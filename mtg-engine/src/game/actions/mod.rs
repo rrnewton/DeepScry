@@ -599,7 +599,7 @@ impl GameState {
     /// # Returns
     /// The effective mana cost after applying all cost reductions, or the original cost on error
     pub fn calculate_effective_cost(&self, card_id: CardId, player_id: PlayerId) -> crate::core::ManaCost {
-        use crate::core::{Keyword, KeywordArgs};
+        use crate::core::{CostReductionTarget, Keyword, KeywordArgs, StaticAbility};
 
         let card = match self.cards.get(card_id) {
             Ok(c) => c,
@@ -638,7 +638,151 @@ impl GameState {
             }
         }
 
+        // Check for ReduceCost static abilities from controlled permanents
+        // Example: Gran-Gran reduces non-creature spell costs by {1} with enough Lessons in graveyard
+        for &bf_card_id in &self.battlefield.cards {
+            let Some(source_card) = self.cards.try_get(bf_card_id) else {
+                continue;
+            };
+
+            // Only consider permanents controlled by the player casting the spell
+            if source_card.controller != player_id {
+                continue;
+            }
+
+            for static_ability in &source_card.static_abilities {
+                if let StaticAbility::ReduceCost {
+                    valid_card,
+                    amount,
+                    condition,
+                    description,
+                } = static_ability
+                {
+                    // Check if the spell being cast matches the valid_card filter
+                    let spell_matches = match valid_card {
+                        CostReductionTarget::AllSpells => true,
+                        CostReductionTarget::NonCreature => !card.is_creature(),
+                        CostReductionTarget::Creature => card.is_creature(),
+                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
+                    };
+
+                    if !spell_matches {
+                        continue;
+                    }
+
+                    // Check if the condition is met (if any)
+                    let condition_met = if let Some(cond) = condition {
+                        // Count cards matching is_present filter in the specified zone
+                        self.count_cards_matching_filter(player_id, &cond.is_present, cond.present_zone)
+                            >= cond.min_count as usize
+                    } else {
+                        true // No condition means always active
+                    };
+
+                    if condition_met {
+                        let old_generic = effective_cost.generic;
+                        effective_cost.generic = effective_cost.generic.saturating_sub(*amount);
+
+                        if old_generic != effective_cost.generic {
+                            log::debug!(
+                                "ReduceCost from {}: {} (reducing generic by {}, was {}, now {})",
+                                source_card.name,
+                                description,
+                                amount,
+                                old_generic,
+                                effective_cost.generic
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         effective_cost
+    }
+
+    /// Count cards matching a filter string in a specified zone
+    ///
+    /// Used for checking ReduceCost conditions like "IsPresent$ Lesson.YouOwn | PresentZone$ Graveyard"
+    fn count_cards_matching_filter(&self, player_id: PlayerId, filter: &str, zone: crate::zones::Zone) -> usize {
+        use crate::zones::Zone;
+
+        // Parse filter: "Lesson.YouOwn" -> type="Lesson", ownership="YouOwn"
+        let parts: Vec<&str> = filter.split('.').collect();
+        let type_filter = parts.first().copied().unwrap_or("");
+        let ownership = parts.get(1).copied().unwrap_or("YouOwn");
+
+        // Get the appropriate zone's cards
+        let zone_cards: &[CardId] = match zone {
+            Zone::Graveyard => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    zones.graveyard.cards.as_slice()
+                } else {
+                    return 0;
+                }
+            }
+            Zone::Hand => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    zones.hand.cards.as_slice()
+                } else {
+                    return 0;
+                }
+            }
+            Zone::Battlefield => self.battlefield.cards.as_slice(),
+            Zone::Exile => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    zones.exile.cards.as_slice()
+                } else {
+                    return 0;
+                }
+            }
+            Zone::Library => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    zones.library.cards.as_slice()
+                } else {
+                    return 0;
+                }
+            }
+            Zone::Stack => {
+                // Stack items are StackEntry, not directly cards
+                return 0;
+            }
+            Zone::Command => {
+                // Command zone (for Commander format) not typically checked
+                return 0;
+            }
+        };
+
+        zone_cards
+            .iter()
+            .filter(|&&cid| {
+                let Some(c) = self.cards.try_get(cid) else {
+                    return false;
+                };
+
+                // Check ownership filter
+                let ownership_ok = match ownership {
+                    "YouOwn" => c.owner == player_id,
+                    "OppOwn" => c.owner != player_id,
+                    "YouCtrl" => c.controller == player_id,
+                    "OppCtrl" => c.controller != player_id,
+                    _ => true,
+                };
+
+                if !ownership_ok {
+                    return false;
+                }
+
+                // Check type filter (subtype match)
+                if type_filter.is_empty() {
+                    return true;
+                }
+
+                // Check if card has the specified subtype
+                let subtype = crate::core::Subtype::new(type_filter);
+                c.subtypes.contains(&subtype)
+            })
+            .count()
     }
 
     /// Cast a spell following the full 8-step process (MTG Rules 601.2)

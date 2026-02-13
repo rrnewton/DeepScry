@@ -1339,6 +1339,10 @@ impl GameState {
                         // GrantKeyword abilities don't affect P/T
                         // They are handled in get_granted_keywords() instead
                     }
+                    StaticAbility::ReduceCost { .. } => {
+                        // ReduceCost abilities don't affect P/T
+                        // They are handled in calculate_effective_cost() instead
+                    }
                 }
             }
         }

@@ -20,9 +20,9 @@ pub use delayed_trigger::{
     DelayedTriggerStore, TriggerPhase, TurnOwner,
 };
 pub use effects::{
-    AbilityCache, ActivatedAbility, AffectedSelector, ControllerRestriction, CountExpression, Effect,
-    ImmediateTriggerCondition, ModalMode, StaticAbility, StaticCondition, TargetRef, TargetRestriction, TargetType,
-    Trigger, TriggerEvent,
+    AbilityCache, ActivatedAbility, AffectedSelector, ControllerRestriction, CostReductionCondition,
+    CostReductionTarget, CountExpression, Effect, ImmediateTriggerCondition, ModalMode, StaticAbility, StaticCondition,
+    TargetRef, TargetRestriction, TargetType, Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

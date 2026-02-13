@@ -62,8 +62,7 @@ Key gaps affecting this deck:
 
 **Gran-Gran (x1)** - U 1/2 Legendary Human Peasant Ally
 - [x] Taps trigger: draw then discard (VERIFIED 2026-01-20)
-- [ ] Cost reduction static (S:Mode$ ReduceCost based on Lessons in graveyard)
-- GAP: ReduceCost static (complex feature requiring spell cost system changes)
+- [x] Cost reduction static (S:Mode$ ReduceCost based on Lessons in graveyard) **IMPLEMENTED 2026-02-13**
 
 **Knowledge Seeker (x2)** - 1U 2/1 Fox Spirit
 - [x] Vigilance (should work)
@@ -128,7 +127,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (29/40 fully working)
+## Verified Cards Summary (30/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -149,6 +148,11 @@ Working cards:
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
+19. **Gran-Gran** - Taps trigger + ReduceCost static for non-creature spells **FULLY WORKING 2026-02-13**
+
+## Recent Fixes (2026-02-13)
+
+1. **S:Mode$ ReduceCost**: Implemented cost reduction static abilities. Added `StaticAbility::ReduceCost` variant with `CostReductionTarget` (NonCreature, AllSpells, Creature, Subtype) and `CostReductionCondition` (IsPresent filter, zone, min_count). Enhanced `calculate_effective_cost` in both GameState and GameLoop to query ReduceCost static abilities from controlled permanents. Added `count_cards_matching_filter` helper to check conditions like "3+ Lessons in graveyard". Gran-Gran now fully functional.
 
 ## Recent Fixes (2026-02-10)
 
@@ -175,7 +179,7 @@ Working cards:
 
 ## Remaining Gaps (Complex Features)
 
-1. **S:Mode$ ReduceCost** - Cost reduction static abilities (affects spell casting system)
+1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
 2. **S:Mode$ RaiseCost** - Additional sacrifice costs
 3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
 4. **AddAbility$ for lands** - Grant abilities to land permanents

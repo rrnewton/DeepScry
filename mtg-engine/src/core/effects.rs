@@ -1176,6 +1176,69 @@ pub enum StaticAbility {
         /// None = always active, Some(PlayerTurn) = only during controller's turn
         condition: Option<StaticCondition>,
     },
+
+    /// Cost reduction static ability
+    ///
+    /// Corresponds to: `S:Mode$ ReduceCost | ValidCard$ X | Type$ Spell | Amount$ N`
+    ///
+    /// Example from Gran-Gran:
+    /// `S:Mode$ ReduceCost | ValidCard$ Card.nonCreature | Type$ Spell | Activator$ You |
+    ///  Amount$ 1 | IsPresent$ Lesson.YouOwn | PresentZone$ Graveyard | PresentCompare$ GE3`
+    ///
+    /// This reduces the cost of non-creature spells by {1} when there are 3+ Lessons
+    /// in the controller's graveyard.
+    ReduceCost {
+        /// Which cards get the cost reduction
+        /// Examples: "Card.nonCreature" = non-creature cards, "Card.Self" = only this card
+        valid_card: CostReductionTarget,
+
+        /// Amount of generic mana to reduce
+        amount: u8,
+
+        /// Condition for when the reduction applies (presence checks)
+        condition: Option<CostReductionCondition>,
+
+        /// Description for logging
+        description: String,
+    },
+}
+
+/// Target selector for cost reduction abilities
+///
+/// Specifies which cards get their costs reduced by a ReduceCost static ability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CostReductionTarget {
+    /// Non-creature spells
+    /// Corresponds to: `ValidCard$ Card.nonCreature`
+    NonCreature,
+
+    /// All spells (no restriction)
+    /// Corresponds to: `ValidCard$ Card` or no ValidCard parameter
+    AllSpells,
+
+    /// Creature spells only
+    /// Corresponds to: `ValidCard$ Creature`
+    Creature,
+
+    /// Spells of a specific subtype
+    /// Corresponds to: `ValidCard$ Dragon`, `ValidCard$ Spirit`, etc.
+    Subtype(crate::core::Subtype),
+}
+
+/// Condition for when a cost reduction applies
+///
+/// Used for abilities like Gran-Gran's "as long as there are three or more
+/// Lesson cards in your graveyard"
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CostReductionCondition {
+    /// What cards must be present (e.g., "Lesson.YouOwn")
+    pub is_present: String,
+
+    /// Which zone to check (e.g., Graveyard)
+    pub present_zone: crate::zones::Zone,
+
+    /// Minimum count required (from PresentCompare$ GE3 -> 3)
+    pub min_count: u8,
 }
 
 /// Condition for when a static ability is active

@@ -3014,8 +3014,12 @@ impl CardDefinition {
                 continue;
             }
 
-            // Parse S:Mode$ Continuous lines
-            if !ability.contains("Mode$ Continuous") {
+            // Determine which mode this is
+            let is_continuous = ability.contains("Mode$ Continuous");
+            let is_reduce_cost = ability.contains("Mode$ ReduceCost");
+
+            // Parse S:Mode$ Continuous or S:Mode$ ReduceCost lines
+            if !is_continuous && !is_reduce_cost {
                 continue;
             }
 
@@ -3026,6 +3030,13 @@ impl CardDefinition {
             let mut keyword: Option<Keyword> = None;
             let mut description = String::new();
             let mut condition: Option<crate::core::StaticCondition> = None;
+
+            // ReduceCost-specific parameters
+            let mut valid_card: Option<crate::core::CostReductionTarget> = None;
+            let mut reduce_amount: u8 = 0;
+            let mut is_present: Option<String> = None;
+            let mut present_zone: Option<crate::zones::Zone> = None;
+            let mut present_compare_min: u8 = 1; // Default: at least 1
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -3149,7 +3160,55 @@ impl CardDefinition {
                                 }
                             }
                         }
-                        _ => {} // Ignore other parameters (e.g., AddType$, AddAbility$)
+                        // ReduceCost-specific parameters
+                        "ValidCard" => {
+                            // Parse ValidCard$ for ReduceCost
+                            // Examples: "Card.nonCreature", "Card.Self", "Creature", "Dragon"
+                            use crate::core::CostReductionTarget;
+                            valid_card = Some(match value {
+                                "Card.nonCreature" => CostReductionTarget::NonCreature,
+                                "Card" | "Card.Self" => CostReductionTarget::AllSpells,
+                                "Creature" => CostReductionTarget::Creature,
+                                _ => {
+                                    // Try to parse as a subtype (e.g., "Dragon", "Spirit")
+                                    CostReductionTarget::Subtype(Subtype::new(value))
+                                }
+                            });
+                        }
+                        "Amount" => {
+                            // Parse Amount$ for cost reduction (e.g., "1", "2")
+                            reduce_amount = value.parse().unwrap_or(0);
+                        }
+                        "IsPresent" => {
+                            // Parse IsPresent$ for conditional cost reduction
+                            // Example: "Lesson.YouOwn"
+                            is_present = Some(value.to_string());
+                        }
+                        "PresentZone" => {
+                            // Parse PresentZone$ for where to check IsPresent
+                            // Examples: "Graveyard", "Battlefield", "Hand"
+                            use crate::zones::Zone;
+                            present_zone = match value {
+                                "Graveyard" => Some(Zone::Graveyard),
+                                "Battlefield" => Some(Zone::Battlefield),
+                                "Hand" => Some(Zone::Hand),
+                                "Library" => Some(Zone::Library),
+                                "Exile" => Some(Zone::Exile),
+                                _ => None,
+                            };
+                        }
+                        "PresentCompare" => {
+                            // Parse PresentCompare$ to get minimum count
+                            // Examples: "GE3" (>= 3), "GE1" (>= 1)
+                            if let Some(num_str) = value.strip_prefix("GE") {
+                                present_compare_min = num_str.parse().unwrap_or(1);
+                            } else if let Some(num_str) = value.strip_prefix("GT") {
+                                // GT = greater than, so add 1 to make it GE
+                                present_compare_min = num_str.parse::<u8>().unwrap_or(0).saturating_add(1);
+                            }
+                            // LE and EQ are less common for cost reduction conditions
+                        }
+                        _ => {} // Ignore other parameters (e.g., AddType$, AddAbility$, Type$, Activator$)
                     }
                 }
             }
@@ -3170,9 +3229,31 @@ impl CardDefinition {
                 abilities.push(StaticAbility::GrantKeyword {
                     affected,
                     keyword: kw,
-                    description,
+                    description: description.clone(),
                     condition,
                 });
+            }
+
+            // ReduceCost ability
+            if is_reduce_cost {
+                if let Some(target) = valid_card {
+                    // Build condition if presence check was specified
+                    let reduce_condition =
+                        is_present
+                            .as_ref()
+                            .map(|present_filter| crate::core::CostReductionCondition {
+                                is_present: present_filter.clone(),
+                                present_zone: present_zone.unwrap_or(crate::zones::Zone::Battlefield),
+                                min_count: present_compare_min,
+                            });
+
+                    abilities.push(StaticAbility::ReduceCost {
+                        valid_card: target,
+                        amount: reduce_amount,
+                        condition: reduce_condition,
+                        description,
+                    });
+                }
             }
         }
 

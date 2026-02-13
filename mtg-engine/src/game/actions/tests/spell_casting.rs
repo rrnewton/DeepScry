@@ -947,4 +947,138 @@ mod tests {
         assert_eq!(cost.generic, 1, "With 3 artifacts, generic cost should be 1");
         assert_eq!(cost.blue, 1, "Blue cost should remain 1");
     }
+
+    #[test]
+    fn test_reduce_cost_static_ability() {
+        use crate::core::{CostReductionCondition, CostReductionTarget, ManaCost, StaticAbility, Subtype};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create Gran-Gran on battlefield with ReduceCost ability:
+        // Non-creature spells cost {1} less if you have 3+ Lessons in graveyard
+        let gran_gran_id = game.next_card_id();
+        let mut gran_gran = Card::new(gran_gran_id, "Gran-Gran".to_string(), p1_id);
+        gran_gran.add_type(CardType::Creature);
+        gran_gran.controller = p1_id;
+        gran_gran.static_abilities.push(StaticAbility::ReduceCost {
+            valid_card: CostReductionTarget::NonCreature,
+            amount: 1,
+            condition: Some(CostReductionCondition {
+                is_present: "Lesson.YouOwn".to_string(),
+                present_zone: crate::zones::Zone::Graveyard,
+                min_count: 3,
+            }),
+            description: "Non-creature spells cost {1} less".to_string(),
+        });
+        game.cards.insert(gran_gran_id, gran_gran);
+        game.battlefield.add(gran_gran_id);
+
+        // Create a non-creature spell in hand (cost: 2U)
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Some Instant".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("2U");
+        game.cards.insert(spell_id, spell);
+
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Test 1: Without any Lessons in graveyard, cost should remain 2U
+        let cost_no_lessons = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(
+            cost_no_lessons.generic, 2,
+            "Without lessons, generic cost should remain 2"
+        );
+
+        // Add 2 Lessons to graveyard (not enough)
+        for i in 0..2 {
+            let lesson_id = game.next_card_id();
+            let mut lesson = Card::new(lesson_id, format!("Lesson {}", i), p1_id);
+            lesson.add_type(CardType::Sorcery);
+            lesson.subtypes.push(Subtype::new("Lesson"));
+            lesson.owner = p1_id;
+            game.cards.insert(lesson_id, lesson);
+
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.graveyard.add(lesson_id);
+            }
+        }
+
+        // Test 2: With only 2 Lessons, cost should still be 2U
+        let cost_2_lessons = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(
+            cost_2_lessons.generic, 2,
+            "With only 2 lessons, generic cost should remain 2"
+        );
+
+        // Add 1 more Lesson (now 3 total)
+        let lesson_id = game.next_card_id();
+        let mut lesson = Card::new(lesson_id, "Lesson 2".to_string(), p1_id);
+        lesson.add_type(CardType::Sorcery);
+        lesson.subtypes.push(Subtype::new("Lesson"));
+        lesson.owner = p1_id;
+        game.cards.insert(lesson_id, lesson);
+
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.graveyard.add(lesson_id);
+        }
+
+        // Test 3: With 3 Lessons, cost should be reduced to 1U
+        let cost_3_lessons = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(
+            cost_3_lessons.generic, 1,
+            "With 3 lessons, generic cost should be reduced to 1"
+        );
+        assert_eq!(cost_3_lessons.blue, 1, "Blue cost should remain 1");
+
+        // Create a creature spell in hand - should NOT get reduction
+        let creature_spell_id = game.next_card_id();
+        let mut creature_spell = Card::new(creature_spell_id, "Some Creature".to_string(), p1_id);
+        creature_spell.add_type(CardType::Creature);
+        creature_spell.mana_cost = ManaCost::from_string("3G");
+        game.cards.insert(creature_spell_id, creature_spell);
+
+        // Test 4: Creature spell should NOT get the reduction (NonCreature only)
+        let creature_cost = game.calculate_effective_cost(creature_spell_id, p1_id);
+        assert_eq!(
+            creature_cost.generic, 3,
+            "Creature spell should NOT get cost reduction from Gran-Gran"
+        );
+    }
+
+    #[test]
+    fn test_reduce_cost_unconditional() {
+        use crate::core::{CostReductionTarget, ManaCost, StaticAbility};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a permanent with unconditional cost reduction (no condition)
+        let reducer_id = game.next_card_id();
+        let mut reducer = Card::new(reducer_id, "Cost Reducer".to_string(), p1_id);
+        reducer.add_type(CardType::Artifact);
+        reducer.controller = p1_id;
+        reducer.static_abilities.push(StaticAbility::ReduceCost {
+            valid_card: CostReductionTarget::AllSpells,
+            amount: 1,
+            condition: None, // No condition - always active
+            description: "All spells cost {1} less".to_string(),
+        });
+        game.cards.insert(reducer_id, reducer);
+        game.battlefield.add(reducer_id);
+
+        // Create a spell in hand (cost: 3RR)
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Big Spell".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("3RR");
+        game.cards.insert(spell_id, spell);
+
+        // Test: Cost should be reduced to 2RR
+        let cost = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(cost.generic, 2, "Generic cost should be reduced by 1");
+        assert_eq!(cost.red, 2, "Red cost should remain 2");
+    }
 }

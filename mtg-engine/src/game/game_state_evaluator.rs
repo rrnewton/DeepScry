@@ -482,6 +482,10 @@ impl GameStateEvaluator {
                         value += keyword_value;
                     }
                 }
+                StaticAbility::ReduceCost { .. } => {
+                    // Cost reduction abilities don't affect enchanted creature value
+                    // They affect spell casting costs, not board state
+                }
             }
         }
 
