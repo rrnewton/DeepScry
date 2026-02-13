@@ -1597,6 +1597,27 @@ pub trait PlayerController {
     /// This is critical for snapshot/resume functionality - without this,
     /// stateless controllers would be incorrectly restored as Zero controllers.
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType;
+
+    /// Prepare for a choice by blocking on network if needed
+    ///
+    /// For network controllers (NetworkLocalController, RemoteController on client side),
+    /// this blocks until a ChoiceRequest/OpponentChoice is received from the server.
+    /// This ensures that any CardRevealed messages that precede the choice have been
+    /// buffered, so sync_to_action() can process them BEFORE abilities are computed.
+    ///
+    /// Returns true on success (preparation done or not needed).
+    /// Returns false if the game should exit (GameEnded/Error received).
+    ///
+    /// After this returns true for a network controller, the caller should:
+    /// 1. Call sync_to_action() to process buffered reveals
+    /// 2. Compute available abilities
+    /// 3. Call choose_spell_ability_to_play() with the abilities
+    ///
+    /// The default implementation returns true (no network preparation needed).
+    /// NetworkLocalController and RemoteController override this to block on MVar.
+    fn prepare_for_priority_choice(&mut self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

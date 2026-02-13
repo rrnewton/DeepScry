@@ -276,10 +276,6 @@ impl<'a> GameLoop<'a> {
 
             // Inner loop: pass priority until both players pass
             while consecutive_passes < 2 {
-                // Sync network state before processing priority
-                // This ensures opponent's played cards are instantiated before we try to act on them
-                self.sync_to_action();
-
                 // Safety check to prevent infinite loops
                 action_count += 1;
                 if action_count > MAX_ACTIONS_PER_PRIORITY {
@@ -294,6 +290,32 @@ impl<'a> GameLoop<'a> {
                 } else {
                     controller2
                 };
+
+                // NETWORK SYNC PROTOCOL:
+                // For network controllers (Remote, Network), we need to:
+                // 1. Call prepare_for_priority_choice() to block on MVar and receive ChoiceRequest/OpponentChoice
+                // 2. Then call sync_to_action() to process CardRevealed messages that are now guaranteed buffered
+                // 3. Then compute abilities (now correct, includes newly drawn cards)
+                //
+                // This solves a race condition where sync_to_action() might run before the WS reader
+                // has buffered the CardRevealed messages, causing abilities to be computed with stale data.
+                let is_network_controlled = matches!(
+                    controller.get_controller_type(),
+                    ControllerType::Remote | ControllerType::Network
+                );
+
+                if is_network_controlled {
+                    // For network controllers: prepare first (blocks until network data received)
+                    if !controller.prepare_for_priority_choice() {
+                        // Game ended or error - return ExitGame
+                        return Ok(None);
+                    }
+                }
+
+                // Sync network state now that we know reveals are buffered
+                // For network controllers, the prepare call above guarantees ChoiceRequest/OpponentChoice
+                // has been received, which means all preceding CardRevealed are buffered
+                self.sync_to_action();
 
                 // Loop to allow undo/retry for spell ability choices
                 let choice = loop {

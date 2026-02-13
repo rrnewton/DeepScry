@@ -72,6 +72,17 @@ struct ChoiceInfoResult {
 /// Supports two modes:
 /// - Legacy: Uses Rc<Cell<u32>> for choice_seq (with pre-choice hook)
 /// - MVar: Uses SharedNetworkState for choice info
+///
+/// ## Network Sync Protocol (prepare_for_priority_choice)
+///
+/// To solve a race condition between WS reader and ability computation:
+/// 1. GameLoop calls prepare_for_priority_choice() BEFORE computing abilities
+/// 2. This method blocks on MVar to receive ChoiceRequest from server
+/// 3. By receiving ChoiceRequest, we know all prior CardRevealed are buffered
+/// 4. GameLoop calls sync_to_action() to process buffered reveals
+/// 5. GameLoop computes abilities (now correct, includes newly drawn cards)
+/// 6. GameLoop calls choose_spell_ability_to_play() with correct abilities
+/// 7. This method uses the cached ChoiceRequest (doesn't block again)
 pub struct NetworkLocalController<C: PlayerController> {
     /// The wrapped local controller
     inner: C,
@@ -88,6 +99,9 @@ pub struct NetworkLocalController<C: PlayerController> {
     /// Server-authoritative library search result from ChoiceAccepted
     /// Set during choose_from_library, consumed by game loop via take_library_search_result
     last_library_search_result: Option<CardId>,
+    /// Cached ChoiceRequest from prepare_for_priority_choice()
+    /// Used by choose_spell_ability_to_play() to avoid blocking twice
+    pending_choice_info: Option<ChoiceInfoResult>,
 }
 
 impl<C: PlayerController> NetworkLocalController<C> {
@@ -106,6 +120,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             shared_state: None,
             choice_seq,
             last_library_search_result: None,
+            pending_choice_info: None,
         }
     }
 
@@ -130,6 +145,7 @@ impl<C: PlayerController> NetworkLocalController<C> {
             shared_state: Some(shared_state),
             choice_seq: Rc::new(Cell::new(0)), // Not used in MVar mode
             last_library_search_result: None,
+            pending_choice_info: None,
         }
     }
 
@@ -151,12 +167,23 @@ impl<C: PlayerController> NetworkLocalController<C> {
 
     /// Get choice info for the current choice
     ///
-    /// In MVar mode: Takes ChoiceRequest from local_choice_mvar (blocking if needed)
+    /// Uses cached value from prepare_for_priority_choice() if available.
+    /// Otherwise, in MVar mode: Takes ChoiceRequest from local_choice_mvar (blocking if needed)
     /// In legacy mode: Returns the shared choice_seq from pre-choice hook
     ///
     /// Returns None if the game should exit (GameEnded/Error received)
     /// Returns Some(ChoiceInfoResult) on success
-    fn get_choice_info(&self) -> Option<ChoiceInfoResult> {
+    fn get_choice_info(&mut self) -> Option<ChoiceInfoResult> {
+        // Check for cached choice info from prepare_for_priority_choice()
+        if let Some(info) = self.pending_choice_info.take() {
+            log::debug!(
+                "NetworkLocalController: using cached ChoiceRequest seq={} action={}",
+                info.choice_seq,
+                info.server_action_count
+            );
+            return Some(info);
+        }
+
         if let Some(ref state) = self.shared_state {
             // MVar mode: take from LOCAL choice MVar (dedicated for this controller)
             match state.take_local_choice() {
@@ -204,6 +231,72 @@ impl<C: PlayerController> NetworkLocalController<C> {
                 library_search_names: None,
                 library_search_counts: None,
             })
+        }
+    }
+
+    /// Block on MVar to receive ChoiceRequest and cache it
+    ///
+    /// Called by GameLoop BEFORE computing abilities. This ensures:
+    /// 1. We've received the ChoiceRequest from server
+    /// 2. All CardRevealed messages preceding it are now buffered
+    /// 3. GameLoop can call sync_to_action() to process those reveals
+    /// 4. Abilities can be computed correctly (including newly drawn cards)
+    ///
+    /// Returns true if a ChoiceRequest was received and cached.
+    /// Returns false if game should exit (GameEnded/Error received).
+    fn prepare_choice_info(&mut self) -> bool {
+        // Already have cached info? Nothing to do.
+        if self.pending_choice_info.is_some() {
+            return true;
+        }
+
+        // Only relevant for MVar mode
+        let Some(ref state) = self.shared_state else {
+            return true; // Legacy mode always proceeds
+        };
+
+        // Block on MVar to receive ChoiceRequest
+        match state.take_local_choice() {
+            Some(LocalChoiceInfo::Request {
+                choice_seq,
+                action_count,
+                abilities,
+                library_search_names,
+                library_search_counts,
+            }) => {
+                log::debug!(
+                    "NetworkLocalController::prepare_choice_info: got ChoiceRequest seq={} action={}",
+                    choice_seq,
+                    action_count
+                );
+                // Cache the choice info for later use by choose_spell_ability_to_play()
+                self.pending_choice_info = Some(ChoiceInfoResult {
+                    choice_seq,
+                    server_action_count: action_count,
+                    abilities,
+                    library_search_names,
+                    library_search_counts,
+                });
+                true
+            }
+            Some(LocalChoiceInfo::Exit { winner }) => {
+                log::info!(
+                    "NetworkLocalController::prepare_choice_info: game ended, winner={:?}",
+                    winner
+                );
+                false
+            }
+            Some(LocalChoiceInfo::Error { message }) => {
+                log::error!(
+                    "NetworkLocalController::prepare_choice_info: error from server: {}",
+                    message
+                );
+                false
+            }
+            None => {
+                log::debug!("NetworkLocalController::prepare_choice_info: MVar returned None (exit signaled)");
+                false
+            }
         }
     }
 
@@ -307,6 +400,12 @@ impl<C: PlayerController> NetworkLocalController<C> {
 impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
     fn player_id(&self) -> PlayerId {
         self.inner.player_id()
+    }
+
+    fn prepare_for_priority_choice(&mut self) -> bool {
+        // Block on MVar to receive ChoiceRequest, cache it for later
+        // This ensures CardRevealed messages are buffered before abilities are computed
+        self.prepare_choice_info()
     }
 
     fn choose_spell_ability_to_play(
@@ -573,7 +672,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             // Include actual CardId for opponent's shadow game synchronization
             // (index-based protocol fails when blocker lists differ between server/client)
             let blocker_card_ids = Some(vec![*blocker_id]);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, blocker_card_ids);
+            self.send_choice(
+                choice_seq,
+                vec![idx],
+                server_action_count,
+                hash,
+                debug,
+                None,
+                blocker_card_ids,
+            );
         }
 
         result
@@ -605,7 +712,15 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             // Include actual CardId for opponent's shadow game synchronization
             // (index-based protocol fails when blocker lists differ between server/client)
             let blocker_card_ids = Some(vec![*blocker_id]);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, blocker_card_ids);
+            self.send_choice(
+                choice_seq,
+                vec![idx],
+                server_action_count,
+                hash,
+                debug,
+                None,
+                blocker_card_ids,
+            );
         }
 
         result

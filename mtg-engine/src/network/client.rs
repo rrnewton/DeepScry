@@ -335,6 +335,17 @@ pub struct SharedNetworkState {
     /// Latest action count from server (updated on ChoiceRequest/OpponentChoice)
     /// Used as sync target to ensure client processes all reveals before choices
     server_action_count: std::sync::atomic::AtomicU64,
+
+    /// Flag indicating a choice is pending (ChoiceRequest or OpponentChoice has been received)
+    ///
+    /// This solves a race condition between the WS reader and sync_callback:
+    /// - WS reader pushes CardRevealed to pending_reveals, then pushes ChoiceRequest to MVar
+    /// - sync_callback might run BEFORE WS reader processes messages (sees empty queue)
+    /// - By checking this flag, sync_callback only drains reveals when ChoiceRequest is ready
+    ///
+    /// Set to true when push_local_choice/push_remote_choice is called.
+    /// Cleared when drain_all_reveals_if_ready returns reveals.
+    choice_pending: std::sync::atomic::AtomicBool,
 }
 
 impl SharedNetworkState {
@@ -346,6 +357,7 @@ impl SharedNetworkState {
             remote_choice_mvar: super::mvar::MVar::new(),
             choice_accepted_mvar: super::mvar::MVar::new(),
             server_action_count: std::sync::atomic::AtomicU64::new(0),
+            choice_pending: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -408,13 +420,46 @@ impl SharedNetworkState {
         queue.drain(..).collect()
     }
 
+    /// Drain ALL pending reveals, but ONLY if a choice is pending
+    ///
+    /// This solves the race condition between WS reader and sync_callback:
+    /// 1. WS reader pushes CardRevealed to pending_reveals
+    /// 2. WS reader pushes ChoiceRequest to MVar (sets choice_pending = true)
+    /// 3. sync_callback calls this method
+    ///
+    /// If sync_callback runs BEFORE step 2, choice_pending is false, so we return empty.
+    /// The reveals will be processed on the NEXT sync_callback call after the controller
+    /// has blocked on MVar (which guarantees step 2 has completed).
+    ///
+    /// Returns (reveals, processed) where processed is true if we actually drained.
+    pub fn drain_all_reveals_if_ready(&self) -> (Vec<PendingReveal>, bool) {
+        // Check if a choice is pending (ChoiceRequest/OpponentChoice has been pushed)
+        if !self.choice_pending.load(std::sync::atomic::Ordering::Acquire) {
+            // No choice pending yet - WS reader might not have processed messages
+            // Skip draining to avoid processing reveals too early
+            return (Vec::new(), false);
+        }
+
+        // Choice is pending - safe to drain reveals
+        // Clear the flag so the next sync won't re-drain
+        self.choice_pending.store(false, std::sync::atomic::Ordering::Release);
+
+        let mut queue = self.pending_reveals.lock().unwrap();
+        (queue.drain(..).collect(), true)
+    }
+
     /// Push a local choice request (ChoiceRequest from server)
     pub fn push_local_choice(&self, choice: LocalChoiceInfo) {
+        // Set choice_pending BEFORE pushing to MVar
+        // This ensures sync_callback can see the flag after controller takes from MVar
+        self.choice_pending.store(true, std::sync::atomic::Ordering::Release);
         self.local_choice_mvar.put(choice);
     }
 
     /// Push a remote choice (OpponentChoice from server)
     pub fn push_remote_choice(&self, choice: RemoteChoiceInfo) {
+        // Set choice_pending BEFORE pushing to MVar
+        self.choice_pending.store(true, std::sync::atomic::Ordering::Release);
         self.remote_choice_mvar.put(choice);
     }
 

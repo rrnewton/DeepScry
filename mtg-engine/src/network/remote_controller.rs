@@ -19,11 +19,29 @@ use crate::network::client::{RemoteChoiceInfo, SharedNetworkState};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
+/// Cached choice info from prepare_for_priority_choice()
+#[derive(Debug, Clone)]
+struct CachedOpponentChoice {
+    action_count: u64,
+    indices: Vec<usize>,
+    spell_ability: Option<SpellAbility>,
+    library_search_result: Option<CardId>,
+    target_card_ids: Option<Vec<CardId>>,
+}
+
 /// A controller that represents the remote opponent.
 ///
 /// Supports two modes:
 /// - MVar: Reads OpponentChoice from SharedNetworkState
 /// - Legacy: Panics (pre-choice hook should intercept)
+///
+/// ## Network Sync Protocol (prepare_for_priority_choice)
+///
+/// Like NetworkLocalController, this controller implements a two-phase protocol:
+/// 1. prepare_for_priority_choice() blocks on MVar to receive OpponentChoice
+/// 2. GameLoop calls sync_to_action() to process any buffered reveals
+/// 3. Abilities are computed (now correct, includes opponent's drawn cards)
+/// 4. choose_spell_ability_to_play() uses cached choice (doesn't block again)
 pub struct RemoteController {
     player_id: PlayerId,
     /// Shared network state (MVar architecture) - if set, reads choices from MVar
@@ -32,6 +50,8 @@ pub struct RemoteController {
     /// Stored here so the game loop can retrieve the authoritative CardId after
     /// choose_from_library returns an index into an empty valid_cards list.
     last_library_search_result: Option<CardId>,
+    /// Cached OpponentChoice from prepare_for_priority_choice()
+    pending_choice: Option<CachedOpponentChoice>,
 }
 
 impl RemoteController {
@@ -41,6 +61,7 @@ impl RemoteController {
             player_id,
             shared_state: None,
             last_library_search_result: None,
+            pending_choice: None,
         }
     }
 
@@ -50,17 +71,79 @@ impl RemoteController {
             player_id,
             shared_state: Some(shared_state),
             last_library_search_result: None,
+            pending_choice: None,
+        }
+    }
+
+    /// Block on MVar to receive OpponentChoice and cache it
+    ///
+    /// Called by GameLoop BEFORE computing abilities. This ensures:
+    /// 1. We've received the OpponentChoice from server
+    /// 2. All CardRevealed messages preceding it are now buffered
+    /// 3. GameLoop can call sync_to_action() to process those reveals
+    /// 4. Abilities can be computed correctly (including opponent's drawn cards)
+    ///
+    /// Returns true if an OpponentChoice was received and cached.
+    /// Returns false if game should exit (GameEnded/Error received).
+    fn prepare_choice_info(&mut self) -> bool {
+        // Already have cached info? Nothing to do.
+        if self.pending_choice.is_some() {
+            return true;
+        }
+
+        // Only relevant for MVar mode
+        let Some(ref state) = self.shared_state else {
+            return true; // Legacy mode always proceeds
+        };
+
+        // Block on MVar to receive OpponentChoice
+        match state.take_remote_choice() {
+            Some(RemoteChoiceInfo::Opponent {
+                action_count,
+                indices,
+                spell_ability,
+                library_search_result,
+                target_card_ids,
+            }) => {
+                log::debug!(
+                    "RemoteController::prepare_choice_info: got OpponentChoice action={} indices={:?}",
+                    action_count,
+                    indices
+                );
+                // Cache the choice info for later use
+                self.pending_choice = Some(CachedOpponentChoice {
+                    action_count,
+                    indices,
+                    spell_ability,
+                    library_search_result,
+                    target_card_ids,
+                });
+                true
+            }
+            Some(RemoteChoiceInfo::Exit { winner }) => {
+                log::info!("RemoteController::prepare_choice_info: game ended, winner={:?}", winner);
+                false
+            }
+            Some(RemoteChoiceInfo::Error { message }) => {
+                log::error!("RemoteController::prepare_choice_info: error from server: {}", message);
+                false
+            }
+            None => {
+                log::debug!("RemoteController::prepare_choice_info: MVar returned None (exit signaled)");
+                false
+            }
         }
     }
 
     /// Get opponent's choice from MVar with action count validation
     ///
+    /// Uses cached value from prepare_choice_info() if available.
     /// In MVar mode: Takes OpponentChoice from remote_choice_mvar (blocking if needed)
     /// In legacy mode: Panics (this shouldn't be called)
     ///
     /// The `expected_action` parameter is used for validation in network mode.
     /// If the choice's action_count doesn't match, this indicates a sync issue.
-    fn get_opponent_choice(&self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
+    fn get_opponent_choice(&mut self, expected_action: u64) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>)> {
         match self.get_opponent_choice_full(expected_action) {
             ChoiceResult::Ok((indices, spell_ability, _library_search_result, _target_card_ids)) => {
                 ChoiceResult::Ok((indices, spell_ability))
@@ -74,7 +157,7 @@ impl RemoteController {
 
     /// Get opponent's choice with target CardIds (for target selections)
     fn get_opponent_choice_with_targets(
-        &self,
+        &mut self,
         expected_action: u64,
     ) -> ChoiceResult<(Vec<usize>, Option<Vec<CardId>>)> {
         match self.get_opponent_choice_full(expected_action) {
@@ -90,13 +173,39 @@ impl RemoteController {
 
     /// Get opponent's choice from MVar with full info including library_search_result
     ///
+    /// Uses cached value from prepare_choice_info() if available.
     /// This is the underlying implementation that returns all choice info.
     /// Used by choose_from_library to get the authoritative CardId for library searches.
     #[allow(clippy::type_complexity)]
     fn get_opponent_choice_full(
-        &self,
+        &mut self,
         expected_action: u64,
     ) -> ChoiceResult<(Vec<usize>, Option<SpellAbility>, Option<CardId>, Option<Vec<CardId>>)> {
+        // Check for cached choice from prepare_choice_info()
+        if let Some(cached) = self.pending_choice.take() {
+            // Validate action count ordering
+            if cached.action_count != expected_action {
+                log::warn!(
+                    "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
+                    expected_action,
+                    cached.action_count,
+                    cached.indices
+                );
+                // Continue anyway - server is authoritative, but log the discrepancy
+            }
+            log::debug!(
+                "RemoteController: using cached OpponentChoice indices={:?} action={}",
+                cached.indices,
+                cached.action_count
+            );
+            return ChoiceResult::Ok((
+                cached.indices,
+                cached.spell_ability,
+                cached.library_search_result,
+                cached.target_card_ids,
+            ));
+        }
+
         if let Some(ref state) = self.shared_state {
             // MVar mode: take from REMOTE choice MVar (dedicated for this controller)
             match state.take_remote_choice() {
@@ -151,6 +260,12 @@ impl RemoteController {
 impl PlayerController for RemoteController {
     fn player_id(&self) -> PlayerId {
         self.player_id
+    }
+
+    fn prepare_for_priority_choice(&mut self) -> bool {
+        // Block on MVar to receive OpponentChoice, cache it for later
+        // This ensures CardRevealed messages are buffered before abilities are computed
+        self.prepare_choice_info()
     }
 
     fn choose_spell_ability_to_play(
@@ -361,7 +476,10 @@ impl PlayerController for RemoteController {
         // Prefer the actual CardId if provided (more reliable than index)
         if let Some(ref card_ids) = blocker_card_ids {
             if let Some(&blocker_id) = card_ids.first() {
-                log::info!("RemoteController: using blocker_card_id {} from target_card_ids", blocker_id.as_u32());
+                log::info!(
+                    "RemoteController: using blocker_card_id {} from target_card_ids",
+                    blocker_id.as_u32()
+                );
                 // Validate the CardId exists in killable_blockers
                 if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
                     return ChoiceResult::Ok(blocker_id);
