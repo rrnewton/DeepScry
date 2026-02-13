@@ -1,10 +1,11 @@
 ---
 title: 'Network reveal sync: shadow game missing cards from hand'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-02-13T14:11:07.064662244+00:00
-updated_at: 2026-02-13T14:11:07.064662244+00:00
+updated_at: 2026-02-13T17:19:38.787920797+00:00
+closed_at: 2026-02-13T17:19:38.787920166+00:00
 ---
 
 # Description
