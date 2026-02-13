@@ -341,7 +341,9 @@ impl PlayerController for RemoteController {
         killable_blockers: &[(CardId, i32)],
         _remaining_power: i32,
     ) -> ChoiceResult<CardId> {
-        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
+        // Use get_opponent_choice_with_targets to get the actual CardId
+        // (index-based protocol fails when blocker lists differ between server/client)
+        let (indices, blocker_card_ids) = match self.get_opponent_choice_with_targets(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -349,7 +351,31 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        // Get the selected blocker from the index
+        log::info!(
+            "RemoteController::choose_blocker_for_lethal_damage: indices={:?}, blocker_card_ids={:?}, killable_blockers={:?}",
+            indices,
+            blocker_card_ids,
+            killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
+        );
+
+        // Prefer the actual CardId if provided (more reliable than index)
+        if let Some(ref card_ids) = blocker_card_ids {
+            if let Some(&blocker_id) = card_ids.first() {
+                log::info!("RemoteController: using blocker_card_id {} from target_card_ids", blocker_id.as_u32());
+                // Validate the CardId exists in killable_blockers
+                if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
+                    return ChoiceResult::Ok(blocker_id);
+                }
+                // CardId not found - log warning but continue with index fallback
+                log::warn!(
+                    "RemoteController: blocker_card_ids {:?} not found in killable_blockers ({:?}), falling back to index",
+                    card_ids,
+                    killable_blockers.iter().map(|(id, _)| id).collect::<Vec<_>>()
+                );
+            }
+        }
+
+        // Fallback to index-based selection (for backwards compatibility)
         let idx = indices.first().copied().unwrap_or(0);
         if let Some((blocker_id, _)) = killable_blockers.get(idx) {
             ChoiceResult::Ok(*blocker_id)
@@ -373,7 +399,9 @@ impl PlayerController for RemoteController {
         remaining_blockers: &[CardId],
         _remaining_damage: i32,
     ) -> ChoiceResult<CardId> {
-        let (indices, _) = match self.get_opponent_choice(view.action_count() as u64) {
+        // Use get_opponent_choice_with_targets to get the actual CardId
+        // (index-based protocol fails when blocker lists differ between server/client)
+        let (indices, blocker_card_ids) = match self.get_opponent_choice_with_targets(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)
             | ChoiceResult::ExitGame
@@ -381,7 +409,23 @@ impl PlayerController for RemoteController {
             | ChoiceResult::NeedInput(_) => return ChoiceResult::ExitGame,
         };
 
-        // Get the selected blocker from the index
+        // Prefer the actual CardId if provided (more reliable than index)
+        if let Some(card_ids) = blocker_card_ids {
+            if let Some(&blocker_id) = card_ids.first() {
+                // Validate the CardId exists in remaining_blockers
+                if remaining_blockers.contains(&blocker_id) {
+                    return ChoiceResult::Ok(blocker_id);
+                }
+                // CardId not found - log warning but continue with index fallback
+                log::warn!(
+                    "RemoteController: blocker_card_ids {:?} not found in remaining_blockers ({:?}), falling back to index",
+                    card_ids,
+                    remaining_blockers
+                );
+            }
+        }
+
+        // Fallback to index-based selection (for backwards compatibility)
         let idx = indices.first().copied().unwrap_or(0);
         if let Some(&blocker_id) = remaining_blockers.get(idx) {
             ChoiceResult::Ok(blocker_id)

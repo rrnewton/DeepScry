@@ -563,7 +563,10 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
                 .position(|(id, _)| id == blocker_id)
                 .unwrap_or(0);
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, None);
+            // Include actual CardId for opponent's shadow game synchronization
+            // (index-based protocol fails when blocker lists differ between server/client)
+            let blocker_card_ids = Some(vec![*blocker_id]);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, blocker_card_ids);
         }
 
         result
@@ -592,7 +595,10 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
             // Find the index of the chosen blocker in remaining_blockers
             let idx = remaining_blockers.iter().position(|id| id == blocker_id).unwrap_or(0);
             let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, None);
+            // Include actual CardId for opponent's shadow game synchronization
+            // (index-based protocol fails when blocker lists differ between server/client)
+            let blocker_card_ids = Some(vec![*blocker_id]);
+            self.send_choice(choice_seq, vec![idx], server_action_count, hash, debug, None, blocker_card_ids);
         }
 
         result

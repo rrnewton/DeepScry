@@ -651,6 +651,30 @@ pub enum ChoiceType {
         /// Total number of available modes
         available_modes: usize,
     },
+    /// SMART damage: Choose which blocker to kill first
+    ///
+    /// When an attacker has multiple blockers but not enough power to kill all,
+    /// the controller must choose which blocker to kill first (prioritize lethal).
+    LethalDamageAssignment {
+        /// The attacking creature assigning damage
+        attacker: CardId,
+        /// Number of killable blockers to choose from
+        killable_count: usize,
+        /// Remaining attacker power
+        remaining_power: i32,
+    },
+    /// SMART damage: Choose where to assign remaining non-lethal damage
+    ///
+    /// After killing all possible blockers, remaining damage must be assigned
+    /// to a blocker that can't be killed. Usually doesn't matter strategically.
+    RemainingDamageAssignment {
+        /// The attacking creature assigning damage
+        attacker: CardId,
+        /// Number of remaining blockers
+        blocker_count: usize,
+        /// Damage left to assign (not enough to kill any)
+        remaining_damage: i32,
+    },
 }
 
 /// Additional context for a choice request

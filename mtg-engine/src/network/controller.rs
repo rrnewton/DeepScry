@@ -104,6 +104,7 @@ pub struct ChoiceResponse {
 struct NetworkChoiceResult {
     indices: Vec<usize>,
     spell_ability: Option<crate::core::SpellAbility>,
+    target_card_ids: Option<Vec<crate::core::CardId>>,
 }
 
 /// Error that can occur during network communication
@@ -354,6 +355,7 @@ impl NetworkController {
         Ok(NetworkChoiceResult {
             indices: response.choice_indices,
             spell_ability: response.spell_ability,
+            target_card_ids: response.target_card_ids,
         })
     }
 
@@ -842,6 +844,142 @@ impl PlayerController for NetworkController {
                     } else {
                         ChoiceResult::Error("Invalid damage order index from network".to_string())
                     }
+                }
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
+    }
+
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        // Build options for each killable blocker
+        let options: Vec<String> = killable_blockers
+            .iter()
+            .map(|(card_id, lethal)| {
+                format!(
+                    "Kill {} first (needs {} damage)",
+                    self.format_card(view, *card_id),
+                    lethal
+                )
+            })
+            .collect();
+
+        // Compute state hash
+        let state_hash = self.compute_view_hash(view);
+
+        // Send request
+        let choice_type = ChoiceType::LethalDamageAssignment {
+            attacker,
+            killable_count: killable_blockers.len(),
+            remaining_power,
+        };
+
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                let idx = result.indices.first().copied().unwrap_or(0);
+
+                // Prefer target_card_ids if provided (more reliable than index)
+                if let Some(ref card_ids) = result.target_card_ids {
+                    if let Some(&blocker_id) = card_ids.first() {
+                        // Validate the CardId exists in killable_blockers
+                        if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
+                            log::debug!(
+                                "NetworkController: using blocker CardId {} from target_card_ids",
+                                blocker_id.as_u32()
+                            );
+                            return ChoiceResult::Ok(blocker_id);
+                        }
+                        log::warn!(
+                            "NetworkController: target_card_ids {:?} not in killable_blockers, falling back to index",
+                            card_ids
+                        );
+                    }
+                }
+
+                // Fall back to index-based lookup
+                if let Some((blocker_id, _)) = killable_blockers.get(idx) {
+                    ChoiceResult::Ok(*blocker_id)
+                } else {
+                    ChoiceResult::Error(format!(
+                        "FATAL DESYNC: Invalid lethal damage blocker index {} (only {} killable)",
+                        idx,
+                        killable_blockers.len()
+                    ))
+                }
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        remaining_blockers: &[CardId],
+        remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        // Build options for each remaining blocker
+        let options: Vec<String> = remaining_blockers
+            .iter()
+            .map(|&card_id| {
+                format!(
+                    "Assign {} remaining damage to {}",
+                    remaining_damage,
+                    self.format_card(view, card_id)
+                )
+            })
+            .collect();
+
+        // Compute state hash
+        let state_hash = self.compute_view_hash(view);
+
+        // Send request
+        let choice_type = ChoiceType::RemainingDamageAssignment {
+            attacker,
+            blocker_count: remaining_blockers.len(),
+            remaining_damage,
+        };
+
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                let idx = result.indices.first().copied().unwrap_or(0);
+
+                // Prefer target_card_ids if provided (more reliable than index)
+                if let Some(ref card_ids) = result.target_card_ids {
+                    if let Some(&blocker_id) = card_ids.first() {
+                        // Validate the CardId exists in remaining_blockers
+                        if remaining_blockers.contains(&blocker_id) {
+                            log::debug!(
+                                "NetworkController: using remaining blocker CardId {} from target_card_ids",
+                                blocker_id.as_u32()
+                            );
+                            return ChoiceResult::Ok(blocker_id);
+                        }
+                        log::warn!(
+                            "NetworkController: target_card_ids {:?} not in remaining_blockers, falling back to index",
+                            card_ids
+                        );
+                    }
+                }
+
+                // Fall back to index-based lookup
+                if let Some(&blocker_id) = remaining_blockers.get(idx) {
+                    ChoiceResult::Ok(blocker_id)
+                } else {
+                    ChoiceResult::Error(format!(
+                        "FATAL DESYNC: Invalid remaining damage blocker index {} (only {} blockers)",
+                        idx,
+                        remaining_blockers.len()
+                    ))
                 }
             }
             Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
