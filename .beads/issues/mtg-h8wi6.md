@@ -1,13 +1,14 @@
 ---
 title: Network seed 23 combat damage life mismatch
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - bug
 - network
 created_at: 2026-02-12T16:19:30.771870570+00:00
-updated_at: 2026-02-12T16:19:30.771870570+00:00
+updated_at: 2026-02-12T22:59:13.862311570+00:00
+closed_at: 2026-02-12T22:59:13.862311480+00:00
 ---
 
 # Description
@@ -46,6 +47,16 @@ May be related to:
 - Modal spell not being resolved during casting
 - Action count mismatch causing state divergence
 - Combat damage calculation timing
+
+## Resolution
+
+**FIXED** in commit c15b104d5 (target_card_ids protocol field) and 0804cd8b0 (fatal error handling).
+
+The root cause was target choices using index-based protocol where the client's `valid_targets`
+list could differ from the server's. By sending actual CardIds instead of indices, the target
+selection now stays synchronized.
+
+Seed 23 and all other tested seeds (3, 5, 7, 11, 13, 17) now pass heuristic vs random network tests.
 
 ## Related Issues
 
