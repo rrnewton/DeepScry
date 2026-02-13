@@ -325,32 +325,39 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         // Log any action count discrepancy (informational)
         self.verify_action_count_sync(view, server_action_count);
 
-        // Use server's authoritative abilities if available (eliminates race condition)
-        // The server sends abilities computed with full card knowledge.
-        // The client may compute abilities before CardRevealed messages arrive,
-        // causing desync. Using server abilities fixes this.
-        let effective_available: Vec<SpellAbility> = if let Some(ref server_abilities) = info.abilities {
-            // Extract non-None abilities from server list (index 0 is "Pass")
-            server_abilities
-                .iter()
-                .skip(1) // Skip "Pass priority" placeholder
-                .filter_map(|opt| opt.clone())
-                .collect()
-        } else {
-            // Fallback to locally-computed abilities (legacy path)
-            available.to_vec()
-        };
+        // CRITICAL: Always use locally-computed abilities to preserve information independence.
+        // Using server abilities would cause the heuristic to see different options than
+        // the local shadow game computes, leading to different decisions (M1/M2 divergence).
+        //
+        // If server and local abilities differ, this indicates a reveal sync bug that
+        // should be fixed properly, NOT papered over by using server abilities.
+        let effective_available = available;
 
-        // Log if server abilities differ from local
-        if info.abilities.is_some() && effective_available.len() != available.len() {
-            log::info!(
-                "NetworkLocalController: using server abilities ({}) vs local ({})",
-                effective_available.len(),
-                available.len()
-            );
+        // Detect ability mismatches - these indicate reveal sync bugs
+        if let Some(ref server_abilities) = info.abilities {
+            let server_count = server_abilities.iter().skip(1).filter(|opt| opt.is_some()).count();
+            if server_count != available.len() {
+                log::error!(
+                    "NetworkLocalController: ABILITY SYNC BUG - server has {} abilities, local has {}. \
+                     This indicates the shadow game is out of sync with server state.",
+                    server_count,
+                    available.len()
+                );
+                let server_abilities_str: Vec<String> = server_abilities
+                    .iter()
+                    .skip(1)
+                    .filter_map(|opt| opt.as_ref())
+                    .map(|a| format!("{:?}", a))
+                    .collect();
+                log::error!("  Server abilities: {:?}", server_abilities_str);
+                log::error!(
+                    "  Local abilities: {:?}",
+                    available.iter().map(|a| format!("{:?}", a)).collect::<Vec<_>>()
+                );
+            }
         }
 
-        let result = self.inner.choose_spell_ability_to_play(view, &effective_available);
+        let result = self.inner.choose_spell_ability_to_play(view, effective_available);
 
         // Convert result to index and send
         // Use SERVER's action_count - this is a correlation ID for the ChoiceRequest
