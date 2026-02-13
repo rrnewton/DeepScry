@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: epic
 created_at: 2026-01-08T01:50:48.341942482+00:00
-updated_at: 2026-01-20T10:10:46.670034552+00:00
+updated_at: 2026-02-13T11:30:40.649636165+00:00
 ---
 
 # Description
@@ -47,6 +47,11 @@ The network architecture is based on these inviolable principles:
 - [x] Deduplication happens at log time
 - [x] Update `collect_reveals_since_last_choice()` in NetworkController
 - [x] Enable skip_reveals=false for network games
+
+### NetworkController Choice Methods (DONE - commit 3d66c52bd)
+- [x] choose_blocker_for_lethal_damage - SMART damage assignment sync
+- [x] choose_blocker_for_remaining_damage - SMART damage assignment sync
+- [x] LethalDamageAssignment and RemainingDamageAssignment ChoiceTypes added
 
 ### Code Violations Status
 
