@@ -233,28 +233,35 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
-        // CRITICAL: Use server's authoritative abilities to avoid DESYNC (mtg-d0jg3)
-        // The local game state may have different abilities available due to race
-        // conditions with CardRevealed message processing. The server's abilities
-        // are computed with full card knowledge and are authoritative.
-        let server_abilities = self.get_server_abilities();
-        let effective_available: Vec<SpellAbility> = if let Some(ref abilities) = server_abilities {
-            if abilities.len() != available.len() {
-                log::info!(
-                    "WasmNetworkLocalController: using server abilities ({}) vs local ({})",
-                    abilities.len(),
-                    available.len()
-                );
-            }
-            abilities.clone()
-        } else {
-            // Fallback to locally-computed abilities (legacy path or non-priority choices)
-            available.to_vec()
-        };
+        // BEHAVIORAL IDENTITY: Use locally-computed abilities (same as native)
+        // The sync_callback has already drained CardRevealed messages, so local state
+        // is synchronized with server. We compute abilities from local state and verify
+        // they match server's abilities in debug mode.
+        //
+        // CRITICAL: This achieves perfect behavioral identity with native client.
+        // WASM and native both compute abilities locally after processing reveals.
 
-        // ChoiceRequest is ready - delegate to inner controller with server's abilities
-        let sorted = sort_spell_abilities(&effective_available);
-        match self.inner.choose_spell_ability_to_play(view, &effective_available) {
+        // Debug validation: verify local abilities match server's
+        #[cfg(debug_assertions)]
+        {
+            let server_abilities = self.get_server_abilities();
+            if let Some(ref server_abs) = server_abilities {
+                if server_abs.len() != available.len() {
+                    log::error!(
+                        "DESYNC: Local abilities ({}) != server abilities ({})",
+                        available.len(),
+                        server_abs.len()
+                    );
+                    log::error!("Local: {:?}", available);
+                    log::error!("Server: {:?}", server_abs);
+                    // Don't panic - let it play out and see what happens
+                }
+            }
+        }
+
+        // ChoiceRequest is ready - delegate to inner controller with LOCAL abilities
+        let sorted = sort_spell_abilities(available);
+        match self.inner.choose_spell_ability_to_play(view, available) {
             ChoiceResult::Ok(choice) => {
                 // Submit choice to server and consume the ChoiceRequest
                 let choice_indices = match &choice {
@@ -466,56 +473,44 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
-        // CRITICAL: Use server's values to avoid DESYNC (mtg-d0jg3)
-        // The local game state may have different cards/counts than the server expects.
+        // BEHAVIORAL IDENTITY: Use locally-computed hand and count (same as native)
+        // The sync_callback has already processed reveals, so local state matches server.
+        // We use local values and verify they match server's in debug mode.
 
-        // 1. Get server's option count to limit hand size
-        let server_option_count = self.get_server_option_count();
-        let effective_hand: Vec<CardId> = if server_option_count > 0 && server_option_count < hand.len() {
-            log::info!(
-                "WasmNetworkLocalController: limiting hand from {} to {} cards (server option count)",
-                hand.len(),
-                server_option_count
-            );
-            hand[..server_option_count].to_vec()
-        } else {
-            hand.to_vec()
-        };
+        // Debug validation: verify local state matches server's
+        #[cfg(debug_assertions)]
+        {
+            let server_option_count = self.get_server_option_count();
+            if server_option_count > 0 && server_option_count != hand.len() {
+                log::error!(
+                    "DESYNC: Local hand size ({}) != server option count ({})",
+                    hand.len(),
+                    server_option_count
+                );
+            }
 
-        // 2. Get server's discard count (local count may differ due to state divergence)
-        let effective_count = self.get_server_discard_count().unwrap_or(count);
-        if effective_count != count {
-            log::info!(
-                "WasmNetworkLocalController: using server discard count {} vs local {}",
-                effective_count,
-                count
-            );
+            let server_discard_count = self.get_server_discard_count();
+            if let Some(server_count) = server_discard_count {
+                if server_count != count {
+                    log::error!(
+                        "DESYNC: Local discard count ({}) != server discard count ({})",
+                        count,
+                        server_count
+                    );
+                }
+            }
         }
 
-        match self
-            .inner
-            .choose_cards_to_discard(view, &effective_hand, effective_count)
-        {
+        match self.inner.choose_cards_to_discard(view, hand, count) {
             ChoiceResult::Ok(discards) => {
-                log::debug!(
-                    "WasmNetworkLocalController: inner returned {} discards for count={} from effective_hand of {} cards",
-                    discards.len(),
-                    effective_count,
-                    effective_hand.len()
-                );
                 let choice_indices: Vec<usize> = if discards.is_empty() {
-                    vec![effective_hand.len()]
+                    vec![hand.len()]
                 } else {
                     discards
                         .iter()
-                        .filter_map(|&c| effective_hand.iter().position(|&h| h == c))
+                        .filter_map(|&c| hand.iter().position(|&h| h == c))
                         .collect()
                 };
-                log::debug!(
-                    "WasmNetworkLocalController: submitting {} indices for discard: {:?}",
-                    choice_indices.len(),
-                    choice_indices
-                );
                 self.submit_choice_to_server(choice_indices, view);
                 ChoiceResult::Ok(discards)
             }

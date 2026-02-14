@@ -58,6 +58,10 @@ pub mod image_overlay;
 #[cfg(all(feature = "wasm-network", target_arch = "wasm32"))]
 pub mod network;
 
+// Re-export network functions for wasm-bindgen
+#[cfg(all(feature = "wasm-network", target_arch = "wasm32"))]
+pub use network::*;
+
 pub use human_controller::{PendingChoice, WasmHumanController};
 pub use rich_input_controller::WasmRichInputController;
 
