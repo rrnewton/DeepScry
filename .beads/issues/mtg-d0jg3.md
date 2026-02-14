@@ -8,7 +8,7 @@ labels:
 - network
 - tracking
 created_at: 2026-01-23T01:47:39.764992958+00:00
-updated_at: 2026-01-26T16:35:00.000000000+00:00
+updated_at: 2026-02-13T22:21:30.474932975+00:00
 ---
 
 # Description
@@ -46,109 +46,72 @@ This structural difference is necessary due to browser constraints, but the GAME
 - Use drain_reveals_up_to() for sync points
 - **Use server's authoritative data for choices** (abilities, counts, option lists)
 
-## Current Status (2026-01-26)
+## Current Status (2026-02-13)
 
-### Native Network (Prerequisites for WASM)
-- [x] Native network random/random games work (fixed in affdfc22, 1682ac37)
-- [x] network_vs_local_equivalence_e2e passes with random controller
+### Native Network (Working)
+- [x] Native network random/random games work
+- [x] network_vs_local_equivalence_e2e passes (100% determinism)
+- [x] `prepare_for_priority_choice()` fix solves race condition
 - [x] LibrarySearchByName supports random instance selection
 
-### WASM Network
+### WASM Network (Partially Working)
 - [x] WASM network client builds with wasm-network feature
 - [x] WASM connects to server and authenticates
-- [x] WASM captures deck_card_ids from GameStarted (commit 13e6cae1)
-- [x] WASM captures rng_state from GameStarted (commit 13e6cae1)
-- [x] WASM uses init_game_reserve_only_wasm() with server CardID ranges (commit 13e6cae1)
-- [x] Disabled heuristic/zero controllers in WASM until sync fixed (commit 36a39a2e)
-- [x] **WASM uses server's authoritative abilities for Priority choices (commit bd0cfe41)**
-- [x] **WASM uses server's discard count from ChoiceType::Discard (commit bd0cfe41)**
-- [x] **WASM random games progress 23+ choices without DESYNC (commit bd0cfe41)**
+- [x] WASM captures deck_card_ids from GameStarted
+- [x] WASM captures rng_state from GameStarted
+- [x] WASM uses init_game_reserve_only_wasm() with server CardID ranges
+- [x] **WASM uses server's authoritative abilities for Priority choices**
+- [x] **WASM uses server's discard count from ChoiceType::Discard**
+- [x] WASM random games progress 23+ choices without DESYNC
+- [x] test_network_e2e.js passes (connection and game UI)
 - [ ] WASM random/random games run to completion
 - [ ] State hashes match at each action count
 - [ ] --network-debug works in WASM
+- [ ] **Local-equivalence verified** (WASM network == local same seed)
+
+## Architecture Gap Analysis (2026-02-13)
+
+### Native vs WASM Sync Approaches
+
+| Aspect | Native | WASM |
+|--------|--------|------|
+| Race Protection | `prepare_for_priority_choice()` blocks on MVar | Uses server-authoritative data |
+| Ability Computation | Local (then verified against server) | Server-provided via ChoiceRequest |
+| Discard Count | Local (verified) | Server-provided from ChoiceType |
+| Equivalence | Verified: local == network gamelogs | NOT verified |
+
+### The Problem
+
+Native client now has PERFECT determinism:
+1. `prepare_for_priority_choice()` blocks until ChoiceRequest arrives
+2. All CardRevealed messages buffered at that point
+3. `sync_to_action()` processes reveals
+4. Abilities computed locally = match server exactly
+
+WASM takes a shortcut:
+1. Uses `get_server_abilities()` to bypass local computation
+2. Uses `get_server_discard_count()` to bypass local count
+3. This WORKS but doesn't VERIFY behavioral identity
+
+### Next Steps for True Parity
+
+1. **Verify sync_callback timing** - ensure reveals processed before controller
+2. **Remove server-authoritative fallbacks** - compute locally, verify against server
+3. **Add WASM local-equivalence test** - same seed locally vs WASM network
+4. **Enable state hash verification** - catch any remaining divergence
 
 ---
-
-## Fix: Server-Authoritative Choice Data (2026-01-26)
-
-### Problem
-WASM network games were DESYNCing because `WasmNetworkLocalController` was using
-local game state values instead of server's authoritative data:
-
-1. **Priority choices**: Local game state computed different available abilities
-   than server due to CardRevealed race conditions.
-   - DESYNC: Client sent index 4, server only had 2 options
-
-2. **Discard choices**: Local game state calculated different discard count
-   (e.g., 8 vs 2) because local hand size diverged from server's.
-   - DESYNC: Client sent 8 indices, server expected 2
-
-### Solution
-Use server's authoritative data from ChoiceRequest (same pattern as native):
-
-```rust
-// 1. Use server's abilities for Priority choices
-let effective_available = if let Some(ref abilities) = self.get_server_abilities() {
-    abilities.clone()
-} else {
-    available.to_vec()
-};
-
-// 2. Use server's option count to limit hand/list size
-let server_option_count = self.get_server_option_count();
-let effective_hand = hand[..server_option_count].to_vec();
-
-// 3. Use server's discard count
-let effective_count = self.get_server_discard_count().unwrap_or(count);
-```
-
-### Result
-- Games progress 23+ choices without DESYNC
-- No more "invalid choice index" errors
-- Server-authoritative pattern matches native NetworkLocalController
-
----
-
-## Investigation: CardReveal Owner Bug (2026-01-25)
-
-Found a bug in `collect_reveals_since_last_choice()` where reveal owner was set to
-`self.player_id` (placeholder) instead of actual card owner.
-
-### Fix Applied
-Changed controller.rs to look up actual card owner:
-```rust
-let card_owner = view.get_card(*card_id)
-    .map(|c| c.owner)
-    .unwrap_or(self.player_id);
-```
-
-### Status
-The native network equivalence tests now pass (fixed in integration branch via
-affdfc22 and 1682ac37). This owner fix is a belt-and-suspenders improvement.
-
----
-
-## Anti-Patterns (NEVER DO THESE)
-
-1. **"Direct response" to server** - Bypasses game loop, loses state sync
-2. **WASM-specific AI logic** - Violates behavioral identity principle
-3. **Removing state sync to "fix" sync issues** - Makes problem worse
-4. **Server-centric protocol changes** - WASM and native must use same protocol
-5. **Empty library mode for WASM** - WASM must populate libraries same as native
-6. **Using local counts/abilities** - Use server's authoritative data from ChoiceRequest
 
 ## Key Files
 
-- `mtg-engine/src/network/controller.rs` - NetworkController with collect_reveals_since_last_choice
+- `mtg-engine/src/network/controller.rs` - NetworkController
 - `mtg-engine/src/network/reveal_processor.rs` - Shared reveal processing logic
-- `mtg-engine/src/wasm/network/client.rs` - WASM network client (ChoiceRequestData with abilities)
-- `mtg-engine/src/wasm/network/local_controller.rs` - Local player controller wrapper (server-authoritative choices)
-- `mtg-engine/src/wasm/fancy_tui.rs` - Main WASM TUI
+- `mtg-engine/src/wasm/network/client.rs` - WASM network client
+- `mtg-engine/src/wasm/network/local_controller.rs` - Local player controller wrapper
+- `mtg-engine/src/wasm/fancy_tui.rs` - Main WASM TUI with sync_callback
 - `docs/NETWORK_ARCHITECTURE.md` - Network protocol documentation
 
 ## References
 
-- Bad commit (archived): wasm-direct-response-bad.v1
-- Native client sync: src/network/client.rs drain_reveals_up_to()
-- Network equivalence fixes: affdfc22, 1682ac37
-- **Server-authoritative WASM fix: bd0cfe41**
+- Native race condition fix: e30c0433d `prepare_for_priority_choice()`
+- Server-authoritative WASM fix: bd0cfe41
