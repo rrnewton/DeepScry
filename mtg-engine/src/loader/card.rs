@@ -3042,6 +3042,9 @@ impl CardDefinition {
             // RaiseCost-specific parameters
             let mut raised_cost: Option<crate::core::RaisedCost> = None;
 
+            // GrantAbility-specific parameters
+            let mut add_ability_svar: Option<String> = None;
+
             // Split by | and parse each parameter
             for param in ability.split('|') {
                 let param = param.trim();
@@ -3238,7 +3241,15 @@ impl CardDefinition {
                             }
                             // LE and EQ are less common for cost reduction conditions
                         }
-                        _ => {} // Ignore other parameters (e.g., AddType$, AddAbility$, Type$, Activator$)
+                        "AddAbility" => {
+                            // Store the SVar name to parse later
+                            // Example: AddAbility$ AnyMana
+                            // Can also have multiple abilities separated by &
+                            // For now, just take the first one
+                            let svar_name = value.split('&').next().unwrap_or(value).trim();
+                            add_ability_svar = Some(svar_name.to_string());
+                        }
+                        _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
             }
@@ -3257,7 +3268,7 @@ impl CardDefinition {
             if let Some(kw) = keyword {
                 // Keyword grant ability
                 abilities.push(StaticAbility::GrantKeyword {
-                    affected,
+                    affected: affected.clone(),
                     keyword: kw,
                     description: description.clone(),
                     condition,
@@ -3298,13 +3309,66 @@ impl CardDefinition {
                     abilities.push(StaticAbility::RaiseCost {
                         valid_card: target,
                         raised_cost: cost,
-                        description,
+                        description: description.clone(),
                     });
+                }
+            }
+
+            // GrantAbility - parse AddAbility$ SVar into an ActivatedAbility
+            if let Some(ref svar_name) = add_ability_svar {
+                if let Some(svar_body) = self.svars.get(svar_name) {
+                    // Parse the SVar as an activated ability
+                    // SVars look like: "AB$ Mana | Cost$ T | Produced$ Any | Amount$ 3 | SpellDescription$ ..."
+                    // We need to prefix with "A:" to make it parseable
+                    let ability_str = format!("A:{}", svar_body);
+                    if let Some(parsed_ability) = self.parse_svar_as_activated_ability(&ability_str) {
+                        abilities.push(StaticAbility::GrantAbility {
+                            affected: affected.clone(),
+                            ability: parsed_ability,
+                            description,
+                        });
+                    }
                 }
             }
         }
 
         abilities
+    }
+
+    /// Parse an SVar body as an activated ability
+    ///
+    /// Used by AddAbility$ to convert an SVar like:
+    /// `AB$ Mana | Cost$ T | Produced$ Any | Amount$ 3 | SpellDescription$ Add three mana.`
+    /// into an ActivatedAbility that can be granted to permanents.
+    fn parse_svar_as_activated_ability(&self, ability_str: &str) -> Option<crate::core::ActivatedAbility> {
+        use super::ability_parser::{AbilityParams, AbilityRecordType, ApiType};
+        use super::effect_converter::params_to_effect_with_svars;
+        use crate::core::{ActivatedAbility, Cost};
+
+        let params = match AbilityParams::parse(ability_str) {
+            Ok(p) if p.record_type == AbilityRecordType::Ability => p,
+            _ => return None,
+        };
+
+        // Extract cost from Cost$ parameter
+        let cost = params.get("Cost").and_then(Cost::parse)?;
+
+        // Check if this is a mana ability
+        let is_mana_ability = matches!(params.api_type, ApiType::Mana);
+
+        // Parse effects
+        let effects = params_to_effect_with_svars(&params, &self.svars)
+            .map(|e| vec![e])
+            .unwrap_or_default();
+
+        if effects.is_empty() {
+            return None;
+        }
+
+        // Extract description
+        let description = params.get("SpellDescription").unwrap_or("Granted ability").to_string();
+
+        Some(ActivatedAbility::new(cost, effects, description, is_mana_ability))
     }
 }
 
@@ -4844,5 +4908,44 @@ Oracle:Noncreature spells cost {1} more to cast.
         });
 
         assert!(has_raise_cost, "Should have RaiseCost::Mana(1) for non-creatures");
+    }
+
+    #[test]
+    fn test_grant_ability_parsing() {
+        use crate::core::effects::AffectedSelector;
+        use crate::core::StaticAbility;
+
+        // Test parsing of GrantAbility (AddAbility$)
+        // Example: Chromatic Lantern grants lands "{T}: Add one mana of any color."
+        let content = r#"
+Name:Chromatic Lantern
+ManaCost:3
+Types:Artifact
+A:AB$ Mana | Cost$ T | Produced$ Any | SpellDescription$ Add one mana of any color.
+S:Mode$ Continuous | Affected$ Land.YouCtrl | AddAbility$ AnyMana | Description$ Lands you control have "{T}: Add one mana of any color."
+SVar:AnyMana:AB$ Mana | Cost$ T | Produced$ Any | SpellDescription$ Add one mana of any color.
+Oracle:Lands you control have "{T}: Add one mana of any color."
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Chromatic Lantern");
+
+        let static_abilities = def.parse_static_abilities();
+
+        let has_grant_ability = static_abilities.iter().any(|ability| {
+            matches!(
+                ability,
+                StaticAbility::GrantAbility {
+                    affected: AffectedSelector::LandsYouControl,
+                    ability,
+                    ..
+                } if ability.is_mana_ability
+            )
+        });
+
+        assert!(
+            has_grant_ability,
+            "Should have GrantAbility for lands with mana ability"
+        );
     }
 }

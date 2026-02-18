@@ -1224,6 +1224,28 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Grant an activated ability to affected permanents
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ Land.YouCtrl | AddAbility$ AnyMana`
+    /// with `SVar:AnyMana:AB$ Mana | Cost$ T | Produced$ Any | Amount$ 3`
+    ///
+    /// Example from Tectonic Split:
+    /// Grants lands "{T}: Add three mana of any one color."
+    ///
+    /// Example from Chromatic Lantern:
+    /// Grants lands "{T}: Add one mana of any color."
+    GrantAbility {
+        /// Selector for which cards are affected
+        /// Example: "Land.YouCtrl" = lands you control
+        affected: AffectedSelector,
+
+        /// The ability to grant (stored as parsed ActivatedAbility)
+        ability: ActivatedAbility,
+
+        /// Description for logging
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities
@@ -1521,6 +1543,11 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Equipment.EnchantedBy`
     /// Used by Auras that attach to equipment
     EquipmentEnchantedBy,
+
+    /// The land enchanted by this Aura
+    /// Corresponds to: `Affected$ Land.EnchantedBy`
+    /// Used by Auras that attach to lands (e.g., Squirrel Nest)
+    LandEnchantedBy,
 
     /// Any permanent this Aura/Equipment is attached to
     /// Corresponds to: `Affected$ Card.AttachedBy`

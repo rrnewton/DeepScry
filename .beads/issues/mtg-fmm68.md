@@ -148,7 +148,7 @@ Working cards:
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
 
-## Recent Fixes (2026-02-14)
+## Recent Fixes (2026-02-18)
 
 1. **S:Mode$ RaiseCost**: Implemented additional cost static abilities, mirroring the existing ReduceCost pattern. Added `StaticAbility::RaiseCost` variant with `RaisedCost` enum supporting two types:
    - `RaisedCost::Mana(u8)`: Increases generic mana cost (for effects like Thalia, Guardian of Thraben)
@@ -156,6 +156,8 @@ Working cards:
    - `RaisedCostAmount::Variable(String)`: Supports SVar X calculation with `Count$Valid Type.YouCtrl/HalfUp` pattern
    - Added `can_pay_sacrifice_costs()` and `pay_sacrifice_costs()` to check/execute sacrifice costs during spell casting
    - Integrated into `calculate_effective_cost()` for mana increases and `push_castable_spells()` for sacrifice castability checks
+
+2. **AddAbility$ (partial)**: Implemented parsing and infrastructure for granting abilities to permanents. Added `StaticAbility::GrantAbility` variant that stores parsed `ActivatedAbility`. Added `get_granted_abilities()` method to query granted abilities for a permanent. Supports `Affected$ Land.YouCtrl` selector. **Remaining work**: Integrate granted mana abilities into ManaEngine to fully enable Chromatic Lantern/Tectonic Split.
 
 ## Recent Fixes (2026-02-13)
 
@@ -189,9 +191,9 @@ Working cards:
 ## Remaining Gaps (Complex Features)
 
 1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
-2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-14**
+2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-18**
 3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-4. **AddAbility$ for lands** - Grant abilities to land permanents
+4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **PARTIAL 2026-02-18** (parsing done, ManaEngine integration needed)
 
 ## Testing Protocol
 

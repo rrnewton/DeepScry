@@ -582,6 +582,8 @@ impl GameState {
             AffectedSelector::SorceryColorYouControl { .. } => false,
             // Top of library with subtype - not applicable for battlefield creatures
             AffectedSelector::TopLibraryWithSubtype { .. } => false,
+            // Land enchanted by - not applicable for P/T (lands don't have P/T)
+            AffectedSelector::LandEnchantedBy => false,
         }
     }
 
@@ -1326,7 +1328,8 @@ impl GameState {
                             | AffectedSelector::SelfTopLibrary
                             | AffectedSelector::InstantColorYouControl { .. }
                             | AffectedSelector::SorceryColorYouControl { .. }
-                            | AffectedSelector::TopLibraryWithSubtype { .. } => {
+                            | AffectedSelector::TopLibraryWithSubtype { .. }
+                            | AffectedSelector::LandEnchantedBy => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;
@@ -1346,6 +1349,10 @@ impl GameState {
                     StaticAbility::RaiseCost { .. } => {
                         // RaiseCost abilities don't affect P/T
                         // They are handled in calculate_effective_cost() instead
+                    }
+                    StaticAbility::GrantAbility { .. } => {
+                        // GrantAbility doesn't affect P/T
+                        // It grants activated abilities, handled in get_granted_abilities()
                     }
                 }
             }
@@ -1534,6 +1541,78 @@ impl GameState {
 
         // Then check for granted keywords from continuous effects
         self.get_granted_keywords(creature_id).contains(keyword)
+    }
+
+    /// Get all activated abilities granted to a permanent by continuous effects.
+    ///
+    /// ## CR 613 Layer 6
+    ///
+    /// Per the layer system, abilities are granted before combat-related effects are resolved.
+    /// This checks all GrantAbility static abilities on the battlefield.
+    ///
+    /// ## Use Cases
+    ///
+    /// - Chromatic Lantern: Lands you control have "{T}: Add one mana of any color."
+    /// - Tectonic Split: Lands you control have "{T}: Add three mana of any one color."
+    /// - Squirrel Nest: Enchanted land has "{T}: Create a 1/1 green Squirrel creature token."
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub fn get_granted_abilities(&self, permanent_id: CardId) -> Vec<crate::core::ActivatedAbility> {
+        use crate::core::effects::AffectedSelector;
+
+        let mut granted = Vec::new();
+
+        // Get the target permanent
+        let permanent = match self.cards.get(permanent_id) {
+            Ok(c) => c,
+            Err(_) => return granted,
+        };
+
+        // Check all permanents on the battlefield for GrantAbility abilities
+        for &source_id in &self.battlefield.cards {
+            let source = match self.cards.get(source_id) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            // Process GrantAbility abilities
+            for ability in &source.static_abilities {
+                if let crate::core::StaticAbility::GrantAbility {
+                    affected,
+                    ability: granted_ability,
+                    description: _,
+                } = ability
+                {
+                    // Check if this ability affects the target permanent
+                    let affects_permanent = match affected {
+                        AffectedSelector::LandsYouControl => {
+                            permanent.is_land() && permanent.controller == source.controller
+                        }
+                        AffectedSelector::CreatureEnchantedBy => {
+                            // Grant ability to enchanted creature (e.g., Presence of Gond)
+                            self.get_attached_auras(permanent_id).contains(&source_id)
+                        }
+                        AffectedSelector::LandEnchantedBy => {
+                            // Grant ability to enchanted land (e.g., Squirrel Nest)
+                            permanent.is_land() && self.get_attached_auras(permanent_id).contains(&source_id)
+                        }
+                        AffectedSelector::Self_ => {
+                            // Grant ability to self (rare but possible)
+                            permanent_id == source_id
+                        }
+                        AffectedSelector::CreaturesYouControl => {
+                            permanent.is_creature() && permanent.controller == source.controller
+                        }
+                        _ => false, // Other selectors not yet supported for abilities
+                    };
+
+                    if affects_permanent {
+                        granted.push(granted_ability.clone());
+                    }
+                }
+            }
+        }
+
+        granted
     }
 }
 

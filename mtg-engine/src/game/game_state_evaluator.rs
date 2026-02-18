@@ -490,6 +490,11 @@ impl GameStateEvaluator {
                     // Cost increase abilities don't affect enchanted creature value
                     // They affect spell casting costs, not board state
                 }
+                StaticAbility::GrantAbility { .. } => {
+                    // GrantAbility gives permanents new activated abilities
+                    // Value depends on the granted ability
+                    value += 30; // Base value for granting an ability
+                }
             }
         }
 
