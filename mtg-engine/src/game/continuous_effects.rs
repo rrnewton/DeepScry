@@ -1343,6 +1343,10 @@ impl GameState {
                         // ReduceCost abilities don't affect P/T
                         // They are handled in calculate_effective_cost() instead
                     }
+                    StaticAbility::RaiseCost { .. } => {
+                        // RaiseCost abilities don't affect P/T
+                        // They are handled in calculate_effective_cost() instead
+                    }
                 }
             }
         }

@@ -1201,6 +1201,29 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Cost increase static ability
+    ///
+    /// Corresponds to: `S:Mode$ RaiseCost | ValidCard$ X | Type$ Spell | Amount$ N`
+    /// or: `S:Mode$ RaiseCost | ValidCard$ Card.Self | Cost$ Sac<X/Land>`
+    ///
+    /// Example from Thalia, Guardian of Thraben:
+    /// `S:Mode$ RaiseCost | ValidCard$ Card.nonCreature | Type$ Spell | Amount$ 1`
+    ///
+    /// Example from Tectonic Split:
+    /// `S:Mode$ RaiseCost | ValidCard$ Card.Self | Type$ Spell | Cost$ Sac<X/Land/land(s)>`
+    /// with `SVar:X:Count$Valid Land.YouCtrl/HalfUp`
+    RaiseCost {
+        /// Which cards get the cost increase
+        /// Examples: "Card.nonCreature" = non-creature cards, "Card.Self" = only this card
+        valid_card: CostReductionTarget,
+
+        /// The additional cost to add
+        raised_cost: RaisedCost,
+
+        /// Description for logging
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities
@@ -1239,6 +1262,34 @@ pub struct CostReductionCondition {
 
     /// Minimum count required (from PresentCompare$ GE3 -> 3)
     pub min_count: u8,
+}
+
+/// Represents what additional cost is raised by a RaiseCost ability
+///
+/// Can be either a mana cost increase or a non-mana cost like sacrifice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RaisedCost {
+    /// Increase generic mana cost by this amount
+    /// Corresponds to: `Amount$ N` where N is a number
+    Mana(u8),
+
+    /// Sacrifice N permanents of the given type
+    /// Corresponds to: `Cost$ Sac<N/Type>` or `Cost$ Sac<X/Type>`
+    Sacrifice {
+        /// The amount to sacrifice (fixed or variable)
+        amount: RaisedCostAmount,
+        /// The type of permanent to sacrifice (e.g., "Land", "Creature")
+        valid_type: String,
+    },
+}
+
+/// Amount for a raised cost - can be fixed or variable (X)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RaisedCostAmount {
+    /// A fixed amount (e.g., Sac<1/Land>)
+    Fixed(u8),
+    /// A variable amount referencing an SVar (e.g., Sac<X/Land> with SVar:X:...)
+    Variable(String),
 }
 
 /// Condition for when a static ability is active

@@ -695,6 +695,47 @@ impl GameState {
                         }
                     }
                 }
+
+                // Also check for RaiseCost (mana-based cost increases)
+                if let StaticAbility::RaiseCost {
+                    valid_card,
+                    raised_cost,
+                    description,
+                } = static_ability
+                {
+                    use crate::core::RaisedCost;
+
+                    // Check if the spell being cast matches the valid_card filter
+                    let spell_matches = match valid_card {
+                        CostReductionTarget::AllSpells => true,
+                        CostReductionTarget::NonCreature => !card.is_creature(),
+                        CostReductionTarget::Creature => card.is_creature(),
+                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
+                    };
+
+                    if !spell_matches {
+                        continue;
+                    }
+
+                    // Handle mana-based cost increase
+                    if let RaisedCost::Mana(amount) = raised_cost {
+                        let old_generic = effective_cost.generic;
+                        effective_cost.generic = effective_cost.generic.saturating_add(*amount);
+
+                        if old_generic != effective_cost.generic {
+                            log::debug!(
+                                "RaiseCost from {}: {} (increasing generic by {}, was {}, now {})",
+                                source_card.name,
+                                description,
+                                amount,
+                                old_generic,
+                                effective_cost.generic
+                            );
+                        }
+                    }
+                    // Note: Sacrifice-based RaiseCost is handled separately during spell casting
+                    // as it requires prompting for sacrifice choices, not just mana adjustment
+                }
             }
         }
 
@@ -785,6 +826,154 @@ impl GameState {
             .count()
     }
 
+    /// Pay sacrifice costs for a card being cast
+    ///
+    /// Checks if the card has any RaiseCost::Sacrifice static abilities and
+    /// sacrifices the required permanents. For AI players, this auto-selects
+    /// the permanents to sacrifice.
+    fn pay_sacrifice_costs(&mut self, card_id: CardId, player_id: PlayerId) -> Result<()> {
+        use crate::core::{RaisedCost, RaisedCostAmount, StaticAbility};
+
+        // Get the card's static abilities (need to clone to avoid borrow issues)
+        let static_abilities: Vec<StaticAbility> = self
+            .cards
+            .try_get(card_id)
+            .map(|c| c.static_abilities.clone())
+            .unwrap_or_default();
+
+        // Get the card's SVars for X calculation
+        let svars: std::collections::HashMap<String, String> =
+            self.cards.try_get(card_id).map(|c| c.svars.clone()).unwrap_or_default();
+
+        for static_ability in &static_abilities {
+            if let StaticAbility::RaiseCost {
+                raised_cost: RaisedCost::Sacrifice { amount, valid_type },
+                description,
+                ..
+            } = static_ability
+            {
+                // Calculate required sacrifice amount
+                let required_amount = match amount {
+                    RaisedCostAmount::Fixed(n) => *n as usize,
+                    RaisedCostAmount::Variable(svar_name) => {
+                        self.evaluate_sacrifice_svar_internal(svar_name, &svars, player_id, valid_type)
+                    }
+                };
+
+                if required_amount == 0 {
+                    continue;
+                }
+
+                // Find permanents to sacrifice
+                let permanents_to_sacrifice: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .filter(|&&pid| {
+                        self.cards.try_get(pid).is_some_and(|c| {
+                            c.controller == player_id && Self::card_matches_type_filter_static(c, valid_type)
+                        })
+                    })
+                    .copied()
+                    .take(required_amount)
+                    .collect();
+
+                if permanents_to_sacrifice.len() < required_amount {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Cannot pay sacrifice cost: need {} {} but only have {}",
+                        required_amount,
+                        valid_type,
+                        permanents_to_sacrifice.len()
+                    )));
+                }
+
+                // Log the sacrifice
+                if !description.is_empty() {
+                    log::debug!(
+                        "Paying sacrifice cost: {} ({} {})",
+                        description,
+                        required_amount,
+                        valid_type
+                    );
+                }
+
+                // Sacrifice the permanents
+                for sacrifice_id in permanents_to_sacrifice {
+                    if let Some(card) = self.cards.try_get(sacrifice_id) {
+                        let card_name = card.name.clone();
+                        self.logger.gamelog(&format!(
+                            "  sacrifices {} ({}) as additional cost",
+                            card_name, sacrifice_id
+                        ));
+                    }
+                    self.move_card(sacrifice_id, Zone::Battlefield, Zone::Graveyard, player_id)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Evaluate an SVar for sacrifice cost amount (internal version for GameState)
+    fn evaluate_sacrifice_svar_internal(
+        &self,
+        svar_name: &str,
+        svars: &std::collections::HashMap<String, String>,
+        player_id: PlayerId,
+        _valid_type: &str,
+    ) -> usize {
+        let Some(svar_value) = svars.get(svar_name) else {
+            log::warn!("RaiseCost SVar '{}' not found", svar_name);
+            return 0;
+        };
+
+        // Parse "Count$Valid Land.YouCtrl/HalfUp" or similar
+        if let Some(count_expr) = svar_value.strip_prefix("Count$Valid ") {
+            let parts: Vec<&str> = count_expr.split('/').collect();
+            let type_filter = parts.first().copied().unwrap_or("");
+            let modifier = parts.get(1).copied().unwrap_or("");
+
+            let filter_type = type_filter.split('.').next().unwrap_or(type_filter);
+            let count = self.count_permanents_by_type_internal(player_id, filter_type);
+
+            match modifier {
+                "HalfUp" => count.div_ceil(2),
+                "Half" => count / 2,
+                _ => count,
+            }
+        } else {
+            svar_value.parse().unwrap_or(0)
+        }
+    }
+
+    /// Count permanents of a specific type controlled by a player (internal version)
+    fn count_permanents_by_type_internal(&self, player_id: PlayerId, type_filter: &str) -> usize {
+        self.battlefield
+            .cards
+            .iter()
+            .filter(|&&card_id| {
+                self.cards
+                    .try_get(card_id)
+                    .is_some_and(|c| c.controller == player_id && Self::card_matches_type_filter_static(c, type_filter))
+            })
+            .count()
+    }
+
+    /// Check if a card matches a type filter string (static method)
+    fn card_matches_type_filter_static(card: &crate::core::Card, type_filter: &str) -> bool {
+        match type_filter {
+            "Land" => card.is_land(),
+            "Creature" => card.is_creature(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Permanent" => true,
+            _ => {
+                let subtype = crate::core::Subtype::new(type_filter);
+                card.subtypes.contains(&subtype)
+            }
+        }
+    }
+
     /// Cast a spell following the full 8-step process (MTG Rules 601.2)
     ///
     /// This method implements the complete spell casting sequence:
@@ -851,6 +1040,14 @@ impl GameState {
 
         // Step 5: Determine total cost (after applying Affinity and other reductions)
         let mana_cost = self.calculate_effective_cost(card_id, player_id);
+
+        // Step 5b: Pay additional costs (sacrifice costs from RaiseCost)
+        // This must happen BEFORE mana payment so sacrificed lands aren't used for mana
+        if let Err(e) = self.pay_sacrifice_costs(card_id, player_id) {
+            // Cannot pay sacrifice cost - unwind the spell cast
+            self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+            return Err(e);
+        }
 
         // Step 6: Activate mana abilities
         // This is where mana gets tapped - AFTER the spell is on the stack

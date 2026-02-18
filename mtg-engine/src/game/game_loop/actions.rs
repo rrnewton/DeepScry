@@ -267,6 +267,47 @@ impl<'a> GameLoop<'a> {
                         }
                     }
                 }
+
+                // Also check for RaiseCost (mana-based cost increases)
+                if let StaticAbility::RaiseCost {
+                    valid_card,
+                    raised_cost,
+                    description,
+                } = static_ability
+                {
+                    use crate::core::RaisedCost;
+
+                    // Check if the spell being cast matches the valid_card filter
+                    let spell_matches = match valid_card {
+                        CostReductionTarget::AllSpells => true,
+                        CostReductionTarget::NonCreature => !card.is_creature(),
+                        CostReductionTarget::Creature => card.is_creature(),
+                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
+                    };
+
+                    if !spell_matches {
+                        continue;
+                    }
+
+                    // Handle mana-based cost increase
+                    if let RaisedCost::Mana(amount) = raised_cost {
+                        let old_generic = effective_cost.generic;
+                        effective_cost.generic = effective_cost.generic.saturating_add(*amount);
+
+                        if old_generic != effective_cost.generic {
+                            log::debug!(
+                                "RaiseCost from {}: {} (increasing generic by {}, was {}, now {})",
+                                source_card.name,
+                                description,
+                                amount,
+                                old_generic,
+                                effective_cost.generic
+                            );
+                        }
+                    }
+                    // Note: Sacrifice-based RaiseCost is handled separately during spell casting
+                    // as it requires prompting for sacrifice choices, not just mana adjustment
+                }
             }
         }
 
@@ -357,6 +398,112 @@ impl<'a> GameLoop<'a> {
             .count()
     }
 
+    /// Check if a card's additional sacrifice costs can be paid
+    ///
+    /// Returns true if the player has enough permanents to sacrifice for any
+    /// RaiseCost::Sacrifice static abilities on the card.
+    fn can_pay_sacrifice_costs(&self, card: &crate::core::Card, player_id: PlayerId) -> bool {
+        use crate::core::{RaisedCost, RaisedCostAmount, StaticAbility};
+
+        for static_ability in &card.static_abilities {
+            if let StaticAbility::RaiseCost {
+                raised_cost: RaisedCost::Sacrifice { amount, valid_type },
+                ..
+            } = static_ability
+            {
+                // Calculate required sacrifice amount
+                let required_amount = match amount {
+                    RaisedCostAmount::Fixed(n) => *n as usize,
+                    RaisedCostAmount::Variable(svar_name) => {
+                        // Evaluate the SVar to get the required amount
+                        // For Tectonic Split: SVar:X:Count$Valid Land.YouCtrl/HalfUp
+                        self.evaluate_sacrifice_svar(svar_name, &card.svars, player_id, valid_type)
+                    }
+                };
+
+                // Count available permanents of the required type
+                let available = self.count_permanents_by_type(player_id, valid_type);
+
+                if available < required_amount {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Evaluate an SVar for sacrifice cost amount
+    ///
+    /// Handles patterns like "Count$Valid Land.YouCtrl/HalfUp"
+    fn evaluate_sacrifice_svar(
+        &self,
+        svar_name: &str,
+        svars: &std::collections::HashMap<String, String>,
+        player_id: PlayerId,
+        _valid_type: &str, // Kept for future use (more complex filters)
+    ) -> usize {
+        // Look up the SVar value
+        let Some(svar_value) = svars.get(svar_name) else {
+            log::warn!("RaiseCost SVar '{}' not found", svar_name);
+            return 0;
+        };
+
+        // Parse "Count$Valid Land.YouCtrl/HalfUp" or similar
+        if let Some(count_expr) = svar_value.strip_prefix("Count$Valid ") {
+            // Split by "/" to get modifier (HalfUp, etc.)
+            let parts: Vec<&str> = count_expr.split('/').collect();
+            let type_filter = parts.first().copied().unwrap_or("");
+            let modifier = parts.get(1).copied().unwrap_or("");
+
+            // Extract the type from filter (e.g., "Land.YouCtrl" -> "Land")
+            let filter_type = type_filter.split('.').next().unwrap_or(type_filter);
+
+            // Count matching permanents (use the filter type, not valid_type)
+            let count = self.count_permanents_by_type(player_id, filter_type);
+
+            // Apply modifier
+            match modifier {
+                "HalfUp" => count.div_ceil(2), // Round up
+                "Half" => count / 2,           // Round down
+                _ => count,
+            }
+        } else {
+            // Try to parse as a simple number
+            svar_value.parse().unwrap_or(0)
+        }
+    }
+
+    /// Count permanents of a specific type controlled by a player
+    fn count_permanents_by_type(&self, player_id: PlayerId, type_filter: &str) -> usize {
+        self.game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&card_id| {
+                self.game
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|c| c.controller == player_id && Self::card_matches_type_filter(c, type_filter))
+            })
+            .count()
+    }
+
+    /// Check if a card matches a type filter string
+    fn card_matches_type_filter(card: &crate::core::Card, type_filter: &str) -> bool {
+        match type_filter {
+            "Land" => card.is_land(),
+            "Creature" => card.is_creature(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Permanent" => true, // Any permanent matches
+            _ => {
+                // Try matching as a subtype
+                let subtype = crate::core::Subtype::new(type_filter);
+                card.subtypes.contains(&subtype)
+            }
+        }
+    }
+
     /// Push castable spells directly to abilities_buffer
     ///
     /// Zero allocation - pushes SpellAbility::CastSpell directly to the buffer
@@ -406,7 +553,11 @@ impl<'a> GameLoop<'a> {
 
                             // Check if we can pay for this spell's effective mana cost
                             // Use can_pay_with_pool to consider floating mana from rituals like Dark Ritual
-                            if self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool) {
+                            // Also check if we can pay any additional sacrifice costs (RaiseCost)
+                            let can_afford_mana = self.mana_engine.can_pay_with_pool(&effective_cost, &mana_pool);
+                            let can_afford_sacrifice = self.can_pay_sacrifice_costs(card, player_id);
+
+                            if can_afford_mana && can_afford_sacrifice {
                                 // For Aura spells, check if there are valid targets
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {

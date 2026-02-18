@@ -1081,4 +1081,51 @@ mod tests {
         assert_eq!(cost.generic, 2, "Generic cost should be reduced by 1");
         assert_eq!(cost.red, 2, "Red cost should remain 2");
     }
+
+    #[test]
+    fn test_raise_cost_mana_increase() {
+        use crate::core::{CostReductionTarget, ManaCost, RaisedCost, StaticAbility};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Create a permanent that increases non-creature spell costs by {1}
+        // (like Thalia, Guardian of Thraben)
+        let thalia_id = game.next_card_id();
+        let mut thalia = Card::new(thalia_id, "Thalia".to_string(), p1_id);
+        thalia.add_type(CardType::Creature);
+        thalia.controller = p1_id;
+        thalia.static_abilities.push(StaticAbility::RaiseCost {
+            valid_card: CostReductionTarget::NonCreature,
+            raised_cost: RaisedCost::Mana(1),
+            description: "Non-creature spells cost {1} more".to_string(),
+        });
+        game.cards.insert(thalia_id, thalia);
+        game.battlefield.add(thalia_id);
+
+        // Create a non-creature spell in hand (cost: 1U)
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Counterspell".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1U");
+        game.cards.insert(spell_id, spell);
+
+        // Test: Cost should be increased to 2U
+        let cost = game.calculate_effective_cost(spell_id, p1_id);
+        assert_eq!(cost.generic, 2, "Generic cost should be increased by 1");
+        assert_eq!(cost.blue, 1, "Blue cost should remain 1");
+
+        // Create a creature spell - should NOT be affected
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Bear".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.mana_cost = ManaCost::from_string("1G");
+        game.cards.insert(creature_id, creature);
+
+        let creature_cost = game.calculate_effective_cost(creature_id, p1_id);
+        assert_eq!(
+            creature_cost.generic, 1,
+            "Creature spell should NOT get cost increase from Thalia"
+        );
+    }
 }

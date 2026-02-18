@@ -27,8 +27,8 @@ Key gaps affecting this deck:
 - ~~**ImmediateTrigger / RememberDiscarded** - Complex conditional triggers (Teo's counter placement)~~ **IMPLEMENTED 2026-01-22** (remembered_cards on GameState, ImmediateTriggerCondition enum, DB$ Cleanup)
 - ~~**DB$ EachDamage** - Multiple sources dealing damage (Allies at Last)~~ **IMPLEMENTED 2026-01-24** (Effect::EachDamage variant, damagers from parent targets, power-based damage)
 - ~~**K:Affinity:Ally** - Cost reduction (Allies at Last)~~ **IMPLEMENTED 2026-02-10** (calculate_effective_cost in GameState and GameLoop, counts controlled permanents of specified type)
-- **S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)
-- **S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)
+- ~~**S:Mode$ RaiseCost** - Additional sacrifice costs (Tectonic Split)~~ **IMPLEMENTED 2026-02-14** (RaisedCost::Mana and RaisedCost::Sacrifice variants)
+- ~~**S:Mode$ ReduceCost** - Cost reduction static abilities (Gran-Gran)~~ **IMPLEMENTED 2026-02-13**
 - ~~**DB$ Effect with StaticAbilities$** - Grant can't be blocked (Otter-Penguin, Giant Koi)~~ **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolution in CardDrawn triggers)
 - ~~**Conditional hexproof (Condition$ PlayerTurn)**~~ **IMPLEMENTED 2026-01-21** (StaticCondition enum, Avatar Kyoshi)
 
@@ -119,10 +119,10 @@ Key gaps affecting this deck:
 - [x] Pump + Untap SubAbility (VERIFIED in Gabriel deck)
 
 **Tectonic Split (x1)** - 4GG Enchantment
-- [ ] Additional cost: sacrifice half lands (S:Mode$ RaiseCost | Cost$ Sac<X/Land>)
-- [ ] Hexproof (should work)
+- [x] Additional cost: sacrifice half lands (S:Mode$ RaiseCost | Cost$ Sac<X/Land>) **IMPLEMENTED 2026-02-14**
+- [x] Hexproof (should work)
 - [ ] Lands gain triple mana ability (S:Mode$ Continuous | AddAbility$)
-- GAP: RaiseCost, AddAbility for lands
+- GAP: AddAbility for lands
 
 ---
 
@@ -147,6 +147,15 @@ Working cards:
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
+
+## Recent Fixes (2026-02-14)
+
+1. **S:Mode$ RaiseCost**: Implemented additional cost static abilities, mirroring the existing ReduceCost pattern. Added `StaticAbility::RaiseCost` variant with `RaisedCost` enum supporting two types:
+   - `RaisedCost::Mana(u8)`: Increases generic mana cost (for effects like Thalia, Guardian of Thraben)
+   - `RaisedCost::Sacrifice { amount, valid_type }`: Requires sacrificing permanents as additional cost (for Tectonic Split)
+   - `RaisedCostAmount::Variable(String)`: Supports SVar X calculation with `Count$Valid Type.YouCtrl/HalfUp` pattern
+   - Added `can_pay_sacrifice_costs()` and `pay_sacrifice_costs()` to check/execute sacrifice costs during spell casting
+   - Integrated into `calculate_effective_cost()` for mana increases and `push_castable_spells()` for sacrifice castability checks
 
 ## Recent Fixes (2026-02-13)
 
@@ -180,7 +189,7 @@ Working cards:
 ## Remaining Gaps (Complex Features)
 
 1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
-2. **S:Mode$ RaiseCost** - Additional sacrifice costs
+2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-14**
 3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
 4. **AddAbility$ for lands** - Grant abilities to land permanents
 

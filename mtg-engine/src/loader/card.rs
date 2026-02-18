@@ -3017,9 +3017,10 @@ impl CardDefinition {
             // Determine which mode this is
             let is_continuous = ability.contains("Mode$ Continuous");
             let is_reduce_cost = ability.contains("Mode$ ReduceCost");
+            let is_raise_cost = ability.contains("Mode$ RaiseCost");
 
-            // Parse S:Mode$ Continuous or S:Mode$ ReduceCost lines
-            if !is_continuous && !is_reduce_cost {
+            // Parse S:Mode$ Continuous, S:Mode$ ReduceCost, or S:Mode$ RaiseCost lines
+            if !is_continuous && !is_reduce_cost && !is_raise_cost {
                 continue;
             }
 
@@ -3037,6 +3038,9 @@ impl CardDefinition {
             let mut is_present: Option<String> = None;
             let mut present_zone: Option<crate::zones::Zone> = None;
             let mut present_compare_min: u8 = 1; // Default: at least 1
+
+            // RaiseCost-specific parameters
+            let mut raised_cost: Option<crate::core::RaisedCost> = None;
 
             // Split by | and parse each parameter
             for param in ability.split('|') {
@@ -3176,8 +3180,34 @@ impl CardDefinition {
                             });
                         }
                         "Amount" => {
-                            // Parse Amount$ for cost reduction (e.g., "1", "2")
+                            // Parse Amount$ for cost reduction/increase (e.g., "1", "2")
                             reduce_amount = value.parse().unwrap_or(0);
+                            // For RaiseCost with Amount$, create a mana-based raised cost
+                            if is_raise_cost && reduce_amount > 0 {
+                                raised_cost = Some(crate::core::RaisedCost::Mana(reduce_amount));
+                            }
+                        }
+                        "Cost" => {
+                            // Parse Cost$ for RaiseCost sacrifice costs
+                            // Format: Sac<amount/type/description> or Sac<X/type/description>
+                            // Examples: "Sac<1/Land>", "Sac<X/Land/land(s)>"
+                            if is_raise_cost && value.starts_with("Sac<") && value.ends_with('>') {
+                                let inner = &value[4..value.len() - 1]; // Strip "Sac<" and ">"
+                                let parts: Vec<&str> = inner.split('/').collect();
+                                if parts.len() >= 2 {
+                                    let amount_str = parts[0].trim();
+                                    let valid_type = parts[1].trim().to_string();
+
+                                    use crate::core::RaisedCostAmount;
+                                    let amount = if amount_str == "X" {
+                                        RaisedCostAmount::Variable("X".to_string())
+                                    } else {
+                                        RaisedCostAmount::Fixed(amount_str.parse().unwrap_or(1))
+                                    };
+
+                                    raised_cost = Some(crate::core::RaisedCost::Sacrifice { amount, valid_type });
+                                }
+                            }
                         }
                         "IsPresent" => {
                             // Parse IsPresent$ for conditional cost reduction
@@ -3236,7 +3266,7 @@ impl CardDefinition {
 
             // ReduceCost ability
             if is_reduce_cost {
-                if let Some(target) = valid_card {
+                if let Some(ref target) = valid_card {
                     // Build condition if presence check was specified
                     let reduce_condition =
                         is_present
@@ -3248,9 +3278,26 @@ impl CardDefinition {
                             });
 
                     abilities.push(StaticAbility::ReduceCost {
-                        valid_card: target,
+                        valid_card: target.clone(),
                         amount: reduce_amount,
                         condition: reduce_condition,
+                        description: description.clone(),
+                    });
+                }
+            }
+
+            // RaiseCost ability
+            if is_raise_cost {
+                if let Some(cost) = raised_cost {
+                    // Use valid_card if specified, otherwise default to AllSpells
+                    // Clone valid_card since it may have been used in ReduceCost branch
+                    let target = valid_card
+                        .clone()
+                        .unwrap_or(crate::core::CostReductionTarget::AllSpells);
+
+                    abilities.push(StaticAbility::RaiseCost {
+                        valid_card: target,
+                        raised_cost: cost,
                         description,
                     });
                 }
@@ -4724,5 +4771,78 @@ Oracle:During your turn, Avatar Kyoshi has hexproof."#;
         } else {
             panic!("Expected GrantKeyword static ability, got: {:?}", ability);
         }
+    }
+
+    #[test]
+    fn test_raise_cost_sacrifice_parsing() {
+        use crate::core::{RaisedCost, RaisedCostAmount, StaticAbility};
+
+        // Test parsing of RaiseCost with sacrifice
+        let content = r#"
+Name:Tectonic Split
+ManaCost:4 G G
+Types:Enchantment
+S:Mode$ RaiseCost | ValidCard$ Card.Self | Type$ Spell | Cost$ Sac<X/Land/land(s)> | Description$ Sacrifice half your lands.
+SVar:X:Count$Valid Land.YouCtrl/HalfUp
+Oracle:Sacrifice half your lands, rounded up.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Tectonic Split");
+
+        // Parse static abilities directly from CardDefinition
+        let static_abilities = def.parse_static_abilities();
+
+        // Verify it has a RaiseCost static ability
+        assert!(!static_abilities.is_empty(), "Should have static abilities");
+
+        let has_raise_cost = static_abilities.iter().any(|ability| {
+            matches!(
+                ability,
+                StaticAbility::RaiseCost {
+                    raised_cost: RaisedCost::Sacrifice {
+                        amount: RaisedCostAmount::Variable(x),
+                        valid_type,
+                    },
+                    ..
+                } if x == "X" && valid_type == "Land"
+            )
+        });
+
+        assert!(has_raise_cost, "Should have RaiseCost::Sacrifice with X/Land");
+    }
+
+    #[test]
+    fn test_raise_cost_mana_parsing() {
+        use crate::core::{CostReductionTarget, RaisedCost, StaticAbility};
+
+        // Test parsing of RaiseCost with mana amount
+        let content = r#"
+Name:Thalia Guardian
+ManaCost:1 W
+Types:Creature Human Soldier
+PT:2/1
+S:Mode$ RaiseCost | ValidCard$ Card.nonCreature | Type$ Spell | Amount$ 1 | Description$ Noncreature spells cost {1} more.
+Oracle:Noncreature spells cost {1} more to cast.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        assert_eq!(def.name.as_str(), "Thalia Guardian");
+
+        // Parse static abilities directly from CardDefinition
+        let static_abilities = def.parse_static_abilities();
+
+        let has_raise_cost = static_abilities.iter().any(|ability| {
+            matches!(
+                ability,
+                StaticAbility::RaiseCost {
+                    valid_card: CostReductionTarget::NonCreature,
+                    raised_cost: RaisedCost::Mana(1),
+                    ..
+                }
+            )
+        });
+
+        assert!(has_raise_cost, "Should have RaiseCost::Mana(1) for non-creatures");
     }
 }
