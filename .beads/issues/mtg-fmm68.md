@@ -193,7 +193,14 @@ Working cards:
 1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
 2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-18**
 3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
+   - Complex: requires player choice during spell resolution
+   - Cards: Abandon Attachments, Academy Loremaster, Aether Barrier
+   - Pattern: `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`
+   - UnlessSwitched$ True: pay cost → get effect; False: don't pay → get effect
 4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **PARTIAL 2026-02-18** (parsing done, ManaEngine integration needed)
+   - Parsing: ✅ StaticAbility::GrantAbility with parsed ActivatedAbility
+   - Query: ✅ get_granted_abilities() in continuous_effects.rs
+   - Remaining: Integrate into ManaEngine for granted mana abilities
 
 ## Testing Protocol
 
