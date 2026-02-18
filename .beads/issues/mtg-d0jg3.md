@@ -8,7 +8,7 @@ labels:
 - network
 - tracking
 created_at: 2026-01-23T01:47:39.764992958+00:00
-updated_at: 2026-02-13T22:21:30.474932975+00:00
+updated_at: 2026-02-18T17:03:12.965469450+00:00
 ---
 
 # Description
@@ -46,7 +46,28 @@ This structural difference is necessary due to browser constraints, but the GAME
 - Use drain_reveals_up_to() for sync points
 - **Use server's authoritative data for choices** (abilities, counts, option lists)
 
-## Current Status (2026-02-13)
+## Current Status (2026-02-18)
+
+### Completed this session (2026-02-18):
+- Removed server-authoritative fallbacks from WasmNetworkLocalController (choose_spell_ability_to_play, choose_cards_to_discard). WASM now computes locally like native.
+- Added debug-assertion validation that logs DESYNC when local != server (but doesn't crash)
+- Fixed WASM module exports: added `pub use network::*` in wasm/mod.rs so wasm-bindgen sees network functions
+- Extracted init_game_reserve_only_wasm + process_card_reveal_wasm from fancy_tui.rs → wasm/network/game_init.rs (shared between FancyTUI and headless AI harness)
+- Created wasm/network/ai_harness.rs with run_network_ai_step + network_ai_reset WASM exports for headless testing
+- Extended bug_finding/network_test_lib.py: parse_deck_file, start_wasm_http_server, run_wasm_client (Playwright), ClientMode support in TestConfig, updated run_network_game
+- Extended bug_finding/network_fuzz_test.py with --client flag (native/wasm/mixed)
+- Extended tests/network_vs_local_equivalence.py with client mode args
+- Fixed wasm_ai_harness.html: correct load_deck_pack API, proper deck_index.json parsing
+
+### Remaining Issues (known divergence):
+- WASM game state diverges from server at seq~9 when running random controller
+- Specific case: WASM computes PlayLand(card_id=36) locally but server sends 0 abilities in ChoiceRequest
+- Root cause: sync_callback timing - reveals may not be processed at exact right moment
+- Symptom: After ~20 choices, game diverges; server sees connection drop
+- Infrastructure correctly detects this as FAIL in equivalence tests
+- Next: investigate sync_callback vs prepare_for_priority_choice() equivalence
+
+### Prior Status (2026-02-13)
 
 ### Native Network (Working)
 - [x] Native network random/random games work

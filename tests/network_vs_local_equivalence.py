@@ -7,12 +7,14 @@ Replaces tests/network_vs_local_equivalence_e2e.sh with Python.
 
 Usage:
     python3 tests/network_vs_local_equivalence.py [SEED] [CONTROLLER_P1] [CONTROLLER_P2]
+    python3 tests/network_vs_local_equivalence.py [SEED] [CONTROLLER_P1] [CONTROLLER_P2] [CLIENT_P1] [CLIENT_P2]
 
 Examples:
-    python3 tests/network_vs_local_equivalence.py              # seed=3, both random
+    python3 tests/network_vs_local_equivalence.py              # seed=3, both random, native
     python3 tests/network_vs_local_equivalence.py 5            # seed=5, both random
     python3 tests/network_vs_local_equivalence.py 5 zero       # seed=5, both zero
     python3 tests/network_vs_local_equivalence.py 5 random heuristic  # seed=5, p1=random, p2=heuristic
+    python3 tests/network_vs_local_equivalence.py 5 random random native wasm  # p2 is WASM client
 
 Exit codes:
     0 - PASS: gamelogs are identical
@@ -26,7 +28,7 @@ import shutil
 # Import shared library
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bug_finding'))
 from network_test_lib import (
-    MTG_BIN, DECKS, CONTROLLERS,
+    MTG_BIN, DECKS, CONTROLLERS, CLIENT_MODES,
     TestConfig, run_equivalence_test,
 )
 
@@ -36,11 +38,19 @@ def main():
     seed = int(sys.argv[1]) if len(sys.argv) > 1 else 3
     controller_p1 = sys.argv[2] if len(sys.argv) > 2 else "random"
     controller_p2 = sys.argv[3] if len(sys.argv) > 3 else controller_p1
+    client_p1 = sys.argv[4] if len(sys.argv) > 4 else "native"
+    client_p2 = sys.argv[5] if len(sys.argv) > 5 else "native"
 
     # Validate controllers
     for ctrl in [controller_p1, controller_p2]:
         if ctrl not in CONTROLLERS:
             print(f"Error: Invalid controller '{ctrl}'. Must be: {', '.join(CONTROLLERS)}")
+            sys.exit(1)
+
+    # Validate client modes
+    for client in [client_p1, client_p2]:
+        if client not in CLIENT_MODES:
+            print(f"Error: Invalid client mode '{client}'. Must be: {', '.join(CLIENT_MODES)}")
             sys.exit(1)
 
     # Check binary exists
@@ -53,8 +63,8 @@ def main():
     print()
     print("Configuration:")
     print(f"  Seed: {seed}")
-    print(f"  Controller P1: {controller_p1}")
-    print(f"  Controller P2: {controller_p2}")
+    print(f"  Controller P1: {controller_p1} ({client_p1})")
+    print(f"  Controller P2: {controller_p2} ({client_p2})")
     print(f"  Deck 1: {os.path.basename(DECKS[0])}")
     print(f"  Deck 2: {os.path.basename(DECKS[1])}")
     print()
@@ -65,6 +75,8 @@ def main():
         controller_p2=controller_p2,
         deck1=DECKS[0],
         deck2=DECKS[1],
+        client_p1=client_p1,
+        client_p2=client_p2,
     )
 
     print("Running LOCAL and NETWORK games...")

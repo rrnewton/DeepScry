@@ -35,7 +35,7 @@ from typing import List, Dict, Tuple
 # Import shared library
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from network_test_lib import (
-    MTG_BIN, DECKS, CONTROLLERS,
+    MTG_BIN, DECKS, CONTROLLERS, CLIENT_MODES,
     TestConfig, TestResult,
     run_network_test, run_equivalence_test,
 )
@@ -50,13 +50,16 @@ error_buckets_collected: Dict[str, List[TestResult]] = defaultdict(list)
 
 
 def generate_configs(num_configs: int = 50,
-                     controller_filter: str = None) -> List[TestConfig]:
+                     controller_filter: str = None,
+                     client_filter: str = None) -> List[TestConfig]:
     """Generate diverse test configurations.
 
     Args:
         num_configs: Maximum number of configs to generate
         controller_filter: If set, only generate configs where BOTH players
                           use this controller type
+        client_filter: If set, use this client mode for all players
+                       ("native", "wasm", or "mixed" for p1=native/p2=wasm)
     """
     configs = []
 
@@ -66,26 +69,43 @@ def generate_configs(num_configs: int = 50,
     else:
         controllers_to_test = CONTROLLERS
 
+    # Determine client modes
+    def get_client_modes():
+        if client_filter == "wasm":
+            return [("wasm", "wasm")]
+        elif client_filter == "mixed":
+            return [("native", "wasm"), ("wasm", "native")]
+        else:  # native (default)
+            return [("native", "native")]
+
+    client_mode_pairs = get_client_modes()
+
     # Test all controller combinations with first 5 seeds
     for c1 in controllers_to_test:
         for c2 in controllers_to_test:
             for seed in SEEDS[:5]:
-                configs.append(TestConfig(
-                    seed=seed,
-                    controller_p1=c1,
-                    controller_p2=c2,
-                    deck1=DECKS[0],
-                    deck2=DECKS[1]
-                ))
+                for cl1, cl2 in client_mode_pairs:
+                    configs.append(TestConfig(
+                        seed=seed,
+                        controller_p1=c1,
+                        controller_p2=c2,
+                        deck1=DECKS[0],
+                        deck2=DECKS[1],
+                        client_p1=cl1,
+                        client_p2=cl2,
+                    ))
 
     # Add random configs to fill up to num_configs
     while len(configs) < num_configs:
+        cl1, cl2 = random.choice(client_mode_pairs)
         configs.append(TestConfig(
             seed=random.randint(1, 1000),
             controller_p1=random.choice(controllers_to_test),
             controller_p2=random.choice(controllers_to_test),
             deck1=random.choice(DECKS),
-            deck2=random.choice(DECKS)
+            deck2=random.choice(DECKS),
+            client_p1=cl1,
+            client_p2=cl2,
         ))
 
     return configs[:num_configs]
@@ -250,6 +270,10 @@ def main():
     parser.add_argument('--controller', type=str, default=None,
                         help='Filter to only test specific controller type '
                              '(heuristic, random, zero)')
+    parser.add_argument('--client', type=str, default='native',
+                        help='Client mode for network players: '
+                             '"native" (default), "wasm" (both players use WASM), '
+                             'or "mixed" (p1=native, p2=wasm and vice versa)')
     args = parser.parse_args()
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -301,7 +325,7 @@ def main():
             elapsed = time.time() - start_wall_time
             print(f"\n=== Batch {batch_num} (elapsed: {elapsed:.0f}s) ===")
 
-        configs = generate_configs(args.configs, args.controller)
+        configs = generate_configs(args.configs, args.controller, args.client)
         if not args.infinite and args.duration == 0:
             filter_msg = f" (controller={args.controller})" if args.controller else ""
             print(f"Generated {len(configs)} test configurations{filter_msg}")

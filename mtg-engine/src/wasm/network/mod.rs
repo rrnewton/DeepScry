@@ -22,11 +22,14 @@
 //! This module reuses protocol types from `crate::network` and shares
 //! the same JSON message format as the native client, enabling interoperability.
 
+mod ai_harness;
 mod client;
 mod exports;
+pub(crate) mod game_init;
 mod local_controller;
 mod remote_controller;
 
+pub use ai_harness::*;
 pub use client::{NetworkState, SharedNetworkClient, WasmNetworkClient};
 pub use exports::*;
 pub use local_controller::WasmNetworkLocalController;

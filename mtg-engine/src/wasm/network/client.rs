@@ -196,6 +196,11 @@ impl WasmNetworkClient {
         self.opponent_name.as_deref()
     }
 
+    /// Get our player name (as sent to server during authentication)
+    pub fn our_name(&self) -> Option<&str> {
+        self.player_name.as_deref()
+    }
+
     /// Get the last error message
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
