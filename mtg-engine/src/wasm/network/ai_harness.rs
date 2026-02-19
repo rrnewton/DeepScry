@@ -89,6 +89,12 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
         .cloned()
         .ok_or_else(|| "deck_card_ids not set (GameStarted not received?)".to_string())?;
     let rng_state = client_ref.rng_state().to_vec();
+    // Clone token definitions before releasing the borrow
+    let token_defs: Vec<(String, crate::loader::CardDefinition)> = client_ref
+        .token_definitions()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
     drop(client_ref);
 
@@ -100,7 +106,12 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
         (opponent_name, our_name)
     };
 
-    let game = init_game_reserve_only_wasm(p1_name, p2_name, starting_life, &ranges);
+    let mut game = init_game_reserve_only_wasm(p1_name, p2_name, starting_life, &ranges);
+
+    // Populate token definitions so shadow game can create tokens (e.g. Clue tokens)
+    for (name, def) in token_defs {
+        game.token_definitions.insert(name, std::sync::Arc::new(def));
+    }
 
     // Initialize RNG from server state for deterministic shuffles
     if !rng_state.is_empty() {

@@ -19,6 +19,7 @@ use super::client::SharedNetworkClient;
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
+use crate::loader::CardDefinition;
 use smallvec::SmallVec;
 
 /// Context returned when waiting for opponent
@@ -40,6 +41,11 @@ pub struct WasmRemoteController {
     network_client: SharedNetworkClient,
     /// Last received spell ability (from OpponentChoice)
     last_spell_ability: Option<SpellAbility>,
+    /// Last received library search result CardId (from OpponentChoice).
+    /// Stored so choose_from_library can trigger the game loop's
+    /// take_library_search_result() fallback path for shadow games where
+    /// valid_cards is empty (opponent's unrevealed library cards).
+    last_library_search_result: Option<CardId>,
     /// Whether the game has ended
     game_ended: bool,
 }
@@ -51,6 +57,7 @@ impl WasmRemoteController {
             player_id,
             network_client,
             last_spell_ability: None,
+            last_library_search_result: None,
             game_ended: false,
         }
     }
@@ -80,6 +87,8 @@ impl WasmRemoteController {
             );
             // Store spell_ability for choose_spell_ability_to_play to use
             self.last_spell_ability = choice.spell_ability;
+            // Store library_search_result for choose_from_library / take_library_search_result
+            self.last_library_search_result = choice.library_search_result;
             ChoiceResult::Ok(choice.choice_indices)
         } else {
             log::debug!("WasmRemoteController: No opponent choice available, returning NeedInput");
@@ -176,11 +185,17 @@ impl PlayerController for WasmRemoteController {
         _cost: &ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // For mana sources, we receive a bitmask or index
-        // For simplicity, treat as single source selection
-        match self.select_from_slice(available_sources) {
-            ChoiceResult::Ok(Some(source)) => ChoiceResult::Ok(smallvec::smallvec![source]),
-            ChoiceResult::Ok(None) => ChoiceResult::Ok(SmallVec::new()),
+        // Server sends ALL source positions (0-indexed) in a single OpponentChoice.
+        // Multi-mana costs (e.g. {R}{R}) send multiple indices (e.g. [0, 1]).
+        // We must return ALL selected sources, not just the first.
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                let sources: SmallVec<[CardId; 8]> = indices
+                    .into_iter()
+                    .filter_map(|idx| available_sources.get(idx).copied())
+                    .collect();
+                ChoiceResult::Ok(sources)
+            }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
             ChoiceResult::ExitGame => ChoiceResult::ExitGame,
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
@@ -304,15 +319,37 @@ impl PlayerController for WasmRemoteController {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&crate::loader::CardDefinition],
+        valid_cards: &[&CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
-        // Server sends the index (or None for decline)
+        // Server sends 1-based name index (0 = decline) in choice_indices,
+        // and stores the authoritative CardId in library_search_result.
+        // try_get_choice() already captured library_search_result in last_library_search_result.
         match self.try_get_choice() {
             ChoiceResult::Ok(indices) => {
-                if indices.is_empty() || (indices.len() == 1 && indices[0] >= valid_cards.len()) {
+                let name_idx_raw = indices.first().copied().unwrap_or(0);
+                if name_idx_raw == 0 {
+                    // Opponent declined the search
                     ChoiceResult::Ok(None)
+                } else if self.last_library_search_result.is_some() {
+                    // Server provided authoritative CardId. Return Some(_) (non-None) to
+                    // trigger the game loop's take_library_search_result() fallback path,
+                    // which handles the case where valid_cards is empty (shadow game).
+                    log::debug!(
+                        "WasmRemoteController::choose_from_library: using server CardId {:?} (indices={:?})",
+                        self.last_library_search_result,
+                        indices
+                    );
+                    ChoiceResult::Ok(Some(0)) // Placeholder; game loop will use take_library_search_result()
+                } else if !valid_cards.is_empty() {
+                    // Fallback: use index into local valid_cards list
+                    let card_idx = (name_idx_raw - 1).min(valid_cards.len() - 1);
+                    ChoiceResult::Ok(Some(card_idx))
                 } else {
-                    ChoiceResult::Ok(Some(indices[0]))
+                    log::warn!(
+                        "WasmRemoteController::choose_from_library: no library_search_result and valid_cards empty (indices={:?})",
+                        indices
+                    );
+                    ChoiceResult::Ok(None)
                 }
             }
             ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
@@ -320,6 +357,10 @@ impl PlayerController for WasmRemoteController {
             ChoiceResult::Error(e) => ChoiceResult::Error(e),
             ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
         }
+    }
+
+    fn take_library_search_result(&mut self) -> Option<CardId> {
+        self.last_library_search_result.take()
     }
 
     fn choose_permanents_to_sacrifice(

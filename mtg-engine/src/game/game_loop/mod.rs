@@ -43,7 +43,6 @@ use crate::game::controller::{GameStateView, PlayerController};
 use crate::game::phase::Step;
 use crate::game::GameState;
 use crate::{MtgError, Result};
-use smallvec::SmallVec;
 
 /// Type alias for the sync callback function (network state synchronization)
 ///
@@ -225,10 +224,7 @@ pub struct GameLoop<'a> {
     pub verbosity: VerbosityLevel,
     /// Track if current step header has been printed (for lazy printing)
     step_header_printed: bool,
-    /// Track targets for spells on the stack (spell_id -> chosen_targets)
-    /// This is needed because targets are chosen at cast time but used at resolution time
-    /// Uses SmallVec for targets since most spells have 0-2 targets (avoids heap allocation)
-    spell_targets: Vec<(CardId, SmallVec<[CardId; 2]>)>,
+    // spell_targets is now in GameState (game.spell_targets) to survive WASM step_harness() re-entry.
     /// Global choice counter for tracking all player choices
     /// Increments each time a controller makes any decision
     choice_counter: u32,
@@ -324,7 +320,7 @@ impl<'a> GameLoop<'a> {
             turns_elapsed: 0,
             verbosity,
             step_header_printed: false,
-            spell_targets: Vec::new(),
+            // spell_targets lives in game.spell_targets
             choice_counter: 0,
             mana_engine: crate::game::mana_engine::ManaEngine::new(),
             abilities_buffer: Vec::with_capacity(16), // Pre-allocate for typical game (lands + spells + abilities)
@@ -750,7 +746,7 @@ impl<'a> GameLoop<'a> {
     pub fn reset(&mut self) {
         self.turns_elapsed = 0;
         self.step_header_printed = false;
-        self.spell_targets.clear();
+        self.game.spell_targets.clear();
         self.choice_counter = 0;
         self.game.logger.reset_step_header();
     }
@@ -1253,8 +1249,14 @@ impl<'a> GameLoop<'a> {
             println!("🔄 RESUMING TURN {} (will suppress header)", self.turns_elapsed + 1);
         }
 
-        // Reset turn-based state
-        self.reset_turn_state(active_player)?;
+        // Reset turn-based state (guarded to prevent re-entry when WASM harness recreates
+        // GameLoop mid-turn: re-running reset_turn_state would zero lands_played_this_turn,
+        // causing the local WASM client to offer PlayLand when the server correctly denies it)
+        let turn_num = self.game.turn.turn_number;
+        if self.game.turn.turn_state_reset_turn != Some(turn_num) {
+            self.game.turn.turn_state_reset_turn = Some(turn_num);
+            self.reset_turn_state(active_player)?;
+        }
 
         // Run through all steps of the turn
         loop {

@@ -24,6 +24,7 @@ impl<'a> GameLoop<'a> {
     pub(super) fn resolve_top_spell_from_stack(&mut self, spell_id: CardId) -> Result<()> {
         // Look up the targets for this spell (already stored as SmallVec)
         let targets: SmallVec<[CardId; 2]> = self
+            .game
             .spell_targets
             .iter()
             .find(|(id, _)| *id == spell_id)
@@ -232,7 +233,7 @@ impl<'a> GameLoop<'a> {
         }
 
         // Remove the spell from our targets tracking
-        self.spell_targets.retain(|(id, _)| *id != spell_id);
+        self.game.spell_targets.retain(|(id, _)| *id != spell_id);
 
         Ok(())
     }
@@ -317,120 +318,377 @@ impl<'a> GameLoop<'a> {
                 // has been received, which means all preceding CardRevealed are buffered
                 self.sync_to_action();
 
-                // Loop to allow undo/retry for spell ability choices
-                let choice = loop {
-                    // Get all available spell abilities for this player.
-                    //
-                    // OPTIMIZATION: get_available_spell_abilities now returns &[SpellAbility] from a
-                    // reused internal buffer, eliminating repeated Vec allocations. We check emptiness
-                    // first (no copy needed), then copy into SmallVec only when there are abilities
-                    // (avoiding heap allocation for typical hand sizes up to 16 cards).
-                    let available_count = self.get_available_spell_abilities(current_priority).len();
-
-                    // Log abilities for debugging network sync issues
-                    if available_count > 0 && available_count <= 5 {
-                        // Log the actual abilities available
-                        let abilities: smallvec::SmallVec<[String; 8]> =
-                            self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
+                // WASM RESUMPTION: Complete a pending typecycling library search.
+                //
+                // When the WASM game loop is interrupted (NeedInput) during the library
+                // search phase of typecycling, `pending_cycling_search` is set. On the
+                // next game loop invocation we bypass `choose_spell_ability_to_play` and
+                // call `choose_from_library_with_hook` directly. Without this, the queued
+                // LibrarySearchByName OpponentChoice would be mistakenly consumed by
+                // `choose_spell_ability_to_play`, corrupting the RNG and causing a desync.
+                if let Some((search_player, ref land_type)) = self.game.pending_cycling_search.clone() {
+                    if search_player == current_priority {
+                        let land_type = land_type.clone();
                         log::debug!(
-                            "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
-                            current_priority,
-                            available_count,
-                            self.game.action_count(),
-                            abilities
+                            "[WASM RESUME] Resuming cycling library search for player {:?}, land_type={}",
+                            search_player,
+                            land_type.as_str()
                         );
-                    } else {
+                        // Rebuild valid_cards with the same filter used in the cycling handler.
+                        let filter = format!("Land.{}", land_type.as_str());
+                        let library_cards = self
+                            .game
+                            .player_zones
+                            .iter()
+                            .find(|(id, _)| *id == search_player)
+                            .map(|(_, zones)| zones.library.cards.clone())
+                            .unwrap_or_default();
+                        let valid_cards: Vec<CardId> = library_cards
+                            .iter()
+                            .copied()
+                            .filter(|&card_id| {
+                                self.game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|card| {
+                                        crate::game::state::GameState::card_matches_search_filter(card, &filter)
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .collect();
+                        // Capture log size BEFORE the library search choice (for log_choice_point).
+                        let prior_log_size = self.game.logger.log_count();
+
+                        // Ask controller to complete the library search.
+                        let lib_choice = self.choose_from_library_with_hook(controller, search_player, &valid_cards);
+                        let chosen_card_opt = handle_choice_result_break!(lib_choice, self.game, search_player);
+
+                        // Library search succeeded — clear the pending state.
+                        self.game.pending_cycling_search = None;
+
+                        // Log this choice point for undo/replay (mirrors the cycling handler).
+                        let chosen_index = chosen_card_opt.and_then(|c| valid_cards.iter().position(|&v| v == c));
+                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                        self.log_choice_point(search_player, Some(replay_choice), prior_log_size);
+
+                        // Move chosen card from library to hand.
+                        // The card may already be in hand (moved via CardRevealed); if so,
+                        // move_card fails gracefully — the shadow game tolerates this.
+                        if let Some(chosen_card) = chosen_card_opt {
+                            let _ = self.game.move_card(
+                                chosen_card,
+                                crate::zones::Zone::Library,
+                                crate::zones::Zone::Hand,
+                                search_player,
+                            );
+                        }
+
+                        // Shuffle library after searching (MTG CR 702.29).
+                        self.game.shuffle_library(search_player);
+
+                        // Cycling is now fully complete — switch priority to the other player.
+                        consecutive_passes = 0;
+                        self.game.turn.consecutive_passes = 0;
+                        current_priority = if current_priority == active_player {
+                            non_active_player
+                        } else {
+                            active_player
+                        };
+                        self.game.turn.priority_player = Some(current_priority);
+
+                        continue; // Re-enter while loop with new current_priority.
+                    }
+                }
+
+                // WASM RESUMPTION: Complete a pending spell cast.
+                //
+                // When the WASM game loop is interrupted (NeedInput) during mode selection
+                // or target selection of a spell cast, `pending_cast` is set to the card_id.
+                // On the next game loop invocation, we bypass `choose_spell_ability_to_play`
+                // and resume the cast from where it was interrupted. Without this, the queued
+                // mode or target ChoiceRequest would be mistakenly consumed by
+                // `choose_spell_ability_to_play`, causing a desync.
+                if let Some((cast_player, card_id)) = self.game.pending_cast {
+                    if cast_player == current_priority {
                         log::debug!(
-                            "Priority check: player {:?} has {} available abilities, action_count={}",
-                            current_priority,
-                            available_count,
-                            self.game.action_count()
+                            "[WASM RESUME] Resuming pending cast of {:?} for player {:?}",
+                            card_id,
+                            cast_player
                         );
-                    }
 
-                    // If no actions available, automatically pass priority without asking controller
-                    // Only invoke controller when there's an actual choice to make
-                    //
-                    // EXCEPTION: Remote/Network controllers MUST always be asked:
-                    // - Remote: Client-side opponent controller, we don't know hidden hand contents
-                    // - Network: Server-side controller, must notify clients even on 0-ability pass
-                    // The server will send the actual ability via OpponentChoice.
-                    let ctrl_type = controller.get_controller_type();
-                    let is_network_controlled = matches!(ctrl_type, ControllerType::Remote | ControllerType::Network);
-                    if available_count == 0 && !is_network_controlled {
-                        // No available actions - automatically pass priority
-                        break None;
-                    }
+                        // Step 1: Mode selection (only if ModalChoice effect still present).
+                        // If the previous iteration already applied modes (via apply_selected_modes),
+                        // get_modal_choice_info returns Ok(None) and we skip directly to targeting.
+                        if let Ok(Some(Effect::ModalChoice {
+                            modes,
+                            num_to_choose,
+                            min_to_choose,
+                            can_repeat_modes,
+                        })) = self.game.get_modal_choice_info(card_id)
+                        {
+                            let valid_modes = self
+                                .game
+                                .get_valid_modes_for_spell(card_id, cast_player)
+                                .unwrap_or_default();
+                            let valid_mode_indices: Vec<usize> = valid_modes
+                                .iter()
+                                .filter(|(_, has_targets)| *has_targets)
+                                .map(|(idx, _)| *idx)
+                                .collect();
 
-                    // Copy abilities into SmallVec now that we know there are some.
-                    // SmallVec<[_; 16]> covers typical hand sizes without heap allocation.
-                    // We need a copy because self.game is accessed later in the loop.
-                    let available: smallvec::SmallVec<[_; 16]> = self.abilities_buffer.iter().cloned().collect();
+                            if !valid_mode_indices.is_empty() {
+                                let mode_descriptions: Vec<String> = valid_mode_indices
+                                    .iter()
+                                    .filter_map(|&idx| modes.get(idx).map(|m| m.description.clone()))
+                                    .collect();
 
-                    // Clear replay mode if all choices have been replayed
-                    // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
-                    // include the upcoming choice (which hasn't been presented yet)
-                    //
-                    // We stay in replay mode until BOTH conditions are met:
-                    // 1. All intra-turn choices have been replayed (replay_choices_remaining == 0)
-                    // 2. We've passed the baseline choice count from the snapshot
-                    //
-                    // This ensures that automatic actions (like draws) that happen before the first
-                    // NEW choice point are properly suppressed, avoiding duplicate logging.
-                    if self.replaying
-                        && self.replay_choices_remaining == 0
-                        && (self.choice_counter as usize) >= self.baseline_choice_count
-                    {
-                        eprintln!(
-                            "🔍 [REPLAY_CLEAR_BEFORE_CHOICE] choice_counter={}, baseline={}, CLEARING replay mode",
-                            self.choice_counter, self.baseline_choice_count
-                        );
-                        self.replaying = false;
-                        if self.verbosity >= VerbosityLevel::Verbose {
-                            println!("✅ REPLAY MODE COMPLETE - will present new choice to controller");
+                                let prior_log_size = self.game.logger.log_count();
+                                let choice = self.choose_modes_with_hook(
+                                    controller,
+                                    cast_player,
+                                    card_id,
+                                    &mode_descriptions,
+                                    num_to_choose as usize,
+                                    min_to_choose as usize,
+                                    can_repeat_modes,
+                                );
+                                let selected_modes = handle_choice_result_break!(choice, self.game, cast_player);
+
+                                let original_indices: Vec<usize> = selected_modes
+                                    .iter()
+                                    .filter_map(|&idx| valid_mode_indices.get(idx).copied())
+                                    .collect();
+
+                                let replay_choice =
+                                    crate::game::ReplayChoice::Modes(original_indices.iter().copied().collect());
+                                self.log_choice_point(cast_player, Some(replay_choice), prior_log_size);
+
+                                if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
+                                    log::warn!("[WASM RESUME] Failed to apply selected modes: {}", e);
+                                }
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    for &mode_idx in &original_indices {
+                                        if let Some(mode) = modes.get(mode_idx) {
+                                            let message = format!(
+                                                "{} chooses mode: {}",
+                                                self.get_player_name(cast_player),
+                                                mode.description
+                                            );
+                                            self.game.logger.gamelog(&message);
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    } else if self.replaying {
-                        eprintln!(
-                            "🔍 [REPLAY_STILL_ACTIVE] choice_counter={}, baseline={}, remaining={}",
-                            self.choice_counter, self.baseline_choice_count, self.replay_choices_remaining
-                        );
-                    }
 
-                    // PREAMBLE: Check stop conditions BEFORE printing menu
-                    // This ensures snapshots are taken BEFORE presenting the choice to the controller,
-                    // and prevents duplicate menu printing when resuming from snapshot.
-                    if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
-                        return Ok(Some(result));
-                    }
+                        // Step 2: Target selection (runs after mode selection, or directly for non-modal spells).
+                        let valid_targets = self
+                            .game
+                            .get_valid_targets_for_spell(card_id)
+                            .unwrap_or_else(|_| SmallVec::new());
 
-                    // Print prompt AFTER checking stop conditions to avoid duplicate output
-                    {
-                        let view = GameStateView::new(self.game, current_priority);
-                        // Print spell ability menu (controlled by show_choice_menu flag)
-                        if view.logger().should_show_choice_menu() && !available.is_empty() {
-                            print!("{}", format_choice_menu(&view, &available));
+                        let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
+                            SmallVec::new()
+                        } else if valid_targets.len() == 1 {
+                            smallvec::smallvec![valid_targets[0]]
+                        } else {
+                            let prior_log_size = self.game.logger.log_count();
+                            let choice =
+                                self.choose_targets_with_hook(controller, cast_player, card_id, &valid_targets);
+                            let chosen_targets = handle_choice_result_break!(choice, self.game, cast_player);
+                            let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
+                            self.log_choice_point(cast_player, Some(replay_choice), prior_log_size);
+                            chosen_targets.into_iter().collect()
+                        };
+
+                        // Step 3: Cast the spell — mana is paid automatically (GreedyManaResolver).
+                        let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
+                        let targeting_callback =
+                            move |_game: &GameState, _spell_id: CardId| targets_for_callback.clone();
+
+                        self.mana_engine.update_mut(self.game, cast_player);
+
+                        match self
+                            .game
+                            .cast_spell_8_step(cast_player, card_id, targeting_callback, &self.mana_engine)
+                        {
+                            Ok(()) => {
+                                self.game.spell_targets.push((card_id, chosen_targets_vec));
+                                self.game.pending_cast = None;
+                                consecutive_passes = 0;
+                                self.game.turn.consecutive_passes = 0;
+                                // Mirror the main-path priority switch at the end of Some(ability).
+                                // Without this, the recovery block would keep current_priority on the
+                                // caster, causing the WASM to skip the opponent's priority pass and
+                                // creating a 1-action desync (log_choice_point missing for opponent).
+                                current_priority = if current_priority == active_player {
+                                    non_active_player
+                                } else {
+                                    active_player
+                                };
+                                self.game.turn.priority_player = Some(current_priority);
+                                continue;
+                            }
+                            Err(e) => {
+                                log::error!("[WASM RESUME] Failed to cast spell {:?}: {}", card_id, e);
+                                self.game.pending_cast = None;
+                                consecutive_passes += 1;
+                                self.game.turn.consecutive_passes = consecutive_passes;
+                                current_priority = if current_priority == active_player {
+                                    non_active_player
+                                } else {
+                                    active_player
+                                };
+                                self.game.turn.priority_player = Some(current_priority);
+                                continue;
+                            }
                         }
-                    } // Drop view before mutable borrow
+                    }
+                }
 
-                    // Ask controller to choose one (or None to pass)
-                    // Capture log size BEFORE asking controller (before controller logs its choice)
-                    let prior_log_size = self.game.logger.log_count();
-                    // Use network-aware helper (creates view internally, handles pre-choice hook)
-                    let choice_result = self.choose_spell_ability_with_hook(controller, current_priority, &available);
-                    let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
+                // WASM RESUMPTION: Bypass spell ability selection when resuming pending activation.
+                //
+                // When the WASM game loop is interrupted (NeedInput) during target selection
+                // of an activated ability, `pending_activation` is set. On the next
+                // step_harness() call, we skip `choose_spell_ability_to_play` (which would
+                // misroute the queued target ChoiceRequest) and resume directly in the
+                // ActivateAbility arm where the target choice is completed.
+                let choice = 'ability_choice: {
+                    if let Some((act_player, act_card, act_idx)) = self.game.pending_activation {
+                        if act_player == current_priority {
+                            log::debug!(
+                                "[WASM RESUME] Resuming pending activation of {:?} ability {} for player {:?}",
+                                act_card,
+                                act_idx,
+                                act_player
+                            );
+                            // Sync reveals before resuming (mirrors sync_to_action() in normal loop)
+                            self.sync_to_action();
+                            break 'ability_choice Some(crate::core::SpellAbility::ActivateAbility {
+                                card_id: act_card,
+                                ability_index: act_idx,
+                            });
+                        }
+                    }
 
-                    // IMPORTANT: Sync network state after receiving opponent choice
-                    // During wait_for_choice(), reveals may have arrived via WebSocket for cards
-                    // that the opponent is about to play. We need to process those reveals NOW
-                    // before the game tries to act on the choice (e.g., cast a spell from hand).
-                    self.sync_to_action();
+                    // Loop to allow undo/retry for spell ability choices
+                    loop {
+                        // Get all available spell abilities for this player.
+                        //
+                        // OPTIMIZATION: get_available_spell_abilities now returns &[SpellAbility] from a
+                        // reused internal buffer, eliminating repeated Vec allocations. We check emptiness
+                        // first (no copy needed), then copy into SmallVec only when there are abilities
+                        // (avoiding heap allocation for typical hand sizes up to 16 cards).
+                        let available_count = self.get_available_spell_abilities(current_priority).len();
 
-                    // Log this choice point for snapshot/replay
-                    let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
-                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+                        // Log abilities for debugging network sync issues
+                        if available_count > 0 && available_count <= 5 {
+                            // Log the actual abilities available
+                            let abilities: smallvec::SmallVec<[String; 8]> =
+                                self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
+                            log::debug!(
+                                "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
+                                current_priority,
+                                available_count,
+                                self.game.action_count(),
+                                abilities
+                            );
+                        } else {
+                            log::debug!(
+                                "Priority check: player {:?} has {} available abilities, action_count={}",
+                                current_priority,
+                                available_count,
+                                self.game.action_count()
+                            );
+                        }
 
-                    break choice_value;
-                };
+                        // If no actions available, automatically pass priority without asking controller
+                        // Only invoke controller when there's an actual choice to make
+                        //
+                        // EXCEPTION: Remote/Network controllers MUST always be asked:
+                        // - Remote: Client-side opponent controller, we don't know hidden hand contents
+                        // - Network: Server-side controller, must notify clients even on 0-ability pass
+                        // The server will send the actual ability via OpponentChoice.
+                        let ctrl_type = controller.get_controller_type();
+                        let is_network_controlled =
+                            matches!(ctrl_type, ControllerType::Remote | ControllerType::Network);
+                        if available_count == 0 && !is_network_controlled {
+                            // No available actions - automatically pass priority
+                            break None;
+                        }
+
+                        // Copy abilities into SmallVec now that we know there are some.
+                        // SmallVec<[_; 16]> covers typical hand sizes without heap allocation.
+                        // We need a copy because self.game is accessed later in the loop.
+                        let available: smallvec::SmallVec<[_; 16]> = self.abilities_buffer.iter().cloned().collect();
+
+                        // Clear replay mode if all choices have been replayed
+                        // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
+                        // include the upcoming choice (which hasn't been presented yet)
+                        //
+                        // We stay in replay mode until BOTH conditions are met:
+                        // 1. All intra-turn choices have been replayed (replay_choices_remaining == 0)
+                        // 2. We've passed the baseline choice count from the snapshot
+                        //
+                        // This ensures that automatic actions (like draws) that happen before the first
+                        // NEW choice point are properly suppressed, avoiding duplicate logging.
+                        if self.replaying
+                            && self.replay_choices_remaining == 0
+                            && (self.choice_counter as usize) >= self.baseline_choice_count
+                        {
+                            eprintln!(
+                                "🔍 [REPLAY_CLEAR_BEFORE_CHOICE] choice_counter={}, baseline={}, CLEARING replay mode",
+                                self.choice_counter, self.baseline_choice_count
+                            );
+                            self.replaying = false;
+                            if self.verbosity >= VerbosityLevel::Verbose {
+                                println!("✅ REPLAY MODE COMPLETE - will present new choice to controller");
+                            }
+                        } else if self.replaying {
+                            eprintln!(
+                                "🔍 [REPLAY_STILL_ACTIVE] choice_counter={}, baseline={}, remaining={}",
+                                self.choice_counter, self.baseline_choice_count, self.replay_choices_remaining
+                            );
+                        }
+
+                        // PREAMBLE: Check stop conditions BEFORE printing menu
+                        // This ensures snapshots are taken BEFORE presenting the choice to the controller,
+                        // and prevents duplicate menu printing when resuming from snapshot.
+                        if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
+                            return Ok(Some(result));
+                        }
+
+                        // Print prompt AFTER checking stop conditions to avoid duplicate output
+                        {
+                            let view = GameStateView::new(self.game, current_priority);
+                            // Print spell ability menu (controlled by show_choice_menu flag)
+                            if view.logger().should_show_choice_menu() && !available.is_empty() {
+                                print!("{}", format_choice_menu(&view, &available));
+                            }
+                        } // Drop view before mutable borrow
+
+                        // Ask controller to choose one (or None to pass)
+                        // Capture log size BEFORE asking controller (before controller logs its choice)
+                        let prior_log_size = self.game.logger.log_count();
+                        // Use network-aware helper (creates view internally, handles pre-choice hook)
+                        let choice_result =
+                            self.choose_spell_ability_with_hook(controller, current_priority, &available);
+                        let choice_value = handle_choice_result!(choice_result, self.game, current_priority);
+
+                        // IMPORTANT: Sync network state after receiving opponent choice
+                        // During wait_for_choice(), reveals may have arrived via WebSocket for cards
+                        // that the opponent is about to play. We need to process those reveals NOW
+                        // before the game tries to act on the choice (e.g., cast a spell from hand).
+                        self.sync_to_action();
+
+                        // Log this choice point for snapshot/replay
+                        let replay_choice = crate::game::ReplayChoice::SpellAbility(choice_value.clone());
+                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                        break choice_value;
+                    } // close inner loop
+                }; // close 'ability_choice labeled block
 
                 match choice {
                     None => {
@@ -568,6 +826,11 @@ impl<'a> GameLoop<'a> {
                                         self.game.logger.verbose(&message);
                                     }
                                 }
+
+                                // Mark this cast as in-progress for WASM resumption.
+                                // If mode selection or target selection below returns NeedInput,
+                                // the next game loop invocation will resume via `pending_cast`.
+                                self.game.pending_cast = Some((current_priority, card_id));
 
                                 // MTG Rule 601.2b: Modal choice happens BEFORE targeting
                                 // Check if this is a modal spell and prompt for mode selection
@@ -751,7 +1014,10 @@ impl<'a> GameLoop<'a> {
                                     continue;
                                 } else {
                                     // Store targets for this spell (will be used when it resolves)
-                                    self.spell_targets.push((card_id, chosen_targets_vec));
+                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
+
+                                    // Cast fully committed — clear WASM resumption flag.
+                                    self.game.pending_cast = None;
 
                                     // Spell is now on the stack - it will resolve later
                                     // when both players pass priority
@@ -770,13 +1036,27 @@ impl<'a> GameLoop<'a> {
                                     .ok()
                                     .and_then(|c| c.activated_abilities.get(ability_index).cloned());
 
+                                // On WASM resumption, pending_activation is already set.
+                                // Don't log the "activates ability" message again on re-entry.
+                                let is_activation_resumption = self.game.pending_activation.is_some();
+
                                 if let Some(ability) = ability {
-                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    // Log "activates ability" only on first entry (not WASM resumption)
+                                    if !is_activation_resumption
+                                        && self.verbosity >= VerbosityLevel::Normal
+                                        && !self.replaying
+                                    {
                                         let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
                                         let message = format!("{} activates ability: {}", name, ability.description);
                                         // Use gamelog for official game action
                                         self.game.logger.gamelog(&message);
                                     }
+
+                                    // Guard against WASM re-entry at spell ability selection.
+                                    // If target selection below returns NeedInput, the next
+                                    // step_harness() call will see this flag and bypass
+                                    // choose_spell_ability_to_play, resuming here instead.
+                                    self.game.pending_activation = Some((current_priority, card_id, ability_index));
 
                                     // Get valid targets for the ability (before paying costs)
                                     let valid_targets = self
@@ -946,6 +1226,8 @@ impl<'a> GameLoop<'a> {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to pay cost: {e}");
                                         }
+                                        // Clear pending_activation — ability failed, no resumption needed
+                                        self.game.pending_activation = None;
                                         // Treat failed ability activation like passing priority to prevent infinite loops
                                         consecutive_passes += 1;
                                         self.game.turn.consecutive_passes = consecutive_passes;
@@ -1282,6 +1564,9 @@ impl<'a> GameLoop<'a> {
                                             eprintln!("    Failed to check equipment attachment: {e}");
                                         }
                                     }
+
+                                    // Clear pending_activation — ability executed successfully
+                                    self.game.pending_activation = None;
                                 } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                     eprintln!("  Ability not found");
                                 }
@@ -1499,7 +1784,14 @@ impl<'a> GameLoop<'a> {
                                             valid_cards.len()
                                         );
 
-                                        // Ask controller to choose a card (or decline to find)
+                                        // Ask controller to choose a card (or decline to find).
+                                        // Set pending_cycling_search BEFORE calling, so that if
+                                        // NeedInput is returned and the WASM game loop restarts,
+                                        // priority_round() will resume the search directly instead
+                                        // of routing the LibrarySearchByName OpponentChoice through
+                                        // choose_spell_ability_to_play (which would misroute it).
+                                        self.game.pending_cycling_search = Some((current_priority, land_type.clone()));
+
                                         let prior_log_size = self.game.logger.log_count();
                                         log::debug!("[TYPECYCLING] About to call choose_from_library_with_hook");
                                         let choice = self.choose_from_library_with_hook(
@@ -1513,6 +1805,9 @@ impl<'a> GameLoop<'a> {
                                         );
                                         let chosen_card_opt =
                                             handle_choice_result_break!(choice, self.game, current_priority);
+
+                                        // Library search succeeded — clear the pending state.
+                                        self.game.pending_cycling_search = None;
 
                                         // Log the choice for replay - convert CardId to index
                                         let chosen_index = chosen_card_opt

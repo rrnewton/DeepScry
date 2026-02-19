@@ -48,6 +48,12 @@ pub(crate) fn init_game_reserve_only_wasm(
         }
     }
 
+    // CRITICAL: Match server behavior - set skip_reveals=false so draw_card() logs RevealCard
+    // actions to the undo_log. Both server and native clients do this to keep action_count in sync.
+    // Without this, the WASM shadow game has fewer actions than the server, causing hash mismatches
+    // at every choice point (action_count is included in the state hash).
+    game.set_skip_reveals(false);
+
     log::info!(
         "init_game_reserve_only_wasm: Created game with {} reserved CardID slots (P1: {}, P2: {})",
         total_cards,

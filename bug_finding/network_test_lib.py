@@ -329,9 +329,7 @@ def run_wasm_client(server_port: int, player_name: str, controller: str,
     harness_url = (f"http://localhost:{harness_port}/wasm_ai_harness.html"
                    f"?server={server_url}&controller={controller}&seed={seed}&name={player_name}")
 
-    console_lines = []
     result_holder = [None]
-    done_event = threading.Event()
 
     def browser_thread():
         try:
@@ -339,37 +337,46 @@ def run_wasm_client(server_port: int, player_name: str, controller: str,
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page()
 
-                # Collect console messages
-                def on_console(msg):
-                    text = msg.text
-                    console_lines.append(text)
-                    if '[WASM_DONE]' in text:
-                        done_event.set()
+                # Collect console output incrementally using Playwright's native event loop.
+                # IMPORTANT: Do NOT use done_event.wait() here - that blocks the thread
+                # and prevents Playwright's background event loop from delivering console
+                # messages from async JavaScript code (like WASM initialization).
+                # Instead, open the log file and write messages from on_console, then
+                # use page.wait_for_function() which keeps Playwright's event loop running.
+                with open(output_log_path, 'w', buffering=1) as log_f:
+                    def on_console(msg):
+                        text = msg.text
+                        log_f.write(text + '\n')
+                        log_f.flush()
 
-                page.on("console", on_console)
+                    page.on("console", on_console)
 
-                page.goto(harness_url)
+                    page.goto(harness_url)
 
-                # Wait for game completion or timeout
-                done_event.wait(timeout=timeout)
+                    # Poll for game completion using page.evaluate(), which keeps
+                    # Playwright's event loop running so console messages are delivered.
+                    # We check window.gameResult every 500ms up to timeout.
+                    deadline = time.time() + timeout
+                    while time.time() < deadline:
+                        try:
+                            result_js = page.evaluate("window.gameResult")
+                            if result_js is not None:
+                                break
+                        except Exception:
+                            break
+                        time.sleep(0.5)
 
-                # Get the game result
-                result = page.evaluate("window.getGameResult()")
-                result_holder[0] = result
+                    result = page.evaluate("window.getGameResult()")
+                    result_holder[0] = result
 
                 browser.close()
         except Exception as e:
-            console_lines.append(f"[PLAYWRIGHT_ERROR] {e}")
-            done_event.set()
+            with open(output_log_path, 'a') as log_f:
+                log_f.write(f"[PLAYWRIGHT_ERROR] {e}\n")
 
     t = threading.Thread(target=browser_thread, daemon=True)
     t.start()
     t.join(timeout=timeout + 10)
-
-    # Write console output to log file
-    with open(output_log_path, 'w') as f:
-        f.write('\n'.join(console_lines))
-        f.write('\n')
 
     return result_holder[0]
 
@@ -509,10 +516,13 @@ def run_network_game(config: TestConfig, output_dir: str,
                     proc.kill()
                     proc.wait(timeout=2)
 
-        # Wait for WASM threads to finish
+        # Wait for WASM threads to finish.
+        # WASM browser (Playwright) needs time to detect server disconnect,
+        # close cleanly, and write its log file. Use a generous timeout (45s)
+        # so client2.log is always written before we try to read it.
         for t in [t1, t2]:
             if t is not None:
-                t.join(timeout=10)
+                t.join(timeout=45)
 
         return server_proc.returncode
     except subprocess.TimeoutExpired:

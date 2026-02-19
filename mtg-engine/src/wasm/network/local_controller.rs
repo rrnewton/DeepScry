@@ -18,7 +18,7 @@
 
 use super::client::SharedNetworkClient;
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{sort_spell_abilities, ChoiceContext, ChoiceResult, GameStateView, PlayerController};
+use crate::game::controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
 
@@ -197,7 +197,29 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
             });
 
         let state_hash = if client.is_network_debug() {
-            Some(crate::game::compute_view_hash(view))
+            let hash = crate::game::compute_view_hash(view);
+            // Debug: log each field used in compute_view_hash so we can compare with server
+            use crate::core::PlayerId;
+            log::info!(
+                "WASM_HASH_DEBUG: turn={} active={} step_hash_u32={} action_count={} (local={}) | P0: life={} hand={} lib={} gyard={} | P1: life={} hand={} lib={} gyard={} | bf={} stack={} | hash={:016x}",
+                view.turn_number(),
+                view.active_player().as_u32(),
+                view.current_step().as_hash_u32(),
+                action_count,  // server's action_count
+                view.action_count(),  // local (WASM) action_count
+                view.player_life(PlayerId::new(0)),
+                view.player_hand_size(PlayerId::new(0)),
+                view.player_library_size(PlayerId::new(0)),
+                view.player_graveyard_size(PlayerId::new(0)),
+                view.player_life(PlayerId::new(1)),
+                view.player_hand_size(PlayerId::new(1)),
+                view.player_library_size(PlayerId::new(1)),
+                view.player_graveyard_size(PlayerId::new(1)),
+                view.battlefield().len(),
+                view.stack().len(),
+                hash,
+            );
+            Some(hash)
         } else {
             None
         };
@@ -260,13 +282,14 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         }
 
         // ChoiceRequest is ready - delegate to inner controller with LOCAL abilities
-        let sorted = sort_spell_abilities(available);
         match self.inner.choose_spell_ability_to_play(view, available) {
             ChoiceResult::Ok(choice) => {
-                // Submit choice to server and consume the ChoiceRequest
+                // Submit choice to server and consume the ChoiceRequest.
+                // CRITICAL: Index into `available` (original order), NOT a sorted view.
+                // The server assigns option indices based on the original availability order.
                 let choice_indices = match &choice {
                     None => vec![0], // Pass
-                    Some(ability) => vec![sorted.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
+                    Some(ability) => vec![available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
                 };
                 self.submit_choice_to_server(choice_indices, view);
 
@@ -536,9 +559,10 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
 
         match self.inner.choose_from_library(view, valid_cards) {
             ChoiceResult::Ok(choice) => {
+                // Server LibrarySearchByName protocol is 1-based: 0=decline, 1=first card, 2=second card, etc.
                 let choice_index = match choice {
-                    None => valid_cards.len(),
-                    Some(idx) => idx,
+                    None => 0,            // 0 = decline
+                    Some(idx) => idx + 1, // 1-based: first card = 1
                 };
                 self.submit_choice_to_server(vec![choice_index], view);
                 ChoiceResult::Ok(choice)

@@ -227,7 +227,8 @@ ws.onerror = (e) => {
 };
 
 ws.onclose = () => {
-    log('[WASM_HARNESS] WebSocket closed');
+    const netState = wasm.network_get_state?.() ?? 'unknown';
+    log(`[WASM_HARNESS] WebSocket closed (network_state=${netState}, gameResult=${JSON.stringify(gameResult)})`);
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (!gameResult) {
         gameResult = { error: 'websocket_closed_early' };
@@ -245,6 +246,9 @@ async function runGameLoop() {
         // run_network_mode_ai() runs the game loop until NeedInput
         // It returns: 'complete', 'need_input', or throws
         const result = wasm.run_network_ai_step(controller, seed);
+        if (result !== 'need_input') {
+            log(`[WASM_HARNESS] run_network_ai_step returned: ${result}, state=${wasm.network_get_state()}`);
+        }
         if (result === 'complete') {
             if (!gameResult) {
                 gameResult = { choices: choiceCount, completed: true };

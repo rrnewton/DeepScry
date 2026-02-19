@@ -306,11 +306,19 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     let mut hasher = DefaultHasher::new();
 
     // ═══ Game Metadata ═══
+    // CRITICAL: Cast usize values to u64 before hashing.
+    // `usize` is platform-dependent (32-bit on WASM, 64-bit on native x86-64).
+    // `Hash for usize` calls `write_usize` which emits 4 bytes on wasm32 and 8 bytes
+    // on x86-64, causing different hash inputs for the same value across platforms.
+    // Explicit u64 casts ensure identical byte sequences on all platforms.
     view.turn_number().hash(&mut hasher);
     view.active_player().as_u32().hash(&mut hasher);
-    // Use discriminant for step since it may not implement Hash
-    std::mem::discriminant(&view.current_step()).hash(&mut hasher);
-    view.action_count().hash(&mut hasher);
+    // CRITICAL: Use Step::as_hash_u32() (not discriminant!) for cross-platform stability.
+    // `std::mem::discriminant<Step>` wraps `isize` internally (32-bit on WASM32,
+    // 64-bit on x86-64), causing `write_isize` to emit different byte counts.
+    // `as_hash_u32()` returns a fixed u32 from an explicit match, identical on all platforms.
+    view.current_step().as_hash_u32().hash(&mut hasher);
+    (view.action_count() as u64).hash(&mut hasher); // usize → u64 for cross-platform stability
 
     // ═══ Player State (2 players) ═══
     for player_idx in 0..2u32 {
@@ -322,18 +330,18 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
         // Hand SIZE only (contents are private)
         // Use player_hand_size() to correctly include hidden cards
         // (opponent's draws we don't have reveals for in network mode)
-        view.player_hand_size(player_id).hash(&mut hasher);
+        (view.player_hand_size(player_id) as u64).hash(&mut hasher); // usize → u64
 
         // Library SIZE only (contents are private)
         // Use player_library_size() to correctly handle remote libraries
         // (client shadow state where cards vec is empty but size is tracked)
-        view.player_library_size(player_id).hash(&mut hasher);
+        (view.player_library_size(player_id) as u64).hash(&mut hasher); // usize → u64
 
         // Graveyard contents (public zone - include card IDs in order)
         // Use player_graveyard_size() to correctly include hidden discards
         // (opponent's discards we don't know about in network mode)
         let graveyard = view.player_graveyard(player_id);
-        view.player_graveyard_size(player_id).hash(&mut hasher);
+        (view.player_graveyard_size(player_id) as u64).hash(&mut hasher); // usize → u64
         for &card_id in graveyard {
             card_id.as_u32().hash(&mut hasher);
         }
@@ -344,7 +352,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     let mut battlefield_cards: Vec<_> = view.battlefield().to_vec();
     battlefield_cards.sort_by_key(|id| id.as_u32());
 
-    battlefield_cards.len().hash(&mut hasher);
+    (battlefield_cards.len() as u64).hash(&mut hasher); // usize → u64
     for card_id in battlefield_cards {
         card_id.as_u32().hash(&mut hasher);
         // Include tap status (public information)
@@ -357,7 +365,7 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 
     // ═══ Stack (public zone) ═══
     let stack = view.stack();
-    stack.len().hash(&mut hasher);
+    (stack.len() as u64).hash(&mut hasher); // usize → u64
     for &card_id in stack {
         card_id.as_u32().hash(&mut hasher);
     }

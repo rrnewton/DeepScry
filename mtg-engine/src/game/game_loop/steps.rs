@@ -302,27 +302,38 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
-        // Sync network state before drawing
-        // This ensures revealed cards are queued in the library before draw_card() pops them
-        self.sync_to_action();
+        // Guard against re-entry: WASM harness creates a new GameLoop on each step_harness() call.
+        // If priority_round() blocks with NeedInput, current_step stays at Draw (advance_step()
+        // is never called), so the next step_harness() call would re-execute draw_card() again.
+        // We track which turn we already drew on to skip the draw on re-entry.
+        let current_turn = self.game.turn.turn_number;
+        let already_drew = self.game.turn.draw_step_executed_turn == Some(current_turn);
+        if !already_drew {
+            // Sync network state before drawing
+            // This ensures revealed cards are queued in the library before draw_card() pops them
+            self.sync_to_action();
 
-        // Debug: Log state hash before draw
-        #[cfg(feature = "verbose-logging")]
-        {
-            let player_name = self.get_player_name(active_player);
-            let draw_msg = format!("{} draws", player_name);
-            self.game.debug_log_state_hash(&draw_msg);
+            // Debug: Log state hash before draw
+            #[cfg(feature = "verbose-logging")]
+            {
+                let player_name = self.get_player_name(active_player);
+                let draw_msg = format!("{} draws", player_name);
+                self.game.debug_log_state_hash(&draw_msg);
+            }
+
+            // Draw a card
+            let (_, draw_count) = self.game.draw_card(active_player)?;
+
+            // Mark this turn's mandatory draw as executed
+            self.game.turn.draw_step_executed_turn = Some(current_turn);
+
+            // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
+            self.game.check_card_drawn_triggers(active_player, draw_count)?;
+
+            // Push reveals immediately for network mode (server-side)
+            // This ensures clients receive the draw reveal before their GameLoop needs it
+            self.push_reveals(active_player);
         }
-
-        // Draw a card
-        let (_, draw_count) = self.game.draw_card(active_player)?;
-
-        // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
-        self.game.check_card_drawn_triggers(active_player, draw_count)?;
-
-        // Push reveals immediately for network mode (server-side)
-        // This ensures clients receive the draw reveal before their GameLoop needs it
-        self.push_reveals(active_player);
 
         #[cfg(feature = "verbose-logging")]
         {

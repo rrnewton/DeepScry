@@ -39,6 +39,29 @@ pub enum Step {
 }
 
 impl Step {
+    /// Get a fixed platform-independent u32 discriminant for hashing.
+    ///
+    /// CRITICAL: Use this instead of `std::mem::discriminant` for network hash computation.
+    /// `Discriminant<Step>` wraps `isize` internally (32-bit on WASM32, 64-bit on x86-64),
+    /// causing `write_isize` to emit different byte counts, producing different hashes.
+    /// This explicit match returns a fixed `u32` that is identical on all platforms.
+    pub fn as_hash_u32(self) -> u32 {
+        match self {
+            Step::Untap => 0,
+            Step::Upkeep => 1,
+            Step::Draw => 2,
+            Step::Main1 => 3,
+            Step::BeginCombat => 4,
+            Step::DeclareAttackers => 5,
+            Step::DeclareBlockers => 6,
+            Step::CombatDamage => 7,
+            Step::EndCombat => 8,
+            Step::Main2 => 9,
+            Step::End => 10,
+            Step::Cleanup => 11,
+        }
+    }
+
     /// Get the phase this step belongs to
     pub fn phase(&self) -> Phase {
         match self {
@@ -141,6 +164,74 @@ pub struct TurnStructure {
     /// When both players pass consecutively (reaches 2), the stack resolves or phase advances.
     /// This must persist across NeedInput returns for WASM non-blocking controllers.
     pub consecutive_passes: u8,
+
+    /// Tracks which turn the mandatory Draw step card draw was executed.
+    /// Prevents double-draw when WASM harness re-creates GameLoop mid-step (the harness creates
+    /// a new GameLoop on each step_harness() call; if priority_round blocks with NeedInput,
+    /// current_step stays at Draw, and the next call would re-execute draw_card()).
+    /// Auto-invalidates when turn_number changes (Some(old_turn) != Some(current_turn)).
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub draw_step_executed_turn: Option<u32>,
+
+    /// Tracks which turn reset_turn_state() has already been called for.
+    /// Prevents reset_turn_state from running multiple times per turn when the WASM harness
+    /// re-creates GameLoop on each step_harness() call. Re-running reset_turn_state mid-turn
+    /// would reset lands_played_this_turn to 0, letting the local WASM client offer PlayLand
+    /// again while the server correctly denies it, causing DESYNC in available action lists.
+    /// Auto-invalidates when turn_number changes (Some(old_turn) != Some(current_turn)).
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub turn_state_reset_turn: Option<u32>,
+
+    /// Tracks which turn the DeclareAttackers choice has already been made for.
+    /// Prevents re-asking the active player for attacker choices when the game loop resumes
+    /// after NeedInput (from the subsequent priority_round). Without this flag, when the
+    /// active player chose no attackers (no creatures tapped), re-entering declare_attackers_step
+    /// would find available attackers again and consume the wrong opponent choice message.
+    /// Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub attackers_declared_turn: Option<u32>,
+
+    /// Tracks which turn the DeclareBlockers choice has already been made for.
+    /// Prevents re-asking the defending player for blocker choices when the game loop resumes
+    /// after NeedInput (from the subsequent priority_round). Without this flag, re-entering
+    /// declare_blockers_step would consume the wrong ChoiceRequest from the server queue,
+    /// causing the WASM shadow state's action_count to fall 1 behind the server.
+    /// Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub blockers_declared_turn: Option<u32>,
+
+    /// Tracks which turn first-strike combat damage has already been dealt.
+    /// Prevents re-dealing first-strike damage when the game loop resumes after NeedInput
+    /// from the subsequent priority_round. The WASM harness recreates GameLoop on every
+    /// step_harness() call, so without this guard, first-strike damage would be applied
+    /// multiple times across calls.
+    /// Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub combat_first_strike_damage_dealt_turn: Option<u32>,
+
+    /// Tracks which turn the priority round AFTER first-strike damage has completed.
+    /// Required because has_first_strike_combat() may return false on re-entry (if
+    /// first-strike creatures died), which would cause the first-strike priority_round
+    /// to be skipped entirely on subsequent step_harness() calls.
+    /// Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub combat_first_strike_priority_done_turn: Option<u32>,
+
+    /// Tracks which turn normal combat damage has already been dealt.
+    /// Prevents re-dealing combat damage when the game loop resumes after NeedInput
+    /// from the subsequent priority_round. The WASM harness recreates GameLoop on every
+    /// step_harness() call, causing double damage and action_count divergence without
+    /// this guard.
+    /// Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub combat_damage_dealt_turn: Option<u32>,
 }
 
 impl TurnStructure {
@@ -152,6 +243,13 @@ impl TurnStructure {
             active_player_idx: 0, // Default to first player, should be set by GameState
             priority_player: None,
             consecutive_passes: 0,
+            draw_step_executed_turn: None,
+            turn_state_reset_turn: None,
+            attackers_declared_turn: None,
+            blockers_declared_turn: None,
+            combat_first_strike_damage_dealt_turn: None,
+            combat_first_strike_priority_done_turn: None,
+            combat_damage_dealt_turn: None,
         }
     }
 
@@ -163,6 +261,13 @@ impl TurnStructure {
             active_player_idx: starting_idx,
             priority_player: None,
             consecutive_passes: 0,
+            draw_step_executed_turn: None,
+            turn_state_reset_turn: None,
+            attackers_declared_turn: None,
+            blockers_declared_turn: None,
+            combat_first_strike_damage_dealt_turn: None,
+            combat_first_strike_priority_done_turn: None,
+            combat_damage_dealt_turn: None,
         }
     }
 

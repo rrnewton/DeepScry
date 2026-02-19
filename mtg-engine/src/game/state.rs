@@ -170,6 +170,66 @@ pub struct GameState {
     /// - Cards are cast from exile (reveal timing issues)
     #[serde(default)]
     pub is_shadow_game: bool,
+
+    /// Pending typecycling library search (WASM game loop resumption).
+    ///
+    /// When the WASM game loop is interrupted (NeedInput) during the library
+    /// search phase of typecycling, this records the search in progress.
+    /// On the next game loop invocation, `priority_round()` checks this flag
+    /// and resumes the library search directly instead of asking the controller
+    /// for a spell ability choice (which would misroute the queued LibrarySearchByName
+    /// OpponentChoice to `choose_spell_ability_to_play`).
+    ///
+    /// Not serialized — this is transient game loop state that only persists
+    /// across WASM step_harness() invocations within the same session.
+    #[serde(skip)]
+    pub pending_cycling_search: Option<(PlayerId, crate::core::Subtype)>,
+
+    /// Pending spell cast (WASM game loop resumption).
+    ///
+    /// When the WASM game loop is interrupted (NeedInput) during mode selection
+    /// or target selection of a spell cast, this records the card being cast.
+    /// On the next game loop invocation, `priority_round()` checks this flag
+    /// and resumes the cast from where it was interrupted, bypassing
+    /// `choose_spell_ability_to_play` which would misroute the queued mode or
+    /// target ChoiceRequest to the spell ability choice handler.
+    ///
+    /// Not serialized — transient game loop state for WASM resumption only.
+    #[serde(skip)]
+    pub pending_cast: Option<(PlayerId, CardId)>,
+
+    /// Pending activated ability (WASM game loop resumption).
+    ///
+    /// When the WASM game loop is interrupted (NeedInput) during target selection
+    /// of an activated ability, this records the ability being executed.
+    /// On the next game loop invocation, `priority_round()` checks this flag
+    /// and resumes from where it was interrupted, bypassing
+    /// `choose_spell_ability_to_play` which would misroute the queued target
+    /// ChoiceRequest to the spell ability choice handler.
+    ///
+    /// Stores (player_id, card_id, ability_index).
+    ///
+    /// Not serialized — transient game loop state for WASM resumption only.
+    #[serde(skip)]
+    pub pending_activation: Option<(PlayerId, CardId, usize)>,
+
+    /// Targets chosen for spells currently on the stack (spell_id -> chosen_targets).
+    ///
+    /// Targets are selected at CAST time but consumed at RESOLUTION time. In the WASM
+    /// harness, `GameLoop` is recreated on every `step_harness()` call. Storing targets
+    /// here (in `GameState`) ensures they survive across step_harness() invocations —
+    /// e.g., when a priority_round returns NeedInput between the cast step_harness and
+    /// the resolve step_harness.
+    ///
+    /// Without this persistence, spells would "resolve" with no targets and fizzle,
+    /// causing state divergence (opponent's permanents not being destroyed/moved/etc).
+    ///
+    /// Entries are removed when the corresponding spell resolves or is countered.
+    /// Uses SmallVec for targets since most spells have 0-2 targets.
+    ///
+    /// Not serialized — transient game loop state for WASM resumption only.
+    #[serde(skip)]
+    pub spell_targets: Vec<(CardId, smallvec::SmallVec<[CardId; 2]>)>,
 }
 
 impl GameState {
@@ -244,6 +304,10 @@ impl GameState {
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             is_shadow_game: false, // Default: not a shadow game
+            pending_cycling_search: None,
+            pending_cast: None,
+            pending_activation: None,
+            spell_targets: Vec::new(),
         }
     }
 
@@ -2748,6 +2812,11 @@ impl Clone for GameState {
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             is_shadow_game: self.is_shadow_game,
+            // pending_cycling_search, pending_cast, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).
+            pending_cycling_search: None,
+            pending_cast: None,
+            pending_activation: None,
+            spell_targets: Vec::new(),
         }
     }
 }

@@ -49,6 +49,9 @@ pub struct OpponentChoiceData {
     pub description: String,
     pub spell_ability: Option<SpellAbility>,
     pub action_count: u64,
+    /// For LibrarySearchByName choices: the specific CardId that was chosen.
+    /// Allows the shadow game's WasmRemoteController to know which card moved to hand.
+    pub library_search_result: Option<crate::core::CardId>,
 }
 
 /// Data from a ChoiceRequest message
@@ -487,7 +490,7 @@ impl WasmNetworkClient {
                 abilities,
                 ..
             } => {
-                log::debug!(
+                log::info!(
                     "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={} abilities={}",
                     choice_seq,
                     choice_type,
@@ -510,12 +513,14 @@ impl WasmNetworkClient {
                 description,
                 spell_ability,
                 action_count,
+                library_search_result,
                 ..
             } => {
-                log::debug!(
-                    "WasmNetworkClient: OpponentChoice seq={} indices={:?} desc={}",
+                log::info!(
+                    "WasmNetworkClient: OpponentChoice seq={} indices={:?} action_count={} desc={}",
                     choice_seq,
                     choice_indices,
+                    action_count,
                     description
                 );
                 self.opponent_choices.push_back(OpponentChoiceData {
@@ -524,11 +529,12 @@ impl WasmNetworkClient {
                     description,
                     spell_ability,
                     action_count,
+                    library_search_result,
                 });
             }
 
             ServerMessage::ChoiceAccepted { choice_seq, .. } => {
-                log::debug!("WasmNetworkClient: ChoiceAccepted seq={}", choice_seq);
+                log::info!("WasmNetworkClient: ChoiceAccepted seq={}", choice_seq);
                 self.choice_acknowledged = true;
             }
 
