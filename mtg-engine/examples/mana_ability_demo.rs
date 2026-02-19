@@ -39,6 +39,7 @@ fn main() -> Result<()> {
             player: alice_id,
             mana: ManaCost::from_string("G"),
             produces_chosen_color: false,
+            amount_var: None,
         }],
         "Add {G}".to_string(),
         true, // This IS a mana ability
@@ -67,6 +68,7 @@ fn main() -> Result<()> {
             player: alice_id,
             mana: ManaCost::from_string("CC"), // 2 colorless mana
             produces_chosen_color: false,
+            amount_var: None,
         }],
         "Add {C}{C}".to_string(),
         true, // This IS a mana ability
@@ -110,6 +112,7 @@ fn main() -> Result<()> {
         player: alice_id,
         mana: ManaCost::from_string("CC"),
         produces_chosen_color: false,
+        amount_var: None,
     };
     game.execute_effect(&effect)?;
     println!("  ✓ Executed effect: Added {{C}}{{C}} to mana pool");
@@ -145,6 +148,7 @@ fn main() -> Result<()> {
         player: alice_id,
         mana: ManaCost::from_string("G"),
         produces_chosen_color: false,
+        amount_var: None,
     };
     game.execute_effect(&effect)?;
     println!("  ✓ Executed effect: Added {{G}} to mana pool");
