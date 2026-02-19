@@ -2942,7 +2942,7 @@ impl GameState {
                     .payer
                     .parse::<u32>()
                     .map(PlayerId::new)
-                    .unwrap_or(PlayerId::new(0));
+                    .unwrap_or_else(|_| PlayerId::new(0));
 
                 // Check if the cost can be paid
                 let can_pay = match &unless_cost.cost {
@@ -2961,7 +2961,7 @@ impl GameState {
                     UnlessCostType::PayLife(amount) => {
                         // Check if player has enough life
                         self.get_player(payer_id)
-                            .map(|p| p.life > *amount as i32)
+                            .map(|p| p.life > i32::from(*amount))
                             .unwrap_or(false)
                     }
                     UnlessCostType::Mana(mana_cost) => {
@@ -3032,7 +3032,7 @@ impl GameState {
                         UnlessCostType::PayLife(amount) => {
                             // Pay life
                             if let Some(player) = self.players.iter_mut().find(|p| p.id == payer_id) {
-                                player.life -= *amount as i32;
+                                player.life -= i32::from(*amount);
                                 true
                             } else {
                                 false
