@@ -100,8 +100,7 @@ Key gaps affecting this deck:
 ### Spells/Other (8):
 
 **Abandon Attachments (x1)** - 1UR Instant Lesson
-- [ ] "You may discard. If you do, draw 2" (UnlessCost$ Discard | UnlessSwitched$ True)
-- GAP: UnlessCost/UnlessSwitched optional cost
+- [x] "You may discard. If you do, draw 2" (UnlessCost$ Discard | UnlessSwitched$ True) **FULLY WORKING 2026-02-19**
 
 **Allies at Last (x2)** - 2G Instant
 - [x] Affinity for Allies (K:Affinity:Ally) **IMPLEMENTED 2026-02-10**
@@ -126,7 +125,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (31/40 fully working)
+## Verified Cards Summary (32/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -147,12 +146,20 @@ Working cards:
 16. **Rebellious Captives** - Exhaust ability for counters + earthbend **FULLY WORKING 2026-01-22**
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
+19. **Abandon Attachments** - UnlessCost$ Discard optional draw 2 **FULLY WORKING 2026-02-19**
 
 ## Recent Fixes (2026-02-19)
 
 1. **ManaEngine granted ability integration**: Extended ManaEngine to recognize mana abilities granted by continuous effects (like Chromatic Lantern's "Lands you control have '{T}: Add any color'"). Added `get_effective_mana_production()` helper to merge cached production with granted abilities, `merge_mana_production_kinds()` for OR semantics. Updated `compute_from_scratch()` and `scan_battlefield_fallback()` to use effective production. Tectonic Split's "lands tap for 3 mana" now fully functional.
 
-2. **UnlessCost$ parsing infrastructure**: Added data types and parsing for UnlessCost$ parameters. New types: `UnlessCostType` enum (Mana, Discard, Sacrifice, PayLife, Reveal), `UnlessCost` struct, `Effect::UnlessCostWrapper` variant. Parsing functions: `parse_unless_cost()`, `wrap_with_unless_cost()`, `params_to_effect_with_unless()`. Supports patterns like `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`. **Remaining**: Player choice during resolution.
+2. **UnlessCost$ parsing infrastructure**: Added data types and parsing for UnlessCost$ parameters. New types: `UnlessCostType` enum (Mana, Discard, Sacrifice, PayLife, Reveal), `UnlessCost` struct, `Effect::UnlessCostWrapper` variant. Parsing functions: `parse_unless_cost()`, `wrap_with_unless_cost()`, `params_to_effect_with_unless()`. Supports patterns like `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`.
+
+3. **UnlessCost$ resolution logic**: Implemented full resolution for UnlessCostWrapper effect in actions/mod.rs:
+   - Payer resolution: Resolves "You", "TargetedController" references to concrete PlayerId
+   - Cost checking: Verifies player can pay (hand size for discard, life total, controlled permanents for sacrifice)
+   - AI heuristics: AI always pays if it can (beneficial for UnlessSwitched=true effects)
+   - Payment execution: Discard removes cards from hand, PayLife reduces life total
+   - Conditional execution: Inner effect executes based on switched flag (if paid vs if not paid)
 
 ## Recent Fixes (2026-02-18)
 
@@ -198,11 +205,11 @@ Working cards:
 
 1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
 2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-18**
-3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics **PARSING DONE 2026-02-19**
+3. ~~**UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics~~ **FULLY IMPLEMENTED 2026-02-19**
    - Parsing: ✅ UnlessCostType enum (Mana, Discard, Sacrifice, PayLife, Reveal)
    - Parsing: ✅ Effect::UnlessCostWrapper wraps effects with unless_cost
    - Parsing: ✅ parse_unless_cost() and wrap_with_unless_cost() in effect_converter.rs
-   - Remaining: Player choice during spell resolution (prompt to pay/not pay)
+   - Resolution: ✅ Payer resolution, cost checking, AI heuristics, payment execution
    - Cards: Abandon Attachments, Academy Loremaster, Aether Barrier
    - Pattern: `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`
 4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **FULLY IMPLEMENTED 2026-02-19**
