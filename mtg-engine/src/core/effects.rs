@@ -791,6 +791,28 @@ pub enum Effect {
     ///
     /// This effect clears the game.remembered_cards storage after ImmediateTrigger has checked it.
     ClearRemembered,
+
+    /// Wraps an effect with an UnlessCost condition
+    ///
+    /// The wrapped effect only executes if the payer pays (or doesn't pay, depending on switched flag).
+    ///
+    /// # Examples
+    ///
+    /// **Counter unless pays**: (switched=false) Effect resolves if payer does NOT pay
+    /// ```text
+    /// DB$ Counter | UnlessCost$ 2 | UnlessPayer$ TargetedController
+    /// ```
+    ///
+    /// **You may discard**: (switched=true) Effect resolves if payer DOES pay
+    /// ```text
+    /// SP$ Draw | NumCards$ 2 | UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True
+    /// ```
+    UnlessCostWrapper {
+        /// The effect to conditionally execute
+        inner_effect: Box<Effect>,
+        /// The UnlessCost condition
+        unless_cost: UnlessCost,
+    },
 }
 
 /// Condition for ImmediateTrigger effect
@@ -858,6 +880,9 @@ impl Effect {
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,
+
+            // UnlessCost wrapper delegates to inner effect's category
+            Effect::UnlessCostWrapper { inner_effect, .. } => inner_effect.target_category(),
 
             // Effects requiring creature/permanent/spell targets
             Effect::DealDamage { .. }
@@ -1312,6 +1337,72 @@ pub enum RaisedCostAmount {
     Fixed(u8),
     /// A variable amount referencing an SVar (e.g., Sac<X/Land> with SVar:X:...)
     Variable(String),
+}
+
+/// Represents the type of cost for an UnlessCost condition
+///
+/// These correspond to the `UnlessCost$` parameter in card scripts.
+/// Common patterns:
+/// - `UnlessCost$ 2` - pay {2} generic mana
+/// - `UnlessCost$ Discard<1/Card>` - discard 1 card
+/// - `UnlessCost$ Sac<1/Creature>` - sacrifice 1 creature
+/// - `UnlessCost$ PayLife<3>` - pay 3 life
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnlessCostType {
+    /// Pay mana cost (e.g., "2", "1U", "X")
+    Mana(crate::core::ManaCost),
+    /// Discard N cards of the given type
+    /// Format: `Discard<N/Type>` (e.g., Discard<1/Card>)
+    Discard { count: u8, card_type: String },
+    /// Sacrifice N permanents of the given type
+    /// Format: `Sac<N/Type>` (e.g., Sac<1/Creature>)
+    Sacrifice { count: u8, valid_type: String },
+    /// Pay N life
+    /// Format: `PayLife<N>`
+    PayLife(u8),
+    /// Reveal N cards of the given type from hand
+    /// Format: `Reveal<N/Type>` (e.g., Reveal<1/Giant>)
+    Reveal { count: u8, card_type: String },
+}
+
+/// Represents an UnlessCost condition that wraps an effect
+///
+/// In MTG Forge card scripts, this corresponds to:
+/// - `UnlessCost$ <cost>` - the cost to pay
+/// - `UnlessPayer$ <player>` - who pays (defaults to TargetedController)
+/// - `UnlessSwitched$ True` - if present, effect executes when paid (otherwise when NOT paid)
+///
+/// # Examples
+///
+/// **Counter unless pays**: Effect executes when cost is NOT paid
+/// ```text
+/// DB$ Counter | UnlessCost$ 2 | UnlessPayer$ TargetedController
+/// ```
+///
+/// **You may discard to draw**: Effect executes when cost IS paid (switched)
+/// ```text
+/// SP$ Draw | NumCards$ 2 | UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlessCost {
+    /// The cost to pay
+    pub cost: UnlessCostType,
+    /// Who pays the cost (resolved player reference)
+    /// Common values: "You", "TargetedController", "Player"
+    pub payer: String,
+    /// If true, effect executes when paid; if false, when not paid
+    pub switched: bool,
+}
+
+impl UnlessCost {
+    /// Create a new UnlessCost
+    pub fn new(cost: UnlessCostType, payer: &str, switched: bool) -> Self {
+        Self {
+            cost,
+            payer: payer.to_string(),
+            switched,
+        }
+    }
 }
 
 /// Condition for when a static ability is active

@@ -650,6 +650,16 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // Log the UnlessCost wrapper with inner effect
+                let switched = if unless_cost.switched { "if paid" } else { "unless paid" };
+                let inner_desc = format!("{:?}", inner_effect.target_category());
+                let message = format!("{source_name} ({source_id}) UnlessCost ({switched}): {inner_desc}");
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

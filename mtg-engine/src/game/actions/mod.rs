@@ -2856,6 +2856,19 @@ impl GameState {
                 // Clear the remembered cards storage
                 self.remembered_cards.clear();
             }
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost: _,
+            } => {
+                // TODO(mtg-UnlessCost): Implement UnlessCost resolution
+                // For now, just execute the inner effect unconditionally
+                // Full implementation requires:
+                // 1. Check if payer wants to pay the cost
+                // 2. If UnlessSwitched: execute inner effect only if paid
+                // 3. If not switched: execute inner effect only if NOT paid
+                log::debug!("UnlessCostWrapper: executing inner effect (UnlessCost not yet implemented)");
+                self.execute_effect(inner_effect)?;
+            }
         }
         Ok(())
     }

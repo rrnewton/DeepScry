@@ -836,6 +836,18 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
     }
 }
 
+/// Convert ability parameters to an Effect, applying UnlessCost wrapping if present
+///
+/// This is the main entry point for effect parsing. It:
+/// 1. Parses the base effect using params_to_effect
+/// 2. Wraps with UnlessCostWrapper if UnlessCost$ parameter is present
+///
+/// Use this instead of params_to_effect when parsing spell abilities.
+pub fn params_to_effect_with_unless(params: &AbilityParams) -> Option<Effect> {
+    let effect = params_to_effect(params)?;
+    Some(wrap_with_unless_cost(effect, params))
+}
+
 /// Convert Charm ability parameters to a ModalChoice Effect with full SVar resolution.
 ///
 /// This resolves each mode's SVar to get the actual effect and description.
@@ -1182,6 +1194,81 @@ pub fn params_to_immediate_trigger_with_svars(
         condition,
         sub_effects: vec![execute_effect],
     })
+}
+
+/// Parse UnlessCost parameters from ability params
+///
+/// Parses:
+/// - UnlessCost$ <cost> - the cost to pay (mana, Discard<N>, Sac<N/Type>, etc.)
+/// - UnlessPayer$ <player> - who pays (default: TargetedController)
+/// - UnlessSwitched$ True - if present, effect executes when paid (default: when NOT paid)
+///
+/// Returns None if no UnlessCost$ parameter is present.
+fn parse_unless_cost(params: &AbilityParams) -> Option<crate::core::effects::UnlessCost> {
+    use crate::core::effects::{UnlessCost, UnlessCostType};
+
+    let cost_str = params.get("UnlessCost")?;
+
+    // Parse the cost type
+    let cost_type = if cost_str.starts_with("Discard<") && cost_str.ends_with('>') {
+        // Format: Discard<N/Type> (e.g., "Discard<1/Card>")
+        let inner = &cost_str[8..cost_str.len() - 1];
+        let parts: Vec<&str> = inner.split('/').collect();
+        let count = parts.first().and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+        let card_type = parts.get(1).unwrap_or(&"Card").to_string();
+        UnlessCostType::Discard { count, card_type }
+    } else if cost_str.starts_with("Sac<") && cost_str.ends_with('>') {
+        // Format: Sac<N/Type> (e.g., "Sac<1/Creature>")
+        let inner = &cost_str[4..cost_str.len() - 1];
+        let parts: Vec<&str> = inner.split('/').collect();
+        let count = parts.first().and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+        let valid_type = parts.get(1).unwrap_or(&"Permanent").to_string();
+        UnlessCostType::Sacrifice { count, valid_type }
+    } else if cost_str.starts_with("PayLife<") && cost_str.ends_with('>') {
+        // Format: PayLife<N> (e.g., "PayLife<3>")
+        let amount_str = &cost_str[8..cost_str.len() - 1];
+        let amount = amount_str.parse::<u8>().unwrap_or(1);
+        UnlessCostType::PayLife(amount)
+    } else if cost_str.starts_with("Reveal<") && cost_str.ends_with('>') {
+        // Format: Reveal<N/Type> (e.g., "Reveal<1/Giant>")
+        let inner = &cost_str[7..cost_str.len() - 1];
+        let parts: Vec<&str> = inner.split('/').collect();
+        let count = parts.first().and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+        let card_type = parts.get(1).unwrap_or(&"Card").to_string();
+        UnlessCostType::Reveal { count, card_type }
+    } else {
+        // Assume it's a mana cost (e.g., "2", "1U", "X")
+        let mana_cost = crate::core::ManaCost::from_string(cost_str);
+        UnlessCostType::Mana(mana_cost)
+    };
+
+    // Parse who pays (default to TargetedController for counter spells)
+    let payer = params.get("UnlessPayer").unwrap_or("TargetedController");
+
+    // Parse whether the logic is switched
+    let switched = params.get("UnlessSwitched") == Some("True");
+
+    Some(UnlessCost::new(cost_type, payer, switched))
+}
+
+/// Wrap an effect with an UnlessCost condition if the params specify one
+///
+/// If UnlessCost$ is present in params, wraps the effect in an UnlessCostWrapper.
+/// Otherwise, returns the effect unchanged.
+pub fn wrap_with_unless_cost(effect: Effect, params: &AbilityParams) -> Effect {
+    if let Some(unless_cost) = parse_unless_cost(params) {
+        log::debug!(
+            target: "effect_converter",
+            "Wrapping effect with UnlessCost: cost={:?}, payer={}, switched={}",
+            unless_cost.cost, unless_cost.payer, unless_cost.switched
+        );
+        Effect::UnlessCostWrapper {
+            inner_effect: Box::new(effect),
+            unless_cost,
+        }
+    } else {
+        effect
+    }
 }
 
 #[cfg(test)]
@@ -1883,6 +1970,87 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 }
             }
             _ => panic!("Expected ModalChoice effect"),
+        }
+    }
+
+    #[test]
+    fn test_unless_cost_discard() {
+        use crate::core::effects::UnlessCostType;
+
+        // Test Abandon Attachments pattern: "You may discard. If you do, draw 2"
+        let params = AbilityParams::parse(
+            "A:SP$ Draw | NumCards$ 2 | UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True",
+        )
+        .unwrap();
+
+        let effect = params_to_effect_with_unless(&params).unwrap();
+
+        match effect {
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // Check inner effect is DrawCards
+                match *inner_effect {
+                    Effect::DrawCards { count, .. } => {
+                        assert_eq!(count, 2, "Should draw 2 cards");
+                    }
+                    _ => panic!("Inner effect should be DrawCards"),
+                }
+
+                // Check UnlessCost
+                assert!(unless_cost.switched, "Should be switched (pay to get effect)");
+                assert_eq!(unless_cost.payer, "You", "Payer should be 'You'");
+
+                match unless_cost.cost {
+                    UnlessCostType::Discard { count, ref card_type } => {
+                        assert_eq!(count, 1, "Should discard 1 card");
+                        assert_eq!(card_type, "Card", "Should be any card");
+                    }
+                    _ => panic!("Cost should be Discard"),
+                }
+            }
+            _ => panic!("Expected UnlessCostWrapper effect"),
+        }
+    }
+
+    #[test]
+    fn test_unless_cost_mana() {
+        // Test counter spell pattern: "Counter unless controller pays 2"
+        let params = AbilityParams::parse("A:SP$ Counter | UnlessCost$ 2").unwrap();
+
+        let effect = params_to_effect_with_unless(&params).unwrap();
+
+        match effect {
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // Check inner effect is CounterSpell
+                assert!(matches!(*inner_effect, Effect::CounterSpell { .. }));
+
+                // Check UnlessCost
+                assert!(!unless_cost.switched, "Should not be switched (effect if NOT paid)");
+                assert_eq!(unless_cost.payer, "TargetedController", "Default payer");
+            }
+            _ => panic!("Expected UnlessCostWrapper effect"),
+        }
+    }
+
+    #[test]
+    fn test_no_unless_cost() {
+        // Test regular Draw without UnlessCost
+        let params = AbilityParams::parse("A:SP$ Draw | NumCards$ 3").unwrap();
+
+        let effect = params_to_effect_with_unless(&params).unwrap();
+
+        // Should not be wrapped
+        match effect {
+            Effect::DrawCards { count, .. } => {
+                assert_eq!(count, 3, "Should draw 3 cards");
+            }
+            Effect::UnlessCostWrapper { .. } => panic!("Should not be wrapped"),
+            _ => panic!("Expected DrawCards effect"),
         }
     }
 }

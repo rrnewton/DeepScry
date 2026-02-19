@@ -148,6 +148,10 @@ Working cards:
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
 
+## Recent Fixes (2026-02-19)
+
+1. **ManaEngine granted ability integration**: Extended ManaEngine to recognize mana abilities granted by continuous effects (like Chromatic Lantern's "Lands you control have '{T}: Add any color'"). Added `get_effective_mana_production()` helper to merge cached production with granted abilities, `merge_mana_production_kinds()` for OR semantics. Updated `compute_from_scratch()` and `scan_battlefield_fallback()` to use effective production. Tectonic Split's "lands tap for 3 mana" now fully functional.
+
 ## Recent Fixes (2026-02-18)
 
 1. **S:Mode$ RaiseCost**: Implemented additional cost static abilities, mirroring the existing ReduceCost pattern. Added `StaticAbility::RaiseCost` variant with `RaisedCost` enum supporting two types:
@@ -157,7 +161,7 @@ Working cards:
    - Added `can_pay_sacrifice_costs()` and `pay_sacrifice_costs()` to check/execute sacrifice costs during spell casting
    - Integrated into `calculate_effective_cost()` for mana increases and `push_castable_spells()` for sacrifice castability checks
 
-2. **AddAbility$ (partial)**: Implemented parsing and infrastructure for granting abilities to permanents. Added `StaticAbility::GrantAbility` variant that stores parsed `ActivatedAbility`. Added `get_granted_abilities()` method to query granted abilities for a permanent. Supports `Affected$ Land.YouCtrl` selector. **Remaining work**: Integrate granted mana abilities into ManaEngine to fully enable Chromatic Lantern/Tectonic Split.
+2. **AddAbility$**: Implemented parsing and infrastructure for granting abilities to permanents. Added `StaticAbility::GrantAbility` variant that stores parsed `ActivatedAbility`. Added `get_granted_abilities()` method to query granted abilities for a permanent. Supports `Affected$ Land.YouCtrl` selector.
 
 ## Recent Fixes (2026-02-13)
 
@@ -197,10 +201,10 @@ Working cards:
    - Cards: Abandon Attachments, Academy Loremaster, Aether Barrier
    - Pattern: `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`
    - UnlessSwitched$ True: pay cost → get effect; False: don't pay → get effect
-4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **PARTIAL 2026-02-18** (parsing done, ManaEngine integration needed)
+4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **FULLY IMPLEMENTED 2026-02-19**
    - Parsing: ✅ StaticAbility::GrantAbility with parsed ActivatedAbility
    - Query: ✅ get_granted_abilities() in continuous_effects.rs
-   - Remaining: Integrate into ManaEngine for granted mana abilities
+   - ManaEngine: ✅ get_effective_mana_production() merges granted abilities with cached production
 
 ## Testing Protocol
 
