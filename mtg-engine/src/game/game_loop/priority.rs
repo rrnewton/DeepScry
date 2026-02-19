@@ -1226,6 +1226,13 @@ impl<'a> GameLoop<'a> {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to pay cost: {e}");
                                         }
+                                        log::warn!(
+                                            "pay_ability_cost failed for {:?} ability {} (player {:?}): {}",
+                                            card_id,
+                                            ability.description,
+                                            current_priority,
+                                            e
+                                        );
                                         // Clear pending_activation — ability failed, no resumption needed
                                         self.game.pending_activation = None;
                                         // Treat failed ability activation like passing priority to prevent infinite loops
@@ -1567,8 +1574,24 @@ impl<'a> GameLoop<'a> {
 
                                     // Clear pending_activation — ability executed successfully
                                     self.game.pending_activation = None;
-                                } else if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                    eprintln!("  Ability not found");
+                                } else {
+                                    log::warn!(
+                                        "ActivateAbility: ability not found for card {:?} '{}' ability_index={} (player {:?})",
+                                        card_id, card_name.as_ref().map(|n| n.as_str()).unwrap_or("MISSING"), ability_index, current_priority
+                                    );
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        eprintln!("  Ability not found");
+                                    }
+                                    // Treat as pass to avoid infinite loop
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
                                 }
                             }
                             crate::core::SpellAbility::CastFromExile {

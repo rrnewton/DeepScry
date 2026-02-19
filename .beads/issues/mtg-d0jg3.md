@@ -8,7 +8,7 @@ labels:
 - network
 - tracking
 created_at: 2026-01-23T01:47:39.764992958+00:00
-updated_at: 2026-02-19T07:37:11.081789879+00:00
+updated_at: 2026-02-19T13:25:07.186875243+00:00
 ---
 
 # Description
@@ -71,6 +71,24 @@ All known desync patterns have been fixed. Seeds 1-10 pass 100% with identical l
 
 ### References
 
-- Native race condition fix: e30c0433d (prepare_for_priority_choice())
-- WASM desync fixes: 8cb994050 (pending_activation + token defs)
-- Equivalence test: ./tests/network_vs_local_equivalence_e2e.sh
+- Native race condition fix: `e30c0433d` (`prepare_for_priority_choice()`)
+- WASM desync fixes: `8cb994050` (`pending_activation` + token defs)
+- Equivalence test: `./tests/network_vs_local_equivalence_e2e.sh`
+
+---
+
+### Additional Fix (2026-02-19_#1835(9f35d9252))
+
+**Token shadow game desync fix** - Seeds 1-10 continue passing after race condition fixes.
+
+Root cause: `init_game_reserve_only_wasm()` was missing two critical initializations that native client (network/client.rs) had:
+
+1. **`game.set_next_entity_id(ranges.p2_end)`**: Without this, shadow game's `next_entity_id` stayed at 3 (after 3 PlayerId allocations). When Clue Token was created by server with ID 80, CreateToken in shadow game assigned token ID 3 instead, causing `game.cards.get(80)` to return None when remote controller tried to activate ability on card 80.
+
+2. **`game.set_shadow_game(true)`**: Without this, the CreateToken dedup check (`if self.is_shadow_game && self.cards.contains(token_id)`) never fired, causing EntityStore write-once panic if CardRevealed(TokenCreated) pre-added a token before CreateToken executed.
+
+Additional changes:
+- `server.rs`: Use `RevealReason::TokenCreated` for ActivateAbility card reveals so shadow game adds card to both `game.cards` AND `game.battlefield` (via `insert_if_vacant` + `battlefield.add`). Previously used `RevealReason::Played` which only instantiated the card, not placing it on battlefield.
+- `actions/mod.rs`: Added explicit shadow game dedup check in CreateToken effect to handle race between CardRevealed pre-adding a token and the CreateToken action executing.
+- `priority.rs`: Improved "ability not found" handling - previously fell through silently without advancing priority (potential infinite loop); now logs a warning and properly passes priority.
+- `bug_finding/network_test_lib.py`: Added `RAYON_NUM_THREADS=2` limit and Chromium sandbox args for container compatibility.

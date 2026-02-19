@@ -54,6 +54,18 @@ pub(crate) fn init_game_reserve_only_wasm(
     // at every choice point (action_count is included in the state hash).
     game.set_skip_reveals(false);
 
+    // Set next_entity_id past the reserved deck card range so tokens get unique IDs
+    // that match the server's ID assignment (mirrors GameInitializer::init_game_reserve_only).
+    // Without this, tokens created in the shadow game get IDs starting at 3 (default after
+    // 3 PlayerId allocations), while the server assigns token IDs starting at ranges.p2_end.
+    game.set_next_entity_id(ranges.p2_end);
+
+    // Mark as shadow game: enables CreateToken dedup (insert_if_vacant check) so that if
+    // a CardRevealed(TokenCreated) pre-populates a token before CreateToken executes,
+    // the subsequent CreateToken call skips re-insertion (avoids write-once panic).
+    // The server is authoritative; this shadow state is approximate.
+    game.set_shadow_game(true);
+
     log::info!(
         "init_game_reserve_only_wasm: Created game with {} reserved CardID slots (P1: {}, P2: {})",
         total_cards,

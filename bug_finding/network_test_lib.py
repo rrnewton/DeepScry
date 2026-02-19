@@ -334,7 +334,7 @@ def run_wasm_client(server_port: int, player_name: str, controller: str,
     def browser_thread():
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
                 page = browser.new_page()
 
                 # Collect console output incrementally using Playwright's native event loop.
@@ -389,6 +389,8 @@ def run_local_game(config: TestConfig, output_dir: str,
     Writes output to output_dir/local.log.
     """
     log_path = os.path.join(output_dir, "local.log")
+    rayon_env = os.environ.copy()
+    rayon_env.setdefault('RAYON_NUM_THREADS', '2')
     proc = subprocess.Popen(
         [MTG_BIN, "tui",
          config.deck1, config.deck2,
@@ -403,7 +405,8 @@ def run_local_game(config: TestConfig, output_dir: str,
          "--verbosity", "normal"],
         stdout=open(log_path, 'w'),
         stderr=subprocess.STDOUT,
-        cwd=WORKSPACE_ROOT
+        cwd=WORKSPACE_ROOT,
+        env=rayon_env
     )
     try:
         proc.wait(timeout=timeout)
@@ -416,7 +419,8 @@ def run_local_game(config: TestConfig, output_dir: str,
 
 def _start_native_client(port: int, deck_path: str, controller: str,
                           seed_player: int, name: str,
-                          log_path: str) -> subprocess.Popen:
+                          log_path: str,
+                          env: Optional[dict] = None) -> subprocess.Popen:
     """Start a native MTG connect process."""
     return subprocess.Popen(
         [MTG_BIN, "connect",
@@ -428,7 +432,8 @@ def _start_native_client(port: int, deck_path: str, controller: str,
          "--tag-gamelogs"],
         stdout=open(log_path, 'w'),
         stderr=subprocess.STDOUT,
-        cwd=WORKSPACE_ROOT
+        cwd=WORKSPACE_ROOT,
+        env=env
     )
 
 
@@ -450,6 +455,11 @@ def run_network_game(config: TestConfig, output_dir: str,
     client1_log = os.path.join(output_dir, "client1.log")
     client2_log = os.path.join(output_dir, "client2.log")
 
+    # Limit rayon worker threads to avoid exhausting system thread limits on
+    # high-CPU-count machines (rayon defaults to nCPUs which can be 64+).
+    rayon_env = os.environ.copy()
+    rayon_env.setdefault('RAYON_NUM_THREADS', '2')
+
     server_proc = subprocess.Popen(
         [MTG_BIN, "server",
          "--port", str(port),
@@ -460,7 +470,8 @@ def run_network_game(config: TestConfig, output_dir: str,
          "--no-color-logs"],
         stdout=open(server_log, 'w'),
         stderr=subprocess.STDOUT,
-        cwd=WORKSPACE_ROOT
+        cwd=WORKSPACE_ROOT,
+        env=rayon_env
     )
 
     time.sleep(1.5)
@@ -489,7 +500,7 @@ def run_network_game(config: TestConfig, output_dir: str,
             t.start()
             return None, t, result_holder
         else:
-            proc = _start_native_client(port, deck, controller, seed_player, name, log_path)
+            proc = _start_native_client(port, deck, controller, seed_player, name, log_path, env=rayon_env)
             return proc, None, None
 
     proc1, t1, res1 = start_client(

@@ -1633,7 +1633,7 @@ async fn handle_player_websocket(
                             conn.player_id, info.choice_seq
                         );
 
-                        // If opponent played a card, send CardRevealed first
+                        // If opponent played or activated a card, send CardRevealed first
                         if let Some(ref ability) = info.spell_ability {
                             let card_id = ability.card_id();
                             let game_guard = game.lock().await;
@@ -1644,10 +1644,21 @@ async fn handle_player_websocket(
                                     name: card.name.to_string(),
                                     card_def,
                                 };
+                                // For ActivateAbility: the card is already on the battlefield.
+                                // Use TokenCreated reason so the shadow game adds it to both
+                                // game.cards AND game.battlefield (via insert_if_vacant + battlefield.add).
+                                // For CastSpell/CastFromExile: the card is being played from
+                                // hand/exile; Played reason instantiates it so the game loop
+                                // can recognize it when executing the action.
+                                let reason = if matches!(ability, SpellAbility::ActivateAbility { .. }) {
+                                    RevealReason::TokenCreated
+                                } else {
+                                    RevealReason::Played
+                                };
                                 conn.send(&ServerMessage::CardRevealed {
                                     owner: info.player,
                                     card: card_reveal,
-                                    reason: RevealReason::Played,
+                                    reason,
                                 }).await?;
                             }
                         }

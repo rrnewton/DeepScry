@@ -2193,6 +2193,21 @@ impl GameState {
                         for _ in 0..*amount {
                             let token_id = self.next_card_id();
 
+                            // Shadow game dedup: in shadow games, tokens for opponent actions are
+                            // pre-added via CardRevealed(TokenCreated) before this effect runs.
+                            // CardRevealed uses insert_if_vacant (doesn't advance next_entity_id),
+                            // so next_card_id() here returns the SAME id that was pre-added.
+                            // We must skip to avoid the EntityStore write-once panic.
+                            // For locally-created tokens (own actions in native shadow game),
+                            // cards.contains() is false so we proceed normally.
+                            if self.is_shadow_game && self.cards.contains(token_id) {
+                                // Pre-added by CardRevealed; ensure it's on the battlefield too.
+                                if !self.battlefield.contains(token_id) {
+                                    self.battlefield.add(token_id);
+                                }
+                                continue;
+                            }
+
                             // Instantiate token from definition
                             let mut token = token_def.instantiate(token_id, player_id);
 
