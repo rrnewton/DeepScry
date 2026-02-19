@@ -1,11 +1,15 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web build-network
 
 # Configuration variables
 # PORT: web server port (use: make PORT=7999 wasm-dev-serve)
 PORT ?= 8080
+# SERVER_PORT: MTG game server port (use: make play-web SERVER_PORT=9999)
+SERVER_PORT ?= 17771
+# CONTROLLER: AI controller for play-web (random, heuristic, zero)
+CONTROLLER ?= heuristic
 
 # Default target - show available commands
 help:
@@ -32,7 +36,9 @@ help:
 	@echo "  make docs           - Generate documentation (no browser)"
 	@echo "  make wasm           - Build WebAssembly module for browser"
 	@echo "  make wasm-dev       - Build WASM (dev mode, fast)"
-	@echo "  make wasm-serve     - Build WASM and start local web server"
+	@echo "  make play-web       - Play web GUI game vs AI (launches server + AI + web server)"
+	@echo "                        Override: DECK=decks/foo.dck CONTROLLER=random PORT=8080"
+	@echo "  make wasm-serve     - Build WASM and start local web server (no AI opponent)"
 	@echo "  make wasm-test-fancy - Run Playwright e2e test with screenshots"
 	@echo ""
 
@@ -45,6 +51,11 @@ build:
 build-release:
 	@echo "=== Building release ==="
 	cargo build --release
+
+# Build release binary with network feature (required for server/connect subcommands)
+build-network:
+	@echo "=== Building release with network support ==="
+	cargo build --release --features network
 
 # Run unit tests (including network tests)
 # Note: human_input_e2e tests for WASM pattern don't require wasm feature
@@ -498,6 +509,19 @@ wasm: wasm-export
 
 # Web server log file location
 WASM_SERVER_LOG := web/server.log
+
+# Deck for the AI opponent in play-web (override with: make play-web DECK=decks/monored.dck)
+DECK ?= decks/white_weenie.dck
+
+# Play a web GUI game against a native AI opponent.
+# Starts the MTG server, connects an AI client, and launches the web server.
+# Usage: make play-web [DECK=decks/foo.dck] [PORT=8080] [SERVER_PORT=17771] [CONTROLLER=heuristic]
+play-web: build-network wasm-network
+	@./scripts/play-web.sh \
+		--port $(PORT) \
+		--server-port $(SERVER_PORT) \
+		--controller $(CONTROLLER) \
+		$(DECK)
 
 # Build WASM and start local web server
 wasm-serve: wasm
