@@ -73,8 +73,7 @@ Key gaps affecting this deck:
 - [x] "Can't be blocked" effect from second draw trigger **FIXED 2026-01-21** (GrantCantBeBlocked placeholder resolved to self)
 
 **Raucous Audience (x1)** - 1R 2/2 Human Rebel
-- [ ] Mana ability with conditional (already known GAP: Count$Compare)
-- GAP: Count$Compare
+- [x] Mana ability with conditional Count$Compare **IMPLEMENTED 2026-02-19**
 
 **Rebellious Captives (x1)** - 1G 2/2 Human Peasant Ally
 - [x] Exhaust {6}: Put counters + earthbend 2 (Exhaust$ True) **IMPLEMENTED 2026-01-22**
@@ -125,7 +124,7 @@ Key gaps affecting this deck:
 
 ---
 
-## Verified Cards Summary (32/40 fully working)
+## Verified Cards Summary (33/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -147,6 +146,7 @@ Working cards:
 17. **Teo, Spirited Glider** - AttackersDeclared trigger for flying creatures + ImmediateTrigger for counter **FULLY WORKING 2026-01-22**
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
 19. **Abandon Attachments** - UnlessCost$ Discard optional draw 2 **FULLY WORKING 2026-02-19**
+20. **Raucous Audience** - Conditional mana ability with Count$Compare **FULLY WORKING 2026-02-19**
 
 ## Recent Fixes (2026-02-19)
 
@@ -160,6 +160,13 @@ Working cards:
    - AI heuristics: AI always pays if it can (beneficial for UnlessSwitched=true effects)
    - Payment execution: Discard removes cards from hand, PayLife reduces life total
    - Conditional execution: Inner effect executes based on switched flag (if paid vs if not paid)
+
+4. **Count$Compare**: Implemented conditional count expressions for variable mana production:
+   - Added CountExpression::Compare variant with source, condition, true_value, false_value
+   - Added CompareCondition enum with GreaterOrEqual, LessOrEqual, Equal, GreaterThan, LessThan
+   - Parses patterns like "Count$Compare Y GE1.2.1" (if Y >= 1 then return 2 else return 1)
+   - Added amount_var field to Effect::AddMana for variable mana amounts
+   - Raucous Audience now fully working (adds {G} or {G}{G} based on creature power)
 
 ## Recent Fixes (2026-02-18)
 
