@@ -1575,6 +1575,56 @@ impl GameState {
                     effect.clone()
                 }
             }
+
+            // UnlessCostWrapper: resolve inner effect and payer reference
+            Effect::UnlessCostWrapper {
+                inner_effect,
+                unless_cost,
+            } => {
+                // Recursively resolve the inner effect
+                let resolved_inner = self.resolve_effect_target(
+                    inner_effect,
+                    chosen_targets,
+                    target_index,
+                    card_owner,
+                    opponent_id,
+                    last_resolved_target,
+                );
+
+                // Resolve payer reference to concrete PlayerId
+                let resolved_payer = match unless_cost.payer.as_str() {
+                    "You" => card_owner,
+                    "TargetedController" => {
+                        // Get controller of the targeted permanent/spell
+                        // Use last_resolved_target if available, otherwise fall back to opponent
+                        if let Some(target_id) = last_resolved_target {
+                            self.cards
+                                .get(*target_id)
+                                .map(|c| c.controller)
+                                .unwrap_or_else(|_| opponent_id.unwrap_or(card_owner))
+                        } else if let Some(opp) = opponent_id {
+                            opp
+                        } else {
+                            card_owner
+                        }
+                    }
+                    "Player" | "Opponent" => opponent_id.unwrap_or(card_owner),
+                    _ => card_owner, // Default to spell controller
+                };
+
+                // Create resolved UnlessCost with concrete payer
+                let resolved_unless_cost = crate::core::effects::UnlessCost {
+                    cost: unless_cost.cost.clone(),
+                    payer: resolved_payer.as_u32().to_string(), // Store as numeric ID string
+                    switched: unless_cost.switched,
+                };
+
+                Effect::UnlessCostWrapper {
+                    inner_effect: Box::new(resolved_inner),
+                    unless_cost: resolved_unless_cost,
+                }
+            }
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
@@ -2873,16 +2923,163 @@ impl GameState {
             }
             Effect::UnlessCostWrapper {
                 inner_effect,
-                unless_cost: _,
+                unless_cost,
             } => {
-                // TODO(mtg-UnlessCost): Implement UnlessCost resolution
-                // For now, just execute the inner effect unconditionally
-                // Full implementation requires:
-                // 1. Check if payer wants to pay the cost
-                // 2. If UnlessSwitched: execute inner effect only if paid
-                // 3. If not switched: execute inner effect only if NOT paid
-                log::debug!("UnlessCostWrapper: executing inner effect (UnlessCost not yet implemented)");
-                self.execute_effect(inner_effect)?;
+                use crate::core::effects::UnlessCostType;
+
+                // Parse the resolved payer ID (stored as numeric string after resolve_effect_target)
+                let payer_id = unless_cost
+                    .payer
+                    .parse::<u32>()
+                    .map(PlayerId::new)
+                    .unwrap_or(PlayerId::new(0));
+
+                // Check if the cost can be paid
+                let can_pay = match &unless_cost.cost {
+                    UnlessCostType::Discard { count, card_type: _ } => {
+                        // Check if player has enough cards in hand
+                        self.player_zones
+                            .iter()
+                            .find(|(pid, _)| *pid == payer_id)
+                            .map(|(_, zones)| zones.hand.cards.len() >= *count as usize)
+                            .unwrap_or(false)
+                    }
+                    UnlessCostType::Sacrifice { count, valid_type } => {
+                        // Check if player controls enough permanents of the type
+                        self.can_pay_sacrifice_pattern(valid_type, *count, CardId::new(0), payer_id)
+                    }
+                    UnlessCostType::PayLife(amount) => {
+                        // Check if player has enough life
+                        self.get_player(payer_id)
+                            .map(|p| p.life > *amount as i32)
+                            .unwrap_or(false)
+                    }
+                    UnlessCostType::Mana(mana_cost) => {
+                        // For mana costs, check total mana available
+                        // Simplified: just check if generic cost <= lands
+                        let lands_count = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .filter(|&&cid| {
+                                self.cards
+                                    .get(cid)
+                                    .is_ok_and(|c| c.is_land() && c.controller == payer_id && !c.tapped)
+                            })
+                            .count();
+                        lands_count >= mana_cost.generic as usize
+                    }
+                    UnlessCostType::Reveal { count, card_type: _ } => {
+                        // Check if player has enough cards in hand to reveal
+                        self.player_zones
+                            .iter()
+                            .find(|(pid, _)| *pid == payer_id)
+                            .map(|(_, zones)| zones.hand.cards.len() >= *count as usize)
+                            .unwrap_or(false)
+                    }
+                };
+
+                // AI heuristic: decide whether to pay
+                // - For switched costs (pay → effect): AI pays if the effect benefits them
+                // - For non-switched costs (effect if NOT paid): AI pays to prevent opponent's effect
+                let should_pay = if can_pay {
+                    // Simple heuristic based on who benefits
+                    if unless_cost.switched {
+                        // "You may discard to draw" - controller benefits from effect
+                        // AI always takes beneficial effects
+                        true
+                    } else {
+                        // "Counter unless you pay" - opponent pays to prevent our spell
+                        // AI always tries to prevent the effect
+                        true
+                    }
+                } else {
+                    false
+                };
+
+                // Execute payment if decided to pay
+                let paid = if should_pay {
+                    match &unless_cost.cost {
+                        UnlessCostType::Discard { count, card_type: _ } => {
+                            // Discard cards from hand (simple: discard from back)
+                            let mut discarded = 0u8;
+                            for _ in 0..*count {
+                                // Get a card from hand to discard
+                                let card_to_discard = self
+                                    .player_zones
+                                    .iter()
+                                    .find(|(pid, _)| *pid == payer_id)
+                                    .and_then(|(_, zones)| zones.hand.cards.last().copied());
+
+                                if let Some(card_id) = card_to_discard {
+                                    // Move card to graveyard
+                                    let _ = self.move_card(card_id, Zone::Hand, Zone::Graveyard, payer_id);
+                                    discarded += 1;
+                                }
+                            }
+                            discarded == *count
+                        }
+                        UnlessCostType::PayLife(amount) => {
+                            // Pay life
+                            if let Some(player) = self.players.iter_mut().find(|p| p.id == payer_id) {
+                                player.life -= *amount as i32;
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        UnlessCostType::Sacrifice {
+                            count: _,
+                            valid_type: _,
+                        } => {
+                            // TODO: Implement sacrifice payment
+                            // For now, return false (can't pay)
+                            log::debug!("UnlessCost: Sacrifice payment not yet implemented");
+                            false
+                        }
+                        UnlessCostType::Mana(_mana_cost) => {
+                            // TODO: Implement mana payment
+                            // For now, assume payment succeeds if can_pay was true
+                            log::debug!("UnlessCost: Mana payment simplified (auto-success)");
+                            true
+                        }
+                        UnlessCostType::Reveal { count: _, card_type: _ } => {
+                            // Reveal doesn't consume cards, just show them
+                            // For now, assume success
+                            true
+                        }
+                    }
+                } else {
+                    false
+                };
+
+                log::debug!(
+                    "UnlessCost: payer={}, can_pay={}, should_pay={}, paid={}, switched={}",
+                    payer_id.as_u32(),
+                    can_pay,
+                    should_pay,
+                    paid,
+                    unless_cost.switched
+                );
+
+                // Execute inner effect based on payment result and switched flag
+                // - switched=true: execute if paid (e.g., "you may discard, if you do, draw")
+                // - switched=false: execute if NOT paid (e.g., "counter unless you pay")
+                let should_execute = if unless_cost.switched {
+                    paid // Execute effect only if cost was paid
+                } else {
+                    !paid // Execute effect only if cost was NOT paid
+                };
+
+                if should_execute {
+                    self.execute_effect(inner_effect)?;
+                } else {
+                    log::debug!(
+                        "UnlessCost: inner effect skipped (paid={}, switched={})",
+                        paid,
+                        unless_cost.switched
+                    );
+                }
             }
         }
         Ok(())
