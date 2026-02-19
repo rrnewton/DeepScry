@@ -399,7 +399,13 @@ impl CardCache {
     /// and combines them into a single ManaProduction using OR semantics.
     ///
     /// Returns the upper bound of what colors this card can produce.
-    fn derive_mana_production_from_abilities(abilities: &[crate::core::ActivatedAbility]) -> ManaProduction {
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic. The internal unwrap() is guarded by a
+    /// count check ensuring the iterator has at least one element.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn derive_mana_production_from_abilities(abilities: &[crate::core::ActivatedAbility]) -> ManaProduction {
         use crate::core::{Effect, ManaColor, ManaProductionKind};
         use crate::game::mana_colors::ManaColors;
 

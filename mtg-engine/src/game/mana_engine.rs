@@ -234,6 +234,99 @@ impl Default for ManaEngine {
     }
 }
 
+/// Get the effective mana production for a card, including granted abilities.
+///
+/// This handles cards like Chromatic Lantern which grant "{T}: Add any color" to lands.
+/// When a land has a granted mana ability, we merge the granted production with
+/// the card's cached production using OR semantics.
+///
+/// Returns the merged ManaProduction if the card has granted mana abilities,
+/// or None if the card's original production should be used unchanged.
+fn get_effective_mana_production(
+    game: &GameState,
+    card_id: CardId,
+    cached_production: &ManaProduction,
+) -> Option<ManaProduction> {
+    use crate::core::CardCache;
+
+    // Get granted abilities from continuous effects (e.g., Chromatic Lantern)
+    let granted_abilities = game.get_granted_abilities(card_id);
+
+    // Filter to only mana abilities
+    let mana_abilities: Vec<_> = granted_abilities.into_iter().filter(|a| a.is_mana_ability).collect();
+
+    if mana_abilities.is_empty() {
+        return None;
+    }
+
+    // Derive mana production from granted abilities using existing infrastructure
+    let granted_production = CardCache::derive_mana_production_from_abilities(&mana_abilities);
+
+    if !granted_production.produces_mana() {
+        return None;
+    }
+
+    // Merge productions: the result should be the OR of both
+    // If either produces AnyColor, result is AnyColor
+    // Otherwise, combine the colors from both
+    let merged_kind = merge_mana_production_kinds(&cached_production.kind, &granted_production.kind);
+
+    Some(ManaProduction::free(merged_kind))
+}
+
+/// Merge two ManaProductionKind values using OR semantics.
+///
+/// The result represents what colors can be produced by either ability.
+fn merge_mana_production_kinds(a: &ManaProductionKind, b: &ManaProductionKind) -> ManaProductionKind {
+    use crate::game::mana_colors::ManaColors;
+
+    // If either is AnyColor, result is AnyColor
+    if matches!(a, ManaProductionKind::AnyColor) || matches!(b, ManaProductionKind::AnyColor) {
+        return ManaProductionKind::AnyColor;
+    }
+
+    // Collect all colors from both productions
+    let mut colors = ManaColors::new();
+    let mut has_colorless = false;
+
+    fn add_colors(kind: &ManaProductionKind, colors: &mut ManaColors, has_colorless: &mut bool) {
+        match kind {
+            ManaProductionKind::Fixed(c) => {
+                colors.insert(*c);
+            }
+            ManaProductionKind::Choice(cs) => {
+                for c in cs.iter() {
+                    colors.insert(c);
+                }
+            }
+            ManaProductionKind::Colorless => {
+                *has_colorless = true;
+            }
+            ManaProductionKind::AnyColor => {
+                // Handled above
+            }
+        }
+    }
+
+    add_colors(a, &mut colors, &mut has_colorless);
+    add_colors(b, &mut colors, &mut has_colorless);
+
+    // Build result
+    let count = colors.len();
+    if count == 0 {
+        if has_colorless {
+            ManaProductionKind::Colorless
+        } else {
+            ManaProductionKind::default()
+        }
+    } else if count == 1 && !has_colorless {
+        ManaProductionKind::Fixed(colors.iter().next().unwrap())
+    } else {
+        // Multiple colors or colorless + color = complex choice
+        ManaProductionKind::Choice(colors)
+    }
+}
+
 impl ManaEngine {
     /// Create a new mana engine
     pub fn new() -> Self {
@@ -289,15 +382,19 @@ impl ManaEngine {
                     false
                 };
 
-                let production = &card.definition.cache.mana_production;
+                let cached_production = &card.definition.cache.mana_production;
+
+                // Check for granted mana abilities (e.g., from Chromatic Lantern)
+                let effective_production =
+                    get_effective_mana_production(game, card_id, cached_production).unwrap_or(*cached_production);
 
                 // Creatures with mana abilities are always complex sources
                 // (due to summoning sickness and other creature-specific rules)
                 if card.is_creature() {
                     scratch_complex_sources.push(card_id);
                 } else {
-                    // Classify source and update capacity
-                    match &production.kind {
+                    // Classify source and update capacity based on effective production
+                    match &effective_production.kind {
                         ManaProductionKind::Fixed(color) => {
                             use crate::core::ManaColor;
                             scratch_simple_sources.push(card_id);
@@ -324,10 +421,10 @@ impl ManaEngine {
                     }
                 }
 
-                // Add to full source list
+                // Add to full source list with effective production
                 scratch_mana_sources.push(ManaSource {
                     card_id,
-                    production: *production,
+                    production: effective_production,
                     is_tapped: card.tapped,
                     has_summoning_sickness,
                 });
@@ -565,15 +662,19 @@ impl ManaEngine {
                     false
                 };
 
-                let production = &card.definition.cache.mana_production;
+                let cached_production = &card.definition.cache.mana_production;
+
+                // Check for granted mana abilities (e.g., from Chromatic Lantern)
+                let effective_production =
+                    get_effective_mana_production(game, card_id, cached_production).unwrap_or(*cached_production);
 
                 // Creatures with mana abilities are always complex sources
                 // (due to summoning sickness and other creature-specific rules)
                 if card.is_creature() {
                     self.complex_sources.push(card_id);
                 } else {
-                    // Classify source and update capacity
-                    match &production.kind {
+                    // Classify source and update capacity based on effective production
+                    match &effective_production.kind {
                         ManaProductionKind::Fixed(color) => {
                             use crate::core::ManaColor;
                             self.simple_sources.push(card_id);
@@ -600,10 +701,10 @@ impl ManaEngine {
                     }
                 }
 
-                // Add to full source list
+                // Add to full source list with effective production
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: *production,
+                    production: effective_production,
                     is_tapped: card.tapped,
                     has_summoning_sickness,
                 });
