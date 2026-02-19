@@ -152,6 +152,8 @@ Working cards:
 
 1. **ManaEngine granted ability integration**: Extended ManaEngine to recognize mana abilities granted by continuous effects (like Chromatic Lantern's "Lands you control have '{T}: Add any color'"). Added `get_effective_mana_production()` helper to merge cached production with granted abilities, `merge_mana_production_kinds()` for OR semantics. Updated `compute_from_scratch()` and `scan_battlefield_fallback()` to use effective production. Tectonic Split's "lands tap for 3 mana" now fully functional.
 
+2. **UnlessCost$ parsing infrastructure**: Added data types and parsing for UnlessCost$ parameters. New types: `UnlessCostType` enum (Mana, Discard, Sacrifice, PayLife, Reveal), `UnlessCost` struct, `Effect::UnlessCostWrapper` variant. Parsing functions: `parse_unless_cost()`, `wrap_with_unless_cost()`, `params_to_effect_with_unless()`. Supports patterns like `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`. **Remaining**: Player choice during resolution.
+
 ## Recent Fixes (2026-02-18)
 
 1. **S:Mode$ RaiseCost**: Implemented additional cost static abilities, mirroring the existing ReduceCost pattern. Added `StaticAbility::RaiseCost` variant with `RaisedCost` enum supporting two types:
@@ -196,11 +198,13 @@ Working cards:
 
 1. ~~**S:Mode$ ReduceCost** - Cost reduction static abilities~~ **IMPLEMENTED 2026-02-13**
 2. ~~**S:Mode$ RaiseCost** - Additional sacrifice costs~~ **IMPLEMENTED 2026-02-18**
-3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics
-   - Complex: requires player choice during spell resolution
+3. **UnlessCost$ / UnlessSwitched$** - Optional cost/discard mechanics **PARSING DONE 2026-02-19**
+   - Parsing: ✅ UnlessCostType enum (Mana, Discard, Sacrifice, PayLife, Reveal)
+   - Parsing: ✅ Effect::UnlessCostWrapper wraps effects with unless_cost
+   - Parsing: ✅ parse_unless_cost() and wrap_with_unless_cost() in effect_converter.rs
+   - Remaining: Player choice during spell resolution (prompt to pay/not pay)
    - Cards: Abandon Attachments, Academy Loremaster, Aether Barrier
    - Pattern: `UnlessCost$ Discard<1/Card> | UnlessPayer$ You | UnlessSwitched$ True`
-   - UnlessSwitched$ True: pay cost → get effect; False: don't pay → get effect
 4. ~~**AddAbility$ for lands** - Grant abilities to land permanents~~ **FULLY IMPLEMENTED 2026-02-19**
    - Parsing: ✅ StaticAbility::GrantAbility with parsed ActivatedAbility
    - Query: ✅ get_granted_abilities() in continuous_effects.rs
