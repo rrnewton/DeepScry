@@ -119,12 +119,11 @@ Key gaps affecting this deck:
 **Tectonic Split (x1)** - 4GG Enchantment
 - [x] Additional cost: sacrifice half lands (S:Mode$ RaiseCost | Cost$ Sac<X/Land>) **IMPLEMENTED 2026-02-14**
 - [x] Hexproof (should work)
-- [ ] Lands gain triple mana ability (S:Mode$ Continuous | AddAbility$)
-- GAP: AddAbility for lands
+- [x] Lands gain triple mana ability (S:Mode$ Continuous | AddAbility$) **IMPLEMENTED 2026-02-19** (ManaEngine integration)
 
 ---
 
-## Verified Cards Summary (33/40 fully working)
+## Verified Cards Summary (34/40 fully working)
 
 Working cards:
 1. **Island** - basic land
@@ -147,6 +146,7 @@ Working cards:
 18. **Allies at Last** - Affinity for Ally + EachDamage power-based damage **FULLY WORKING 2026-02-10**
 19. **Abandon Attachments** - UnlessCost$ Discard optional draw 2 **FULLY WORKING 2026-02-19**
 20. **Raucous Audience** - Conditional mana ability with Count$Compare **FULLY WORKING 2026-02-19**
+21. **Tectonic Split** - RaiseCost sacrifice + AddAbility for land mana tripling **FULLY WORKING 2026-02-19**
 
 ## Recent Fixes (2026-02-19)
 
