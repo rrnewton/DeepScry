@@ -118,10 +118,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     player,
                     mana,
                     produces_chosen_color,
+                    amount_var,
                 } if player.is_placeholder() => mtg_forge_rs::core::Effect::AddMana {
                     player: alice_id,
                     mana: *mana,
                     produces_chosen_color: *produces_chosen_color,
+                    amount_var: amount_var.clone(),
                 },
                 _ => effect.clone(),
             };
