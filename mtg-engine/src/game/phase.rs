@@ -293,6 +293,22 @@ impl TurnStructure {
         self.priority_player = None;
         self.consecutive_passes = 0;
     }
+
+    /// Reset transient guard fields to None.
+    ///
+    /// These fields are `#[serde(skip)]` and not in the undo log, so they persist
+    /// their end-of-game values after a full rewind. Call this when the game has been
+    /// completely rewound to its initial state (undo log empty) so that the next
+    /// play-through starts with clean guard state.
+    pub fn reset_transient_guards(&mut self) {
+        self.draw_step_executed_turn = None;
+        self.turn_state_reset_turn = None;
+        self.attackers_declared_turn = None;
+        self.blockers_declared_turn = None;
+        self.combat_first_strike_damage_dealt_turn = None;
+        self.combat_first_strike_priority_done_turn = None;
+        self.combat_damage_dealt_turn = None;
+    }
 }
 
 #[cfg(test)]

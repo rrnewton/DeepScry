@@ -2403,6 +2403,20 @@ impl GameState {
                 cache.mark_dirty();
             }
 
+            // When fully rewound to the initial state, reset transient guard fields.
+            // These fields are #[serde(skip)] (not in undo log) so they persist their
+            // end-of-game values after rewind. This matters for rewind benchmarks where
+            // the game is fully rewound and replayed in the same session: without this
+            // reset, guards like draw_step_executed_turn = Some(N) would fire on turn N
+            // in the replay, corrupting game state (e.g. skipping mandatory draw steps).
+            if self.undo_log.is_empty() {
+                self.turn.reset_transient_guards();
+                self.pending_cast = None;
+                self.pending_activation = None;
+                self.pending_cycling_search = None;
+                self.spell_targets.clear();
+            }
+
             Ok(Some(prior_log_size))
         } else {
             Ok(None)
