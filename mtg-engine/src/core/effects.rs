@@ -83,6 +83,65 @@ pub enum CountExpression {
 
     /// Count cards drawn this turn (Count$YouDrewThisTurn)
     CardsDrawnThisTurn,
+
+    /// Compare a source count against a condition and return true/false value
+    /// Pattern: Count$Compare SourceSVar Condition.TrueValue.FalseValue
+    /// Example: Count$Compare Y GE1.2.1 → if Y >= 1 then 2 else 1
+    Compare {
+        /// The nested count expression to evaluate (resolved from SVar)
+        source: Box<CountExpression>,
+        /// Comparison operator and threshold (e.g., "GE1" for >= 1)
+        condition: CompareCondition,
+        /// Value to return if condition is true
+        true_value: i32,
+        /// Value to return if condition is false
+        false_value: i32,
+    },
+}
+
+/// Comparison conditions for Count$Compare expressions
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompareCondition {
+    /// Greater or Equal (GE1 = >= 1)
+    GreaterOrEqual(i32),
+    /// Less or Equal (LE0 = <= 0)
+    LessOrEqual(i32),
+    /// Equal (EQ3 = == 3)
+    Equal(i32),
+    /// Greater Than (GT2 = > 2)
+    GreaterThan(i32),
+    /// Less Than (LT5 = < 5)
+    LessThan(i32),
+}
+
+impl CompareCondition {
+    /// Parse a condition string like "GE1", "LE0", "EQ3", "GT2", "LT5"
+    pub fn parse(s: &str) -> Option<Self> {
+        if let Some(rest) = s.strip_prefix("GE") {
+            rest.parse().ok().map(CompareCondition::GreaterOrEqual)
+        } else if let Some(rest) = s.strip_prefix("LE") {
+            rest.parse().ok().map(CompareCondition::LessOrEqual)
+        } else if let Some(rest) = s.strip_prefix("EQ") {
+            rest.parse().ok().map(CompareCondition::Equal)
+        } else if let Some(rest) = s.strip_prefix("GT") {
+            rest.parse().ok().map(CompareCondition::GreaterThan)
+        } else if let Some(rest) = s.strip_prefix("LT") {
+            rest.parse().ok().map(CompareCondition::LessThan)
+        } else {
+            None
+        }
+    }
+
+    /// Evaluate the condition against a value
+    pub fn evaluate(&self, value: i32) -> bool {
+        match self {
+            CompareCondition::GreaterOrEqual(threshold) => value >= *threshold,
+            CompareCondition::LessOrEqual(threshold) => value <= *threshold,
+            CompareCondition::Equal(threshold) => value == *threshold,
+            CompareCondition::GreaterThan(threshold) => value > *threshold,
+            CompareCondition::LessThan(threshold) => value < *threshold,
+        }
+    }
 }
 
 impl Default for CountExpression {
@@ -98,7 +157,18 @@ impl CountExpression {
     /// - "+3" -> Fixed(3)
     /// - "X" with SVar X = "Count$Valid Artifact.OppCtrl" -> ValidPermanents { filter: "Artifact.OppCtrl" }
     /// - "X" with SVar X = "Count$YouDrewThisTurn" -> CardsDrawnThisTurn
+    /// - "X" with SVar X = "Count$Compare Y GE1.2.1" -> Compare { source, condition, true_value, false_value }
     pub fn parse(value: &str, svars: &std::collections::HashMap<String, String>) -> Self {
+        Self::parse_internal(value, svars, 0)
+    }
+
+    /// Internal parse with recursion depth to prevent infinite loops
+    fn parse_internal(value: &str, svars: &std::collections::HashMap<String, String>, depth: u8) -> Self {
+        // Prevent infinite recursion
+        if depth > 10 {
+            return CountExpression::Fixed(0);
+        }
+
         // Try parsing as fixed integer first
         let trimmed = value.trim_start_matches('+');
         if let Ok(n) = trimmed.parse::<i32>() {
@@ -118,6 +188,30 @@ impl CountExpression {
                     return CountExpression::ValidPermanents { filter };
                 } else if rest == "YouDrewThisTurn" {
                     return CountExpression::CardsDrawnThisTurn;
+                } else if rest.starts_with("Compare ") {
+                    // Count$Compare SourceSVar Condition.TrueValue.FalseValue
+                    // Example: "Compare Y GE1.2.1"
+                    let compare_parts: Vec<&str> = rest.strip_prefix("Compare ").unwrap().splitn(2, ' ').collect();
+                    if compare_parts.len() == 2 {
+                        let source_svar = compare_parts[0];
+                        let cond_parts: Vec<&str> = compare_parts[1].split('.').collect();
+                        if cond_parts.len() == 3 {
+                            if let (Some(condition), Ok(true_val), Ok(false_val)) = (
+                                CompareCondition::parse(cond_parts[0]),
+                                cond_parts[1].parse::<i32>(),
+                                cond_parts[2].parse::<i32>(),
+                            ) {
+                                // Recursively parse the source SVar
+                                let source = Self::parse_internal(source_svar, svars, depth + 1);
+                                return CountExpression::Compare {
+                                    source: Box::new(source),
+                                    condition,
+                                    true_value: true_val,
+                                    false_value: false_val,
+                                };
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -444,6 +538,10 @@ pub enum Effect {
         /// If true, this ability also produces mana of the card's chosen color
         /// (for cards like Thriving lands that have "Produced$ Combo G Chosen")
         produces_chosen_color: bool,
+        /// Optional variable name for amount (e.g., "X" for cards like Raucous Audience)
+        /// If present, resolved via card's SVars to a CountExpression at execution time
+        #[serde(default)]
+        amount_var: Option<String>,
     },
 
     /// Put counters on a permanent
@@ -2244,5 +2342,49 @@ mod tests {
         // Unknown variable -> defaults to 0
         let expr = CountExpression::parse("X", &svars);
         assert_eq!(expr, CountExpression::Fixed(0));
+    }
+
+    #[test]
+    fn test_count_expression_parse_compare() {
+        // Test Count$Compare parsing (Raucous Audience pattern)
+        // X = "Count$Compare Y GE1.2.1" means: if Y >= 1 then 2 else 1
+        // Y = "Count$Valid Creature.YouCtrl+powerGE4" means: count creatures with power >= 4
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$Compare Y GE1.2.1".to_string());
+        svars.insert("Y".to_string(), "Count$Valid Creature.YouCtrl+powerGE4".to_string());
+
+        let expr = CountExpression::parse("X", &svars);
+        match &expr {
+            CountExpression::Compare { source, condition, true_value, false_value } => {
+                // Check the nested source was resolved
+                match source.as_ref() {
+                    CountExpression::ValidPermanents { filter } => {
+                        assert_eq!(filter, "Creature.YouCtrl+powerGE4");
+                    }
+                    other => panic!("Expected ValidPermanents, got {:?}", other),
+                }
+                // Check the condition
+                assert!(matches!(condition, CompareCondition::GreaterOrEqual(1)));
+                // Check the values
+                assert_eq!(*true_value, 2);
+                assert_eq!(*false_value, 1);
+            }
+            other => panic!("Expected Compare, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_compare_condition_evaluate() {
+        // Test condition evaluation
+        assert!(CompareCondition::GreaterOrEqual(1).evaluate(1));
+        assert!(CompareCondition::GreaterOrEqual(1).evaluate(2));
+        assert!(!CompareCondition::GreaterOrEqual(1).evaluate(0));
+
+        assert!(CompareCondition::LessOrEqual(2).evaluate(1));
+        assert!(CompareCondition::LessOrEqual(2).evaluate(2));
+        assert!(!CompareCondition::LessOrEqual(2).evaluate(3));
+
+        assert!(CompareCondition::Equal(3).evaluate(3));
+        assert!(!CompareCondition::Equal(3).evaluate(2));
     }
 }

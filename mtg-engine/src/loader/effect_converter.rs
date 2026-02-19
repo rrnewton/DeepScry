@@ -302,16 +302,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 ManaCost::from_string(produced_str)
             };
 
-            // Check for Amount$ parameter (e.g., Amount$ 2 for Sol Ring)
-            let amount = params.get("Amount").and_then(|s| s.parse::<u8>().ok()).unwrap_or(1);
+            // Check for Amount$ parameter (e.g., Amount$ 2 for Sol Ring, or Amount$ X for variable)
+            let (amount, amount_var) = if let Some(amount_str) = params.get("Amount") {
+                // Try parsing as fixed integer first
+                if let Ok(n) = amount_str.parse::<u8>() {
+                    (n, None)
+                } else {
+                    // It's a variable (X, Y, etc.) - store for later resolution
+                    (1, Some(amount_str.to_string()))
+                }
+            } else {
+                (1, None)
+            };
 
-            // Multiply mana by amount
+            // Multiply mana by amount (for fixed amounts)
             let final_mana = mana_cost.multiply(amount);
 
             Some(Effect::AddMana {
                 player: PlayerId::new(0), // Placeholder - filled in when activated
                 mana: final_mana,
                 produces_chosen_color,
+                amount_var,
             })
         }
 

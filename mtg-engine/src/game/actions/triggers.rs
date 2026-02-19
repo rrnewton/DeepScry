@@ -174,10 +174,12 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             player,
             mana,
             produces_chosen_color,
+            amount_var,
         } if player.is_placeholder() => Effect::AddMana {
             player: ctx.controller,
             mana: *mana,
             produces_chosen_color: *produces_chosen_color,
+            amount_var: amount_var.clone(),
         },
 
         // =========================================================================

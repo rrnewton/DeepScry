@@ -5171,6 +5171,7 @@ mod tests {
                     ..Default::default()
                 },
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "{T}: Add {G}".to_string(),
             true, // is_mana_ability
@@ -5196,6 +5197,7 @@ mod tests {
                     ..Default::default()
                 },
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "{T}: Add {G}".to_string(),
             true, // is_mana_ability
@@ -5216,6 +5218,7 @@ mod tests {
                     ..Default::default()
                 },
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "{T}: Add {C}".to_string(),
             true, // is_mana_ability

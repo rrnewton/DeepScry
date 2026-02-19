@@ -1288,6 +1288,7 @@ mod tests {
                 player: p1_id,
                 mana: ManaCost::from_string("G"),
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "Add {G}".to_string(),
             true, // is_mana_ability
@@ -1341,6 +1342,7 @@ mod tests {
                 player: p1_id,
                 mana: ManaCost::from_string("G"),
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "Add {G}".to_string(),
             true, // is_mana_ability
@@ -1393,6 +1395,7 @@ mod tests {
                 player: p1_id,
                 mana: ManaCost::from_string("C"),
                 produces_chosen_color: false,
+                amount_var: None,
             }],
             "Add {C}".to_string(),
             true, // is_mana_ability

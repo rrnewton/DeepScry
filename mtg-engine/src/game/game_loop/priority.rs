@@ -148,10 +148,12 @@ impl<'a> GameLoop<'a> {
                         player,
                         mana,
                         produces_chosen_color,
+                        amount_var,
                     } if player.is_placeholder() => Effect::AddMana {
                         player: card_owner,
                         mana: *mana,
                         produces_chosen_color: *produces_chosen_color,
+                        amount_var: amount_var.clone(),
                     },
                     Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                         player: card_owner,
@@ -1256,12 +1258,14 @@ impl<'a> GameLoop<'a> {
                                                 player,
                                                 mana,
                                                 produces_chosen_color,
+                                                amount_var,
                                             } if player.is_placeholder() => {
                                                 // Replace placeholder with current player
                                                 crate::core::Effect::AddMana {
                                                     player: current_priority,
                                                     mana: *mana,
                                                     produces_chosen_color: *produces_chosen_color,
+                                                    amount_var: amount_var.clone(),
                                                 }
                                             }
                                             crate::core::Effect::GainLife { player, amount }

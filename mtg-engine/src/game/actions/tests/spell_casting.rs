@@ -375,6 +375,7 @@ mod tests {
                 x_count: 0,
             },
             produces_chosen_color: false,
+            amount_var: None,
         });
         game.cards.insert(ritual_id, ritual);
 

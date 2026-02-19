@@ -1454,10 +1454,12 @@ impl GameState {
                 player,
                 mana,
                 produces_chosen_color,
+                amount_var,
             } if player.is_placeholder() => Effect::AddMana {
                 player: card_owner,
                 mana: *mana,
                 produces_chosen_color: *produces_chosen_color,
+                amount_var: amount_var.clone(),
             },
             // Earthbend: Target land becomes 0/0 creature with haste
             Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
@@ -1970,6 +1972,7 @@ impl GameState {
                 player,
                 mana,
                 produces_chosen_color,
+                amount_var,
             } => {
                 // Capture log size before mana addition
                 let prior_log_size = self.logger.log_count();
@@ -1978,11 +1981,18 @@ impl GameState {
                 // Note: For mana abilities, produces_chosen_color is handled in tap_for_mana_for_cost
                 // where we have access to the source card's chosen_color.
                 // This path is mainly for spell effects (Dark Ritual) and triggered abilities (Su-Chi).
+                // Note: amount_var (for variable mana like Raucous Audience) is resolved in ManaEngine
+                // during tap_for_mana_for_cost, not here.
                 if *produces_chosen_color {
                     // This shouldn't happen in practice since mana abilities go through tap_for_mana_for_cost
                     // but log a warning if it does
                     self.logger
                         .normal("Warning: produces_chosen_color in execute_effect - source card unknown");
+                }
+                if amount_var.is_some() {
+                    // Variable mana should be resolved before reaching execute_effect
+                    self.logger
+                        .normal("Warning: amount_var in execute_effect - should be resolved in ManaEngine");
                 }
                 let p = self.get_player_mut(*player)?;
 
@@ -5430,6 +5440,16 @@ impl GameState {
                     Ok(i32::from(player.cards_drawn_this_turn))
                 } else {
                     Ok(0)
+                }
+            }
+            CountExpression::Compare { source, condition, true_value, false_value } => {
+                // Evaluate the source expression
+                let source_value = self.evaluate_count_expression(source, controller)?;
+                // Apply the condition and return the appropriate value
+                if condition.evaluate(source_value) {
+                    Ok(*true_value)
+                } else {
+                    Ok(*false_value)
                 }
             }
         }
