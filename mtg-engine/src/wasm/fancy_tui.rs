@@ -560,17 +560,15 @@ impl WasmFancyTuiState {
         None
     }
 
-    /// Rewind game state to turn start and return P1's choices made so far
+    /// Rewind game state to turn start and return choices made so far, split by player
     ///
     /// This undoes all game state changes since the start of the turn,
-    /// returning only P1's ReplayChoice entries that were logged.
+    /// returning ReplayChoice entries partitioned into (our_choices, opponent_choices).
     ///
-    /// IMPORTANT: We only extract choices for P1 (the human player) because:
-    /// - P1's choices will be replayed via ReplayController
-    /// - P2's choices will be re-made by the AI controller during replay
-    /// - If we included P2's choices in P1's replay queue, P1 would try to
-    ///   execute P2's actions (e.g., casting P2's spells) causing "Card not in hand" errors
-    fn rewind_to_turn_start(&mut self) -> Vec<ReplayChoice> {
+    /// In local mode, only our_choices are used (the AI re-computes its choices).
+    /// In network mode, BOTH are needed because the opponent is remote and can't
+    /// re-compute choices — they must be replayed from the saved log.
+    fn rewind_to_turn_start(&mut self, our_id: PlayerId) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
         let log_len_before = self.game.undo_log.len();
         log::debug!(target: "wasm_tui", "REWIND: Undo log has {} actions before rewind", log_len_before);
 
@@ -586,7 +584,7 @@ impl WasmFancyTuiState {
             Some(r) => r,
             None => {
                 log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");
-                return Vec::new();
+                return (Vec::new(), Vec::new());
             }
         };
 
@@ -595,10 +593,7 @@ impl WasmFancyTuiState {
         // when we replay the choices
         self.game.logger.truncate_to(log_size_at_turn);
 
-        // Get P1's player ID for filtering choices
-        let p1_id = self.game.players[0].id;
-
-        // Count total and P1's choices for logging
+        // Count total choices for logging
         let total_choices = choice_actions
             .iter()
             .filter(|a| matches!(a, GameAction::ChoicePoint { choice: Some(_), .. }))
@@ -610,42 +605,32 @@ impl WasmFancyTuiState {
             turn_number, actions_rewound, log_len_after, total_choices
         );
 
-        // Extract ReplayChoice from ChoicePoint actions, filtering to only P1's choices
-        // This prevents the "Card not in hand" bug where P1's ReplayController
-        // would try to replay P2's actions (like casting P2's spells)
-        let p1_choices: Vec<ReplayChoice> = choice_actions
-            .into_iter()
-            .filter_map(|action| {
-                if let GameAction::ChoicePoint {
-                    player_id,
-                    choice: Some(c),
-                    ..
-                } = action
-                {
-                    // Only include choices made by P1 (human player)
-                    if player_id == p1_id {
-                        Some(c)
-                    } else {
-                        log::debug!(
-                            target: "wasm_tui",
-                            "REWIND: Skipping P2 choice (will be re-made by AI): {:?}",
-                            c
-                        );
-                        None
-                    }
+        // Partition choices by player: our choices vs opponent choices
+        let mut our_choices = Vec::new();
+        let mut opponent_choices = Vec::new();
+
+        for action in choice_actions {
+            if let GameAction::ChoicePoint {
+                player_id,
+                choice: Some(c),
+                ..
+            } = action
+            {
+                if player_id == our_id {
+                    our_choices.push(c);
                 } else {
-                    None
+                    opponent_choices.push(c);
                 }
-            })
-            .collect();
+            }
+        }
 
         log::debug!(
             target: "wasm_tui",
-            "REWIND: Extracted {} P1 choices for replay",
-            p1_choices.len()
+            "REWIND: Extracted {} our choices and {} opponent choices for replay",
+            our_choices.len(), opponent_choices.len()
         );
 
-        p1_choices
+        (our_choices, opponent_choices)
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
@@ -861,7 +846,8 @@ impl WasmFancyTuiState {
                 };
 
                 // Rewind game state and get previous choices from this turn
-                let mut replay_choices = self.rewind_to_turn_start();
+                // In local mode, only our choices are used; AI re-computes its own
+                let (mut replay_choices, _opponent_choices) = self.rewind_to_turn_start(p1_id);
                 let turn_after_rewind = self.game.turn.turn_number;
                 log::debug!(
                     target: "wasm_tui",
@@ -1193,14 +1179,18 @@ impl WasmFancyTuiState {
             }
 
             // Rewind game state and get previous choices from this turn
-            let replay_choices = self.rewind_to_turn_start();
+            // In network mode, we need BOTH players' choices: our choices for our
+            // ReplayController, and opponent choices for the opponent's ReplayController.
+            // Unlike local mode where the AI can re-compute its choices, the remote
+            // opponent's choices must be replayed from the saved log.
+            let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
             log::debug!(
                 target: "wasm_tui",
-                "NETWORK REPLAY: After rewind - turn {}, {} existing choices to replay",
-                self.game.turn.turn_number, replay_choices.len()
+                "NETWORK REPLAY: After rewind - turn {}, {} our choices + {} opponent choices to replay",
+                self.game.turn.turn_number, our_choices.len(), opponent_choices.len()
             );
 
-            // NOTE: We do NOT add new_pending_choice to replay_choices!
+            // NOTE: We do NOT add new_pending_choice to our_choices!
             // The new choice must go through WasmNetworkLocalController to be
             // submitted to the server. If we add it to replay, it bypasses the server.
 
@@ -1211,10 +1201,18 @@ impl WasmFancyTuiState {
             }
             let network_local = WasmNetworkLocalController::new(human_controller, network_client.clone());
 
-            // Create ReplayController that will replay choices then delegate to network local
-            let mut replay_controller = ReplayController::new(our_id, Box::new(network_local), replay_choices);
+            // Create ReplayController for us: replays our saved choices, then delegates
+            // to the WasmNetworkLocalController (which submits new choices to the server)
+            let mut our_replay = ReplayController::new(our_id, Box::new(network_local), our_choices);
 
-            // Run the game with replay controller
+            // Create ReplayController for opponent: replays their saved choices, then
+            // delegates to a fresh WasmRemoteController (which gets new choices from network).
+            // This is critical for network mode — unlike local AI, the remote opponent
+            // can't re-compute their choices, so we must replay them.
+            let fresh_remote = WasmRemoteController::new(opponent_id, network_client.clone());
+            let mut opponent_replay = ReplayController::new(opponent_id, Box::new(fresh_remote), opponent_choices);
+
+            // Run the game with both replay controllers
             // Scope game_loop tightly so self can be accessed afterwards
             let result = {
                 // Create sync callback that processes pending reveals
@@ -1242,9 +1240,9 @@ impl WasmFancyTuiState {
 
                 // Pass controllers in correct order based on which player we are
                 if we_are_p1 {
-                    game_loop.run_until_input(&mut replay_controller, remote_controller)
+                    game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
                 } else {
-                    game_loop.run_until_input(remote_controller, &mut replay_controller)
+                    game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
                 }
             };
 
