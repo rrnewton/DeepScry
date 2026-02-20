@@ -5442,7 +5442,12 @@ impl GameState {
                     Ok(0)
                 }
             }
-            CountExpression::Compare { source, condition, true_value, false_value } => {
+            CountExpression::Compare {
+                source,
+                condition,
+                true_value,
+                false_value,
+            } => {
                 // Evaluate the source expression
                 let source_value = self.evaluate_count_expression(source, controller)?;
                 // Apply the condition and return the appropriate value

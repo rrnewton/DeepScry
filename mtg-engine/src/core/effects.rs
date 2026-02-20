@@ -2355,13 +2355,22 @@ mod tests {
 
         let expr = CountExpression::parse("X", &svars);
         match &expr {
-            CountExpression::Compare { source, condition, true_value, false_value } => {
+            CountExpression::Compare {
+                source,
+                condition,
+                true_value,
+                false_value,
+            } => {
                 // Check the nested source was resolved
                 match source.as_ref() {
                     CountExpression::ValidPermanents { filter } => {
                         assert_eq!(filter, "Creature.YouCtrl+powerGE4");
                     }
-                    other => panic!("Expected ValidPermanents, got {:?}", other),
+                    CountExpression::Fixed(_)
+                    | CountExpression::CardsDrawnThisTurn
+                    | CountExpression::Compare { .. } => {
+                        panic!("Expected ValidPermanents, got {:?}", source)
+                    }
                 }
                 // Check the condition
                 assert!(matches!(condition, CompareCondition::GreaterOrEqual(1)));
@@ -2369,7 +2378,9 @@ mod tests {
                 assert_eq!(*true_value, 2);
                 assert_eq!(*false_value, 1);
             }
-            other => panic!("Expected Compare, got {:?}", other),
+            CountExpression::Fixed(_)
+            | CountExpression::ValidPermanents { .. }
+            | CountExpression::CardsDrawnThisTurn => panic!("Expected Compare, got {:?}", expr),
         }
     }
 
