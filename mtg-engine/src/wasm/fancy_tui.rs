@@ -439,22 +439,29 @@ impl WasmFancyTuiState {
         #[allow(unused_variables)] is_network_mode: bool,
         #[allow(unused_variables)] controller_seed: u64,
     ) -> Self {
-        // Create renderer for player 1's perspective in GUI mode
-        // This enables image layout bounds and pane background colors
-        let player_id = game.players[0].id;
+        // In network mode, determine which player we control.
+        // The non-Remote controller is ours; Remote is the opponent.
+        let (our_player_idx, our_controller) = if is_network_mode && p1_controller_type == WasmControllerType::Remote {
+            (1, p2_controller_type) // We are P2
+        } else {
+            (0, p1_controller_type) // We are P1 (or local mode)
+        };
+
+        // Create renderer for OUR player's perspective in GUI mode
+        let player_id = game.players[our_player_idx].id;
         let (cell_w, cell_h) = CELL_DIMENSIONS.with(|dims| *dims.borrow());
         let renderer = FancyTuiRenderer::new_gui(player_id, true, cell_w, cell_h);
 
-        // Create human controller if player 1 is human
+        // Create human controller for our player (could be P1 or P2 in network mode)
         // In network mode with Human controller, this is wrapped by WasmNetworkLocalController
-        let p1_human_controller = if p1_controller_type == WasmControllerType::Human {
+        let p1_human_controller = if our_controller == WasmControllerType::Human {
             Some(WasmHumanController::new(player_id))
         } else {
             None
         };
 
-        // Create fixed script controller if player 1 is Fixed
-        let p1_fixed_controller = if p1_controller_type == WasmControllerType::Fixed {
+        // Create fixed script controller if our player is Fixed
+        let p1_fixed_controller = if our_controller == WasmControllerType::Fixed {
             // Get the script from thread-local storage (set via set_p1_fixed_script)
             let commands = FIXED_SCRIPT.with(|s| s.borrow().clone()).unwrap_or_default();
             Some(WasmRichInputController::new(player_id, commands))
@@ -462,30 +469,26 @@ impl WasmFancyTuiState {
             None
         };
 
-        #[cfg(feature = "wasm-network")]
-        let prompt = if is_network_mode {
-            "Network game ready. Waiting for server...".to_string()
-        } else if p1_controller_type == WasmControllerType::Human {
-            "Game ready. Your turn to play!".to_string()
-        } else if p1_controller_type == WasmControllerType::Fixed {
-            "Game ready. Running fixed script...".to_string()
-        } else {
-            "Game ready. Press Space to advance turn.".to_string()
-        };
-
-        #[cfg(not(feature = "wasm-network"))]
-        let prompt = if p1_controller_type == WasmControllerType::Human {
-            "Game ready. Your turn to play!".to_string()
-        } else if p1_controller_type == WasmControllerType::Fixed {
-            "Game ready. Running fixed script...".to_string()
-        } else {
-            "Game ready. Press Space to advance turn.".to_string()
+        let prompt = match our_controller {
+            WasmControllerType::Human => "Game ready. Your turn to play!".to_string(),
+            WasmControllerType::Fixed => "Game ready. Running fixed script...".to_string(),
+            WasmControllerType::Random
+            | WasmControllerType::Heuristic
+            | WasmControllerType::Zero
+            | WasmControllerType::Network
+            | WasmControllerType::Remote => {
+                if is_network_mode {
+                    "Network AI game running...".to_string()
+                } else {
+                    "Game ready. Press Space to advance turn.".to_string()
+                }
+            }
         };
 
         // Auto-run for AI controllers in network mode (they don't need user input)
         // Also auto-run for Fixed controller (scripted play)
         #[cfg(feature = "wasm-network")]
-        let auto_run = is_network_mode && !matches!(p1_controller_type, WasmControllerType::Human);
+        let auto_run = is_network_mode && !matches!(our_controller, WasmControllerType::Human);
         #[cfg(not(feature = "wasm-network"))]
         let auto_run = false;
 
@@ -2376,7 +2379,12 @@ pub fn launch_network_game(
             // For network AI mode, always run the game loop (even with pending_context)
             // since "pending" just means waiting for server, not waiting for human input.
             // The game loop handles waiting states correctly via NeedInput.
-            let should_run = state.auto_run && !state.game_over;
+            // For network HUMAN mode, stop when we have a pending_context (like local mode)
+            // to avoid spinning while waiting for the human to click a choice.
+            let has_human_controller = state.p1_controller_type == WasmControllerType::Human
+                || state.p2_controller_type == WasmControllerType::Human;
+            let should_run =
+                state.auto_run && !state.game_over && (!has_human_controller || state.pending_context.is_none());
             if should_run {
                 state.run_until_choice();
                 state.needs_redraw = true;
@@ -2399,7 +2407,7 @@ pub fn launch_network_game(
         }
     });
 
-    log::info!("launch_network_game: Network TUI ready (placeholder implementation)");
+    log::info!("launch_network_game: Network TUI ready");
     Ok(())
 }
 
