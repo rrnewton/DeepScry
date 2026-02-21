@@ -64,8 +64,8 @@ pub struct ChoiceRequestData {
     pub action_count: u64,
     /// Server's authoritative list of available abilities for Priority choices.
     /// Index 0 is "Pass priority" (None), indices 1+ are the actual abilities.
-    /// CRITICAL: Use these instead of locally-computed abilities to avoid DESYNC
-    /// caused by race conditions with CardRevealed message processing.
+    /// Used for DESYNC DETECTION: local abilities are validated against these.
+    /// Any mismatch is a FATAL error (per NETWORK_ARCHITECTURE.md).
     pub abilities: Option<Vec<Option<SpellAbility>>>,
 }
 

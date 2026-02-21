@@ -81,12 +81,13 @@ async function waitForChoicePrompt(page, timeout = 15000) {
 function checkForFatalErrors(browserLogs) {
     const fatalPatterns = [
         'MONOTONICITY VIOLATION',
+        'FATAL DESYNC',
+        'DESYNC',
         'unreachable',
         'panic',
     ];
-    // Ability DESYNC is non-fatal: server is authoritative and the game uses
-    // server abilities when there's a mismatch. This is a known race condition
-    // with CardRevealed processing timing (tracked separately).
+    // Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal, never papered over.
+    // Any mismatch between local and server state is an immediate test failure.
     for (const entry of browserLogs) {
         for (const pattern of fatalPatterns) {
             if (entry.text.toUpperCase().includes(pattern.toUpperCase())) {

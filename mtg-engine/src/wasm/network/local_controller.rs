@@ -125,11 +125,12 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         self.network_client.borrow().last_submitted_choice_seq().is_some()
     }
 
-    /// Get server's authoritative abilities from the current ChoiceRequest
+    /// Get server's abilities from the current ChoiceRequest for DESYNC DETECTION.
     ///
-    /// CRITICAL: For Priority choices, we MUST use the server's abilities instead of
-    /// locally-computed ones. This eliminates race conditions where the local game state
-    /// hasn't received all CardRevealed messages yet, causing DESYNC.
+    /// Used to validate that locally-computed abilities match the server's. If they
+    /// don't match, this is a FATAL DESYNC error (per NETWORK_ARCHITECTURE.md).
+    /// This data is for validation only, NOT for recovery — we never substitute
+    /// server abilities for locally-computed ones.
     ///
     /// Returns the abilities if available, skipping index 0 ("Pass priority" placeholder).
     fn get_server_abilities(&self) -> Option<Vec<SpellAbility>> {
@@ -146,11 +147,10 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         })
     }
 
-    /// Get server's option count from the current ChoiceRequest
+    /// Get server's option count from the current ChoiceRequest for DESYNC DETECTION.
     ///
-    /// CRITICAL: For multi-select choices (discard, attackers, blockers, etc.), we MUST
-    /// limit choice indices to the server's option count. The local game state may have
-    /// different items available due to CardRevealed race conditions.
+    /// Used to validate that the local hand/option count matches the server's.
+    /// If they don't match, this is a FATAL DESYNC error.
     ///
     /// Returns the number of options in the server's ChoiceRequest.
     fn get_server_option_count(&self) -> usize {
@@ -158,11 +158,10 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         client.peek_choice_request().map(|req| req.options.len()).unwrap_or(0)
     }
 
-    /// Get server's discard count from the current ChoiceRequest
+    /// Get server's discard count from the current ChoiceRequest for DESYNC DETECTION.
     ///
-    /// CRITICAL: For discard choices, the local game state may calculate a different
-    /// count than the server due to CardRevealed race conditions. We MUST use the
-    /// server's count to avoid DESYNC.
+    /// Used to validate that the local discard count matches the server's.
+    /// If they don't match, this is a FATAL DESYNC error.
     ///
     /// Returns the count from ChoiceType::Discard, or None if not a discard choice.
     fn get_server_discard_count(&self) -> Option<usize> {
@@ -255,28 +254,27 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
-        // BEHAVIORAL IDENTITY: Use locally-computed abilities (same as native)
+        // BEHAVIORAL IDENTITY: Use locally-computed abilities (same as native).
         // The sync_callback has already drained CardRevealed messages, so local state
-        // is synchronized with server. We compute abilities from local state and verify
-        // they match server's abilities in debug mode.
-        //
-        // CRITICAL: This achieves perfect behavioral identity with native client.
-        // WASM and native both compute abilities locally after processing reveals.
+        // MUST be synchronized with server. We compute abilities from local state and
+        // validate they match server's abilities — any mismatch is FATAL DESYNC.
 
-        // Debug validation: verify local abilities match server's
-        #[cfg(debug_assertions)]
+        // FATAL validation: verify local abilities match server's.
+        // Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal, never papered over.
         {
             let server_abilities = self.get_server_abilities();
             if let Some(ref server_abs) = server_abilities {
                 if server_abs.len() != available.len() {
-                    log::error!(
-                        "DESYNC: Local abilities ({}) != server abilities ({})",
+                    let msg = format!(
+                        "FATAL DESYNC: Local abilities ({}) != server abilities ({}). \
+                         Local: {:?}, Server: {:?}",
                         available.len(),
-                        server_abs.len()
+                        server_abs.len(),
+                        available,
+                        server_abs,
                     );
-                    log::error!("Local: {:?}", available);
-                    log::error!("Server: {:?}", server_abs);
-                    // Don't panic - let it play out and see what happens
+                    log::error!("{}", msg);
+                    return ChoiceResult::Error(msg);
                 }
             }
         }
@@ -496,30 +494,33 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
-        // BEHAVIORAL IDENTITY: Use locally-computed hand and count (same as native)
-        // The sync_callback has already processed reveals, so local state matches server.
-        // We use local values and verify they match server's in debug mode.
+        // BEHAVIORAL IDENTITY: Use locally-computed hand and count (same as native).
+        // The sync_callback has already processed reveals, so local state MUST match
+        // server. We validate they match — any mismatch is FATAL DESYNC.
 
-        // Debug validation: verify local state matches server's
-        #[cfg(debug_assertions)]
+        // FATAL validation: verify local state matches server's.
+        // Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal, never papered over.
         {
             let server_option_count = self.get_server_option_count();
             if server_option_count > 0 && server_option_count != hand.len() {
-                log::error!(
-                    "DESYNC: Local hand size ({}) != server option count ({})",
+                let msg = format!(
+                    "FATAL DESYNC: Local hand size ({}) != server option count ({})",
                     hand.len(),
-                    server_option_count
+                    server_option_count,
                 );
+                log::error!("{}", msg);
+                return ChoiceResult::Error(msg);
             }
 
             let server_discard_count = self.get_server_discard_count();
             if let Some(server_count) = server_discard_count {
                 if server_count != count {
-                    log::error!(
-                        "DESYNC: Local discard count ({}) != server discard count ({})",
-                        count,
-                        server_count
+                    let msg = format!(
+                        "FATAL DESYNC: Local discard count ({}) != server discard count ({})",
+                        count, server_count,
                     );
+                    log::error!("{}", msg);
+                    return ChoiceResult::Error(msg);
                 }
             }
         }
