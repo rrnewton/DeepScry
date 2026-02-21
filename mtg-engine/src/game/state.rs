@@ -2066,6 +2066,31 @@ impl GameState {
                                 equipment.attached_to = old_target;
                             }
                         }
+                        crate::undo::GameAction::RevealCard {
+                            card_id,
+                            name,
+                            old_mask,
+                            ..
+                        } => {
+                            // Undo reveal: restore mask (matches undo.rs behavior)
+                            // CRITICAL: Do NOT unconditionally clear card from EntityStore.
+                            // In WASM network mode, cards instantiated by process_card_reveal_wasm
+                            // are outside the undo log and must be preserved.
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.revealed_to_mask = old_mask;
+                            } else if old_mask == 0 && name.is_some() {
+                                self.cards.clear(card_id);
+                            }
+                        }
+                        crate::undo::GameAction::SetRevealedToMask {
+                            card_id,
+                            old_value,
+                            new_value: _,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.revealed_to_mask = old_value;
+                            }
+                        }
                         _ => {}
                     }
 
@@ -2367,15 +2392,35 @@ impl GameState {
                     // Choice points don't need to be undone
                 }
 
-                crate::undo::GameAction::RevealCard { card_id, name, .. } => {
-                    // Undo reveal: clear the card from EntityStore (unreveal it)
-                    // Only clear if we actually revealed a card (name was Some)
-                    // Note: revealed_to is not used for undo - we just need to clear the slot
-                    if name.is_some() {
+                crate::undo::GameAction::RevealCard {
+                    card_id,
+                    name,
+                    old_mask,
+                    ..
+                } => {
+                    // Undo reveal: restore previous mask state (matches undo.rs behavior)
+                    // Two cases:
+                    // 1. Card exists (server or client after instantiation):
+                    //    Restore the old_mask value (card instance is preserved)
+                    // 2. Card doesn't exist but was created by this reveal
+                    //    (late-binding, old_mask=0, name=Some): Clear the slot
+                    //
+                    // CRITICAL: Do NOT unconditionally clear the card from EntityStore!
+                    // In WASM network mode, cards are instantiated by process_card_reveal_wasm
+                    // which is outside the undo log. Clearing the card would destroy the instance
+                    // and cause FATAL DESYNC when abilities are recomputed (the card's type info
+                    // would be lost, so PlayLand abilities wouldn't be generated for it).
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        // Card exists - restore the mask
+                        card.revealed_to_mask = old_mask;
+                    } else if old_mask == 0 && name.is_some() {
+                        // Card doesn't exist but was created by this reveal
+                        // This shouldn't normally happen since the card should exist
+                        // if it was instantiated, but handle it defensively
                         self.cards.clear(card_id);
                     }
-                    // If name was None, this was a dummy reveal (opponent perspective)
-                    // and nothing needs to be undone
+                    // If card doesn't exist and old_mask != 0, this is a late-binding
+                    // reveal that never instantiated (opponent's hidden card) - nothing to undo
                 }
 
                 crate::undo::GameAction::SetRevealedToMask {

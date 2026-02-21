@@ -339,6 +339,13 @@ impl PlayerController for ReplayController {
             .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
     }
 
+    fn prepare_for_priority_choice(&mut self) -> bool {
+        // Delegate to inner controller for network sync behavior
+        // This ensures the wrapped controller (e.g., WasmNetworkLocalController)
+        // can perform its prepare logic even when wrapped in a ReplayController.
+        self.inner.prepare_for_priority_choice()
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         // Always delegate notifications to inner controller
         self.inner.on_priority_passed(view);

@@ -675,6 +675,23 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         }
     }
 
+    fn prepare_for_priority_choice(&mut self) -> bool {
+        // In WASM network mode, we can't block like the native controller does.
+        // The native controller blocks on MVar until ChoiceRequest arrives,
+        // guaranteeing all preceding CardRevealed messages are buffered.
+        //
+        // For WASM, we check if a ChoiceRequest is available. If yes, all
+        // preceding CardRevealed messages are guaranteed to be in pending_reveals
+        // (WebSocket delivers messages in order, and JS processes them sequentially).
+        // The sync_callback (called by sync_to_action after this returns) will
+        // drain and process them before abilities are computed.
+        //
+        // If no ChoiceRequest is available, we return true anyway - the controller's
+        // choose_spell_ability_to_play will return NeedInput, causing the game loop
+        // to exit and wait for more network data. This is correct behavior.
+        true
+    }
+
     fn on_priority_passed(&mut self, view: &GameStateView) {
         self.inner.on_priority_passed(view);
     }
