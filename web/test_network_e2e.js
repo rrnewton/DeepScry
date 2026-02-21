@@ -111,7 +111,8 @@ async function runTest() {
             'server',
             '--port', SERVER_PORT.toString(),
             '--password', SERVER_PASSWORD,
-            '--seed', GAME_SEED.toString()
+            '--seed', GAME_SEED.toString(),
+            '--network-debug'
         ], {
             cwd: projectRoot,
             stdio: ['ignore', 'pipe', 'pipe']

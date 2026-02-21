@@ -6,7 +6,7 @@ issue_type: bug
 labels:
 - bug
 created_at: 2026-02-21T17:02:07.902149965+00:00
-updated_at: 2026-02-21T17:02:07.902149965+00:00
+updated_at: 2026-02-21T17:09:19.048876653+00:00
 ---
 
 # Description
@@ -35,6 +35,8 @@ node web/test_network_human_input.js
 
 Requires: make build-network && make wasm-network
 
+**IMPORTANT**: Always launch the server with `--network-debug` to enable full state hash validation. See `docs/NETWORK_ARCHITECTURE.md` "Testing Requirements" section.
+
 ## Expected Behavior
 
 Local abilities should always match server abilities. CardRevealed messages must be fully processed before ability computation.
@@ -42,3 +44,13 @@ Local abilities should always match server abilities. CardRevealed messages must
 ## Context
 
 Per NETWORK_ARCHITECTURE.md, desync is ALWAYS fatal. The WASM local_controller now correctly returns ChoiceResult::Error on desync detection (previously it was a log-only warning that was papered over).
+
+## Investigation Notes
+
+Key files to examine:
+- `mtg-engine/src/wasm/network/local_controller.rs` - WASM local controller, validates abilities
+- `mtg-engine/src/wasm/network/client.rs` - Receives CardRevealed from server, queues them
+- `mtg-engine/src/wasm/network/remote_controller.rs` - Opponent choice handling
+- `mtg-engine/src/game/game_loop/mod.rs` - Core game loop, where reveals should be emitted
+
+The fix must ensure CardRevealed messages are applied to shadow state BEFORE ability computation, while maintaining deterministic sequential simulation.

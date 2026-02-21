@@ -303,6 +303,34 @@ This is a direct consequence of the deterministic simulation model:
    (`tests/network_vs_local_equivalence_e2e.sh`) validates gamelog identity across
    ALL controller types. This is not optional - it catches info-leakage bugs.
 
+## Testing Requirements: Always Use `--network-debug`
+
+When testing any network functionality, **always** launch the server with `--network-debug`:
+
+```bash
+mtg server --port 17771 --password test --network-debug
+```
+
+The `--network-debug` flag enables **full state hash validation** after every choice:
+- Server computes a hash of the game state after applying each choice
+- Client computes the same hash independently and sends it with each `ChoiceResponse`
+- Server validates the hashes match — any mismatch is an immediate fatal error
+
+Without `--network-debug`, the server still runs the game correctly, but state hash
+validation is disabled. The cheap integer-comparison checks (ability count, hand size,
+discard count) always run in all builds, but these only catch a subset of desyncs.
+The full hash check catches **all** state divergences.
+
+**Every test script and launch helper MUST pass `--network-debug` to the server.**
+This includes:
+- E2E tests (`web/test_network_*.js`, `tests/network_vs_local_equivalence_e2e.sh`)
+- Bug-finding infrastructure (`bug_finding/network_test_lib.py`)
+- Launch helpers (`scripts/launch_network_game.sh`, `scripts/play-web.sh`)
+- Manual testing scripts (`scripts/network_desync_reproducer.sh`)
+
+If you create a new test or script that launches a network server, add `--network-debug`.
+If you find an existing script without it, that's a bug — fix it.
+
 ## Related Issues
 
 - `mtg-secqu`: Single-channel architecture to eliminate select! nondeterminism

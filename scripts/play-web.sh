@@ -129,7 +129,7 @@ cd "$REPO_ROOT"
 
 # 1. Start the MTG game server
 echo "Starting MTG server on port $SERVER_PORT..."
-"$MTG_BIN" server --port "$SERVER_PORT" > "$SERVER_LOG" 2>&1 &
+"$MTG_BIN" server --port "$SERVER_PORT" --network-debug > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 sleep 1.5  # Wait for server to be ready
 

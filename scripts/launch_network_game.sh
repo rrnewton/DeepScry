@@ -137,6 +137,7 @@ run_mtg_prebuilt server \
     --password "$PASSWORD" \
     --cardsfolder mtg-engine/cardsfolder \
     --seed $GAME_SEED \
+    --network-debug \
     --verbosity normal &
 SERVER_PID=$!
 sleep 1
