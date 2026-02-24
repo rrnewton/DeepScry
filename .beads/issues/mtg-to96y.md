@@ -68,6 +68,18 @@ Fix: Call `game.turn.reset_transient_guards()` and clear `pending_cast`/`pending
 
 Previous fix `12308e80c` addressed a related but different issue: RevealCard undo destroying card instances in EntityStore.
 
+## Bug Fix: Multiple Rewind/Replay DESYNCs (2026-02-24_#1857(387a24da6))
+
+Fixed 5 DESYNC bugs in WASM network human mode (`387a24da6`):
+
+1. **card.damage accumulation**: Damage/bonus fields not undo-logged → doubled during replay. Fix: Clear damage, power_bonus, toughness_bonus, temp_base_stats in `rewind_to_turn_start()`.
+2. **City of Brass targeting**: `Defined$ You` for DealDamage not parsed → targeted creatures instead of controller. Fix: Parse into `TargetRef::Player(placeholder)`, resolved via `resolve_effect_placeholder()`.
+3. **Non-deterministic trigger targets**: `.find()` on battlefield after rewind → different order than original. Fix: Collect candidates, sort by CardId, take `.first()`.
+4. **Wheel of Fortune**: `Defined$ Player` (each player) and `Mode$ Hand` (entire hand) not supported. Fix: Added ALL_PLAYERS_ID sentinel, `expand_all_players_effect()`, Mode$ Hand → count=u8::MAX sentinel.
+5. **Unrevealed card discard crash**: Network shadow state has no Card entity for hidden cards. Fix: Fallback card name in `discard_card()`, direct hand iteration for Mode$ Hand.
+
+Test evidence: 100 choices across 11 turns with zero DESYNCs.
+
 ## Dependencies
 
 - tokio-tungstenite (native WebSocket)
