@@ -1,12 +1,13 @@
 ---
 title: 'WASM network DESYNC: CardRevealed for drawn card not processed before ability computation'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 labels:
 - bug
 created_at: 2026-02-21T17:02:07.902149965+00:00
-updated_at: 2026-02-21T17:09:19.048876653+00:00
+updated_at: 2026-02-21T17:52:57.198378822+00:00
+closed_at: 2026-02-21T17:52:57.198378762+00:00
 ---
 
 # Description

@@ -601,22 +601,13 @@ impl GameAction {
                 ..
             } => {
                 // Undo reveal: restore the previous mask state
-                // Two cases:
-                // 1. Card exists (server or client after instantiation):
-                //    Restore the old_mask value
-                // 2. Card was created by this reveal (late-binding, old_mask=0, name=Some):
-                //    Clear the slot entirely
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     // Card exists - restore the mask
                     card.revealed_to_mask = *old_mask;
                 } else if *old_mask == 0 && name.is_some() {
                     // Card doesn't exist but was created by this reveal
-                    // This shouldn't normally happen since the card should exist
-                    // if it was instantiated, but handle it defensively
                     game.cards.clear(*card_id);
                 }
-                // If card doesn't exist and old_mask != 0, this is a late-binding
-                // reveal that never instantiated (opponent's hidden card) - nothing to undo
             }
 
             GameAction::SetRevealedToMask {
@@ -814,6 +805,20 @@ impl UndoLog {
         // Otherwise (turn 1), use turn 1 as the turn number.
         // The game state has been rewound either way.
         let effective_turn = turn_number.unwrap_or(1);
+
+        // Reset transient guard fields that are NOT tracked by the undo log.
+        // These are #[serde(skip)] fields that persist from the original execution.
+        // Without this reset, guards like draw_step_executed_turn = Some(N) would
+        // cause the draw step to be skipped during replay, resulting in missing
+        // cards and DESYNC errors. (See also: the full-rewind reset at
+        // GameState::undo_to_previous_choice_point which does this when undo_log is empty.)
+        game.turn.reset_transient_guards();
+
+        // Clear pending cast/activation state (not tracked by undo log)
+        game.pending_cast = None;
+        game.pending_activation = None;
+        game.pending_cycling_search = None;
+        game.spell_targets.clear();
 
         // Reverse the choices to get forward chronological order
         choices_reversed.reverse();
