@@ -51,6 +51,8 @@ impl<'a> GameLoop<'a> {
         // Get available creatures that can attack
         let available_creatures = self.get_available_attacker_creatures(active_player);
 
+        // (combat debug logging removed after fixing combat state rewind bug)
+
         if !available_creatures.is_empty() && !already_declared {
             // Clear replay mode if all choices have been replayed
             // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT

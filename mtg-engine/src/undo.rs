@@ -739,6 +739,18 @@ impl UndoLog {
         self.actions.is_empty()
     }
 
+    /// Get the last N actions as formatted strings for debugging
+    ///
+    /// Returns a vector of "[index] ActionDescription" strings.
+    pub fn last_n_display(&self, n: usize) -> Vec<String> {
+        let start = self.actions.len().saturating_sub(n);
+        self.actions[start..]
+            .iter()
+            .enumerate()
+            .map(|(i, a)| format!("[{}] {}", start + i, a))
+            .collect()
+    }
+
     /// Clear all actions up to the most recent choice point
     pub fn rewind_to_choice_point(&mut self) {
         if let Some(checkpoint) = self.choice_points.pop() {
@@ -814,11 +826,49 @@ impl UndoLog {
         // GameState::undo_to_previous_choice_point which does this when undo_log is empty.)
         game.turn.reset_transient_guards();
 
+        // Reset priority state that persists across NeedInput returns.
+        // These fields are NOT #[serde(skip)] (they must survive serialization) and NOT
+        // tracked by the undo log (they're updated directly by priority_round).
+        // After rewinding, the replay re-executes priority rounds from scratch, so stale
+        // values from the interrupted execution would cause the wrong player to get priority
+        // first, or skip players entirely (e.g., consecutive_passes=1 from an interrupted
+        // End step would cause the Turn 3 Upkeep priority round to end after just one pass,
+        // producing a 1-action DESYNC).
+        game.turn.priority_player = None;
+        game.turn.consecutive_passes = 0;
+
         // Clear pending cast/activation state (not tracked by undo log)
         game.pending_cast = None;
         game.pending_activation = None;
         game.pending_cycling_search = None;
         game.spell_targets.clear();
+
+        // Clear combat state (not tracked by undo log).
+        // CombatState is modified directly by declare_attacker/declare_blocker and
+        // cleared at end_of_combat. After rewinding to turn start, combat hasn't
+        // begun yet, so all combat maps must be empty. Without this, a creature
+        // that was declared as attacker before the rewind would still show as
+        // attacking (is_attacking=true), preventing it from being selected as an
+        // attacker during replay and causing the replay to miss choices.
+        game.combat.clear();
+
+        // Clear per-turn transient state on battlefield permanents (not tracked by undo log).
+        // These fields are modified directly during the turn but are NOT logged as undo
+        // actions. The cleanup step at end of previous turn resets them all, so at turn
+        // start they must be zero/None. Without this:
+        // - damage persists after rewind and accumulates during replay (original + replayed
+        //   = 2x damage), causing spurious state-based action kills
+        // - power_bonus/toughness_bonus are handled by PumpCreature undo, but we clear them
+        //   defensively since cleanup already set them to 0 at turn boundary
+        // - temp_base_power/toughness (from Animate effects) have NO undo support at all
+        for card_id in game.battlefield.cards.iter() {
+            if let Ok(card) = game.cards.get_mut(*card_id) {
+                card.damage = 0;
+                card.power_bonus = 0;
+                card.toughness_bonus = 0;
+                card.clear_temp_base_stats();
+            }
+        }
 
         // Reverse the choices to get forward chronological order
         choices_reversed.reverse();

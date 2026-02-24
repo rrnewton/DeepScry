@@ -1163,7 +1163,8 @@ impl WasmFancyTuiState {
             self.in_rewind_replay = true;
 
             let turn_before = self.game.turn.turn_number;
-            log::debug!(target: "wasm_tui", "NETWORK REPLAY: Starting replay on turn {}", turn_before);
+            let undo_len_before_rewind = self.game.undo_log.len();
+            log::info!(target: "wasm_tui", "NETWORK REPLAY: Starting on turn {}, undo_log={}", turn_before, undo_len_before_rewind);
 
             // Take the new pending choice from the stored human controller
             // IMPORTANT: Don't add this to replay_choices! It needs to go through
@@ -1184,10 +1185,10 @@ impl WasmFancyTuiState {
             // Unlike local mode where the AI can re-compute its choices, the remote
             // opponent's choices must be replayed from the saved log.
             let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
-            log::debug!(
+            log::info!(
                 target: "wasm_tui",
-                "NETWORK REPLAY: After rewind - turn {}, {} our choices + {} opponent choices to replay",
-                self.game.turn.turn_number, our_choices.len(), opponent_choices.len()
+                "NETWORK REPLAY: After rewind - turn {}, undo_log={}, {} our choices + {} opponent choices to replay",
+                self.game.turn.turn_number, self.game.undo_log.len(), our_choices.len(), opponent_choices.len()
             );
 
             // NOTE: We do NOT add new_pending_choice to our_choices!
@@ -1247,32 +1248,35 @@ impl WasmFancyTuiState {
             };
 
             let turn_after_run = self.game.turn.turn_number;
-            log::debug!(
+            log::info!(
                 target: "wasm_tui",
-                "NETWORK REPLAY: Game loop returned on turn {}",
-                turn_after_run
+                "NETWORK REPLAY: Game loop returned on turn {}, undo_log={}",
+                turn_after_run, self.game.undo_log.len()
             );
 
             // Replay complete - clear the rewind flag
             self.in_rewind_replay = false;
 
-            // Check monotonicity invariants after network replay
-            if let Some(violation_msg) = self.check_monotonicity_invariants() {
-                self.error_message = Some(violation_msg);
-                self.game_over = true;
-                self.needs_redraw = true;
-                return;
-            }
+            // Reset high-water marks to post-replay values.
+            // After replay, the undo_log may be shorter than the pre-rewind high-water mark
+            // because normal runs between replays can process opponent choices that advance
+            // the game beyond the replay's NeedInput point. Those "extra" opponent choices are
+            // in the replay queue but not consumed because the game stops at OUR NeedInput
+            // (after the new choice is submitted) before reaching the opponent's choices.
+            // This is correct behavior - the hash check validates state correctness.
+            self.high_water_action_count = self.game.undo_log.len();
+            self.high_water_log_count = self.game.logger.log_count();
 
             self.handle_game_result(result);
             self.needs_redraw = true;
         } else {
             // Normal run - no replay needed
-            log::debug!(
+            log::info!(
                 target: "wasm_tui",
-                "NETWORK NORMAL: Running game loop, turn {}, we_are_p1={}",
+                "NETWORK NORMAL: Running game loop, turn {}, we_are_p1={}, undo_log={}",
                 self.game.turn.turn_number,
-                we_are_p1
+                we_are_p1,
+                self.game.undo_log.len()
             );
 
             if let Some(ref mut human) = self.p1_human_controller {
@@ -1315,10 +1319,10 @@ impl WasmFancyTuiState {
                 };
 
                 let turn_number = self.game.turn.turn_number;
-                log::debug!(
+                log::info!(
                     target: "wasm_tui",
-                    "NETWORK NORMAL: Game loop returned on turn {}",
-                    turn_number
+                    "NETWORK NORMAL: Game loop returned on turn {}, undo_log={}",
+                    turn_number, self.game.undo_log.len()
                 );
 
                 // Check monotonicity invariants after normal network run

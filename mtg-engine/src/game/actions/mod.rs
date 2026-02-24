@@ -10,6 +10,118 @@ use crate::game::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
 
+/// Expand effects with `ALL_PLAYERS_ID` player target into one effect per player.
+/// For effects that don't use the all-players sentinel, returns the original effect unchanged.
+fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallvec::SmallVec<[Effect; 4]> {
+    // Check if this effect uses the all-players sentinel on its player field
+    let is_all_players = match effect {
+        Effect::DrawCards { player, .. }
+        | Effect::DiscardCards { player, .. }
+        | Effect::GainLife { player, .. }
+        | Effect::Mill { player, .. } => player.is_all_players(),
+        // All other effect variants don't have an expandable player field
+        Effect::DealDamage { .. }
+        | Effect::EachDamage { .. }
+        | Effect::Loot { .. }
+        | Effect::DestroyPermanent { .. }
+        | Effect::TapPermanent { .. }
+        | Effect::UntapPermanent { .. }
+        | Effect::PumpCreature { .. }
+        | Effect::PumpAllCreatures { .. }
+        | Effect::PumpCreatureVariable { .. }
+        | Effect::Scry { .. }
+        | Effect::CounterSpell { .. }
+        | Effect::AddMana { .. }
+        | Effect::PutCounter { .. }
+        | Effect::RemoveCounter { .. }
+        | Effect::ExilePermanent { .. }
+        | Effect::SearchLibrary { .. }
+        | Effect::AttachEquipment { .. }
+        | Effect::CreateToken { .. }
+        | Effect::CopyPermanent { .. }
+        | Effect::Balance { .. }
+        | Effect::SetBasePowerToughness { .. }
+        | Effect::Airbend { .. }
+        | Effect::Earthbend { .. }
+        | Effect::Firebend { .. }
+        | Effect::GrantCantBeBlocked { .. }
+        | Effect::ModalChoice { .. }
+        | Effect::Dig { .. }
+        | Effect::CreateDelayedTrigger { .. }
+        | Effect::CopySpellAbility { .. }
+        | Effect::ImmediateTrigger { .. }
+        | Effect::ClearRemembered
+        | Effect::UnlessCostWrapper { .. } => false,
+    };
+
+    if !is_all_players {
+        return smallvec::smallvec![effect.clone()];
+    }
+
+    // Expand: create one effect per player
+    player_ids
+        .iter()
+        .map(|&pid| match effect {
+            Effect::DrawCards { count, .. } => Effect::DrawCards {
+                player: pid,
+                count: *count,
+            },
+            Effect::DiscardCards {
+                count,
+                remember_discarded,
+                ..
+            } => Effect::DiscardCards {
+                player: pid,
+                count: *count,
+                remember_discarded: *remember_discarded,
+            },
+            Effect::GainLife { amount, .. } => Effect::GainLife {
+                player: pid,
+                amount: *amount,
+            },
+            Effect::Mill { count, .. } => Effect::Mill {
+                player: pid,
+                count: *count,
+            },
+            // Unreachable: is_all_players only true for the above four variants.
+            // The remaining variants can never reach here because the is_all_players
+            // check already returned false for them.
+            Effect::DealDamage { .. }
+            | Effect::EachDamage { .. }
+            | Effect::Loot { .. }
+            | Effect::DestroyPermanent { .. }
+            | Effect::TapPermanent { .. }
+            | Effect::UntapPermanent { .. }
+            | Effect::PumpCreature { .. }
+            | Effect::PumpAllCreatures { .. }
+            | Effect::PumpCreatureVariable { .. }
+            | Effect::Scry { .. }
+            | Effect::CounterSpell { .. }
+            | Effect::AddMana { .. }
+            | Effect::PutCounter { .. }
+            | Effect::RemoveCounter { .. }
+            | Effect::ExilePermanent { .. }
+            | Effect::SearchLibrary { .. }
+            | Effect::AttachEquipment { .. }
+            | Effect::CreateToken { .. }
+            | Effect::CopyPermanent { .. }
+            | Effect::Balance { .. }
+            | Effect::SetBasePowerToughness { .. }
+            | Effect::Airbend { .. }
+            | Effect::Earthbend { .. }
+            | Effect::Firebend { .. }
+            | Effect::GrantCantBeBlocked { .. }
+            | Effect::ModalChoice { .. }
+            | Effect::Dig { .. }
+            | Effect::CreateDelayedTrigger { .. }
+            | Effect::CopySpellAbility { .. }
+            | Effect::ImmediateTrigger { .. }
+            | Effect::ClearRemembered
+            | Effect::UnlessCostWrapper { .. } => unreachable!(),
+        })
+        .collect()
+}
+
 impl GameState {
     /// Play a land from hand to battlefield
     ///
@@ -195,7 +307,13 @@ impl GameState {
                         &mut last_resolved_target,
                     );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
-                    self.execute_effect(&resolved)?;
+
+                    // Expand "all players" effects (e.g., Wheel of Fortune: each player discards/draws)
+                    let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+                    let expanded = expand_all_players_effect(&resolved, &player_ids);
+                    for e in &expanded {
+                        self.execute_effect(e)?;
+                    }
                 }
             }
         }
@@ -1728,18 +1846,37 @@ impl GameState {
                 count,
                 remember_discarded,
             } => {
-                // Discard cards (AI chooses which cards to discard)
-                for _ in 0..*count {
-                    let card_to_discard = self.choose_card_to_discard(*player)?;
-                    if let Some(card_id) = card_to_discard {
-                        // If RememberDiscarded$ True, store the discarded card for ImmediateTrigger
+                if *count == u8::MAX {
+                    // Mode$ Hand: discard ENTIRE hand unconditionally.
+                    // We collect all card IDs first (can't borrow zones during mutation).
+                    // Unlike the choose_card_to_discard path, this doesn't filter by card
+                    // properties, so it works even for face-down/hidden cards on network clients.
+                    // Sort by CardId for deterministic graveyard ordering across server/clients
+                    // (hand iteration order can differ after WASM rewind+replay).
+                    let mut hand_cards: smallvec::SmallVec<[CardId; 16]> = self
+                        .get_player_zones(*player)
+                        .map(|zones| zones.hand.cards.iter().copied().collect())
+                        .unwrap_or_default();
+                    hand_cards.sort_by_key(|id| id.as_u32());
+                    for card_id in hand_cards {
                         if *remember_discarded {
                             self.remembered_cards.push(card_id);
                         }
                         self.discard_card(*player, card_id)?;
-                    } else {
-                        // No cards in hand to discard
-                        break;
+                    }
+                } else {
+                    // Fixed count: AI chooses which cards to discard
+                    for _ in 0..*count {
+                        let card_to_discard = self.choose_card_to_discard(*player)?;
+                        if let Some(card_id) = card_to_discard {
+                            if *remember_discarded {
+                                self.remembered_cards.push(card_id);
+                            }
+                            self.discard_card(*player, card_id)?;
+                        } else {
+                            // No cards in hand to discard
+                            break;
+                        }
                     }
                 }
             }
@@ -3380,8 +3517,12 @@ impl GameState {
     /// Returns an error if the card or player cannot be found, or if the
     /// card cannot be moved from hand to graveyard.
     pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
-        // Get card name for logging before move
-        let card_name = self.cards.get(card_id)?.name.to_string();
+        // Get card name for logging before move (unrevealed cards use fallback name)
+        let card_name = self
+            .cards
+            .get(card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
         let player_name = self.get_player(player_id)?.name.clone();
 
         // Move card from hand to graveyard
@@ -3618,12 +3759,14 @@ impl GameState {
                         target: TargetRef::None,
                         amount,
                     } => {
-                        // Try to find opponent's creature first
-                        if let Some(target_id) = self
+                        // Try to find opponent's creature first, sorted by CardId for determinism.
+                        // Using .find() on unsorted battlefield iteration order would produce
+                        // different results after rewind+replay if the internal ordering changed.
+                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
                             .cards
                             .iter()
-                            .find(|&card_id| {
+                            .filter(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
                                     card.is_creature()
                                         && card.controller != controller
@@ -3633,7 +3776,9 @@ impl GameState {
                                 }
                             })
                             .copied()
-                        {
+                            .collect();
+                        candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&target_id) = candidates.first() {
                             effect = Effect::DealDamage {
                                 target: TargetRef::Permanent(target_id),
                                 amount: *amount,
@@ -3648,12 +3793,13 @@ impl GameState {
                         // else stays as TargetRef::None and will fizzle
                     }
                     Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
-                        // Find a valid target (opponent's creature matching restriction)
-                        if let Some(target_id) = self
+                        // Find a valid target (opponent's creature matching restriction),
+                        // sorted by CardId for determinism after rewind+replay.
+                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
                             .cards
                             .iter()
-                            .find(|&card_id| {
+                            .filter(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
                                     restriction.matches(card)
                                         && card.controller != controller
@@ -3663,7 +3809,9 @@ impl GameState {
                                 }
                             })
                             .copied()
-                        {
+                            .collect();
+                        candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&target_id) = candidates.first() {
                             effect = Effect::DestroyPermanent {
                                 target: target_id,
                                 restriction: restriction.clone(),
@@ -3676,12 +3824,13 @@ impl GameState {
                         toughness_bonus,
                         keywords_granted,
                     } if target.is_placeholder() => {
-                        // Find a valid target (any creature on battlefield)
-                        if let Some(target_id) = self
+                        // Find a valid target (any creature on battlefield),
+                        // sorted by CardId for determinism after rewind+replay.
+                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
                             .cards
                             .iter()
-                            .find(|&card_id| {
+                            .filter(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
                                     card.is_creature() && targeting::is_legal_target(card, controller)
                                 } else {
@@ -3689,7 +3838,9 @@ impl GameState {
                                 }
                             })
                             .copied()
-                        {
+                            .collect();
+                        candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&target_id) = candidates.first() {
                             effect = Effect::PumpCreature {
                                 target: target_id,
                                 power_bonus: *power_bonus,
@@ -3700,16 +3851,16 @@ impl GameState {
                     }
                     // Note: CreateToken is handled by resolve_effect_placeholder
                     Effect::ExilePermanent { target } if target.is_placeholder() => {
-                        // Find a valid target (opponent's nonland permanent)
+                        // Find a valid target (opponent's nonland permanent),
+                        // sorted by CardId for determinism after rewind+replay.
                         // Web Up and similar cards: "exile target nonland permanent an opponent controls"
                         let controller = self.cards.get(trigger_source)?.controller;
-                        if let Some(target_id) = self
+                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
                             .cards
                             .iter()
-                            .find(|&card_id| {
+                            .filter(|&card_id| {
                                 if let Ok(card) = self.cards.get(*card_id) {
-                                    // Target nonland permanents controlled by opponents
                                     !card.is_land()
                                         && card.controller != controller
                                         && targeting::is_legal_target(card, controller)
@@ -3718,7 +3869,9 @@ impl GameState {
                                 }
                             })
                             .copied()
-                        {
+                            .collect();
+                        candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&target_id) = candidates.first() {
                             effect = Effect::ExilePermanent { target: target_id };
                         }
                     }
@@ -3727,8 +3880,9 @@ impl GameState {
                         // For now, pick the first land they control (AI could choose better targets)
                         let controller = self.cards.get(trigger_source)?.controller;
 
-                        // Find a land controlled by the trigger's controller
-                        if let Some(land_id) = self
+                        // Find a land controlled by the trigger's controller,
+                        // sorted by CardId for determinism after rewind+replay.
+                        let mut land_candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
                             .cards
                             .iter()
@@ -3740,8 +3894,9 @@ impl GameState {
                                     None
                                 }
                             })
-                            .next()
-                        {
+                            .collect();
+                        land_candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&land_id) = land_candidates.first() {
                             effect = Effect::Earthbend {
                                 target: land_id,
                                 num_counters: *num_counters,

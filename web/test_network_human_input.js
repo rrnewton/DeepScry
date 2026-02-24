@@ -5,9 +5,9 @@
 // 1. Starts a native MTG server
 // 2. Starts a native AI client (heuristic) as P1
 // 3. Launches browser as P2 with human controller
-// 4. Waits for choice prompts, makes selections
-// 5. Verifies no MONOTONICITY VIOLATION or other errors
-// 6. Verifies the game advances after each choice
+// 4. Waits for choice prompts, makes smart selections
+// 5. Verifies no MONOTONICITY VIOLATION, DESYNC, or other errors
+// 6. Plays through as many turns as possible
 //
 // Requires:
 //   make build-network
@@ -24,6 +24,12 @@ const SERVER_PASSWORD = 'test_human';
 const HTTP_PORT = 8769;
 const GAME_SEED = 42;
 const DECK_NAME = 'grizzly_bears.dck';
+
+// Test limits
+const MAX_CHOICES = 100;           // Maximum choices before declaring success
+const GAME_TIMEOUT_MS = 180000;    // 3 minute overall game timeout
+const CHOICE_TIMEOUT_MS = 20000;   // 20 second timeout per choice prompt
+const POST_CHOICE_WAIT_MS = 500;   // Wait after pressing key before checking
 
 function log(message) {
     const timestamp = new Date().toISOString().substring(11, 23);
@@ -64,17 +70,198 @@ async function extractTerminalText(page) {
     });
 }
 
+// Classify what kind of choice prompt is on screen
+// Returns: { type, text } or null if no prompt
+function classifyPrompt(terminalText) {
+    if (!terminalText) return null;
+
+    // Check for game over first
+    if (terminalText.includes('Game Over') || terminalText.includes('wins')) {
+        return { type: 'game_over', text: terminalText };
+    }
+
+    // Check for various prompt types based on the prompts from controller.rs
+    if (terminalText.includes('Declare Attackers')) {
+        return { type: 'attackers', text: terminalText };
+    }
+    if (terminalText.includes('Declare Blockers')) {
+        return { type: 'blockers', text: terminalText };
+    }
+    if (terminalText.includes('Discard') && terminalText.includes('card(s)')) {
+        return { type: 'discard', text: terminalText };
+    }
+    if (terminalText.includes('Choose target for')) {
+        return { type: 'targets', text: terminalText };
+    }
+    if (terminalText.includes('Choose mana source')) {
+        return { type: 'mana_source', text: terminalText };
+    }
+    if (terminalText.includes('Search library')) {
+        return { type: 'library_search', text: terminalText };
+    }
+    if (terminalText.includes('Choose damage order')) {
+        return { type: 'damage_order', text: terminalText };
+    }
+    if (terminalText.includes('sacrifice')) {
+        return { type: 'sacrifice', text: terminalText };
+    }
+    if (terminalText.includes('Choose') && terminalText.includes('mode')) {
+        return { type: 'modes', text: terminalText };
+    }
+    if (terminalText.includes('Priority') && terminalText.includes('Choose action')) {
+        return { type: 'spell_ability', text: terminalText };
+    }
+    // Fallback: any visible choice list (look for [0], [1] etc.)
+    // This could be a priority prompt where we just have [0] pass visible
+    if (terminalText.match(/\[\d\]/)) {
+        // Check if this looks like a spell/ability choice with pass option
+        if (terminalText.match(/\[0\] pass/)) {
+            return { type: 'spell_ability', text: terminalText };
+        }
+        return { type: 'unknown_choice', text: terminalText };
+    }
+    return null;
+}
+
 // Wait for a choice prompt to appear in the terminal
-async function waitForChoicePrompt(page, timeout = 15000) {
+// If previousText is provided, waits for the terminal text to CHANGE first
+async function waitForChoicePrompt(page, timeout = CHOICE_TIMEOUT_MS, previousText = null) {
     const startTime = Date.now();
+    let textChanged = (previousText === null);
+
     while (Date.now() - startTime < timeout) {
         const text = await extractTerminalText(page);
-        if (text.includes('Choose') || text.includes('Play land') || text.includes('Pass')) {
-            return text;
+
+        // If we need the text to change first, wait for it
+        if (!textChanged) {
+            if (text !== previousText) {
+                textChanged = true;
+                // Small delay after text change to let rendering settle
+                await page.waitForTimeout(200);
+                continue;
+            }
+            await page.waitForTimeout(100);
+            continue;
         }
+
+        const prompt = classifyPrompt(text);
+        if (prompt) return prompt;
         await page.waitForTimeout(200);
     }
     return null;
+}
+
+// Decide which key to press based on prompt type and available choices
+// Network mode uses 0-indexed keys: '0' = choice [0], '1' = choice [1], etc.
+function decideKey(prompt) {
+    const text = prompt.text;
+
+    switch (prompt.type) {
+        case 'spell_ability': {
+            // Parse available choices from terminal text
+            // Choices are formatted as: [0] pass, [1] play Forest, [2] cast Grizzly Bears
+            // (lowercase - from format_spell_ability_choice in controller.rs)
+
+            // Priority 1: Play a land if possible
+            const landMatch = text.match(/\[(\d)\] play /);
+            if (landMatch) {
+                return { key: landMatch[1], reason: 'play land' };
+            }
+
+            // Priority 2: Cast a creature spell if available
+            // Only cast if we have enough mana (simple heuristic: we have lands on battlefield)
+            const castMatch = text.match(/\[(\d)\] cast /);
+            if (castMatch) {
+                return { key: castMatch[1], reason: 'cast spell' };
+            }
+
+            // NOTE: Don't activate abilities for now.
+            // Bazaar of Baghdad's "draw 2, discard 3" creates multi-card discard
+            // that the FancyTUI single-selection UI can't handle yet.
+            // TODO: Re-enable once multi-card discard UI is implemented.
+
+            // Default: Pass priority (choice [0] = "pass")
+            return { key: '0', reason: 'pass priority' };
+        }
+
+        case 'attackers': {
+            // Declare Attackers: [0] Done, [1] creature1, [2] creature2, ...
+            // Attack with the first available creature if any
+            const creatureMatch = text.match(/\[(\d)\] (?!Done)/);
+            if (creatureMatch) {
+                return { key: creatureMatch[1], reason: 'attack with creature' };
+            }
+            // No creatures, select Done
+            return { key: '0', reason: 'done (no attackers)' };
+        }
+
+        case 'blockers': {
+            // Declare Blockers: [0] Done, [1] blocker blocks attacker, ...
+            // Block with first available blocker if any
+            const blockMatch = text.match(/\[(\d)\] (?!Done)/);
+            if (blockMatch) {
+                return { key: blockMatch[1], reason: 'block with creature' };
+            }
+            return { key: '0', reason: 'done (no blockers)' };
+        }
+
+        case 'discard': {
+            // Discard N card(s): [0] Card1, [1] Card2, ...
+            // Discard the first card
+            return { key: '0', reason: 'discard first card' };
+        }
+
+        case 'targets': {
+            // Choose target: [0] No target, [1] target1, ...
+            // Select first valid target (not "No target")
+            const targetMatch = text.match(/\[(\d)\] (?!No target)/);
+            if (targetMatch) {
+                return { key: targetMatch[1], reason: 'select target' };
+            }
+            return { key: '0', reason: 'no target' };
+        }
+
+        case 'mana_source': {
+            // Choose mana source: [0] Forest, [1] Forest, ...
+            // Select first mana source
+            return { key: '0', reason: 'first mana source' };
+        }
+
+        case 'library_search': {
+            // Search library: [0] Fail to find, [1] card1, ...
+            // Select first card if available
+            const cardMatch = text.match(/\[(\d)\] (?!Fail to find)/);
+            if (cardMatch) {
+                return { key: cardMatch[1], reason: 'search: select card' };
+            }
+            return { key: '0', reason: 'fail to find' };
+        }
+
+        case 'damage_order': {
+            // Choose damage order: [0] creature1, [1] creature2, ...
+            return { key: '0', reason: 'first damage order' };
+        }
+
+        case 'sacrifice': {
+            // Choose permanent to sacrifice: [0] Done, [1] permanent1, ...
+            // If we must sacrifice, pick the first option after Done
+            const sacMatch = text.match(/\[(\d)\] (?!Done)/);
+            if (sacMatch) {
+                return { key: sacMatch[1], reason: 'sacrifice permanent' };
+            }
+            return { key: '0', reason: 'done (sacrifice)' };
+        }
+
+        case 'modes': {
+            // Choose mode: [0] mode1, [1] mode2, ...
+            return { key: '0', reason: 'first mode' };
+        }
+
+        default: {
+            // Unknown choice: try first option
+            return { key: '0', reason: 'unknown prompt (first option)' };
+        }
+    }
 }
 
 // Check for fatal errors in browser console logs
@@ -133,7 +320,7 @@ async function runTest() {
             cwd: __dirname,
             stdio: ['ignore', 'pipe', 'pipe']
         });
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
 
         // Start MTG server
         log('Starting MTG server...');
@@ -147,8 +334,26 @@ async function runTest() {
             cwd: projectRoot,
             stdio: ['ignore', 'pipe', 'pipe']
         });
-        server.stdout.on('data', data => log(`Server: ${data.toString().trim()}`));
-        server.stderr.on('data', data => log(`Server: ${data.toString().trim()}`));
+        const serverErrors = [];
+        server.stdout.on('data', data => {
+            const text = data.toString().trim();
+            log(`Server: ${text}`);
+        });
+        server.stderr.on('data', data => {
+            const text = data.toString().trim();
+            // Log server output - highlight action dumps and sync errors
+            if (text.includes('SERVER_ACTION_DUMP')) {
+                log(`Server ACTION DUMP:\n${text}`);
+            } else if (text.includes('SYNC MISMATCH') || text.includes('DESYNC')) {
+                log(`Server SYNC ERROR: ${text}`);
+            } else {
+                log(`Server: ${text}`);
+            }
+            // Capture sync mismatch and error messages from server
+            if (text.includes('SYNC MISMATCH') || text.includes('DESYNC') || text.includes('InvalidAction')) {
+                serverErrors.push(text);
+            }
+        });
 
         const serverReady = await waitForServer(SERVER_PORT);
         if (!serverReady) throw new Error('Server failed to start');
@@ -189,6 +394,24 @@ async function runTest() {
             if (msg.type() === 'error') {
                 log(`Browser ERROR: ${msg.text().substring(0, 200)}`);
             }
+            // Log WASM network mode messages for debugging
+            if (msg.text().includes('NETWORK REPLAY') || msg.text().includes('NETWORK NORMAL')
+                || msg.text().includes('COMBAT_DEBUG') || msg.text().includes('REPLAY_DEBUG')) {
+                log(`WASM: ${msg.text().substring(0, 400)}`);
+            }
+            // Log WASM hash debug messages for sync analysis
+            if (msg.text().includes('WASM_HASH_DEBUG')) {
+                // Show full text for action dumps (they can be long)
+                if (msg.text().includes('ACTION COUNT MISMATCH')) {
+                    log(`WASM ACTION MISMATCH:\n${msg.text()}`);
+                } else {
+                    log(`WASM: ${msg.text().substring(0, 300)}`);
+                }
+            }
+            // Log WASM action dumps for comparing with server dumps
+            if (msg.text().includes('WASM_ACTION_DUMP')) {
+                log(`WASM: ${msg.text()}`);
+            }
         });
 
         page.on('pageerror', err => {
@@ -219,6 +442,12 @@ async function runTest() {
         // Select human controller
         await page.selectOption('#p1-controller', 'human');
 
+        // Enable debug mode for WASM hash debug logging
+        const debugCheckbox = await page.$('#debug-mode');
+        if (debugCheckbox) {
+            await debugCheckbox.check();
+        }
+
         await page.screenshot({ path: path.join(screenshotDir, 'net_human_01_settings.png'), fullPage: true });
         log('Settings filled, launching...');
 
@@ -229,7 +458,7 @@ async function runTest() {
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 20000 });
         log('Game terminal appeared');
 
-        // Wait a bit for game to initialize and auto-pass initial choices
+        // Wait for game to initialize
         await page.waitForTimeout(3000);
 
         await page.screenshot({ path: path.join(screenshotDir, 'net_human_02_game_started.png'), fullPage: true });
@@ -240,66 +469,102 @@ async function runTest() {
             throw new Error(`Fatal error before first choice: ${fatalError}`);
         }
 
-        // Wait for a choice prompt to appear
-        log('Waiting for choice prompt...');
-        let choiceText = await waitForChoicePrompt(page, 20000);
+        // Track server/client process state for crash detection
+        let serverExited = false;
+        let nativeClientExited = false;
+        server.on('exit', (code) => {
+            serverExited = true;
+            log(`Server process exited with code ${code}`);
+        });
+        nativeClient.on('exit', (code) => {
+            nativeClientExited = true;
+            log(`NativeAI process exited with code ${code}`);
+        });
 
-        if (!choiceText) {
-            // Take a screenshot to see what's on screen
-            await page.screenshot({ path: path.join(screenshotDir, 'net_human_03_no_choice.png'), fullPage: true });
-            const text = await extractTerminalText(page);
-            log(`Terminal text (no choice found): ${text.substring(0, 500)}`);
-
-            // Check if game ended
-            if (text.includes('Game Over') || text.includes('wins')) {
-                log('Game ended before human could make a choice (AI won quickly)');
-                log('TEST PASSED (game completed without errors)');
-                return true;
-            }
-            throw new Error('No choice prompt appeared within timeout');
-        }
-
-        log('Choice prompt appeared!');
-        await page.screenshot({ path: path.join(screenshotDir, 'net_human_03_choice.png'), fullPage: true });
-
-        // Try to make choices: press number keys to select options
-        // In the human controller, choices are displayed and selected by number keys
-        const maxChoices = 5;
+        // Main game loop - make choices until game ends or we hit the limit
+        const gameStartTime = Date.now();
         let choicesMade = 0;
+        let gameEnded = false;
+        let lastTurnInfo = '';
+        const choiceHistory = [];
+        let lastTerminalText = null; // Track previous terminal text for change detection
 
-        for (let i = 0; i < maxChoices; i++) {
-            // Check for fatal errors before each choice
+        log('Starting game play loop...');
+
+        for (let i = 0; i < MAX_CHOICES; i++) {
+            // Check overall game timeout
+            if (Date.now() - gameStartTime > GAME_TIMEOUT_MS) {
+                log(`Game timeout reached (${GAME_TIMEOUT_MS / 1000}s). Made ${choicesMade} choices.`);
+                break;
+            }
+
+            // Check if server crashed (game is over abnormally)
+            if (serverExited && !gameEnded) {
+                throw new Error(`Server process exited unexpectedly after ${choicesMade} choices`);
+            }
+
+            // Check for fatal errors before each choice (browser + server)
             fatalError = checkForFatalErrors(browserLogs);
             if (fatalError) {
                 throw new Error(`Fatal error before choice ${i + 1}: ${fatalError}`);
             }
+            if (serverErrors.length > 0) {
+                // Wait a moment to capture action dumps that may follow
+                await page.waitForTimeout(1000);
+                throw new Error(`Server error before choice ${i + 1}: ${serverErrors[0].substring(0, 500)}`);
+            }
 
-            // Get current terminal text
-            const text = await extractTerminalText(page);
+            // Wait for a choice prompt, requiring text change after first choice
+            const prompt = await waitForChoicePrompt(page, CHOICE_TIMEOUT_MS, lastTerminalText);
 
-            // Check if game ended
-            if (text.includes('Game Over') || text.includes('wins')) {
-                log(`Game ended after ${choicesMade} choices`);
+            if (!prompt) {
+                // No prompt - check if game ended
+                const text = await extractTerminalText(page);
+                if (text.includes('Game Over') || text.includes('wins')) {
+                    log(`Game ended (detected during wait)`);
+                    gameEnded = true;
+                    break;
+                }
+                // Could be waiting for server
+                if (choicesMade === 0) {
+                    await page.screenshot({ path: path.join(screenshotDir, 'net_human_03_no_choice.png'), fullPage: true });
+                    log(`No initial choice prompt. Terminal: ${text.substring(0, 300)}`);
+                    throw new Error('No choice prompt appeared within timeout');
+                }
+                log(`No prompt after choice ${choicesMade}, continuing...`);
+                lastTerminalText = null; // Reset change detection
+                continue;
+            }
+
+            if (prompt.type === 'game_over') {
+                gameEnded = true;
+                log(`Game over detected!`);
                 break;
             }
 
-            // Determine what key to press
-            // If there's a "Play land" option, select it (typically option 2+)
-            // Otherwise, press '1' to pass
-            let key;
-            if (text.includes('Play land')) {
-                key = '2'; // First non-pass option (play a land)
-                log(`Choice ${i + 1}: Pressing '${key}' (play land)`);
-            } else {
-                key = '1'; // Pass priority
-                log(`Choice ${i + 1}: Pressing '${key}' (pass/first option)`);
+            // Decide what key to press
+            const decision = decideKey(prompt);
+
+            // Extract turn info for logging
+            const turnMatch = prompt.text.match(/Turn (\d+)/);
+            const turnInfo = turnMatch ? `T${turnMatch[1]}` : '??';
+            if (turnInfo !== lastTurnInfo) {
+                log(`--- Turn ${turnInfo} ---`);
+                lastTurnInfo = turnInfo;
             }
 
-            await page.keyboard.press(key);
-            choicesMade++;
+            log(`Choice ${i + 1} [${prompt.type}]: pressing '${decision.key}' (${decision.reason})`);
 
-            // Wait for the game to process the choice
-            await page.waitForTimeout(1000);
+            // Save terminal text before pressing key for change detection on next iteration
+            lastTerminalText = prompt.text;
+
+            // Press the key
+            await page.keyboard.press(decision.key);
+            choicesMade++;
+            choiceHistory.push({ type: prompt.type, key: decision.key, reason: decision.reason });
+
+            // Brief wait for key to register
+            await page.waitForTimeout(POST_CHOICE_WAIT_MS);
 
             // Check for fatal errors after the choice
             fatalError = checkForFatalErrors(browserLogs);
@@ -308,24 +573,15 @@ async function runTest() {
                     path: path.join(screenshotDir, `net_human_error_after_choice_${i + 1}.png`),
                     fullPage: true
                 });
-                throw new Error(`Fatal error after choice ${i + 1}: ${fatalError}`);
+                throw new Error(`Fatal error after choice ${i + 1} [${prompt.type}, key='${decision.key}']: ${fatalError}`);
             }
 
-            await page.screenshot({
-                path: path.join(screenshotDir, `net_human_${String(i + 4).padStart(2, '0')}_after_choice_${i + 1}.png`),
-                fullPage: true
-            });
-
-            // Wait for next choice prompt (or game end)
-            const nextText = await waitForChoicePrompt(page, 10000);
-            if (!nextText) {
-                const finalText = await extractTerminalText(page);
-                if (finalText.includes('Game Over') || finalText.includes('wins')) {
-                    log(`Game ended after ${choicesMade} choices`);
-                    break;
-                }
-                log(`No next choice prompt after choice ${i + 1}, continuing...`);
-                break;
+            // Take periodic screenshots (every 10 choices)
+            if ((i + 1) % 10 === 0 || i < 5) {
+                await page.screenshot({
+                    path: path.join(screenshotDir, `net_human_choice_${String(i + 1).padStart(3, '0')}.png`),
+                    fullPage: true
+                });
             }
         }
 
@@ -337,11 +593,23 @@ async function runTest() {
 
         await page.screenshot({ path: path.join(screenshotDir, 'net_human_final.png'), fullPage: true });
         const finalText = await extractTerminalText(page);
-        log(`Final terminal text: ${finalText.substring(0, 500)}`);
 
+        // Print summary
+        const elapsedSec = ((Date.now() - gameStartTime) / 1000).toFixed(1);
         log(`\n=== TEST PASSED ===`);
-        log(`Made ${choicesMade} choices without MONOTONICITY VIOLATION`);
-        log(`No fatal errors detected`);
+        log(`Made ${choicesMade} choices in ${elapsedSec}s`);
+        log(`Game ended: ${gameEnded}`);
+        log(`No DESYNC or MONOTONICITY VIOLATION errors detected`);
+
+        // Print choice type breakdown
+        const typeCounts = {};
+        for (const c of choiceHistory) {
+            typeCounts[c.type] = (typeCounts[c.type] || 0) + 1;
+        }
+        log(`Choice breakdown: ${JSON.stringify(typeCounts)}`);
+
+        // Print final game state snippet
+        log(`Final state: ${finalText.substring(0, 300)}`);
 
         return true;
 
@@ -360,11 +628,16 @@ async function runTest() {
         }
 
         // Dump relevant browser logs
-        const errorLogs = browserLogs.filter(l => l.type === 'error' || l.text.includes('MONOTONICITY'));
+        const errorLogs = browserLogs.filter(l =>
+            l.type === 'error' ||
+            l.text.includes('MONOTONICITY') ||
+            l.text.includes('DESYNC') ||
+            l.text.includes('panic')
+        );
         if (errorLogs.length > 0) {
             log('\nRelevant browser error logs:');
             for (const entry of errorLogs.slice(-10)) {
-                log(`  ${entry.text.substring(0, 200)}`);
+                log(`  ${entry.text.substring(0, 300)}`);
             }
         }
 

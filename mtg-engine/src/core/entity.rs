@@ -58,6 +58,10 @@ impl<T> std::hash::Hash for EntityId<T> {
 /// Used when parsing `Defined$ Targeted` to avoid consuming a new target.
 pub const REUSE_PREVIOUS_TARGET: u32 = u32::MAX;
 
+/// Sentinel value indicating "all players" for effects like Wheel of Fortune.
+/// Used when parsing `Defined$ Player` to mean "each player".
+pub const ALL_PLAYERS_ID: u32 = u32::MAX - 1;
+
 /// Sentinel value indicating "placeholder to be resolved".
 /// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
 pub const PLACEHOLDER_ID: u32 = 0;
@@ -88,6 +92,18 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn placeholder() -> Self {
         EntityId::new(PLACEHOLDER_ID)
+    }
+
+    /// Check if this ID means "all players" (for effects like Wheel of Fortune).
+    #[inline]
+    pub fn is_all_players(&self) -> bool {
+        self.id == ALL_PLAYERS_ID
+    }
+
+    /// Create a sentinel ID meaning "all players".
+    #[inline]
+    pub fn all_players() -> Self {
+        EntityId::new(ALL_PLAYERS_ID)
     }
 
     /// Check if this ID is the "reuse previous target" sentinel.

@@ -271,6 +271,14 @@ impl NetworkController {
         // Full RNG verification would require GameLoop to pass the hash through.
         // Pass requesting player ID to include their hand's CardIds for desync detection.
         let debug_info = if self.network_debug {
+            // Dump the last 30 actions at each choice point for sync debugging
+            log::info!(
+                "SERVER_ACTION_DUMP: {:?} choice_seq={} action_count={}\n{}",
+                self.player_id,
+                self.choice_seq + 1,
+                action_count,
+                view.format_last_n_actions(30),
+            );
             Some(crate::game::build_debug_sync_info(view, 10, None, Some(self.player_id)))
         } else {
             None

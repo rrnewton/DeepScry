@@ -35,10 +35,16 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::DealDamage => {
             // Extract damage amount from NumDmg$ parameter
             let amount = params.get_i32("NumDmg").ok()?;
-            Some(Effect::DealDamage {
-                target: TargetRef::None, // Placeholder - filled in at cast time
-                amount,
-            })
+            // Check if Defined$ specifies a player target (e.g., City of Brass "Defined$ You")
+            let target = match params.get("Defined") {
+                Some("You") => {
+                    // "You" = the controller. Use PlayerId(0) as placeholder;
+                    // resolve_effect_placeholder() maps this to the actual controller at runtime.
+                    TargetRef::Player(crate::core::PlayerId::new(0))
+                }
+                _ => TargetRef::None, // Placeholder - filled in at cast time
+            };
+            Some(Effect::DealDamage { target, amount })
         }
 
         ApiType::EachDamage => {
@@ -73,19 +79,32 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         ApiType::Draw => {
             // Extract card count from NumCards$ parameter (default to 1 if not specified)
             let count = params.get_u8("NumCards").unwrap_or(1);
-            Some(Effect::DrawCards {
-                player: PlayerId::new(0), // Placeholder - filled in at cast time
-                count,
-            })
+            // Defined$ Player = each player (Wheel of Fortune); otherwise controller placeholder
+            let player = if params.get("Defined") == Some("Player") {
+                PlayerId::all_players()
+            } else {
+                PlayerId::placeholder()
+            };
+            Some(Effect::DrawCards { player, count })
         }
 
         ApiType::Discard => {
-            // Extract card count from NumCards$ parameter (default to 1 if not specified)
-            // Example: DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose | RememberDiscarded$ True
-            let count = params.get_u8("NumCards").unwrap_or(1);
+            // Mode$ Hand = discard entire hand (Wheel of Fortune); otherwise fixed count
+            // We use u8::MAX (255) as sentinel for "all cards in hand"
+            let count = if params.get("Mode") == Some("Hand") {
+                u8::MAX // Sentinel: discard entire hand
+            } else {
+                params.get_u8("NumCards").unwrap_or(1)
+            };
             let remember_discarded = params.get("RememberDiscarded") == Some("True");
+            // Defined$ Player = each player; otherwise controller placeholder
+            let player = if params.get("Defined") == Some("Player") {
+                PlayerId::all_players()
+            } else {
+                PlayerId::placeholder()
+            };
             Some(Effect::DiscardCards {
-                player: PlayerId::new(0), // Placeholder - filled in at cast/resolve time
+                player,
                 count,
                 remember_discarded,
             })

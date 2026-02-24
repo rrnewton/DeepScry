@@ -58,7 +58,15 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 
 ## Active Bugs
 
-- [ ] mtg-y4e5q: WASM network DESYNC: CardRevealed for drawn card not processed before ability computation (priority 2)
+- [x] mtg-y4e5q: WASM network DESYNC: CardRevealed for drawn card not processed before ability computation (CLOSED)
+
+## Bug Fix: Transient Guard Reset in Rewind (2026-02-24_#1855)
+
+Fixed critical DESYNC in network human mode (`60a77990b`). During `rewind_to_turn_start()`, transient guard fields (`draw_step_executed_turn`, `turn_state_reset_turn`, etc.) were NOT reset because they are `#[serde(skip)]` and not tracked by the undo log. After rewind, the draw step guard still had `Some(current_turn)`, causing the mandatory draw to be skipped during replay → missing card → ability count DESYNC.
+
+Fix: Call `game.turn.reset_transient_guards()` and clear `pending_cast`/`pending_activation`/`spell_targets` after rewinding.
+
+Previous fix `12308e80c` addressed a related but different issue: RevealCard undo destroying card instances in EntityStore.
 
 ## Dependencies
 
