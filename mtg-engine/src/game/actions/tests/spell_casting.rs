@@ -841,6 +841,245 @@ mod tests {
         );
     }
 
+    /// Test that mimics the WASM flow: targets stored in spell_targets, then looked up during resolution
+    /// This tests the flow used by GameLoop where spell_targets is populated during casting
+    /// and then read during resolve_top_spell_from_stack
+    #[test]
+    fn test_modal_spell_with_spell_targets_storage() {
+        use crate::core::{Color, Effect, ManaCost, ModalMode, TargetRestriction};
+        use smallvec::smallvec;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Create a creature for P2 (no counters - valid target for mode 1)
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Test Creature".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(3));
+        creature.set_base_toughness(Some(3));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create Heartless Act with modal effect
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Heartless Act".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1B");
+
+        // Mode 1: Destroy target creature with no counters
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0), // Placeholder
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature with no counters on it.".to_string(),
+            svar_name: "Destroy".to_string(),
+        };
+
+        // Mode 2: Remove counters
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::RemoveCounter {
+                target: CardId::new(0),
+                counter_type: Some(crate::core::CounterType::P1P1),
+                amount: 3,
+            }),
+            description: "Remove up to three counters from target creature.".to_string(),
+            svar_name: "Remove".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+
+        game.cards.insert(spell_id, spell);
+
+        // Add spell to P1's hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Add mana for casting (1B)
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Black);
+        player.mana_pool.add_color(Color::Colorless);
+
+        // Step 1: Apply mode selection BEFORE casting (like priority.rs line 468)
+        let mode_result = game.apply_selected_modes(spell_id, &[0]);
+        assert!(mode_result.is_ok(), "Should be able to apply mode selection");
+
+        // Verify effect was changed to DestroyPermanent
+        let spell = game.cards.get(spell_id).unwrap();
+        assert!(
+            matches!(spell.effects[0], Effect::DestroyPermanent { .. }),
+            "Effect should be DestroyPermanent after mode selection, got: {:?}",
+            spell.effects[0]
+        );
+
+        // Step 2: Cast the spell (moves to stack)
+        let cast_result = game.cast_spell(p1_id, spell_id, vec![]);
+        assert!(cast_result.is_ok(), "Should be able to cast spell: {:?}", cast_result);
+
+        // Verify spell is on stack
+        assert!(game.stack.contains(spell_id), "Spell should be on stack");
+
+        // Step 3: Store targets in spell_targets (like priority.rs line 519)
+        game.spell_targets.push((spell_id, smallvec::smallvec![creature_id]));
+
+        // Step 4: Look up targets and resolve (like resolve_top_spell_from_stack does)
+        let targets: smallvec::SmallVec<[CardId; 2]> = game
+            .spell_targets
+            .iter()
+            .find(|(id, _)| *id == spell_id)
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default();
+
+        assert_eq!(targets.len(), 1, "Should have 1 target stored");
+        assert_eq!(targets[0], creature_id, "Target should be the creature");
+
+        // Step 5: Resolve the spell using the looked-up targets
+        let resolve_result = game.resolve_spell(spell_id, &targets);
+        assert!(resolve_result.is_ok(), "Should resolve spell: {:?}", resolve_result);
+
+        // Verify creature was destroyed (moved to graveyard)
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Creature should no longer be on battlefield after Heartless Act resolves"
+        );
+
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(creature_id),
+                "Creature should be in owner's graveyard"
+            );
+        }
+    }
+
+    /// Test that Heartless Act loaded from card file correctly destroys creatures
+    /// This tests the full parsing path including TargetRestriction with !HasCounters
+    #[test]
+    fn test_heartless_act_from_card_file_destroys_creature() {
+        use crate::loader::CardLoader;
+        use std::path::PathBuf;
+
+        // Load Heartless Act from the actual card file
+        let path = PathBuf::from("cardsfolder/h/heartless_act.txt");
+        if !path.exists() {
+            // Skip test if cardsfolder is not available
+            return;
+        }
+
+        let card_def = CardLoader::load_from_file(&path).expect("Should load Heartless Act");
+        assert_eq!(card_def.name.as_str(), "Heartless Act");
+
+        // Create game state
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Create a creature for P2 (no counters - valid target)
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "The Boulder".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(4));
+        creature.set_base_toughness(Some(4));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Create Heartless Act card from the loaded definition using instantiate()
+        let spell_id = game.next_card_id();
+        let mut spell = card_def.instantiate(spell_id, p1_id);
+        spell.controller = p1_id;
+
+        // Verify it's a ModalChoice before we insert
+        use crate::core::Effect;
+        assert!(
+            matches!(&spell.effects[0], Effect::ModalChoice { modes, .. } if modes.len() == 2),
+            "Should have ModalChoice with 2 modes, got: {:?}",
+            spell.effects[0]
+        );
+
+        // Get the modal choice and check the destroy mode's restriction
+        if let Effect::ModalChoice { modes, .. } = &spell.effects[0] {
+            if let Effect::DestroyPermanent { restriction, .. } = &*modes[0].effect {
+                assert!(
+                    restriction.requires_no_counters,
+                    "Destroy mode should have requires_no_counters=true"
+                );
+            } else {
+                panic!("Mode 0 should be DestroyPermanent, got: {:?}", modes[0].effect);
+            }
+        }
+
+        game.cards.insert(spell_id, spell);
+
+        // Add spell to P1's hand
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+
+        // Apply mode selection (choose Destroy mode)
+        let mode_result = game.apply_selected_modes(spell_id, &[0]);
+        assert!(mode_result.is_ok(), "Should apply mode selection");
+
+        // Verify effect is now DestroyPermanent
+        let spell = game.cards.get(spell_id).unwrap();
+        assert!(
+            matches!(&spell.effects[0], Effect::DestroyPermanent { .. }),
+            "Effect should be DestroyPermanent after mode selection"
+        );
+
+        // Check that the creature is a valid target
+        let valid_targets = game.get_valid_targets_for_spell(spell_id).unwrap();
+        assert!(
+            valid_targets.contains(&creature_id),
+            "The Boulder should be a valid target (no counters)"
+        );
+
+        // Cast the spell
+        use crate::core::Color;
+        let player = game.get_player_mut(p1_id).unwrap();
+        player.mana_pool.add_color(Color::Black);
+        player.mana_pool.add_color(Color::Colorless);
+        let cast_result = game.cast_spell(p1_id, spell_id, vec![]);
+        assert!(cast_result.is_ok(), "Should cast spell");
+
+        // Store targets (like WASM flow)
+        game.spell_targets.push((spell_id, smallvec::smallvec![creature_id]));
+
+        // Resolve the spell
+        let targets: smallvec::SmallVec<[CardId; 2]> = game
+            .spell_targets
+            .iter()
+            .find(|(id, _)| *id == spell_id)
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default();
+
+        let resolve_result = game.resolve_spell(spell_id, &targets);
+        assert!(resolve_result.is_ok(), "Should resolve spell");
+
+        // Verify creature was destroyed
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "The Boulder should no longer be on battlefield"
+        );
+
+        if let Some(zones) = game.get_player_zones(p2_id) {
+            assert!(
+                zones.graveyard.contains(creature_id),
+                "The Boulder should be in graveyard"
+            );
+        }
+    }
+
     #[test]
     fn test_affinity_cost_reduction() {
         use crate::core::{KeywordArgs, ManaCost, Subtype};

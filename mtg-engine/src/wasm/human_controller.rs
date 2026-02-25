@@ -63,6 +63,11 @@ pub struct WasmHumanController {
     /// The next choice to return (set by UI before resuming game)
     /// Made pub(crate) so fancy_tui can access it for replay pattern
     pub(crate) pending_choice: Option<PendingChoice>,
+    /// The context from the last NeedInput response.
+    /// This is crucial for target selection: when the user selects targets by INDEX,
+    /// we need to map those indices to CardIds using the ORIGINAL valid_targets list
+    /// that was shown to the user, NOT the current valid_targets which may have changed.
+    pending_context: Option<ChoiceContext>,
 }
 
 impl WasmHumanController {
@@ -71,6 +76,7 @@ impl WasmHumanController {
         Self {
             player_id,
             pending_choice: None,
+            pending_context: None,
         }
     }
 
@@ -140,19 +146,69 @@ impl PlayerController for WasmHumanController {
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Check for pending choice
         if let Some(PendingChoice::Targets(indices)) = self.pending_choice.take() {
+            // CRITICAL: Use the ORIGINAL valid_targets from pending_context, NOT the current
+            // valid_targets passed in. Between showing the UI and processing the choice,
+            // the valid_targets list could have changed (e.g., a creature gained counters,
+            // making it invalid for "destroy target creature with no counters").
+            // The user selected indices into the ORIGINAL list, so we must use that list.
+            let original_targets = if let Some(ChoiceContext::Targets {
+                valid_targets: stored_targets,
+                ..
+            }) = &self.pending_context
+            {
+                stored_targets.as_slice()
+            } else {
+                // Fallback to current list if no context stored (shouldn't happen)
+                log::warn!(
+                    target: "human_controller",
+                    "choose_targets: No pending_context found, falling back to current valid_targets"
+                );
+                valid_targets
+            };
+
+            let indices_len = indices.len();
+            log::debug!(
+                target: "human_controller",
+                "choose_targets: indices={:?}, original_targets={:?}, current_targets={:?}",
+                &indices,
+                original_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(),
+                valid_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+            );
+
             let targets: SmallVec<[CardId; 4]> = indices
                 .into_iter()
-                .filter_map(|i| valid_targets.get(i).copied())
+                .filter_map(|i| original_targets.get(i).copied())
                 .collect();
+
+            log::debug!(
+                target: "human_controller",
+                "choose_targets: resolved targets={:?}",
+                targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+            );
+
+            if targets.is_empty() && indices_len > 0 {
+                log::warn!(
+                    target: "human_controller",
+                    "choose_targets: User selection resulted in empty targets! indices={:?} original_targets={:?}",
+                    indices_len,
+                    original_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+                );
+            }
+
+            // Clear the context after use
+            self.pending_context = None;
+
             return ChoiceResult::Ok(targets);
         }
 
-        // No pending choice - request input
-        ChoiceResult::NeedInput(ChoiceContext::Targets {
+        // No pending choice - store context and request input
+        let context = ChoiceContext::Targets {
             spell_id: spell,
             valid_targets: valid_targets.to_vec(),
             formatted_targets: format_card_choices(view, valid_targets, self.player_id),
-        })
+        };
+        self.pending_context = Some(context.clone());
+        ChoiceResult::NeedInput(context)
     }
 
     fn choose_mana_sources_to_pay(
@@ -341,18 +397,31 @@ impl PlayerController for WasmHumanController {
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
         // Check for pending choice
         if let Some(PendingChoice::Modes(indices)) = self.pending_choice.take() {
-            let modes: SmallVec<[usize; 4]> = indices.into_iter().filter(|&i| i < mode_descriptions.len()).collect();
+            // Use original mode count from pending_context for validation
+            let original_count = if let Some(ChoiceContext::Modes { formatted_modes, .. }) = &self.pending_context {
+                formatted_modes.len()
+            } else {
+                mode_descriptions.len()
+            };
+
+            let modes: SmallVec<[usize; 4]> = indices.into_iter().filter(|&i| i < original_count).collect();
+
+            // Clear context after use
+            self.pending_context = None;
+
             return ChoiceResult::Ok(modes);
         }
 
-        // No pending choice - request input
-        ChoiceResult::NeedInput(ChoiceContext::Modes {
+        // No pending choice - store context and request input
+        let context = ChoiceContext::Modes {
             spell_id,
             mode_count,
             min_modes,
             can_repeat,
             formatted_modes: mode_descriptions.to_vec(),
-        })
+        };
+        self.pending_context = Some(context.clone());
+        ChoiceResult::NeedInput(context)
     }
 
     fn on_priority_passed(&mut self, _view: &GameStateView) {

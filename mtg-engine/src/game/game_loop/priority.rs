@@ -31,6 +31,13 @@ impl<'a> GameLoop<'a> {
             .map(|(_, t)| t.clone())
             .unwrap_or_default();
 
+        log::debug!(
+            target: "priority",
+            "[RESOLVE] spell_id={}, targets from spell_targets: {:?}",
+            spell_id.as_u32(),
+            targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+        );
+
         // Check if verbose logging is enabled (avoids allocations when not logging)
         let should_log = self.verbosity >= VerbosityLevel::Normal && !self.replaying;
 
@@ -490,19 +497,43 @@ impl<'a> GameLoop<'a> {
                             .get_valid_targets_for_spell(card_id)
                             .unwrap_or_else(|_| SmallVec::new());
 
+                        log::debug!(
+                            target: "priority",
+                            "[WASM RESUME] Target selection: card_id={}, valid_targets={:?}",
+                            card_id.as_u32(),
+                            valid_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+                        );
+
                         let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
+                            log::debug!(target: "priority", "[WASM RESUME] No valid targets, using empty vec");
                             SmallVec::new()
                         } else if valid_targets.len() == 1 {
+                            log::debug!(
+                                target: "priority",
+                                "[WASM RESUME] Auto-selecting single target: {:?}",
+                                valid_targets[0].as_u32()
+                            );
                             smallvec::smallvec![valid_targets[0]]
                         } else {
                             let prior_log_size = self.game.logger.log_count();
                             let choice =
                                 self.choose_targets_with_hook(controller, cast_player, card_id, &valid_targets);
                             let chosen_targets = handle_choice_result_break!(choice, self.game, cast_player);
+                            log::debug!(
+                                target: "priority",
+                                "[WASM RESUME] User chose targets: {:?}",
+                                chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+                            );
                             let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
                             self.log_choice_point(cast_player, Some(replay_choice), prior_log_size);
                             chosen_targets.into_iter().collect()
                         };
+
+                        log::debug!(
+                            target: "priority",
+                            "[WASM RESUME] Final chosen_targets_vec: {:?}",
+                            chosen_targets_vec.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+                        );
 
                         // Step 3: Cast the spell — mana is paid automatically (GreedyManaResolver).
                         let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
