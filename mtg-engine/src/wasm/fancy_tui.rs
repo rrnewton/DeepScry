@@ -2211,6 +2211,10 @@ pub fn launch_network_game(
         // Create game with reserved CardID slots (same as native client)
         let mut game = init_game_reserve_only_wasm(p1_name, p2_name, starting_life, ranges);
 
+        // Configure logger for WASM TUI: capture to memory for log panel display
+        game.logger.set_output_mode(OutputMode::Memory);
+        game.logger.set_verbosity(VerbosityLevel::Normal);
+
         // Initialize RNG from server state for deterministic shuffles
         if !rng_state.is_empty() {
             use rand_chacha::ChaCha12Rng;

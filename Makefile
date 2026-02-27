@@ -183,7 +183,7 @@ validate-wasm-step:
 validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo "✓ wasm-e2e tests completed"
 
 # Generate documentation and open in browser
@@ -622,7 +622,7 @@ wasm-test-human: wasm-dev
 wasm-e2e: wasm
 	@echo "=== Running all WASM e2e tests (production) ==="
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
 
@@ -630,6 +630,6 @@ wasm-e2e: wasm
 wasm-e2e-dev: wasm-dev
 	@echo "=== Running all WASM e2e tests (dev build) ==="
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js
+	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
