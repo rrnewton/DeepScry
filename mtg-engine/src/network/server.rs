@@ -52,6 +52,8 @@ pub struct ServerConfig {
     pub network_debug: bool,
     /// Disable ANSI colored log output
     pub no_color_logs: bool,
+    /// Loop mode: keep running and accept new games after each one completes
+    pub loop_mode: bool,
 }
 
 impl Default for ServerConfig {
@@ -68,6 +70,7 @@ impl Default for ServerConfig {
             verbosity: crate::game::VerbosityLevel::Normal,
             network_debug: false,
             no_color_logs: false,
+            loop_mode: false,
         }
     }
 }
@@ -442,32 +445,47 @@ impl GameServer {
         log::info!("MTG Server listening on {}", addr);
         log::info!("Password required: {}", !self.config.password.is_empty());
 
-        // Accept connections until we have two players and start a game
+        // Accept connections and run games
+        // In loop mode, keep accepting new games after each one completes
         loop {
-            match listener.accept().await {
-                Ok((stream, addr)) => {
-                    log::info!("New connection from {}", addr);
-                    match self.handle_connection(stream).await {
-                        Ok(Some(game_handle)) => {
-                            // Game started - wait for it to complete then exit
-                            log::info!("Game started, waiting for completion...");
-                            if let Err(e) = game_handle.await {
-                                log::error!("Game task error: {}", e);
+            // Accept connections until we have two players and start a game
+            let game_handle = loop {
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        log::info!("New connection from {}", addr);
+                        match self.handle_connection(stream).await {
+                            Ok(Some(handle)) => break handle,
+                            Ok(None) => {
+                                // First player connected, waiting for second
                             }
-                            log::info!("Game completed, server exiting");
-                            return Ok(());
-                        }
-                        Ok(None) => {
-                            // First player connected, waiting for second
-                        }
-                        Err(e) => {
-                            log::error!("Connection error: {}", e);
+                            Err(e) => {
+                                log::error!("Connection error: {}", e);
+                            }
                         }
                     }
+                    Err(e) => {
+                        log::error!("Accept error: {}", e);
+                    }
                 }
-                Err(e) => {
-                    log::error!("Accept error: {}", e);
-                }
+            };
+
+            // Game started - wait for it to complete
+            log::info!("Game {} started, waiting for completion...", self.next_game_id);
+            if let Err(e) = game_handle.await {
+                log::error!("Game task error: {}", e);
+            }
+
+            if self.config.loop_mode {
+                log::info!(
+                    "Game {} completed. Loop mode: waiting for new clients...",
+                    self.next_game_id
+                );
+                // Reset waiting player state for the next game
+                self.waiting_player = None;
+                // Increment game ID (next_game_id was already incremented in start_game)
+            } else {
+                log::info!("Game completed, server exiting");
+                return Ok(());
             }
         }
     }

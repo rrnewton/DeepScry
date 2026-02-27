@@ -570,6 +570,11 @@ enum Commands {
         /// Disable ANSI colored log output (respects NO_COLOR env var by default)
         #[arg(long)]
         no_color_logs: bool,
+
+        /// Loop mode: keep running after each game, accepting new clients.
+        /// Without this flag, the server exits after the first game completes.
+        #[arg(long, alias = "loop-mode")]
+        r#loop: bool,
     },
 
     /// Connect to a multiplayer game server
@@ -627,6 +632,11 @@ enum Commands {
         /// Use this to capture client gamelogs to a file for comparison.
         #[arg(long, value_name = "FILE")]
         gamelog_output: Option<PathBuf>,
+
+        /// Auto-reconnect after game ends and play again.
+        /// Use with --loop on the server to play multiple games in sequence.
+        #[arg(long)]
+        reconnect: bool,
     },
 }
 
@@ -843,6 +853,7 @@ async fn main() -> Result<()> {
             verbosity,
             network_debug,
             no_color_logs,
+            r#loop: loop_mode,
         } => {
             run_server(
                 port,
@@ -855,6 +866,7 @@ async fn main() -> Result<()> {
                 verbosity,
                 network_debug,
                 no_color_logs,
+                loop_mode,
             )
             .await?
         }
@@ -872,6 +884,7 @@ async fn main() -> Result<()> {
             verbosity,
             tag_gamelogs,
             gamelog_output,
+            reconnect,
         } => {
             run_connect(
                 deck,
@@ -886,6 +899,7 @@ async fn main() -> Result<()> {
                 verbosity,
                 tag_gamelogs,
                 gamelog_output,
+                reconnect,
             )
             .await?
         }
@@ -972,6 +986,7 @@ async fn run_server(
     verbosity: VerbosityArg,
     network_debug: bool,
     no_color_logs: bool,
+    loop_mode: bool,
 ) -> Result<()> {
     use mtg_forge_rs::network::{GameServer, ServerConfig};
 
@@ -988,6 +1003,7 @@ async fn run_server(
         verbosity: verbosity_level,
         network_debug,
         no_color_logs,
+        loop_mode,
         ..Default::default()
     };
 
@@ -1015,6 +1031,7 @@ async fn run_connect(
     verbosity: VerbosityArg,
     tag_gamelogs: bool,
     gamelog_output: Option<PathBuf>,
+    reconnect: bool,
 ) -> Result<()> {
     use mtg_forge_rs::core::PlayerId;
     use mtg_forge_rs::game::FancyTuiController;
@@ -1030,96 +1047,129 @@ async fn run_connect(
     // Resolve seed
     let seed_resolved = seed_player.map(|s| s.resolve());
 
-    let config = ClientConfig {
-        server,
-        password: password.unwrap_or_default(),
-        player_name: name,
-        deck_path: deck,
-        cardsfolder,
-    };
-
     let verbosity_level: VerbosityLevel = verbosity.into();
+    let password_str = password.unwrap_or_default();
 
-    let mut client = NetworkClient::new(config);
-    client.set_verbosity(verbosity_level);
-    client.set_visual_stacks(visual_stacks);
-    client.set_tag_gamelogs(tag_gamelogs);
-    if let Some(ref path) = gamelog_output {
-        client.set_gamelog_output(path.clone());
-    }
+    let mut game_number = 0u32;
+    loop {
+        game_number += 1;
+        if game_number > 1 {
+            log::info!("=== Reconnecting for game {} ===", game_number);
+            // Brief delay before reconnecting to allow server to reset
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
 
-    client
-        .connect()
-        .await
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Connection error: {}", e)))?;
+        let config = ClientConfig {
+            server: server.clone(),
+            password: password_str.clone(),
+            player_name: name.clone(),
+            deck_path: deck.clone(),
+            cardsfolder: cardsfolder.clone(),
+        };
 
-    client
-        .wait_for_game_start()
-        .await
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game start error: {}", e)))?;
+        let mut client = NetworkClient::new(config);
+        client.set_verbosity(verbosity_level);
+        client.set_visual_stacks(visual_stacks);
+        client.set_tag_gamelogs(tag_gamelogs);
+        if let Some(ref path) = gamelog_output {
+            client.set_gamelog_output(path.clone());
+        }
 
-    // Get our player ID from the client state
-    let our_player_id = client.our_player_id().unwrap_or_else(|| PlayerId::new(0));
+        if let Err(e) = client.connect().await {
+            if reconnect {
+                log::warn!("Connection failed: {}. Retrying in 2s...", e);
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            return Err(mtg_forge_rs::MtgError::InvalidAction(format!(
+                "Connection error: {}",
+                e
+            )));
+        }
 
-    // Create controller based on type and run the synchronized GameLoop
-    let result: Option<PlayerId> = match controller_type {
-        ControllerType::Zero => {
-            let ctrl = ZeroController::new(our_player_id);
-            client.run_game(ctrl).await
+        if let Err(e) = client.wait_for_game_start().await {
+            if reconnect {
+                log::warn!("Game start failed: {}. Retrying in 2s...", e);
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                continue;
+            }
+            return Err(mtg_forge_rs::MtgError::InvalidAction(format!(
+                "Game start error: {}",
+                e
+            )));
         }
-        ControllerType::Random => {
-            let ctrl = if let Some(seed) = seed_resolved {
-                RandomController::with_seed(our_player_id, seed)
-            } else {
-                let entropy_seed = SeedArg::FromEntropy.resolve();
-                log::warn!(
-                    "No seed provided for Random controller, using entropy: {}",
-                    entropy_seed
-                );
-                RandomController::with_seed(our_player_id, entropy_seed)
-            };
-            client.run_game(ctrl).await
-        }
-        ControllerType::Tui => {
-            let ctrl = InteractiveController::new(our_player_id);
-            client.run_game(ctrl).await
-        }
-        ControllerType::Heuristic => {
-            let ctrl = HeuristicController::new(our_player_id);
-            client.run_game(ctrl).await
-        }
-        ControllerType::Fixed => {
-            let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap())
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e)))?;
-            let ctrl = RichInputController::new(our_player_id, script);
-            client.run_game(ctrl).await
-        }
-        ControllerType::Fancy => {
-            let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e)))?;
-            client.run_game(ctrl).await
-        }
-        ControllerType::FancyFixed => {
-            // FancyFixed requires --fixed-inputs
-            return Err(mtg_forge_rs::MtgError::InvalidAction(
-                "FancyFixed controller requires --fixed-inputs (not yet fully supported in network mode).".to_string(),
-            ));
-        }
-    }
-    .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)))?;
 
-    match result {
-        Some(winner) => {
-            if winner == our_player_id {
-                log::info!("Game ended. You won!");
-            } else {
-                log::info!("Game ended. You lost.");
+        // Get our player ID from the client state
+        let our_player_id = client.our_player_id().unwrap_or_else(|| PlayerId::new(0));
+
+        // Create controller based on type and run the synchronized GameLoop
+        let result: std::result::Result<Option<PlayerId>, _> = match controller_type {
+            ControllerType::Zero => {
+                let ctrl = ZeroController::new(our_player_id);
+                client.run_game(ctrl).await
+            }
+            ControllerType::Random => {
+                let ctrl = if let Some(seed) = seed_resolved {
+                    RandomController::with_seed(our_player_id, seed)
+                } else {
+                    let entropy_seed = SeedArg::FromEntropy.resolve();
+                    log::warn!(
+                        "No seed provided for Random controller, using entropy: {}",
+                        entropy_seed
+                    );
+                    RandomController::with_seed(our_player_id, entropy_seed)
+                };
+                client.run_game(ctrl).await
+            }
+            ControllerType::Tui => {
+                let ctrl = InteractiveController::new(our_player_id);
+                client.run_game(ctrl).await
+            }
+            ControllerType::Heuristic => {
+                let ctrl = HeuristicController::new(our_player_id);
+                client.run_game(ctrl).await
+            }
+            ControllerType::Fixed => {
+                let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
+                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
+                })?;
+                let ctrl = RichInputController::new(our_player_id, script);
+                client.run_game(ctrl).await
+            }
+            ControllerType::Fancy => {
+                let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
+                    .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e)))?;
+                client.run_game(ctrl).await
+            }
+            ControllerType::FancyFixed => {
+                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    "FancyFixed controller requires --fixed-inputs (not yet fully supported in network mode)."
+                        .to_string(),
+                ));
+            }
+        };
+
+        match result {
+            Ok(winner) => match winner {
+                Some(winner) if winner == our_player_id => log::info!("Game {} ended. You won!", game_number),
+                Some(_) => log::info!("Game {} ended. You lost.", game_number),
+                None => log::info!("Game {} ended in a draw", game_number),
+            },
+            Err(e) => {
+                if reconnect {
+                    log::warn!("Game {} error: {}. Will reconnect...", game_number, e);
+                } else {
+                    return Err(mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)));
+                }
             }
         }
-        None => log::info!("Game ended in a draw"),
-    }
 
-    client.disconnect().await.ok();
+        client.disconnect().await.ok();
+
+        if !reconnect {
+            break;
+        }
+    }
     Ok(())
 }
 

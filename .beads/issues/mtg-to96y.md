@@ -59,6 +59,13 @@ mtg connect deck.dck --server=HOST:PORT --password=SECRET
 ## Active Bugs
 
 - [x] mtg-y4e5q: WASM network DESYNC: CardRevealed for drawn card not processed before ability computation (CLOSED)
+- [ ] mtg-61a70: WASM network hang: available_count mismatch after intermediate server actions
+- [ ] mtg-lyh66: WASM network: card images not loading in network mode
+- [ ] mtg-ouk0p: WASM network: click focus between panes not working
+- [ ] mtg-yetqe: WASM network: clicking card doesn't show detail
+- [ ] mtg-vgmjz: WASM network: interface unresponsive, flashes during opponent turn
+- [ ] mtg-hbjkp: WASM network: game log only shows turn markers, not action messages
+- [ ] mtg-7umvv: WASM network: reduce console spam, put debug logs behind network-debug flag
 
 ## Bug Fix: Transient Guard Reset in Rewind (2026-02-24_#1855)
 

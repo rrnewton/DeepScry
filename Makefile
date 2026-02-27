@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web build-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp build-network
 
 # Configuration variables
 # PORT: web server port (use: make PORT=7999 wasm-dev-serve)
@@ -38,6 +38,7 @@ help:
 	@echo "  make wasm-dev       - Build WASM (dev mode, fast)"
 	@echo "  make play-web       - Play web GUI game vs AI (launches server + AI + web server)"
 	@echo "                        Override: DECK=decks/foo.dck CONTROLLER=random PORT=8080"
+	@echo "  make play-web-pvp   - Two-player PvP: two browser tabs connect to same server"
 	@echo "  make wasm-serve     - Build WASM and start local web server (no AI opponent)"
 	@echo "  make wasm-test-fancy - Run Playwright e2e test with screenshots"
 	@echo ""
@@ -522,6 +523,14 @@ play-web: build-network wasm-network
 		--server-port $(SERVER_PORT) \
 		--controller $(CONTROLLER) \
 		$(DECK)
+
+# Two-player PvP: launches game server + web server, two browser tabs connect as players.
+# Usage: make play-web-pvp [PORT=8080] [SERVER_PORT=17771]
+play-web-pvp: build-network wasm-network
+	@./scripts/play-web.sh \
+		--port $(PORT) \
+		--server-port $(SERVER_PORT) \
+		--pvp
 
 # Build WASM and start local web server
 wasm-serve: wasm

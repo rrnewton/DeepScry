@@ -251,6 +251,32 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         view: &GameStateView,
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
+        // Auto-pass when no abilities available.
+        // When available_count == 0, the ONLY valid choice is pass (index 0).
+        // We submit immediately if ChoiceRequest is ready, otherwise return NeedInput
+        // to exit the game loop and wait for the server's ChoiceRequest to arrive.
+        //
+        // IMPORTANT: We must NOT advance the local game past this point without
+        // a ChoiceRequest, because the server sends ChoiceRequests one at a time
+        // and expects a response for each. If we advance past multiple auto-pass
+        // points locally, we'd need to answer multiple future ChoiceRequests, but
+        // the game state would already be past those points.
+        if available.is_empty() {
+            if self.check_choice_request_ready().is_some() {
+                log::info!(
+                    "WasmNetworkLocalController: Auto-pass with 0 abilities (ChoiceRequest ready, submitting immediately)"
+                );
+                self.submit_choice_to_server(vec![0], view);
+                return ChoiceResult::Ok(None);
+            } else {
+                // No ChoiceRequest yet - return NeedInput to exit the game loop.
+                // tui_run_turn() will re-trigger when the ChoiceRequest arrives
+                // (via onMessageProcessed in JavaScript).
+                log::debug!("WasmNetworkLocalController: Auto-pass with 0 abilities (no ChoiceRequest, waiting)");
+                return ChoiceResult::NeedInput(waiting_for_server_context());
+            }
+        }
+
         // Check if ChoiceRequest is ready (not already submitted for this request)
         if self.check_choice_request_ready().is_none() {
             // Either no ChoiceRequest, or we already submitted for it

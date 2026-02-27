@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# play-web.sh - Launch a web GUI game against a native AI opponent
+# play-web.sh - Launch a web GUI game (vs AI or two-player PvP)
 #
 # Usage:
 #   ./scripts/play-web.sh [OPTIONS] [DECK]
 #
 # Arguments:
 #   DECK        Deck file for the AI opponent (default: decks/white_weenie.dck)
+#               Ignored in --pvp mode.
 #
 # Options:
 #   --port PORT         Web server port (default: 8080)
 #   --server-port PORT  MTG server port (default: 17771)
 #   --controller TYPE   AI controller: random, heuristic, zero (default: heuristic)
+#   --pvp               Two-player mode: no AI, two browser tabs connect as players
 #   --help              Show this help
 #
-# Example:
+# Examples:
 #   ./scripts/play-web.sh decks/monored.dck
 #   ./scripts/play-web.sh --controller random decks/white_weenie.dck
+#   ./scripts/play-web.sh --pvp
 #   make play-web DECK=decks/monored.dck
+#   make play-web-pvp
 
 set -euo pipefail
 
@@ -25,24 +29,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<EOF
-play-web.sh - Launch a web GUI game against a native AI opponent
+play-web.sh - Launch a web GUI game (vs AI or two-player PvP)
 
 Usage:
   ./scripts/play-web.sh [OPTIONS] [DECK]
 
 Arguments:
   DECK        Deck file for the AI opponent (default: decks/white_weenie.dck)
+              Ignored in --pvp mode.
 
 Options:
   --port PORT         Web server port (default: 8080)
   --server-port PORT  MTG server port (default: 17771)
   --controller TYPE   AI controller: random, heuristic, zero (default: heuristic)
+  --pvp               Two-player mode: no AI, two browser tabs connect as players
   --help              Show this help
 
 Examples:
   ./scripts/play-web.sh decks/monored.dck
   ./scripts/play-web.sh --controller random decks/white_weenie.dck
+  ./scripts/play-web.sh --pvp
   make play-web DECK=decks/monored.dck
+  make play-web-pvp
 EOF
 }
 
@@ -51,6 +59,7 @@ DECK="decks/white_weenie.dck"
 WEB_PORT=8080
 SERVER_PORT=17771
 CONTROLLER="heuristic"
+PVP_MODE=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -61,6 +70,8 @@ while [[ $# -gt 0 ]]; do
             SERVER_PORT="$2"; shift 2 ;;
         --controller)
             CONTROLLER="$2"; shift 2 ;;
+        --pvp|--no-ai)
+            PVP_MODE=true; shift ;;
         --help|-h)
             usage; exit 0 ;;
         -*)
@@ -89,11 +100,13 @@ if ! "$MTG_BIN" --help 2>&1 | grep -q "server"; then
     echo "Rebuild with: make build-network" >&2
     exit 1
 fi
-if [[ ! -f "$DECK" ]]; then
-    echo "Error: deck file not found: $DECK" >&2
-    echo "Available decks:" >&2
-    ls "${REPO_ROOT}/decks/"*.dck 2>/dev/null | sed 's|.*/||' >&2
-    exit 1
+if ! $PVP_MODE; then
+    if [[ ! -f "$DECK" ]]; then
+        echo "Error: deck file not found: $DECK" >&2
+        echo "Available decks:" >&2
+        ls "${REPO_ROOT}/decks/"*.dck 2>/dev/null | sed 's|.*/||' >&2
+        exit 1
+    fi
 fi
 if [[ ! -f "${REPO_ROOT}/web/pkg/mtg_forge_rs_bg.wasm" ]]; then
     echo "Error: WASM build not found." >&2
@@ -127,20 +140,25 @@ trap cleanup EXIT INT TERM
 
 cd "$REPO_ROOT"
 
-# 1. Start the MTG game server
-echo "Starting MTG server on port $SERVER_PORT..."
-"$MTG_BIN" server --port "$SERVER_PORT" --network-debug > "$SERVER_LOG" 2>&1 &
+# 1. Start the MTG game server (loop mode: accepts new games after each one ends)
+echo "Starting MTG server on port $SERVER_PORT (loop mode)..."
+"$MTG_BIN" server --port "$SERVER_PORT" --network-debug --loop > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 sleep 1.5  # Wait for server to be ready
 
-# 2. Connect AI opponent with the specified deck
-echo "Connecting AI opponent ($CONTROLLER controller, deck: $(basename "$DECK"))..."
-"$MTG_BIN" connect "$DECK" \
-    --server "localhost:$SERVER_PORT" \
-    --controller "$CONTROLLER" \
-    --name "AI" \
-    > "$AI_LOG" 2>&1 &
-CLIENT_PID=$!
+# 2. Connect AI opponent (skip in PvP mode)
+if $PVP_MODE; then
+    echo "PvP mode: waiting for two browser clients to connect..."
+else
+    echo "Connecting AI opponent ($CONTROLLER controller, deck: $(basename "$DECK"), reconnect mode)..."
+    "$MTG_BIN" connect "$DECK" \
+        --server "localhost:$SERVER_PORT" \
+        --controller "$CONTROLLER" \
+        --name "AI" \
+        --reconnect \
+        > "$AI_LOG" 2>&1 &
+    CLIENT_PID=$!
+fi
 
 # 3. Start the HTTP server for the web GUI
 echo "Starting web server on port $WEB_PORT..."
@@ -150,32 +168,55 @@ WEB_PID=$!
 sleep 0.5  # Wait for web server to be ready
 
 # 4. Print instructions
+URL="http://localhost:${WEB_PORT}/fancy.html"
+WS_URL="ws://localhost:${SERVER_PORT}"
+
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║            MTG Web GUI Game Ready!                   ║"
-echo "╠══════════════════════════════════════════════════════╣"
-echo "║                                                      ║"
-echo "║  1. Open your browser and go to:                     ║"
-printf "║     \033[1;36mhttp://localhost:%d/fancy.html\033[0m" "$WEB_PORT"
-# Pad to fill the box
-printf "%*s" $((49 - ${#WEB_PORT} - 19)) "║"
-echo ""
-echo "║                                                      ║"
-echo "║  2. In the 'Server URL' field, enter:                ║"
-printf "║     \033[1;33mws://localhost:%d\033[0m" "$SERVER_PORT"
-printf "%*s" $((53 - ${#SERVER_PORT} - 16)) "║"
-echo ""
-echo "║                                                      ║"
-echo "║  3. Choose your deck and click Connect!              ║"
-echo "║                                                      ║"
-echo "╠══════════════════════════════════════════════════════╣"
-printf "║  AI opponent: %-38s║\n" "$(basename "$DECK") ($CONTROLLER)"
-printf "║  Server log:  %-38s║\n" "$SERVER_LOG"
-printf "║  AI log:      %-38s║\n" "$AI_LOG"
-echo "╠══════════════════════════════════════════════════════╣"
-echo "║  Press Ctrl+C to stop.                               ║"
-echo "╚══════════════════════════════════════════════════════╝"
+if $PVP_MODE; then
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║         MTG Web PvP Game Ready!                      ║"
+    echo "╠══════════════════════════════════════════════════════╣"
+    echo "║                                                      ║"
+    echo "║  Open TWO browser tabs and go to:                    ║"
+    printf "║     \033[1;36m%s\033[0m" "$URL"
+    printf "%*s║\n" $((53 - ${#URL})) ""
+    echo "║                                                      ║"
+    echo "║  In each tab, enter the server URL:                  ║"
+    printf "║     \033[1;33m%s\033[0m" "$WS_URL"
+    printf "%*s║\n" $((53 - ${#WS_URL})) ""
+    echo "║                                                      ║"
+    echo "║  Each player chooses a deck and clicks Connect.      ║"
+    echo "║  The game starts when both players have connected.   ║"
+    echo "║                                                      ║"
+    echo "╠══════════════════════════════════════════════════════╣"
+    printf "║  Server log:  %-38s║\n" "$SERVER_LOG"
+    echo "╠══════════════════════════════════════════════════════╣"
+    echo "║  Press Ctrl+C to stop.                               ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+else
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║            MTG Web GUI Game Ready!                   ║"
+    echo "╠══════════════════════════════════════════════════════╣"
+    echo "║                                                      ║"
+    echo "║  1. Open your browser and go to:                     ║"
+    printf "║     \033[1;36m%s\033[0m" "$URL"
+    printf "%*s║\n" $((53 - ${#URL})) ""
+    echo "║                                                      ║"
+    echo "║  2. In the 'Server URL' field, enter:                ║"
+    printf "║     \033[1;33m%s\033[0m" "$WS_URL"
+    printf "%*s║\n" $((53 - ${#WS_URL})) ""
+    echo "║                                                      ║"
+    echo "║  3. Choose your deck and click Connect!              ║"
+    echo "║                                                      ║"
+    echo "╠══════════════════════════════════════════════════════╣"
+    printf "║  AI opponent: %-38s║\n" "$(basename "$DECK") ($CONTROLLER)"
+    printf "║  Server log:  %-38s║\n" "$SERVER_LOG"
+    printf "║  AI log:      %-38s║\n" "$AI_LOG"
+    echo "╠══════════════════════════════════════════════════════╣"
+    echo "║  Press Ctrl+C to stop.                               ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+fi
 echo ""
 
-# Keep running until any critical process exits
-wait "${SERVER_PID}" "${CLIENT_PID}" 2>/dev/null || true
+# Keep running until server exits
+wait "${SERVER_PID}" 2>/dev/null || true

@@ -802,6 +802,11 @@ impl WasmFancyTuiState {
     /// the stack state. To resume mid-turn, we must rewind and replay all choices.
     fn run_until_choice(&mut self) {
         if self.game_over {
+            log::warn!(
+                target: "wasm_tui",
+                "run_until_choice: Skipping - game_over is true (error: {:?})",
+                self.error_message
+            );
             return;
         }
 
@@ -1250,8 +1255,14 @@ impl WasmFancyTuiState {
             let turn_after_run = self.game.turn.turn_number;
             log::info!(
                 target: "wasm_tui",
-                "NETWORK REPLAY: Game loop returned on turn {}, undo_log={}",
-                turn_after_run, self.game.undo_log.len()
+                "NETWORK REPLAY: Game loop returned on turn {}, undo_log={}, result={}",
+                turn_after_run,
+                self.game.undo_log.len(),
+                match &result {
+                    Ok(GameLoopState::Complete(_)) => "Complete",
+                    Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
+                    Err(_) => "Error",
+                }
             );
 
             // Replay complete - clear the rewind flag
@@ -1321,8 +1332,14 @@ impl WasmFancyTuiState {
                 let turn_number = self.game.turn.turn_number;
                 log::info!(
                     target: "wasm_tui",
-                    "NETWORK NORMAL: Game loop returned on turn {}, undo_log={}",
-                    turn_number, self.game.undo_log.len()
+                    "NETWORK NORMAL: Game loop returned on turn {}, undo_log={}, result={}",
+                    turn_number,
+                    self.game.undo_log.len(),
+                    match &result {
+                        Ok(GameLoopState::Complete(_)) => "Complete",
+                        Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
+                        Err(_) => "Error",
+                    }
                 );
 
                 // Check monotonicity invariants after normal network run
@@ -1435,6 +1452,30 @@ impl WasmFancyTuiState {
                 }
             }
             Ok(GameLoopState::AwaitingInput(context)) => {
+                // In network mode, detect "waiting for server" contexts:
+                // these are SpellAbility with empty available, meaning the controller
+                // needs a ChoiceRequest from the server before it can proceed.
+                // Don't show these as real choices - just display a status message.
+                #[cfg(feature = "wasm-network")]
+                if self.is_network_mode {
+                    if let ChoiceContext::SpellAbility { available, .. } = &context {
+                        if available.is_empty() {
+                            log::debug!(
+                                target: "wasm_tui",
+                                "Waiting for server (not showing as choice), turn {}, undo_log={}",
+                                self.game.turn.turn_number,
+                                self.game.undo_log.len()
+                            );
+                            // Don't set pending_context - tui_run_turn() will re-trigger
+                            // when the ChoiceRequest arrives via onMessageProcessed
+                            self.pending_context = None;
+                            self.current_prompt = Some("Waiting for server...".to_string());
+                            self.current_choices.clear();
+                            return;
+                        }
+                    }
+                }
+
                 // Need human input - display choices
                 self.pending_context = Some(context.clone());
                 self.selected_choice_idx = 0;
@@ -1459,13 +1500,19 @@ impl WasmFancyTuiState {
                     ChoiceContext::SacrificePermanents { .. } => "SacrificePermanents".to_string(),
                     ChoiceContext::Modes { mode_count, .. } => format!("Modes({})", mode_count),
                 };
-                log::debug!(
+                log::info!(
                     target: "wasm_tui",
                     "Turn {}, {}, P1's turn: {}, choices: {}, context: {}",
                     turn, phase, is_p1_turn, choice_count, context_type
                 );
             }
             Err(e) => {
+                log::error!(
+                    target: "wasm_tui",
+                    "GAME OVER due to error on turn {}: {}",
+                    self.game.turn.turn_number,
+                    e
+                );
                 self.error_message = Some(format!("Game error: {}", e));
                 self.game_over = true;
             }

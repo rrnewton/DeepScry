@@ -1,0 +1,12 @@
+---
+title: 'WASM network: click focus between panes not working'
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-02-24T23:30:19.708217984+00:00
+updated_at: 2026-02-24T23:30:19.708217984+00:00
+---
+
+# Description
+
+Clicking on different panes (hand, battlefield, graveyard) does not shift focus to the clicked pane. Navigation is difficult as user can't select which zone to interact with.
