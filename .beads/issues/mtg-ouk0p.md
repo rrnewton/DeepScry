@@ -1,10 +1,11 @@
 ---
 title: 'WASM network: click focus between panes not working'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-02-24T23:30:19.708217984+00:00
-updated_at: 2026-02-24T23:30:19.708217984+00:00
+updated_at: 2026-02-27T19:31:41.677428589+00:00
+closed_at: 2026-02-27T19:31:41.677428529+00:00
 ---
 
 # Description

@@ -1,10 +1,11 @@
 ---
 title: 'WASM network: game log only shows turn markers, not action messages'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-02-24T23:30:22.783935324+00:00
-updated_at: 2026-02-24T23:30:22.783935324+00:00
+updated_at: 2026-02-27T19:31:49.479448616+00:00
+closed_at: 2026-02-27T19:31:49.479448546+00:00
 ---
 
 # Description
