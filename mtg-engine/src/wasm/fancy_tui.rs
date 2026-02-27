@@ -2182,6 +2182,14 @@ pub fn launch_network_game(
     let deck_card_ids = client_ref.deck_card_ids().cloned();
     let rng_state = client_ref.rng_state().to_vec();
 
+    // Clone token definitions from server's GameStarted message
+    // These are needed for CreateToken effects (e.g., Clue tokens, Food tokens)
+    let token_defs: Vec<(String, crate::loader::CardDefinition)> = client_ref
+        .token_definitions()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
     log::info!(
         "launch_network_game: starting_life={}, our_player_id={:?}, opponent={}, deck_card_ids={:?}",
         starting_life,
@@ -2239,6 +2247,15 @@ pub fn launch_network_game(
 
         // Enable reveal logging for network games (same as native)
         game.set_skip_reveals(false);
+
+        // Populate token definitions so network game can create tokens
+        if !token_defs.is_empty() {
+            log::info!("launch_network_game: Populating {} token definitions", token_defs.len());
+            for (name, def) in &token_defs {
+                game.token_definitions
+                    .insert(name.clone(), std::sync::Arc::new(def.clone()));
+            }
+        }
 
         game
     } else {
