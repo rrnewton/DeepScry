@@ -62,6 +62,7 @@ enum ActivatedAbilityType {
     /// Example: Royal Assassin "{T}: Destroy target tapped creature"
     /// Reference: DestroyAi.java in forge-ai
     Destroy,
+    // TODO: Add Regenerate variant once AB$ Regenerate is parsed by the loader
     /// Other abilities not yet categorized
     Other,
 }
@@ -574,11 +575,92 @@ impl HeuristicController {
         }
 
         // Mana abilities add value
-        // Java: if (!c.getManaAbilities().isEmpty()) { value += addValue(10, "mana"); }
-        // TODO: Implement mana ability check
-        // For now, check if it's a land with mana ability
-        if card.is_land() {
+        // Java: if (!c.getManaAbilities().isEmpty()) { value += addValue(10, "manadork"); }
+        // Check activated abilities for mana production (Llanowar Elves, Birds of Paradise, etc.)
+        let has_mana_ability = card.activated_abilities.iter().any(|ab| ab.is_mana_ability);
+        if has_mana_ability || card.is_land() {
             value += 10;
+        }
+
+        // Activated ability bonuses (non-mana)
+        // Creatures with useful activated abilities are more valuable
+        // Reference: Java CreatureEvaluator doesn't explicitly score these,
+        // but the AI ability evaluators (DestroyAi, PumpAi, DamageDealAi) all
+        // consider source creature value when deciding to activate.
+        for ability in &card.activated_abilities {
+            if ability.is_mana_ability {
+                continue;
+            }
+            let ability_type = self.classify_activated_ability(ability);
+            match ability_type {
+                ActivatedAbilityType::Ping { damage } => {
+                    // Repeatable damage is very valuable (Prodigal Sorcerer)
+                    value += 10 + damage * 5;
+                }
+                ActivatedAbilityType::Pump { power, toughness } => {
+                    // Firebreathing/pump abilities (Shivan Dragon, Granite Gargoyle)
+                    value += 5 + power * 3 + toughness * 2;
+                }
+                ActivatedAbilityType::Destroy => {
+                    // Destroy abilities are extremely valuable (Royal Assassin)
+                    value += 40;
+                }
+                ActivatedAbilityType::Other => {}
+            }
+        }
+
+        // Triggered ability bonuses
+        // Creatures with beneficial triggers are more valuable
+        for trigger in &card.triggers {
+            match trigger.event {
+                crate::core::TriggerEvent::DealsCombatDamage => {
+                    // Combat damage triggers (Sengir Vampire, Hypnotic Specter)
+                    // Valuable because they reward successful attacks
+                    value += 15;
+                }
+                crate::core::TriggerEvent::EntersBattlefield => {
+                    // ETB effects (value depends on the effect)
+                    value += 10;
+                }
+                crate::core::TriggerEvent::LeavesBattlefield => {
+                    // Death/LTB triggers can be valuable or just cleanup
+                    value += 5;
+                }
+                crate::core::TriggerEvent::Attacks => {
+                    // Attack triggers (value scales with the effect)
+                    value += 10;
+                }
+                crate::core::TriggerEvent::Blocks => {
+                    // Block triggers
+                    value += 5;
+                }
+                crate::core::TriggerEvent::BeginningOfUpkeep => {
+                    // Upkeep triggers are often COSTS (sacrifice unless pay)
+                    // Check if this is a negative trigger (sacrifice, damage to self)
+                    let is_negative = trigger.effects.iter().any(|e| {
+                        matches!(
+                            e,
+                            crate::core::Effect::DealDamage { .. }
+                                | crate::core::Effect::DiscardCards { .. }
+                                | crate::core::Effect::Mill { .. }
+                        )
+                    });
+                    if is_negative {
+                        value -= 15;
+                    }
+                    // Positive upkeep triggers are rarer, handled by keyword checks above
+                }
+                crate::core::TriggerEvent::BeginningOfEndStep
+                | crate::core::TriggerEvent::BeginningOfCombat
+                | crate::core::TriggerEvent::SpellCast
+                | crate::core::TriggerEvent::Sacrificed
+                | crate::core::TriggerEvent::CardDrawn
+                | crate::core::TriggerEvent::Taps
+                | crate::core::TriggerEvent::AttackersDeclared => {
+                    // Other triggers get a small bonus
+                    value += 5;
+                }
+            }
         }
 
         value

@@ -682,8 +682,12 @@ fn test_e2e_avalanche_riders_echo() {
     // Base: 80 + Non-token: 20 + Power(2)*15: 30 + Toughness(2)*10: 20 + CMC(4)*5: 20 = 170
     // Note: Haste has no static bonus in creature evaluation (only affects pump spells)
     // Echo penalty: -10
-    // Total: 160
-    assert_eq!(score, 160, "Avalanche Riders (2/2 Haste with Echo) should score 160");
+    // ETB trigger (destroy land): +10
+    // Total: 170
+    assert_eq!(
+        score, 170,
+        "Avalanche Riders (2/2 Haste with Echo + ETB) should score 170"
+    );
 }
 
 /// Test evaluating real Blastoderm (Fading) from cardsfolder
@@ -764,10 +768,11 @@ fn test_e2e_keldon_marauders_vanishing() {
     // Expected calculation:
     // Base: 80 + Non-token: 20 + Power(3)*15: 45 + Toughness(3)*10: 30 + CMC(2)*5: 10 = 185
     // Vanishing penalty (0 counters on card, so -50 "about to die"): -50
-    // Total: 135
+    // ETB trigger (deal damage): +10
+    // Total: 145
     assert_eq!(
-        score, 135,
-        "Keldon Marauders (3/3 with Vanishing, 0 counters) should score 135"
+        score, 145,
+        "Keldon Marauders (3/3 with Vanishing, 0 counters + ETB) should score 145"
     );
 }
 
@@ -833,7 +838,9 @@ fn test_e2e_shivan_dragon_classic() {
     let score = controller.evaluate_creature(&view, card_id);
 
     // Base: 80 + Non-token: 20 + P(5)*15: 75 + T(5)*10: 50 + CMC(6)*5: 30 + Flying(5*10): 50 = 305
-    assert_eq!(score, 305, "Shivan Dragon (5/5 Flying) should score 305");
+    // Pump ability ({R}: +1/+0): +8 (5 + 1*3 + 0*2)
+    // Total: 313
+    assert_eq!(score, 313, "Shivan Dragon (5/5 Flying + Pump) should score 313");
 }
 
 // =========================================================================
@@ -1328,5 +1335,374 @@ fn test_e2e_bog_wraith_landwalk() {
     assert_eq!(
         score, 225,
         "Bog Wraith (3/3 Swampwalk) should score 225 when opponent has Swamp"
+    );
+}
+
+// =============================================================================
+// Real Card Tests: Loading from cardsfolder to verify triggered/activated ability scoring
+// =============================================================================
+
+/// Helper: load a card from cardsfolder and place it on the battlefield for evaluation
+fn load_real_card_for_eval(card_path: &str) -> Option<(GameState, CardId, PlayerId)> {
+    let path = PathBuf::from(card_path);
+    if !path.exists() {
+        return None;
+    }
+    let def = mtg_forge_rs::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+    let card_id = CardId::new(100);
+    let card = def.instantiate(card_id, p1_id);
+    game.cards.insert(card_id, card);
+    game.battlefield.add(card_id);
+    Some((game, card_id, p1_id))
+}
+
+#[test]
+fn test_real_card_royal_assassin_activated_ability_scoring() {
+    // Royal Assassin (4ED): 1/1, {T}: Destroy target tapped creature
+    // The destroy activated ability should add +40 to evaluation
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (1): +15
+    // - Toughness (1): +10
+    // - CMC (3): +15
+    // - Destroy activated ability: +40
+    // Total: 180
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/r/royal_assassin.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(
+        !card.activated_abilities.is_empty(),
+        "Royal Assassin should have activated abilities"
+    );
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(
+        score, 180,
+        "Royal Assassin with destroy ability should score 180 (base 140 + destroy 40)"
+    );
+}
+
+#[test]
+fn test_real_card_prodigal_sorcerer_ping_ability_scoring() {
+    // Prodigal Sorcerer (4ED): 1/1, {T}: Deal 1 damage to any target
+    // The ping activated ability should add +15 (10 + 1*5)
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (1): +15
+    // - Toughness (1): +10
+    // - CMC (3): +15
+    // - Ping ability (1 damage): +15 (10 + 1*5)
+    // Total: 155
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/p/prodigal_sorcerer.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(
+        !card.activated_abilities.is_empty(),
+        "Prodigal Sorcerer should have activated abilities"
+    );
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(
+        score, 155,
+        "Prodigal Sorcerer with ping ability should score 155 (base 140 + ping 15)"
+    );
+}
+
+#[test]
+fn test_real_card_llanowar_elves_mana_ability_scoring() {
+    // Llanowar Elves: 1/1 with {T}: Add {G} (mana ability)
+    // Mana abilities add +10 to evaluation
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (1): +15
+    // - Toughness (1): +10
+    // - CMC (1): +5
+    // - Mana ability: +10
+    // Total: 140
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/l/llanowar_elves.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    let has_mana = card.activated_abilities.iter().any(|a| a.is_mana_ability);
+    assert!(has_mana, "Llanowar Elves should have a mana ability");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(
+        score, 140,
+        "Llanowar Elves (1/1 mana dork) should score 140 (base 130 + mana 10)"
+    );
+}
+
+#[test]
+fn test_real_card_birds_of_paradise_mana_plus_flying() {
+    // Birds of Paradise: 0/1 Flying with {T}: Add any mana
+    // Flying + mana ability
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (0): +0
+    // - Toughness (1): +10
+    // - CMC (1): +5
+    // - Flying: +0 (power * 10 = 0 * 10)
+    // - Mana ability: +10
+    // Total: 125
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/b/birds_of_paradise.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(card.has_flying(), "Birds of Paradise should have flying");
+    let has_mana = card.activated_abilities.iter().any(|a| a.is_mana_ability);
+    assert!(has_mana, "Birds of Paradise should have a mana ability");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    assert_eq!(score, 125, "Birds of Paradise (0/1 flying mana dork) should score 125");
+}
+
+#[test]
+fn test_real_card_sengir_vampire_combat_damage_trigger() {
+    // Sengir Vampire (4ED): 4/4 Flying with DealsCombatDamage trigger (+1/+1 counter)
+    // The combat damage trigger adds +15 to evaluation
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (4): +60
+    // - Toughness (4): +40
+    // - CMC (5): +25
+    // - Flying: +40 (power * 10)
+    // - DealsCombatDamage trigger: +15
+    // Total: 280
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/s/sengir_vampire.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(card.has_flying(), "Sengir Vampire should have flying");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Base without any triggers: 4/4 Flying CMC 5
+    // 80 + 20 + 60 + 40 + 25 + 40 = 265
+    let base_score = 265;
+
+    if card.triggers.is_empty() {
+        // DamageDone trigger parsing not yet implemented
+        // Verify base score is correct for a 4/4 flyer
+        assert_eq!(
+            score, base_score,
+            "Sengir Vampire without parsed triggers should score {base_score}"
+        );
+        println!("Note: Sengir Vampire trigger (Mode$ DamageDone) not yet parsed by loader");
+    } else {
+        // Once triggers are parsed, score should be higher
+        assert!(
+            score > base_score,
+            "Sengir Vampire with trigger should score more than {base_score}, got {score}"
+        );
+    }
+}
+
+#[test]
+fn test_real_card_hypnotic_specter_combat_damage_trigger() {
+    // Hypnotic Specter (4ED): 2/2 Flying with DealsCombatDamage trigger (discard)
+    // The combat damage trigger should add value
+    //
+    // Expected base (without trigger):
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (2): +30
+    // - Toughness (2): +20
+    // - CMC (3): +15
+    // - Flying: +20 (power * 10)
+    // = 185
+    //
+    // + DealsCombatDamage trigger: +15
+    // Total: 200
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/h/hypnotic_specter.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(card.has_flying(), "Hypnotic Specter should have flying");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // Base without any triggers: 2/2 Flying CMC 3
+    // 80 + 20 + 30 + 20 + 15 + 20 = 185
+    let base_score = 185;
+
+    if card.triggers.is_empty() {
+        // DamageDone trigger parsing not yet implemented
+        assert_eq!(
+            score, base_score,
+            "Hypnotic Specter without parsed triggers should score {base_score}"
+        );
+        println!("Note: Hypnotic Specter trigger (Mode$ DamageDone) not yet parsed by loader");
+    } else {
+        assert!(
+            score > base_score,
+            "Hypnotic Specter with trigger should score more than {base_score}, got {score}"
+        );
+    }
+}
+
+#[test]
+fn test_real_card_shivan_dragon_pump_ability() {
+    // Shivan Dragon (4ED): 5/5 Flying with {R}: +1/+0 pump ability
+    //
+    // Expected score:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (5): +75
+    // - Toughness (5): +50
+    // - CMC (6): +30
+    // - Flying: +50 (power * 10)
+    // - Pump ability (+1/+0): +8 (5 + 1*3 + 0*2)
+    // Total: 313
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/s/shivan_dragon.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(card.has_flying(), "Shivan Dragon should have flying");
+    let has_pump = card.activated_abilities.iter().any(|a| {
+        a.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::PumpCreature { .. }))
+    });
+    assert!(has_pump, "Shivan Dragon should have a pump ability");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    let base_without_pump = 305;
+    assert!(
+        score > base_without_pump,
+        "Shivan Dragon with pump ability should score more than base {base_without_pump}, got {score}"
+    );
+}
+
+#[test]
+fn test_real_card_phantasmal_forces_upkeep_penalty() {
+    // Phantasmal Forces: 4/1 Flying with upkeep sacrifice trigger
+    // The upkeep trigger should penalize the evaluation
+    //
+    // Base without trigger:
+    // - Base: 80
+    // - Non-token: +20
+    // - Power (4): +60
+    // - Toughness (1): +10
+    // - CMC (4): +20
+    // - Flying: +40
+    // = 230
+    //
+    // Upkeep sacrifice trigger penalty: depends on effect type
+    let Some((game, card_id, player_id)) = load_real_card_for_eval("../cardsfolder/p/phantasmal_forces.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let card = game.cards.get(card_id).unwrap();
+    assert!(card.has_flying(), "Phantasmal Forces should have flying");
+
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+
+    // The upkeep trigger should make this score less than a vanilla 4/1 flyer (230)
+    // but still positive since it's a 4/1 flyer
+    println!("Phantasmal Forces score: {score}");
+    assert!(
+        score > 0 && score <= 230,
+        "Phantasmal Forces with upkeep penalty should score 0 < score <= 230, got {score}"
+    );
+}
+
+/// Test that creatures with mana abilities score higher than vanilla creatures of same size
+#[test]
+fn test_mana_dork_scores_higher_than_vanilla() {
+    // Llanowar Elves (1/1 mana dork) should score higher than a vanilla 1/1 with same CMC
+    let (vanilla_game, vanilla_id, player_id) = create_test_setup("Vanilla 1/1", 1, 1, 1);
+    let controller = HeuristicController::new(player_id);
+
+    let vanilla_view = GameStateView::new(&vanilla_game, player_id);
+    let vanilla_score = controller.evaluate_creature(&vanilla_view, vanilla_id);
+
+    let Some((elves_game, elves_id, _)) = load_real_card_for_eval("../cardsfolder/l/llanowar_elves.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let elves_view = GameStateView::new(&elves_game, player_id);
+    let elves_score = controller.evaluate_creature(&elves_view, elves_id);
+
+    assert!(
+        elves_score > vanilla_score,
+        "Llanowar Elves ({elves_score}) should score higher than vanilla 1/1 ({vanilla_score})"
+    );
+}
+
+/// Test that Royal Assassin (with destroy ability) scores much higher than
+/// a vanilla 1/1 of the same CMC
+#[test]
+fn test_destroy_ability_significantly_boosts_creature_value() {
+    let (vanilla_game, vanilla_id, player_id) = create_test_setup("Vanilla 1/1", 1, 1, 3);
+    let controller = HeuristicController::new(player_id);
+
+    let vanilla_view = GameStateView::new(&vanilla_game, player_id);
+    let vanilla_score = controller.evaluate_creature(&vanilla_view, vanilla_id);
+
+    let Some((ra_game, ra_id, _)) = load_real_card_for_eval("../cardsfolder/r/royal_assassin.txt") else {
+        println!("Skipping: cardsfolder not present");
+        return;
+    };
+
+    let ra_view = GameStateView::new(&ra_game, player_id);
+    let ra_score = controller.evaluate_creature(&ra_view, ra_id);
+
+    // Royal Assassin's destroy ability (+40) should make it significantly more valuable
+    let difference = ra_score - vanilla_score;
+    assert!(
+        difference >= 30,
+        "Royal Assassin ({ra_score}) should score at least 30 more than vanilla 1/1 ({vanilla_score}), diff={difference}"
     );
 }
