@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-07T20:52:14.538667821+00:00
+updated_at: 2026-03-07T21:24:54.598088193+00:00
 ---
 
 # Description
@@ -63,4 +63,4 @@ Checked up-to-date as of 2026-01-03.
 
 # Notes
 
-2026-03-07: AB$ Regenerate implemented (246 cards). Full stack: parsing, Effect::Regenerate, regeneration shields, combat damage interception, AI evaluation/timing, end-of-turn cleanup. Also implemented end-of-turn damage removal for all creatures.
+2026-03-07_#1869: LoseLife (108 cards), DestroyAll (34 cards), DamageAll (58 cards) implemented. Board wipes (Wrath of God) and mass damage (Pyroclasm) now work. 886 tests passing.
