@@ -19,6 +19,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::DiscardCards { player, .. }
         | Effect::GainLife { player, .. }
         | Effect::LoseLife { player, .. }
+        | Effect::ForceSacrifice { player, .. }
+        | Effect::SetLife { player, .. }
         | Effect::Mill { player, .. } => player.is_all_players(),
         // All other effect variants don't have an expandable player field
         Effect::DealDamage { .. }
@@ -27,6 +29,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::DestroyPermanent { .. }
         | Effect::DestroyAll { .. }
         | Effect::DamageAll { .. }
+        | Effect::TapAll { .. }
+        | Effect::UntapAll { .. }
         | Effect::TapPermanent { .. }
         | Effect::UntapPermanent { .. }
         | Effect::PumpCreature { .. }
@@ -91,13 +95,24 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
                 player: pid,
                 count: *count,
             },
-            // Unreachable: is_all_players only true for the above five variants.
+            Effect::ForceSacrifice { sac_type, count, .. } => Effect::ForceSacrifice {
+                player: pid,
+                sac_type: sac_type.clone(),
+                count: *count,
+            },
+            Effect::SetLife { amount, .. } => Effect::SetLife {
+                player: pid,
+                amount: *amount,
+            },
+            // Unreachable: is_all_players only true for the above seven variants.
             Effect::DealDamage { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::DestroyAll { .. }
             | Effect::DamageAll { .. }
+            | Effect::TapAll { .. }
+            | Effect::UntapAll { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }
@@ -1565,6 +1580,21 @@ impl GameState {
                 player: opponent_id.unwrap_or(card_owner),
                 amount: *amount,
             },
+            Effect::ForceSacrifice {
+                player,
+                sac_type,
+                count,
+            } if player.is_placeholder() => Effect::ForceSacrifice {
+                // ForceSacrifice defaults to opponent (Diabolic Edict pattern)
+                player: opponent_id.unwrap_or(card_owner),
+                sac_type: sac_type.clone(),
+                count: *count,
+            },
+            Effect::SetLife { player, amount } if player.is_placeholder() => Effect::SetLife {
+                // SetLife defaults to self (Angel of Grace: "Your life total becomes 10")
+                player: card_owner,
+                amount: *amount,
+            },
             Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                 player: card_owner,
                 count: *count,
@@ -2784,6 +2814,134 @@ impl GameState {
 
                 // Check for creatures that took lethal damage
                 self.check_lethal_damage()?;
+            }
+
+            Effect::ForceSacrifice {
+                player,
+                sac_type,
+                count,
+            } => {
+                // Force a player to sacrifice permanents matching a type
+                // CR 701.17: "sacrifice a permanent" means its controller moves it to graveyard
+                let player_name = self
+                    .get_player(*player)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|_| "Unknown".to_string().into());
+
+                // Find matching permanents controlled by the target player
+                let mut candidates: Vec<(CardId, i32)> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter_map(|card_id| {
+                        let card = self.cards.get(card_id).ok()?;
+                        if card.controller != *player {
+                            return None;
+                        }
+                        // Match sac_type against card types
+                        let type_matches = match sac_type.as_str() {
+                            "Creature" => card.is_creature(),
+                            "Land" => card.is_land(),
+                            "Artifact" => card.is_artifact(),
+                            "Enchantment" => card.is_enchantment(),
+                            "Permanent" | "" => true, // Any permanent
+                            _ => {
+                                // Try matching as creature subtype or more complex filter
+                                card.is_creature() // Default to creature
+                            }
+                        };
+                        if type_matches {
+                            // Score: lower value = sacrifice first
+                            // Use P/T sum for creatures, CMC for non-creatures
+                            let value = if card.is_creature() {
+                                i32::from(card.current_power()) + i32::from(card.current_toughness())
+                            } else {
+                                i32::from(card.mana_cost.cmc())
+                            };
+                            Some((card_id, value))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Sort by value ascending (sacrifice least valuable first)
+                candidates.sort_by_key(|&(_, v)| v);
+
+                let to_sac = (*count as usize).min(candidates.len());
+                for &(card_id, _) in candidates.iter().take(to_sac) {
+                    let card_name = self.cards.get(card_id).map(|c| c.name.to_string()).unwrap_or_default();
+                    let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(*player);
+                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    self.logger
+                        .gamelog(&format!("{} sacrifices {} ({})", player_name, card_name, card_id));
+                }
+
+                if to_sac == 0 {
+                    self.logger
+                        .gamelog(&format!("{} has no {} to sacrifice", player_name, sac_type));
+                }
+            }
+
+            Effect::TapAll { restriction } => {
+                // Tap all permanents matching the restriction
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&card_id| {
+                        self.cards
+                            .get(card_id)
+                            .map(|card| !card.tapped && restriction.matches(card))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                for card_id in targets {
+                    let card = self.cards.get_mut(card_id)?;
+                    card.tapped = true;
+                    let card_name = card.name.clone();
+                    self.logger.gamelog(&format!("{} ({}) is tapped", card_name, card_id));
+                }
+            }
+
+            Effect::UntapAll { restriction } => {
+                // Untap all permanents matching the restriction
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&card_id| {
+                        self.cards
+                            .get(card_id)
+                            .map(|card| card.tapped && restriction.matches(card))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                for card_id in targets {
+                    let card = self.cards.get_mut(card_id)?;
+                    card.tapped = false;
+                    let card_name = card.name.clone();
+                    self.logger.gamelog(&format!("{} ({}) is untapped", card_name, card_id));
+                }
+            }
+
+            Effect::SetLife { player, amount } => {
+                // Set a player's life total to a specific amount
+                // CR 119.5: "If an effect sets a player's life total, the player gains or loses
+                // the necessary amount of life"
+                let p = self.get_player_mut(*player)?;
+                let player_name = p.name.clone();
+                let old_life = p.life;
+                p.life = *amount;
+                self.logger.gamelog(&format!(
+                    "{}'s life total is set to {} (was {})",
+                    player_name, amount, old_life
+                ));
             }
 
             Effect::CreateDelayedTrigger {

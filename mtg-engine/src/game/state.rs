@@ -2812,6 +2812,10 @@ impl GameState {
                     | crate::core::Effect::LoseLife { .. }
                     | crate::core::Effect::DestroyAll { .. }
                     | crate::core::Effect::DamageAll { .. }
+                    | crate::core::Effect::ForceSacrifice { .. }
+                    | crate::core::Effect::TapAll { .. }
+                    | crate::core::Effect::UntapAll { .. }
+                    | crate::core::Effect::SetLife { .. }
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CreateDelayedTrigger { .. }

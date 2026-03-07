@@ -918,6 +918,57 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Sacrifice => {
+            // ForceSacrifice: Target player sacrifices permanents of a type
+            // Examples: "SP$ Sacrifice | ValidTgts$ Player | SacValid$ Creature" (Diabolic Edict)
+            //           "SP$ Sacrifice | Amount$ 2 | SacValid$ Creature | Defined$ Player" (Barter in Blood)
+            let sac_type = params.get("SacValid").unwrap_or("Creature").to_string();
+            let count = params.get_i32("Amount").unwrap_or(1) as u8;
+
+            // Placeholder - resolved at cast time.
+            // Defined$ Player means "each player" (expand_all_players),
+            // Defined$ Opponent or ValidTgts$ Player means opponent (default for placeholder)
+            Some(Effect::ForceSacrifice {
+                player: PlayerId::new(0),
+                sac_type,
+                count,
+            })
+        }
+
+        ApiType::TapAll => {
+            // TapAll: Tap all permanents matching ValidCards$
+            // Example: "DB$ TapAll | ValidCards$ Creature.OppCtrl" (Cryptic Command mode)
+            let restriction = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            Some(Effect::TapAll { restriction })
+        }
+
+        ApiType::UntapAll => {
+            // UntapAll: Untap all permanents matching ValidCards$
+            // Example: "AB$ UntapAll | ValidCards$ Creature.YouCtrl" (Aggravated Assault)
+            let restriction = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            Some(Effect::UntapAll { restriction })
+        }
+
+        ApiType::SetLife => {
+            // SetLife: Set a player's life total to a specific amount
+            // Example: "AB$ SetLife | Defined$ You | LifeAmount$ 10" (Angel of Grace)
+            //          "SP$ SetLife | ValidTgts$ Player | LifeAmount$ 20" (Blessed Wind)
+            let amount = params.get_i32("LifeAmount").ok()?;
+
+            Some(Effect::SetLife {
+                player: PlayerId::new(0),
+                amount,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

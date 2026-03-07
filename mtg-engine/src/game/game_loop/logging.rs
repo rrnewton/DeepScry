@@ -689,6 +689,29 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::ForceSacrifice {
+                player,
+                sac_type,
+                count,
+            } => {
+                let player_name = self.get_player_name(*player);
+                let message =
+                    format!("{source_name} ({source_id}) forces {player_name} to sacrifice {count} {sac_type}");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::TapAll { .. } => {
+                let message = format!("{source_name} ({source_id}) taps all matching permanents");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::UntapAll { .. } => {
+                let message = format!("{source_name} ({source_id}) untaps all matching permanents");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::SetLife { player, amount } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) sets {player_name}'s life total to {amount}");
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

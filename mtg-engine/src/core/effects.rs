@@ -496,6 +496,29 @@ pub enum Effect {
         damage_players: bool,
     },
 
+    /// Force a player to sacrifice permanents
+    /// Example: "Target player sacrifices a creature" (Diabolic Edict)
+    ForceSacrifice {
+        /// The player who must sacrifice
+        player: PlayerId,
+        /// Type of permanent to sacrifice (e.g., "Creature", "Permanent")
+        sac_type: String,
+        /// Number of permanents to sacrifice
+        count: u8,
+    },
+
+    /// Tap all permanents matching a filter
+    /// Example: "Tap all creatures your opponents control" (Cryptic Command)
+    TapAll { restriction: TargetRestriction },
+
+    /// Untap all permanents matching a filter
+    /// Example: "Untap all creatures you control"
+    UntapAll { restriction: TargetRestriction },
+
+    /// Set a player's life total to a specific value
+    /// Example: "Target opponent's life total becomes 10" (Sorin Markov)
+    SetLife { player: PlayerId, amount: i32 },
+
     /// Tap a permanent
     /// Example: "Tap target creature"
     TapPermanent { target: CardId },
@@ -1000,6 +1023,8 @@ impl Effect {
             | Effect::DiscardCards { .. }
             | Effect::GainLife { .. }
             | Effect::LoseLife { .. }
+            | Effect::ForceSacrifice { .. }
+            | Effect::SetLife { .. }
             | Effect::Mill { .. }
             | Effect::Scry { .. }
             | Effect::AddMana { .. }
@@ -1013,9 +1038,11 @@ impl Effect {
             | Effect::ClearRemembered => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
-            Effect::PumpAllCreatures { .. } | Effect::DestroyAll { .. } | Effect::DamageAll { .. } => {
-                EffectTargetCategory::UsesFilter
-            }
+            Effect::PumpAllCreatures { .. }
+            | Effect::DestroyAll { .. }
+            | Effect::DamageAll { .. }
+            | Effect::TapAll { .. }
+            | Effect::UntapAll { .. } => EffectTargetCategory::UsesFilter,
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,

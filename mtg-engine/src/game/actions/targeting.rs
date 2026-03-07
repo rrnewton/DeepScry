@@ -403,6 +403,10 @@ impl GameState {
                             | Effect::DestroyAll { .. }
                             | Effect::DamageAll { .. }
                             | Effect::LoseLife { .. }
+                            | Effect::ForceSacrifice { .. }
+                            | Effect::TapAll { .. }
+                            | Effect::UntapAll { .. }
+                            | Effect::SetLife { .. }
                             | Effect::CreateDelayedTrigger { .. }
                             | Effect::CopySpellAbility { .. }
                             | Effect::ImmediateTrigger { .. }
@@ -442,7 +446,11 @@ impl GameState {
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
                 | Effect::Earthbend { .. }
-                | Effect::AttachEquipment { .. } => {
+                | Effect::AttachEquipment { .. }
+                | Effect::ForceSacrifice { .. }
+                | Effect::TapAll { .. }
+                | Effect::UntapAll { .. }
+                | Effect::SetLife { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                 }
@@ -837,6 +845,10 @@ impl GameState {
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
                 | Effect::EachDamage { .. }
+                | Effect::ForceSacrifice { .. }
+                | Effect::TapAll { .. }
+                | Effect::UntapAll { .. }
+                | Effect::SetLife { .. }
                 | Effect::UnlessCostWrapper { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
@@ -1068,7 +1080,11 @@ impl GameState {
             | Effect::UnlessCostWrapper { .. }
             | Effect::DestroyAll { .. }
             | Effect::DamageAll { .. }
-            | Effect::LoseLife { .. } => true, // Filter-based / no-target effects
+            | Effect::LoseLife { .. }
+            | Effect::ForceSacrifice { .. }
+            | Effect::TapAll { .. }
+            | Effect::UntapAll { .. }
+            | Effect::SetLife { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

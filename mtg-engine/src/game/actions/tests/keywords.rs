@@ -2014,4 +2014,294 @@ mod tests {
         assert_eq!(p1.life, 17, "P1 should have lost 3 life");
         assert_eq!(p2.life, 17, "P2 should have lost 3 life");
     }
+
+    // ==================== ForceSacrifice Tests ====================
+
+    #[test]
+    fn test_force_sacrifice_creature() {
+        // Diabolic Edict: target player sacrifices a creature
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 has two creatures - a big one and a small one
+        let bear_id = game.next_entity_id();
+        let mut bear = Card::new(bear_id, "Grizzly Bears".to_string(), p2_id);
+        bear.add_type(CardType::Creature);
+        bear.set_base_power(Some(2));
+        bear.set_base_toughness(Some(2));
+        bear.controller = p2_id;
+        game.cards.insert(bear_id, bear);
+        game.battlefield.add(bear_id);
+
+        let dragon_id = game.next_entity_id();
+        let mut dragon = Card::new(dragon_id, "Shivan Dragon".to_string(), p2_id);
+        dragon.add_type(CardType::Creature);
+        dragon.set_base_power(Some(5));
+        dragon.set_base_toughness(Some(5));
+        dragon.controller = p2_id;
+        game.cards.insert(dragon_id, dragon);
+        game.battlefield.add(dragon_id);
+
+        // P1 casts Diabolic Edict targeting P2
+        let edict_id = game.next_entity_id();
+        let mut edict = Card::new(edict_id, "Diabolic Edict".to_string(), p1_id);
+        edict.add_type(CardType::Instant);
+        edict.mana_cost = ManaCost::from_string("1B");
+        edict.effects.push(Effect::ForceSacrifice {
+            player: p2_id,
+            sac_type: "Creature".to_string(),
+            count: 1,
+        });
+        game.cards.insert(edict_id, edict);
+        game.stack.add(edict_id);
+
+        game.resolve_spell(edict_id, &[]).unwrap();
+
+        // P2 should sacrifice the least valuable creature (Bears, P/T sum 4 < Dragon 10)
+        assert!(
+            !game.battlefield.contains(bear_id),
+            "Grizzly Bears should be sacrificed (least valuable)"
+        );
+        assert!(
+            game.battlefield.contains(dragon_id),
+            "Shivan Dragon should survive (more valuable)"
+        );
+    }
+
+    #[test]
+    fn test_force_sacrifice_two_creatures() {
+        // Barter in Blood: each player sacrifices two creatures
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2 has three creatures
+        let mut creature_ids = Vec::new();
+        for name in ["Grizzly Bears", "Elvish Mystic", "Shivan Dragon"] {
+            let id = game.next_entity_id();
+            let mut c = Card::new(id, name.to_string(), p2_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(if name == "Shivan Dragon" {
+                5
+            } else if name == "Grizzly Bears" {
+                2
+            } else {
+                1
+            }));
+            c.set_base_toughness(Some(if name == "Shivan Dragon" {
+                5
+            } else if name == "Grizzly Bears" {
+                2
+            } else {
+                1
+            }));
+            c.controller = p2_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+            creature_ids.push(id);
+        }
+
+        // Force P2 to sacrifice 2 creatures
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Barter in Blood".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects.push(Effect::ForceSacrifice {
+            player: p2_id,
+            sac_type: "Creature".to_string(),
+            count: 2,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        // Should keep the most valuable creature (Shivan Dragon)
+        assert!(
+            game.battlefield.contains(creature_ids[2]),
+            "Shivan Dragon should survive (most valuable)"
+        );
+        // The other two should be sacrificed
+        let bf_creatures = game
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&&id| game.cards.get(id).map(|c| c.is_creature()).unwrap_or(false))
+            .count();
+        assert_eq!(bf_creatures, 1, "Only 1 creature should remain after sacrificing 2");
+    }
+
+    // ==================== TapAll Tests ====================
+
+    #[test]
+    fn test_tap_all_creatures() {
+        // TapAll with creature type restriction - taps all creatures
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 creature
+        let c1_id = game.next_entity_id();
+        let mut c1 = Card::new(c1_id, "Serra Angel".to_string(), p1_id);
+        c1.add_type(CardType::Creature);
+        c1.controller = p1_id;
+        game.cards.insert(c1_id, c1);
+        game.battlefield.add(c1_id);
+
+        // P2 creature
+        let c2_id = game.next_entity_id();
+        let mut c2 = Card::new(c2_id, "Grizzly Bears".to_string(), p2_id);
+        c2.add_type(CardType::Creature);
+        c2.controller = p2_id;
+        game.cards.insert(c2_id, c2);
+        game.battlefield.add(c2_id);
+
+        // P1 land (should NOT be tapped - not a creature)
+        let land_id = game.next_entity_id();
+        let mut land = Card::new(land_id, "Plains".to_string(), p1_id);
+        land.add_type(CardType::Land);
+        land.controller = p1_id;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // TapAll creatures
+        let restriction = crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]);
+
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Sleep".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects.push(Effect::TapAll { restriction });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        // Both creatures should be tapped
+        assert!(game.cards.get(c1_id).unwrap().tapped, "P1's creature should be tapped");
+        assert!(game.cards.get(c2_id).unwrap().tapped, "P2's creature should be tapped");
+        // Land should NOT be tapped
+        assert!(!game.cards.get(land_id).unwrap().tapped, "Land should not be tapped");
+    }
+
+    // ==================== UntapAll Tests ====================
+
+    #[test]
+    fn test_untap_all_creatures() {
+        // UntapAll with creature type restriction - untaps all tapped creatures
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 tapped creature
+        let c1_id = game.next_entity_id();
+        let mut c1 = Card::new(c1_id, "Grizzly Bears".to_string(), p1_id);
+        c1.add_type(CardType::Creature);
+        c1.controller = p1_id;
+        c1.tapped = true;
+        game.cards.insert(c1_id, c1);
+        game.battlefield.add(c1_id);
+
+        // P2 tapped creature
+        let c2_id = game.next_entity_id();
+        let mut c2 = Card::new(c2_id, "Shivan Dragon".to_string(), p2_id);
+        c2.add_type(CardType::Creature);
+        c2.controller = p2_id;
+        c2.tapped = true;
+        game.cards.insert(c2_id, c2);
+        game.battlefield.add(c2_id);
+
+        // P1 tapped land (should NOT be untapped - not a creature)
+        let land_id = game.next_entity_id();
+        let mut land = Card::new(land_id, "Plains".to_string(), p1_id);
+        land.add_type(CardType::Land);
+        land.controller = p1_id;
+        land.tapped = true;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // P1 untapped creature (should remain untapped)
+        let c3_id = game.next_entity_id();
+        let mut c3 = Card::new(c3_id, "Elvish Mystic".to_string(), p1_id);
+        c3.add_type(CardType::Creature);
+        c3.controller = p1_id;
+        game.cards.insert(c3_id, c3);
+        game.battlefield.add(c3_id);
+
+        // UntapAll creatures
+        let restriction = crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]);
+
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Mobilize".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects.push(Effect::UntapAll { restriction });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        // Both tapped creatures should be untapped
+        assert!(
+            !game.cards.get(c1_id).unwrap().tapped,
+            "P1's creature should be untapped"
+        );
+        assert!(
+            !game.cards.get(c2_id).unwrap().tapped,
+            "P2's creature should be untapped"
+        );
+        // Land should still be tapped
+        assert!(game.cards.get(land_id).unwrap().tapped, "Land should still be tapped");
+        // Already-untapped creature should remain untapped
+        assert!(
+            !game.cards.get(c3_id).unwrap().tapped,
+            "Already-untapped creature stays untapped"
+        );
+    }
+
+    // ==================== SetLife Tests ====================
+
+    #[test]
+    fn test_set_life_effect() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Angel of Grace".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.effects.push(Effect::SetLife {
+            player: p1_id,
+            amount: 10,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        let p1 = game.get_player(p1_id).unwrap();
+        assert_eq!(p1.life, 10, "P1's life should be set to 10");
+    }
+
+    #[test]
+    fn test_set_life_increase() {
+        // SetLife can also increase life (e.g., Blessed Wind sets to 20 when at low life)
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Reduce P1 life first
+        game.get_player_mut(p1_id).unwrap().life = 5;
+
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Blessed Wind".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects.push(Effect::SetLife {
+            player: p1_id,
+            amount: 20,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        let p1 = game.get_player(p1_id).unwrap();
+        assert_eq!(p1.life, 20, "P1's life should be restored to 20");
+    }
 }
