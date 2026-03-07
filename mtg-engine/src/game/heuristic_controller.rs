@@ -2787,9 +2787,12 @@ impl HeuristicController {
             .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
 
         if has_destroy || has_damage {
-            // Check if there's a valid removal target
-            if let Some(_target) = self.choose_best_removal_target(spell, view) {
-                return true;
+            // Check if there's a valid removal target AND if timing is right
+            // Reference: DestroyAi.java:246 calls useRemovalNow() before committing
+            if let Some(target) = self.choose_best_removal_target(spell, view) {
+                if self.use_removal_now(spell, target, view) {
+                    return true;
+                }
             }
         }
 
@@ -3351,15 +3354,101 @@ impl HeuristicController {
             return None;
         }
 
-        // TODO: Implement more filtering from DestroyAi.java:
+        // TODO(mtg-77): Implement more filtering from DestroyAi.java:
         // - Filter out creatures with shield counters (line 162)
         // - Filter out creatures that can be sacrificed in response (lines 165-186)
         // - Filter out creatures with regeneration shields (lines 191-194)
-        // - Implement useRemovalNow() check for timing (line 246)
+        // Note: useRemovalNow() timing check is now implemented separately
 
         // Select the best creature (highest evaluation score)
         // Reference: ComputerUtilCard.getBestCreatureAI() (line 224)
         self.get_best_creature(view, &opponent_creature_ids)
+    }
+
+    /// Determine if removal should be used NOW or held for a better moment
+    ///
+    /// Reference: ComputerUtilCard.useRemovalNow() (lines 1062-1278)
+    ///
+    /// Key logic from Java (simplified for our engine):
+    /// 1. Sorcery-speed removal: always use now (limited casting windows)
+    /// 2. Non-spell removal (activated abilities): always use now
+    /// 3. Interrupt: target is enchanted → two-for-one card advantage
+    /// 4. Interrupt: during combat → remove blocker/attacker for tempo
+    /// 5. Value threshold: removal cost vs target evaluation score
+    /// 6. Phase awareness: prefer opponent's end step for instant removal
+    fn use_removal_now(&self, spell: &Card, target_id: CardId, view: &GameStateView) -> bool {
+        let current_step = view.current_step();
+
+        // Sorcery-speed removal must be used now (limited windows)
+        // Reference: Java useRemovalNow line 1185 (sorcery speed multiplier 2x)
+        if spell.is_sorcery() {
+            return true;
+        }
+
+        // --- Interrupt conditions (always use now) ---
+
+        // Interrupt 1: Target is enchanted → removing it also removes attached auras (two-for-one)
+        // Reference: Java useRemovalNow lines 1107-1115
+        if self.target_has_auras(target_id, view) {
+            return true;
+        }
+
+        // Interrupt 2: During our Main1 → remove blocker to enable attack
+        // Reference: Java useRemovalNow lines 1070-1086
+        if current_step == crate::game::Step::Main1 && view.active_player() == self.player_id {
+            // We're about to attack; removing an opponent's creature now enables better attacks
+            return true;
+        }
+
+        // Interrupt 3: During combat → tactical removal
+        // Reference: Java useRemovalNow lines 1089-1104
+        let is_combat = matches!(
+            current_step,
+            crate::game::Step::DeclareAttackers | crate::game::Step::DeclareBlockers | crate::game::Step::CombatDamage
+        );
+        if is_combat {
+            return true;
+        }
+
+        // --- Value-based timing for instants outside combat ---
+
+        // At opponent's end step: good time to use instant removal
+        // Reference: Java useRemovalNow line 1192 (end-of-turn multiplier 2x)
+        if current_step == crate::game::Step::End && view.active_player() != self.player_id {
+            return true;
+        }
+
+        // Main2: acceptable timing for removal (post-combat cleanup)
+        if current_step == crate::game::Step::Main2 {
+            return true;
+        }
+
+        // Value threshold: if target is high-value, use removal even at suboptimal timing
+        // Reference: Java useRemovalNow lines 1226-1260 (threat evaluation)
+        if let Some(target) = view.get_card(target_id) {
+            if target.is_creature() {
+                let target_eval = self.evaluate_creature(view, target_id);
+                // High-value creatures (evaluation >= 200) are worth removing immediately
+                // This threshold matches Java's 0.8 * cost normalization for typical removal
+                if target_eval >= 200 {
+                    return true;
+                }
+            }
+        }
+
+        // Default: hold instant removal for a better moment
+        false
+    }
+
+    /// Check if a permanent has auras attached to it
+    ///
+    /// Used by use_removal_now() to detect two-for-one opportunities.
+    /// Removing an enchanted creature also destroys the attached auras.
+    fn target_has_auras(&self, target_id: CardId, view: &GameStateView) -> bool {
+        view.battlefield().iter().any(|&bf_id| {
+            view.get_card(bf_id)
+                .is_some_and(|c| c.definition.cache.is_aura && c.attached_to == Some(target_id))
+        })
     }
 
     /// Determine if we should block an attacker with a specific blocker
@@ -6558,15 +6647,437 @@ mod tests {
             player: p2_id,
             amount: 3,
         });
-        // Need to insert into game for view access
-        // (but view only needs the card, not on battlefield)
-        // Actually, should_cast_spell takes a &Card, so we can pass directly
 
         let view = GameStateView::new(&game, p1_id);
 
         assert!(
             controller.should_cast_spell(&spell, &view),
             "should_cast_spell should return true for LoseLife effect"
+        );
+    }
+
+    // ==================== Removal Timing (use_removal_now) Tests ====================
+    // Reference: ComputerUtilCard.useRemovalNow() in Java Forge
+    // Tests use real 4ED cards loaded from cardsfolder
+
+    /// Helper: load a card definition from cardsfolder, instantiate, and insert on battlefield
+    fn load_and_place_on_battlefield(
+        game: &mut crate::game::GameState,
+        card_path: &str,
+        card_id: crate::core::CardId,
+        owner: crate::core::PlayerId,
+    ) -> bool {
+        let path = std::path::PathBuf::from(card_path);
+        if !path.exists() {
+            return false;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+        let mut card = def.instantiate(card_id, owner);
+        card.controller = owner;
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        true
+    }
+
+    /// Helper: load a card definition from cardsfolder and instantiate in hand (not on battlefield)
+    fn load_card_in_hand(
+        game: &mut crate::game::GameState,
+        card_path: &str,
+        card_id: crate::core::CardId,
+        owner: crate::core::PlayerId,
+    ) -> bool {
+        let path = std::path::PathBuf::from(card_path);
+        if !path.exists() {
+            return false;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+        let card = def.instantiate(card_id, owner);
+        game.cards.insert(card_id, card);
+        true
+    }
+
+    /// Test: Sorcery removal (e.g. a destroy sorcery) always uses removal now
+    #[test]
+    fn test_use_removal_now_sorcery_always_true() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Opponent has a creature on battlefield
+        let creature_id = CardId::new(50);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Sorcery-speed removal spell
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Destroy Sorcery", p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("1B");
+        spell.effects.push(crate::core::Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(spell_id, spell);
+
+        // Even at Upkeep (suboptimal timing), sorceries should always return true
+        game.turn.current_step = crate::game::Step::Upkeep;
+
+        let view = GameStateView::new(&game, p1_id);
+        let spell_card = view.get_card(spell_id).unwrap();
+
+        assert!(
+            controller.use_removal_now(spell_card, creature_id, &view),
+            "Sorcery removal should always be used now regardless of phase"
+        );
+    }
+
+    /// Test: Instant removal held during opponent's upkeep (suboptimal timing)
+    #[test]
+    fn test_use_removal_now_instant_held_at_upkeep() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Small opponent creature (low evaluation, below 200 threshold)
+        let creature_id = CardId::new(50);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Instant removal spell (Terror)
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Terror", p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1B");
+        spell.effects.push(crate::core::Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(spell_id, spell);
+
+        // Opponent's upkeep - suboptimal timing for a low-value target
+        game.turn.current_step = crate::game::Step::Upkeep;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let spell_card = view.get_card(spell_id).unwrap();
+
+        assert!(
+            !controller.use_removal_now(spell_card, creature_id, &view),
+            "Instant removal should be held during opponent's upkeep for a low-value target"
+        );
+    }
+
+    /// Test: Instant removal used during combat (DeclareAttackers)
+    #[test]
+    fn test_use_removal_now_during_combat() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Load real cards: Terror (instant removal) and Serra Angel (target)
+        let angel_id = crate::core::CardId::new(50);
+        let terror_id = crate::core::CardId::new(100);
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/s/serra_angel.txt", angel_id, p2_id) {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+        if !load_card_in_hand(&mut game, "../cardsfolder/t/terror.txt", terror_id, p1_id) {
+            return;
+        }
+
+        // During combat (DeclareAttackers) - optimal timing
+        game.turn.current_step = crate::game::Step::DeclareAttackers;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let terror = view.get_card(terror_id).unwrap();
+
+        assert!(
+            controller.use_removal_now(terror, angel_id, &view),
+            "Terror should be used during combat to remove Serra Angel"
+        );
+    }
+
+    /// Test: Instant removal used during our Main1 (to enable attacks)
+    #[test]
+    fn test_use_removal_now_main1_enable_attack() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Load Swords to Plowshares and Shivan Dragon
+        let dragon_id = crate::core::CardId::new(50);
+        let stp_id = crate::core::CardId::new(100);
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/s/shivan_dragon.txt", dragon_id, p2_id) {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+        if !load_card_in_hand(&mut game, "../cardsfolder/s/swords_to_plowshares.txt", stp_id, p1_id) {
+            return;
+        }
+
+        // Our Main1 - removing opponent's dragon enables attacks
+        game.turn.current_step = crate::game::Step::Main1;
+        game.turn.active_player = p1_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let stp = view.get_card(stp_id).unwrap();
+
+        assert!(
+            controller.use_removal_now(stp, dragon_id, &view),
+            "Swords to Plowshares should be used in Main1 to enable attacks"
+        );
+    }
+
+    /// Test: Instant removal used at opponent's end step
+    #[test]
+    fn test_use_removal_now_opponent_end_step() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Load Lightning Bolt and Grizzly Bears
+        let bears_id = crate::core::CardId::new(50);
+        let bolt_id = crate::core::CardId::new(100);
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/g/grizzly_bears.txt", bears_id, p2_id) {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+        if !load_card_in_hand(&mut game, "../cardsfolder/l/lightning_bolt.txt", bolt_id, p1_id) {
+            return;
+        }
+
+        // Opponent's end step - good timing for instant removal
+        game.turn.current_step = crate::game::Step::End;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let bolt = view.get_card(bolt_id).unwrap();
+
+        assert!(
+            controller.use_removal_now(bolt, bears_id, &view),
+            "Lightning Bolt should be used at opponent's end step"
+        );
+    }
+
+    /// Test: Enchanted target triggers two-for-one removal
+    #[test]
+    fn test_use_removal_now_enchanted_target_two_for_one() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Load Grizzly Bears (target), Holy Strength (aura), and Lightning Bolt (removal)
+        let bears_id = crate::core::CardId::new(50);
+        let aura_id = crate::core::CardId::new(51);
+        let bolt_id = crate::core::CardId::new(100);
+
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/g/grizzly_bears.txt", bears_id, p2_id) {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/h/holy_strength.txt", aura_id, p2_id) {
+            return;
+        }
+        if !load_card_in_hand(&mut game, "../cardsfolder/l/lightning_bolt.txt", bolt_id, p1_id) {
+            return;
+        }
+
+        // Attach the aura to the bears
+        if let Some(aura) = game.cards.try_get_mut(aura_id) {
+            aura.attached_to = Some(bears_id);
+        }
+
+        // Set to suboptimal timing (opponent's draw step)
+        // Normally we'd hold instant removal here, but the two-for-one
+        // should override timing concerns
+        game.turn.current_step = crate::game::Step::Draw;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let bolt = view.get_card(bolt_id).unwrap();
+
+        assert!(
+            controller.use_removal_now(bolt, bears_id, &view),
+            "Lightning Bolt should be used immediately on enchanted target (two-for-one)"
+        );
+    }
+
+    /// Test: High-value target triggers immediate removal even at bad timing
+    #[test]
+    fn test_use_removal_now_high_value_target() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Load Shivan Dragon (high-value: 5/5 flyer with firebreathing)
+        // and Swords to Plowshares
+        let dragon_id = crate::core::CardId::new(50);
+        let stp_id = crate::core::CardId::new(100);
+
+        if !load_and_place_on_battlefield(&mut game, "../cardsfolder/s/shivan_dragon.txt", dragon_id, p2_id) {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+        if !load_card_in_hand(&mut game, "../cardsfolder/s/swords_to_plowshares.txt", stp_id, p1_id) {
+            return;
+        }
+
+        // Opponent's draw step - normally bad timing for instant removal
+        game.turn.current_step = crate::game::Step::Draw;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let stp = view.get_card(stp_id).unwrap();
+        let dragon_eval = controller.evaluate_creature(&view, dragon_id);
+
+        // Shivan Dragon should evaluate high enough (>= 200) to trigger immediate removal
+        assert!(
+            dragon_eval >= 200,
+            "Shivan Dragon evaluation ({dragon_eval}) should be >= 200 for high-value threshold"
+        );
+
+        assert!(
+            controller.use_removal_now(stp, dragon_id, &view),
+            "Swords to Plowshares should remove high-value Shivan Dragon even at bad timing"
+        );
+    }
+
+    /// Test: target_has_auras detects aura attachments
+    #[test]
+    fn test_target_has_auras() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Creature without aura
+        let creature_id = CardId::new(50);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", p2_id);
+        creature.add_type(CardType::Creature);
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            !controller.target_has_auras(creature_id, &view),
+            "Creature without auras should return false"
+        );
+
+        // Add an aura attached to the creature
+        let aura_id = CardId::new(51);
+        let mut aura = Card::new(aura_id, "Holy Strength", p2_id);
+        aura.add_type(CardType::Enchantment);
+        aura.set_subtypes(smallvec::smallvec![crate::core::Subtype::new("Aura")]);
+        aura.attached_to = Some(creature_id);
+        aura.controller = p2_id;
+        game.cards.insert(aura_id, aura);
+        game.battlefield.add(aura_id);
+
+        let view2 = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.target_has_auras(creature_id, &view2),
+            "Creature with aura attached should return true"
+        );
+    }
+
+    /// Test: Integration - should_cast_spell with removal timing uses use_removal_now
+    /// Verifies that the AI holds instant removal at bad timing but uses it during combat
+    #[test]
+    fn test_should_cast_spell_removal_timing_integration() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Small opponent creature (low value)
+        let creature_id = CardId::new(50);
+        let mut creature = Card::new(creature_id, "Squire", p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Instant removal spell
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Terror", p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("1B");
+        spell.effects.push(crate::core::Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(spell_id, spell);
+
+        // At opponent's upkeep: should_cast_spell returns false (hold removal)
+        game.turn.current_step = crate::game::Step::Upkeep;
+        game.turn.active_player = p2_id;
+
+        let view = GameStateView::new(&game, p1_id);
+        let spell_card = view.get_card(spell_id).unwrap();
+        assert!(
+            !controller.should_cast_spell(spell_card, &view),
+            "AI should hold instant removal at opponent's upkeep for low-value target"
+        );
+
+        // During combat: should_cast_spell returns true
+        game.turn.current_step = crate::game::Step::DeclareAttackers;
+        let view2 = GameStateView::new(&game, p1_id);
+        let spell_card2 = view2.get_card(spell_id).unwrap();
+        assert!(
+            controller.should_cast_spell(spell_card2, &view2),
+            "AI should use instant removal during combat"
         );
     }
 }
