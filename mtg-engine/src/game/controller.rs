@@ -1103,7 +1103,7 @@ macro_rules! handle_choice_result {
                 // Signal that game needs human input
                 // This error propagates up to run_until_input() which converts it
                 // to GameLoopState::AwaitingInput
-                return Err($crate::MtgError::NeedInput(context));
+                return Err($crate::MtgError::NeedInput(Box::new(context)));
             }
         }
     };
@@ -1170,7 +1170,7 @@ macro_rules! handle_choice_result_break {
                 // Signal that game needs human input
                 // This error propagates up to run_until_input() which converts it
                 // to GameLoopState::AwaitingInput
-                return Err($crate::MtgError::NeedInput(context));
+                return Err($crate::MtgError::NeedInput(Box::new(context)));
             }
         }
     };

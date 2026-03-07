@@ -149,7 +149,7 @@ impl<'a> GameLoop<'a> {
 
                     // Get power/toughness for more detail
                     // Use get_effective_power/toughness to include all continuous effects
-                    if let Ok(card) = self.game.cards.get(*attacker_id) {
+                    if let Some(card) = self.game.cards.try_get(*attacker_id) {
                         let power = self
                             .game
                             .get_effective_power(*attacker_id)

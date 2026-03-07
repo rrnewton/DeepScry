@@ -2117,7 +2117,7 @@ impl GameState {
                     .cards
                     .iter()
                     .filter_map(|&card_id| {
-                        if let Ok(card) = self.cards.get(card_id) {
+                        if let Some(card) = self.cards.try_get(card_id) {
                             // Check if it's a creature
                             if !card.is_creature() {
                                 return None;
@@ -2375,7 +2375,7 @@ impl GameState {
                 // - "Artifact.Equipment" = Artifact type + Equipment subtype
                 let mut found_card = None;
                 for &card_id in &library_cards {
-                    if let Ok(card) = self.cards.get(card_id) {
+                    if let Some(card) = self.cards.try_get(card_id) {
                         let card_matches = Self::card_matches_search_filter(card, card_type_filter);
 
                         if card_matches {
@@ -3348,7 +3348,7 @@ impl GameState {
                     crate::core::ImmediateTriggerCondition::RememberedNonLand => {
                         // Check if any remembered card is a nonland
                         self.remembered_cards.iter().any(|&card_id| {
-                            if let Ok(card) = self.cards.get(card_id) {
+                            if let Some(card) = self.cards.try_get(card_id) {
                                 !card.is_land()
                             } else {
                                 false
@@ -3723,7 +3723,7 @@ impl GameState {
             .cards
             .iter()
             .filter(|&&card_id| {
-                if let Ok(card) = self.cards.get(card_id) {
+                if let Some(card) = self.cards.try_get(card_id) {
                     // Must be controlled by the player
                     if card.controller != player_id {
                         return false;
@@ -3876,8 +3876,8 @@ impl GameState {
 
         // Pre-compute source card info for trigger filtering (landfall check, etc.)
         // We need this before the iterator borrows self
-        let source_card_is_land = self.cards.get(source_card_id).map(|c| c.is_land()).unwrap_or(false);
-        let source_card_controller = self.cards.get(source_card_id).map(|c| c.controller).ok();
+        let source_card_is_land = self.cards.try_get(source_card_id).is_some_and(|c| c.is_land());
+        let source_card_controller = self.cards.try_get(source_card_id).map(|c| c.controller);
 
         // Phase 1: Collect matching triggers with their metadata
         let candidate_triggers: Vec<TriggerInfo> = self
@@ -3885,7 +3885,7 @@ impl GameState {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                if let Ok(card) = self.cards.get(card_id) {
+                if let Some(card) = self.cards.try_get(card_id) {
                     let controller = card.controller;
                     let card_name = card.name.clone();
 
@@ -4068,7 +4068,7 @@ impl GameState {
                             .cards
                             .iter()
                             .filter(|&card_id| {
-                                if let Ok(card) = self.cards.get(*card_id) {
+                                if let Some(card) = self.cards.try_get(*card_id) {
                                     card.is_creature()
                                         && card.controller != controller
                                         && targeting::is_legal_target(card, controller)
@@ -4101,7 +4101,7 @@ impl GameState {
                             .cards
                             .iter()
                             .filter(|&card_id| {
-                                if let Ok(card) = self.cards.get(*card_id) {
+                                if let Some(card) = self.cards.try_get(*card_id) {
                                     restriction.matches(card)
                                         && card.controller != controller
                                         && targeting::is_legal_target(card, controller)
@@ -4132,7 +4132,7 @@ impl GameState {
                             .cards
                             .iter()
                             .filter(|&card_id| {
-                                if let Ok(card) = self.cards.get(*card_id) {
+                                if let Some(card) = self.cards.try_get(*card_id) {
                                     card.is_creature() && targeting::is_legal_target(card, controller)
                                 } else {
                                     false
@@ -4161,7 +4161,7 @@ impl GameState {
                             .cards
                             .iter()
                             .filter(|&card_id| {
-                                if let Ok(card) = self.cards.get(*card_id) {
+                                if let Some(card) = self.cards.try_get(*card_id) {
                                     !card.is_land()
                                         && card.controller != controller
                                         && targeting::is_legal_target(card, controller)
@@ -4211,7 +4211,7 @@ impl GameState {
                     // Note: Firebend placeholder resolution handled by resolve_effect_placeholder
                     // Log firebend effect after resolution
                     Effect::Firebend { amount, .. } if *amount > 0 => {
-                        if let Ok(card) = self.cards.get(trigger_source) {
+                        if let Some(card) = self.cards.try_get(trigger_source) {
                             self.logger.gamelog(&format!(
                                 "{} triggers Firebending {} (adding {} {{R}} to combat mana)",
                                 card.name, amount, amount
@@ -4357,7 +4357,7 @@ impl GameState {
             }
 
             // Log the trigger effect
-            if let Ok(card) = self.cards.get(card_id) {
+            if let Some(card) = self.cards.try_get(card_id) {
                 let card_name = card.name.clone();
                 let message = match &effect {
                     Effect::DealDamage {
@@ -4424,7 +4424,7 @@ impl GameState {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                if let Ok(card) = self.cards.get(card_id) {
+                if let Some(card) = self.cards.try_get(card_id) {
                     // Only trigger for permanents controlled by the caster
                     if card.controller != caster_id {
                         return None;
@@ -4542,7 +4542,7 @@ impl GameState {
     fn check_delayed_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
         // Get the spell's types for matching
         let spell_types: smallvec::SmallVec<[String; 4]> = {
-            if let Ok(card) = self.cards.get(cast_spell_id) {
+            if let Some(card) = self.cards.try_get(cast_spell_id) {
                 // Collect subtypes (like "Lesson", "Human", etc.) and card types (like "Sorcery", "Creature")
                 card.subtypes
                     .iter()
@@ -4626,7 +4626,7 @@ impl GameState {
         }
 
         // Log the trigger (official game action)
-        if let Ok(card) = self.cards.get(dying_card_id) {
+        if let Some(card) = self.cards.try_get(dying_card_id) {
             for trigger in &card.triggers {
                 if trigger.event == TriggerEvent::LeavesBattlefield {
                     self.logger
@@ -4645,7 +4645,7 @@ impl GameState {
 
             // Log AddMana effects specially (Su-Chi death trigger)
             if let Effect::AddMana { .. } = &effect {
-                if let Ok(card) = self.cards.get(dying_card_id) {
+                if let Some(card) = self.cards.try_get(dying_card_id) {
                     let player_name = self
                         .get_player(controller)
                         .map(|p| p.name.as_str().to_string())
@@ -5628,7 +5628,7 @@ impl GameState {
                         if cid == card_id {
                             return false; // Can't tap the source to pay its own cost
                         }
-                        if let Ok(card) = self.cards.get(cid) {
+                        if let Some(card) = self.cards.try_get(cid) {
                             // Must be untapped land controlled by player with mana ability
                             !card.tapped && card.controller == player_id && card.is_land()
                         } else {
@@ -5649,7 +5649,7 @@ impl GameState {
                         if mana_sources.contains(&cid) {
                             return false; // Already counted as mana source
                         }
-                        if let Ok(card) = self.cards.get(cid) {
+                        if let Some(card) = self.cards.try_get(cid) {
                             // Must be untapped, controlled by player, and be creature or artifact
                             !card.tapped && card.controller == player_id && (card.is_creature() || card.is_artifact())
                         } else {
@@ -5778,7 +5778,7 @@ impl GameState {
                         self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
 
                         // Log the discard
-                        if let Ok(card) = self.cards.get(card_id) {
+                        if let Some(card) = self.cards.try_get(card_id) {
                             let player_name = self
                                 .get_player(player_id)
                                 .map(|p| p.name.to_string())
@@ -5801,7 +5801,7 @@ impl GameState {
                         .cards
                         .iter()
                         .filter(|&&card_id| {
-                            if let Ok(card) = self.cards.get(card_id) {
+                            if let Some(card) = self.cards.try_get(card_id) {
                                 // Must be controlled by this player
                                 if card.controller != pid {
                                     return false;
@@ -5849,7 +5849,7 @@ impl GameState {
                         let owner = self.cards.get(card_id)?.owner;
 
                         // Log before moving
-                        if let Ok(card) = self.cards.get(card_id) {
+                        if let Some(card) = self.cards.try_get(card_id) {
                             let player_name = self
                                 .get_player(player_id)
                                 .map(|p| p.name.to_string())
@@ -5928,7 +5928,7 @@ impl GameState {
             .cards
             .iter()
             .filter(|&&card_id| {
-                if let Ok(card) = self.cards.get(card_id) {
+                if let Some(card) = self.cards.try_get(card_id) {
                     // Check card type filter
                     let type_matches = if filter.starts_with("Artifact") {
                         card.is_artifact()

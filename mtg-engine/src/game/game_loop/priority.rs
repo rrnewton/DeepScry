@@ -194,7 +194,7 @@ impl<'a> GameLoop<'a> {
             }
 
             // Check if it's a permanent entering battlefield
-            if let Ok(card) = self.game.cards.get(spell_id) {
+            if let Some(card) = self.game.cards.try_get(spell_id) {
                 if card.is_creature() {
                     // Get effective P/T applying all continuous effects (CR 613)
                     let power = self
@@ -999,7 +999,7 @@ impl<'a> GameLoop<'a> {
                                     let target_names: Vec<String> = chosen_targets_vec
                                         .iter()
                                         .filter_map(|&tid| {
-                                            self.game.cards.get(tid).ok().map(|c| format!("{} ({})", c.name, tid))
+                                            self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
                                         })
                                         .collect();
                                     if !target_names.is_empty() {
@@ -1057,7 +1057,7 @@ impl<'a> GameLoop<'a> {
                                 // TODO(mtg-70): This should go on the stack for non-mana abilities
 
                                 // Get the card and ability
-                                let card_name = self.game.cards.get(card_id).ok().map(|c| c.name.clone());
+                                let card_name = self.game.cards.try_get(card_id).map(|c| c.name.clone());
                                 let ability = self
                                     .game
                                     .cards
@@ -1130,7 +1130,7 @@ impl<'a> GameLoop<'a> {
                                         let target_names: Vec<String> = chosen_targets_vec
                                             .iter()
                                             .filter_map(|&tid| {
-                                                self.game.cards.get(tid).ok().map(|c| format!("{} ({})", c.name, tid))
+                                                self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
                                             })
                                             .collect();
                                         if !target_names.is_empty() {
@@ -1499,7 +1499,7 @@ impl<'a> GameLoop<'a> {
                                                 // Filter cards by type
                                                 let mut valid_cards = Vec::new();
                                                 for &card_id in &library_cards {
-                                                    if let Ok(card) = self.game.cards.get(card_id) {
+                                                    if let Some(card) = self.game.cards.try_get(card_id) {
                                                         if crate::game::state::GameState::card_matches_search_filter(
                                                             card,
                                                             card_type_filter,
@@ -1841,7 +1841,7 @@ impl<'a> GameLoop<'a> {
                                         // Filter cards by type
                                         let mut valid_cards = Vec::new();
                                         for &lib_card_id in &library_cards {
-                                            if let Ok(card) = self.game.cards.get(lib_card_id) {
+                                            if let Some(card) = self.game.cards.try_get(lib_card_id) {
                                                 if crate::game::state::GameState::card_matches_search_filter(
                                                     card, &filter,
                                                 ) {
@@ -1977,7 +1977,7 @@ impl<'a> GameLoop<'a> {
         // Check if this spell has any Balance effects before resolving
         // Also capture SVars for SubAbility resolution
         let (balance_effects, svars): (Vec<_>, std::collections::HashMap<String, String>) =
-            if let Ok(card) = self.game.cards.get(spell_id) {
+            if let Some(card) = self.game.cards.try_get(spell_id) {
                 let effects = card
                     .effects
                     .iter()
@@ -2048,7 +2048,7 @@ impl<'a> GameLoop<'a> {
                         .cards
                         .iter()
                         .filter(|&&card_id| {
-                            if let Ok(card) = self.game.cards.get(card_id) {
+                            if let Some(card) = self.game.cards.try_get(card_id) {
                                 if card.controller != pid {
                                     return false;
                                 }
@@ -2136,7 +2136,7 @@ impl<'a> GameLoop<'a> {
                     let owner = self.game.cards.get(card_id)?.owner;
 
                     // Log before moving
-                    if let Ok(card) = self.game.cards.get(card_id) {
+                    if let Some(card) = self.game.cards.try_get(card_id) {
                         let player_name = self
                             .game
                             .get_player(player_id)

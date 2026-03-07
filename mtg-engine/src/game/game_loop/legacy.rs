@@ -35,7 +35,7 @@ impl<'a> GameLoop<'a> {
 
         // Find creatures that can attack
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == player_id
                     && card.is_creature()
                     && !card.tapped
@@ -66,7 +66,7 @@ impl<'a> GameLoop<'a> {
 
         // Find creatures that can block
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == player_id
                     && card.is_creature()
                     && !card.tapped
@@ -104,7 +104,7 @@ impl<'a> GameLoop<'a> {
                     // Find lands in hand
                     if let Some(zones) = self.game.get_player_zones(player_id) {
                         for &card_id in &zones.hand.cards {
-                            if let Ok(card) = self.game.cards.get(card_id) {
+                            if let Some(card) = self.game.cards.try_get(card_id) {
                                 if card.is_land() {
                                     actions.push(PlayerAction::PlayLand(card_id));
                                 }
@@ -117,7 +117,7 @@ impl<'a> GameLoop<'a> {
 
         // Can tap lands for mana
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.owner == player_id && card.is_land() && !card.tapped {
                     actions.push(PlayerAction::TapForMana(card_id));
                 }
@@ -127,7 +127,7 @@ impl<'a> GameLoop<'a> {
         // Can cast spells from hand
         if let Some(zones) = self.game.get_player_zones(player_id) {
             for &card_id in &zones.hand.cards {
-                if let Ok(card) = self.game.cards.get(card_id) {
+                if let Some(card) = self.game.cards.try_get(card_id) {
                     // Check if card is castable (not a land)
                     if !card.is_land() {
                         // Check if player has enough mana

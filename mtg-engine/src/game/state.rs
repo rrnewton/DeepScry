@@ -806,7 +806,7 @@ impl GameState {
     /// Returns an error if zone operations fail.
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
         // Debug log card movement
-        if let Ok(card) = self.cards.get(card_id) {
+        if let Some(card) = self.cards.try_get(card_id) {
             log::debug!(target: "zone", "Moving card {} (id={}) from {:?} to {:?} (owner: player {})",
                 card.name, card_id.as_u32(), from, to, owner.as_u32());
         } else {
@@ -816,7 +816,7 @@ impl GameState {
 
         // State-based action: If a creature is leaving the battlefield, detach all Equipment from it
         if from == Zone::Battlefield {
-            if let Ok(card) = self.cards.get(card_id) {
+            if let Some(card) = self.cards.try_get(card_id) {
                 if card.is_creature() {
                     // Collect Equipment to detach (to avoid borrow issues)
                     let equipment_to_detach: Vec<CardId> = self
@@ -824,7 +824,7 @@ impl GameState {
                         .cards
                         .iter()
                         .filter_map(|&equip_id| {
-                            let equip = self.cards.get(equip_id).ok()?;
+                            let equip = self.cards.try_get(equip_id)?;
                             if equip.is_equipment() && equip.attached_to == Some(card_id) {
                                 Some(equip_id)
                             } else {
@@ -895,7 +895,7 @@ impl GameState {
 
         // Handle cards that enter the battlefield tapped (e.g., Thriving lands)
         if to == Zone::Battlefield {
-            if let Ok(card) = self.cards.get(card_id) {
+            if let Some(card) = self.cards.try_get(card_id) {
                 if card.definition.cache.enters_tapped {
                     // Must drop the immutable borrow before getting mutable borrow
                     let card_name = card.name.clone();
@@ -908,7 +908,7 @@ impl GameState {
             }
 
             // Handle ETB color choice (e.g., Thriving lands)
-            if let Ok(card) = self.cards.get(card_id) {
+            if let Some(card) = self.cards.try_get(card_id) {
                 if card.definition.cache.etb_choose_color {
                     let exclude_colors = card.definition.cache.etb_exclude_colors.clone();
                     let card_name = card.name.clone();
@@ -939,7 +939,7 @@ impl GameState {
 
         // Log significant zone transitions to the gamelog
         // This ensures visibility into all card movements for debugging and replay
-        if let Ok(card) = self.cards.get(card_id) {
+        if let Some(card) = self.cards.try_get(card_id) {
             let card_name = &card.name;
             match (from, to) {
                 (Zone::Battlefield, Zone::Graveyard) => {
@@ -1029,7 +1029,7 @@ impl GameState {
 
         for zone in zones_to_check {
             for &card_id in zone.cards.iter() {
-                if let Ok(card) = self.cards.get(card_id) {
+                if let Some(card) = self.cards.try_get(card_id) {
                     // Count mana symbols in the mana cost
                     if card.mana_cost.white > 0 {
                         *color_counts.entry(Color::White).or_insert(0) += u32::from(card.mana_cost.white);
@@ -1254,7 +1254,7 @@ impl GameState {
                 z.hand
                     .cards
                     .iter()
-                    .filter(|&cid| self.cards.get(*cid).map(|c| c.is_land()).unwrap_or(false))
+                    .filter(|&cid| self.cards.try_get(*cid).is_some_and(|c| c.is_land()))
                     .count()
             })
             .unwrap_or(0);
@@ -1263,7 +1263,7 @@ impl GameState {
         let want_lands = lands_in_hand < 3;
 
         for card_id in &top_cards {
-            let is_land = self.cards.get(*card_id).map(|c| c.is_land()).unwrap_or(false);
+            let is_land = self.cards.try_get(*card_id).is_some_and(|c| c.is_land());
             if is_land && !want_lands {
                 // Put excess lands on bottom
                 put_on_bottom.push(*card_id);
@@ -1274,7 +1274,7 @@ impl GameState {
         }
 
         // Log the scry action
-        let card_name = self.cards.get(top_cards[0]).map(|c| c.name.clone()).ok();
+        let card_name = self.cards.try_get(top_cards[0]).map(|c| c.name.clone());
 
         if top_cards.len() == 1 {
             let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
@@ -1375,7 +1375,7 @@ impl GameState {
     /// Returns an error if card access fails (should not happen for normal operations).
     pub fn untap_all(&mut self, player_id: PlayerId) -> Result<()> {
         for card_id in self.battlefield.cards.iter() {
-            if let Ok(card) = self.cards.get_mut(*card_id) {
+            if let Some(card) = self.cards.try_get_mut(*card_id) {
                 if card.controller == player_id && card.tapped {
                     card.untap();
                     // Log the untap action with prior log size
@@ -1399,7 +1399,7 @@ impl GameState {
     ///
     /// Returns an error if the card cannot be found.
     pub fn add_counters(&mut self, card_id: CardId, counter_type: crate::core::CounterType, amount: u8) -> Result<()> {
-        if let Ok(card) = self.cards.get_mut(card_id) {
+        if let Some(card) = self.cards.try_get_mut(card_id) {
             card.add_counter(counter_type, amount);
 
             // Log the action with prior log size
@@ -1430,7 +1430,7 @@ impl GameState {
         counter_type: crate::core::CounterType,
         amount: u8,
     ) -> Result<u8> {
-        if let Ok(card) = self.cards.get_mut(card_id) {
+        if let Some(card) = self.cards.try_get_mut(card_id) {
             let removed = card.remove_counter(counter_type, amount);
 
             // Log the action with prior log size
@@ -1467,7 +1467,7 @@ impl GameState {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                let card = self.cards.get(card_id).ok()?;
+                let card = self.cards.try_get(card_id)?;
                 if !card.is_creature() {
                     return None;
                 }
@@ -1493,7 +1493,7 @@ impl GameState {
 
         // Destroy all creatures with lethal damage
         for (card_id, owner) in creatures_to_destroy {
-            let card_name = self.cards.get(card_id).map(|c| c.name.clone()).ok();
+            let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
 
             // Check death triggers BEFORE moving to graveyard (MTG Rules 603.6c)
             // The trigger sees the game state as it was just before the creature left
@@ -1529,7 +1529,7 @@ impl GameState {
         let mut legendary_groups: HashMap<(PlayerId, CardName), Vec<CardId>> = HashMap::new();
 
         for &card_id in &self.battlefield.cards {
-            if let Ok(card) = self.cards.get(card_id) {
+            if let Some(card) = self.cards.try_get(card_id) {
                 if card.is_legendary {
                     let key = (card.controller, card.name.clone());
                     legendary_groups.entry(key).or_default().push(card_id);
@@ -1547,7 +1547,7 @@ impl GameState {
                 // TODO: Let player choose which one to keep
                 let kept_card = cards[0];
                 for &card_id in &cards[1..] {
-                    if let Ok(card) = self.cards.get(card_id) {
+                    if let Some(card) = self.cards.try_get(card_id) {
                         cards_to_sacrifice.push((card_id, card.owner, name.clone(), kept_card));
                     }
                 }
@@ -1583,7 +1583,7 @@ impl GameState {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                let card = self.cards.get(card_id).ok()?;
+                let card = self.cards.try_get(card_id)?;
                 if !card.is_aura() {
                     return None;
                 }
@@ -1632,7 +1632,7 @@ impl GameState {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                let card = self.cards.get(card_id).ok()?;
+                let card = self.cards.try_get(card_id)?;
                 if !card.is_equipment() || !card.is_attached() {
                     return None;
                 }
@@ -1653,7 +1653,7 @@ impl GameState {
                 }
 
                 // Check if attached target is still a creature
-                let target = self.cards.get(attached_to).ok()?;
+                let target = self.cards.try_get(attached_to)?;
                 if !target.is_creature() {
                     log::debug!(target: "sba", "Equipment {} ({}) attached to {} which is no longer a creature",
                         card.name, card_id.as_u32(), attached_to.as_u32());
@@ -1666,7 +1666,7 @@ impl GameState {
 
         // Unattach equipment
         for card_id in equipment_to_unattach {
-            if let Ok(card) = self.cards.get_mut(card_id) {
+            if let Some(card) = self.cards.try_get_mut(card_id) {
                 let name = card.name.clone();
                 card.attached_to = None;
                 self.logger
@@ -1682,7 +1682,7 @@ impl GameState {
     /// MTG CR 514.2: Damage marked on permanents is removed (CR 704.5f)
     pub fn cleanup_temporary_effects(&mut self) {
         for card_id in self.battlefield.cards.iter() {
-            if let Ok(card) = self.cards.get_mut(*card_id) {
+            if let Some(card) = self.cards.try_get_mut(*card_id) {
                 // Reset temporary bonuses (pump effects last until end of turn)
                 card.power_bonus = 0;
                 card.toughness_bonus = 0;
@@ -1957,7 +1957,7 @@ impl GameState {
                             }
                         }
                         crate::undo::GameAction::TapCard { card_id, tapped } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 if tapped {
                                     card.untap();
                                 } else {
@@ -2022,7 +2022,7 @@ impl GameState {
                             counter_type,
                             amount,
                         } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.remove_counter(counter_type, amount);
                             }
                         }
@@ -2031,7 +2031,7 @@ impl GameState {
                             counter_type,
                             amount,
                         } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.add_counter(counter_type, amount);
                             }
                         }
@@ -2059,7 +2059,7 @@ impl GameState {
                             toughness_delta,
                             keywords_granted,
                         } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.power_bonus -= power_delta;
                                 card.toughness_bonus -= toughness_delta;
                                 // Remove granted keywords
@@ -2073,7 +2073,7 @@ impl GameState {
                             old_value,
                             new_value: _,
                         } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.turn_entered_battlefield = old_value;
                             }
                         }
@@ -2105,7 +2105,7 @@ impl GameState {
                             // CRITICAL: Do NOT unconditionally clear card from EntityStore.
                             // In WASM network mode, cards instantiated by process_card_reveal_wasm
                             // are outside the undo log and must be preserved.
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.revealed_to_mask = old_mask;
                             } else if old_mask == 0 && name.is_some() {
                                 self.cards.clear(card_id);
@@ -2116,7 +2116,7 @@ impl GameState {
                             old_value,
                             new_value: _,
                         } => {
-                            if let Ok(card) = self.cards.get_mut(card_id) {
+                            if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.revealed_to_mask = old_value;
                             }
                         }
@@ -2251,7 +2251,7 @@ impl GameState {
                 }
                 crate::undo::GameAction::TapCard { card_id, tapped } => {
                     // Reverse the tap state
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         if tapped {
                             card.untap();
                         } else {
@@ -2322,7 +2322,7 @@ impl GameState {
                     amount,
                 } => {
                     // Remove the counters that were added
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.remove_counter(counter_type, amount);
                     }
                 }
@@ -2332,7 +2332,7 @@ impl GameState {
                     amount,
                 } => {
                     // Add back the counters that were removed
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.add_counter(counter_type, amount);
                     }
                 }
@@ -2368,7 +2368,7 @@ impl GameState {
                     keywords_granted,
                 } => {
                     // Reverse the pump effect
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.power_bonus -= power_delta;
                         card.toughness_bonus -= toughness_delta;
                         // Remove granted keywords
@@ -2383,7 +2383,7 @@ impl GameState {
                     new_value: _,
                 } => {
                     // Restore the previous turn_entered_battlefield value
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.turn_entered_battlefield = old_value;
                     }
                 }
@@ -2439,7 +2439,7 @@ impl GameState {
                     // which is outside the undo log. Clearing the card would destroy the instance
                     // and cause FATAL DESYNC when abilities are recomputed (the card's type info
                     // would be lost, so PlayLand abilities wouldn't be generated for it).
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         // Card exists - restore the mask
                         card.revealed_to_mask = old_mask;
                     } else if old_mask == 0 && name.is_some() {
@@ -2458,7 +2458,7 @@ impl GameState {
                     new_value: _,
                 } => {
                     // Restore the previous revealed_to_mask value
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.revealed_to_mask = old_value;
                     }
                 }
@@ -2559,7 +2559,7 @@ impl GameState {
             DelayedEffect::ReturnToBattlefield { tapped, to_owner } => {
                 // Get the card's current zone and owner
                 let (current_zone, card_owner) = {
-                    if let Ok(card) = self.cards.get(card_id) {
+                    if let Some(card) = self.cards.try_get(card_id) {
                         let owner = card.owner;
                         // Find where the card currently is
                         let zone = self.find_card_zone(card_id).unwrap_or(Zone::Graveyard);
@@ -2584,7 +2584,7 @@ impl GameState {
 
                 // Tap if required
                 if tapped {
-                    if let Ok(card) = self.cards.get_mut(card_id) {
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.tapped = true;
                     }
                 }
@@ -2600,7 +2600,7 @@ impl GameState {
                 // Find where the card is and sacrifice it
                 if let Some(zone) = self.find_card_zone(card_id) {
                     if zone == Zone::Battlefield {
-                        let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(controller);
+                        let owner = self.cards.try_get(card_id).map_or(controller, |c| c.owner);
                         self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
                     }
                 }
@@ -2609,7 +2609,7 @@ impl GameState {
             DelayedEffect::ExileCard => {
                 // Exile the card from wherever it is
                 if let Some(zone) = self.find_card_zone(card_id) {
-                    let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(controller);
+                    let owner = self.cards.try_get(card_id).map_or(controller, |c| c.owner);
                     self.move_card(card_id, zone, Zone::Exile, owner)?;
                 }
             }

@@ -893,7 +893,7 @@ impl<'a> GameLoop<'a> {
         // Try to run the game, catching NeedInput as a special case
         match self.run_game(controller1, controller2) {
             Ok(result) => Ok(GameLoopState::Complete(result)),
-            Err(MtgError::NeedInput(context)) => Ok(GameLoopState::AwaitingInput(context)),
+            Err(MtgError::NeedInput(context)) => Ok(GameLoopState::AwaitingInput(*context)),
             Err(e) => Err(e),
         }
     }

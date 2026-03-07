@@ -41,8 +41,13 @@ pub enum MtgError {
     /// describes what input is needed.
     ///
     /// Used by `run_until_input()` to implement the interrupt pattern.
+    ///
+    /// Boxed to keep MtgError small: ChoiceContext contains Option<CardReveal>
+    /// which contains Option<CardDefinition> (hundreds of bytes with Vec/HashMap).
+    /// Without boxing, every Result<T, MtgError> on the stack would be enormous,
+    /// causing ~7% CPU overhead from moving/dropping large Result values.
     #[error("Game needs input: waiting for human player")]
-    NeedInput(crate::game::controller::ChoiceContext),
+    NeedInput(Box<crate::game::controller::ChoiceContext>),
 }
 
 pub type Result<T> = std::result::Result<T, MtgError>;

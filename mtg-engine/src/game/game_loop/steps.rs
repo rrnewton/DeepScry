@@ -45,7 +45,7 @@ impl<'a> GameLoop<'a> {
         let mut may_not_untap: SmallVec<[CardId; 8]> = SmallVec::new();
 
         for &card_id in &self.game.battlefield.cards {
-            if let Ok(card) = self.game.cards.get(card_id) {
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == active_player && card.tapped {
                     if card.keywords.contains(Keyword::MayNotUntap) {
                         may_not_untap.push(card_id);
@@ -95,7 +95,7 @@ impl<'a> GameLoop<'a> {
                     let _ = self.game.untap_permanent(card_id);
                 } else if self.verbosity >= VerbosityLevel::Normal {
                     // Log that this permanent stays tapped
-                    if let Ok(card) = self.game.cards.get(card_id) {
+                    if let Some(card) = self.game.cards.try_get(card_id) {
                         let player_name = self.get_player_name(active_player);
                         self.log_normal(&format!("{} chooses not to untap {}", player_name, card.name));
                     }
@@ -118,7 +118,7 @@ impl<'a> GameLoop<'a> {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                if let Ok(card) = self.game.cards.get(card_id) {
+                if let Some(card) = self.game.cards.try_get(card_id) {
                     // Filter triggers: match event and respect ValidPlayer$ You restriction
                     let matching_descriptions: Vec<String> = card
                         .triggers
@@ -199,7 +199,7 @@ impl<'a> GameLoop<'a> {
             .cards
             .iter()
             .filter_map(|&card_id| {
-                if let Ok(card) = self.game.cards.get(card_id) {
+                if let Some(card) = self.game.cards.try_get(card_id) {
                     // Find matching AttackersDeclared triggers
                     for trigger in &card.triggers {
                         if trigger.event != TriggerEvent::AttackersDeclared {
@@ -245,14 +245,14 @@ impl<'a> GameLoop<'a> {
         // Fire each trigger
         for (card_id, description) in triggered_cards {
             if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
-                if let Ok(card) = self.game.cards.get(card_id) {
+                if let Some(card) = self.game.cards.try_get(card_id) {
                     let message = format!("Trigger: {} - {}", card.name, description);
                     self.log_verbose(&message);
                 }
             }
 
             // Execute the trigger effects
-            if let Ok(card) = self.game.cards.get(card_id) {
+            if let Some(card) = self.game.cards.try_get(card_id) {
                 let controller = card.controller;
                 self.game
                     .check_triggers_for_controller(TriggerEvent::AttackersDeclared, card_id, controller)?;
@@ -343,7 +343,7 @@ impl<'a> GameLoop<'a> {
                 if let Some(zones) = self.game.get_player_zones(active_player) {
                     if let Some(&card_id) = zones.hand.cards.last() {
                         // Late-binding: CardID is known, but card identity may not be
-                        if let Ok(card) = self.game.cards.get(card_id) {
+                        if let Some(card) = self.game.cards.try_get(card_id) {
                             log_gamelog!(self, "{} draws {} ({})", player_name, card.name, card_id);
                         } else {
                             // Card not yet revealed - just log the draw
