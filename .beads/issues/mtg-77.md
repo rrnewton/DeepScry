@@ -6,10 +6,11 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T04:50:07.114089917+00:00
+updated_at: 2026-03-07T22:24:20.626617532+00:00
 ---
 
 # Description
+
 
 Track completion of heuristic AI port from Java Forge to Rust.
 
@@ -116,5 +117,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - 7 new tests (4 mechanical + 3 creature evaluation with Drudge Skeletons, Sedge Troll)
   - Affects 246 cards. Also implemented end-of-turn damage removal for all creatures.
 
+---- ✅ **Board wipe / mass effect AI evaluation (2026-03-07_#1874)**
+  - Board wipe (DestroyAll/DamageAll): compares creature values with 200pt threshold, low-life override
+  - ForceSacrifice: cast when opponent has creatures
+  - TapAll: cast when opponent has 2+ untapped creatures
+  - UntapAll: cast when we have 2+ tapped creatures
+  - SetLife: cast when target amount > current life
+  - LoseLife: always cast (targets opponent)
+  - 11 new unit tests for AI decision methods
+  - Modeled after Java DestroyAllAi.doMassRemovalLogic()
+
 ---
-**Checked up-to-date as of 2026-03-07_#1868 - 880 tests passing**
+**Checked up-to-date as of 2026-03-07_#1874 - 876+ tests passing**

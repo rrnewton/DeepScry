@@ -2820,6 +2820,66 @@ impl HeuristicController {
             }
         }
 
+        // Check for board wipes (DestroyAll, DamageAll)
+        // Reference: DestroyAllAi.java:52-175 (doMassRemovalLogic)
+        let has_destroy_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DestroyAll { .. }));
+        let has_damage_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DamageAll { .. }));
+        if (has_destroy_all || has_damage_all) && self.should_cast_board_wipe(spell, view) {
+            return true;
+        }
+
+        // Check for sacrifice effects (ForceSacrifice)
+        let has_force_sac = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::ForceSacrifice { .. }));
+        if has_force_sac && self.should_cast_force_sacrifice(view) {
+            return true;
+        }
+
+        // Check for TapAll effects
+        let has_tap_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::TapAll { .. }));
+        if has_tap_all && self.should_cast_tap_all(view) {
+            return true;
+        }
+
+        // Check for UntapAll effects
+        let has_untap_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::UntapAll { .. }));
+        if has_untap_all && self.should_cast_untap_all(view) {
+            return true;
+        }
+
+        // Check for SetLife effects
+        let has_set_life = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::SetLife { .. }));
+        if has_set_life && self.should_cast_set_life(spell, view) {
+            return true;
+        }
+
+        // Check for LoseLife effects (targeting opponent)
+        let has_lose_life = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::LoseLife { .. }));
+        if has_lose_life {
+            // LoseLife targeting opponent is almost always worth casting
+            return true;
+        }
+
         false
     }
 
@@ -3027,6 +3087,168 @@ impl HeuristicController {
         // TODO: Handle curse auras (negative effects on opponent creatures)
         // For now, don't cast those
 
+        false
+    }
+
+    /// Evaluate whether to cast a board wipe (DestroyAll/DamageAll)
+    ///
+    /// Reference: DestroyAllAi.java:52-175 (doMassRemovalLogic)
+    ///
+    /// Key logic from Java:
+    /// 1. Don't cast if opponent has no affected permanents
+    /// 2. Cast if opponent creatures are more valuable than ours (creature_eval_threshold=200)
+    /// 3. Cast immediately if life is in serious danger during combat
+    /// 4. Prefer main phase 2 (after combat) unless emergency
+    fn should_cast_board_wipe(&self, spell: &Card, view: &GameStateView) -> bool {
+        // Evaluate each player's creatures that would be affected
+        let mut our_creature_value: i32 = 0;
+        let mut opp_creature_value: i32 = 0;
+        let mut our_creature_count: i32 = 0;
+        let mut opp_creature_count: i32 = 0;
+
+        // Get the restriction from the effect (for type matching)
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let restriction = spell.effects.iter().find_map(|e| match e {
+            crate::core::Effect::DestroyAll { restriction, .. } => Some(restriction),
+            crate::core::Effect::DamageAll { valid_cards, .. } => Some(valid_cards),
+            _ => None,
+        });
+
+        for &card_id in view.battlefield() {
+            let Some(card) = view.get_card(card_id) else {
+                continue;
+            };
+
+            // Check if this permanent would be affected by the board wipe
+            let affected = if let Some(r) = restriction {
+                r.matches(card)
+            } else {
+                card.is_creature()
+            };
+
+            if !affected {
+                continue;
+            }
+
+            // Skip indestructible creatures for DestroyAll
+            if card.has_indestructible()
+                && spell
+                    .effects
+                    .iter()
+                    .any(|e| matches!(e, crate::core::Effect::DestroyAll { .. }))
+            {
+                continue;
+            }
+
+            let value = self.evaluate_creature(view, card_id);
+            if card.controller == self.player_id {
+                our_creature_value += value;
+                our_creature_count += 1;
+            } else {
+                opp_creature_value += value;
+                opp_creature_count += 1;
+            }
+        }
+
+        // Don't cast if opponent has no affected creatures
+        if opp_creature_count == 0 {
+            return false;
+        }
+
+        // Java: CREATURE_EVAL_THRESHOLD = 200
+        // Cast if opponent creatures are worth significantly more than ours
+        let threshold = 200;
+        if our_creature_value + threshold < opp_creature_value {
+            return true;
+        }
+
+        // Cast if we're behind on board and losing life
+        // (Simplified version of Java's lifeInSeriousDanger check)
+        let our_life = view.life();
+        if our_life <= 5 && opp_creature_count > our_creature_count {
+            return true;
+        }
+
+        // Cast if opponent has significantly more creatures and we're losing
+        if opp_creature_count >= our_creature_count + 2 && our_creature_value < opp_creature_value {
+            return true;
+        }
+
+        false
+    }
+
+    /// Evaluate whether to cast a ForceSacrifice spell (e.g., Diabolic Edict)
+    ///
+    /// Simple heuristic: cast if opponent has creatures on the battlefield.
+    /// More valuable if opponent has few creatures (they lose their best one).
+    fn should_cast_force_sacrifice(&self, view: &GameStateView) -> bool {
+        // Check if any opponent has creatures
+        for opp_id in view.opponents() {
+            let opp_creature_count = view
+                .battlefield()
+                .iter()
+                .filter(|&&card_id| {
+                    view.get_card(card_id)
+                        .is_some_and(|c| c.is_creature() && c.controller == opp_id)
+                })
+                .count();
+
+            if opp_creature_count > 0 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Evaluate whether to cast TapAll
+    ///
+    /// Reference: TapAllAi.java
+    /// Cast if opponent has untapped creatures (e.g., before our attack)
+    fn should_cast_tap_all(&self, view: &GameStateView) -> bool {
+        // Count opponent untapped creatures
+        let opp_untapped_creatures = view
+            .battlefield()
+            .iter()
+            .filter(|&&card_id| {
+                view.get_card(card_id)
+                    .is_some_and(|c| c.is_creature() && c.controller != self.player_id && !c.tapped)
+            })
+            .count();
+
+        // Worth tapping if opponent has 2+ untapped creatures
+        opp_untapped_creatures >= 2
+    }
+
+    /// Evaluate whether to cast UntapAll
+    ///
+    /// Reference: UntapAllAi.java
+    /// Cast if we have tapped creatures that could attack or block
+    fn should_cast_untap_all(&self, view: &GameStateView) -> bool {
+        // Count our tapped creatures
+        let our_tapped_creatures = view
+            .battlefield()
+            .iter()
+            .filter(|&&card_id| {
+                view.get_card(card_id)
+                    .is_some_and(|c| c.is_creature() && c.controller == self.player_id && c.tapped)
+            })
+            .count();
+
+        // Worth untapping if we have 2+ tapped creatures
+        our_tapped_creatures >= 2
+    }
+
+    /// Evaluate whether to cast SetLife
+    ///
+    /// Cast if it would increase our life total
+    fn should_cast_set_life(&self, spell: &Card, view: &GameStateView) -> bool {
+        // Find the SetLife effect and its amount
+        for effect in &spell.effects {
+            if let crate::core::Effect::SetLife { amount, .. } = effect {
+                // Cast if it would increase our life
+                return *amount > view.life();
+            }
+        }
         false
     }
 
@@ -5924,6 +6146,427 @@ mod tests {
         assert!(
             controller.has_valuable_destroy_target(&view),
             "Should detect 3/3 tapped creature as valuable destroy target"
+        );
+    }
+
+    // ==================== Board Wipe AI Tests ====================
+
+    /// Test: AI should cast Wrath of God when opponent has more valuable creatures
+    #[test]
+    fn test_should_cast_board_wipe_opponent_advantage() {
+        use crate::core::{Card, CardId, CardType, ManaCost, TargetRestriction, TargetType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P1: One small creature (Grizzly Bears 2/2)
+        let c1_id = CardId::new(50);
+        let mut c1 = Card::new(c1_id, "Grizzly Bears", p1_id);
+        c1.add_type(CardType::Creature);
+        c1.set_base_power(Some(2));
+        c1.set_base_toughness(Some(2));
+        c1.controller = p1_id;
+        game.cards.insert(c1_id, c1);
+        game.battlefield.add(c1_id);
+
+        // P2: Three big creatures (Serra Angel 4/4 x2, Shivan Dragon 5/5)
+        for (i, (name, p, t)) in [
+            ("Serra Angel", 4i8, 4i8),
+            ("Serra Angel", 4, 4),
+            ("Shivan Dragon", 5, 5),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = CardId::new(60 + i as u32);
+            let mut c = Card::new(id, *name, p2_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(*p));
+            c.set_base_toughness(Some(*t));
+            c.controller = p2_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+        }
+
+        // Create Wrath of God spell
+        let wrath_id = CardId::new(100);
+        let mut wrath = Card::new(wrath_id, "Wrath of God", p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(crate::core::Effect::DestroyAll {
+            restriction: TargetRestriction::from_types([TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+
+        let view = GameStateView::new(&game, p1_id);
+        let wrath_card = view.get_card(wrath_id).unwrap();
+
+        assert!(
+            controller.should_cast_board_wipe(wrath_card, &view),
+            "AI should cast Wrath of God when opponent has much more valuable creatures"
+        );
+    }
+
+    /// Test: AI should NOT cast Wrath of God when AI has better board
+    #[test]
+    fn test_should_not_cast_board_wipe_own_advantage() {
+        use crate::core::{Card, CardId, CardType, ManaCost, TargetRestriction, TargetType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P1: Two big creatures
+        for (i, (name, p, t)) in [("Serra Angel", 4i8, 4i8), ("Shivan Dragon", 5, 5)].iter().enumerate() {
+            let id = CardId::new(50 + i as u32);
+            let mut c = Card::new(id, *name, p1_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(*p));
+            c.set_base_toughness(Some(*t));
+            c.controller = p1_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+        }
+
+        // P2: One small creature
+        let c2_id = CardId::new(60);
+        let mut c2 = Card::new(c2_id, "Grizzly Bears", p2_id);
+        c2.add_type(CardType::Creature);
+        c2.set_base_power(Some(2));
+        c2.set_base_toughness(Some(2));
+        c2.controller = p2_id;
+        game.cards.insert(c2_id, c2);
+        game.battlefield.add(c2_id);
+
+        let wrath_id = CardId::new(100);
+        let mut wrath = Card::new(wrath_id, "Wrath of God", p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(crate::core::Effect::DestroyAll {
+            restriction: TargetRestriction::from_types([TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+
+        let view = GameStateView::new(&game, p1_id);
+        let wrath_card = view.get_card(wrath_id).unwrap();
+
+        assert!(
+            !controller.should_cast_board_wipe(wrath_card, &view),
+            "AI should NOT cast Wrath of God when AI has better board position"
+        );
+    }
+
+    /// Test: AI should cast board wipe when life is critically low
+    #[test]
+    fn test_should_cast_board_wipe_low_life() {
+        use crate::core::{Card, CardId, CardType, ManaCost, TargetRestriction, TargetType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P1: Low life, no creatures
+        game.get_player_mut(p1_id).unwrap().life = 3;
+
+        // P2: Two creatures threatening lethal
+        for (i, (name, p, t)) in [("Serra Angel", 4i8, 4i8), ("Grizzly Bears", 2, 2)].iter().enumerate() {
+            let id = CardId::new(60 + i as u32);
+            let mut c = Card::new(id, *name, p2_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(*p));
+            c.set_base_toughness(Some(*t));
+            c.controller = p2_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+        }
+
+        let wrath_id = CardId::new(100);
+        let mut wrath = Card::new(wrath_id, "Wrath of God", p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(crate::core::Effect::DestroyAll {
+            restriction: TargetRestriction::from_types([TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+
+        let view = GameStateView::new(&game, p1_id);
+        let wrath_card = view.get_card(wrath_id).unwrap();
+
+        assert!(
+            controller.should_cast_board_wipe(wrath_card, &view),
+            "AI should cast Wrath of God when at 3 life facing 2 opponent creatures"
+        );
+    }
+
+    // ==================== ForceSacrifice AI Tests ====================
+
+    /// Test: AI casts edict when opponent has creatures
+    #[test]
+    fn test_should_cast_force_sacrifice_with_target() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P2 has a creature
+        let c_id = CardId::new(50);
+        let mut c = Card::new(c_id, "Shivan Dragon", p2_id);
+        c.add_type(CardType::Creature);
+        c.set_base_power(Some(5));
+        c.set_base_toughness(Some(5));
+        c.controller = p2_id;
+        game.cards.insert(c_id, c);
+        game.battlefield.add(c_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            controller.should_cast_force_sacrifice(&view),
+            "AI should cast edict when opponent has creatures"
+        );
+    }
+
+    /// Test: AI doesn't cast edict when opponent has no creatures
+    #[test]
+    fn test_should_not_cast_force_sacrifice_no_targets() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let controller = HeuristicController::new(p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            !controller.should_cast_force_sacrifice(&view),
+            "AI should not cast edict when opponent has no creatures"
+        );
+    }
+
+    // ==================== TapAll/UntapAll AI Tests ====================
+
+    /// Test: AI casts TapAll when opponent has multiple untapped creatures
+    #[test]
+    fn test_should_cast_tap_all_with_targets() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P2 has 3 untapped creatures
+        for i in 0..3 {
+            let id = CardId::new(50 + i);
+            let mut c = Card::new(id, "Grizzly Bears", p2_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(2));
+            c.set_base_toughness(Some(2));
+            c.controller = p2_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+        }
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            controller.should_cast_tap_all(&view),
+            "AI should cast TapAll when opponent has 3 untapped creatures"
+        );
+    }
+
+    /// Test: AI doesn't cast TapAll when opponent has few untapped creatures
+    #[test]
+    fn test_should_not_cast_tap_all_few_targets() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P2 has 1 untapped creature (below threshold of 2)
+        let id = CardId::new(50);
+        let mut c = Card::new(id, "Grizzly Bears", p2_id);
+        c.add_type(CardType::Creature);
+        c.controller = p2_id;
+        game.cards.insert(id, c);
+        game.battlefield.add(id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            !controller.should_cast_tap_all(&view),
+            "AI should not cast TapAll with only 1 opponent creature"
+        );
+    }
+
+    // ==================== SetLife AI Tests ====================
+
+    /// Test: AI casts SetLife when it increases life
+    #[test]
+    fn test_should_cast_set_life_when_beneficial() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P1 at 5 life
+        game.get_player_mut(p1_id).unwrap().life = 5;
+
+        // Create spell that sets life to 10
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Angel of Grace", p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("4WW");
+        spell.effects.push(crate::core::Effect::SetLife {
+            player: crate::core::PlayerId::new(0),
+            amount: 10,
+        });
+        game.cards.insert(spell_id, spell);
+
+        let view = GameStateView::new(&game, p1_id);
+        let spell_card = view.get_card(spell_id).unwrap();
+
+        assert!(
+            controller.should_cast_set_life(spell_card, &view),
+            "AI should cast SetLife when it would increase life from 5 to 10"
+        );
+    }
+
+    /// Test: AI doesn't cast SetLife when it would decrease life
+    #[test]
+    fn test_should_not_cast_set_life_when_harmful() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P1 at full 20 life
+        // SetLife to 10 would be harmful
+
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Angel of Grace", p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("4WW");
+        spell.effects.push(crate::core::Effect::SetLife {
+            player: crate::core::PlayerId::new(0),
+            amount: 10,
+        });
+        game.cards.insert(spell_id, spell);
+
+        let view = GameStateView::new(&game, p1_id);
+        let spell_card = view.get_card(spell_id).unwrap();
+
+        assert!(
+            !controller.should_cast_set_life(spell_card, &view),
+            "AI should NOT cast SetLife when it would decrease life from 20 to 10"
+        );
+    }
+
+    // ==================== should_cast_spell Integration Tests ====================
+
+    /// Test: should_cast_spell routes board wipe effects correctly
+    #[test]
+    fn test_should_cast_spell_routes_board_wipe() {
+        use crate::core::{Card, CardId, CardType, ManaCost, TargetRestriction, TargetType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // P2: Three big creatures, P1: nothing
+        for i in 0..3 {
+            let id = CardId::new(50 + i);
+            let mut c = Card::new(id, "Serra Angel", p2_id);
+            c.add_type(CardType::Creature);
+            c.set_base_power(Some(4));
+            c.set_base_toughness(Some(4));
+            c.controller = p2_id;
+            game.cards.insert(id, c);
+            game.battlefield.add(id);
+        }
+
+        let wrath_id = CardId::new(100);
+        let mut wrath = Card::new(wrath_id, "Wrath of God", p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(crate::core::Effect::DestroyAll {
+            restriction: TargetRestriction::from_types([TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+
+        let view = GameStateView::new(&game, p1_id);
+        let wrath_card = view.get_card(wrath_id).unwrap();
+
+        assert!(
+            controller.should_cast_spell(wrath_card, &view),
+            "should_cast_spell should return true for Wrath of God when opponent dominates board"
+        );
+    }
+
+    /// Test: should_cast_spell routes LoseLife effects correctly
+    #[test]
+    fn test_should_cast_spell_routes_lose_life() {
+        use crate::core::{Card, CardId, CardType, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // LoseLife targeting opponent should always be worth casting
+        let spell_id = CardId::new(100);
+        let mut spell = Card::new(spell_id, "Drain Life", p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("1B");
+        spell.effects.push(crate::core::Effect::LoseLife {
+            player: p2_id,
+            amount: 3,
+        });
+        // Need to insert into game for view access
+        // (but view only needs the card, not on battlefield)
+        // Actually, should_cast_spell takes a &Card, so we can pass directly
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            controller.should_cast_spell(&spell, &view),
+            "should_cast_spell should return true for LoseLife effect"
         );
     }
 }
