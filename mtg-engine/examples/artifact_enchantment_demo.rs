@@ -154,7 +154,7 @@ async fn main() {
         let cast_result = game.cast_spell_8_step(
             alice,
             sol_ring,
-            |_game, _card_id| Vec::new(), // No targets needed
+            |_game, _card_id| smallvec::SmallVec::new(), // No targets needed
             &mana_engine,
         );
 

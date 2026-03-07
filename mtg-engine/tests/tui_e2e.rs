@@ -627,8 +627,8 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
     let result = game.cast_spell_8_step(
         p1_id,
         spell_id,
-        |_state, _card_id| Vec::new(), // No targets
-        &mana_engine,                  // Empty mana engine (no sources)
+        |_state, _card_id| smallvec::SmallVec::new(), // No targets
+        &mana_engine,                                 // Empty mana engine (no sources)
     );
 
     // The cast should fail with an error

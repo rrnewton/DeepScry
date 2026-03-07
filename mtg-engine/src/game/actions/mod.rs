@@ -1123,11 +1123,11 @@ impl GameState {
         &mut self,
         player_id: PlayerId,
         card_id: CardId,
-        mut choose_targets_fn: TargetFn,
+        choose_targets_fn: TargetFn,
         mana_engine: &crate::game::mana_engine::ManaEngine,
     ) -> Result<()>
     where
-        TargetFn: FnMut(&GameState, CardId) -> Vec<CardId>,
+        TargetFn: FnOnce(&GameState, CardId) -> smallvec::SmallVec<[CardId; 2]>,
     {
         // Verify card is in hand
         if let Some(zones) = self.get_player_zones(player_id) {
@@ -1235,7 +1235,7 @@ impl GameState {
         }
 
         // Track which sources we've successfully tapped for unwinding if needed
-        let mut tapped_sources = Vec::new();
+        let mut tapped_sources = smallvec::SmallVec::<[CardId; 4]>::new();
 
         // Track remaining cost as hint for each land tap
         // This ensures dual lands produce the right color based on what's still needed

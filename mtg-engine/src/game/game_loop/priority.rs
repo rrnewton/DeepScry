@@ -536,9 +536,8 @@ impl<'a> GameLoop<'a> {
                         );
 
                         // Step 3: Cast the spell — mana is paid automatically (GreedyManaResolver).
-                        let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
-                        let targeting_callback =
-                            move |_game: &GameState, _spell_id: CardId| targets_for_callback.clone();
+                        let targets_for_callback = chosen_targets_vec.clone();
+                        let targeting_callback = move |_game: &GameState, _spell_id: CardId| targets_for_callback;
 
                         self.mana_engine.update_mut(self.game, cast_player);
 
@@ -1009,15 +1008,12 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
-                                // Clone for closure (which will move it)
-                                // Convert to Vec for callback signature compatibility
-                                let targets_for_callback: Vec<CardId> = chosen_targets_vec.iter().copied().collect();
+                                // Clone SmallVec for closure (which will move it)
+                                let targets_for_callback = chosen_targets_vec.clone();
 
-                                // Create targeting callback
-                                let targeting_callback = move |_game: &GameState, _spell_id: CardId| {
-                                    // Return the pre-selected targets
-                                    targets_for_callback.clone()
-                                };
+                                // Create targeting callback (FnOnce — no clone needed)
+                                let targeting_callback =
+                                    move |_game: &GameState, _spell_id: CardId| targets_for_callback;
 
                                 // Pre-compute ManaEngine for mana payment (step 6)
                                 // This avoids allocating a new ManaEngine inside cast_spell_8_step
