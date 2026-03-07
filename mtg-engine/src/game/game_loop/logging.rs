@@ -670,6 +670,25 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) UnlessCost ({switched}): {inner_desc}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::LoseLife { player, amount } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) causes {player_name} to lose {amount} life");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::DestroyAll { no_regenerate, .. } => {
+                let regen_note = if *no_regenerate { " (can't be regenerated)" } else { "" };
+                let message = format!("{source_name} ({source_id}) destroys all matching permanents{regen_note}");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::DamageAll {
+                amount, damage_players, ..
+            } => {
+                let players_note = if *damage_players { " and each player" } else { "" };
+                let message = format!(
+                    "{source_name} ({source_id}) deals {amount} damage to each matching creature{players_note}"
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

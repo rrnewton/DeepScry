@@ -870,6 +870,54 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::LoseLife => {
+            // LoseLife: Target player or defined players lose life
+            // Examples: "AB$ LoseLife | LifeAmount$ 2 | Defined$ Opponent"
+            //           "AB$ LoseLife | LifeAmount$ 1 | ValidTgts$ Player"
+            let amount = params.get_i32("LifeAmount").ok()?;
+
+            // Placeholder - resolved at cast time. Defined$ Opponent resolves to opponent.
+            Some(Effect::LoseLife {
+                player: PlayerId::new(0),
+                amount,
+            })
+        }
+
+        ApiType::DestroyAll => {
+            // DestroyAll: Destroy all permanents matching ValidCards$
+            // Example: "SP$ DestroyAll | ValidCards$ Creature | NoRegen$ True" (Wrath of God)
+            let restriction = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            let no_regenerate = params.get("NoRegen").is_some_and(|v| v.eq_ignore_ascii_case("True"));
+
+            Some(Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+            })
+        }
+
+        ApiType::DamageAll => {
+            // DamageAll: Deal damage to all creatures matching ValidCards$, optionally players
+            // Example: "SP$ DamageAll | NumDmg$ 2 | ValidCards$ Creature" (Pyroclasm)
+            let amount = params.get_i32("NumDmg").ok()?;
+
+            let valid_cards = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            let damage_players = params.get("ValidPlayers").is_some();
+
+            Some(Effect::DamageAll {
+                amount,
+                valid_cards,
+                damage_players,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

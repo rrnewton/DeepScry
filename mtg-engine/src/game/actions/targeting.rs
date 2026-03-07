@@ -400,6 +400,9 @@ impl GameState {
                             | Effect::AttachEquipment { .. }
                             | Effect::ModalChoice { .. }
                             | Effect::PumpAllCreatures { .. }
+                            | Effect::DestroyAll { .. }
+                            | Effect::DamageAll { .. }
+                            | Effect::LoseLife { .. }
                             | Effect::CreateDelayedTrigger { .. }
                             | Effect::CopySpellAbility { .. }
                             | Effect::ImmediateTrigger { .. }
@@ -463,6 +466,9 @@ impl GameState {
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::PumpAllCreatures { .. }
+                | Effect::DestroyAll { .. }
+                | Effect::DamageAll { .. }
+                | Effect::LoseLife { .. }
                 | Effect::CreateDelayedTrigger { .. }
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
@@ -858,6 +864,9 @@ impl GameState {
                 | Effect::CopyPermanent { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::PumpAllCreatures { .. }
+                | Effect::DestroyAll { .. }
+                | Effect::DamageAll { .. }
+                | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
@@ -1056,7 +1065,10 @@ impl GameState {
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
             | Effect::EachDamage { .. }
-            | Effect::UnlessCostWrapper { .. } => true, // PumpAllCreatures uses filter, not explicit targets
+            | Effect::UnlessCostWrapper { .. }
+            | Effect::DestroyAll { .. }
+            | Effect::DamageAll { .. }
+            | Effect::LoseLife { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

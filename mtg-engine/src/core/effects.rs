@@ -464,12 +464,36 @@ pub enum Effect {
     /// Example: "You gain 3 life"
     GainLife { player: PlayerId, amount: i32 },
 
+    /// Lose life
+    /// Example: "Target player loses 2 life"
+    LoseLife { player: PlayerId, amount: i32 },
+
     /// Destroy a permanent
     /// Example: "Destroy target creature" or "Destroy target artifact or enchantment"
     DestroyPermanent {
         target: CardId,
         /// Restriction on what types can be targeted (e.g., [Artifact, Enchantment] for Disenchant)
         restriction: TargetRestriction,
+    },
+
+    /// Destroy all permanents matching a filter
+    /// Example: "Destroy all creatures" (Wrath of God)
+    DestroyAll {
+        /// Filter for which permanents to destroy
+        restriction: TargetRestriction,
+        /// If true, destroyed permanents can't be regenerated (CR 701.15)
+        no_regenerate: bool,
+    },
+
+    /// Deal damage to all creatures (and optionally players) matching a filter
+    /// Example: "Deal 2 damage to each creature" (Pyroclasm)
+    DamageAll {
+        /// Amount of damage to deal
+        amount: i32,
+        /// Filter for which creatures/permanents to damage
+        valid_cards: TargetRestriction,
+        /// Also damage players? (e.g., "each creature and each player")
+        damage_players: bool,
     },
 
     /// Tap a permanent
@@ -975,6 +999,7 @@ impl Effect {
             | Effect::Loot { .. }
             | Effect::DiscardCards { .. }
             | Effect::GainLife { .. }
+            | Effect::LoseLife { .. }
             | Effect::Mill { .. }
             | Effect::Scry { .. }
             | Effect::AddMana { .. }
@@ -988,7 +1013,9 @@ impl Effect {
             | Effect::ClearRemembered => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
-            Effect::PumpAllCreatures { .. } => EffectTargetCategory::UsesFilter,
+            Effect::PumpAllCreatures { .. } | Effect::DestroyAll { .. } | Effect::DamageAll { .. } => {
+                EffectTargetCategory::UsesFilter
+            }
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,

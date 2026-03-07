@@ -1784,4 +1784,234 @@ mod tests {
         // Creature should still be on battlefield
         assert!(game.battlefield.contains(attacker_id));
     }
+
+    // ==================== LoseLife Tests ====================
+
+    #[test]
+    fn test_lose_life_effect() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 casts a spell that makes P2 lose 3 life
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Drain Life".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("1B");
+        spell.effects.push(Effect::LoseLife {
+            player: p2_id,
+            amount: 3,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        let p2 = game.get_player(p2_id).unwrap();
+        assert_eq!(p2.life, 17, "Player should have lost 3 life");
+    }
+
+    // ==================== DestroyAll Tests ====================
+
+    #[test]
+    fn test_destroy_all_creatures() {
+        // Wrath of God: destroy all creatures, no regeneration
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Two creatures
+        let c1_id = game.next_entity_id();
+        let mut c1 = Card::new(c1_id, "Grizzly Bears".to_string(), p1_id);
+        c1.add_type(CardType::Creature);
+        c1.set_base_power(Some(2));
+        c1.set_base_toughness(Some(2));
+        c1.controller = p1_id;
+        game.cards.insert(c1_id, c1);
+        game.battlefield.add(c1_id);
+
+        let c2_id = game.next_entity_id();
+        let mut c2 = Card::new(c2_id, "Elvish Mystic".to_string(), p1_id);
+        c2.add_type(CardType::Creature);
+        c2.set_base_power(Some(1));
+        c2.set_base_toughness(Some(1));
+        c2.controller = p1_id;
+        game.cards.insert(c2_id, c2);
+        game.battlefield.add(c2_id);
+
+        // P2: One creature
+        let c3_id = game.next_entity_id();
+        let mut c3 = Card::new(c3_id, "Shivan Dragon".to_string(), p2_id);
+        c3.add_type(CardType::Creature);
+        c3.set_base_power(Some(5));
+        c3.set_base_toughness(Some(5));
+        c3.controller = p2_id;
+        game.cards.insert(c3_id, c3);
+        game.battlefield.add(c3_id);
+
+        // P1: A land (should NOT be destroyed)
+        let land_id = game.next_entity_id();
+        let mut land = Card::new(land_id, "Plains".to_string(), p1_id);
+        land.add_type(CardType::Land);
+        land.controller = p1_id;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // Cast Wrath of God
+        let wrath_id = game.next_entity_id();
+        let mut wrath = Card::new(wrath_id, "Wrath of God".to_string(), p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(Effect::DestroyAll {
+            restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+        game.stack.add(wrath_id);
+
+        game.resolve_spell(wrath_id, &[]).unwrap();
+
+        // All creatures should be gone
+        assert!(!game.battlefield.contains(c1_id), "P1 creature 1 should be destroyed");
+        assert!(!game.battlefield.contains(c2_id), "P1 creature 2 should be destroyed");
+        assert!(!game.battlefield.contains(c3_id), "P2 creature should be destroyed");
+
+        // Land should survive
+        assert!(
+            game.battlefield.contains(land_id),
+            "Land should survive DestroyAll Creature"
+        );
+    }
+
+    #[test]
+    fn test_destroy_all_respects_indestructible() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Normal creature
+        let normal_id = game.next_entity_id();
+        let mut normal = Card::new(normal_id, "Grizzly Bears".to_string(), p1_id);
+        normal.add_type(CardType::Creature);
+        normal.set_base_power(Some(2));
+        normal.set_base_toughness(Some(2));
+        normal.controller = p1_id;
+        game.cards.insert(normal_id, normal);
+        game.battlefield.add(normal_id);
+
+        // Indestructible creature
+        let indestructible_id = game.next_entity_id();
+        let mut indestructible = Card::new(indestructible_id, "Darksteel Colossus".to_string(), p2_id);
+        indestructible.add_type(CardType::Creature);
+        indestructible.set_base_power(Some(11));
+        indestructible.set_base_toughness(Some(11));
+        indestructible.keywords.insert(Keyword::Indestructible);
+        indestructible.controller = p2_id;
+        game.cards.insert(indestructible_id, indestructible);
+        game.battlefield.add(indestructible_id);
+
+        // Wrath of God (no regen)
+        let wrath_id = game.next_entity_id();
+        let mut wrath = Card::new(wrath_id, "Wrath of God".to_string(), p1_id);
+        wrath.add_type(CardType::Sorcery);
+        wrath.mana_cost = ManaCost::from_string("2WW");
+        wrath.effects.push(Effect::DestroyAll {
+            restriction: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            no_regenerate: true,
+        });
+        game.cards.insert(wrath_id, wrath);
+        game.stack.add(wrath_id);
+
+        game.resolve_spell(wrath_id, &[]).unwrap();
+
+        assert!(
+            !game.battlefield.contains(normal_id),
+            "Normal creature should be destroyed"
+        );
+        assert!(
+            game.battlefield.contains(indestructible_id),
+            "Indestructible creature should survive Wrath of God"
+        );
+    }
+
+    // ==================== DamageAll Tests ====================
+
+    #[test]
+    fn test_damage_all_creatures() {
+        // Pyroclasm: 2 damage to each creature
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // 1/1 (should die)
+        let small_id = game.next_entity_id();
+        let mut small = Card::new(small_id, "Elvish Mystic".to_string(), p1_id);
+        small.add_type(CardType::Creature);
+        small.set_base_power(Some(1));
+        small.set_base_toughness(Some(1));
+        small.controller = p1_id;
+        game.cards.insert(small_id, small);
+        game.battlefield.add(small_id);
+
+        // 3/3 (should survive with 2 damage)
+        let big_id = game.next_entity_id();
+        let mut big = Card::new(big_id, "Centaur Courser".to_string(), p2_id);
+        big.add_type(CardType::Creature);
+        big.set_base_power(Some(3));
+        big.set_base_toughness(Some(3));
+        big.controller = p2_id;
+        game.cards.insert(big_id, big);
+        game.battlefield.add(big_id);
+
+        // Cast Pyroclasm
+        let pyro_id = game.next_entity_id();
+        let mut pyro = Card::new(pyro_id, "Pyroclasm".to_string(), p1_id);
+        pyro.add_type(CardType::Sorcery);
+        pyro.mana_cost = ManaCost::from_string("1R");
+        pyro.effects.push(Effect::DamageAll {
+            amount: 2,
+            valid_cards: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            damage_players: false,
+        });
+        game.cards.insert(pyro_id, pyro);
+        game.stack.add(pyro_id);
+
+        game.resolve_spell(pyro_id, &[]).unwrap();
+
+        // 1/1 should be dead (2 damage >= 1 toughness)
+        assert!(!game.battlefield.contains(small_id), "1/1 should die to 2 damage");
+
+        // 3/3 should survive with 2 damage marked
+        assert!(game.battlefield.contains(big_id), "3/3 should survive 2 damage");
+        let big_card = game.cards.get(big_id).unwrap();
+        assert_eq!(big_card.damage, 2, "3/3 should have 2 damage marked");
+    }
+
+    #[test]
+    fn test_damage_all_with_players() {
+        // Earthquake-style: damage each creature and each player
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Earthquake".to_string(), p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.mana_cost = ManaCost::from_string("XR");
+        spell.effects.push(Effect::DamageAll {
+            amount: 3,
+            valid_cards: crate::core::TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            damage_players: true,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        game.resolve_spell(spell_id, &[]).unwrap();
+
+        // Both players should take damage
+        let p1 = game.get_player(p1_id).unwrap();
+        let p2 = game.get_player(p2_id).unwrap();
+        assert_eq!(p1.life, 17, "P1 should have lost 3 life");
+        assert_eq!(p2.life, 17, "P2 should have lost 3 life");
+    }
 }

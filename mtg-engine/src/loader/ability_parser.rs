@@ -58,6 +58,7 @@ impl AbilityRecordType {
 pub enum ApiType {
     // === Damage & Life ===
     DealDamage,
+    DamageAll,
     /// Multiple creatures deal damage to a single target
     /// Used by Allies at Last, Band Together, Tandem Takedown
     /// Parameters:
@@ -222,6 +223,7 @@ impl ApiType {
         match s {
             // Damage & Life
             "DealDamage" => Self::DealDamage,
+            "DamageAll" => Self::DamageAll,
             "EachDamage" => Self::EachDamage,
             "GainLife" => Self::GainLife,
             "LoseLife" => Self::LoseLife,
@@ -336,6 +338,7 @@ impl ApiType {
     pub fn as_str(&self) -> &str {
         match self {
             Self::DealDamage => "DealDamage",
+            Self::DamageAll => "DamageAll",
             Self::EachDamage => "EachDamage",
             Self::GainLife => "GainLife",
             Self::LoseLife => "LoseLife",

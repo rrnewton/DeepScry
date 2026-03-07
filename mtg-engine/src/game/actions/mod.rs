@@ -18,12 +18,15 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         Effect::DrawCards { player, .. }
         | Effect::DiscardCards { player, .. }
         | Effect::GainLife { player, .. }
+        | Effect::LoseLife { player, .. }
         | Effect::Mill { player, .. } => player.is_all_players(),
         // All other effect variants don't have an expandable player field
         Effect::DealDamage { .. }
         | Effect::EachDamage { .. }
         | Effect::Loot { .. }
         | Effect::DestroyPermanent { .. }
+        | Effect::DestroyAll { .. }
+        | Effect::DamageAll { .. }
         | Effect::TapPermanent { .. }
         | Effect::UntapPermanent { .. }
         | Effect::PumpCreature { .. }
@@ -80,17 +83,21 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
                 player: pid,
                 amount: *amount,
             },
+            Effect::LoseLife { amount, .. } => Effect::LoseLife {
+                player: pid,
+                amount: *amount,
+            },
             Effect::Mill { count, .. } => Effect::Mill {
                 player: pid,
                 count: *count,
             },
-            // Unreachable: is_all_players only true for the above four variants.
-            // The remaining variants can never reach here because the is_all_players
-            // check already returned false for them.
+            // Unreachable: is_all_players only true for the above five variants.
             Effect::DealDamage { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
             | Effect::DestroyPermanent { .. }
+            | Effect::DestroyAll { .. }
+            | Effect::DamageAll { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }
@@ -1553,6 +1560,11 @@ impl GameState {
                 player: card_owner,
                 amount: *amount,
             },
+            Effect::LoseLife { player, amount } if player.is_placeholder() => Effect::LoseLife {
+                // LoseLife defaults to opponent (most common: "each opponent loses N life")
+                player: opponent_id.unwrap_or(card_owner),
+                amount: *amount,
+            },
             Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {
                 player: card_owner,
                 count: *count,
@@ -1916,6 +1928,25 @@ impl GameState {
                     crate::undo::GameAction::ModifyLife {
                         player_id: *player,
                         delta: *amount,
+                    },
+                    prior_log_size,
+                );
+            }
+            Effect::LoseLife { player, amount } => {
+                let prior_log_size = self.logger.log_count();
+
+                let p = self.get_player_mut(*player)?;
+                let player_name = p.name.clone();
+                p.lose_life(*amount);
+                let new_life = p.life;
+
+                self.logger
+                    .gamelog(&format!("{} loses {} life (life: {})", player_name, amount, new_life));
+
+                self.undo_log.log(
+                    crate::undo::GameAction::ModifyLife {
+                        player_id: *player,
+                        delta: -*amount,
                     },
                     prior_log_size,
                 );
@@ -2665,6 +2696,94 @@ impl GameState {
                 let card_name = self.cards.get(*target).map(|c| c.name.as_str()).unwrap_or("Unknown");
                 self.logger
                     .gamelog(&format!("{} ({}) gains a regeneration shield", card_name, target));
+            }
+
+            Effect::DestroyAll {
+                restriction,
+                no_regenerate,
+            } => {
+                // Destroy all permanents matching the restriction (e.g., Wrath of God)
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&card_id| {
+                        self.cards
+                            .get(card_id)
+                            .map(|card| restriction.matches(card))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                for card_id in targets {
+                    let (owner, has_indestructible, has_regen_shield) = {
+                        let card = self.cards.get(card_id)?;
+                        (card.owner, card.has_indestructible(), card.regeneration_shields > 0)
+                    };
+                    if has_indestructible {
+                        // Indestructible - can't be destroyed
+                    } else if has_regen_shield && !no_regenerate {
+                        // CR 701.15a: Regeneration replaces destruction
+                        self.apply_regeneration_shield(card_id)?;
+                    } else {
+                        let _ = self.check_death_triggers(card_id);
+                        if let Some(zones) = self.get_player_zones_mut(owner) {
+                            zones.graveyard.add(card_id);
+                        }
+                        self.battlefield.remove(card_id);
+                        let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                        self.logger
+                            .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
+                    }
+                }
+            }
+
+            Effect::DamageAll {
+                amount,
+                valid_cards,
+                damage_players,
+            } => {
+                // Deal damage to all creatures matching the filter
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&card_id| {
+                        self.cards
+                            .get(card_id)
+                            .map(|card| card.is_creature() && valid_cards.matches(card))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+
+                for card_id in targets {
+                    let card = self.cards.get_mut(card_id)?;
+                    card.damage += *amount;
+                    let card_name = card.name.clone();
+                    let total_damage = card.damage;
+                    self.logger.gamelog(&format!(
+                        "{} ({}) takes {} damage (total: {})",
+                        card_name, card_id, amount, total_damage
+                    ));
+                }
+
+                // Optionally damage all players
+                if *damage_players {
+                    let player_ids: Vec<_> = self.players.iter().map(|p| p.id).collect();
+                    for pid in player_ids {
+                        let p = self.get_player_mut(pid)?;
+                        let player_name = p.name.clone();
+                        p.lose_life(*amount);
+                        let new_life = p.life;
+                        self.logger
+                            .gamelog(&format!("{} takes {} damage (life: {})", player_name, amount, new_life));
+                    }
+                }
+
+                // Check for creatures that took lethal damage
+                self.check_lethal_damage()?;
             }
 
             Effect::CreateDelayedTrigger {
