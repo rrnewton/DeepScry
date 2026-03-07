@@ -241,6 +241,20 @@ impl GameState {
                         }
                     }
                 }
+                Effect::Regenerate { target } if target.is_placeholder() => {
+                    // Regenerate targets creatures you control (most common: self)
+                    // Cards like Yavimaya Hollow use ValidTgts$ Creature for any creature
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature()
+                                && target_card.controller == spell_owner
+                                && is_legal_target(target_card, spell_owner)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                     // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
                     // TODO: Some RemoveCounter effects can target any permanent
@@ -380,6 +394,7 @@ impl GameState {
                             | Effect::Airbend { .. }
                             | Effect::Earthbend { .. }
                             | Effect::GrantCantBeBlocked { .. }
+                            | Effect::Regenerate { .. }
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
                             | Effect::AttachEquipment { .. }
@@ -443,6 +458,7 @@ impl GameState {
                 | Effect::ExilePermanent { .. }
                 | Effect::Airbend { .. }
                 | Effect::GrantCantBeBlocked { .. }
+                | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
@@ -836,6 +852,7 @@ impl GameState {
                 | Effect::ExilePermanent { .. }
                 | Effect::Airbend { .. }
                 | Effect::GrantCantBeBlocked { .. }
+                | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::CopyPermanent { .. }
@@ -1054,6 +1071,7 @@ impl GameState {
             | Effect::ExilePermanent { .. }
             | Effect::Airbend { .. }
             | Effect::GrantCantBeBlocked { .. }
+            | Effect::Regenerate { .. }
             | Effect::RemoveCounter { .. }
             | Effect::PutCounter { .. }
             | Effect::CopyPermanent { .. } => {

@@ -542,7 +542,15 @@ impl<'a> GameLoop<'a> {
             }
         }
 
-        // TODO: Remove damage from creatures
+        // Remove damage from creatures and clear regeneration shields (CR 514.2)
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get_mut(card_id) {
+                if card.is_creature() {
+                    card.damage = 0;
+                    card.regeneration_shields = 0;
+                }
+            }
+        }
 
         Ok(None)
     }

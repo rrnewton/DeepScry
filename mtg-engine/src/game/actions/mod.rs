@@ -45,6 +45,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Earthbend { .. }
         | Effect::Firebend { .. }
         | Effect::GrantCantBeBlocked { .. }
+        | Effect::Regenerate { .. }
         | Effect::ModalChoice { .. }
         | Effect::Dig { .. }
         | Effect::CreateDelayedTrigger { .. }
@@ -111,6 +112,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Earthbend { .. }
             | Effect::Firebend { .. }
             | Effect::GrantCantBeBlocked { .. }
+            | Effect::Regenerate { .. }
             | Effect::ModalChoice { .. }
             | Effect::Dig { .. }
             | Effect::CreateDelayedTrigger { .. }
@@ -1925,11 +1927,16 @@ impl GameState {
                     return Ok(());
                 }
                 // MTG Rules 702.12b: Permanents with indestructible can't be destroyed
-                let (owner, has_indestructible) = {
+                let (owner, has_indestructible, has_regen_shield) = {
                     let card = self.cards.get(*target)?;
-                    (card.owner, card.has_indestructible())
+                    (card.owner, card.has_indestructible(), card.regeneration_shields > 0)
                 };
-                if !has_indestructible {
+                if has_indestructible {
+                    // Indestructible - can't be destroyed
+                } else if has_regen_shield {
+                    // CR 701.15a: Regeneration replaces destruction
+                    self.apply_regeneration_shield(*target)?;
+                } else {
                     // Check death triggers BEFORE moving the card (trigger still has access to card data)
                     let _ = self.check_death_triggers(*target);
                     self.move_card(*target, Zone::Battlefield, Zone::Graveyard, owner)?;
@@ -2641,6 +2648,23 @@ impl GameState {
                 // Log the effect
                 self.logger
                     .gamelog(&format!("{} can't be blocked this turn", card_name));
+            }
+
+            Effect::Regenerate { target } => {
+                // Regenerate: Add a regeneration shield to target permanent (CR 701.15a)
+                // "The next time [permanent] would be destroyed this turn, instead
+                // remove all damage marked on it, tap it, and remove it from combat."
+                if target.is_placeholder() {
+                    return Ok(());
+                }
+                if !self.battlefield.contains(*target) {
+                    return Ok(());
+                }
+                let card = self.cards.get_mut(*target)?;
+                card.regeneration_shields = card.regeneration_shields.saturating_add(1);
+                let card_name = self.cards.get(*target).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                self.logger
+                    .gamelog(&format!("{} ({}) gains a regeneration shield", card_name, target));
             }
 
             Effect::CreateDelayedTrigger {

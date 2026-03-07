@@ -1706,3 +1706,108 @@ fn test_destroy_ability_significantly_boosts_creature_value() {
         "Royal Assassin ({ra_score}) should score at least 30 more than vanilla 1/1 ({vanilla_score}), diff={difference}"
     );
 }
+
+// =========================================================================
+// REGENERATION TESTS
+// Tests for AB$ Regenerate parsing, scoring, and mechanics
+// =========================================================================
+
+/// Test that Drudge Skeletons loads with a Regenerate activated ability
+#[test]
+fn test_real_card_drudge_skeletons_regeneration_ability() {
+    let result = load_real_card_for_eval("../cardsfolder/d/drudge_skeletons.txt");
+    if result.is_none() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+    let (game, card_id, player_id) = result.unwrap();
+
+    let card = game.cards.get(card_id).expect("Card should exist");
+    assert_eq!(card.name.as_str(), "Drudge Skeletons");
+
+    // Verify the regeneration ability was parsed
+    let has_regen = card.activated_abilities.iter().any(|ab| {
+        ab.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Regenerate { .. }))
+    });
+    assert!(
+        has_regen,
+        "Drudge Skeletons should have a Regenerate activated ability, got abilities: {:?}",
+        card.activated_abilities
+    );
+
+    // Evaluate: 1/1 for 1B + Regenerate ability (+20)
+    // Base: 80 + Non-token: 20 + P(1)*15: 15 + T(1)*10: 10 + CMC(2)*5: 10 = 135
+    // Regenerate: +20
+    // Total: 155
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+    assert_eq!(score, 155, "Drudge Skeletons (1/1 with Regenerate) should score 155");
+}
+
+/// Test that Sedge Troll loads with a Regenerate activated ability
+#[test]
+fn test_real_card_sedge_troll_regeneration_ability() {
+    let result = load_real_card_for_eval("../cardsfolder/s/sedge_troll.txt");
+    if result.is_none() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+    let (game, card_id, player_id) = result.unwrap();
+
+    let card = game.cards.get(card_id).expect("Card should exist");
+    assert_eq!(card.name.as_str(), "Sedge Troll");
+
+    // Verify the regeneration ability was parsed
+    let has_regen = card.activated_abilities.iter().any(|ab| {
+        ab.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Regenerate { .. }))
+    });
+    assert!(
+        has_regen,
+        "Sedge Troll should have a Regenerate activated ability, got abilities: {:?}",
+        card.activated_abilities
+    );
+
+    // Evaluate: 2/2 for 2R + Regenerate ability (+20)
+    // Base: 80 + Non-token: 20 + P(2)*15: 30 + T(2)*10: 20 + CMC(3)*5: 15 = 165
+    // Regenerate: +20
+    // Total: 185
+    let controller = HeuristicController::new(player_id);
+    let view = GameStateView::new(&game, player_id);
+    let score = controller.evaluate_creature(&view, card_id);
+    assert_eq!(score, 185, "Sedge Troll (2/2 with Regenerate) should score 185");
+}
+
+/// Test that regeneration makes a creature significantly more valuable than vanilla
+#[test]
+fn test_regeneration_boosts_creature_value() {
+    // Create a vanilla 1/1 for comparison
+    let (vanilla_game, vanilla_id, vanilla_pid) = create_test_setup_with_keywords("Vanilla 1/1", 1, 1, 2, vec![]);
+
+    // Load Drudge Skeletons (1/1 with Regenerate for B)
+    let regen_result = load_real_card_for_eval("../cardsfolder/d/drudge_skeletons.txt");
+    if regen_result.is_none() {
+        println!("Skipping test: cardsfolder not present");
+        return;
+    }
+    let (regen_game, regen_id, regen_pid) = regen_result.unwrap();
+
+    let vanilla_controller = HeuristicController::new(vanilla_pid);
+    let vanilla_view = GameStateView::new(&vanilla_game, vanilla_pid);
+    let vanilla_score = vanilla_controller.evaluate_creature(&vanilla_view, vanilla_id);
+
+    let regen_controller = HeuristicController::new(regen_pid);
+    let regen_view = GameStateView::new(&regen_game, regen_pid);
+    let regen_score = regen_controller.evaluate_creature(&regen_view, regen_id);
+
+    // Regeneration should add significant value (+20)
+    let diff = regen_score - vanilla_score;
+    assert!(
+        diff >= 15,
+        "Drudge Skeletons ({regen_score}) should score at least 15 more than vanilla 1/1 ({vanilla_score}), diff={diff}"
+    );
+}

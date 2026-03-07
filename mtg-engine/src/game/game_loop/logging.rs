@@ -478,6 +478,16 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) makes {target_name} ({target}) unblockable this turn");
                 self.game.logger.gamelog(&message);
             }
+            Effect::Regenerate { target } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!("{target_name} ({target}) gains a regeneration shield");
+                self.game.logger.gamelog(&message);
+            }
             Effect::Firebend { controller, amount } => {
                 let player_name = self.get_player_name(*controller);
                 let message = format!(

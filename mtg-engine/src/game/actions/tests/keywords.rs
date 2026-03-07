@@ -1610,4 +1610,178 @@ mod tests {
         let normal_card = game.cards.get(normal_creature_id).unwrap();
         assert!(normal_card.tapped, "Normal creature should be tapped");
     }
+
+    // ==================== Regeneration Tests ====================
+
+    #[test]
+    fn test_regeneration_shield_prevents_destroy_effect() {
+        // CR 701.15a: A creature with a regeneration shield survives DestroyPermanent
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P2: Create a creature with a regeneration shield
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Drudge Skeletons".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        creature.controller = p2_id;
+        creature.regeneration_shields = 1; // Pre-set a regen shield
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // P1: Cast Terror targeting the creature
+        let destroy_spell_id = game.next_entity_id();
+        let mut destroy_spell = Card::new(destroy_spell_id, "Terror".to_string(), p1_id);
+        destroy_spell.add_type(CardType::Instant);
+        destroy_spell.mana_cost = ManaCost::from_string("1B");
+        destroy_spell.effects.push(Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(destroy_spell_id, destroy_spell);
+        game.stack.add(destroy_spell_id);
+
+        let result = game.resolve_spell(destroy_spell_id, &[]);
+        assert!(result.is_ok(), "Destroy spell should resolve");
+
+        // Creature should survive (regenerated)
+        assert!(
+            game.battlefield.contains(creature_id),
+            "Creature with regeneration shield should survive destroy effect"
+        );
+
+        // Shield should be consumed
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.regeneration_shields, 0, "Shield should be consumed");
+
+        // Creature should be tapped (CR 701.15a)
+        assert!(card.tapped, "Regenerated creature should be tapped");
+
+        // Damage should be cleared
+        assert_eq!(card.damage, 0, "Regenerated creature should have damage cleared");
+    }
+
+    #[test]
+    fn test_regeneration_shield_consumed_only_once() {
+        // A creature with one shield: first destroy is prevented, second destroys it
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Drudge Skeletons".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        creature.controller = p2_id;
+        creature.regeneration_shields = 1;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // First destroy: regeneration intercepts
+        let spell1_id = game.next_entity_id();
+        let mut spell1 = Card::new(spell1_id, "Terror".to_string(), p1_id);
+        spell1.add_type(CardType::Instant);
+        spell1.mana_cost = ManaCost::from_string("1B");
+        spell1.effects.push(Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(spell1_id, spell1);
+        game.stack.add(spell1_id);
+        game.resolve_spell(spell1_id, &[]).unwrap();
+
+        assert!(game.battlefield.contains(creature_id), "Should survive first destroy");
+        assert_eq!(game.cards.get(creature_id).unwrap().regeneration_shields, 0);
+
+        // Second destroy: no shield left, creature dies
+        let spell2_id = game.next_entity_id();
+        let mut spell2 = Card::new(spell2_id, "Murder".to_string(), p1_id);
+        spell2.add_type(CardType::Instant);
+        spell2.mana_cost = ManaCost::from_string("1BB");
+        spell2.effects.push(Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        });
+        game.cards.insert(spell2_id, spell2);
+        game.stack.add(spell2_id);
+        game.resolve_spell(spell2_id, &[]).unwrap();
+
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Should die to second destroy with no shield"
+        );
+    }
+
+    #[test]
+    fn test_regeneration_effect_adds_shield() {
+        // Test that resolving Effect::Regenerate adds a shield to the creature
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Sedge Troll".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Cast a spell that grants a regen shield
+        let regen_spell_id = game.next_entity_id();
+        let mut regen_spell = Card::new(regen_spell_id, "Regenerate".to_string(), p1_id);
+        regen_spell.add_type(CardType::Instant);
+        regen_spell.mana_cost = ManaCost::from_string("G");
+        regen_spell.effects.push(Effect::Regenerate { target: creature_id });
+        game.cards.insert(regen_spell_id, regen_spell);
+        game.stack.add(regen_spell_id);
+
+        let result = game.resolve_spell(regen_spell_id, &[]);
+        assert!(result.is_ok(), "Regen spell should resolve");
+
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(
+            card.regeneration_shields, 1,
+            "Creature should have 1 regeneration shield"
+        );
+    }
+
+    #[test]
+    fn test_regeneration_removes_from_combat() {
+        // CR 701.15a: Regeneration removes creature from combat
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1: Create an attacking creature with regen shield
+        let attacker_id = game.next_entity_id();
+        let mut attacker = Card::new(attacker_id, "Sedge Troll".to_string(), p1_id);
+        attacker.add_type(CardType::Creature);
+        attacker.set_base_power(Some(2));
+        attacker.set_base_toughness(Some(2));
+        attacker.controller = p1_id;
+        attacker.regeneration_shields = 1;
+        attacker.turn_entered_battlefield = Some(game.turn.turn_number - 1);
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // Declare it as an attacker
+        game.combat.declare_attacker(attacker_id, p2_id);
+        assert!(game.combat.is_attacking(attacker_id));
+
+        // Apply regeneration shield (simulating it being destroyed mid-combat)
+        game.apply_regeneration_shield(attacker_id).unwrap();
+
+        // After regeneration, creature should be removed from combat
+        assert!(
+            !game.combat.is_attacking(attacker_id),
+            "Regenerated creature should be removed from combat"
+        );
+
+        // Creature should still be on battlefield
+        assert!(game.battlefield.contains(attacker_id));
+    }
 }

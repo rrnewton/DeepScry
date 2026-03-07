@@ -759,6 +759,20 @@ pub enum Effect {
         target: CardId,
     },
 
+    /// Regenerate: Add a regeneration shield to target permanent (CR 701.15a).
+    /// "The next time [permanent] would be destroyed this turn, instead remove
+    /// all damage marked on it and its controller taps it. If it's an attacking
+    /// or blocking creature, remove it from combat."
+    ///
+    /// Most cards target Self (e.g., Drudge Skeletons: "{B}: Regenerate CARDNAME.")
+    /// Some cards target other creatures (e.g., Zombie Master granting regeneration).
+    ///
+    /// Cards using this: Drudge Skeletons, Sedge Troll, Skeletal Wurm, etc. (246 cards)
+    Regenerate {
+        /// The permanent to add a regeneration shield to
+        target: CardId,
+    },
+
     /// Modal spell choice - player selects modes from multiple predefined effects.
     ///
     /// Example: Heartless Act - "Choose one — Destroy target creature with no counters on it;
@@ -999,6 +1013,7 @@ impl Effect {
             | Effect::Airbend { .. }
             | Effect::Earthbend { .. }
             | Effect::GrantCantBeBlocked { .. }
+            | Effect::Regenerate { .. }
             | Effect::CreateDelayedTrigger { .. }
             | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
         }

@@ -105,5 +105,16 @@ Track completion of heuristic AI port from Java Forge to Rust.
 1. More static abilities handling ("can't be blocked except by" types)
 2. Bluffing/deception
 
+---- ✅ **Activated/triggered ability scoring in creature evaluation (2026-03-07_#1867(b876f88))**
+  - Activated abilities: classify as Ping/Pump/Destroy/Mana, score accordingly
+  - Triggered abilities: score by event type (ETB +10, combat damage +15, etc.)
+  - 10 new tests with real 4ED cards
+
+---- ✅ **Regeneration ability support (AB$ Regenerate) (2026-03-07_#1868)**
+  - Full-stack: parsing, Effect::Regenerate, regeneration shields, combat damage interception
+  - AI activates regeneration during combat phases; creature evaluation: +20
+  - 7 new tests (4 mechanical + 3 creature evaluation with Drudge Skeletons, Sedge Troll)
+  - Affects 246 cards. Also implemented end-of-turn damage removal for all creatures.
+
 ---
-**Checked up-to-date as of 2026-01-17_#1715 - 513 unit tests passing**
+**Checked up-to-date as of 2026-03-07_#1868 - 880 tests passing**

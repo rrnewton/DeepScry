@@ -33,7 +33,7 @@ flamegraph.svg
 *.gz
 heaptrack_analysis.*.txt
 heaptrack.profile.*
-dhat-heap.json
+**/dhat-heap*.json
 
 # Temporary benchmark and profiling output files
 benchmark_output.txt
@@ -113,3 +113,4 @@ serve_no_cache.py
 console_logs.txt
 sanity_test_console.txt
 output.dck
+# dhat-heap covered by **/dhat-heap*.json above

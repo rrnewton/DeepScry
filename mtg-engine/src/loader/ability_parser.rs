@@ -174,9 +174,12 @@ pub enum ApiType {
     Scry,
     Surveil,
 
-    // === Protection ===
+    // === Protection & Regeneration ===
     Protection,
     ProtectionAll,
+    /// Regenerate: Create a regeneration shield on target permanent (CR 701.15)
+    /// Example: AB$ Regenerate | Cost$ B | SpellDescription$ Regenerate CARDNAME.
+    Regenerate,
 
     // === Special ===
     Clash,
@@ -303,9 +306,10 @@ impl ApiType {
             "Scry" => Self::Scry,
             "Surveil" => Self::Surveil,
 
-            // Protection
+            // Protection & Regeneration
             "Protection" => Self::Protection,
             "ProtectionAll" => Self::ProtectionAll,
+            "Regenerate" => Self::Regenerate,
 
             // Special
             "Clash" => Self::Clash,
@@ -389,6 +393,7 @@ impl ApiType {
             Self::Surveil => "Surveil",
             Self::Protection => "Protection",
             Self::ProtectionAll => "ProtectionAll",
+            Self::Regenerate => "Regenerate",
             Self::Clash => "Clash",
             Self::Planeswalk => "Planeswalk",
             Self::RollDice => "RollDice",

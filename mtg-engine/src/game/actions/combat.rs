@@ -723,6 +723,19 @@ impl GameState {
         creatures_to_destroy_sorted.sort_by_key(|id| id.as_u32());
 
         for creature_id in creatures_to_destroy_sorted {
+            // CR 701.15a: Check regeneration shields before destruction
+            let has_regen_shield = self
+                .cards
+                .get(creature_id)
+                .map(|c| c.regeneration_shields > 0)
+                .unwrap_or(false);
+
+            if has_regen_shield {
+                // Regeneration replaces destruction: tap, clear damage, remove from combat
+                self.apply_regeneration_shield(creature_id)?;
+                continue;
+            }
+
             // Get creature name before moving to graveyard (for logging)
             let creature_name = self
                 .cards

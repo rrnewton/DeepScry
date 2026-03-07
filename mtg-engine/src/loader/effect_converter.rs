@@ -861,6 +861,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::Regenerate => {
+            // Regenerate: Add a regeneration shield to target permanent (CR 701.15a)
+            // Most cards target self: "AB$ Regenerate | Cost$ B | SpellDescription$ Regenerate CARDNAME."
+            // Some target other creatures: "AB$ Regenerate | ValidTgts$ Creature | ..."
+            Some(Effect::Regenerate {
+                target: CardId::new(0), // Placeholder - filled in at activation time
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

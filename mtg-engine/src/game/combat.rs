@@ -105,6 +105,29 @@ impl CombatState {
         self.blockers.keys().copied()
     }
 
+    /// Check if a creature is an attacker (alias for is_attacking)
+    pub fn is_attacker(&self, card_id: CardId) -> bool {
+        self.attackers.contains_key(&card_id)
+    }
+
+    /// Remove a creature from combat (attacker or blocker).
+    /// Used by regeneration (CR 701.15a) and other removal-from-combat effects.
+    pub fn remove_from_combat(&mut self, card_id: CardId) {
+        // Remove as attacker
+        self.attackers.remove(&card_id);
+
+        // Remove from attacker_blockers reverse mapping
+        self.attacker_blockers.remove(&card_id);
+
+        // Remove as blocker
+        self.blockers.remove(&card_id);
+
+        // Remove from all attacker_blockers entries where this creature was blocking
+        for blockers in self.attacker_blockers.values_mut() {
+            blockers.retain(|b| *b != card_id);
+        }
+    }
+
     /// Clear all combat state (called at end of combat)
     pub fn clear(&mut self) {
         self.attackers.clear();

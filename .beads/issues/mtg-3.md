@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-03T03:49:53.795012567+00:00
+updated_at: 2026-03-07T20:52:14.538667821+00:00
 ---
 
 # Description
@@ -60,3 +60,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Parse as 0 placeholder until SVar evaluation implemented
 
 Checked up-to-date as of 2026-01-03.
+
+# Notes
+
+2026-03-07: AB$ Regenerate implemented (246 cards). Full stack: parsing, Effect::Regenerate, regeneration shields, combat damage interception, AI evaluation/timing, end-of-turn cleanup. Also implemented end-of-turn damage removal for all creatures.

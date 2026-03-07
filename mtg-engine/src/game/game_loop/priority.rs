@@ -1447,6 +1447,22 @@ impl<'a> GameLoop<'a> {
                                                     target: chosen_targets_vec[0],
                                                 }
                                             }
+                                            // Self-targeting Regenerate: "Regenerate CARDNAME"
+                                            crate::core::Effect::Regenerate { target }
+                                                if target.is_placeholder() && chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::Regenerate {
+                                                    target: card_id, // Target self
+                                                }
+                                            }
+                                            // Targeted Regenerate: "Regenerate target creature"
+                                            crate::core::Effect::Regenerate { target }
+                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::Regenerate {
+                                                    target: chosen_targets_vec[0],
+                                                }
+                                            }
                                             // Replace placeholder targets in DealDamage effects
                                             // This is needed for ping abilities like Prodigal Sorcerer
                                             crate::core::Effect::DealDamage {

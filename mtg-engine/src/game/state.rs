@@ -399,6 +399,35 @@ impl GameState {
         Ok(())
     }
 
+    /// Apply a regeneration shield: consume one shield, tap, clear damage,
+    /// remove from combat. CR 701.15a.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card doesn't exist.
+    pub fn apply_regeneration_shield(&mut self, card_id: CardId) -> Result<()> {
+        let card_name = {
+            let card = self.cards.get_mut(card_id)?;
+            // Consume one shield
+            card.regeneration_shields = card.regeneration_shields.saturating_sub(1);
+            // Remove all damage
+            card.damage = 0;
+            card.name.clone()
+        };
+        // Tap the creature (needs &mut self so can't hold card borrow)
+        self.tap_permanent(card_id)?;
+
+        // Remove from combat if attacking or blocking (CR 701.15a)
+        self.combat.remove_from_combat(card_id);
+
+        self.logger.gamelog(&format!(
+            "{} ({}) regenerates (shield consumed, tapped, damage removed)",
+            card_name, card_id
+        ));
+
+        Ok(())
+    }
+
     /// Untap a permanent and log the action for undo
     ///
     /// This is the preferred way to untap permanents - it handles:
@@ -2779,6 +2808,7 @@ impl GameState {
                     | crate::core::Effect::Airbend { .. }
                     | crate::core::Effect::Firebend { .. }
                     | crate::core::Effect::GrantCantBeBlocked { .. }
+                    | crate::core::Effect::Regenerate { .. }
                     | crate::core::Effect::ModalChoice { .. }
                     | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CreateDelayedTrigger { .. }

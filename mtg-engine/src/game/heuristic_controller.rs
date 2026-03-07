@@ -62,7 +62,9 @@ enum ActivatedAbilityType {
     /// Example: Royal Assassin "{T}: Destroy target tapped creature"
     /// Reference: DestroyAi.java in forge-ai
     Destroy,
-    // TODO: Add Regenerate variant once AB$ Regenerate is parsed by the loader
+    /// Regenerate ability - adds a regeneration shield
+    /// Example: Drudge Skeletons "{B}: Regenerate CARDNAME."
+    Regenerate,
     /// Other abilities not yet categorized
     Other,
 }
@@ -604,6 +606,11 @@ impl HeuristicController {
                 ActivatedAbilityType::Destroy => {
                     // Destroy abilities are extremely valuable (Royal Assassin)
                     value += 40;
+                }
+                ActivatedAbilityType::Regenerate => {
+                    // Regeneration makes creatures harder to kill (Drudge Skeletons, Sedge Troll)
+                    // Roughly equivalent to a toughness bonus
+                    value += 20;
                 }
                 ActivatedAbilityType::Other => {}
             }
@@ -2351,6 +2358,24 @@ impl HeuristicController {
                         }
                     }
                 }
+                ActivatedAbilityType::Regenerate => {
+                    // Regeneration: activate when creature is in danger
+                    // Best used proactively before combat damage or when
+                    // an opponent has destroy effects.
+                    // For now, always activate if we have mana — it's never bad
+                    // to have a regeneration shield up.
+                    let current_step = view.current_step();
+                    let is_combat = matches!(
+                        current_step,
+                        crate::game::Step::DeclareAttackers
+                            | crate::game::Step::DeclareBlockers
+                            | crate::game::Step::CombatDamage
+                    );
+                    // Activate during combat or if creature doesn't have a shield already
+                    if is_combat {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2391,6 +2416,13 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::DestroyPermanent { .. }) {
                 return ActivatedAbilityType::Destroy;
+            }
+        }
+
+        // Check for regeneration effects (Drudge Skeletons, Sedge Troll, etc.)
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::Regenerate { .. }) {
+                return ActivatedAbilityType::Regenerate;
             }
         }
 
