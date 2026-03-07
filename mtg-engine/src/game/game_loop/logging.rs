@@ -712,6 +712,29 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) sets {player_name}'s life total to {amount}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::GainControl {
+                target,
+                new_controller,
+                untap,
+                ..
+            } => {
+                // Skip logging if target is still placeholder - execute_effect logs the resolved target
+                if target.is_placeholder() {
+                    return;
+                }
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let controller_name = self.get_player_name(*new_controller);
+                let untap_text = if *untap { " (untapped)" } else { "" };
+                let message = format!(
+                    "{source_name} ({source_id}) gives {controller_name} control of {target_name} ({target}){untap_text}"
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

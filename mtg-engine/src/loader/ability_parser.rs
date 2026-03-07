@@ -96,6 +96,15 @@ pub enum ApiType {
     Exile,
     ExileAll,
 
+    // === Control ===
+    /// Gain control of target permanent
+    /// Parameters:
+    ///   ValidTgts$ - target restriction (e.g., "Creature", "Artifact")
+    ///   LoseControl$ - when control is lost (EOT, LeavesPlay, Untap)
+    ///   Untap$ True - also untap the stolen permanent
+    ///   AddKWs$ - keywords to grant (e.g., "Haste")
+    GainControl,
+
     // === Tap/Untap ===
     Tap,
     TapAll,
@@ -256,6 +265,9 @@ impl ApiType {
             "Exile" => Self::Exile,
             "ExileAll" => Self::ExileAll,
 
+            // Control
+            "GainControl" => Self::GainControl,
+
             // Tap/Untap
             "Tap" => Self::Tap,
             "TapAll" => Self::TapAll,
@@ -360,6 +372,7 @@ impl ApiType {
             Self::SacrificeAll => "SacrificeAll",
             Self::Exile => "Exile",
             Self::ExileAll => "ExileAll",
+            Self::GainControl => "GainControl",
             Self::Tap => "Tap",
             Self::TapAll => "TapAll",
             Self::TapOrUntap => "TapOrUntap",

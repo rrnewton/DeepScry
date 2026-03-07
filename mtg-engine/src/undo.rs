@@ -126,6 +126,15 @@ pub enum GameAction {
         new_value: u8,
     },
 
+    /// Change controller of a permanent (for GainControl effects)
+    ChangeController {
+        card_id: CardId,
+        /// Previous controller
+        old_controller: PlayerId,
+        /// New controller
+        new_controller: PlayerId,
+    },
+
     /// Set attached_to field (for Equipment/Aura attachment tracking)
     SetAttachedTo {
         equipment_id: CardId,
@@ -317,6 +326,11 @@ impl fmt::Display for GameAction {
             GameAction::SetCardsDrawnThisTurn {
                 player_id, new_value, ..
             } => write!(f, "CardsDrawn(P{} = {})", player_id.as_u32(), new_value),
+            GameAction::ChangeController {
+                card_id,
+                new_controller,
+                ..
+            } => write!(f, "ChangeCtrl({} -> P{})", card_id.as_u32(), new_controller.as_u32()),
             GameAction::SetAttachedTo {
                 equipment_id,
                 new_target,
@@ -571,6 +585,19 @@ impl GameAction {
                         "Player {} not found for SetCardsDrawnThisTurn undo",
                         player_id.as_u32()
                     ));
+                }
+            }
+
+            GameAction::ChangeController {
+                card_id,
+                old_controller,
+                new_controller: _,
+            } => {
+                // Restore the previous controller
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.controller = *old_controller;
+                } else {
+                    return Err(format!("Card {} not found for ChangeController undo", card_id.as_u32()));
                 }
             }
 

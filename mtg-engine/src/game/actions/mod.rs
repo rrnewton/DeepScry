@@ -31,6 +31,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::DamageAll { .. }
         | Effect::TapAll { .. }
         | Effect::UntapAll { .. }
+        | Effect::GainControl { .. }
         | Effect::TapPermanent { .. }
         | Effect::UntapPermanent { .. }
         | Effect::PumpCreature { .. }
@@ -113,6 +114,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
+            | Effect::GainControl { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }
@@ -1513,6 +1515,26 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::GainControl {
+                target,
+                untap,
+                until_eot,
+                ..
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::GainControl {
+                        target: resolved_target,
+                        new_controller: card_owner,
+                        untap: *untap,
+                        until_eot: *until_eot,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // Handle UntapPermanent with reuse_previous sentinel (from Defined$ Targeted)
             Effect::UntapPermanent { target } if target.is_reuse_previous() => {
                 // Reuse the target from the previous effect in the chain
@@ -2002,6 +2024,62 @@ impl GameState {
                     let _ = self.check_death_triggers(*target);
                     self.move_card(*target, Zone::Battlefield, Zone::Graveyard, owner)?;
                 }
+            }
+            Effect::GainControl {
+                target,
+                new_controller,
+                untap,
+                until_eot,
+            } => {
+                // Skip if target is still placeholder
+                if target.is_placeholder() {
+                    return Ok(());
+                }
+                // Skip if target is not on battlefield
+                if !self.battlefield.contains(*target) {
+                    log::debug!(target: "gain_control", "GainControl fizzled: target {} not on battlefield", target.as_u32());
+                    return Ok(());
+                }
+
+                let prior_log_size = self.logger.log_count();
+                let (old_controller, target_name) = {
+                    let card = self.cards.get(*target)?;
+                    (card.controller, card.name.to_string())
+                };
+                let new_ctrl_name = self
+                    .get_player(*new_controller)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|_| format!("P{}", new_controller.as_u32()).into());
+
+                // Change controller
+                {
+                    let card = self.cards.get_mut(*target)?;
+                    card.controller = *new_controller;
+                }
+
+                // Log the undo action
+                self.undo_log.log(
+                    crate::undo::GameAction::ChangeController {
+                        card_id: *target,
+                        old_controller,
+                        new_controller: *new_controller,
+                    },
+                    prior_log_size,
+                );
+
+                // Optionally untap the stolen permanent
+                if *untap {
+                    self.untap_permanent(*target)?;
+                }
+
+                let duration = if *until_eot { " until end of turn" } else { "" };
+                self.logger.gamelog(&format!(
+                    "{} gains control of {}{}",
+                    new_ctrl_name, target_name, duration
+                ));
+
+                // TODO(mtg-77): Implement EOT control return for until_eot=true
+                // This requires end-of-turn delayed trigger infrastructure
             }
             Effect::TapPermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found

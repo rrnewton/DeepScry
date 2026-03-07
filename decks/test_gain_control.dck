@@ -1,0 +1,14 @@
+[metadata]
+Name=GainControl Test
+
+[Main]
+# Steal effects
+4 Act of Treason
+
+# Creatures to steal or attack with
+4 Grizzly Bears
+4 Llanowar Elves
+
+# Mana base
+24 Mountain
+24 Forest

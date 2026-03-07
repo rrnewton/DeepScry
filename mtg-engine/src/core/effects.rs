@@ -519,6 +519,20 @@ pub enum Effect {
     /// Example: "Target opponent's life total becomes 10" (Sorin Markov)
     SetLife { player: PlayerId, amount: i32 },
 
+    /// Gain control of a permanent
+    /// Example: "Gain control of target creature" (Control Magic, Threaten)
+    /// Reference: Java Forge AB$ GainControl
+    GainControl {
+        /// The permanent to gain control of
+        target: CardId,
+        /// The new controller (resolved at cast time)
+        new_controller: PlayerId,
+        /// Whether to also untap the stolen permanent
+        untap: bool,
+        /// Duration: true = until end of turn (Threaten), false = permanent (Control Magic)
+        until_eot: bool,
+    },
+
     /// Tap a permanent
     /// Example: "Tap target creature"
     TapPermanent { target: CardId },
@@ -1054,6 +1068,7 @@ impl Effect {
             Effect::DealDamage { .. }
             | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
+            | Effect::GainControl { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }

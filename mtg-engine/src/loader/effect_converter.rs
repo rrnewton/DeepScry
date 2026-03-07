@@ -969,6 +969,22 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::GainControl => {
+            // GainControl: Gain control of target permanent
+            // Examples:
+            //   "AB$ GainControl | ValidTgts$ Creature | LoseControl$ EOT" (Threaten)
+            //   "AB$ GainControl | ValidTgts$ Artifact | LoseControl$ LeavesPlay" (Aladdin)
+            let untap = params.get("Untap").is_some_and(|v| v.eq_ignore_ascii_case("true"));
+            let until_eot = params.get("LoseControl").is_some_and(|v| v.contains("EOT"));
+
+            Some(Effect::GainControl {
+                target: CardId::placeholder(),
+                new_controller: PlayerId::new(0), // Resolved at cast time
+                untap,
+                until_eot,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

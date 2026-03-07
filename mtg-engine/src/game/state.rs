@@ -2086,6 +2086,15 @@ impl GameState {
                                 player.lands_played_this_turn = old_value;
                             }
                         }
+                        crate::undo::GameAction::ChangeController {
+                            card_id,
+                            old_controller,
+                            new_controller: _,
+                        } => {
+                            if let Ok(card) = self.cards.get_mut(card_id) {
+                                card.controller = old_controller;
+                            }
+                        }
                         crate::undo::GameAction::SetAttachedTo {
                             equipment_id,
                             old_target,
@@ -2405,6 +2414,15 @@ impl GameState {
                     // Restore the previous cards_drawn_this_turn count
                     if let Ok(player) = self.get_player_mut(player_id) {
                         player.cards_drawn_this_turn = old_value;
+                    }
+                }
+                crate::undo::GameAction::ChangeController {
+                    card_id,
+                    old_controller,
+                    new_controller: _,
+                } => {
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.controller = old_controller;
                     }
                 }
                 crate::undo::GameAction::SetAttachedTo {
@@ -2822,7 +2840,8 @@ impl GameState {
                     | crate::core::Effect::CopySpellAbility { .. }
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
-                    | crate::core::Effect::UnlessCostWrapper { .. } => {
+                    | crate::core::Effect::UnlessCostWrapper { .. }
+                    | crate::core::Effect::GainControl { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility

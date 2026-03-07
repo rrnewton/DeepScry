@@ -152,6 +152,29 @@ impl GameState {
                         }
                     }
                 }
+                Effect::GainControl { target, .. } if target.is_placeholder() => {
+                    // GainControl targets opponent's permanents (creatures by default)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            // Must be opponent's permanent
+                            if target_card.controller == spell_owner {
+                                continue;
+                            }
+                            // Check type from cached flags (default: creatures)
+                            let type_matches = if targets_any {
+                                true
+                            } else if targets_creature {
+                                target_card.is_creature()
+                            } else {
+                                // Default to creatures for GainControl
+                                target_card.is_creature()
+                            };
+                            if type_matches && is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::TapPermanent { target } if target.is_placeholder() => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
@@ -411,7 +434,8 @@ impl GameState {
                             | Effect::CopySpellAbility { .. }
                             | Effect::ImmediateTrigger { .. }
                             | Effect::ClearRemembered
-                            | Effect::UnlessCostWrapper { .. } => {
+                            | Effect::UnlessCostWrapper { .. }
+                            | Effect::GainControl { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -461,6 +485,7 @@ impl GameState {
                     // TargetRef::None case handled above
                 }
                 Effect::DestroyPermanent { .. }
+                | Effect::GainControl { .. }
                 | Effect::PumpCreature { .. }
                 | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
@@ -879,7 +904,8 @@ impl GameState {
                 | Effect::DestroyAll { .. }
                 | Effect::DamageAll { .. }
                 | Effect::LoseLife { .. }
-                | Effect::Earthbend { .. } => {
+                | Effect::Earthbend { .. }
+                | Effect::GainControl { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
@@ -1084,7 +1110,8 @@ impl GameState {
             | Effect::ForceSacrifice { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
-            | Effect::SetLife { .. } => true, // Filter-based / no-target effects
+            | Effect::SetLife { .. }
+            | Effect::GainControl { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
