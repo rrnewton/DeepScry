@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-07T21:24:54.598088193+00:00
+updated_at: 2026-03-07T22:00:42.732486542+00:00
 ---
 
 # Description
@@ -29,37 +29,31 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
 
-## Recent Fixes (2026-01-03_#1477)
+## Recent Completions
+
+**New Effect Types (2026-03-07_#1872(e04b78d)):**
+- ✅ ForceSacrifice (891 card usages) - Diabolic Edict, Barter in Blood
+- ✅ TapAll (64 card usages) - Sleep, Cryptic Command tap mode
+- ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
+- ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
+
+**Previous Effect Types (2026-03-07_#1869(4dbfd3b)):**
+- ✅ LoseLife (108 card usages) - Drain Life, Sign in Blood
+- ✅ DestroyAll (34 card usages) - Wrath of God, Day of Judgment
+- ✅ DamageAll (58 card usages) - Pyroclasm, Earthquake
+
+## Completed Work (older)
 
 **Affected$ Selector Expansion (2026-01-03_#1477):**
-- ✅ Card.Treasure+YouCtrl (Treasure tokens you control)
-- ✅ Card.YouCtrl+wasCast (Cards you control that were cast)
-- ✅ Card.Self+TopLibrary (Self on top of library)
-- ✅ Instant.COLOR+YouCtrl, Sorcery.COLOR+YouCtrl (color-based spell buffs)
-- ✅ Card.TopLibrary+YouCtrl+SUBTYPE (subtype on top of library)
-- Warning count: 792 → 772 (-20 warnings)
-
-**Affected$ Selector Expansion (2026-01-03_#1475):**
-- ✅ Dynamic Subtype.YouOwn parsing (Merfolk.YouOwn, Druid.YouOwn, etc.)
-- ✅ CardType.TopLibrary+YouCtrl patterns (Instant, Sorcery)
-- ✅ Permanent.Subtype+YouCtrl patterns (Servo, Thopter)
-- ✅ Card.EquippedBy+TYPE patterns (Human, Angel)
-- ✅ Artifact.nonCreature+YouCtrl, Artifact.Creature+YouCtrl+Other
-- Warning count: 854 → 792 (-62 warnings)
-
-**Avatar Set Mana Engine Fixes (2026-01-02):**
-- ✅ Ba Sing Se (non-basic land with Fixed mana production) now taps correctly for {G}
-- ✅ Foggy Swamp Vinebender no longer incorrectly marked as mana source
-- Avatar decks now play 200+ seeds without mana errors
-
-## Completed Work (2025-12-04_#1134)
+- ✅ Card.Treasure+YouCtrl, Card.YouCtrl+wasCast, Card.Self+TopLibrary
+- ✅ Instant.COLOR+YouCtrl, Sorcery.COLOR+YouCtrl
+- ✅ Dynamic Subtype.YouOwn parsing (Merfolk.YouOwn, etc.)
+- Warning count: 854 → 772
 
 **Variable P/T Parsing (2025-12-04_#1131(4cec306)):**
 - ✅ Accept AddPower$/AddToughness$ with X, Y, Z, -X, AffectedX
-- ✅ Accept Count$ expressions and named variables
-- ✅ Parse as 0 placeholder until SVar evaluation implemented
 
-Checked up-to-date as of 2026-01-03.
+Checked up-to-date as of 2026-03-07_#1872(e04b78d) - 869 tests passing
 
 # Notes
 
