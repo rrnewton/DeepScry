@@ -6,11 +6,10 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-07T22:24:20.626617532+00:00
+updated_at: 2026-03-07T23:23:00.724008349+00:00
 ---
 
 # Description
-
 
 Track completion of heuristic AI port from Java Forge to Rust.
 
@@ -129,3 +128,14 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ---
 **Checked up-to-date as of 2026-03-07_#1874 - 876+ tests passing**
+
+---- ✅ **Removal timing AI - use_removal_now() (2026-03-07_#1877(975720b))**
+  - Phase-aware timing: hold instant removal for combat/end step/Main phases
+  - Sorcery removal always fires immediately (limited windows)
+  - Two-for-one detection: enchanted targets trigger immediate removal
+  - High-value threshold (eval >= 200): remove dangerous creatures immediately
+  - Integrated into should_cast_spell() for destroy/damage effects
+  - target_has_auras() helper for aura attachment detection
+  - Reference: ComputerUtilCard.useRemovalNow() lines 1062-1278 in Java Forge
+  - 9 new tests with real 4ED cards (Terror, Lightning Bolt, Swords to Plowshares,
+    Serra Angel, Shivan Dragon, Grizzly Bears, Holy Strength)
