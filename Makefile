@@ -1,10 +1,10 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev wasm-dev-serve wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp build-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
-# PORT: web server port (use: make PORT=7999 wasm-dev-serve)
+# PORT: web server port (use: make PORT=7999 play-web-local-dev)
 PORT ?= 8080
 # SERVER_PORT: MTG game server port (use: make play-web SERVER_PORT=9999)
 SERVER_PORT ?= 17771
@@ -39,7 +39,9 @@ help:
 	@echo "  make play-web       - Play web GUI game vs AI (launches server + AI + web server)"
 	@echo "                        Override: DECK=decks/foo.dck CONTROLLER=random PORT=8080"
 	@echo "  make play-web-pvp   - Two-player PvP: two browser tabs connect to same server"
-	@echo "  make wasm-serve     - Build WASM and start local web server (no AI opponent)"
+	@echo "  make play-web-local - Build WASM (network) and start local web server (no AI)"
+	@echo "  make play-web-local-dev - Same as play-web-local but with dev build (fast)"
+	@echo "  make wasm-serve     - Build WASM (non-network) and start local web server"
 	@echo "  make wasm-test-fancy - Run Playwright e2e test with screenshots"
 	@echo ""
 
@@ -555,8 +557,8 @@ wasm-dev: wasm-export
 	@echo ""
 	@echo "=== WASM dev build complete! ==="
 
-# Quick dev build and serve
-wasm-dev-serve: wasm-dev
+# Quick dev build and serve (local-only, no network/AI opponent)
+play-web-local-dev: wasm-dev
 	@echo ""
 	@echo "=== Starting web server (dev build) ==="
 	@echo "Open http://localhost:$(PORT) in your browser"
@@ -578,8 +580,8 @@ wasm-network: wasm-export
 	@echo ""
 	@echo "=== WASM network build complete! ==="
 
-# Build WASM with network feature and start web server
-wasm-network-serve: wasm-network
+# Build WASM with network feature and start web server (no AI opponent)
+play-web-local: wasm-network
 	@echo ""
 	@echo "=== Starting web server (network build) ==="
 	@echo "Open http://localhost:$(PORT)/fancy.html in your browser"
