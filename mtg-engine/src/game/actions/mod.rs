@@ -2561,6 +2561,12 @@ impl GameState {
                             let token_name = token.name.to_string();
                             self.cards.insert(token_id, token);
 
+                            // NETWORK: Reveal token to all players so server sends
+                            // CardRevealed(TokenCreated). Without this, clients don't
+                            // know the token's identity (causes desync).
+                            let prior_log_size = self.logger.log_count();
+                            self.maybe_reveal_to_all(token_id, prior_log_size);
+
                             // Put token onto the battlefield
                             self.battlefield.add(token_id);
 
@@ -3195,6 +3201,12 @@ impl GameState {
                     // Add token to game
                     let token_name = token.name.to_string();
                     self.cards.insert(token_id, token);
+
+                    // NETWORK: Reveal token copy to all players so server sends
+                    // CardRevealed(TokenCreated). Without this, clients don't
+                    // know the token's identity (causes desync).
+                    let prior_log_size = self.logger.log_count();
+                    self.maybe_reveal_to_all(token_id, prior_log_size);
 
                     // Put token onto battlefield
                     self.battlefield.add(token_id);
