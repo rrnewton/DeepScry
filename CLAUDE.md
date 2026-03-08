@@ -4,6 +4,7 @@ MTG Forge-rs: Devolpement Guidelines
 
 This document contains the development guidelines and instructions for the project. This guide OVERRIDES any default behaviors and MUST be followed exactly.
 
+**CRITICAL**: DRY: do not duplicate code. Always test changes and present evidence.
 NEVER run `git clean -fxd` in this repo or any submodule, that would destroy valuable container configuration.
 
 Read the PROJECT_VISION.md document.
@@ -150,8 +151,7 @@ file a new duplicate issue with `bd create`.
 
 We often record transient information, like benchmark results, that quickly gets out of date. We want to label such information so we can tell how old it is. In addition to YYYY-MM-DD, our convention is to use:
   `git rev-list --count HEAD`
-which prints out the number of commits in the repo (or equivalently the ./gitdepth.sh script), and then format the timestamp as `YYYY-MM-DD_#DEPTH(387498cecf)` e.g. `2025-10-22_#161(387498cecf)`. That's our full timestamp
-for any transient information that derives from a specific commit.
+which prints out the number of commits in the repo (or equivalently the ./scripts/gitdepth.sh script), and then format the timestamp as `YYYY-MM-DD_#DEPTH(387498cecf)` e.g. `2025-10-22_#161(387498cecf)`. That's our full timestamp for any transient information that derives from a specific commit.
 Sometimes this requires us to split our commits into (1) functionality and then (2) documentation-update.
 
 #### Reference issues in code TODO
@@ -250,5 +250,4 @@ Except for purely internal fixes that don't directly affect MTG gameplay, in eve
 Runnable commands included in the message should refer to actual `.dck` files in the repository so that the user can indeed reproduce them and see the logs cited.
 
 See the file `docs/HOWTO_AGENTPLAY+REPRODUCERS.md` for instructions on playing the game as an agent to observe engine behaviors without writing new code.
-
 

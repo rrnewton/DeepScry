@@ -21,7 +21,7 @@ use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, Verbosit
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
 use crate::loader::CardDefinition;
 use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
-use ratzilla::ratatui::Terminal;
+use ratzilla::ratatui::{Frame, Terminal};
 use ratzilla::{DomBackend, WebRenderer};
 
 /// RatZilla uses these magic numbers for pixel-to-cell conversion
@@ -1793,6 +1793,285 @@ impl WasmFancyTuiState {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SHARED TUI SETUP HELPERS
+// Used by both launch_fancy_tui() and launch_network_game() to avoid duplication
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Check if auto-run should advance the game this frame.
+///
+/// Unified logic for both local and network modes:
+/// - Must be in auto_run mode and game not over
+/// - If a human controller is present, don't run when waiting for human input
+///   (pending_context is set). AI-only games run freely.
+fn should_auto_run(state: &WasmFancyTuiState) -> bool {
+    if !state.auto_run || state.game_over {
+        return false;
+    }
+    let has_human =
+        state.p1_controller_type == WasmControllerType::Human || state.p2_controller_type == WasmControllerType::Human;
+    // Don't auto-run when waiting for human input
+    !(has_human && state.pending_context.is_some())
+}
+
+/// Process a keyboard event on the TUI state.
+///
+/// Converts RatZilla KeyCode to KeyInput and dispatches through the shared
+/// event handler. Handles WASM-specific keys (auto-run toggle, card images,
+/// controls panel) and human choice navigation.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
+    let key_input = match code {
+        KeyCode::Char(' ') => Some(KeyInput::Space),
+        KeyCode::Char('a' | 'A') => {
+            state.auto_run = !state.auto_run;
+            state.needs_redraw = true;
+            return;
+        }
+        KeyCode::Char('i') => {
+            let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
+            return;
+        }
+        KeyCode::Char('q' | 'Q') => Some(KeyInput::Pass),
+        KeyCode::Esc => Some(KeyInput::Escape),
+        KeyCode::Char('h' | 'H') => Some(KeyInput::FocusHand),
+        KeyCode::Char('I') => Some(KeyInput::FocusInfo),
+        KeyCode::Char('y' | 'Y') => Some(KeyInput::FocusYourBf),
+        KeyCode::Char('o' | 'O') => Some(KeyInput::FocusOpponentBf),
+        KeyCode::Char('s' | 'S') => Some(KeyInput::FocusStack),
+        KeyCode::Char('b' | 'B') => Some(KeyInput::ShowBattlefield),
+        KeyCode::Char('c' | 'C') => {
+            let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
+            return;
+        }
+        KeyCode::Char('?') => Some(KeyInput::Help),
+        KeyCode::Char('w' | 'W') => Some(KeyInput::ToggleWrap),
+        KeyCode::Tab => Some(KeyInput::Tab),
+        KeyCode::Up => Some(KeyInput::Up),
+        KeyCode::Down => Some(KeyInput::Down),
+        KeyCode::Left => Some(KeyInput::Left),
+        KeyCode::Right => Some(KeyInput::Right),
+        KeyCode::PageUp => Some(KeyInput::PageUp),
+        KeyCode::PageDown => Some(KeyInput::PageDown),
+        KeyCode::Home => Some(KeyInput::Home),
+        KeyCode::End => Some(KeyInput::End),
+        KeyCode::Enter => Some(KeyInput::Enter),
+        KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
+        _ => None,
+    };
+
+    let Some(key) = key_input else { return };
+
+    // Handle human player choice navigation when a choice is pending
+    if state.pending_context.is_some() {
+        match key {
+            KeyInput::Up => {
+                state.select_previous_choice();
+                return;
+            }
+            KeyInput::Down => {
+                state.select_next_choice();
+                return;
+            }
+            KeyInput::Enter | KeyInput::Space => {
+                state.select_current_choice();
+                state.needs_redraw = true;
+                return;
+            }
+            KeyInput::Digit(n) => {
+                // 1-based selection: press '1' for first choice, '0' for 10th
+                let idx = if n == 0 { 9 } else { (n - 1) as usize };
+                if idx < state.current_choices.len() {
+                    state.selected_choice_idx = idx;
+                    state.update_choice_highlights();
+                    state.select_current_choice();
+                    state.needs_redraw = true;
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Dispatch through the shared event handler
+    let num_choices = state.current_choices.len();
+    let WasmFancyTuiState {
+        ref game,
+        ref mut renderer,
+        ..
+    } = *state;
+
+    let view = GameStateView::new(game, renderer.player_id);
+    let result = handle_key_event(&mut renderer.state, key, &view, num_choices);
+
+    match result {
+        EventResult::Handled => {
+            state.needs_redraw = true;
+        }
+        EventResult::NotHandled => {
+            if matches!(key, KeyInput::Space) {
+                state.run_until_choice();
+                state.needs_redraw = true;
+            }
+        }
+        EventResult::Pass | EventResult::Exit => {
+            let _ = js_sys::eval("window.showExitConfirmation && window.showExitConfirmation()");
+        }
+        EventResult::SelectChoice(idx) => {
+            if idx < state.current_choices.len() {
+                state.selected_choice_idx = idx;
+                state.update_choice_highlights();
+                state.select_current_choice();
+                state.needs_redraw = true;
+            }
+        }
+        EventResult::ShowBattlefield => {
+            let WasmFancyTuiState {
+                ref game, ref renderer, ..
+            } = *state;
+            let view = GameStateView::new(game, renderer.player_id);
+            let bf_text = crate::game::display::format_battlefield_for_log(&view);
+            log::info!("{}", bf_text);
+        }
+        EventResult::ShowHelp => {
+            let _ = js_sys::eval("window.showHelpDialog && window.showHelpDialog()");
+        }
+        _ => {}
+    }
+}
+
+/// Process a mouse click event on the TUI state.
+///
+/// Converts pixel coordinates to terminal cell coordinates and dispatches
+/// to the shared handle_mouse_click() function.
+fn process_mouse_event(state: &mut WasmFancyTuiState, x: u32, y: u32) {
+    let cell_x = (x / CELL_WIDTH_PX) as u16;
+    let cell_y = (y / CELL_HEIGHT_PX) as u16;
+
+    let WasmFancyTuiState {
+        ref game,
+        ref mut renderer,
+        ..
+    } = *state;
+
+    let view = GameStateView::new(game, renderer.player_id);
+    handle_mouse_click(&mut renderer.state, cell_x, cell_y, &view);
+    state.needs_redraw = true;
+}
+
+/// Draw the TUI frame using the shared renderer.
+///
+/// Called from within the render callback. Always draws the full frame
+/// (RatZilla uses immediate-mode rendering where each frame must be populated).
+fn draw_tui_frame(f: &mut Frame, state: &mut WasmFancyTuiState) {
+    let WasmFancyTuiState {
+        ref game,
+        ref mut renderer,
+        ref current_prompt,
+        ref current_choices,
+        ..
+    } = *state;
+
+    let player_id = renderer.player_id;
+    let view = GameStateView::new(game, player_id);
+    let prompt = current_prompt.as_deref();
+    let choices: Vec<(String, bool)> = current_choices.clone();
+    renderer.draw_ui(f, &view, prompt, &choices);
+}
+
+/// Run post-render JavaScript callbacks when state has changed.
+///
+/// Updates turn info in the header, exports card positions for image overlays,
+/// and notifies JavaScript that rendering is complete via onRenderComplete().
+fn run_post_render_js_callbacks(state: &mut WasmFancyTuiState) {
+    if !state.needs_redraw {
+        return;
+    }
+    state.needs_redraw = false;
+
+    let turn_number = state.game.turn.turn_number;
+    let game_over = state.game_over;
+    let _ = js_sys::eval(&format!(
+        "window.updateTurnInfo && window.updateTurnInfo({}, {})",
+        turn_number, game_over
+    ));
+
+    let player_id = state.renderer.player_id;
+    let positions_json =
+        export_card_positions_from_renderer(&state.renderer.state.entity_positions, &state.game, player_id);
+
+    let selected_card_json = if let Some(card_id) = state.renderer.state.selected_card_id {
+        if let Ok(card) = state.game.cards.get(card_id) {
+            let escaped_name = card.name.as_str().replace('\"', "\\\"");
+            if let Some(pane_area) = state.renderer.state.card_details_pane_area {
+                format!(
+                    r#"{{"card_id": {}, "name": "{}", "pane": {{"x": {}, "y": {}, "width": {}, "height": {}}}}}"#,
+                    card_id.as_u32(),
+                    escaped_name,
+                    pane_area.x,
+                    pane_area.y,
+                    pane_area.width,
+                    pane_area.height
+                )
+            } else {
+                format!(r#"{{"card_id": {}, "name": "{}"}}"#, card_id.as_u32(), escaped_name)
+            }
+        } else {
+            "null".to_string()
+        }
+    } else {
+        "null".to_string()
+    };
+
+    let js_code = format!(
+        "window.onRenderComplete && window.onRenderComplete({}, {})",
+        positions_json, selected_card_json
+    );
+    let _ = js_sys::eval(&js_code);
+}
+
+/// Set up the terminal with event handlers and render callback.
+///
+/// Shared terminal setup for both local and network modes:
+/// 1. Installs keyboard event handler (key navigation, shortcuts)
+/// 2. Installs mouse event handler (click-to-select cards)
+/// 3. Stores state in thread-local for button callbacks
+/// 4. Starts the render loop with auto-run + draw + JS callbacks
+fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<WasmFancyTuiState>>) {
+    terminal.on_key_event({
+        let state = Rc::clone(&state);
+        move |key_event| {
+            process_key_event(&mut state.borrow_mut(), key_event.code);
+        }
+    });
+
+    terminal.on_mouse_event({
+        let state = Rc::clone(&state);
+        move |mouse_event| {
+            if mouse_event.button != MouseButton::Left || mouse_event.event != MouseEventKind::Pressed {
+                return;
+            }
+            process_mouse_event(&mut state.borrow_mut(), mouse_event.x, mouse_event.y);
+        }
+    });
+
+    GLOBAL_TUI_STATE.with(|s| {
+        *s.borrow_mut() = Some(Rc::clone(&state));
+    });
+
+    terminal.draw_web({
+        move |f| {
+            let mut state = state.borrow_mut();
+            if should_auto_run(&state) {
+                state.run_until_choice();
+                state.needs_redraw = true;
+            }
+            draw_tui_frame(f, &mut state);
+            run_post_render_js_callbacks(&mut state);
+        }
+    });
+}
+
 /// Launch the WASM fancy TUI in the browser
 ///
 /// This function creates and runs the RatZilla-based TUI application.
@@ -1809,7 +2088,6 @@ impl WasmFancyTuiState {
 /// Panics if mutex locks are poisoned or internal channel operations fail.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::wildcard_enum_match_arm)]
 pub fn launch_fancy_tui(
     card_db: &WasmCardDatabase,
     p1_deck_name: &str,
@@ -1840,280 +2118,7 @@ pub fn launch_fancy_tui(
     let terminal =
         Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
 
-    // Set up keyboard event handling using shared event handler
-    terminal.on_key_event({
-        let state = Rc::clone(&state);
-        move |key_event| {
-            let mut state = state.borrow_mut();
-
-            // Convert RatZilla KeyCode to our abstract KeyInput
-            let key_input = match key_event.code {
-                KeyCode::Char(' ') => Some(KeyInput::Space),
-                KeyCode::Char('a' | 'A') => {
-                    // A: toggle auto-run (WASM-specific, not shared)
-                    state.auto_run = !state.auto_run;
-                    state.needs_redraw = true; // UI state changed, need redraw
-                    return;
-                }
-                KeyCode::Char('i') => {
-                    // lowercase 'i': toggle card images (WASM-specific, not shared)
-                    let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
-                    return;
-                }
-                KeyCode::Char('q' | 'Q') => Some(KeyInput::Pass),
-                KeyCode::Esc => Some(KeyInput::Escape),
-                KeyCode::Char('h' | 'H') => Some(KeyInput::FocusHand),
-                KeyCode::Char('I') => Some(KeyInput::FocusInfo), // uppercase I for Info pane
-                KeyCode::Char('y' | 'Y') => Some(KeyInput::FocusYourBf),
-                KeyCode::Char('o' | 'O') => Some(KeyInput::FocusOpponentBf),
-                KeyCode::Char('s' | 'S') => Some(KeyInput::FocusStack),
-                KeyCode::Char('b' | 'B') => Some(KeyInput::ShowBattlefield),
-                KeyCode::Char('c' | 'C') => {
-                    // C: toggle controls panel visibility (WASM-specific)
-                    let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
-                    return;
-                }
-                KeyCode::Char('?') => Some(KeyInput::Help),
-                KeyCode::Char('w' | 'W') => Some(KeyInput::ToggleWrap),
-                KeyCode::Tab => Some(KeyInput::Tab),
-                KeyCode::Up => Some(KeyInput::Up),
-                KeyCode::Down => Some(KeyInput::Down),
-                KeyCode::Left => Some(KeyInput::Left),
-                KeyCode::Right => Some(KeyInput::Right),
-                KeyCode::PageUp => Some(KeyInput::PageUp),
-                KeyCode::PageDown => Some(KeyInput::PageDown),
-                KeyCode::Home => Some(KeyInput::Home),
-                KeyCode::End => Some(KeyInput::End),
-                KeyCode::Enter => Some(KeyInput::Enter),
-                KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
-                _ => None,
-            };
-
-            if let Some(key) = key_input {
-                // Handle human player input for choice selection
-                let has_pending_choice = state.pending_context.is_some();
-
-                if has_pending_choice {
-                    // Human player making a choice - handle navigation and selection
-                    match key {
-                        KeyInput::Up => {
-                            state.select_previous_choice();
-                            // needs_redraw already set by select_previous_choice()
-                            return;
-                        }
-                        KeyInput::Down => {
-                            state.select_next_choice();
-                            // needs_redraw already set by select_next_choice()
-                            return;
-                        }
-                        KeyInput::Enter | KeyInput::Space => {
-                            state.select_current_choice();
-                            state.needs_redraw = true; // State changed, need redraw
-                            return;
-                        }
-                        KeyInput::Digit(n) => {
-                            // Direct number selection (1-9 for choices 0-8)
-                            let idx = if n == 0 { 9 } else { (n - 1) as usize };
-                            if idx < state.current_choices.len() {
-                                state.selected_choice_idx = idx;
-                                state.update_choice_highlights();
-                                state.select_current_choice();
-                                state.needs_redraw = true; // State changed, need redraw
-                            }
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Get values we need before creating the view
-                let num_choices = state.current_choices.len();
-
-                // Use shared event handler
-                // Split borrows: we need &game and &mut renderer.state
-                let WasmFancyTuiState {
-                    ref game,
-                    ref mut renderer,
-                    ..
-                } = *state;
-
-                let view = GameStateView::new(game, renderer.player_id);
-                let result = handle_key_event(&mut renderer.state, key, &view, num_choices);
-                // view borrow ends here when we're done with it
-
-                match result {
-                    EventResult::Handled => {
-                        // State was updated, will redraw on next frame
-                        state.needs_redraw = true; // Renderer state changed, need redraw
-                    }
-                    EventResult::NotHandled => {
-                        // For Space key (not handled by shared handler), run game
-                        if matches!(key, KeyInput::Space) {
-                            state.run_until_choice();
-                            state.needs_redraw = true; // State changed, need redraw
-                        }
-                    }
-                    EventResult::Pass | EventResult::Exit => {
-                        // Show exit confirmation dialog
-                        let _ = js_sys::eval("window.showExitConfirmation && window.showExitConfirmation()");
-                    }
-                    EventResult::SelectChoice(idx) => {
-                        // Choice selection from hand click - set selection and confirm
-                        if idx < state.current_choices.len() {
-                            state.selected_choice_idx = idx;
-                            state.update_choice_highlights();
-                            state.select_current_choice();
-                            state.needs_redraw = true; // State changed, need redraw
-                        }
-                    }
-                    EventResult::ShowBattlefield => {
-                        // Log battlefield state to console
-                        // Create a fresh view since we dropped the previous one
-                        let WasmFancyTuiState {
-                            ref game, ref renderer, ..
-                        } = *state;
-                        let view = GameStateView::new(game, renderer.player_id);
-                        let bf_text = crate::game::display::format_battlefield_for_log(&view);
-                        log::info!("{}", bf_text);
-                    }
-                    EventResult::ShowHelp => {
-                        // Show help dialog
-                        let _ = js_sys::eval("window.showHelpDialog && window.showHelpDialog()");
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
-
-    // Set up mouse event handling
-    // Note: RatZilla doesn't support scroll wheel events, so only handle clicks
-    terminal.on_mouse_event({
-        let state = Rc::clone(&state);
-        move |mouse_event| {
-            // Only handle left mouse button press
-            if mouse_event.button != MouseButton::Left || mouse_event.event != MouseEventKind::Pressed {
-                return;
-            }
-
-            let mut state = state.borrow_mut();
-
-            // Convert pixel coordinates to terminal cell coordinates
-            // RatZilla uses window.innerWidth / 10 for cols and innerHeight / 20 for rows
-            let cell_x = (mouse_event.x / CELL_WIDTH_PX) as u16;
-            let cell_y = (mouse_event.y / CELL_HEIGHT_PX) as u16;
-
-            // Split borrows for mouse click handling
-            let WasmFancyTuiState {
-                ref game,
-                ref mut renderer,
-                ..
-            } = *state;
-
-            let view = GameStateView::new(game, renderer.player_id);
-            handle_mouse_click(&mut renderer.state, cell_x, cell_y, &view);
-            // State was updated, will redraw on next frame
-            state.needs_redraw = true; // State changed, need redraw
-        }
-    });
-
-    // Store state in global for button callbacks
-    GLOBAL_TUI_STATE.with(|s| {
-        *s.borrow_mut() = Some(Rc::clone(&state));
-    });
-
-    // Set up the render callback
-    terminal.draw_web({
-        let state = state;
-        move |f| {
-            let mut state = state.borrow_mut();
-
-            // Auto-run: advance game per frame if enabled (only for AI vs AI)
-            // Don't auto-run if there's a pending choice (waiting for human)
-            if state.auto_run && !state.game_over && state.pending_context.is_none() {
-                state.run_until_choice();
-                state.needs_redraw = true; // Game state changed, need redraw
-            }
-
-            // Split borrows to avoid conflict: we need &game and &mut renderer
-            let WasmFancyTuiState {
-                ref game,
-                ref mut renderer,
-                ref current_prompt,
-                ref current_choices,
-                ref needs_redraw, // Borrow the dirty bit to check it
-                ..
-            } = *state;
-
-            let player_id = renderer.player_id;
-            let view = GameStateView::new(game, player_id);
-            let prompt = current_prompt.as_deref();
-            let choices: Vec<(String, bool)> = current_choices.clone();
-
-            // IMPORTANT: We must ALWAYS draw the frame, even when state hasn't changed!
-            // RatZilla/Ratatui uses immediate-mode rendering where each frame must be
-            // fully populated. If we skip drawing, the frame will be empty -> black screen.
-            renderer.draw_ui(f, &view, prompt, &choices);
-
-            // Optimization: Only run expensive JavaScript callbacks when state has changed
-            if *needs_redraw {
-                // Clear dirty bit - borrows end when we re-destructure below
-                state.needs_redraw = false;
-
-                // Re-borrow for JavaScript callbacks
-                let WasmFancyTuiState {
-                    ref game, ref renderer, ..
-                } = *state;
-
-                // Update the turn info in the header
-                let turn_number = game.turn.turn_number;
-                let game_over = state.game_over;
-                let _ = js_sys::eval(&format!(
-                    "window.updateTurnInfo && window.updateTurnInfo({}, {})",
-                    turn_number, game_over
-                ));
-
-                // Export card positions for image overlays
-                let positions_json =
-                    export_card_positions_from_renderer(&renderer.state.entity_positions, game, player_id);
-
-                // Export selected card info for Card Details image overlay
-                // Include the pane position so JavaScript can properly position the image
-                let selected_card_json = if let Some(card_id) = renderer.state.selected_card_id {
-                    if let Ok(card) = game.cards.get(card_id) {
-                        // Escape quotes in card name for JSON
-                        let escaped_name = card.name.as_str().replace('\"', "\\\"");
-                        // Include pane area if available
-                        if let Some(pane_area) = renderer.state.card_details_pane_area {
-                            format!(
-                                r#"{{"card_id": {}, "name": "{}", "pane": {{"x": {}, "y": {}, "width": {}, "height": {}}}}}"#,
-                                card_id.as_u32(),
-                                escaped_name,
-                                pane_area.x,
-                                pane_area.y,
-                                pane_area.width,
-                                pane_area.height
-                            )
-                        } else {
-                            format!(r#"{{"card_id": {}, "name": "{}"}}"#, card_id.as_u32(), escaped_name)
-                        }
-                    } else {
-                        "null".to_string()
-                    }
-                } else {
-                    "null".to_string()
-                };
-
-                // Post-render hook: notify JavaScript that rendering is complete
-                // Pass the card positions and selected card so JavaScript doesn't need to call back into WASM
-                let js_code = format!(
-                    "window.onRenderComplete && window.onRenderComplete({}, {})",
-                    positions_json, selected_card_json
-                );
-                let _ = js_sys::eval(&js_code);
-            }
-        }
-    });
+    setup_terminal_and_render(terminal, state);
 
     Ok(())
 }
@@ -2306,176 +2311,7 @@ pub fn launch_network_game(
     let terminal =
         Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
 
-    // Set up keyboard event handling (same as launch_fancy_tui)
-    terminal.on_key_event({
-        let state = state.clone();
-        move |key_event| {
-            let mut state = state.borrow_mut();
-
-            // Convert RatZilla KeyCode to our abstract KeyInput
-            let key_input = match key_event.code {
-                KeyCode::Char(' ') => Some(KeyInput::Space),
-                KeyCode::Char('a') | KeyCode::Char('A') => {
-                    state.auto_run = !state.auto_run;
-                    state.needs_redraw = true;
-                    return;
-                }
-                KeyCode::Char('i') => {
-                    let _ = js_sys::eval("window.toggleCardImages && window.toggleCardImages()");
-                    return;
-                }
-                KeyCode::Char('q') | KeyCode::Char('Q') => Some(KeyInput::Pass),
-                KeyCode::Esc => Some(KeyInput::Escape),
-                KeyCode::Char('h') | KeyCode::Char('H') => Some(KeyInput::FocusHand),
-                KeyCode::Char('I') => Some(KeyInput::FocusInfo),
-                KeyCode::Char('y') | KeyCode::Char('Y') => Some(KeyInput::FocusYourBf),
-                KeyCode::Char('o') | KeyCode::Char('O') => Some(KeyInput::FocusOpponentBf),
-                KeyCode::Char('s') | KeyCode::Char('S') => Some(KeyInput::FocusStack),
-                KeyCode::Char('b') | KeyCode::Char('B') => Some(KeyInput::ShowBattlefield),
-                KeyCode::Char('c') | KeyCode::Char('C') => {
-                    let _ = js_sys::eval("document.getElementById('btn-toggle-controls')?.click()");
-                    return;
-                }
-                KeyCode::Char('?') => Some(KeyInput::Help),
-                KeyCode::Char('w') | KeyCode::Char('W') => Some(KeyInput::ToggleWrap),
-                KeyCode::Tab => Some(KeyInput::Tab),
-                KeyCode::Up => Some(KeyInput::Up),
-                KeyCode::Down => Some(KeyInput::Down),
-                KeyCode::Left => Some(KeyInput::Left),
-                KeyCode::Right => Some(KeyInput::Right),
-                KeyCode::PageUp => Some(KeyInput::PageUp),
-                KeyCode::PageDown => Some(KeyInput::PageDown),
-                KeyCode::Home => Some(KeyInput::Home),
-                KeyCode::End => Some(KeyInput::End),
-                KeyCode::Enter => Some(KeyInput::Enter),
-                KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
-                _ => None,
-            };
-
-            if let Some(key) = key_input {
-                // Handle input with the shared event handler
-                let has_pending_choice = state.pending_context.is_some();
-
-                if has_pending_choice {
-                    // Human player making a choice - handle navigation and selection
-                    match key {
-                        KeyInput::Up => {
-                            state.select_previous_choice();
-                            return;
-                        }
-                        KeyInput::Down => {
-                            state.select_next_choice();
-                            return;
-                        }
-                        KeyInput::Enter | KeyInput::Space => {
-                            state.select_current_choice();
-                            state.needs_redraw = true;
-                            return;
-                        }
-                        KeyInput::Digit(d) => {
-                            let idx = d as usize;
-                            if idx < state.current_choices.len() {
-                                state.selected_choice_idx = idx;
-                                state.update_choice_highlights();
-                                state.select_current_choice();
-                                state.needs_redraw = true;
-                            }
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-
-                let WasmFancyTuiState {
-                    ref game,
-                    ref mut renderer,
-                    ref current_choices,
-                    ..
-                } = *state;
-
-                let view = GameStateView::new(game, renderer.player_id);
-                let result = handle_key_event(&mut renderer.state, key, &view, current_choices.len());
-
-                // Process event result
-                match result {
-                    EventResult::Handled => {
-                        state.needs_redraw = true;
-                    }
-                    EventResult::NotHandled => {
-                        if matches!(key, KeyInput::Space) {
-                            state.run_until_choice();
-                            state.needs_redraw = true;
-                        }
-                    }
-                    EventResult::Pass | EventResult::Exit => {
-                        let _ = js_sys::eval("window.showExitConfirmation && window.showExitConfirmation()");
-                    }
-                    EventResult::SelectChoice(idx) => {
-                        if idx < state.current_choices.len() {
-                            state.selected_choice_idx = idx;
-                            state.update_choice_highlights();
-                            state.select_current_choice();
-                            state.needs_redraw = true;
-                        }
-                    }
-                    EventResult::ShowBattlefield => {
-                        let WasmFancyTuiState {
-                            ref game, ref renderer, ..
-                        } = *state;
-                        let view = GameStateView::new(game, renderer.player_id);
-                        let bf_text = crate::game::display::format_battlefield_for_log(&view);
-                        log::info!("{}", bf_text);
-                    }
-                    EventResult::ShowHelp => {
-                        let _ = js_sys::eval("window.showHelpDialog && window.showHelpDialog()");
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
-
-    // Store state in global
-    GLOBAL_TUI_STATE.with(|s| {
-        *s.borrow_mut() = Some(state.clone());
-    });
-
-    // Set up render callback (simplified version for network)
-    terminal.draw_web({
-        let state = state.clone();
-        move |f| {
-            let mut state = state.borrow_mut();
-
-            // For network AI mode, always run the game loop (even with pending_context)
-            // since "pending" just means waiting for server, not waiting for human input.
-            // The game loop handles waiting states correctly via NeedInput.
-            // For network HUMAN mode, stop when we have a pending_context (like local mode)
-            // to avoid spinning while waiting for the human to click a choice.
-            let has_human_controller = state.p1_controller_type == WasmControllerType::Human
-                || state.p2_controller_type == WasmControllerType::Human;
-            let should_run =
-                state.auto_run && !state.game_over && (!has_human_controller || state.pending_context.is_none());
-            if should_run {
-                state.run_until_choice();
-                state.needs_redraw = true;
-            }
-
-            let WasmFancyTuiState {
-                ref game,
-                ref mut renderer,
-                ref current_prompt,
-                ref current_choices,
-                ..
-            } = *state;
-
-            let player_id = renderer.player_id;
-            let view = GameStateView::new(game, player_id);
-            let prompt = current_prompt.as_deref();
-            let choices: Vec<(String, bool)> = current_choices.clone();
-
-            renderer.draw_ui(f, &view, prompt, &choices);
-        }
-    });
+    setup_terminal_and_render(terminal, state);
 
     log::info!("launch_network_game: Network TUI ready");
     Ok(())
