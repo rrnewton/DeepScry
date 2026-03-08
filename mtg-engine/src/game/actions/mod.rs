@@ -180,12 +180,7 @@ impl GameState {
             }
         }
 
-        // Reveal to all players before logging movement
-        // (playing a land reveals to all since battlefield is public)
-        let prior_log_size = self.logger.log_count();
-        self.maybe_reveal_to_all(card_id, prior_log_size);
-
-        // Move card to battlefield (move_card logs the MoveCard action)
+        // Move card to battlefield (move_card logs the MoveCard action + auto-reveals)
         self.move_card(card_id, Zone::Hand, Zone::Battlefield, player_id)?;
 
         // Record the turn number when this land entered the battlefield
@@ -263,12 +258,7 @@ impl GameState {
             .pay_from_total_mana(&mana_cost)
             .map_err(MtgError::InvalidAction)?;
 
-        // Reveal to all players before logging movement
-        // (casting a spell reveals to all since stack is public)
-        let prior_log_size = self.logger.log_count();
-        self.maybe_reveal_to_all(card_id, prior_log_size);
-
-        // Move card to stack (move_card logs the MoveCard action)
+        // Move card to stack (move_card logs the MoveCard action + auto-reveals)
         self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
 
         Ok(())
@@ -1164,12 +1154,7 @@ impl GameState {
             }
         }
 
-        // Reveal to all players before logging movement
-        // (casting a spell reveals to all since stack is public)
-        let prior_log_size = self.logger.log_count();
-        self.maybe_reveal_to_all(card_id, prior_log_size);
-
-        // Step 1: Propose the spell - move card to stack (move_card logs the MoveCard action)
+        // Step 1: Propose the spell - move card to stack (move_card auto-reveals + logs MoveCard)
         // This happens BEFORE paying costs (unlike our old implementation)
         self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
 
@@ -2949,11 +2934,12 @@ impl GameState {
                         self.apply_regeneration_shield(card_id)?;
                     } else {
                         let _ = self.check_death_triggers(card_id);
-                        if let Some(zones) = self.get_player_zones_mut(owner) {
-                            zones.graveyard.add(card_id);
-                        }
-                        self.battlefield.remove(card_id);
-                        let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                        let card_name = self
+                            .cards
+                            .get(card_id)
+                            .map(|c| c.name.to_string())
+                            .unwrap_or_else(|_| "Unknown".to_string());
+                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
                         self.logger
                             .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
                     }
@@ -3406,12 +3392,6 @@ impl GameState {
                         // For now, move all looked-at cards to destination (simplified)
                         // TODO(mtg-dig-choice): Implement player choice for partial moves
                         for card_id in card_ids {
-                            // NETWORK: Reveal card to digger BEFORE moving to hand
-                            // This logs RevealCard action which server sends as CardRevealed message
-                            // Without this, clients don't know the card identity (causes desync)
-                            let prior_log_size = self.logger.log_count();
-                            self.maybe_reveal_to_player(card_id, digger, prior_log_size);
-
                             // Get card name if available - in network mode, library cards
                             // may not be in the client's entity store until revealed
                             let card_name = self
@@ -3453,13 +3433,8 @@ impl GameState {
                             let card_ids: smallvec::SmallVec<[CardId; 4]> =
                                 library.cards.iter().take(take_count).copied().collect();
 
-                            // Now exile each card
+                            // Now exile each card (move_card auto-reveals Library→public zones)
                             for card_id in card_ids {
-                                // NETWORK: Reveal card to ALL players BEFORE moving
-                                // Exile is a public zone, so card identity is revealed
-                                let prior_log_size = self.logger.log_count();
-                                self.maybe_reveal_to_all(card_id, prior_log_size);
-
                                 // Get opponent name for logging
                                 let opponent_name = self.get_player(opponent_id)?.name.to_string();
 

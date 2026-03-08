@@ -4,8 +4,7 @@ status: blocked
 priority: 2
 issue_type: task
 created_at: 2026-01-08T15:59:50.778794868+00:00
-updated_at: 2026-01-08T22:30:31.481711838+00:00
-blocked_by: mtg-secqu
+updated_at: 2026-03-08T16:42:32.191815730+00:00
 ---
 
 # Description
@@ -35,31 +34,52 @@ The reveal infrastructure violates `docs/NETWORK_ARCHITECTURE.md`:
    - Current RevealCard doesn't track WHO should see the reveal
    - Need: P1, P2, or BOTH as target audience
 
-## Fix Required
+## Partial Fix (2026-03-08): Token/Copy reveals
 
-Implement proper reveal architecture per `docs/NETWORK_ARCHITECTURE.md`:
+CreateToken and CopyPermanent effects were missing `maybe_reveal_to_all()` calls.
+Without these, the server never sent `CardRevealed(TokenCreated)` messages to clients
+for newly created tokens. This caused the client to have extra cards (tokens it created
+locally during shadow simulation that the server didn't know about), leading to
+ability count mismatches and FATAL DESYNC.
 
-```
-1. GameLoop about to move card from hidden zone
-2. GameLoop logs: RevealCard { card_id, name, revealed_to }
-3. GameLoop logs: MoveCard { ... }
-4. Server reads RevealCard from log, sends CardRevealed to target clients
-5. Client receives CardRevealed, instantiates card
-6. Client receives ChoiceRequest (reveals already processed)
-```
+**Fixed in**: `actions/mod.rs` - Added `maybe_reveal_to_all()` after `cards.insert()` 
+for both CreateToken and CopyPermanent effects. This follows the same pattern used by
+the Dig effect (line 3294).
+
+## Centralized Auto-Reveal in move_card() (2026-03-08)
+
+Centralized reveal logic at the top of `move_card()` so callers no longer need to
+remember to call `maybe_reveal_to_all()` or `maybe_reveal_to_player()` manually.
+
+**Auto-reveal rules in move_card():**
+- Library/Hand → Battlefield/Stack/Graveyard/Exile/Command: `maybe_reveal_to_all()`
+- Library → Hand: `maybe_reveal_to_player(owner)`
+- All other transitions: no reveal needed
+
+**This fixes missing reveals in:**
+- `discard_card()` (Hand→Graveyard) - was missing reveal
+- `discard_to_hand_size()` via Balance (Hand→Graveyard) - was missing reveal
+- `SearchLibrary` effect (Library→destination) - was missing reveal
+- All future `move_card()` callers automatically get correct reveals
+
+**Also fixed:** DestroyAll effect was bypassing `move_card()` with direct
+`zones.graveyard.add()` + `battlefield.remove()`. Now uses `move_card()` properly.
+
+**Removed redundant explicit reveals from:**
+- `play_land()`, `cast_spell_simple()`, `propose_spell_for_priority()`
+- `mill_cards()`, Dig self/opponent cases
+
+Idempotent: existing code that called reveal before `move_card()` hits a no-op on the
+second (internal) call since `maybe_reveal_to_all()`/`maybe_reveal_to_player()` check
+the revealed_to_mask before logging.
+
+## Remaining Work
+
+The broader reveal architecture refactoring (points 1-4 in Root Cause above) still
+needs to be done:
+- ChoiceRequest bundling mechanism
+- Protocol's CardRevealed message format (no `revealed_to` field yet)
+- `draw_card()` has its own inline zone manipulation (doesn't use `move_card()`)
+- Token creation reveals (don't use `move_card()`)
 
 This is tracked in mtg-secqu "Reveal Architecture" section.
-
-## Reproducer
-
-```bash
-# Run multiple times - flaky test
-cargo test --features network --test network_e2e test_run_game_with_random_controllers -- --ignored
-```
-
-## Related
-
-- mtg-secqu: Network architecture compliance (blocks this)
-- mtg-to96y: Main networking tracking issue
-- mtg-qtqcr: Hidden information architecture
-- docs/NETWORK_ARCHITECTURE.md: Architecture principles

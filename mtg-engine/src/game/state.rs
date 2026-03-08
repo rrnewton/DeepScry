@@ -805,6 +805,29 @@ impl GameState {
     ///
     /// Returns an error if zone operations fail.
     pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
+        // NETWORK: Auto-reveal cards transitioning from hidden to public zones.
+        // This ensures the server logs RevealCard actions for all zone moves,
+        // preventing desync when clients don't know the card's identity.
+        // Idempotent: callers that already revealed before calling move_card()
+        // will hit the is_revealed check and skip (no duplicate log entries).
+        if !self.skip_reveals {
+            let prior_log_size = self.logger.log_count();
+            match (from, to) {
+                // Hidden → Public: reveal to all players
+                (
+                    Zone::Library | Zone::Hand,
+                    Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile | Zone::Command,
+                ) => {
+                    self.maybe_reveal_to_all(card_id, prior_log_size);
+                }
+                // Library → Hand: reveal to owner only (hand is private)
+                (Zone::Library, Zone::Hand) => {
+                    self.maybe_reveal_to_player(card_id, owner, prior_log_size);
+                }
+                _ => {} // Public→Public, Public→Hidden: no reveal needed
+            }
+        }
+
         // Debug log card movement
         if let Some(card) = self.cards.try_get(card_id) {
             log::debug!(target: "zone", "Moving card {} (id={}) from {:?} to {:?} (owner: player {})",
@@ -1183,13 +1206,7 @@ impl GameState {
             };
 
             if let Some(card_id) = card_id {
-                let prior_log_size = self.logger.log_count();
-
-                // Reveal to all players before logging movement
-                // (milling reveals to all since graveyard is public)
-                self.maybe_reveal_to_all(card_id, prior_log_size);
-
-                // Move the card from library to graveyard (move_card logs the MoveCard action)
+                // Move the card from library to graveyard (move_card auto-reveals + logs MoveCard)
                 self.move_card(
                     card_id,
                     crate::zones::Zone::Library,
