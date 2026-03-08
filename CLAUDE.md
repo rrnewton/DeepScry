@@ -213,8 +213,8 @@ You may push after validation and can check CI status with github MCP. Don't for
 
 **IMPORTANT: The `main` branch is protected.** Do NOT merge directly to main. We use a three-tier branch structure:
 - **main**: Stable branch - only receives merges from `integration` after CI passes
-- **integration**: Staging branch - receives merges from feature branches with green CI
-- **Feature branches**: Active development (e.g., `avatar4`, `network2`)
+- **integration**: Staging branch - receives merges from feature branches with green CI, or direct commits when working on integration branch.
+- **Feature branches**: Active development on specific features (e.g., `avatar4`, `network2`)
 
 To get changes into main, use the `ci-integration-monitor` agent (see `.claude/agents/ci-integration-monitor.md`) which handles:
 1. Checking CI status on feature branches
