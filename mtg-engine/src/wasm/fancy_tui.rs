@@ -1085,7 +1085,7 @@ impl WasmFancyTuiState {
             self.p2_controller_type
         };
 
-        log::info!(
+        log::debug!(
             "run_network_mode: server assigned us {:?}, we_are_p1={}, opponent_id={:?}, our_controller={:?}",
             our_player_id,
             we_are_p1,
@@ -1169,7 +1169,7 @@ impl WasmFancyTuiState {
 
             let turn_before = self.game.turn.turn_number;
             let undo_len_before_rewind = self.game.undo_log.len();
-            log::info!(target: "wasm_tui", "NETWORK REPLAY: Starting on turn {}, undo_log={}", turn_before, undo_len_before_rewind);
+            log::debug!(target: "wasm_tui", "NETWORK REPLAY: Starting on turn {}, undo_log={}", turn_before, undo_len_before_rewind);
 
             // Take the new pending choice from the stored human controller
             // IMPORTANT: Don't add this to replay_choices! It needs to go through
@@ -1190,7 +1190,7 @@ impl WasmFancyTuiState {
             // Unlike local mode where the AI can re-compute its choices, the remote
             // opponent's choices must be replayed from the saved log.
             let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
-            log::info!(
+            log::debug!(
                 target: "wasm_tui",
                 "NETWORK REPLAY: After rewind - turn {}, undo_log={}, {} our choices + {} opponent choices to replay",
                 self.game.turn.turn_number, self.game.undo_log.len(), our_choices.len(), opponent_choices.len()
@@ -1253,7 +1253,7 @@ impl WasmFancyTuiState {
             };
 
             let turn_after_run = self.game.turn.turn_number;
-            log::info!(
+            log::debug!(
                 target: "wasm_tui",
                 "NETWORK REPLAY: Game loop returned on turn {}, undo_log={}, result={}",
                 turn_after_run,
@@ -1282,7 +1282,7 @@ impl WasmFancyTuiState {
             self.needs_redraw = true;
         } else {
             // Normal run - no replay needed
-            log::info!(
+            log::debug!(
                 target: "wasm_tui",
                 "NETWORK NORMAL: Running game loop, turn {}, we_are_p1={}, undo_log={}",
                 self.game.turn.turn_number,
@@ -1330,7 +1330,7 @@ impl WasmFancyTuiState {
                 };
 
                 let turn_number = self.game.turn.turn_number;
-                log::info!(
+                log::debug!(
                     target: "wasm_tui",
                     "NETWORK NORMAL: Game loop returned on turn {}, undo_log={}, result={}",
                     turn_number,
@@ -1466,9 +1466,11 @@ impl WasmFancyTuiState {
                                 self.game.turn.turn_number,
                                 self.game.undo_log.len()
                             );
-                            // Don't set pending_context - tui_run_turn() will re-trigger
-                            // when the ChoiceRequest arrives via onMessageProcessed
-                            self.pending_context = None;
+                            // Set pending_context to block should_auto_run() from re-triggering
+                            // run_until_choice() every render frame (which causes duplicate log
+                            // messages). tui_run_turn() will bypass this when the ChoiceRequest
+                            // arrives via onMessageProcessed.
+                            self.pending_context = Some(context);
                             self.current_prompt = Some("Waiting for server...".to_string());
                             self.current_choices.clear();
                             return;
@@ -1500,7 +1502,7 @@ impl WasmFancyTuiState {
                     ChoiceContext::SacrificePermanents { .. } => "SacrificePermanents".to_string(),
                     ChoiceContext::Modes { mode_count, .. } => format!("Modes({})", mode_count),
                 };
-                log::info!(
+                log::debug!(
                     target: "wasm_tui",
                     "Turn {}, {}, P1's turn: {}, choices: {}, context: {}",
                     turn, phase, is_p1_turn, choice_count, context_type

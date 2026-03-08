@@ -272,7 +272,7 @@ impl NetworkController {
         // Pass requesting player ID to include their hand's CardIds for desync detection.
         let debug_info = if self.network_debug {
             // Dump the last 30 actions at each choice point for sync debugging
-            log::info!(
+            log::trace!(
                 "SERVER_ACTION_DUMP: {:?} choice_seq={} action_count={}\n{}",
                 self.player_id,
                 self.choice_seq + 1,

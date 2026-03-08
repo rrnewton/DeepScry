@@ -1812,13 +1812,6 @@ impl<'a> GameLoop<'a> {
                                             "[TYPECYCLING] Entered typecycling branch for land_type={:?}",
                                             land_type
                                         );
-                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                            self.game.logger.normal(&format!(
-                                                "[TYPECYCLING-DEBUG] Searching library for {} (filter: Land.{})",
-                                                land_type.as_str(),
-                                                land_type.as_str()
-                                            ));
-                                        }
 
                                         // Build search filter for matching land type
                                         let filter = format!("Land.{}", land_type.as_str());

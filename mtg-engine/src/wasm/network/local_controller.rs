@@ -97,7 +97,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 );
                 None
             } else {
-                log::info!(
+                log::debug!(
                     "WasmNetworkLocalController: ChoiceRequest seq={} ready (last_submitted={:?})",
                     req.choice_seq,
                     last_submitted
@@ -200,7 +200,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
             // Debug: log each field used in compute_view_hash so we can compare with server
             use crate::core::PlayerId;
             let local_action_count = view.action_count() as u64;
-            log::info!(
+            log::trace!(
                 "WASM_HASH_DEBUG: turn={} active={} step_hash_u32={} action_count={} (local={}) | P0: life={} hand={} lib={} gyard={} | P1: life={} hand={} lib={} gyard={} | bf={} stack={} | hash={:016x}",
                 view.turn_number(),
                 view.active_player().as_u32(),
@@ -229,7 +229,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                     view.format_last_n_actions(15),
                 );
             } else {
-                log::info!("WASM_ACTION_DUMP: last 30 actions:\n{}", view.format_last_n_actions(30),);
+                log::trace!("WASM_ACTION_DUMP: last 30 actions:\n{}", view.format_last_n_actions(30),);
             }
             Some(hash)
         } else {
@@ -263,7 +263,7 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         // the game state would already be past those points.
         if available.is_empty() {
             if self.check_choice_request_ready().is_some() {
-                log::info!(
+                log::debug!(
                     "WasmNetworkLocalController: Auto-pass with 0 abilities (ChoiceRequest ready, submitting immediately)"
                 );
                 self.submit_choice_to_server(vec![0], view);

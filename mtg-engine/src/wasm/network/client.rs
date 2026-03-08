@@ -490,7 +490,7 @@ impl WasmNetworkClient {
                 abilities,
                 ..
             } => {
-                log::info!(
+                log::debug!(
                     "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={} abilities={}",
                     choice_seq,
                     choice_type,
@@ -516,7 +516,7 @@ impl WasmNetworkClient {
                 library_search_result,
                 ..
             } => {
-                log::info!(
+                log::debug!(
                     "WasmNetworkClient: OpponentChoice seq={} indices={:?} action_count={} desc={}",
                     choice_seq,
                     choice_indices,
@@ -534,7 +534,7 @@ impl WasmNetworkClient {
             }
 
             ServerMessage::ChoiceAccepted { choice_seq, .. } => {
-                log::info!("WasmNetworkClient: ChoiceAccepted seq={}", choice_seq);
+                log::debug!("WasmNetworkClient: ChoiceAccepted seq={}", choice_seq);
                 self.choice_acknowledged = true;
             }
 
