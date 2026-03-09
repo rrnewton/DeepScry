@@ -105,6 +105,12 @@ pub enum ApiType {
     ///   AddKWs$ - keywords to grant (e.g., "Haste")
     GainControl,
 
+    // === Combat ===
+    /// Fight - two creatures deal damage equal to their power to each other (CR 701.12)
+    ///   Defined$ - the creature that initiates the fight (Self, ParentTarget, etc.)
+    ///   ValidTgts$ - target creature to fight against
+    Fight,
+
     // === Tap/Untap ===
     Tap,
     TapAll,
@@ -268,6 +274,9 @@ impl ApiType {
             // Control
             "GainControl" => Self::GainControl,
 
+            // Combat
+            "Fight" => Self::Fight,
+
             // Tap/Untap
             "Tap" => Self::Tap,
             "TapAll" => Self::TapAll,
@@ -373,6 +382,7 @@ impl ApiType {
             Self::Exile => "Exile",
             Self::ExileAll => "ExileAll",
             Self::GainControl => "GainControl",
+            Self::Fight => "Fight",
             Self::Tap => "Tap",
             Self::TapAll => "TapAll",
             Self::TapOrUntap => "TapOrUntap",

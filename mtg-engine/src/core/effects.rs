@@ -533,6 +533,16 @@ pub enum Effect {
         until_eot: bool,
     },
 
+    /// Fight - two creatures deal damage equal to their power to each other (CR 701.12)
+    /// Example: "Target creature you control fights target creature you don't control"
+    /// Reference: Java Forge AB$ Fight
+    Fight {
+        /// The creature that initiates the fight (typically "your" creature)
+        fighter: CardId,
+        /// The target creature to fight against (typically opponent's creature)
+        target: CardId,
+    },
+
     /// Tap a permanent
     /// Example: "Tap target creature"
     TapPermanent { target: CardId },
@@ -1069,6 +1079,7 @@ impl Effect {
             | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::GainControl { .. }
+            | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }

@@ -32,6 +32,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::TapAll { .. }
         | Effect::UntapAll { .. }
         | Effect::GainControl { .. }
+        | Effect::Fight { .. }
         | Effect::TapPermanent { .. }
         | Effect::UntapPermanent { .. }
         | Effect::PumpCreature { .. }
@@ -115,6 +116,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
             | Effect::GainControl { .. }
+            | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
             | Effect::PumpCreature { .. }
@@ -1535,6 +1537,65 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::Fight { fighter, target } if target.is_placeholder() => {
+                // Fight has two participants:
+                // - fighter: from Defined$ (Self = source card, ParentTarget = last_resolved_target)
+                // - target: from ValidTgts$ (chosen_targets)
+                let resolved_fighter = if fighter.is_placeholder() {
+                    // If fighter is also placeholder, use last_resolved_target (from ParentTarget/Targeted)
+                    // or fall back to the spell's source card
+                    last_resolved_target.unwrap_or(CardId::placeholder())
+                } else {
+                    *fighter
+                };
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::Fight {
+                        fighter: resolved_fighter,
+                        target: resolved_target,
+                    }
+                } else if !resolved_fighter.is_placeholder() {
+                    // SubAbility$ chained Fight (e.g., Prey Upon: SP$ Pump → DB$ Fight):
+                    // The fighter was resolved from the parent effect's target (last_resolved_target),
+                    // but no explicit target was chosen for the Fight itself because our casting
+                    // system currently picks targets from a single flat list.
+                    // Auto-select the best opponent creature as the fight target.
+                    // TODO(mtg-52): Implement per-effect target selection at cast time (CR 601.2c)
+                    let fighter_controller = self
+                        .cards
+                        .get(resolved_fighter)
+                        .map(|c| c.controller)
+                        .unwrap_or(card_owner);
+                    let mut best_target: Option<(CardId, i32)> = None;
+                    for &cid in &self.battlefield.cards {
+                        if let Ok(tc) = self.cards.get(cid) {
+                            if tc.is_creature()
+                                && tc.controller != fighter_controller
+                                && is_legal_target(tc, fighter_controller)
+                            {
+                                let power = i32::from(tc.base_power().unwrap_or(0)) + tc.power_bonus;
+                                if best_target.is_none_or(|(_, bp)| power > bp) {
+                                    best_target = Some((cid, power));
+                                }
+                            }
+                        }
+                    }
+                    if let Some((fight_target, _)) = best_target {
+                        *last_resolved_target = Some(fight_target);
+                        Effect::Fight {
+                            fighter: resolved_fighter,
+                            target: fight_target,
+                        }
+                    } else {
+                        log::debug!(target: "fight", "Fight fizzled: no valid opponent creature to fight");
+                        effect.clone()
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // Handle UntapPermanent with reuse_previous sentinel (from Defined$ Targeted)
             Effect::UntapPermanent { target } if target.is_reuse_previous() => {
                 // Reuse the target from the previous effect in the chain
@@ -2080,6 +2141,52 @@ impl GameState {
 
                 // TODO(mtg-77): Implement EOT control return for until_eot=true
                 // This requires end-of-turn delayed trigger infrastructure
+            }
+            Effect::Fight { fighter, target } => {
+                // CR 701.12: Fight - each creature deals damage equal to its power to the other
+                if fighter.is_placeholder() || target.is_placeholder() {
+                    return Ok(());
+                }
+                // Both creatures must be on the battlefield
+                if !self.battlefield.contains(*fighter) || !self.battlefield.contains(*target) {
+                    log::debug!(target: "fight", "Fight fizzled: fighter or target not on battlefield");
+                    return Ok(());
+                }
+                // Get power values before dealing damage
+                let fighter_power = self.get_effective_power(*fighter).unwrap_or_else(|_| {
+                    self.cards
+                        .get(*fighter)
+                        .map(|c| i32::from(c.current_power()))
+                        .unwrap_or(0)
+                });
+                let target_power = self.get_effective_power(*target).unwrap_or_else(|_| {
+                    self.cards
+                        .get(*target)
+                        .map(|c| i32::from(c.current_power()))
+                        .unwrap_or(0)
+                });
+
+                let fighter_name = self.cards.get(*fighter).map(|c| c.name.to_string()).unwrap_or_default();
+                let target_name = self.cards.get(*target).map(|c| c.name.to_string()).unwrap_or_default();
+
+                // CR 701.12a: Each creature deals damage equal to its power to the other
+                // Only deal damage if power > 0
+                if fighter_power > 0 {
+                    self.deal_damage_to_creature(*target, fighter_power)?;
+                }
+                if target_power > 0 {
+                    self.deal_damage_to_creature(*fighter, target_power)?;
+                }
+
+                self.logger.gamelog(&format!(
+                    "{} fights {} ({} deals {} damage, {} deals {} damage)",
+                    fighter_name,
+                    target_name,
+                    fighter_name,
+                    fighter_power.max(0),
+                    target_name,
+                    target_power.max(0),
+                ));
             }
             Effect::TapPermanent { target } => {
                 // Skip if target is still placeholder (0) - no valid targets found

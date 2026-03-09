@@ -735,6 +735,28 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Fight { fighter, target } => {
+                // Skip logging if targets are still placeholders - execute_effect logs the resolved fight
+                if fighter.is_placeholder() || target.is_placeholder() {
+                    return;
+                }
+                let fighter_name = self
+                    .game
+                    .cards
+                    .get(*fighter)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) causes {fighter_name} ({fighter}) to fight {target_name} ({target})"
+                );
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

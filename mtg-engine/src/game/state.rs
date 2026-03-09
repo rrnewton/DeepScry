@@ -2841,7 +2841,8 @@ impl GameState {
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
                     | crate::core::Effect::UnlessCostWrapper { .. }
-                    | crate::core::Effect::GainControl { .. } => {
+                    | crate::core::Effect::GainControl { .. }
+                    | crate::core::Effect::Fight { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;
                         // typically CopySpellAbility should be used with DelayedEffect::CopySpellAbility

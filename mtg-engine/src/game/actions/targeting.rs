@@ -175,6 +175,19 @@ impl GameState {
                         }
                     }
                 }
+                Effect::Fight { target, .. } if target.is_placeholder() => {
+                    // Fight targets an opponent's creature by default
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature()
+                                && target_card.controller != spell_owner
+                                && is_legal_target(target_card, spell_owner)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::TapPermanent { target } if target.is_placeholder() => {
                     // Tap can target untapped permanents
                     for &card_id in &self.battlefield.cards {
@@ -435,7 +448,8 @@ impl GameState {
                             | Effect::ImmediateTrigger { .. }
                             | Effect::ClearRemembered
                             | Effect::UnlessCostWrapper { .. }
-                            | Effect::GainControl { .. } => {
+                            | Effect::GainControl { .. }
+                            | Effect::Fight { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -506,7 +520,8 @@ impl GameState {
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
-                | Effect::EachDamage { .. } => {
+                | Effect::EachDamage { .. }
+                | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
@@ -514,6 +529,7 @@ impl GameState {
                     // CopySpellAbility doesn't use explicit targets - copies triggering spell
                     // ImmediateTrigger/ClearRemembered don't need targets - work with remembered state
                     // EachDamage gets targets from parent ability's ValidTgts, resolved at spell resolution
+                    // Fight with non-placeholder targets already has both fighters assigned
                 }
                 // UnlessCostWrapper delegates targeting to inner effect
                 // TODO: Handle inner effect targeting when implementing UnlessCost resolution
@@ -905,7 +921,8 @@ impl GameState {
                 | Effect::DamageAll { .. }
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
-                | Effect::GainControl { .. } => {
+                | Effect::GainControl { .. }
+                | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
@@ -1111,7 +1128,8 @@ impl GameState {
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
             | Effect::SetLife { .. }
-            | Effect::GainControl { .. } => true, // Filter-based / no-target effects
+            | Effect::GainControl { .. }
+            | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)

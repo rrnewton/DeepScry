@@ -160,8 +160,11 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 })
                 .unwrap_or_default();
 
-            // Create effect if at least one bonus is non-zero OR keywords are granted
-            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() {
+            // Create effect if at least one bonus is non-zero, keywords are granted,
+            // or a SubAbility$ chain needs target resolution (e.g., Prey Upon uses
+            // SP$ Pump with +0/+0 purely as a targeting vehicle for DB$ Fight)
+            let has_sub_ability = params.contains_key("SubAbility");
+            if power_bonus != 0 || toughness_bonus != 0 || !keywords_granted.is_empty() || has_sub_ability {
                 Some(Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - filled in at cast time
                     power_bonus,
@@ -982,6 +985,18 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 new_controller: PlayerId::new(0), // Resolved at cast time
                 untap,
                 until_eot,
+            })
+        }
+
+        ApiType::Fight => {
+            // Fight: Two creatures deal damage equal to their power to each other (CR 701.12)
+            // Examples:
+            //   "SP$ Fight | Defined$ ParentTarget | ValidTgts$ Creature.OppCtrl" (Prey Upon)
+            //   "AB$ Fight | Defined$ Self | ValidTgts$ Creature.Other" (Brash Taunter)
+            // The "fighter" (Defined$) is the initiating creature, "target" is from ValidTgts$
+            Some(Effect::Fight {
+                fighter: CardId::placeholder(), // Resolved from Defined$ at cast time
+                target: CardId::placeholder(),  // Resolved from ValidTgts$ at cast time
             })
         }
 
@@ -2206,5 +2221,41 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             Effect::UnlessCostWrapper { .. } => panic!("Should not be wrapped"),
             _ => panic!("Expected DrawCards effect"),
         }
+    }
+
+    #[test]
+    fn test_pump_with_sub_ability_creates_effect() {
+        // Prey Upon uses SP$ Pump with +0/+0 purely as a targeting vehicle for DB$ Fight
+        // It must still create a PumpCreature effect so targets get collected
+        let ability = "A:SP$ Pump | ValidTgts$ Creature.YouCtrl | SubAbility$ DBFight | StackDescription$ None";
+        let params = AbilityParams::parse(ability).unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_some(),
+            "Pump with SubAbility should create PumpCreature effect even with +0/+0"
+        );
+        match effect.unwrap() {
+            Effect::PumpCreature {
+                power_bonus,
+                toughness_bonus,
+                ..
+            } => {
+                assert_eq!(power_bonus, 0);
+                assert_eq!(toughness_bonus, 0);
+            }
+            other => panic!("Expected PumpCreature, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_pump_without_bonuses_or_sub_ability_returns_none() {
+        // A bare Pump with no bonuses and no SubAbility should return None
+        let ability = "A:SP$ Pump | ValidTgts$ Creature";
+        let params = AbilityParams::parse(ability).unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_none(),
+            "Pump with no bonuses/keywords/SubAbility should return None"
+        );
     }
 }

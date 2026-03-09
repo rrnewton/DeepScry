@@ -1,0 +1,14 @@
+[metadata]
+Name=Fight Test
+
+[Main]
+# Fight spells
+4 Prey Upon
+
+# Creatures
+4 Grizzly Bears
+4 Llanowar Elves
+
+# Mana base
+24 Forest
+24 Mountain
