@@ -11,7 +11,16 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-10_#1893(cabe142))
+## Latest Optimization (2026-03-10_#1903(2220e88))
+
+✅ **Guard debug formatting in priority_round with log_enabled check** - **+6.2% actions/sec, -36% bytes/game**
+- Wrapped ability debug logging in `log::log_enabled!(Debug)` check
+- Prevents expensive `format!("{:?}", a)` allocations when debug logging disabled
+- simple_bolt: 5,617,090→5,963,538 actions/sec (+6.2%)
+- Bytes/game: 2,751→1,752 bytes (-36% allocation reduction)
+- Criterion: -9.8% to -7.9% time (p = 0.00)
+
+## Previous Optimization (2026-03-10_#1893(cabe142))
 
 ✅ **Merge two loops in bounds_check_payment** - **+5-6.6% actions/sec**
 - bounds_check_payment was iterating over sources twice: once for available_delta, once for color bounds
@@ -20,7 +29,7 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 - simple_bolt: 5,374,109→5,642,275 actions/sec (+5.0%)
 - Criterion: -6.6% time (p = 0.00)
 
-## Previous Optimization (2026-03-07_#1876)
+## Earlier Optimization (2026-03-07_#1876)
 
 ✅ **Box MtgError::NeedInput + convert hot-path cards.get()→try_get()** - **+9.5-10.2% actions/sec**
 - Boxing NeedInput(ChoiceContext) which contained Option<CardDefinition> (huge struct with Vec/HashMap)
@@ -32,7 +41,7 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 - simple_bolt: 5,198,761→5,702,465 actions/sec (+9.7%)
 - monoblack: 2,666,430→2,937,489 actions/sec (+10.2%), bytes/game -12.0%
 
-## Earlier Optimization (2026-03-07_#1865(cdb8c74))
+## Earlier Optimization 2 (2026-03-07_#1865(cdb8c74))
 
 ✅ **Eliminate Vec allocation+clone in targeting callback** - **-3.9% bytes/game (simple_bolt), -4.4% allocation blocks**
 - Changed cast_spell_8_step callback from FnMut→FnOnce, Vec<CardId>→SmallVec<[CardId; 2]>
