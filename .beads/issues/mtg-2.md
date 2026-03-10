@@ -11,7 +11,16 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-10_#1907(931f1c5))
+## Latest Optimization (2026-03-10_#1911)
+
+✅ **Use CardName (Arc<str>) instead of String in TriggerInfo** - **-3% to -12% time**
+- Changed TriggerInfo.card_name from `String` to `CardName` (Arc<str>)
+- Eliminated heap allocation from `.to_string()` on every trigger check
+- Perf profiling showed `CardName::clone` was 2.56% of CPU, Arc<str>::drop was 1.10%
+- simple_bolt: -2.9% to -3.9% time (p = 0.00)
+- robots_mirror/32x_par: -10% to -15% time (p = 0.00)
+
+## Previous Optimization (2026-03-10_#1907(931f1c5))
 
 ✅ **Add try_get_player() to avoid MtgError allocation on hot paths** - **+14.4% actions/sec**
 - Added `try_get_player()` and `try_get_player_mut()` methods returning Option instead of Result

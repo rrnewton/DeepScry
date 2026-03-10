@@ -4064,7 +4064,7 @@ impl GameState {
         // Info needed to check trigger payability and execute costs
         struct TriggerInfo {
             card_id: CardId,
-            card_name: String,
+            card_name: crate::core::types::CardName, // Use Arc<str> instead of String to avoid heap allocation
             controller: PlayerId,
             trigger: Trigger,
         }
@@ -4129,7 +4129,7 @@ impl GameState {
                         })
                         .map(|trigger| TriggerInfo {
                             card_id,
-                            card_name: card_name.to_string(),
+                            card_name: card_name.clone(), // Clone Arc<str> (cheap refcount increment)
                             controller,
                             trigger: trigger.clone(),
                         })
