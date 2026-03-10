@@ -3166,7 +3166,7 @@ impl GameState {
                 // Wildcard is appropriate: all non-CopySpellAbility effects wrap in ExecuteEffect
                 #[allow(clippy::wildcard_enum_match_arm)]
                 let delayed_effect_type = match **delayed_effect {
-                    Effect::CopySpellAbility { may_choose_targets } => {
+                    Effect::CopySpellAbility { may_choose_targets, .. } => {
                         // For CopySpellAbility, use the specialized DelayedEffect variant
                         // tracked_card will be repurposed to hold the spell being copied
                         // (set at trigger fire time, not creation time)
@@ -3502,17 +3502,48 @@ impl GameState {
                 }
             }
 
-            Effect::CopySpellAbility { may_choose_targets } => {
-                // CopySpellAbility is typically used inside a delayed trigger
-                // When encountered directly in execute_effect, it means the delayed trigger
-                // context is not set up correctly. For now, log a warning.
+            Effect::CopySpellAbility {
+                may_choose_targets,
+                defined_source,
+                controller,
+            } => {
+                // CopySpellAbility is used in two contexts:
+                // 1. Inside a delayed trigger (handled by DelayedEffect::CopySpellAbility)
+                // 2. As a SubAbility of another effect (e.g., Chain Lightning)
                 //
-                // In the future, this could be supported for instant spell copy effects.
-                log::warn!(
-                    target: "actions",
-                    "CopySpellAbility reached execute_effect outside delayed trigger context. may_choose_targets={}",
-                    may_choose_targets
-                );
+                // For SubAbility use (Defined$ Parent), we need to copy the current spell.
+                // This is complex because we need to:
+                // - Track the currently resolving spell
+                // - Clone its effects with potentially new targets
+                // - Put the copy on the stack under a different controller
+                //
+                // For now, log that copy would happen but don't actually create it.
+                // The opponent pays the cost but the copy is not created - this is
+                // a gameplay limitation noted in the tracking issue.
+                //
+                // TODO(mtg-152): Implement full CopySpellAbility for SubAbility context
+                use crate::core::effects::CopySpellSource;
+                match defined_source {
+                    CopySpellSource::Parent => {
+                        log::info!(
+                            target: "actions",
+                            "CopySpellAbility: would copy parent spell (e.g., Chain Lightning). \
+                             may_choose_targets={}, controller={:?}. \
+                             Copy not yet implemented - see mtg-152",
+                            may_choose_targets,
+                            controller
+                        );
+                    }
+                    CopySpellSource::TriggeredSpellAbility => {
+                        // This case should go through DelayedEffect, but log if we get here
+                        log::debug!(
+                            target: "actions",
+                            "CopySpellAbility: TriggeredSpellAbility reached execute_effect \
+                             (should use delayed trigger path). may_choose_targets={}",
+                            may_choose_targets
+                        );
+                    }
+                }
             }
             Effect::ImmediateTrigger { condition, sub_effects } => {
                 // Check if remembered cards match the condition

@@ -624,7 +624,7 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
-            Effect::CopySpellAbility { may_choose_targets } => {
+            Effect::CopySpellAbility { may_choose_targets, .. } => {
                 let message = format!(
                     "{source_name} ({source_id}) copies spell{}",
                     if *may_choose_targets {

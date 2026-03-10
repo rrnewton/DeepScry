@@ -819,21 +819,40 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
         ApiType::CopySpellAbility => {
             // Copy a spell on the stack
-            // Example: DB$ CopySpellAbility | Defined$ TriggeredSpellAbility | MayChooseTarget$ True
+            // Examples:
+            //   DB$ CopySpellAbility | Defined$ TriggeredSpellAbility | MayChooseTarget$ True
+            //   DB$ CopySpellAbility | Defined$ Parent | Controller$ TargetedOrController | MayChooseTarget$ True
             //
-            // This is typically used as the Execute$ target of a DB$ DelayedTrigger
             // Parameters:
-            // - Defined$: What to copy (TriggeredSpellAbility = the spell that triggered this)
+            // - Defined$: What to copy
+            //   - TriggeredSpellAbility = the spell that triggered this (for delayed triggers)
+            //   - Parent = the current spell (for SubAbility chaining like Chain Lightning)
+            // - Controller$: Who controls the copy (optional, defaults to caster)
             // - MayChooseTarget$: Can choose new targets for the copy
+            use crate::core::effects::CopySpellSource;
+
             let may_choose_targets = params.get("MayChooseTarget") == Some("True");
+            let defined_source = match params.get("Defined") {
+                Some("TriggeredSpellAbility") => CopySpellSource::TriggeredSpellAbility,
+                Some("Parent") => CopySpellSource::Parent,
+                // Default to Parent for SubAbility chaining
+                _ => CopySpellSource::Parent,
+            };
+            let controller = params.get("Controller").map(String::from);
 
             log::debug!(
                 target: "effect_converter",
-                "CopySpellAbility: may_choose_targets={}",
-                may_choose_targets
+                "CopySpellAbility: may_choose_targets={}, defined_source={:?}, controller={:?}",
+                may_choose_targets,
+                defined_source,
+                controller
             );
 
-            Some(Effect::CopySpellAbility { may_choose_targets })
+            Some(Effect::CopySpellAbility {
+                may_choose_targets,
+                defined_source,
+                controller,
+            })
         }
 
         ApiType::ImmediateTrigger => {

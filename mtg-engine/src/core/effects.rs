@@ -941,15 +941,23 @@ pub enum Effect {
     ///
     /// Corresponds to: `DB$ CopySpellAbility | Defined$ TriggeredSpellAbility | MayChooseTarget$ True`
     ///
-    /// This effect is typically used as the Execute$ target of a DB$ DelayedTrigger
-    /// with Mode$ SpellCast. When the trigger fires (e.g., "When you cast a Lesson spell"),
-    /// this effect copies the triggering spell.
+    /// This effect is used in two contexts:
+    /// 1. As Execute$ target of a DB$ DelayedTrigger with Mode$ SpellCast
+    ///    (e.g., "When you cast a Lesson spell, copy it")
+    /// 2. As a SubAbility chained to another effect
+    ///    (e.g., Chain Lightning: "Then that player may pay RR. If they do, copy this spell")
     ///
     /// Cards using this:
     /// - Jeong Jeong: "copy it and you may choose new targets for the copy"
+    /// - Chain Lightning: "that player may copy this spell and choose new targets"
     CopySpellAbility {
         /// Whether the player may choose new targets for the copy
         may_choose_targets: bool,
+        /// What spell to copy: "Parent" (the current spell), "TriggeredSpellAbility" (triggering spell)
+        /// Defaults to "Parent" for SubAbility use, "TriggeredSpellAbility" for delayed triggers
+        defined_source: CopySpellSource,
+        /// Who controls the copy (resolved player ID or reference like "TargetedOrController")
+        controller: Option<String>,
     },
 
     /// Conditionally execute a sub-effect based on remembered cards
@@ -1010,6 +1018,22 @@ pub enum ImmediateTriggerCondition {
     /// At least one remembered card exists (any card)
     /// Corresponds to: ConditionCompare$ GE1
     AnyRemembered,
+}
+
+/// Source of the spell to copy for CopySpellAbility
+///
+/// Corresponds to the `Defined$` parameter in DB$ CopySpellAbility
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum CopySpellSource {
+    /// Copy the parent spell (the current spell on the stack that has this as SubAbility)
+    /// Used by Chain Lightning: "copy this spell"
+    /// Corresponds to: Defined$ Parent
+    #[default]
+    Parent,
+    /// Copy the spell that triggered this effect
+    /// Used by Jeong Jeong: "copy it" (the triggering spell)
+    /// Corresponds to: Defined$ TriggeredSpellAbility
+    TriggeredSpellAbility,
 }
 
 /// Categorization of effects for targeting purposes.
