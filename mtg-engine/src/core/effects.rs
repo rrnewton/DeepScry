@@ -2269,6 +2269,30 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Permanent.Other+YouCtrl+Legendary`
     /// Used by effects that buff other legendaries
     LegendaryOtherYouControl,
+
+    /// Equipped creatures of a specific type you control.
+    ///
+    /// Corresponds to: `Affected$ Warrior.YouCtrl+equipped`, `Affected$ Knight.YouCtrl+equipped`
+    /// Used by equipment-matters tribal effects
+    EquippedCreatureTypeYouControl {
+        /// The creature subtype (e.g., "Warrior", "Knight")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Legendary creatures of a specific type you control.
+    ///
+    /// Corresponds to: `Affected$ Human.YouCtrl+Legendary`, `Affected$ Snake.Legendary+YouCtrl`
+    /// Used by legendary-matters tribal effects
+    LegendarySubtypeYouControl {
+        /// The creature subtype (e.g., "Human", "Snake")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Other non-aura enchantments.
+    ///
+    /// Corresponds to: `Affected$ Enchantment.nonAura+Other`
+    /// Used by cards that care about non-aura enchantments (excluding self)
+    NonAuraEnchantmentsOther,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

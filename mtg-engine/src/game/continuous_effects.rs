@@ -603,6 +603,24 @@ impl GameState {
                     && creature.controller == source.controller
                     && creature.subtypes.contains(&crate::core::Subtype::new("Legendary"))
             }
+            // Equipped creatures of a specific type you control
+            AffectedSelector::EquippedCreatureTypeYouControl { subtype } => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+                    && !self.get_attached_equipment(creature_id).is_empty()
+            }
+            // Legendary creatures of a specific subtype you control
+            AffectedSelector::LegendarySubtypeYouControl { subtype } => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Legendary"))
+            }
+            // Non-aura enchantments, other than self
+            AffectedSelector::NonAuraEnchantmentsOther => {
+                creature_id != source_id
+                    && creature.definition.cache.is_enchantment
+                    && !creature.subtypes.contains(&crate::core::Subtype::new("Aura"))
+            }
         }
     }
 
@@ -1352,7 +1370,10 @@ impl GameState {
                             | AffectedSelector::PermanentsOpponentControls
                             | AffectedSelector::AttackingCreatureTypeYouControl { .. }
                             | AffectedSelector::LegendaryYouControl
-                            | AffectedSelector::LegendaryOtherYouControl => {
+                            | AffectedSelector::LegendaryOtherYouControl
+                            | AffectedSelector::EquippedCreatureTypeYouControl { .. }
+                            | AffectedSelector::LegendarySubtypeYouControl { .. }
+                            | AffectedSelector::NonAuraEnchantmentsOther => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;

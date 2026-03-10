@@ -2690,6 +2690,50 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: TYPE.YouCtrl+equipped (e.g., "Warrior.YouCtrl+equipped")
+            // For equipped creatures of a specific type you control
+            if value.ends_with(".YouCtrl+equipped") || value.ends_with("+YouCtrl+equipped") {
+                let subtype = if value.ends_with(".YouCtrl+equipped") {
+                    value.strip_suffix(".YouCtrl+equipped")?
+                } else {
+                    // Handle Creature.TYPE+YouCtrl+equipped format
+                    let remainder = value.strip_prefix("Creature.")?;
+                    remainder.strip_suffix("+YouCtrl+equipped")?.split('+').next()?
+                };
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::EquippedCreatureTypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: TYPE.YouCtrl+Legendary or TYPE.Legendary+YouCtrl (e.g., "Human.YouCtrl+Legendary")
+            // For legendary creatures of a specific type you control
+            if (value.ends_with("+Legendary") && value.contains("+YouCtrl"))
+                || (value.ends_with("+YouCtrl") && value.contains(".Legendary"))
+            {
+                // Extract the subtype from various formats
+                let subtype = if value.contains(".Legendary+YouCtrl") {
+                    // Format: TYPE.Legendary+YouCtrl (e.g., "Snake.Legendary+YouCtrl")
+                    value.split('.').next()?
+                } else if value.contains(".YouCtrl+Legendary") {
+                    // Format: TYPE.YouCtrl+Legendary (e.g., "Human.YouCtrl+Legendary")
+                    value
+                        .strip_suffix("+Legendary")?
+                        .strip_suffix("+YouCtrl")?
+                        .strip_suffix(".YouCtrl")?
+                        .split('.')
+                        .next()?
+                } else {
+                    return None;
+                };
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" && subtype != "Permanent" {
+                    return Some(AffectedSelector::LegendarySubtypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             // Pattern: Card.Self+counters_GE*_TYPE (e.g., "Card.Self+counters_GE8_CHARGE")
             // For cards that gain abilities when they have enough counters
             if value.starts_with("Card.Self+counters_GE") {
@@ -2916,6 +2960,8 @@ impl CardDefinition {
                 "Permanent.Other+YouCtrl+Legendary" | "Permanent.Legendary+Other+YouCtrl" => {
                     AffectedSelector::LegendaryOtherYouControl
                 }
+                // Non-aura enchantments
+                "Enchantment.nonAura+Other" | "Enchantment.Other+nonAura" => AffectedSelector::NonAuraEnchantmentsOther,
                 // State-based self selectors
                 "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
                 "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,
