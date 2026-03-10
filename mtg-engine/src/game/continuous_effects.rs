@@ -621,6 +621,82 @@ impl GameState {
                     && creature.definition.cache.is_enchantment
                     && !creature.subtypes.contains(&crate::core::Subtype::new("Aura"))
             }
+            // Self when tapped
+            AffectedSelector::SelfWhenTapped => creature_id == source_id && creature.tapped,
+            // Self when cast (not put onto battlefield via other means)
+            AffectedSelector::SelfWhenCast => {
+                // For now, treat all creatures as cast - tracking "was_cast" would require state
+                creature_id == source_id
+            }
+            // Enchantments you control
+            AffectedSelector::EnchantmentsYouControl => {
+                creature.controller == source.controller && creature.definition.cache.is_enchantment
+            }
+            // Historic permanents you control (legendary, artifact, or saga)
+            AffectedSelector::HistoricYouControl => {
+                let is_legendary = creature.subtypes.contains(&crate::core::Subtype::new("Legendary"));
+                creature.controller == source.controller
+                    && (is_legendary
+                        || creature.definition.cache.is_artifact
+                        || creature.subtypes.contains(&crate::core::Subtype::new("Saga")))
+            }
+            // Historic permanents you own (any zone) - for battlefield, same as control
+            AffectedSelector::HistoricYouOwn => {
+                let is_legendary = creature.subtypes.contains(&crate::core::Subtype::new("Legendary"));
+                creature.owner == source.controller
+                    && (is_legendary
+                        || creature.definition.cache.is_artifact
+                        || creature.subtypes.contains(&crate::core::Subtype::new("Saga")))
+            }
+            // Card subtype other than self you control
+            AffectedSelector::CardSubtypeOtherYouControl { subtype } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+            }
+            // Card subtype you control (including self)
+            AffectedSelector::CardSubtypeYouControl { subtype } => {
+                creature.controller == source.controller && creature.subtypes.contains(subtype)
+            }
+            // Permanent subtype other than self you control
+            AffectedSelector::PermanentSubtypeOtherYouControl { subtype } => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+            }
+            // Self when NOT attacking
+            AffectedSelector::SelfWhenNotAttacking => {
+                creature_id == source_id && !self.combat.is_attacking(creature_id)
+            }
+            // Self when NOT attacking and NOT blocking
+            AffectedSelector::SelfWhenNotInCombat => {
+                creature_id == source_id
+                    && !self.combat.is_attacking(creature_id)
+                    && !self.combat.is_blocking(creature_id)
+            }
+            // Non-token artifacts you control
+            AffectedSelector::NonTokenArtifactsYouControl => {
+                // We don't track token state currently - treat as regular artifacts
+                creature.controller == source.controller && creature.definition.cache.is_artifact
+            }
+            // Non-legendary artifacts you control
+            AffectedSelector::NonLegendaryArtifactsYouControl => {
+                let is_legendary = creature.subtypes.contains(&crate::core::Subtype::new("Legendary"));
+                creature.controller == source.controller && creature.definition.cache.is_artifact && !is_legendary
+            }
+            // Cards you control that were cast from exile
+            AffectedSelector::CardsYouControlCastFromExile => {
+                // For now, always false - tracking "cast from exile" would require state
+                false
+            }
+            // Commander you own - not applicable for P/T in non-commander games
+            AffectedSelector::CommanderYouOwn => {
+                false // Commander format tracking not implemented
+            }
+            // Subtype other than self (global effect)
+            AffectedSelector::SubtypeOther { subtype } => {
+                creature_id != source_id && creature.subtypes.contains(subtype)
+            }
         }
     }
 
@@ -1373,7 +1449,23 @@ impl GameState {
                             | AffectedSelector::LegendaryOtherYouControl
                             | AffectedSelector::EquippedCreatureTypeYouControl { .. }
                             | AffectedSelector::LegendarySubtypeYouControl { .. }
-                            | AffectedSelector::NonAuraEnchantmentsOther => {
+                            | AffectedSelector::NonAuraEnchantmentsOther
+                            // New selectors added 2026-03-10
+                            | AffectedSelector::SelfWhenTapped
+                            | AffectedSelector::SelfWhenCast
+                            | AffectedSelector::EnchantmentsYouControl
+                            | AffectedSelector::HistoricYouControl
+                            | AffectedSelector::HistoricYouOwn
+                            | AffectedSelector::CardSubtypeOtherYouControl { .. }
+                            | AffectedSelector::CardSubtypeYouControl { .. }
+                            | AffectedSelector::PermanentSubtypeOtherYouControl { .. }
+                            | AffectedSelector::SelfWhenNotAttacking
+                            | AffectedSelector::SelfWhenNotInCombat
+                            | AffectedSelector::NonTokenArtifactsYouControl
+                            | AffectedSelector::NonLegendaryArtifactsYouControl
+                            | AffectedSelector::CardsYouControlCastFromExile
+                            | AffectedSelector::CommanderYouOwn
+                            | AffectedSelector::SubtypeOther { .. } => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;

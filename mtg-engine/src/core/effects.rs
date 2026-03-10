@@ -2293,6 +2293,107 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Enchantment.nonAura+Other`
     /// Used by cards that care about non-aura enchantments (excluding self)
     NonAuraEnchantmentsOther,
+
+    /// This card itself when tapped.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+tapped`
+    /// Used by cards that gain abilities or stats when tapped
+    SelfWhenTapped,
+
+    /// This card itself if it was cast (not put onto battlefield).
+    ///
+    /// Corresponds to: `Affected$ Card.Self+wasCast`
+    /// Used by effects that care about whether the card was cast
+    SelfWhenCast,
+
+    /// Enchantments you control.
+    ///
+    /// Corresponds to: `Affected$ Card.Enchantment+YouCtrl`, `Affected$ Enchantment.YouCtrl`
+    /// Used by effects that affect your enchantments
+    EnchantmentsYouControl,
+
+    /// Historic permanents you control (legendary, artifact, or saga).
+    ///
+    /// Corresponds to: `Affected$ Card.Historic+YouCtrl`
+    /// Used by effects that care about historic cards
+    HistoricYouControl,
+
+    /// Historic permanents you own (any zone).
+    ///
+    /// Corresponds to: `Affected$ Card.Historic+YouOwn`
+    /// Used by effects that grant flashback or graveyard access to historic cards
+    HistoricYouOwn,
+
+    /// Card subtype with Other+YouCtrl pattern (e.g., `Card.Human+Other+YouCtrl`).
+    ///
+    /// Corresponds to: `Affected$ Card.Human+Other+YouCtrl`, etc.
+    /// Different from creature-specific tribal lords - this is Card-prefixed
+    CardSubtypeOtherYouControl {
+        /// The subtype (e.g., "Human", "Merfolk")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Card subtype with YouCtrl pattern (e.g., `Card.Horror+YouCtrl`).
+    ///
+    /// Corresponds to: `Affected$ Card.Horror+YouCtrl`, etc.
+    CardSubtypeYouControl {
+        /// The subtype (e.g., "Horror", "Satyr")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Permanent subtype with Other+YouCtrl pattern (e.g., `Permanent.Dwarf+Other+YouCtrl`).
+    ///
+    /// Corresponds to: `Affected$ Permanent.Dwarf+Other+YouCtrl`, etc.
+    /// For permanents (not just creatures) of a type
+    PermanentSubtypeOtherYouControl {
+        /// The subtype (e.g., "Dwarf", "Elf")
+        subtype: crate::core::Subtype,
+    },
+
+    /// This card itself when NOT attacking.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+!attacking`
+    /// Used by cards that have abilities when not attacking
+    SelfWhenNotAttacking,
+
+    /// This card itself when NOT attacking and NOT blocking.
+    ///
+    /// Corresponds to: `Affected$ Card.Self+!attacking+!blocking`
+    /// Used by cards that have abilities when not in combat
+    SelfWhenNotInCombat,
+
+    /// Artifact permanents that are not tokens.
+    ///
+    /// Corresponds to: `Affected$ Artifact.!token+YouCtrl`
+    /// Used by effects that only affect non-token artifacts
+    NonTokenArtifactsYouControl,
+
+    /// Artifacts that are not legendary.
+    ///
+    /// Corresponds to: `Affected$ Card.Artifact+nonLegendary+YouCtrl`
+    /// Used by effects that only affect non-legendary artifacts
+    NonLegendaryArtifactsYouControl,
+
+    /// Cards that were cast from exile.
+    ///
+    /// Corresponds to: `Affected$ Card.YouCtrl+wasCastFromExile`
+    /// Used by exile-casting effects (foretell, suspend, etc.)
+    CardsYouControlCastFromExile,
+
+    /// Commander you own (any zone).
+    ///
+    /// Corresponds to: `Affected$ Card.IsCommander+YouOwn`
+    /// Used by Commander-specific effects
+    CommanderYouOwn,
+
+    /// Elf creatures other than self.
+    ///
+    /// Corresponds to: `Affected$ Card.Elf+Other`
+    /// Used by elf lords that affect all elves
+    SubtypeOther {
+        /// The subtype (e.g., "Elf", "Merfolk")
+        subtype: crate::core::Subtype,
+    },
 }
 
 /// Cache for expensive string operations on ActivatedAbility

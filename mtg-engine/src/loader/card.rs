@@ -2910,6 +2910,85 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: Card.SUBTYPE+Other+YouCtrl (e.g., "Card.Human+Other+YouCtrl")
+            // For effects that buff other cards of a specific type you control
+            if value.starts_with("Card.") && value.ends_with("+Other+YouCtrl") {
+                let remainder = value.strip_prefix("Card.")?;
+                let subtype = remainder.strip_suffix("+Other+YouCtrl")?;
+                // Skip already-handled patterns
+                if !subtype.contains('+') && !subtype.starts_with("non") {
+                    return Some(AffectedSelector::CardSubtypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Card.SUBTYPE+YouCtrl+Other (alternate ordering)
+            if value.starts_with("Card.") && value.ends_with("+YouCtrl+Other") {
+                let remainder = value.strip_prefix("Card.")?;
+                let subtype = remainder.strip_suffix("+YouCtrl+Other")?;
+                if !subtype.contains('+') && !subtype.starts_with("non") {
+                    return Some(AffectedSelector::CardSubtypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Card.SUBTYPE+YouCtrl (e.g., "Card.Horror+YouCtrl")
+            // For effects that affect cards of a specific type you control
+            if value.starts_with("Card.") && value.ends_with("+YouCtrl") && !value.contains("+Other") {
+                let remainder = value.strip_prefix("Card.")?;
+                let subtype = remainder.strip_suffix("+YouCtrl")?;
+                // Skip already-handled patterns (Creature, Enchantment, Treasure, etc.)
+                if !subtype.contains('+')
+                    && !subtype.starts_with("non")
+                    && !matches!(
+                        subtype,
+                        "Creature" | "Enchantment" | "Artifact" | "Treasure" | "Historic" | "IsCommander"
+                    )
+                {
+                    return Some(AffectedSelector::CardSubtypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Permanent.SUBTYPE+Other+YouCtrl (e.g., "Permanent.Dwarf+Other+YouCtrl")
+            // For effects that buff other permanents of a specific type
+            if value.starts_with("Permanent.") && value.ends_with("+Other+YouCtrl") {
+                let remainder = value.strip_prefix("Permanent.")?;
+                let subtype = remainder.strip_suffix("+Other+YouCtrl")?;
+                // Skip already-handled patterns
+                if !subtype.contains('+') && !subtype.starts_with("non") && subtype != "Legendary" {
+                    return Some(AffectedSelector::PermanentSubtypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Permanent.SUBTYPE+YouCtrl+Other (alternate ordering)
+            if value.starts_with("Permanent.") && value.ends_with("+YouCtrl+Other") {
+                let remainder = value.strip_prefix("Permanent.")?;
+                let subtype = remainder.strip_suffix("+YouCtrl+Other")?;
+                if !subtype.contains('+') && !subtype.starts_with("non") && subtype != "Legendary" {
+                    return Some(AffectedSelector::PermanentSubtypeOtherYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
+            // Pattern: Card.SUBTYPE+Other (e.g., "Card.Elf+Other", "Card.Merfolk+Other")
+            // For effects that buff all cards of a type except self
+            if value.starts_with("Card.") && value.ends_with("+Other") && !value.contains("+YouCtrl") {
+                let remainder = value.strip_prefix("Card.")?;
+                let subtype = remainder.strip_suffix("+Other")?;
+                if !subtype.contains('+') && !subtype.starts_with("non") {
+                    return Some(AffectedSelector::SubtypeOther {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             None
         }
 
@@ -2934,6 +3013,10 @@ impl CardDefinition {
                 "Equipment.EnchantedBy" => AffectedSelector::EquipmentEnchantedBy,
                 "Card.Self+equipped" => AffectedSelector::SelfWhenEquipped,
                 "Card.Self+enchanted" => AffectedSelector::SelfWhenEnchanted,
+                "Card.Self+tapped" => AffectedSelector::SelfWhenTapped,
+                "Card.Self+wasCast" => AffectedSelector::SelfWhenCast,
+                "Card.Self+!attacking" => AffectedSelector::SelfWhenNotAttacking,
+                "Card.Self+!attacking+!blocking" => AffectedSelector::SelfWhenNotInCombat,
                 "Creature.YouCtrl+equipped" => AffectedSelector::EquippedCreaturesYouControl,
                 "Creature.YouCtrl+enchanted" => AffectedSelector::EnchantedCreaturesYouControl,
                 "You" => AffectedSelector::You,
@@ -3064,6 +3147,13 @@ impl CardDefinition {
                 // Cast-based selectors
                 "Card.Creature+YouCtrl+wasCast" => AffectedSelector::CreatureYouControlWasCast,
                 "Card.YouCtrl+wasCast" => AffectedSelector::CardsYouControlWasCast,
+                "Card.YouCtrl+wasCastFromExile" => AffectedSelector::CardsYouControlCastFromExile,
+                "Card.Enchantment+YouCtrl" | "Enchantment.YouCtrl" => AffectedSelector::EnchantmentsYouControl,
+                "Card.Historic+YouCtrl" => AffectedSelector::HistoricYouControl,
+                "Card.Historic+YouOwn" => AffectedSelector::HistoricYouOwn,
+                "Card.IsCommander+YouOwn" => AffectedSelector::CommanderYouOwn,
+                "Artifact.!token+YouCtrl" => AffectedSelector::NonTokenArtifactsYouControl,
+                "Card.Artifact+nonLegendary+YouCtrl" => AffectedSelector::NonLegendaryArtifactsYouControl,
                 // Treasure selectors
                 "Card.Treasure+YouCtrl" => AffectedSelector::TreasuresYouControl,
                 // Self on top of library
