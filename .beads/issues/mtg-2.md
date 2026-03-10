@@ -11,7 +11,17 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-10_#1903(2220e88))
+## Latest Optimization (2026-03-10_#1907(931f1c5))
+
+✅ **Add try_get_player() to avoid MtgError allocation on hot paths** - **+14.4% actions/sec**
+- Added `try_get_player()` and `try_get_player_mut()` methods returning Option instead of Result
+- Converted 4 hot-path usages in priority checking: push_castable_spells, push_castable_from_exile, push_activatable_abilities, push_cycling_abilities
+- These functions were using `get_player().map(...).unwrap_or_default()` which allocates MtgError on every call even when discarded
+- simple_bolt: 5,963,538→6,821,923 actions/sec (+14.4%)
+- robots_mirror/fresh_games: -6.1% time (p = 0.00)
+- robots_mirror/mem_logging: -5.0% time (p = 0.00)
+
+## Previous Optimization (2026-03-10_#1903(2220e88))
 
 ✅ **Guard debug formatting in priority_round with log_enabled check** - **+6.2% actions/sec, -36% bytes/game**
 - Wrapped ability debug logging in `log::log_enabled!(Debug)` check
