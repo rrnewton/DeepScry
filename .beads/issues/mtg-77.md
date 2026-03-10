@@ -127,7 +127,22 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Modeled after Java DestroyAllAi.doMassRemovalLogic()
 
 ---
-**Checked up-to-date as of 2026-03-10_#1898(7de2da0) - 891 tests passing**
+**Checked up-to-date as of 2026-03-10_#1900 - 898 tests passing**
+
+---- ✅ **Fight spell AI (2026-03-10_#1900)**
+  - should_cast_fight() evaluates Fight spells (AB$ Fight)
+  - Favorable matchup detection: our creature kills theirs AND survives
+  - Deathtouch handling: 1 damage is lethal when attacking
+  - Indestructible handling: skip unkillable targets
+  - Trade-up logic: accept mutual kills if their creature worth 50+ more
+  - Reference: FightAi.java:27-108 (checkApiLogic)
+  - 4 new tests (favorable, unfavorable, deathtouch trade-up, no creatures)
+
+---- ✅ **GainControl spell AI (2026-03-10_#1900)**
+  - should_cast_gain_control() evaluates steal effects (AB$ GainControl)
+  - Always cast if opponent has creatures (2-for-1 value)
+  - Reference: ControlGainAi.java
+  - 3 new tests (valuable target, no targets, always steals)
 
 ---- ✅ **Removal timing AI - use_removal_now() (2026-03-07_#1877(975720b))**
   - Phase-aware timing: hold instant removal for combat/end step/Main phases

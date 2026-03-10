@@ -2883,6 +2883,26 @@ impl HeuristicController {
             return true;
         }
 
+        // Check for Fight effects (creature mutual damage)
+        // Reference: FightAi.java:27-108 (checkApiLogic)
+        let has_fight = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::Fight { .. }));
+        if has_fight && self.should_cast_fight(view) {
+            return true;
+        }
+
+        // Check for GainControl effects (steal creature)
+        // Reference: ControlGainAi.java (checkApiLogic)
+        let has_gain_control = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::GainControl { .. }));
+        if has_gain_control && self.should_cast_gain_control(view) {
+            return true;
+        }
+
         false
     }
 
@@ -3253,6 +3273,132 @@ impl HeuristicController {
             }
         }
         false
+    }
+
+    /// Evaluate whether to cast a Fight spell
+    ///
+    /// Reference: FightAi.java:27-108 (checkApiLogic)
+    ///
+    /// Key logic from Java:
+    /// 1. Need at least one targetable opponent creature
+    /// 2. Find a favorable matchup where our creature can kill theirs without dying
+    /// 3. Favorable = our power >= their toughness AND our toughness > their power
+    ///
+    /// For Fight spells, we target one of our creatures and one opponent creature.
+    /// The AI should only cast if we can find a favorable fight.
+    fn should_cast_fight(&self, view: &GameStateView) -> bool {
+        // Get our creatures on the battlefield
+        let our_creatures: Vec<_> = view
+            .battlefield()
+            .iter()
+            .filter_map(|&card_id| view.get_card(card_id))
+            .filter(|c| c.is_creature() && c.controller == self.player_id && !c.tapped)
+            .collect();
+
+        // Get opponent creatures on the battlefield
+        let opp_creatures: Vec<_> = view
+            .battlefield()
+            .iter()
+            .filter_map(|&card_id| view.get_card(card_id))
+            .filter(|c| c.is_creature() && c.controller != self.player_id)
+            .collect();
+
+        if our_creatures.is_empty() || opp_creatures.is_empty() {
+            return false;
+        }
+
+        // Look for a favorable matchup
+        // Favorable = we can kill them AND we survive
+        for our in &our_creatures {
+            let our_power = i32::from(our.current_power());
+            let our_toughness = i32::from(our.current_toughness());
+            let our_has_deathtouch = our.has_deathtouch();
+
+            for opp in &opp_creatures {
+                let opp_power = i32::from(opp.current_power());
+                let opp_toughness = i32::from(opp.current_toughness());
+                let opp_has_deathtouch = opp.has_deathtouch();
+
+                // Skip if opponent has indestructible (can't kill them)
+                if opp.has_indestructible() {
+                    continue;
+                }
+
+                // Check if we can kill them:
+                // - With deathtouch: any damage (power > 0) is lethal
+                // - Without deathtouch: need power >= toughness
+                let we_can_kill = if our_has_deathtouch {
+                    our_power > 0
+                } else {
+                    our_power >= opp_toughness
+                };
+
+                // Check if we survive (they can't kill us):
+                // - We have indestructible: always survive
+                // - They have deathtouch: any damage kills us
+                // - Otherwise: their power < our toughness
+                let we_survive = our.has_indestructible()
+                    || (if opp_has_deathtouch {
+                        opp_power == 0 // They can't deal damage
+                    } else {
+                        opp_power < our_toughness
+                    });
+
+                // Favorable fight: we kill them and we survive
+                if we_can_kill && we_survive {
+                    return true;
+                }
+
+                // Check if they can kill us
+                let they_can_kill_us = if opp_has_deathtouch {
+                    opp_power > 0
+                } else {
+                    opp_power >= our_toughness
+                };
+
+                // Also accept if we can trade for a more valuable creature
+                // Trade = both die, but their creature is more valuable
+                let we_die = they_can_kill_us && !our.has_indestructible();
+                let they_die = we_can_kill && !opp.has_indestructible();
+                if we_die && they_die {
+                    let our_value = self.evaluate_creature(view, our.id);
+                    let their_value = self.evaluate_creature(view, opp.id);
+                    if their_value > our_value + 50 {
+                        // Trade up: their creature is worth 50+ more points
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Evaluate whether to cast a GainControl spell (steal creature)
+    ///
+    /// Reference: ControlGainAi.java (checkApiLogic)
+    ///
+    /// Key logic:
+    /// 1. Need a valuable target to steal
+    /// 2. Prefer stealing high-value creatures
+    /// 3. Always good if opponent has creatures
+    fn should_cast_gain_control(&self, view: &GameStateView) -> bool {
+        // Get opponent creatures on the battlefield
+        let opp_creatures: Vec<_> = view
+            .battlefield()
+            .iter()
+            .filter_map(|&card_id| view.get_card(card_id))
+            .filter(|c| c.is_creature() && c.controller != self.player_id)
+            .collect();
+
+        if opp_creatures.is_empty() {
+            return false;
+        }
+
+        // Stealing any creature is almost always good - it's a 2-for-1
+        // (remove their creature AND gain one ourselves)
+        // Only skip if opponent has literally no creatures
+        true
     }
 
     /// Helper to check if a creature matches an AffectedSelector
@@ -7078,6 +7224,237 @@ mod tests {
         assert!(
             controller.should_cast_spell(spell_card2, &view2),
             "AI should use instant removal during combat"
+        );
+    }
+
+    // ==================== Fight AI Tests ====================
+
+    /// Test: AI casts Fight spell when we have a favorable matchup
+    /// Reference: FightAi.java - favorable = our creature kills theirs and survives
+    #[test]
+    fn test_should_cast_fight_favorable_matchup() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Our 5/5 creature (Serra Angel-like)
+        let our_id = CardId::new(50);
+        let mut our = Card::new(our_id, "Serra Angel", p1_id);
+        our.add_type(CardType::Creature);
+        our.set_base_power(Some(4));
+        our.set_base_toughness(Some(4));
+        our.controller = p1_id;
+        game.cards.insert(our_id, our);
+        game.battlefield.add(our_id);
+
+        // Opponent's 2/2 creature (Grizzly Bears)
+        let opp_id = CardId::new(51);
+        let mut opp = Card::new(opp_id, "Grizzly Bears", p2_id);
+        opp.add_type(CardType::Creature);
+        opp.set_base_power(Some(2));
+        opp.set_base_toughness(Some(2));
+        opp.controller = p2_id;
+        game.cards.insert(opp_id, opp);
+        game.battlefield.add(opp_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        // 4/4 vs 2/2: We kill them (4 >= 2) and survive (2 < 4)
+        assert!(
+            controller.should_cast_fight(&view),
+            "AI should cast Fight when 4/4 fights 2/2 (we win)"
+        );
+    }
+
+    /// Test: AI doesn't cast Fight when we would lose
+    #[test]
+    fn test_should_not_cast_fight_unfavorable() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Our 2/2 creature (Grizzly Bears)
+        let our_id = CardId::new(50);
+        let mut our = Card::new(our_id, "Grizzly Bears", p1_id);
+        our.add_type(CardType::Creature);
+        our.set_base_power(Some(2));
+        our.set_base_toughness(Some(2));
+        our.controller = p1_id;
+        game.cards.insert(our_id, our);
+        game.battlefield.add(our_id);
+
+        // Opponent's 5/5 creature (bigger than ours)
+        let opp_id = CardId::new(51);
+        let mut opp = Card::new(opp_id, "Shivan Dragon", p2_id);
+        opp.add_type(CardType::Creature);
+        opp.set_base_power(Some(5));
+        opp.set_base_toughness(Some(5));
+        opp.controller = p2_id;
+        game.cards.insert(opp_id, opp);
+        game.battlefield.add(opp_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        // 2/2 vs 5/5: We die (5 >= 2), they survive (2 < 5)
+        assert!(
+            !controller.should_cast_fight(&view),
+            "AI should NOT cast Fight when 2/2 fights 5/5 (we lose)"
+        );
+    }
+
+    /// Test: AI casts Fight for favorable trade-up
+    #[test]
+    fn test_should_cast_fight_trade_up() {
+        use crate::core::{Card, CardId, CardType, Keyword};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Our 1/1 deathtouch (high value due to deathtouch)
+        let our_id = CardId::new(50);
+        let mut our = Card::new(our_id, "Typhoid Rats", p1_id);
+        our.add_type(CardType::Creature);
+        our.set_base_power(Some(1));
+        our.set_base_toughness(Some(1));
+        our.keywords.insert(Keyword::Deathtouch);
+        our.controller = p1_id;
+        our.tapped = false; // Must be untapped to fight
+        game.cards.insert(our_id, our);
+        game.battlefield.add(our_id);
+
+        // Opponent's big 5/5 creature (much more valuable)
+        let opp_id = CardId::new(51);
+        let mut opp = Card::new(opp_id, "Shivan Dragon", p2_id);
+        opp.add_type(CardType::Creature);
+        opp.set_base_power(Some(5));
+        opp.set_base_toughness(Some(5));
+        opp.controller = p2_id;
+        game.cards.insert(opp_id, opp);
+        game.battlefield.add(opp_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        // 1/1 deathtouch vs 5/5:
+        // We kill them (deathtouch: 1 damage is lethal)
+        // We die (5 >= 1), but this is a favorable trade
+        assert!(
+            controller.should_cast_fight(&view),
+            "AI should cast Fight when 1/1 deathtouch fights 5/5 (favorable trade)"
+        );
+    }
+
+    /// Test: AI doesn't cast Fight when no creatures available
+    #[test]
+    fn test_should_not_cast_fight_no_creatures() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let controller = HeuristicController::new(p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            !controller.should_cast_fight(&view),
+            "AI should not cast Fight when no creatures on battlefield"
+        );
+    }
+
+    // ==================== GainControl AI Tests ====================
+
+    /// Test: AI casts GainControl when opponent has valuable creature
+    #[test]
+    fn test_should_cast_gain_control_valuable_target() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Opponent's valuable creature (Shivan Dragon 5/5)
+        let opp_id = CardId::new(50);
+        let mut opp = Card::new(opp_id, "Shivan Dragon", p2_id);
+        opp.add_type(CardType::Creature);
+        opp.set_base_power(Some(5));
+        opp.set_base_toughness(Some(5));
+        opp.controller = p2_id;
+        game.cards.insert(opp_id, opp);
+        game.battlefield.add(opp_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            controller.should_cast_gain_control(&view),
+            "AI should cast GainControl on valuable 5/5 creature"
+        );
+    }
+
+    /// Test: AI doesn't cast GainControl when opponent has no creatures
+    #[test]
+    fn test_should_not_cast_gain_control_no_targets() {
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let controller = HeuristicController::new(p1_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        assert!(
+            !controller.should_cast_gain_control(&view),
+            "AI should not cast GainControl when opponent has no creatures"
+        );
+    }
+
+    /// Test: AI always casts GainControl when opponent has creatures
+    /// Even stealing a weak creature is advantageous (denies blocker + gains attacker)
+    #[test]
+    fn test_should_cast_gain_control_any_creature() {
+        use crate::core::{Card, CardId, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        let controller = HeuristicController::new(p1_id);
+
+        // Opponent's weak creature (1/1 vanilla)
+        let opp_id = CardId::new(50);
+        let mut opp = Card::new(opp_id, "Squire", p2_id);
+        opp.add_type(CardType::Creature);
+        opp.set_base_power(Some(1));
+        opp.set_base_toughness(Some(1));
+        opp.controller = p2_id;
+        game.cards.insert(opp_id, opp);
+        game.battlefield.add(opp_id);
+
+        let view = GameStateView::new(&game, p1_id);
+
+        // Even a 1/1 is worth stealing - it's card advantage
+        // (denies them a blocker, gives us an attacker)
+        assert!(
+            controller.should_cast_gain_control(&view),
+            "AI should cast GainControl even on weak 1/1 creature"
         );
     }
 }
