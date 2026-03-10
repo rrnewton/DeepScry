@@ -653,6 +653,16 @@ impl GameState {
             .ok_or(crate::MtgError::EntityNotFound(id.as_u32()))
     }
 
+    /// Get a player by ID (returns Option, no error allocation)
+    ///
+    /// OPTIMIZATION: This returns `Option<&Player>` instead of `Result<&Player, MtgError>`.
+    /// Use this on hot paths where you would otherwise call `.unwrap_or_default()` or `.ok()`
+    /// since it avoids constructing MtgError on the failure path.
+    #[inline]
+    pub fn try_get_player(&self, id: PlayerId) -> Option<&Player> {
+        self.players.iter().find(|p| p.id == id)
+    }
+
     /// Get a mutable player by ID
     ///
     /// # Errors
@@ -663,6 +673,16 @@ impl GameState {
             .iter_mut()
             .find(|p| p.id == id)
             .ok_or(crate::MtgError::EntityNotFound(id.as_u32()))
+    }
+
+    /// Get a mutable player by ID (returns Option, no error allocation)
+    ///
+    /// OPTIMIZATION: This returns `Option<&mut Player>` instead of `Result<&mut Player, MtgError>`.
+    /// Use this on hot paths where you would otherwise call `.unwrap_or_default()` or `.ok()`
+    /// since it avoids constructing MtgError on the failure path.
+    #[inline]
+    pub fn try_get_player_mut(&mut self, id: PlayerId) -> Option<&mut Player> {
+        self.players.iter_mut().find(|p| p.id == id)
     }
 
     /// Get player by index (for stable turn order)

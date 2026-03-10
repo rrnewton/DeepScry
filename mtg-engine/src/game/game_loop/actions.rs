@@ -515,7 +515,12 @@ impl<'a> GameLoop<'a> {
         self.mana_engine.update_mut(self.game, player_id);
 
         // Get the player's mana pool for checking floating mana (from Dark Ritual, etc.)
-        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
+        let mana_pool = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool)
+            .unwrap_or_default();
 
         // Check if this is the active player (only active player can cast sorceries)
         let is_active_player = self.game.turn.active_player == player_id;
@@ -626,7 +631,12 @@ impl<'a> GameLoop<'a> {
         self.mana_engine.update_mut(self.game, player_id);
 
         // Get the player's mana pool for checking floating mana
-        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
+        let mana_pool = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool)
+            .unwrap_or_default();
 
         // Check if this is the active player (only active player can cast sorceries)
         let is_active_player = self.game.turn.active_player == player_id;
@@ -734,7 +744,12 @@ impl<'a> GameLoop<'a> {
         self.mana_engine.update_mut(self.game, player_id);
 
         // Get the player's mana pool for checking floating mana (from Dark Ritual, etc.)
-        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
+        let mana_pool = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool)
+            .unwrap_or_default();
 
         // Check all permanents controlled by this player
         for &card_id in &self.game.battlefield.cards {
@@ -915,7 +930,12 @@ impl<'a> GameLoop<'a> {
 
         // Update mana engine for cost checking
         self.mana_engine.update_mut(self.game, player_id);
-        let mana_pool = self.game.get_player(player_id).map(|p| p.mana_pool).unwrap_or_default();
+        // OPTIMIZATION: Using try_get_player() to avoid MtgError allocation on failure path
+        let mana_pool = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool)
+            .unwrap_or_default();
 
         // Get cards in hand
         let hand = self
