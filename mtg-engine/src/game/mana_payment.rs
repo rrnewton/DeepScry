@@ -90,31 +90,11 @@ pub struct ManaSource {
 /// Lower bound = guaranteed mana (only Fixed sources contribute to specific colors)
 /// Upper bound = potential mana (Fixed + Choice + AnyColor all contribute)
 fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResult {
-    // Check total available mana (accounting for activation costs via net delta)
-    let mut available_delta: i16 = 0;
-    for source in sources {
-        if !source.is_tapped && !source.has_summoning_sickness {
-            available_delta += i16::from(source.production.net_delta());
-        }
-    }
-
-    let needed = cost
-        .white
-        .saturating_add(cost.blue)
-        .saturating_add(cost.black)
-        .saturating_add(cost.red)
-        .saturating_add(cost.green)
-        .saturating_add(cost.colorless)
-        .saturating_add(cost.generic);
-
-    // Can only prove "No" if the total delta is insufficient
-    if available_delta < i16::from(needed) {
-        return PaymentResult::No;
-    }
-
-    // Compute both lower bounds (guaranteed) and upper bounds (potential) for each color
+    // Compute both lower bounds (guaranteed) and upper bounds (potential) for each color,
+    // plus total available delta - all in a single pass over sources.
     // Lower bound: Only Fixed sources guarantee a specific color
     // Upper bound: Fixed + Choice + AnyColor all potentially produce each color
+    let mut available_delta: i16 = 0;
     let mut min_white = 0u8;
     let mut min_blue = 0u8;
     let mut min_black = 0u8;
@@ -135,6 +115,9 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
         if source.is_tapped || source.has_summoning_sickness {
             continue;
         }
+
+        // Accumulate net delta for total mana check
+        available_delta += i16::from(source.production.net_delta());
 
         match &source.production.kind {
             ManaProductionKind::Fixed(color) => {
@@ -191,6 +174,21 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
                 max_green += 1;
             }
         }
+    }
+
+    // Check total available mana (accounting for activation costs via net delta)
+    let needed = cost
+        .white
+        .saturating_add(cost.blue)
+        .saturating_add(cost.black)
+        .saturating_add(cost.red)
+        .saturating_add(cost.green)
+        .saturating_add(cost.colorless)
+        .saturating_add(cost.generic);
+
+    // Can only prove "No" if the total delta is insufficient
+    if available_delta < i16::from(needed) {
+        return PaymentResult::No;
     }
 
     // If UPPER bounds can't meet the cost, it's provably impossible
