@@ -28,8 +28,11 @@ Track user-facing gameplay features and interaction improvements.
 - mtg-31: Card draw triggers and replacement effects
 - mtg-32: Discard mechanics beyond cleanup step
 - mtg-33: Graveyard interactions (flashback, recursion)
-- mtg-34: Token creation
+- ✅ mtg-34: Token creation (CLOSED - fully implemented)
 - mtg-35: +1/+1 and -1/-1 counters on creatures
+
+---
+Checked up-to-date as of 2026-03-10_#1898(7de2da0).
 
 **Serialization & Testing:**
 - mtg-36: GameState text file format (.pzl files)

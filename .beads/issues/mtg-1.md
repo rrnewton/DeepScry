@@ -29,9 +29,9 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-10_#1894:**
-- Tests: 918 unit/integration tests passing
-- All 53 determinism tests passing
+**Current status as of 2026-03-10_#1898(7de2da0):**
+- Tests: 891 unit/integration tests passing
+- All 55 determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
 - Performance: 5.6M actions/sec (simple_bolt benchmark)
 

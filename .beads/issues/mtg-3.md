@@ -53,8 +53,9 @@ Track implementation of MTG game features including keywords, abilities, card ef
 **Variable P/T Parsing (2025-12-04_#1131(4cec306)):**
 - ✅ Accept AddPower$/AddToughness$ with X, Y, Z, -X, AffectedX
 
-Checked up-to-date as of 2026-03-07_#1872(e04b78d) - 869 tests passing
+Checked up-to-date as of 2026-03-10_#1898(7de2da0) - 891 tests passing
 
 # Notes
 
-2026-03-07_#1869: LoseLife (108 cards), DestroyAll (34 cards), DamageAll (58 cards) implemented. Board wipes (Wrath of God) and mass damage (Pyroclasm) now work. 886 tests passing.
+2026-03-07_#1869: LoseLife (108 cards), DestroyAll (34 cards), DamageAll (58 cards) implemented. Board wipes (Wrath of God) and mass damage (Pyroclasm) now work.
+2026-03-10_#1898: AB$ Fight effect (125+ cards, CR 701.12) implemented.

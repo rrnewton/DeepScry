@@ -127,7 +127,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Modeled after Java DestroyAllAi.doMassRemovalLogic()
 
 ---
-**Checked up-to-date as of 2026-03-07_#1874 - 876+ tests passing**
+**Checked up-to-date as of 2026-03-10_#1898(7de2da0) - 891 tests passing**
 
 ---- ✅ **Removal timing AI - use_removal_now() (2026-03-07_#1877(975720b))**
   - Phase-aware timing: hold instant removal for combat/end step/Main phases

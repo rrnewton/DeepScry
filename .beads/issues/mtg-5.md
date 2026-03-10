@@ -13,9 +13,9 @@ updated_at: 2026-03-10T00:57:44.149159574+00:00
 
 Track architectural improvements, API design, and testing infrastructure.
 
-**Testing status as of 2026-03-10_#1894:**
-- Current: 918 passing tests (nextest, all categories)
-- Includes 53 determinism tests across all major decks
+**Testing status as of 2026-03-10_#1898(7de2da0):**
+- Current: 891 passing tests (nextest, all categories)
+- Includes 55 determinism tests across all major decks
 
 **Controller architecture:**
 - Current: Unified PlayerController trait (documented in ai_docs/CONTROLLER_DESIGN.md)
@@ -51,7 +51,7 @@ Track architectural improvements, API design, and testing infrastructure.
 **Testing infrastructure:**
 - mtg-42: Improve test coverage for edge cases
 - mtg-43: Integration test suite expansion
-- mtg-44: Determinism testing - now comprehensive (53 deck tests)
+- mtg-44: Determinism testing - now comprehensive (55 deck tests)
 - mtg-45: Property-based testing with proptest
 
 **Performance & Tree Search (Phase 4):**
