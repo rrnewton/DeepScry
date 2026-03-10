@@ -7457,4 +7457,423 @@ mod tests {
             "AI should cast GainControl even on weak 1/1 creature"
         );
     }
+
+    // ========================================================================
+    // REAL CARD TESTS - Load from cardsfolder
+    // Tests use real 4ED/classic cards to verify AI behavior with actual card data
+    // ========================================================================
+
+    /// Test loading Prodigal Sorcerer from cardsfolder and verifying ping ability AI
+    /// Prodigal Sorcerer: 1/1, T: Deal 1 damage to any target
+    #[test]
+    fn test_prodigal_sorcerer_from_cardsfolder() {
+        use crate::game::controller::GameStateView;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/prodigal_sorcerer.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Prodigal Sorcerer");
+        assert_eq!(def.name.as_str(), "Prodigal Sorcerer");
+
+        // Create game and instantiate the card
+        let mut game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties (before adding to game)
+        assert!(card.is_creature(), "Prodigal Sorcerer should be a creature");
+        assert_eq!(card.current_power(), 1, "Prodigal Sorcerer should be 1/1");
+        assert_eq!(card.current_toughness(), 1, "Prodigal Sorcerer should be 1/1");
+
+        // Verify the activated ability was parsed
+        assert!(
+            !card.activated_abilities.is_empty(),
+            "Prodigal Sorcerer should have at least one activated ability"
+        );
+
+        // Find the tap ability (ping ability)
+        let ping_abilities: Vec<_> = card
+            .activated_abilities
+            .iter()
+            .filter(|a| a.cost.includes_tap())
+            .collect();
+
+        assert_eq!(
+            ping_abilities.len(),
+            1,
+            "Prodigal Sorcerer should have exactly one tap ability"
+        );
+
+        // Verify the ability has a DealDamage effect
+        let ability = ping_abilities[0];
+        let has_damage_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+
+        assert!(
+            has_damage_effect,
+            "Prodigal Sorcerer's ability should have a DealDamage effect"
+        );
+
+        // Test AI classification
+        let controller = HeuristicController::new(p1_id);
+        let ability_type = controller.classify_activated_ability(ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::Ping { damage: 1 }),
+            "Prodigal Sorcerer's ability should be classified as Ping(1) by AI"
+        );
+
+        // Add card to game and battlefield for evaluation
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation includes the ping bonus
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base 1/1 = 100, ping adds 10 + 1*5 = 15, so should be > 110
+        assert!(
+            creature_value > 110,
+            "Prodigal Sorcerer evaluation ({}) should be higher than vanilla 1/1 (100) due to ping ability",
+            creature_value
+        );
+    }
+
+    /// Test Northern Paladin destroy ability with color restriction
+    /// Northern Paladin: 3/3, WW T: Destroy target black permanent
+    #[test]
+    fn test_northern_paladin_from_cardsfolder() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/n/northern_paladin.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Northern Paladin");
+        assert_eq!(def.name.as_str(), "Northern Paladin");
+
+        // Create game and instantiate the card
+        let game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Northern Paladin should be a creature");
+        assert_eq!(card.current_power(), 3, "Northern Paladin should be 3/3");
+        assert_eq!(card.current_toughness(), 3, "Northern Paladin should be 3/3");
+
+        // Verify the activated ability was parsed
+        assert!(
+            !card.activated_abilities.is_empty(),
+            "Northern Paladin should have at least one activated ability"
+        );
+
+        // Find the tap-to-destroy ability
+        let destroy_abilities: Vec<_> = card
+            .activated_abilities
+            .iter()
+            .filter(|a| !a.is_mana_ability && a.cost.includes_tap())
+            .collect();
+
+        assert_eq!(
+            destroy_abilities.len(),
+            1,
+            "Northern Paladin should have exactly one tap-to-destroy ability"
+        );
+
+        // Verify the ability has a DestroyPermanent effect
+        let ability = destroy_abilities[0];
+        let has_destroy_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }));
+
+        assert!(
+            has_destroy_effect,
+            "Northern Paladin's ability should have a DestroyPermanent effect"
+        );
+
+        // Test AI classification
+        let controller = HeuristicController::new(p1_id);
+        let ability_type = controller.classify_activated_ability(ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::Destroy),
+            "Northern Paladin's ability should be classified as Destroy by AI"
+        );
+    }
+
+    /// Test Drudge Skeletons regeneration ability from cardsfolder
+    /// Drudge Skeletons: 1/1, B: Regenerate
+    #[test]
+    fn test_drudge_skeletons_from_cardsfolder() {
+        use crate::game::controller::GameStateView;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/drudge_skeletons.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Drudge Skeletons");
+        assert_eq!(def.name.as_str(), "Drudge Skeletons");
+
+        // Create game and instantiate the card
+        let mut game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Drudge Skeletons should be a creature");
+        assert_eq!(card.current_power(), 1, "Drudge Skeletons should be 1/1");
+        assert_eq!(card.current_toughness(), 1, "Drudge Skeletons should be 1/1");
+
+        // Verify the activated ability was parsed
+        assert!(
+            !card.activated_abilities.is_empty(),
+            "Drudge Skeletons should have at least one activated ability"
+        );
+
+        // Find the regeneration ability
+        let regen_abilities: Vec<_> = card.activated_abilities.iter().filter(|a| !a.is_mana_ability).collect();
+
+        assert_eq!(
+            regen_abilities.len(),
+            1,
+            "Drudge Skeletons should have exactly one non-mana activated ability (regenerate)"
+        );
+
+        // Verify the ability has a Regenerate effect
+        let ability = regen_abilities[0];
+        let has_regen_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::Regenerate { .. }));
+
+        assert!(
+            has_regen_effect,
+            "Drudge Skeletons's ability should have a Regenerate effect"
+        );
+
+        // Add card to game and battlefield for evaluation
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation includes regeneration bonus
+        let controller = HeuristicController::new(p1_id);
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base 1/1 = 100, regeneration typically adds +20
+        assert!(
+            creature_value > 110,
+            "Drudge Skeletons evaluation ({}) should be higher than vanilla 1/1 (100) due to regenerate",
+            creature_value
+        );
+    }
+
+    /// Test Llanowar Elves mana ability recognition from cardsfolder
+    /// Llanowar Elves: 1/1, T: Add G
+    #[test]
+    fn test_llanowar_elves_mana_ability() {
+        use crate::game::controller::GameStateView;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/llanowar_elves.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Llanowar Elves");
+        assert_eq!(def.name.as_str(), "Llanowar Elves");
+
+        // Create game and instantiate the card
+        let mut game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Llanowar Elves should be a creature");
+        assert_eq!(card.current_power(), 1, "Llanowar Elves should be 1/1");
+        assert_eq!(card.current_toughness(), 1, "Llanowar Elves should be 1/1");
+
+        // Verify the activated ability was parsed
+        assert!(
+            !card.activated_abilities.is_empty(),
+            "Llanowar Elves should have at least one activated ability"
+        );
+
+        // Find the mana ability
+        let mana_abilities: Vec<_> = card.activated_abilities.iter().filter(|a| a.is_mana_ability).collect();
+
+        assert_eq!(
+            mana_abilities.len(),
+            1,
+            "Llanowar Elves should have exactly one mana ability"
+        );
+
+        // Verify the mana ability produces green mana
+        let ability = mana_abilities[0];
+        let has_mana_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::AddMana { mana, .. } if mana.green > 0));
+
+        assert!(has_mana_effect, "Llanowar Elves's ability should produce green mana");
+
+        // Add card to game and battlefield for evaluation
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation includes mana bonus
+        let controller = HeuristicController::new(p1_id);
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base 1/1 = 100, mana ability typically adds +15
+        assert!(
+            creature_value > 110,
+            "Llanowar Elves evaluation ({}) should be higher than vanilla 1/1 (100) due to mana ability",
+            creature_value
+        );
+    }
+
+    /// Test Serra Angel keyword evaluation from cardsfolder
+    /// Serra Angel: 4/4, Flying, Vigilance
+    #[test]
+    fn test_serra_angel_keywords() {
+        use crate::game::controller::GameStateView;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/serra_angel.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Serra Angel");
+        assert_eq!(def.name.as_str(), "Serra Angel");
+
+        // Create game and instantiate the card
+        let mut game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Serra Angel should be a creature");
+        assert_eq!(card.current_power(), 4, "Serra Angel should be 4/4");
+        assert_eq!(card.current_toughness(), 4, "Serra Angel should be 4/4");
+
+        // Verify keywords
+        assert!(
+            card.has_keyword(crate::core::Keyword::Flying),
+            "Serra Angel should have Flying"
+        );
+        assert!(
+            card.has_keyword(crate::core::Keyword::Vigilance),
+            "Serra Angel should have Vigilance"
+        );
+
+        // Add card to game and battlefield for evaluation
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation includes keyword bonuses
+        let controller = HeuristicController::new(p1_id);
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 4 * 15 = 60
+        // Toughness: 4 * 10 = 40
+        // CMC: 5 * 5 = 25
+        // Flying: 4 * 10 = 40
+        // Vigilance: 4 * 3 = 12
+        // Total should be > 250 (base = 245 + keywords)
+        assert!(
+            creature_value > 250,
+            "Serra Angel evaluation ({}) should be > 250 due to Flying and Vigilance",
+            creature_value
+        );
+    }
+
+    /// Test Shivan Dragon pump ability and flying from cardsfolder
+    /// Shivan Dragon: 5/5, Flying, R: +1/+0
+    #[test]
+    fn test_shivan_dragon_from_cardsfolder() {
+        use crate::game::controller::GameStateView;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/shivan_dragon.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Shivan Dragon");
+        assert_eq!(def.name.as_str(), "Shivan Dragon");
+
+        // Create game and instantiate the card
+        let mut game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify basic card properties
+        assert!(card.is_creature(), "Shivan Dragon should be a creature");
+        assert_eq!(card.current_power(), 5, "Shivan Dragon should be 5/5");
+        assert_eq!(card.current_toughness(), 5, "Shivan Dragon should be 5/5");
+
+        // Verify keywords
+        assert!(
+            card.has_keyword(crate::core::Keyword::Flying),
+            "Shivan Dragon should have Flying"
+        );
+
+        // Verify the firebreathing ability was parsed
+        let non_mana_abilities: Vec<_> = card.activated_abilities.iter().filter(|a| !a.is_mana_ability).collect();
+
+        assert!(
+            !non_mana_abilities.is_empty(),
+            "Shivan Dragon should have a firebreathing ability"
+        );
+
+        // Test AI classification of the pump ability
+        let controller = HeuristicController::new(p1_id);
+        let ability = non_mana_abilities[0];
+        let ability_type = controller.classify_activated_ability(ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::Pump { power: 1, toughness: 0 }),
+            "Shivan Dragon's ability should be classified as Pump(+1/+0)"
+        );
+
+        // Add card to game and battlefield for evaluation
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation includes keyword and ability bonuses
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 5 * 15 = 75
+        // Toughness: 5 * 10 = 50
+        // CMC: 6 * 5 = 30
+        // Flying: 5 * 10 = 50
+        // Pump ability: adds some bonus
+        // Total should be > 300 (base = 305 without pump)
+        assert!(
+            creature_value > 300,
+            "Shivan Dragon evaluation ({}) should be > 300 due to Flying and pump ability",
+            creature_value
+        );
+    }
 }
