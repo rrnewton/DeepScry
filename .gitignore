@@ -98,6 +98,12 @@ debug/
 # Downloaded by `mtg download` command
 images/
 
+# Coverage (cargo-llvm-cov)
+*.profraw
+*.profdata
+lcov.info
+experiment_results/coverage/
+
 # Legacy one-off scripts (should be moved to debug/)
 # Keeping these patterns temporarily for backward compatibility
 check_*.js

@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp play-web-local build-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # PORT: web server port (use: make PORT=7999 play-web-local-dev)
@@ -27,6 +27,8 @@ help:
 	@echo "  make perfprofile       - Profile with perf (requires host/privileges)"
 	@echo "  make heapprofile       - Profile allocations with heaptrack"
 	@echo "  make dhatprofile       - Profile allocations with dhat-rs (recommended)"
+	@echo "  make coverage          - Run tests with coverage, generate HTML report"
+	@echo "  make coverage-full     - Coverage for tests + examples (slower)"
 	@echo "  make clean             - Clean build artifacts (cargo clean)"
 	@echo "  make run            - Run the main binary (cargo run)"
 	@echo "  make check          - Fast compilation check (cargo check)"
@@ -268,6 +270,24 @@ bench-snapshot:
 bench-logging:
 	@echo "=== Running stdout logging benchmark (not recorded to CSV) ==="
 	cargo bench --bench game_benchmark stdout_logging
+
+# Coverage
+# ==============================================================================
+
+# Run tests with coverage instrumentation and generate HTML report
+# Requires: cargo install cargo-llvm-cov
+# Output: experiment_results/coverage/html/index.html
+coverage:
+	@./scripts/run_coverage.sh
+
+# Coverage for unit tests + examples (slower, more complete)
+coverage-full:
+	@./scripts/run_coverage.sh --full
+
+# Standalone coverage step (not wired into validate by default - opt-in)
+validate-coverage-step:
+	@$(MAKE) coverage
+	@echo "coverage completed"
 
 # Profiling
 # ==============================================================================
