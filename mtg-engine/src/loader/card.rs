@@ -2679,6 +2679,17 @@ impl CardDefinition {
                 }
             }
 
+            // Pattern: TYPE.attacking+YouCtrl (e.g., "Vampire.attacking+YouCtrl")
+            // For attacking creatures of a specific type you control
+            if value.ends_with(".attacking+YouCtrl") {
+                let subtype = value.strip_suffix(".attacking+YouCtrl")?;
+                if subtype != "Creature" && subtype != "Card" && subtype != "Land" {
+                    return Some(AffectedSelector::AttackingCreatureTypeYouControl {
+                        subtype: crate::core::Subtype::new(subtype),
+                    });
+                }
+            }
+
             // Pattern: Card.Self+counters_GE*_TYPE (e.g., "Card.Self+counters_GE8_CHARGE")
             // For cards that gain abilities when they have enough counters
             if value.starts_with("Card.Self+counters_GE") {
@@ -2897,7 +2908,14 @@ impl CardDefinition {
                 "Creature.attacking+YouCtrl" => AffectedSelector::AttackingCreaturesYouControl,
                 "Creature.attacking" => AffectedSelector::AllAttackingCreatures,
                 "Opponent" => AffectedSelector::Opponent,
+                "Player.Opponent" => AffectedSelector::Opponent,
+                "Permanent.OppCtrl" => AffectedSelector::PermanentsOpponentControls,
                 "Card.Self+attacking" => AffectedSelector::SelfWhenAttacking,
+                // Legendary selectors
+                "Creature.Legendary+YouCtrl" | "Permanent.Legendary+YouCtrl" => AffectedSelector::LegendaryYouControl,
+                "Permanent.Other+YouCtrl+Legendary" | "Permanent.Legendary+Other+YouCtrl" => {
+                    AffectedSelector::LegendaryOtherYouControl
+                }
                 // State-based self selectors
                 "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
                 "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,

@@ -2242,6 +2242,33 @@ pub enum AffectedSelector {
         /// The subtype filter (e.g., "Bird", "Land")
         subtype: crate::core::Subtype,
     },
+
+    /// Permanents opponent controls.
+    ///
+    /// Corresponds to: `Affected$ Permanent.OppCtrl`
+    /// Used by effects that debuff or affect enemy permanents
+    PermanentsOpponentControls,
+
+    /// Attacking creatures of a specific type you control.
+    ///
+    /// Corresponds to: `Affected$ Vampire.attacking+YouCtrl`, `Affected$ Pirate.attacking+YouCtrl`
+    /// Used by tribal cards that grant bonuses to attacking creatures of a type
+    AttackingCreatureTypeYouControl {
+        /// The creature subtype (e.g., "Vampire", "Pirate")
+        subtype: crate::core::Subtype,
+    },
+
+    /// Legendary creatures or permanents.
+    ///
+    /// Corresponds to: `Affected$ Creature.Legendary+YouCtrl`, `Affected$ Permanent.Legendary+YouCtrl`
+    /// Used by effects that affect legendary permanents
+    LegendaryYouControl,
+
+    /// Other legendary permanents you control.
+    ///
+    /// Corresponds to: `Affected$ Permanent.Other+YouCtrl+Legendary`
+    /// Used by effects that buff other legendaries
+    LegendaryOtherYouControl,
 }
 
 /// Cache for expensive string operations on ActivatedAbility

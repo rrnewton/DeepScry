@@ -584,6 +584,25 @@ impl GameState {
             AffectedSelector::TopLibraryWithSubtype { .. } => false,
             // Land enchanted by - not applicable for P/T (lands don't have P/T)
             AffectedSelector::LandEnchantedBy => false,
+            // Permanents opponent controls
+            AffectedSelector::PermanentsOpponentControls => creature.controller != source.controller,
+            // Attacking creatures of a specific type you control
+            AffectedSelector::AttackingCreatureTypeYouControl { subtype } => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(subtype)
+                    && self.combat.is_attacking(creature_id)
+            }
+            // Legendary creatures/permanents you control
+            AffectedSelector::LegendaryYouControl => {
+                creature.controller == source.controller
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Legendary"))
+            }
+            // Other legendary permanents you control
+            AffectedSelector::LegendaryOtherYouControl => {
+                creature_id != source_id
+                    && creature.controller == source.controller
+                    && creature.subtypes.contains(&crate::core::Subtype::new("Legendary"))
+            }
         }
     }
 
@@ -1329,7 +1348,11 @@ impl GameState {
                             | AffectedSelector::InstantColorYouControl { .. }
                             | AffectedSelector::SorceryColorYouControl { .. }
                             | AffectedSelector::TopLibraryWithSubtype { .. }
-                            | AffectedSelector::LandEnchantedBy => {
+                            | AffectedSelector::LandEnchantedBy
+                            | AffectedSelector::PermanentsOpponentControls
+                            | AffectedSelector::AttackingCreatureTypeYouControl { .. }
+                            | AffectedSelector::LegendaryYouControl
+                            | AffectedSelector::LegendaryOtherYouControl => {
                                 // Use the unified selector_applies_to_creature helper
                                 if self.selector_applies_to_creature(affected, creature_id, source_id) {
                                     power_bonus += power;
