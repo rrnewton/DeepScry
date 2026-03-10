@@ -1,10 +1,11 @@
 ---
 title: Aura enchantments (need enchant targeting)
-status: open
+status: closed
 priority: 3
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-10T00:58:42.262808576+00:00
+closed_at: 2026-03-10T00:58:42.262808516+00:00
 ---
 
 # Description
