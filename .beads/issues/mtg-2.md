@@ -11,7 +11,17 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-10_#1911)
+## Latest Optimization (2026-03-10_#1912)
+
+✅ **Defer card_name clone in check_triggers until matching triggers found** - **-5% to -20% time**
+- Moved `card.name.clone()` from outer loop into inner `map()` closure
+- Previously cloned Arc<str> for every card on battlefield, even if no triggers match
+- Now only clones for cards with actual matching triggers
+- Perf profiling: CardName clone/drop overhead reduced from 3.36% to 0.76%
+- robots_mirror/32x_par: -15% to -23% time (p = 0.00)
+- robots_mirror/mem_logging: -2.6% to -6.5% time (p = 0.00)
+
+## Previous Optimization (2026-03-10_#1911)
 
 ✅ **Use CardName (Arc<str>) instead of String in TriggerInfo** - **-3% to -12% time**
 - Changed TriggerInfo.card_name from `String` to `CardName` (Arc<str>)

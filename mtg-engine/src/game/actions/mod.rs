@@ -4090,7 +4090,8 @@ impl GameState {
             .filter_map(|&card_id| {
                 if let Some(card) = self.cards.try_get(card_id) {
                     let controller = card.controller;
-                    let card_name = card.name.clone();
+                    // NOTE: card_name clone deferred to map() below - only happens for matching triggers
+                    // This avoids cloning Arc<str> for every card on battlefield when most have no triggers
 
                     // Find triggers matching this event
                     let triggers: Vec<TriggerInfo> = card
@@ -4129,7 +4130,7 @@ impl GameState {
                         })
                         .map(|trigger| TriggerInfo {
                             card_id,
-                            card_name: card_name.clone(), // Clone Arc<str> (cheap refcount increment)
+                            card_name: card.name.clone(), // Clone Arc<str> only for matching triggers
                             controller,
                             trigger: trigger.clone(),
                         })
