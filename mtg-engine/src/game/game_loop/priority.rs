@@ -615,24 +615,29 @@ impl<'a> GameLoop<'a> {
                         let available_count = self.get_available_spell_abilities(current_priority).len();
 
                         // Log abilities for debugging network sync issues
-                        if available_count > 0 && available_count <= 5 {
-                            // Log the actual abilities available
-                            let abilities: smallvec::SmallVec<[String; 8]> =
-                                self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
-                            log::debug!(
-                                "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
-                                current_priority,
-                                available_count,
-                                self.game.action_count(),
-                                abilities
-                            );
-                        } else {
-                            log::debug!(
-                                "Priority check: player {:?} has {} available abilities, action_count={}",
-                                current_priority,
-                                available_count,
-                                self.game.action_count()
-                            );
+                        // OPTIMIZATION: Only format abilities when debug logging is enabled
+                        // The format!("{:?}", a) calls were allocating ~2% of CPU time even when
+                        // debug logging was disabled at runtime.
+                        if log::log_enabled!(log::Level::Debug) {
+                            if available_count > 0 && available_count <= 5 {
+                                // Log the actual abilities available
+                                let abilities: smallvec::SmallVec<[String; 8]> =
+                                    self.abilities_buffer.iter().map(|a| format!("{:?}", a)).collect();
+                                log::debug!(
+                                    "Priority check: player {:?} has {} available abilities at action_count={}: {:?}",
+                                    current_priority,
+                                    available_count,
+                                    self.game.action_count(),
+                                    abilities
+                                );
+                            } else {
+                                log::debug!(
+                                    "Priority check: player {:?} has {} available abilities, action_count={}",
+                                    current_priority,
+                                    available_count,
+                                    self.game.action_count()
+                                );
+                            }
                         }
 
                         // If no actions available, automatically pass priority without asking controller
