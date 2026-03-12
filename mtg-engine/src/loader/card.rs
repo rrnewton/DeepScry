@@ -2303,6 +2303,87 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse DamageDone triggers (Mode$ DamageDone)
+            // Example: T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Player | CombatDamage$ True | Execute$ TrigDiscard
+            // This triggers when a creature deals damage to a player or creature
+            if mode == Some("DamageDone") {
+                let mut effects = Vec::new();
+
+                // Check if we have Execute$ parameter (references a SVar with effects)
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // Check ValidSource$ to determine whose damage triggers this
+                // Card.Self = triggers only when this creature deals damage (default)
+                // Creature.YouCtrl = triggers when any creature you control deals damage
+                let valid_source = params.get("ValidSource").map(|s| s.as_str());
+                let trigger_self_only = match valid_source {
+                    Some("Card.Self" | "Creature.Self") | None => true,
+                    _ => false, // Other ValidSource patterns trigger on other creatures
+                };
+
+                // Check ValidTarget$ to determine what damage triggers this
+                // Player = triggers when dealing damage to a player
+                // Opponent = triggers when dealing damage to opponent specifically
+                // Creature = triggers when dealing damage to creatures
+                let valid_target = params.get("ValidTarget").map(|s| s.as_str());
+                let damages_player = match valid_target {
+                    Some(t) if t.contains("Player") || t.contains("Opponent") => true,
+                    None => true, // Default: assume player damage
+                    _ => false,
+                };
+
+                // Check CombatDamage$ to determine if this requires combat damage only
+                // True = only combat damage triggers this
+                // If absent, any damage (combat or non-combat) triggers
+                let combat_damage = params.get("CombatDamage").map(|s| s.as_str());
+                let combat_damage_only = combat_damage == Some("True");
+
+                // Check OptionalDecider$ for optional triggers
+                let optional = params.contains_key("OptionalDecider");
+
+                // Extract description from TriggerDescription$ if available
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        if combat_damage_only {
+                            "Whenever this creature deals combat damage to a player".to_string()
+                        } else {
+                            "Whenever this creature deals damage to a player".to_string()
+                        }
+                    });
+
+                // Create trigger with DealsCombatDamage event
+                // For now, use DealsCombatDamage for both combat and non-combat triggers
+                // The runtime can check combat_damage_only flag if needed
+                let mut trigger = if trigger_self_only {
+                    if optional {
+                        Trigger::new_optional(TriggerEvent::DealsCombatDamage, effects, description)
+                    } else {
+                        Trigger::new(TriggerEvent::DealsCombatDamage, effects, description)
+                    }
+                } else {
+                    let mut t = Trigger::new_any(TriggerEvent::DealsCombatDamage, effects, description);
+                    t.optional = optional;
+                    t
+                };
+
+                // Store combat_damage_only and damages_player in description markers
+                // This allows runtime filtering without adding new fields
+                if !combat_damage_only && !trigger.description.contains("[any-damage]") {
+                    trigger.description = format!("[any-damage] {}", trigger.description);
+                }
+                if !damages_player && !trigger.description.contains("[damages-creature]") {
+                    trigger.description = format!("[damages-creature] {}", trigger.description);
+                }
+
+                triggers.push(trigger);
+            }
         }
 
         triggers
@@ -4273,6 +4354,122 @@ Oracle:Deathtouch\nWhenever you sacrifice another permanent, put a +1/+1 counter
             "Trigger should have PutCounter effect with P1P1 counter. Effects: {:?}",
             trigger.effects
         );
+    }
+
+    #[test]
+    fn test_parse_damage_done_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Test Hypnotic Specter style DamageDone trigger:
+        // "Whenever Hypnotic Specter deals damage to an opponent, that player discards a card at random."
+        let content = r#"
+Name:Hypnotic Specter
+ManaCost:1 B B
+Types:Creature Specter
+PT:2/2
+K:Flying
+T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Opponent | Execute$ TrigDiscard | TriggerZones$ Battlefield | TriggerDescription$ Whenever CARDNAME deals damage to an opponent, that player discards a card at random.
+SVar:TrigDiscard:DB$ Discard | Defined$ TriggeredTarget | NumCards$ 1 | Mode$ Random
+Oracle:Flying\nWhenever Hypnotic Specter deals damage to an opponent, that player discards a card at random.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the DamageDone trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(
+            trigger.event,
+            TriggerEvent::DealsCombatDamage,
+            "Trigger should be DealsCombatDamage event"
+        );
+        // Not combat-damage-only, so should have [any-damage] marker
+        assert!(
+            trigger.description.contains("[any-damage]"),
+            "Non-combat-damage-only trigger should have [any-damage] marker. Description: {}",
+            trigger.description
+        );
+        // Self-only trigger (ValidSource$ Card.Self)
+        assert!(
+            trigger.trigger_self_only,
+            "ValidSource$ Card.Self should make trigger self-only"
+        );
+    }
+
+    #[test]
+    fn test_parse_combat_damage_done_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Test combat-damage-only DamageDone trigger (Markov Blademaster style):
+        // "Whenever this creature deals combat damage to a player, put a +1/+1 counter on it."
+        let content = r#"
+Name:Markov Blademaster
+ManaCost:1 R R
+Types:Creature Vampire Warrior
+PT:1/1
+K:Double Strike
+T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Player | CombatDamage$ True | Execute$ TrigPutCounter | TriggerZones$ Battlefield | TriggerDescription$ Whenever CARDNAME deals combat damage to a player, put a +1/+1 counter on it.
+SVar:TrigPutCounter:DB$ PutCounter | CounterType$ P1P1 | CounterNum$ 1
+Oracle:Double strike\nWhenever Markov Blademaster deals combat damage to a player, put a +1/+1 counter on it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the DamageDone trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(
+            trigger.event,
+            TriggerEvent::DealsCombatDamage,
+            "Trigger should be DealsCombatDamage event"
+        );
+        // Combat-damage-only, so should NOT have [any-damage] marker
+        assert!(
+            !trigger.description.contains("[any-damage]"),
+            "Combat-damage-only trigger should NOT have [any-damage] marker. Description: {}",
+            trigger.description
+        );
+        // Self-only trigger (ValidSource$ Card.Self)
+        assert!(
+            trigger.trigger_self_only,
+            "ValidSource$ Card.Self should make trigger self-only"
+        );
+    }
+
+    #[test]
+    fn test_parse_optional_damage_done_trigger() {
+        use crate::core::TriggerEvent;
+
+        // Test optional DamageDone trigger (with OptionalDecider$ You):
+        // "Whenever ... you may ..."
+        let content = r#"
+Name:Zombie Cannibal
+ManaCost:B
+Types:Creature Zombie
+PT:1/1
+T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Player | CombatDamage$ True | Execute$ TrigExile | OptionalDecider$ You | TriggerDescription$ Whenever CARDNAME deals combat damage to a player, you may exile target card from that player's graveyard.
+SVar:TrigExile:DB$ ChangeZone | Origin$ Graveyard | Destination$ Exile
+Oracle:Whenever Zombie Cannibal deals combat damage to a player, you may exile target card from that player's graveyard.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        // Verify the DamageDone trigger was parsed
+        assert_eq!(triggers.len(), 1, "Should have one trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(
+            trigger.event,
+            TriggerEvent::DealsCombatDamage,
+            "Trigger should be DealsCombatDamage event"
+        );
+        // Should be optional (OptionalDecider$ You)
+        assert!(trigger.optional, "Trigger with OptionalDecider$ You should be optional");
     }
 
     #[test]

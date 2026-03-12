@@ -7882,9 +7882,8 @@ mod tests {
     /// Hypnotic Specter (4ED): 2/2 Flying
     /// "Whenever Hypnotic Specter deals damage to an opponent, that player discards a card at random."
     ///
-    /// Note: The DamageDone trigger mode is not yet implemented in our parser.
-    /// This test verifies the basic card properties and Flying keyword.
-    /// TODO(mtg-147): Implement Mode$ DamageDone trigger parsing (affects 1000+ cards)
+    /// Tests Mode$ DamageDone trigger parsing - Hypnotic Specter has a damage-to-player trigger
+    /// that causes the opponent to discard a card at random.
     #[test]
     fn test_hypnotic_specter_from_cardsfolder() {
         use crate::core::CardId;
@@ -7918,9 +7917,16 @@ mod tests {
         assert!(card.is_creature(), "Hypnotic Specter should be a creature");
         assert!(card.has_flying(), "Hypnotic Specter should have Flying");
 
-        // Note: Mode$ DamageDone trigger not yet parsed - skip trigger assertion
-        // Once implemented, uncomment:
-        // assert!(!card.triggers.is_empty(), "Hypnotic Specter should have at least one trigger");
+        // Verify Mode$ DamageDone trigger is parsed
+        assert!(
+            !card.triggers.is_empty(),
+            "Hypnotic Specter should have at least one trigger (DamageDone)"
+        );
+        assert_eq!(
+            card.triggers[0].event,
+            crate::core::TriggerEvent::DealsCombatDamage,
+            "Hypnotic Specter's trigger should be DealsCombatDamage"
+        );
 
         game.cards.insert(card_id, card);
         game.battlefield.add(card_id);
