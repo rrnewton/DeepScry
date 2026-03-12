@@ -498,6 +498,9 @@ impl GameState {
         let mut damage_to_players: HashMap<PlayerId, i32> = HashMap::new();
         // Track damage dealt by each creature for lifelink (creature_id -> total damage dealt)
         let mut damage_dealt_by_creature: HashMap<CardId, i32> = HashMap::new();
+        // Track creatures that dealt combat damage to players (for DealsCombatDamage triggers)
+        // Maps creature_id -> (target_player_id, damage_amount)
+        let mut creatures_that_dealt_player_damage: Vec<(CardId, PlayerId, i32)> = Vec::new();
         // Track creatures dealt deathtouch damage (for state-based destruction)
         let mut deathtouch_damaged_creatures: std::collections::HashSet<CardId> = std::collections::HashSet::new();
 
@@ -562,6 +565,8 @@ impl GameState {
                         if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
                             *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                            // Track for DealsCombatDamage triggers
+                            creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                         }
                     }
                 } else {
@@ -603,6 +608,8 @@ impl GameState {
                         if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
                             *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                            // Track for DealsCombatDamage triggers
+                            creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                         }
                     }
                 }
@@ -652,6 +659,8 @@ impl GameState {
                     *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                     // Track damage for lifelink
                     *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                    // Track for DealsCombatDamage triggers
+                    creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                 }
             }
         }
@@ -674,6 +683,17 @@ impl GameState {
         // Deal all damage to players first (they don't die from damage in combat)
         for (player_id, damage) in damage_to_players {
             self.deal_damage(player_id, damage)?;
+        }
+
+        // Fire DealsCombatDamage triggers for creatures that dealt combat damage to players
+        // MTG Rule 702.18: "Whenever this creature deals combat damage to a player..."
+        // Sort by card ID for deterministic trigger ordering
+        creatures_that_dealt_player_damage.sort_by_key(|(card_id, _, _)| card_id.as_u32());
+        for (creature_id, _target_player, _damage) in creatures_that_dealt_player_damage {
+            // Only fire if creature is still on the battlefield
+            if self.battlefield.contains(creature_id) {
+                self.check_triggers(TriggerEvent::DealsCombatDamage, creature_id)?;
+            }
         }
 
         // Track which creatures should die (MTG Rules 704.5f: State-based actions)
