@@ -13,8 +13,8 @@ updated_at: 2026-03-10T00:57:44.149159574+00:00
 
 Track architectural improvements, API design, and testing infrastructure.
 
-**Testing status as of 2026-03-10_#1898(7de2da0):**
-- Current: 891 passing tests (nextest, all categories)
+**Testing status as of 2026-03-12_#1920(aa94be5):**
+- Current: 938 passing tests (nextest, all categories)
 - Includes 55 determinism tests across all major decks
 
 **Controller architecture:**
@@ -67,4 +67,4 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-53: SIMD optimizations where applicable
 
 ---
-Checked up-to-date as of 2026-03-10.
+Checked up-to-date as of 2026-03-12_#1920(aa94be5).

@@ -127,7 +127,7 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Modeled after Java DestroyAllAi.doMassRemovalLogic()
 
 ---
-**Checked up-to-date as of 2026-03-10_#1900 - 898 tests passing**
+**Checked up-to-date as of 2026-03-12_#1920(aa94be5) - 938 tests passing**
 
 ---- ✅ **Fight spell AI (2026-03-10_#1900)**
   - should_cast_fight() evaluates Fight spells (AB$ Fight)

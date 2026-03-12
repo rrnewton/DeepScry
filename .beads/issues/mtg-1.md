@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-10T00:58:09.001410482+00:00
+updated_at: 2026-03-12T02:07:15.887412443+00:00
 ---
 
 # Description
@@ -29,13 +29,16 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-10_#1898(7de2da0):**
-- Tests: 891 unit/integration tests passing
+**Current status as of 2026-03-12_#1920(aa94be5):**
+- Tests: 938 unit/integration tests passing
 - All 55 determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
 - Performance: 5.6M actions/sec (simple_bolt benchmark)
 
 **Recent accomplishments (2026-03):**
+- DealsCombatDamage trigger firing at runtime
+- Keyword text variant fixes (For Mirrodin, Living Weapon, Umbra armor, Partner variants)
+- 124 fewer keyword warnings (706 → 582)
 - AB$ GainControl (steal target creature) effect
 - Removal timing AI for smart spell usage
 - bounds_check_payment optimization (+6.6% perf)
@@ -56,4 +59,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-10.
+Checked up-to-date as of 2026-03-12_#1920(aa94be5).
