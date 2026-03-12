@@ -1371,15 +1371,19 @@ impl CardDefinition {
                     "Undaunted" => keyword_set.insert(Keyword::Undaunted),
                     "Undying" => keyword_set.insert(Keyword::Undying),
                     "Unleash" => keyword_set.insert(Keyword::Unleash),
+                    // Vanishing without a counter count uses existing time counters
+                    "Vanishing" => keyword_set.insert_complex(KeywordArgs::Vanishing { counters: 0 }),
                     // ===== COMMANDER/MULTIPLAYER =====
                     "Choose a Background" => keyword_set.insert(Keyword::ChooseABackground),
                     "Doctor's companion" | "DoctorsCompanion" => keyword_set.insert(Keyword::DoctorsCompanion),
                     "Friends forever" | "FriendsForever" => keyword_set.insert(Keyword::FriendsForever),
-                    "Partner Survivors" | "PartnerSurvivors" => keyword_set.insert(Keyword::PartnerSurvivors),
-                    "Partner Father and Son" | "PartnerFatherAndSon" => {
+                    "Partner Survivors" | "Partner - Survivors" | "PartnerSurvivors" => {
+                        keyword_set.insert(Keyword::PartnerSurvivors)
+                    }
+                    "Partner Father and Son" | "Partner - Father & Son" | "PartnerFatherAndSon" => {
                         keyword_set.insert(Keyword::PartnerFatherAndSon)
                     }
-                    "Partner Character Select" | "PartnerCharacterSelect" => {
+                    "Partner Character Select" | "Partner - Character select" | "PartnerCharacterSelect" => {
                         keyword_set.insert(Keyword::PartnerCharacterSelect)
                     }
                     // Partner (no arguments) - complex keyword for Java compatibility
