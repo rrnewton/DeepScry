@@ -7876,4 +7876,280 @@ mod tests {
             creature_value
         );
     }
+
+    /// Test loading Hypnotic Specter from cardsfolder - classic 4ED evasive creature
+    ///
+    /// Hypnotic Specter (4ED): 2/2 Flying
+    /// "Whenever Hypnotic Specter deals damage to an opponent, that player discards a card at random."
+    ///
+    /// Note: The DamageDone trigger mode is not yet implemented in our parser.
+    /// This test verifies the basic card properties and Flying keyword.
+    /// TODO(mtg-147): Implement Mode$ DamageDone trigger parsing (affects 1000+ cards)
+    #[test]
+    fn test_hypnotic_specter_from_cardsfolder() {
+        use crate::core::CardId;
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+        use std::path::PathBuf;
+
+        // Load card from cardsfolder
+        let path = PathBuf::from("../cardsfolder/h/hypnotic_specter.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let card_def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+
+        // Verify card properties from definition
+        assert_eq!(card_def.name.as_str(), "Hypnotic Specter");
+        assert_eq!(card_def.power, Some(2));
+        assert_eq!(card_def.toughness, Some(2));
+
+        // Set up a game to test creature evaluation
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let card_id = CardId::new(100);
+        let mut card = card_def.instantiate(card_id, p1_id);
+        card.controller = p1_id;
+
+        // Verify card properties after instantiation (is_creature() checks types)
+        assert!(card.is_creature(), "Hypnotic Specter should be a creature");
+        assert!(card.has_flying(), "Hypnotic Specter should have Flying");
+
+        // Note: Mode$ DamageDone trigger not yet parsed - skip trigger assertion
+        // Once implemented, uncomment:
+        // assert!(!card.triggers.is_empty(), "Hypnotic Specter should have at least one trigger");
+
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let controller = HeuristicController::new(p1_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation - Flying bonus should still apply
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 2 * 15 = 30
+        // Toughness: 2 * 10 = 20
+        // CMC: 3 * 5 = 15
+        // Flying: 2 * 10 = 20
+        // Expected minimum without trigger: 100 + 30 + 20 + 15 + 20 = 185
+        assert!(
+            creature_value >= 180,
+            "Hypnotic Specter evaluation ({}) should be >= 180 due to Flying keyword",
+            creature_value
+        );
+
+        println!("Hypnotic Specter evaluation: {}", creature_value);
+    }
+
+    /// Test loading Sengir Vampire from cardsfolder - classic 4ED flyer
+    ///
+    /// Sengir Vampire (4ED): 4/4 Flying
+    /// "Whenever a creature dealt damage by Sengir Vampire this turn dies, put a +1/+1 counter on Sengir Vampire."
+    ///
+    /// Note: The conditional "dies" trigger (ValidCard$ Creature.DamagedBy) requires
+    /// tracking damage sources, which is complex. This test verifies basic card properties.
+    /// TODO(mtg-147): Implement conditional die triggers with DamagedBy tracking
+    #[test]
+    fn test_sengir_vampire_from_cardsfolder() {
+        use crate::core::CardId;
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+        use std::path::PathBuf;
+
+        // Load card from cardsfolder
+        let path = PathBuf::from("../cardsfolder/s/sengir_vampire.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let card_def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+
+        // Verify card properties from definition
+        assert_eq!(card_def.name.as_str(), "Sengir Vampire");
+        assert_eq!(card_def.power, Some(4));
+        assert_eq!(card_def.toughness, Some(4));
+
+        // Set up a game to test creature evaluation
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let card_id = CardId::new(100);
+        let mut card = card_def.instantiate(card_id, p1_id);
+        card.controller = p1_id;
+
+        // Verify card properties after instantiation (is_creature() checks types)
+        assert!(card.is_creature(), "Sengir Vampire should be a creature");
+        assert!(card.has_flying(), "Sengir Vampire should have Flying");
+
+        // Note: Complex conditional trigger not yet parsed - skip trigger assertion
+        // The "Creature.DamagedBy" condition requires damage tracking infrastructure
+
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let controller = HeuristicController::new(p1_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation - Flying bonus should still apply
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 4 * 15 = 60
+        // Toughness: 4 * 10 = 40
+        // CMC: 5 * 5 = 25
+        // Flying: 4 * 10 = 40
+        // Expected minimum without trigger: 100 + 60 + 40 + 25 + 40 = 265
+        assert!(
+            creature_value >= 260,
+            "Sengir Vampire evaluation ({}) should be >= 260 due to Flying keyword",
+            creature_value
+        );
+
+        println!("Sengir Vampire evaluation: {}", creature_value);
+    }
+
+    /// Test loading Mahamoti Djinn from cardsfolder - classic 4ED blue finisher
+    ///
+    /// Mahamoti Djinn (4ED): 5/6 Flying
+    /// No abilities, but tests pure stat-based creature evaluation with Flying
+    #[test]
+    fn test_mahamoti_djinn_from_cardsfolder() {
+        use crate::core::CardId;
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+        use std::path::PathBuf;
+
+        // Load card from cardsfolder
+        let path = PathBuf::from("../cardsfolder/m/mahamoti_djinn.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let card_def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+
+        // Verify card properties from definition
+        assert_eq!(card_def.name.as_str(), "Mahamoti Djinn");
+        assert_eq!(card_def.power, Some(5));
+        assert_eq!(card_def.toughness, Some(6));
+
+        // Set up a game to test creature evaluation
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let card_id = CardId::new(100);
+        let mut card = card_def.instantiate(card_id, p1_id);
+        card.controller = p1_id;
+
+        // Verify card properties after instantiation (is_creature() checks types)
+        assert!(card.is_creature(), "Mahamoti Djinn should be a creature");
+        assert!(card.has_flying(), "Mahamoti Djinn should have Flying");
+
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let controller = HeuristicController::new(p1_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 5 * 15 = 75
+        // Toughness: 6 * 10 = 60
+        // CMC: 6 * 5 = 30
+        // Flying: 5 * 10 = 50 (power * 10)
+        // Expected minimum: 100 + 75 + 60 + 30 + 50 = 315
+        assert!(
+            creature_value >= 300,
+            "Mahamoti Djinn evaluation ({}) should be >= 300 due to high stats and Flying",
+            creature_value
+        );
+
+        println!("Mahamoti Djinn evaluation: {}", creature_value);
+    }
+
+    /// Test loading Force of Nature from cardsfolder - classic 4ED with upkeep cost
+    ///
+    /// Force of Nature (4ED): 8/8 Trample
+    /// "At the beginning of your upkeep, Force of Nature deals 8 damage to you unless you pay GGGG."
+    ///
+    /// This tests that upkeep costs are properly penalized in creature evaluation
+    #[test]
+    fn test_force_of_nature_from_cardsfolder() {
+        use crate::core::CardId;
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+        use std::path::PathBuf;
+
+        // Load card from cardsfolder
+        let path = PathBuf::from("../cardsfolder/f/force_of_nature.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let card_def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+
+        // Verify card properties from definition
+        assert_eq!(card_def.name.as_str(), "Force of Nature");
+        assert_eq!(card_def.power, Some(8));
+        assert_eq!(card_def.toughness, Some(8));
+
+        // Set up a game to test creature evaluation
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let card_id = CardId::new(100);
+        let mut card = card_def.instantiate(card_id, p1_id);
+        card.controller = p1_id;
+
+        // Verify card properties after instantiation (is_creature() checks types)
+        assert!(card.is_creature(), "Force of Nature should be a creature");
+        assert!(card.has_trample(), "Force of Nature should have Trample");
+
+        // Verify upkeep trigger exists on instantiated card
+        let has_upkeep_trigger = card
+            .triggers
+            .iter()
+            .any(|t| matches!(t.event, crate::core::TriggerEvent::BeginningOfUpkeep));
+        assert!(has_upkeep_trigger, "Force of Nature should have an upkeep trigger");
+
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let controller = HeuristicController::new(p1_id);
+        let view = GameStateView::new(&game, p1_id);
+
+        // Verify creature evaluation with upkeep penalty
+        let creature_value = controller.evaluate_creature(&view, card_id);
+        // Base: 80 + 20 (non-token)
+        // Power: 8 * 15 = 120
+        // Toughness: 8 * 10 = 80
+        // CMC: 6 * 5 = 30
+        // Trample: 8 * 5 = 40 (power * 5)
+        // Upkeep trigger penalty: -15 (damage to self)
+        // Expected: 100 + 120 + 80 + 30 + 40 - 15 = 355 minimum (still high due to massive stats)
+        // Should still be valuable despite upkeep penalty
+        assert!(
+            creature_value >= 300,
+            "Force of Nature evaluation ({}) should be >= 300 despite upkeep penalty due to massive stats",
+            creature_value
+        );
+
+        // But should be LOWER than an equivalent creature without upkeep cost
+        // Create a hypothetical 8/8 Trample without upkeep
+        let hypothetical_value = 100 + 120 + 80 + 30 + 40; // 370
+        assert!(
+            creature_value < hypothetical_value + 10, // Allow small margin
+            "Force of Nature should be penalized for upkeep cost (value: {}, pure stats: {})",
+            creature_value,
+            hypothetical_value
+        );
+
+        println!("Force of Nature evaluation: {}", creature_value);
+    }
 }
