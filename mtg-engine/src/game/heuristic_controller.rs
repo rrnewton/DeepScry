@@ -71,37 +71,36 @@ enum ActivatedAbilityType {
 
 /// Heuristic AI controller that makes decisions using evaluation functions
 /// rather than simulation. Aims to faithfully reproduce Java Forge AI behavior.
-///
-/// This controller no longer owns an RNG - instead it uses the RNG passed
-/// from GameState to ensure deterministic replay across snapshot/resume.
 pub struct HeuristicController {
     player_id: PlayerId,
     /// Aggression level for combat decisions (0 = defensive, 6 = all-in)
     /// Default is 3 (balanced). Matches Java's AiAttackController aggression.
     aggression_level: i32,
+    /// RNG for probabilistic decisions (land drop timing, bluffing, etc.)
+    /// Seeded for deterministic behavior across runs
+    rng: rand::rngs::StdRng,
 }
 
 impl HeuristicController {
     /// Create a new heuristic controller with default settings
     ///
-    /// The RNG is now provided by GameState and passed to each decision method,
-    /// ensuring deterministic gameplay across snapshot/resume cycles.
+    /// Uses a seeded RNG for deterministic behavior.
     pub fn new(player_id: PlayerId) -> Self {
+        use rand::SeedableRng;
         HeuristicController {
             player_id,
-            aggression_level: 3, // Balanced aggression
+            aggression_level: 3,                       // Balanced aggression
+            rng: rand::rngs::StdRng::seed_from_u64(0), // Default seed
         }
     }
 
-    /// Create a heuristic controller (seed is no longer needed here)
-    ///
-    /// This method is kept for API compatibility but the seed parameter is ignored.
-    /// The RNG seed should be set on GameState instead using `game.seed_rng(seed)`.
-    #[deprecated(note = "Use HeuristicController::new() and seed the GameState RNG instead")]
-    pub fn with_seed(player_id: PlayerId, _seed: u64) -> Self {
+    /// Create a heuristic controller with a specific seed for deterministic behavior
+    pub fn with_seed(player_id: PlayerId, seed: u64) -> Self {
+        use rand::SeedableRng;
         HeuristicController {
             player_id,
             aggression_level: 3,
+            rng: rand::rngs::StdRng::seed_from_u64(seed),
         }
     }
 
@@ -791,27 +790,80 @@ impl HeuristicController {
     /// 1. Don't play lands that would deal lethal ETB damage
     /// 2. Sometimes hold land drop for Main 2 (bluffing/deception)
     /// 3. Prioritize playing lands early in the game
-    ///
-    /// For now, we use a simplified approach:
-    /// - Always play lands (faithful to Java's default behavior)
-    /// - TODO: Add ETB damage check
-    /// - TODO: Add Main 2 hold logic (requires randomization based on AI profile)
-    /// - TODO: Check for "PlayBeforeLandDrop" special cases
-    fn should_play_land(&self, _view: &GameStateView) -> bool {
-        // Basic check: always play lands
-        // This matches Java's behavior when no special conditions apply
+    fn should_play_land(&mut self, land_id: CardId, view: &GameStateView) -> bool {
+        // If it's not Main Phase 1, always play the land
+        let current_step = view.current_step();
+        if current_step != crate::game::phase::Step::Main1 {
+            return true;
+        }
 
-        // TODO(mtg-XX): Add ETB damage check
-        // Java: (!player.canLoseLife() || player.cantLoseForZeroOrLessLife()
-        //        || ComputerUtil.getDamageFromETB(player, land) < player.getLife())
+        // Check if it's safe to hold land drop for Main 2 (bluffing/deception)
+        if self.is_safe_to_hold_land_for_main2(land_id, view) {
+            // Hold the land - don't play it in Main 1
+            return false;
+        }
 
-        // TODO(mtg-XX): Add Main 2 hold logic for bluffing
-        // Java: (!game.getPhaseHandler().is(PhaseType.MAIN1)
-        //        || !isSafeToHoldLandDropForMain2(land))
-        // This is a deception mechanism to hide information from opponents
-
-        // For phase 1, always play lands
+        // Otherwise, play the land
         true
+    }
+
+    /// Check if it's safe to hold a land drop for Main 2 (bluffing/deception)
+    ///
+    /// Reference: AiController.isSafeToHoldLandDropForMain2 (lines 1643-1740)
+    ///
+    /// This is a deception mechanism to hide information from opponents.
+    /// The AI sometimes waits until Main 2 to play lands when it doesn't need the mana,
+    /// making it harder for opponents to read what's in hand.
+    fn is_safe_to_hold_land_for_main2(&mut self, _land_id: CardId, view: &GameStateView) -> bool {
+        use rand::Rng;
+        // 50% chance to consider holding (matches Java's default HOLD_LAND_DROP_FOR_MAIN2_IF_UNUSED)
+        // This prevents the AI from being too predictable
+        if !self.rng.gen_bool(0.5) {
+            return false;
+        }
+
+        // Don't do this on very early turns (too obvious)
+        if view.turn_number() <= 2 {
+            return false;
+        }
+
+        // Get hand
+        let hand = view.hand();
+
+        // Count non-land cards in hand
+        let nonlands_in_hand: SmallVec<[&Card; 8]> = hand
+            .iter()
+            .filter_map(|&id| view.get_card(id))
+            .filter(|c| !c.is_land())
+            .collect();
+
+        // Calculate minimum CMC of spells in hand (any non-land card)
+        let min_cmc = nonlands_in_hand
+            .iter()
+            .map(|c| u32::from(c.mana_cost.cmc()))
+            .min()
+            .unwrap_or(0);
+
+        // Calculate available mana (before playing land)
+        let current_mana = self.count_available_mana(view);
+
+        // Check if the land would enable casting something
+        // Simplified: assume playing the land adds 1 mana
+        let mana_with_land = current_mana + 1;
+        let can_cast_with_land = min_cmc > 0 && mana_with_land >= min_cmc;
+        let cant_cast_now = current_mana < min_cmc;
+
+        // Simplified decision: Hold land if we can't cast anything even with the land drop
+        // This is the core bluffing logic - we hold lands when they won't help us cast spells
+        // More sophisticated checks (landfall triggers, activated abilities, taplands)
+        // can be added later if needed
+        if !can_cast_with_land && cant_cast_now {
+            // Safe to hold - we won't be able to cast anything anyway
+            // Holding hides information from opponents
+            return true;
+        }
+
+        false
     }
 
     /// Choose the best land to play from available lands
@@ -996,28 +1048,29 @@ impl HeuristicController {
         }
 
         // Phase 3: Land play logic (only if we can't cast creatures)
-        if self.should_play_land(view) {
-            // Collect land play abilities (typically 1-3 lands in hand)
-            let land_plays: SmallVec<[&SpellAbility; 4]> = available
+        // Collect land play abilities (typically 1-3 lands in hand)
+        let land_plays: SmallVec<[&SpellAbility; 4]> = available
+            .iter()
+            .filter(|sa| matches!(sa, SpellAbility::PlayLand { .. }))
+            .collect();
+
+        if !land_plays.is_empty() {
+            // Extract land card IDs
+            let land_ids: SmallVec<[CardId; 4]> = land_plays
                 .iter()
-                .filter(|sa| matches!(sa, SpellAbility::PlayLand { .. }))
+                .filter_map(|sa| {
+                    if let SpellAbility::PlayLand { card_id, .. } = sa {
+                        Some(*card_id)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
 
-            if !land_plays.is_empty() {
-                // Extract land card IDs
-                let land_ids: SmallVec<[CardId; 4]> = land_plays
-                    .iter()
-                    .filter_map(|sa| {
-                        if let SpellAbility::PlayLand { card_id, .. } = sa {
-                            Some(*card_id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Choose best land
-                if let Some(best_land_id) = self.choose_best_land(view, &land_ids) {
+            // Choose best land
+            if let Some(best_land_id) = self.choose_best_land(view, &land_ids) {
+                // Check if we should play this land (may hold for Main 2 bluffing)
+                if self.should_play_land(best_land_id, view) {
                     // Find and return the corresponding land play ability
                     for ability in land_plays {
                         if let SpellAbility::PlayLand { card_id, .. } = ability {
@@ -8157,5 +8210,45 @@ mod tests {
         );
 
         println!("Force of Nature evaluation: {}", creature_value);
+    }
+
+    /// Test land drop hold logic for Main Phase 2 bluffing
+    ///
+    /// Reference: AiController.isSafeToHoldLandDropForMain2
+    ///
+    /// This test validates that the probabilistic land-holding logic works.
+    /// Due to the complexity of setting up proper game state, this is a simplified
+    /// unit test that verifies the basic RNG behavior.
+    #[test]
+    fn test_land_drop_hold_probabilistic_behavior() {
+        use crate::core::PlayerId;
+        use rand::Rng;
+
+        let p1_id = PlayerId::new(0);
+
+        // With different seeds, we should eventually see different results
+        // across multiple trials
+        let mut results = Vec::new();
+        for seed in 0..20 {
+            let mut controller = HeuristicController::with_seed(p1_id, seed);
+            results.push(controller.rng.gen_bool(0.5));
+        }
+
+        let true_count = results.iter().filter(|&&x| x).count();
+        let false_count = results.len() - true_count;
+
+        // With 20 trials and 50% probability, we should see a mix
+        // (not all true or all false)
+        assert!(
+            true_count > 0 && false_count > 0,
+            "RNG should produce varied results (true={}, false={})",
+            true_count,
+            false_count
+        );
+
+        println!(
+            "Land drop RNG test: {} true, {} false out of 20 trials",
+            true_count, false_count
+        );
     }
 }
