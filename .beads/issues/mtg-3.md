@@ -27,13 +27,23 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Umbra armor keyword parsing fixed (30 cards)
 - ✅ Partner variants (- Survivors, - Father & Son, - Character select) fixed (22 cards)
 - ✅ Bare Vanishing (no counter) fixed (4 cards)
-- Protection variants ("Protection from each color", "Protection from everything") still TODO
+- ✅ Protection variants fixed (8 cards)
+- ✅ Lure effects (must be blocked) fixed (50 cards)
 
 **Variable P/T:**
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
 
 ## Recent Completions
+
+**Protection & Lure Keyword Parsing (2026-03-12_#1924(6b3b518)):**
+- ✅ "Protection from everything" (4 cards: Progenitus, Hexdrinker)
+- ✅ "Protection from each color" (4 cards: Etched Champion, Iridescent Angel)
+- ✅ "CARDNAME must be blocked if able" - Lure effect (24 cards)
+- ✅ "All creatures able to block CARDNAME do so" (22 cards)
+- ✅ "CARDNAME must be blocked by two or more creatures if able" (2 cards)
+- ✅ "CARDNAME must be blocked by exactly one creature if able" (2 cards)
+- 54 fewer keyword parsing warnings (582 → 528)
 
 **Partner & Vanishing Keyword Variants (2026-03-12_#1919(4871277)):**
 - ✅ "Partner - Survivors" variant (8 cards)
@@ -60,7 +70,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-12_#1919(4871277) - 938 tests passing
+Checked up-to-date as of 2026-03-12_#1924(6b3b518) - 940 tests passing
 
 # Notes
 
