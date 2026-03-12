@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-12T01:55:29.959815984+00:00
+updated_at: 2026-03-12T02:04:32.634560831+00:00
 ---
 
 # Description
@@ -25,13 +25,22 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Living Weapon keyword parsing fixed (38 cards)
 - ✅ For Mirrodin keyword parsing fixed (30 cards)
 - ✅ Umbra armor keyword parsing fixed (30 cards)
-- Protection variants ("Protection from each color") still TODO
+- ✅ Partner variants (- Survivors, - Father & Son, - Character select) fixed (22 cards)
+- ✅ Bare Vanishing (no counter) fixed (4 cards)
+- Protection variants ("Protection from each color", "Protection from everything") still TODO
 
 **Variable P/T:**
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
 - ⏳ Runtime evaluation still TODO (values default to 0)
 
 ## Recent Completions
+
+**Partner & Vanishing Keyword Variants (2026-03-12_#1919(4871277)):**
+- ✅ "Partner - Survivors" variant (8 cards)
+- ✅ "Partner - Father & Son" variant (4 cards)
+- ✅ "Partner - Character select" variant (10 cards)
+- ✅ Bare "Vanishing" for ETB counter cards (4 cards)
+- 26 fewer keyword parsing warnings (608 → 582)
 
 **Keyword Text Variants (2026-03-12_#1917(a5f047a)):**
 - ✅ "For Mirrodin" variant (card files omit the "!")
@@ -43,25 +52,15 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Fire DealsCombatDamage triggers at runtime when creatures deal combat damage
 - Enables Hypnotic Specter, Ophidian, etc. to work correctly
 
+## Completed Work (older)
+
 **New Effect Types (2026-03-07_#1872(e04b78d)):**
 - ✅ ForceSacrifice (891 card usages) - Diabolic Edict, Barter in Blood
 - ✅ TapAll (64 card usages) - Sleep, Cryptic Command tap mode
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-## Completed Work (older)
-
-**Previous Effect Types (2026-03-07_#1869(4dbfd3b)):**
-- ✅ LoseLife (108 card usages) - Drain Life, Sign in Blood
-- ✅ DestroyAll (34 card usages) - Wrath of God, Day of Judgment
-- ✅ DamageAll (58 card usages) - Pyroclasm, Earthquake
-
-**Affected$ Selector Expansion (2026-01-03_#1477):**
-- ✅ Card.Treasure+YouCtrl, Card.YouCtrl+wasCast, Card.Self+TopLibrary
-- ✅ Instant.COLOR+YouCtrl, Sorcery.COLOR+YouCtrl
-- ✅ Dynamic Subtype.YouOwn parsing (Merfolk.YouOwn, etc.)
-
-Checked up-to-date as of 2026-03-12_#1917(a5f047a) - 938 tests passing
+Checked up-to-date as of 2026-03-12_#1919(4871277) - 938 tests passing
 
 # Notes
 
