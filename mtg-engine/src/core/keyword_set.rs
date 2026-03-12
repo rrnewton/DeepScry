@@ -48,6 +48,8 @@ pub enum Keyword {
     ProtectionFromBlack,
     ProtectionFromWhite,
     ProtectionFromGreen,
+    ProtectionFromEverything, // "Protection from everything" (Progenitus, Hexdrinker)
+    ProtectionFromEachColor,  // "Protection from each color" (Etched Champion, Iridescent Angel)
 
     // ===== COMBAT-RELATED =====
     Banding,
@@ -62,6 +64,12 @@ pub enum Keyword {
     CantAttackOrBlock, // "CARDNAME can't attack or block."
     MustAttack,        // "CARDNAME attacks each combat if able."
     Goaded,            // Creature is goaded (must attack if able, preferably opponent who goaded)
+
+    // Lure-type effects (must be blocked)
+    MustBeBlocked,             // "CARDNAME must be blocked if able."
+    MustBeBlockedByAll,        // "All creatures able to block CARDNAME do so."
+    MustBeBlockedByTwo,        // "CARDNAME must be blocked by two or more creatures if able."
+    MustBeBlockedByExactlyOne, // "CARDNAME must be blocked by exactly one creature if able."
 
     // ===== KEYWORD ACTIONS/ABILITIES =====
     Changeling,

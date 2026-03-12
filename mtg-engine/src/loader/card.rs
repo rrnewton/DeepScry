@@ -1302,6 +1302,17 @@ impl CardDefinition {
                     "Protection from black" => keyword_set.insert(Keyword::ProtectionFromBlack),
                     "Protection from white" => keyword_set.insert(Keyword::ProtectionFromWhite),
                     "Protection from green" => keyword_set.insert(Keyword::ProtectionFromGreen),
+                    "Protection from everything" => keyword_set.insert(Keyword::ProtectionFromEverything),
+                    "Protection from each color" => keyword_set.insert(Keyword::ProtectionFromEachColor),
+                    // ===== LURE-TYPE EFFECTS (must be blocked) =====
+                    "CARDNAME must be blocked if able." => keyword_set.insert(Keyword::MustBeBlocked),
+                    "All creatures able to block CARDNAME do so." => keyword_set.insert(Keyword::MustBeBlockedByAll),
+                    "CARDNAME must be blocked by two or more creatures if able." => {
+                        keyword_set.insert(Keyword::MustBeBlockedByTwo)
+                    }
+                    "CARDNAME must be blocked by exactly one creature if able." => {
+                        keyword_set.insert(Keyword::MustBeBlockedByExactlyOne)
+                    }
                     // ===== COMBAT-RELATED =====
                     "Banding" => keyword_set.insert(Keyword::Banding),
                     "Flanking" => keyword_set.insert(Keyword::Flanking),
