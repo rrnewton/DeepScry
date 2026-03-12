@@ -2824,6 +2824,10 @@ impl HeuristicController {
             let hand_size = view.hand().len();
             // Draw if we have 2 or fewer cards in hand
             if hand_size <= 2 {
+                // Check timing for instant-speed draw - prefer opponent's end step for bluffing
+                if spell.is_instant() && !self.should_cast_instant_now(view, spell) {
+                    return false;
+                }
                 return true;
             }
         }
@@ -2956,6 +2960,71 @@ impl HeuristicController {
             return true;
         }
 
+        false
+    }
+
+    /// Determine if we should cast an instant-speed spell now (bluffing logic)
+    ///
+    /// Reference: Java Forge phase restriction patterns (e.g., "AtOpponentsCombatOrAfter", "AtEOT")
+    /// from various AI files (DestroyAi.java, DrawAi.java, etc.)
+    ///
+    /// This implements bluffing/deception by holding instant-speed spells until opponent's turn
+    /// when possible, to:
+    /// 1. Bluff having combat tricks/removal
+    /// 2. See what opponent does before committing mana
+    /// 3. Maintain maximum flexibility
+    ///
+    /// Key timing windows for instant-speed spells:
+    /// - Opponent's end step: Preferred window (bluffs combat tricks all turn)
+    /// - Our Main 2: Acceptable if we need to tap out for combat/attacks
+    /// - Emergency: Immediate cast if hand is too full or spell is critical
+    ///
+    /// Returns true if we should cast the instant now, false if we should hold it.
+    fn should_cast_instant_now(&self, view: &GameStateView, spell: &Card) -> bool {
+        let current_step = view.current_step();
+        let is_our_turn = view.active_player() == self.player_id;
+
+        // Always cast sorcery-speed spells immediately (no bluffing possible)
+        if !spell.is_instant() {
+            return true;
+        }
+
+        // Interrupt 1: Hand is too full (7+ cards) - need to cast to avoid discarding
+        // Reference: Similar to Java's hand size management in various AIs
+        let hand_size = view.hand().len();
+        if hand_size >= 7 {
+            return true;
+        }
+
+        // Interrupt 2: Opponent's end step - BEST time to cast instant-speed non-combat spells
+        // Reference: Java phase restrictions "AtEOT" pattern
+        // This maximizes bluffing (held mana all turn = could be removal/combat tricks)
+        if !is_our_turn && current_step == crate::game::Step::End {
+            return true;
+        }
+
+        // Interrupt 3: Our Main 2 - acceptable timing if we're about to pass turn anyway
+        // Reference: Java phase restrictions allowing Main 2 casting
+        if is_our_turn && current_step == crate::game::Step::Main2 {
+            return true;
+        }
+
+        // Interrupt 4: Combat phases - if opponent is attacking, might need to respond
+        // Though draw spells don't directly interact, casting now prevents telegraphing
+        let is_combat = matches!(
+            current_step,
+            crate::game::Step::DeclareAttackers | crate::game::Step::DeclareBlockers | crate::game::Step::CombatDamage
+        );
+        if is_combat {
+            // During combat, only cast if hand is getting full (5+ cards)
+            if hand_size >= 5 {
+                return true;
+            }
+        }
+
+        // Default: Hold the instant-speed spell for a better moment (bluffing)
+        // This is the key bluffing logic - by default, don't cast instant-speed
+        // draw/utility spells on our turn, wait for opponent's end step
         false
     }
 
@@ -8250,5 +8319,90 @@ mod tests {
             "Land drop RNG test: {} true, {} false out of 20 trials",
             true_count, false_count
         );
+    }
+
+    /// Test instant-speed spell timing bluffing
+    ///
+    /// Reference: Java Forge phase restriction patterns (e.g., "AtEOT" in various AIs)
+    ///
+    /// This test validates that the AI correctly holds instant-speed draw spells
+    /// for better timing rather than casting them immediately on its own turn.
+    ///
+    /// Key bluffing behavior:
+    /// - Hold instant-speed spells during our Main 1 (bluff having removal/combat tricks)
+    /// - Cast at opponent's end step (maximize bluffing while still getting value)
+    /// - Cast at our Main 2 if needed (acceptable fallback timing)
+    #[test]
+    fn test_instant_spell_bluffing_timing() {
+        use crate::core::{Card, CardId, CardType, Effect};
+        use crate::game::{GameState, GameStateView};
+
+        // Setup: Two players, P1 has instant-speed draw spell
+        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create instant-speed draw spell (like "Ancestral Recall")
+        let draw_spell_id = CardId::new(100);
+        let mut draw_spell = Card::new(draw_spell_id, "Instant Draw", p1_id);
+        draw_spell.add_type(CardType::Instant);
+        draw_spell.effects.push(Effect::DrawCards {
+            player: p1_id,
+            count: 3,
+        });
+
+        // Insert card into game and place in P1's hand
+        game.cards.insert(draw_spell_id, draw_spell.clone());
+        game.get_player_zones_mut(p1_id).unwrap().hand.cards.push(draw_spell_id);
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Scenario 1: Our Main 1, low hand (1 card) - should HOLD (bluffing)
+        game.turn.current_step = crate::game::Step::Main1;
+        game.turn.active_player = p1_id;
+        let view1 = GameStateView::new(&game, p1_id);
+        let should_cast_main1 = controller.should_cast_instant_now(&view1, &draw_spell);
+        assert!(
+            !should_cast_main1,
+            "Should HOLD instant draw during our Main 1 for bluffing (low hand)"
+        );
+
+        // Scenario 2: Our Main 2 - should CAST (acceptable timing)
+        game.turn.current_step = crate::game::Step::Main2;
+        let view2 = GameStateView::new(&game, p1_id);
+        let should_cast_main2 = controller.should_cast_instant_now(&view2, &draw_spell);
+        assert!(
+            should_cast_main2,
+            "Should CAST instant draw during our Main 2 (acceptable timing)"
+        );
+
+        // Scenario 3: Opponent's end step - should CAST (ideal bluffing window)
+        game.turn.active_player = p2_id;
+        game.turn.current_step = crate::game::Step::End;
+        let view3 = GameStateView::new(&game, p1_id);
+        let should_cast_opp_end = controller.should_cast_instant_now(&view3, &draw_spell);
+        assert!(
+            should_cast_opp_end,
+            "Should CAST instant draw at opponent's end step (ideal timing)"
+        );
+
+        // Scenario 4: Hand size 7+ - should CAST immediately (avoid discard)
+        // Add 6 more cards to hand (already have 1 draw spell = 7 total)
+        for i in 0..6 {
+            let filler_id = CardId::new(200 + i);
+            let filler = Card::new(filler_id, "Filler", p1_id);
+            game.cards.insert(filler_id, filler);
+            game.get_player_zones_mut(p1_id).unwrap().hand.cards.push(filler_id);
+        }
+        game.turn.active_player = p1_id;
+        game.turn.current_step = crate::game::Step::Main1;
+        let view4 = GameStateView::new(&game, p1_id);
+        let should_cast_full_hand = controller.should_cast_instant_now(&view4, &draw_spell);
+        assert!(
+            should_cast_full_hand,
+            "Should CAST immediately when hand is full (7+ cards, avoid discard)"
+        );
+
+        println!("Instant spell bluffing test passed - AI correctly holds instant-speed spells for better timing");
     }
 }

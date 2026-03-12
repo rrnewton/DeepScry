@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-07T23:23:00.724008349+00:00
+updated_at: 2026-03-12T02:49:11.452190735+00:00
 ---
 
 # Description
@@ -80,6 +80,19 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Accounts for deathtouch (1 damage lethal) and indestructible (can't kill)
   - Uses effective toughness with all buffs applied
   - Reference: New SMART approach, reduces decision tree vs Java Forge
+- ✅ **Land drop timing bluffing - Main Phase 2 hold logic (2026-03-12_#1921(a7668bf))**
+  - Probabilistic land-holding for Main 2 when mana won't be used
+  - 50% chance to hold on turn 3+ if land doesn't enable spell casting
+  - Bluffs having instant-speed interaction
+  - Reference: AiController.isSafeToHoldLandDropForMain2()
+- ✅ **Instant-speed spell timing bluffing (2026-03-12_#1922)**
+  - Hold instant-speed non-combat spells (draw, utility) for better timing
+  - Prefer casting at opponent's end step (maximizes bluffing)
+  - Acceptable fallback: our Main 2
+  - Emergency override: hand size 7+ (avoid discard)
+  - should_cast_instant_now() implements phase-aware timing decisions
+  - Reference: Java Forge phase restriction patterns ("AtEOT", etc.)
+  - Test: test_instant_spell_bluffing_timing with 4 scenarios
 
 **What's Missing:**
 
@@ -92,65 +105,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
 
 ### Lower Priority:
 
-3. **Bluffing/deception** - Hold information when advantageous
-4. **Additional static abilities** - "Can't be blocked except by" patterns
+3. **Additional static abilities** - "Can't be blocked except by" patterns (mostly covered via keywords)
 
 ## Completed Work
 
 - ✅ All items marked with ✅ above
 - ✅ **Comprehensive test coverage with real cards**
+- ✅ **Bluffing/deception** - Land drop timing AND instant-speed spell timing
 
 ## Next Steps (Priority Order)
 
-1. More static abilities handling ("can't be blocked except by" types)
-2. Bluffing/deception
+1. More static abilities handling (if needed beyond current keyword coverage)
+2. Additional bluffing contexts (if any gaps remain)
 
----- ✅ **Activated/triggered ability scoring in creature evaluation (2026-03-07_#1867(b876f88))**
-  - Activated abilities: classify as Ping/Pump/Destroy/Mana, score accordingly
-  - Triggered abilities: score by event type (ETB +10, combat damage +15, etc.)
-  - 10 new tests with real 4ED cards
-
----- ✅ **Regeneration ability support (AB$ Regenerate) (2026-03-07_#1868)**
-  - Full-stack: parsing, Effect::Regenerate, regeneration shields, combat damage interception
-  - AI activates regeneration during combat phases; creature evaluation: +20
-  - 7 new tests (4 mechanical + 3 creature evaluation with Drudge Skeletons, Sedge Troll)
-  - Affects 246 cards. Also implemented end-of-turn damage removal for all creatures.
-
----- ✅ **Board wipe / mass effect AI evaluation (2026-03-07_#1874)**
-  - Board wipe (DestroyAll/DamageAll): compares creature values with 200pt threshold, low-life override
-  - ForceSacrifice: cast when opponent has creatures
-  - TapAll: cast when opponent has 2+ untapped creatures
-  - UntapAll: cast when we have 2+ tapped creatures
-  - SetLife: cast when target amount > current life
-  - LoseLife: always cast (targets opponent)
-  - 11 new unit tests for AI decision methods
-  - Modeled after Java DestroyAllAi.doMassRemovalLogic()
-
----
-**Checked up-to-date as of 2026-03-12_#1920(aa94be5) - 938 tests passing**
-
----- ✅ **Fight spell AI (2026-03-10_#1900)**
-  - should_cast_fight() evaluates Fight spells (AB$ Fight)
-  - Favorable matchup detection: our creature kills theirs AND survives
-  - Deathtouch handling: 1 damage is lethal when attacking
-  - Indestructible handling: skip unkillable targets
-  - Trade-up logic: accept mutual kills if their creature worth 50+ more
-  - Reference: FightAi.java:27-108 (checkApiLogic)
-  - 4 new tests (favorable, unfavorable, deathtouch trade-up, no creatures)
-
----- ✅ **GainControl spell AI (2026-03-10_#1900)**
-  - should_cast_gain_control() evaluates steal effects (AB$ GainControl)
-  - Always cast if opponent has creatures (2-for-1 value)
-  - Reference: ControlGainAi.java
-  - 3 new tests (valuable target, no targets, always steals)
-
----- ✅ **Removal timing AI - use_removal_now() (2026-03-07_#1877(975720b))**
-  - Phase-aware timing: hold instant removal for combat/end step/Main phases
-  - Sorcery removal always fires immediately (limited windows)
-  - Two-for-one detection: enchanted targets trigger immediate removal
-  - High-value threshold (eval >= 200): remove dangerous creatures immediately
-  - Integrated into should_cast_spell() for destroy/damage effects
-  - target_has_auras() helper for aura attachment detection
-  - Reference: ComputerUtilCard.useRemovalNow() lines 1062-1278 in Java Forge
-  - 9 new tests with real 4ED cards (Terror, Lightning Bolt, Swords to Plowshares,
-    Serra Angel, Shivan Dragon, Grizzly Bears, Holy Strength)
+**Checked up-to-date as of 2026-03-12_#1922 - 940 tests passing**
