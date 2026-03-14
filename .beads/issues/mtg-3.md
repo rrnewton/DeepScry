@@ -36,6 +36,16 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Recent Completions
 
+**Combat Restrictions, Damage Prevention & Alternate Costs (2026-03-14_#1931(823b4bd)):**
+- ✅ CantAttackAlone, CantAttackOrBlockAlone (22 cards)
+- ✅ PreventAllDamage, PreventAllCombatDamage, PreventAllCombatDamageDealtAndReceived (20 cards)
+- ✅ UntapsDuringOthersUntapStep (8 cards), CanBlockShadow (6 cards)
+- ✅ DeckAnyNumber (20 cards), CanBeCommander (10 cards), AnteRemoval (18 cards)
+- ✅ AlternateAdditionalCost parameterized (62 cards)
+- ✅ MustBeBlockedByAllFiltered, MayEffectFromOpeningDeck, Prize (14 cards)
+- ✅ Trample:Planeswalker (4 cards)
+- 182 fewer keyword parsing warnings (528 → 346)
+
 **Protection & Lure Keyword Parsing (2026-03-12_#1924(6b3b518)):**
 - ✅ "Protection from everything" (4 cards: Progenitus, Hexdrinker)
 - ✅ "Protection from each color" (4 cards: Etched Champion, Iridescent Angel)
@@ -70,7 +80,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-12_#1924(6b3b518) - 940 tests passing
+Checked up-to-date as of 2026-03-14_#1931(823b4bd) - 940 tests passing
 
 # Notes
 
