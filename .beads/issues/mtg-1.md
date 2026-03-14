@@ -29,14 +29,15 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-14_#1942(3ebb7a2):**
-- Tests: 941 unit/integration tests passing
+**Current status as of 2026-03-14_#1950(46f42a1e):**
+- Tests: 942 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
 - Performance: 7.0M actions/sec (simple_bolt benchmark)
-- Keyword warnings: 346 remaining (down from 706)
+- Keyword warnings: 338 remaining (down from 706)
 
 **Recent accomplishments (2026-03-14):**
+- SacrificeAll effect (143 cards) - mass sacrifice (All is Dust, Archfiend of Depravity)
 - ChangeZoneAll effect (636 cards) - mass zone changes (Aetherize, Tormod's Crypt)
 - PutCounterAll effect (264 cards) - mass counter placement (Ajani, Arcbound Overseer)
 - PutCounterAll AI evaluation (CountersPutAllAi port)
@@ -60,4 +61,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-14_#1942(3ebb7a2).
+Checked up-to-date as of 2026-03-14_#1950(46f42a1e).

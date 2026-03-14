@@ -36,6 +36,12 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Recent Completions
 
+**SacrificeAll Effect (2026-03-14_#1950(46f42a1e)):**
+- ✅ AB$ SacrificeAll: mass sacrifice (143 cards)
+- Each player sacrifices all permanents matching ValidCards$ filter
+- Bypasses indestructible and regeneration (CR 701.17)
+- Examples: All is Dust, Archfiend of Depravity
+
 **ChangeZoneAll Effect (2026-03-14_#1940(a6fb17e)):**
 - ✅ AB$ ChangeZoneAll: mass zone changes (636 cards)
 - Moves cards matching ChangeType$ filter between Origin$ and Destination$ zones
@@ -91,7 +97,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-14_#1942(3ebb7a2) - 941 tests passing
+Checked up-to-date as of 2026-03-14_#1950(46f42a1e) - 942 tests passing
 
 # Notes
 
