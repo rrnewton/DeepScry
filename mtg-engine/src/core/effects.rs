@@ -1902,6 +1902,12 @@ pub enum AffectedSelector {
     /// Used by cards with Monstrosity that gain abilities when monstrous
     SelfWhenMonstrous,
 
+    /// Self when renowned (has +1/+1 counters from Renown ability)
+    ///
+    /// Corresponds to: `Affected$ Card.Self+IsRenowned`
+    /// Used by cards with Renown that gain abilities when renowned
+    SelfWhenRenowned,
+
     /// Tapped creatures you control, other than self.
     ///
     /// Corresponds to: `Affected$ Creature.tapped+YouCtrl+Other`

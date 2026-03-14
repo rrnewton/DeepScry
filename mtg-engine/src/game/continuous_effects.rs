@@ -384,6 +384,8 @@ impl GameState {
             AffectedSelector::SelfWhenUntapped => creature_id == source_id && !creature.tapped,
             // TODO(mtg-147): SelfWhenMonstrous requires tracking monstrous state on cards
             AffectedSelector::SelfWhenMonstrous => false, // Not yet implemented - need monstrous flag
+            // TODO(mtg-147): SelfWhenRenowned requires tracking renowned state on cards
+            AffectedSelector::SelfWhenRenowned => false, // Not yet implemented - need renowned flag
             AffectedSelector::ArtifactEnchantedBy
             | AffectedSelector::PlaneswalkerEnchantedBy
             | AffectedSelector::EquipmentEnchantedBy => self.get_attached_auras(creature_id).contains(&source_id),
@@ -1247,6 +1249,10 @@ impl GameState {
                             AffectedSelector::SelfWhenMonstrous => {
                                 // Not yet implemented - need is_monstrous flag on Card
                                 // Would check: creature_id == source.id && source.is_monstrous
+                            }
+                            AffectedSelector::SelfWhenRenowned => {
+                                // Not yet implemented - need is_renowned flag on Card
+                                // Would check: creature_id == source.id && source.is_renowned
                             }
                             // Tapped creatures you control (other than self)
                             AffectedSelector::TappedCreaturesYouControlOther => {

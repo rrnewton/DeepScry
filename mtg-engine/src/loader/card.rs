@@ -3202,6 +3202,7 @@ impl CardDefinition {
                 // State-based self selectors
                 "Card.Self+untapped" => AffectedSelector::SelfWhenUntapped,
                 "Card.Self+IsMonstrous" => AffectedSelector::SelfWhenMonstrous,
+                "Card.Self+IsRenowned" => AffectedSelector::SelfWhenRenowned,
                 "Card.Self+ThisTurnEntered" => AffectedSelector::SelfThisTurnEntered,
                 // Generic permanent and card selectors
                 "Permanent" => AffectedSelector::AllPermanents,
@@ -3262,7 +3263,7 @@ impl CardDefinition {
                 "Card.TopLibrary+YouOwn" => AffectedSelector::TopOfLibraryYouOwn,
                 "Card.TopLibrary+YouOwn+nonLand" => AffectedSelector::TopOfLibraryNonLand,
                 // Commander-specific
-                "Card.IsCommander+YouCtrl" => AffectedSelector::CommanderYouControl,
+                "Card.IsCommander+YouCtrl" | "Card.YouCtrl+IsCommander" => AffectedSelector::CommanderYouControl,
                 // Equipment selectors
                 "Card.EquippedBy+Legendary" => AffectedSelector::EquippedByLegendary,
                 // Attachment selectors
