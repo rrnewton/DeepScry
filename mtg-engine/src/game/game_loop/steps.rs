@@ -110,63 +110,60 @@ impl<'a> GameLoop<'a> {
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
         let active_player = self.game.turn.active_player;
 
-        // Collect all permanents with triggers matching this event
-        // Also collect trigger descriptions for logging
-        let triggered_info: SmallVec<[(CardId, Vec<String>); 4]> = self
+        // Collect card IDs with matching triggers (avoid String allocation in hot path)
+        // OPTIMIZATION: Only format trigger descriptions when verbose logging is enabled.
+        // Previously, Vec<String> + format!() was allocated for every trigger even in silent mode.
+        let triggered_cards: SmallVec<[CardId; 4]> = self
             .game
             .battlefield
             .cards
             .iter()
-            .filter_map(|&card_id| {
-                if let Some(card) = self.game.cards.try_get(card_id) {
-                    // Filter triggers: match event and respect ValidPlayer$ You restriction
-                    let matching_descriptions: Vec<String> = card
-                        .triggers
-                        .iter()
-                        .filter(|t| {
-                            if t.event != trigger_event {
-                                return false;
-                            }
-                            // Check [controller_only] flag - if present, only fire on controller's turn
-                            // This implements ValidPlayer$ You from the card definition
-                            if t.description.starts_with("[controller_only]") {
-                                return card.controller == active_player;
-                            }
-                            true
-                        })
-                        .map(|t| {
-                            // Strip the [controller_only] prefix for display
-                            let desc = t
-                                .description
-                                .strip_prefix("[controller_only] ")
-                                .unwrap_or(&t.description);
-                            format!("Trigger: {} - {}", card.name, desc)
-                        })
-                        .collect();
-
-                    if !matching_descriptions.is_empty() {
-                        Some((card_id, matching_descriptions))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .filter(|&&card_id| {
+                self.game.cards.try_get(card_id).is_some_and(|card| {
+                    card.triggers.iter().any(|t| {
+                        if t.event != trigger_event {
+                            return false;
+                        }
+                        // Check [controller_only] flag - if present, only fire on controller's turn
+                        if t.description.starts_with("[controller_only]") {
+                            return card.controller == active_player;
+                        }
+                        true
+                    })
+                })
             })
+            .copied()
             .collect();
 
         // For each card with a matching trigger, log and execute
-        // Note: In the future, this will need to handle optional triggers, conditions, etc.
-        for (card_id, descriptions) in triggered_info {
-            // Log trigger activation if verbose
+        for card_id in triggered_cards {
+            // Log trigger activation only if verbose (avoid String allocation in hot path)
             if self.verbosity >= VerbosityLevel::Verbose {
+                // Collect descriptions separately to avoid borrow conflict with log_verbose
+                let descriptions: SmallVec<[String; 2]> = self
+                    .game
+                    .cards
+                    .try_get(card_id)
+                    .map(|card| {
+                        card.triggers
+                            .iter()
+                            .filter(|t| t.event == trigger_event)
+                            .map(|t| {
+                                let desc = t
+                                    .description
+                                    .strip_prefix("[controller_only] ")
+                                    .unwrap_or(&t.description);
+                                format!("Trigger: {} - {}", card.name, desc)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 for desc in descriptions {
                     self.log_verbose(&desc);
                 }
             }
 
             // Use the existing check_triggers method to execute effects
-            // Pass the card_id as the source for filling in placeholders
             self.game
                 .check_triggers_for_controller(trigger_event, card_id, active_player)?;
         }
