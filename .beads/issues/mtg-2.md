@@ -11,7 +11,17 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-14_#1928(87675a5))
+## Latest Optimization (2026-03-14_#1937(3a67f89))
+
+✅ **sort_unstable + SBA debug logging guard** - **-5% to -7.5% time**
+- Used sort_unstable_by_key for abilities_buffer (avoids allocation overhead of stable sort)
+- Guarded SBA debug logging with log_enabled! check (avoid evaluating conditions when debug off)
+- Removed unnecessary card.name.contains("Peter Porker") string search in SBA hot path
+- robots_mirror/mem_logging: -5.8% to -9.2% time (p = 0.00)
+- simple_bolt: -4.5% to -5.3% time (p = 0.00)
+- Tracked: mem_logging 2,265,401 actions/sec, simple_bolt 7,045,777 actions/sec
+
+## Previous Optimization (2026-03-14_#1928(87675a5))
 
 ✅ **Eliminate inner Vec allocation in check_triggers** - **-2% to -4.6% time**
 - Replaced filter_map + collect::<Vec<TriggerInfo>> + flatten with filter_map + flat_map
