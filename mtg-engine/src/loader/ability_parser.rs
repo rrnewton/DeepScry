@@ -139,6 +139,7 @@ pub enum ApiType {
     ///   NumCopies$ N - create multiple copies
     CopyPermanent,
     PutCounter,
+    PutCounterAll,
     RemoveCounter,
     MoveCounter,
     MultiplyCounter,
@@ -290,6 +291,7 @@ impl ApiType {
             "Attach" => Self::Attach,
             "CopyPermanent" => Self::CopyPermanent,
             "PutCounter" => Self::PutCounter,
+            "PutCounterAll" => Self::PutCounterAll,
             "RemoveCounter" => Self::RemoveCounter,
             "MoveCounter" => Self::MoveCounter,
             "MultiplyCounter" => Self::MultiplyCounter,
@@ -393,6 +395,7 @@ impl ApiType {
             Self::Attach => "Attach",
             Self::CopyPermanent => "CopyPermanent",
             Self::PutCounter => "PutCounter",
+            Self::PutCounterAll => "PutCounterAll",
             Self::RemoveCounter => "RemoveCounter",
             Self::MoveCounter => "MoveCounter",
             Self::MultiplyCounter => "MultiplyCounter",

@@ -623,6 +623,14 @@ pub enum Effect {
         amount: u8,
     },
 
+    /// Put counters on all permanents matching a filter
+    /// Example: "Put a +1/+1 counter on each creature you control"
+    PutCounterAll {
+        restriction: TargetRestriction,
+        counter_type: crate::core::CounterType,
+        amount: u8,
+    },
+
     /// Remove counters from a permanent
     /// Example: "Remove a +1/+1 counter from target creature"
     /// When counter_type is None, removes counters of any type (CounterType$ Any)
@@ -1090,7 +1098,8 @@ impl Effect {
             | Effect::DestroyAll { .. }
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
-            | Effect::UntapAll { .. } => EffectTargetCategory::UsesFilter,
+            | Effect::UntapAll { .. }
+            | Effect::PutCounterAll { .. } => EffectTargetCategory::UsesFilter,
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,

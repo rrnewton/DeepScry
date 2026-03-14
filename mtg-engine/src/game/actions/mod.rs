@@ -42,6 +42,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CounterSpell { .. }
         | Effect::AddMana { .. }
         | Effect::PutCounter { .. }
+        | Effect::PutCounterAll { .. }
         | Effect::RemoveCounter { .. }
         | Effect::ExilePermanent { .. }
         | Effect::SearchLibrary { .. }
@@ -126,6 +127,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CounterSpell { .. }
             | Effect::AddMana { .. }
             | Effect::PutCounter { .. }
+            | Effect::PutCounterAll { .. }
             | Effect::RemoveCounter { .. }
             | Effect::ExilePermanent { .. }
             | Effect::SearchLibrary { .. }
@@ -2412,6 +2414,28 @@ impl GameState {
                 }
                 // Add counters using the GameState method (which logs for undo)
                 self.add_counters(*target, *counter_type, *amount)?;
+            }
+            Effect::PutCounterAll {
+                restriction,
+                counter_type,
+                amount,
+            } => {
+                // Put counters on all permanents matching the restriction
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter(|&card_id| {
+                        self.cards
+                            .try_get(card_id)
+                            .is_some_and(|card| restriction.matches(card))
+                    })
+                    .collect();
+
+                for card_id in targets {
+                    self.add_counters(card_id, *counter_type, *amount)?;
+                }
             }
             Effect::RemoveCounter {
                 target,

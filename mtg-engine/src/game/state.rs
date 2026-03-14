@@ -2852,6 +2852,7 @@ impl GameState {
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }
+                    | crate::core::Effect::PutCounterAll { .. }
                     | crate::core::Effect::RemoveCounter { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::SearchLibrary { .. }

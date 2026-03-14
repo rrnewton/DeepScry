@@ -312,6 +312,16 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::PutCounterAll {
+                restriction,
+                counter_type,
+                amount,
+            } => {
+                let message = format!(
+                    "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on all matching permanents ({restriction:?})"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::RemoveCounter {
                 target,
                 counter_type,

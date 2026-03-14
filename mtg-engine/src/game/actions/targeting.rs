@@ -433,6 +433,7 @@ impl GameState {
                             | Effect::Regenerate { .. }
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
+                            | Effect::PutCounterAll { .. }
                             | Effect::AttachEquipment { .. }
                             | Effect::ModalChoice { .. }
                             | Effect::PumpAllCreatures { .. }
@@ -511,6 +512,7 @@ impl GameState {
                 | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
+                | Effect::PutCounterAll { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::PumpAllCreatures { .. }
                 | Effect::DestroyAll { .. }
@@ -914,6 +916,7 @@ impl GameState {
                 | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
+                | Effect::PutCounterAll { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::PumpAllCreatures { .. }
@@ -1129,6 +1132,7 @@ impl GameState {
             | Effect::UntapAll { .. }
             | Effect::SetLife { .. }
             | Effect::GainControl { .. }
+            | Effect::PutCounterAll { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====

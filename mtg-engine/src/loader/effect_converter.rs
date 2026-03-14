@@ -383,6 +383,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::PutCounterAll => {
+            // PutCounterAll: Put counters on all permanents matching ValidCards$
+            // Example: "DB$ PutCounterAll | ValidCards$ Creature.YouCtrl | CounterType$ P1P1 | CounterNum$ 1"
+            use crate::core::CounterType;
+
+            let counter_type_str = params.get("CounterType")?;
+            let counter_type = CounterType::parse(counter_type_str)?;
+
+            let amount = params.get_u8("CounterNum").unwrap_or(1);
+
+            let restriction = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            Some(Effect::PutCounterAll {
+                restriction,
+                counter_type,
+                amount,
+            })
+        }
+
         ApiType::RemoveCounter => {
             // RemoveCounter effect: DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True
             // Example: Heartless Act mode 2 - "Remove up to three counters from target creature"
