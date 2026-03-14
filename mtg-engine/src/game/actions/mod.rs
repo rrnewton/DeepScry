@@ -4083,69 +4083,56 @@ impl GameState {
         let source_card_controller = self.cards.try_get(source_card_id).map(|c| c.controller);
 
         // Phase 1: Collect matching triggers with their metadata
+        // Use flat_map to avoid inner Vec allocation per card - most cards have no matching triggers
         let candidate_triggers: Vec<TriggerInfo> = self
             .battlefield
             .cards
             .iter()
-            .filter_map(|&card_id| {
-                if let Some(card) = self.cards.try_get(card_id) {
-                    let controller = card.controller;
-                    // NOTE: card_name clone deferred to map() below - only happens for matching triggers
-                    // This avoids cloning Arc<str> for every card on battlefield when most have no triggers
+            .filter_map(|&card_id| self.cards.try_get(card_id).map(|card| (card_id, card)))
+            .flat_map(|(card_id, card)| {
+                let controller = card.controller;
+                let card_name = &card.name;
 
-                    // Find triggers matching this event
-                    let triggers: Vec<TriggerInfo> = card
-                        .triggers
-                        .iter()
-                        .filter(|trigger| {
-                            // Check event type matches
-                            if trigger.event != event {
+                card.triggers
+                    .iter()
+                    .filter(move |trigger| {
+                        // Check event type matches
+                        if trigger.event != event {
+                            return false;
+                        }
+
+                        // Self-only triggers only fire when the trigger source is the event source
+                        if trigger.trigger_self_only && card_id != source_card_id {
+                            return false;
+                        }
+
+                        // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
+                        // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
+                        if trigger.description.contains("[other]") && card_id == source_card_id {
+                            return false;
+                        }
+
+                        // "[landfall]" triggers only fire when:
+                        // 1. The entering card is a Land
+                        // 2. The entering card is controlled by the trigger's controller
+                        if trigger.description.contains("[landfall]") {
+                            if !source_card_is_land {
                                 return false;
                             }
-
-                            // Self-only triggers only fire when the trigger source is the event source
-                            if trigger.trigger_self_only && card_id != source_card_id {
+                            if source_card_controller != Some(controller) {
                                 return false;
                             }
+                        }
 
-                            // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
-                            // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
-                            if trigger.description.contains("[other]") && card_id == source_card_id {
-                                return false;
-                            }
-
-                            // "[landfall]" triggers only fire when:
-                            // 1. The entering card is a Land
-                            // 2. The entering card is controlled by the trigger's controller
-                            if trigger.description.contains("[landfall]") {
-                                if !source_card_is_land {
-                                    return false;
-                                }
-                                if source_card_controller != Some(controller) {
-                                    return false;
-                                }
-                            }
-
-                            true
-                        })
-                        .map(|trigger| TriggerInfo {
-                            card_id,
-                            card_name: card.name.clone(), // Clone Arc<str> only for matching triggers
-                            controller,
-                            trigger: trigger.clone(),
-                        })
-                        .collect();
-
-                    if triggers.is_empty() {
-                        None
-                    } else {
-                        Some(triggers)
-                    }
-                } else {
-                    None
-                }
+                        true
+                    })
+                    .map(move |trigger| TriggerInfo {
+                        card_id,
+                        card_name: card_name.clone(), // Clone Arc<str> only for matching triggers
+                        controller,
+                        trigger: trigger.clone(),
+                    })
             })
-            .flatten()
             .collect();
 
         // Phase 2: Filter by cost payability, choose sacrifice targets, and collect effects
