@@ -59,17 +59,33 @@ pub enum Keyword {
     Infect,
 
     // Combat restrictions (static abilities represented as keywords)
-    CantAttack,        // "CARDNAME can't attack."
-    CantBlock,         // "CARDNAME can't block."
-    CantAttackOrBlock, // "CARDNAME can't attack or block."
-    MustAttack,        // "CARDNAME attacks each combat if able."
-    Goaded,            // Creature is goaded (must attack if able, preferably opponent who goaded)
+    CantAttack,             // "CARDNAME can't attack."
+    CantBlock,              // "CARDNAME can't block."
+    CantAttackOrBlock,      // "CARDNAME can't attack or block."
+    CantAttackAlone,        // "CARDNAME can't attack alone."
+    CantAttackOrBlockAlone, // "CARDNAME can't attack or block alone."
+    MustAttack,             // "CARDNAME attacks each combat if able."
+    Goaded,                 // Creature is goaded (must attack if able, preferably opponent who goaded)
 
     // Lure-type effects (must be blocked)
     MustBeBlocked,             // "CARDNAME must be blocked if able."
     MustBeBlockedByAll,        // "All creatures able to block CARDNAME do so."
     MustBeBlockedByTwo,        // "CARDNAME must be blocked by two or more creatures if able."
     MustBeBlockedByExactlyOne, // "CARDNAME must be blocked by exactly one creature if able."
+
+    // Damage prevention keywords
+    PreventAllDamage,                       // "Prevent all damage that would be dealt to CARDNAME."
+    PreventAllCombatDamage,                 // "Prevent all combat damage that would be dealt to CARDNAME."
+    PreventAllCombatDamageDealtAndReceived, // "Prevent all combat damage that would be dealt to and dealt by CARDNAME."
+
+    // Untap-related keywords
+    UntapsDuringOthersUntapStep, // "CARDNAME untaps during each other player's untap step."
+    CanBlockShadow,              // "CARDNAME can block creatures with shadow as though they didn't have shadow."
+
+    // Deck-building keywords
+    DeckAnyNumber,  // "A deck can have any number of cards named CARDNAME."
+    CanBeCommander, // "CARDNAME can be your commander."
+    AnteRemoval,    // "Remove CARDNAME from your deck before playing if you're not playing for ante."
 
     // ===== KEYWORD ACTIONS/ABILITIES =====
     Changeling,
@@ -272,11 +288,14 @@ pub enum Keyword {
     Haunt,
     Replicate,
     MayEffectFromOpeningHand,
+    MayEffectFromOpeningDeck,
     Mayhem,
     Recover,
     Visit,
     DeckLimit,
     Dungeon,
+    AlternateAdditionalCost,
+    Prize,
 
     // Saga and enchantment-related
     Chapter,
@@ -486,6 +505,9 @@ impl Keyword {
                 | Keyword::Visit
                 | Keyword::DeckLimit
                 | Keyword::Dungeon
+                | Keyword::AlternateAdditionalCost
+                | Keyword::Prize
+                | Keyword::MayEffectFromOpeningDeck
                 // Saga and enchantment-related
                 | Keyword::Chapter
                 | Keyword::Class
@@ -792,6 +814,19 @@ pub enum KeywordArgs {
     /// Dungeon (e.g., "Dungeon:DBPortal,DBDungeon,DBBazaar,...")
     /// Specifies dungeon rooms
     Dungeon { rooms: String },
+
+    // ===== ALTERNATE COSTS AND SPECIAL KEYWORDS =====
+    /// AlternateAdditionalCost (e.g., "AlternateAdditionalCost:Reveal<1/Goblin>:3")
+    /// Alternative costs for spells (reveal a card, sacrifice, etc.)
+    AlternateAdditionalCost { spec: String },
+    /// MustBeBlockedByAll with a creature type filter
+    /// (e.g., "MustBeBlockedByAll:Creature.withFlying:All creatures with flying...")
+    MustBeBlockedByAllFiltered { filter: String },
+    /// MayEffectFromOpeningDeck (e.g., "MayEffectFromOpeningDeck:DBReveal")
+    /// Opening hand reveal effects (similar to Leylines but from deck)
+    MayEffectFromOpeningDeck { effect_ref: String },
+    /// Prize (e.g., "Prize:TrigPrize") - Unfinity attraction mechanic
+    Prize { trigger_ref: String },
 }
 
 impl KeywordArgs {
@@ -918,6 +953,10 @@ impl KeywordArgs {
             KeywordArgs::Visit { .. } => Keyword::Visit,
             KeywordArgs::DeckLimit { .. } => Keyword::DeckLimit,
             KeywordArgs::Dungeon { .. } => Keyword::Dungeon,
+            KeywordArgs::AlternateAdditionalCost { .. } => Keyword::AlternateAdditionalCost,
+            KeywordArgs::MustBeBlockedByAllFiltered { .. } => Keyword::MustBeBlockedByAll,
+            KeywordArgs::MayEffectFromOpeningDeck { .. } => Keyword::MayEffectFromOpeningDeck,
+            KeywordArgs::Prize { .. } => Keyword::Prize,
         }
     }
 }

@@ -1265,6 +1265,38 @@ impl CardDefinition {
                             rooms: param.to_string(),
                         });
                     }
+                    // ===== ALTERNATE COSTS AND SPECIAL PARAMETERIZED KEYWORDS =====
+                    "AlternateAdditionalCost" => {
+                        // Format: "AlternateAdditionalCost:Reveal<1/Goblin>:3"
+                        // Parsed but not yet used at runtime - stores raw format
+                        keyword_set.insert_complex(KeywordArgs::AlternateAdditionalCost {
+                            spec: param.to_string(),
+                        });
+                    }
+                    "MustBeBlockedByAll" => {
+                        // Format: "MustBeBlockedByAll:Creature.withFlying:description"
+                        keyword_set.insert_complex(KeywordArgs::MustBeBlockedByAllFiltered {
+                            filter: param.to_string(),
+                        });
+                    }
+                    "MayEffectFromOpeningDeck" => {
+                        // Format: "MayEffectFromOpeningDeck:DBReveal"
+                        keyword_set.insert_complex(KeywordArgs::MayEffectFromOpeningDeck {
+                            effect_ref: param.to_string(),
+                        });
+                    }
+                    "Prize" => {
+                        // Format: "Prize:TrigPrize"
+                        keyword_set.insert_complex(KeywordArgs::Prize {
+                            trigger_ref: param.to_string(),
+                        });
+                    }
+                    "Trample" if param == "Planeswalker" => {
+                        // "Trample:Planeswalker" means this creature's excess combat damage
+                        // can be dealt to planeswalkers the defending player controls
+                        keyword_set.insert(Keyword::Trample);
+                        // TODO: Add TramplePlaneswalker variant for runtime handling
+                    }
                     _ => {
                         // Unknown parameterized keyword - log warning
                         warn_with_context(&format!("Unknown parameterized keyword '{}' in '{}'", kw, keyword_str));
@@ -1312,6 +1344,32 @@ impl CardDefinition {
                     }
                     "CARDNAME must be blocked by exactly one creature if able." => {
                         keyword_set.insert(Keyword::MustBeBlockedByExactlyOne)
+                    }
+                    // ===== COMBAT RESTRICTIONS =====
+                    "CARDNAME can't attack alone." => keyword_set.insert(Keyword::CantAttackAlone),
+                    "CARDNAME can't attack or block alone." => keyword_set.insert(Keyword::CantAttackOrBlockAlone),
+                    // ===== DAMAGE PREVENTION =====
+                    "Prevent all damage that would be dealt to CARDNAME." => {
+                        keyword_set.insert(Keyword::PreventAllDamage)
+                    }
+                    "Prevent all combat damage that would be dealt to CARDNAME." => {
+                        keyword_set.insert(Keyword::PreventAllCombatDamage)
+                    }
+                    "Prevent all combat damage that would be dealt to and dealt by CARDNAME." => {
+                        keyword_set.insert(Keyword::PreventAllCombatDamageDealtAndReceived)
+                    }
+                    // ===== UNTAP AND BLOCKING =====
+                    "CARDNAME untaps during each other player's untap step." => {
+                        keyword_set.insert(Keyword::UntapsDuringOthersUntapStep)
+                    }
+                    "CARDNAME can block creatures with shadow as though they didn't have shadow." => {
+                        keyword_set.insert(Keyword::CanBlockShadow)
+                    }
+                    // ===== DECK-BUILDING =====
+                    "A deck can have any number of cards named CARDNAME." => keyword_set.insert(Keyword::DeckAnyNumber),
+                    "CARDNAME can be your commander." => keyword_set.insert(Keyword::CanBeCommander),
+                    "Remove CARDNAME from your deck before playing if you're not playing for ante." => {
+                        keyword_set.insert(Keyword::AnteRemoval)
                     }
                     // ===== COMBAT-RELATED =====
                     "Banding" => keyword_set.insert(Keyword::Banding),

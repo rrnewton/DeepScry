@@ -3126,6 +3126,13 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
                     // ETB keywords
                     mtg_forge_rs::core::KeywordArgs::ETBReplacement { .. } => "ETB Replacement",
                     mtg_forge_rs::core::KeywordArgs::EtbCounter { .. } => "ETB Counter",
+                    // Alternate costs and special keywords
+                    mtg_forge_rs::core::KeywordArgs::AlternateAdditionalCost { .. } => "Alternate Additional Cost",
+                    mtg_forge_rs::core::KeywordArgs::MustBeBlockedByAllFiltered { .. } => {
+                        "Must Be Blocked By All (Filtered)"
+                    }
+                    mtg_forge_rs::core::KeywordArgs::MayEffectFromOpeningDeck { .. } => "May Effect From Opening Deck",
+                    mtg_forge_rs::core::KeywordArgs::Prize { .. } => "Prize",
                 }
                 .to_string();
                 *keyword_counts.entry(keyword_name).or_insert(0) += 1;
