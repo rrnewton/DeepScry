@@ -63,17 +63,24 @@ This module contains the fundamental types and entities for the MTG game engine.
 ### [`effects.rs`](effects.rs)
 **Purpose:** Card effects and abilities
 
-- `Effect` - Enum of all possible card effects:
-  - `DealDamage` - Deal damage to target
-  - `Draw` - Draw cards
-  - `Destroy` - Destroy permanent
-  - `GainLife` - Gain life
-  - `Pump` - Modify power/toughness
-  - `Tap`/`Untap` - Tap/untap permanents
-  - `Mill` - Mill cards from library
-  - `Counter` - Counter spell
-  - `CreateToken` - Create token
-  - `Regenerate` - Regenerate creature
+- `Effect` - Enum of all possible card effects (40+ variants):
+  - Damage: `DealDamage`, `DamageAll`, `EachDamage`
+  - Life: `GainLife`, `LoseLife`, `SetLife`
+  - Cards: `DrawCards`, `DiscardCards`, `Mill`, `Loot`, `Scry`, `Surveil`
+  - Creatures: `PumpCreature`, `PumpAllCreatures`, `SetBasePowerToughness`
+  - Removal: `DestroyPermanent`, `DestroyAll`, `ExilePermanent`
+  - Sacrifice: `ForceSacrifice`, `SacrificeAll`
+  - Zone: `ChangeZoneAll`, `SearchLibrary`
+  - Counters: `PutCounter`, `PutCounterAll`, `RemoveCounter`
+  - Tokens: `CreateToken`, `CopyPermanent`
+  - Combat: `Fight`, `Regenerate`, `GrantCantBeBlocked`
+  - Equipment: `AttachEquipment`
+  - Control: `GainControl`
+  - Tap: `TapPermanent`, `UntapPermanent`, `TapAll`, `UntapAll`
+  - Stack: `CounterSpell`
+  - Mana: `AddMana`
+  - Modal: `ModalChoice`, `Balance`, `Dig`
+  - Special: `Airbend`, `Earthbend`, `Firebend` (Avatar set)
 
 - `Keyword` - Combat and static keywords:
   - Flying, First Strike, Double Strike, Deathtouch

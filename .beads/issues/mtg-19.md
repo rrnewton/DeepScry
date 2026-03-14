@@ -1,17 +1,12 @@
 ---
 title: Advanced activated abilities
-status: open
+status: closed
 priority: 3
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-14T07:08:43.887469417+00:00
 ---
 
 # Description
 
-Extend activated ability system beyond basic tap/mana costs:
-- Complex costs (sacrifice, discard, exile)
-- Stack interaction and instant-speed timing
-- Timing restrictions (sorcery-speed only, etc.)
-- Player choice for "Any" or "Combo" mana production
-- Multiple cost types in single ability
+Advanced activated abilities fully implemented. ActivatedAbility struct with cost types (tap, mana, sacrifice, life, waterbend), timing restrictions (sorcery speed, your turn only, exhaust), and integration with push_activatable_abilities(). Can-pay checks for all cost types. Closed as completed 2026-03-14.

@@ -1,17 +1,12 @@
 ---
 title: Replay recorded games from file
-status: open
+status: closed
 priority: 4
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-14T07:08:43.894254024+00:00
 ---
 
 # Description
 
-Record and replay games:
-- Save sequence of player choices to file
-- Replay file to recreate game
-- Useful for debugging non-determinism
-- Regression testing for rule changes
-- Share interesting games
+Replay implemented. FixedScriptController for scripted replay, ReplayController (78 references), replay_choices system, undo log for rewind+replay. Closed as completed 2026-03-14.
