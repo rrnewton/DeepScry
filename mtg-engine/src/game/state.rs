@@ -1514,7 +1514,11 @@ impl GameState {
                 let has_lethal = card.damage >= i32::from(toughness);
 
                 // Debug: Log SBA check for creatures with damage or low toughness
-                if card.damage > 0 || toughness <= 0 || card.name.as_str().contains("Peter Porker") {
+                // OPTIMIZATION: Guard debug logging with log_enabled check to avoid
+                // evaluating string contains and format args when debug is disabled
+                if log::log_enabled!(target: "sba", log::Level::Debug)
+                    && (card.damage > 0 || toughness <= 0)
+                {
                     log::debug!(target: "sba", "SBA check: {} (id={}) damage={} toughness={} has_lethal={} indestructible={}",
                         card.name, card_id.as_u32(), card.damage, toughness, has_lethal, card.has_indestructible());
                 }

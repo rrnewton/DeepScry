@@ -1053,7 +1053,7 @@ impl<'a> GameLoop<'a> {
         // This is critical for snapshot/resume: if two runs have the same cards available
         // but in different hand order, we need to present them in the same order so that
         // index-based choice replay (FixedScriptController) selects the same logical card
-        self.abilities_buffer.sort_by_key(SpellAbility::card_id);
+        self.abilities_buffer.sort_unstable_by_key(SpellAbility::card_id);
 
         // Return a borrowed slice - buffer is reused across calls
         &self.abilities_buffer
