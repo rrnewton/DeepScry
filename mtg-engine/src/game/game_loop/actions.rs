@@ -855,7 +855,22 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
-                    // TODO: Check other cost types (sacrifice, discard, etc.)
+                    // Check sacrifice cost (e.g., "Sac<1/Saproling>")
+                    // Without this check, abilities with unpayable sacrifice costs
+                    // would appear as available, causing infinite loops when AI tries
+                    // to activate them repeatedly.
+                    if can_activate {
+                        if let Some((sac_count, sac_pattern)) = ability.cost.get_sacrifice_pattern() {
+                            if !self
+                                .game
+                                .can_pay_sacrifice_pattern(sac_pattern, sac_count, card_id, player_id)
+                            {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    // TODO: Check other cost types (discard, etc.)
                     // TODO: Check activation limits
 
                     // Check sorcery-speed timing restrictions (CR 602.5d, CR 307.5)
