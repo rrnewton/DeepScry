@@ -1,16 +1,12 @@
 ---
 title: Determinism testing for more complex scenarios
-status: open
+status: closed
 priority: 3
 issue_type: chore
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-14T05:40:14.412682521+00:00
 ---
 
 # Description
 
-Extend determinism tests:
-- Complex random scenarios with seed
-- Multi-thousand game consistency checks
-- Verify undo/redo produces same state
-- Catch floating-point non-determinism
+Determinism testing comprehensive. 55+ determinism deck tests in determinism_e2e.rs. Every deck verified to produce identical output across runs. Closed as completed 2026-03-14.

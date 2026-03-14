@@ -1,18 +1,12 @@
 ---
 title: GameState text file format (.pzl files)
-status: open
+status: closed
 priority: 4
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-14T05:40:14.410581399+00:00
 ---
 
 # Description
 
-Define text format for saving/loading game states:
-- Human-readable format
-- Include all zones (hand, library order, battlefield, graveyard, exile)
-- Player life totals and counters
-- Turn/phase information
-- Stack contents
-Use for testing and puzzle setup.
+.pzl puzzle file format implemented. Tests in puzzle_e2e.rs. Used for specific board state testing. Closed as completed 2026-03-14.

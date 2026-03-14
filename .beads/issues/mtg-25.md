@@ -1,16 +1,12 @@
 ---
 title: Interactive TUI controller (--p1=tui) for human play
-status: open
+status: closed
 priority: 3
 issue_type: feature
-created_at: "2025-10-26T21:06:34Z"
-updated_at: "2025-10-26T21:06:34Z"
+created_at: 2025-10-26T21:06:34+00:00
+updated_at: 2026-03-14T05:39:21.865923972+00:00
 ---
 
 # Description
 
-Implement interactive TUI controller allowing human players to make decisions.
-- Read input from stdin for choices
-- Display available actions
-- Handle complex decision trees
-- Graceful error handling for invalid inputs
+Interactive TUI controller fully implemented (1310 lines). InteractiveController in interactive_controller.rs supports human play via --p1=tui. Rich text commands, card selection, combat decisions, and mana payment all working. Closed as completed 2026-03-14.
