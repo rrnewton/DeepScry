@@ -43,6 +43,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::AddMana { .. }
         | Effect::PutCounter { .. }
         | Effect::PutCounterAll { .. }
+        | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
         | Effect::ExilePermanent { .. }
         | Effect::SearchLibrary { .. }
@@ -128,6 +129,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::AddMana { .. }
             | Effect::PutCounter { .. }
             | Effect::PutCounterAll { .. }
+            | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
             | Effect::ExilePermanent { .. }
             | Effect::SearchLibrary { .. }
@@ -2435,6 +2437,52 @@ impl GameState {
 
                 for card_id in targets {
                     self.add_counters(card_id, *counter_type, *amount)?;
+                }
+            }
+            Effect::ChangeZoneAll {
+                restriction,
+                origin,
+                destination,
+            } => {
+                // Move all cards matching the restriction from origin zone to destination zone
+                let cards_to_move: Vec<(CardId, PlayerId)> = match origin {
+                    crate::zones::Zone::Battlefield => self
+                        .battlefield
+                        .cards
+                        .iter()
+                        .copied()
+                        .filter_map(|card_id| {
+                            let card = self.cards.try_get(card_id)?;
+                            if restriction.matches(card) {
+                                Some((card_id, card.owner))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    crate::zones::Zone::Graveyard => {
+                        // Collect from all players' graveyards
+                        let mut result = Vec::new();
+                        for (player_id, zones) in &self.player_zones {
+                            for &card_id in &zones.graveyard.cards {
+                                if let Some(card) = self.cards.try_get(card_id) {
+                                    if restriction.matches(card) {
+                                        result.push((card_id, *player_id));
+                                    }
+                                }
+                            }
+                        }
+                        result
+                    }
+                    crate::zones::Zone::Hand
+                    | crate::zones::Zone::Exile
+                    | crate::zones::Zone::Library
+                    | crate::zones::Zone::Stack
+                    | crate::zones::Zone::Command => Vec::new(), // Other origin zones not yet supported
+                };
+
+                for (card_id, owner) in cards_to_move {
+                    self.move_card(card_id, *origin, *destination, owner)?;
                 }
             }
             Effect::RemoveCounter {

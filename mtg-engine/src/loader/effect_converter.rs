@@ -1041,6 +1041,32 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::ChangeZoneAll => {
+            // ChangeZoneAll: Move all cards matching a filter from one zone to another
+            // Example: "SP$ ChangeZoneAll | ChangeType$ Creature.attacking | Origin$ Battlefield | Destination$ Hand"
+            // Example: "DB$ ChangeZoneAll | ChangeType$ Card | Origin$ Graveyard | Destination$ Exile"
+            let origin = params
+                .get("Origin")
+                .and_then(crate::zones::Zone::from_str_lenient)
+                .unwrap_or(crate::zones::Zone::Battlefield);
+
+            let destination = params
+                .get("Destination")
+                .and_then(crate::zones::Zone::from_str_lenient)
+                .unwrap_or(crate::zones::Zone::Exile);
+
+            let restriction = params
+                .get("ChangeType")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            Some(Effect::ChangeZoneAll {
+                restriction,
+                origin,
+                destination,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

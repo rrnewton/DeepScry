@@ -322,6 +322,16 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::ChangeZoneAll {
+                restriction,
+                origin,
+                destination,
+            } => {
+                let message = format!(
+                    "{source_name} ({source_id}) moves all matching cards ({restriction:?}) from {origin:?} to {destination:?}"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::RemoveCounter {
                 target,
                 counter_type,

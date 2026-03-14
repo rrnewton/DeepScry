@@ -646,6 +646,18 @@ pub enum Effect {
     /// Moves a card from the battlefield to the exile zone
     ExilePermanent { target: CardId },
 
+    /// Move all cards matching a filter from one zone to another
+    /// Example: "Return all attacking creatures to their owner's hand" (Aetherize)
+    /// Example: "Exile all cards from all graveyards" (Tormod's Crypt)
+    ChangeZoneAll {
+        /// Filter for which cards to move
+        restriction: TargetRestriction,
+        /// Source zone
+        origin: crate::zones::Zone,
+        /// Destination zone
+        destination: crate::zones::Zone,
+    },
+
     /// Search library for a card and put it into a zone
     /// Example: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle"
     /// Corresponds to: AB$ ChangeZone | Origin$ Library | Destination$ Battlefield | ChangeType$ Land.Basic
@@ -1099,7 +1111,8 @@ impl Effect {
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
-            | Effect::PutCounterAll { .. } => EffectTargetCategory::UsesFilter,
+            | Effect::PutCounterAll { .. }
+            | Effect::ChangeZoneAll { .. } => EffectTargetCategory::UsesFilter,
 
             // Modal spells have inner targeting
             Effect::ModalChoice { .. } => EffectTargetCategory::HasInnerTargeting,

@@ -2857,6 +2857,7 @@ impl GameState {
                     | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }
                     | crate::core::Effect::PutCounterAll { .. }
+                    | crate::core::Effect::ChangeZoneAll { .. }
                     | crate::core::Effect::RemoveCounter { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::SearchLibrary { .. }
