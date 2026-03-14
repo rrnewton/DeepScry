@@ -39,6 +39,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PumpAllCreatures { .. }
         | Effect::PumpCreatureVariable { .. }
         | Effect::Scry { .. }
+        | Effect::Surveil { .. }
         | Effect::CounterSpell { .. }
         | Effect::AddMana { .. }
         | Effect::PutCounter { .. }
@@ -125,6 +126,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PumpAllCreatures { .. }
             | Effect::PumpCreatureVariable { .. }
             | Effect::Scry { .. }
+            | Effect::Surveil { .. }
             | Effect::CounterSpell { .. }
             | Effect::AddMana { .. }
             | Effect::PutCounter { .. }
@@ -1675,6 +1677,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::Surveil { player, count } if player.is_placeholder() => Effect::Surveil {
+                player: card_owner,
+                count: *count,
+            },
             Effect::Loot {
                 player,
                 discard_count,
@@ -2342,6 +2348,10 @@ impl GameState {
             Effect::Scry { player, count } => {
                 // Scry - look at top N cards, put any number on bottom
                 self.scry_cards(*player, *count)?;
+            }
+            Effect::Surveil { player, count } => {
+                // Surveil - look at top N cards, put any into graveyard, rest on top (CR 701.42)
+                self.surveil_cards(*player, *count)?;
             }
             Effect::CounterSpell { target } => {
                 // Counter a spell on the stack

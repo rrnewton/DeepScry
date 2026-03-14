@@ -1361,6 +1361,84 @@ impl GameState {
         Ok(())
     }
 
+    /// Surveil N cards (CR 701.42)
+    ///
+    /// Look at the top N cards of your library, put any number into your graveyard
+    /// and the rest back on top in any order.
+    ///
+    /// AI heuristic: Put non-creature, non-land cards into graveyard (fuel for
+    /// graveyard strategies). Keep creatures and lands on top.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if player zones cannot be found.
+    pub fn surveil_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
+        // Get the top N cards from library
+        let top_cards: SmallVec<[CardId; 4]> = {
+            let zones = self
+                .get_player_zones(player_id)
+                .ok_or_else(|| crate::MtgError::InvalidAction("Player zones not found".to_string()))?;
+
+            zones.library.cards.iter().rev().take(count as usize).copied().collect()
+        };
+
+        if top_cards.is_empty() {
+            return Ok(());
+        }
+
+        // AI heuristic: decide which cards to keep on top vs put into graveyard
+        // Keep creatures and lands on top; put instants/sorceries/other into graveyard
+        // (fuels graveyard strategies like Flashback, Escape, etc.)
+        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut put_in_graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
+
+        for &card_id in &top_cards {
+            let dominated_by_creature_or_land = self
+                .cards
+                .try_get(card_id)
+                .is_some_and(|c| c.is_creature() || c.is_land());
+
+            if dominated_by_creature_or_land {
+                keep_on_top.push(card_id);
+            } else {
+                put_in_graveyard.push(card_id);
+            }
+        }
+
+        // Log the surveil action
+        self.logger.gamelog(&format!(
+            "P{} surveils {}, keeps {} on top, puts {} into graveyard",
+            player_id.as_u32() + 1,
+            top_cards.len(),
+            keep_on_top.len(),
+            put_in_graveyard.len()
+        ));
+
+        // Move cards to graveyard first
+        for card_id in &put_in_graveyard {
+            // Remove from library and move to graveyard
+            if let Some(zones) = self.get_player_zones_mut(player_id) {
+                zones.library.remove(*card_id);
+            }
+            if let Some(zones) = self.get_player_zones_mut(player_id) {
+                zones.graveyard.cards.push(*card_id);
+            }
+        }
+
+        // Rearrange remaining cards: remove from current positions, put back on top
+        if let Some(zones) = self.get_player_zones_mut(player_id) {
+            for card_id in &keep_on_top {
+                zones.library.remove(*card_id);
+            }
+            // Put kept cards back on top of library
+            for card_id in keep_on_top {
+                zones.library.cards.push(card_id);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Counter a spell on the stack
     ///
     /// This removes the spell from the stack and moves it to its owner's graveyard.
@@ -2853,6 +2931,7 @@ impl GameState {
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::Scry { .. }
+                    | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }

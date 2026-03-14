@@ -597,6 +597,12 @@ pub enum Effect {
     /// AI heuristic: Keep spells, put excess lands on bottom
     Scry { player: PlayerId, count: u8 },
 
+    /// Surveil N - look at top N cards, put any number into graveyard, rest on top (CR 701.42)
+    /// Example: "Surveil 2" (Thought Erasure)
+    ///
+    /// AI heuristic: Put non-creature, non-land cards into graveyard (fuel for graveyard strategies)
+    Surveil { player: PlayerId, count: u8 },
+
     /// Counter a spell on the stack
     /// Example: "Counter target spell"
     CounterSpell { target: CardId },
@@ -1095,6 +1101,7 @@ impl Effect {
             | Effect::SetLife { .. }
             | Effect::Mill { .. }
             | Effect::Scry { .. }
+            | Effect::Surveil { .. }
             | Effect::AddMana { .. }
             | Effect::Balance { .. }
             | Effect::CreateToken { .. }

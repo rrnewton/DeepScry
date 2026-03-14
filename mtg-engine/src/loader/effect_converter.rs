@@ -247,6 +247,16 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Surveil => {
+            // Surveil N - look at top N cards, put any into graveyard, rest on top (CR 701.42)
+            // Example: "DB$ Surveil | Amount$ 1"
+            let count = params.get_u8("Amount").unwrap_or(1);
+            Some(Effect::Surveil {
+                player: PlayerId::new(0), // Placeholder - filled in at trigger execution
+                count,
+            })
+        }
+
         ApiType::Counter => {
             Some(Effect::CounterSpell {
                 target: CardId::new(0), // Placeholder
