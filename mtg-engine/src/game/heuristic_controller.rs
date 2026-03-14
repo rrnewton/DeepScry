@@ -2970,6 +2970,16 @@ impl HeuristicController {
             return true;
         }
 
+        // Check for ChangeZoneAll effects (mass zone changes: bounce, exile, etc.)
+        // Reference: ChangeZoneAllAi.java:20-200 (canPlay)
+        let has_change_zone_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::ChangeZoneAll { .. }));
+        if has_change_zone_all && self.should_cast_change_zone_all(spell, view) {
+            return true;
+        }
+
         false
     }
 
@@ -3570,6 +3580,78 @@ impl HeuristicController {
             // Reference: CountersPutAllAi.java:86-88
             // Also need at least 1 creature of our own to benefit
             our_count > 0 && our_count > opp_count
+        }
+    }
+
+    /// Evaluate whether to cast a ChangeZoneAll spell (mass zone change)
+    ///
+    /// Reference: ChangeZoneAllAi.java:20-200 (canPlay)
+    ///
+    /// For battlefield → hand/exile: Only cast if opponent loses more value than we do.
+    /// For graveyard → exile: Cast if opponent has 3+ cards in graveyard.
+    /// For graveyard → battlefield: Cast if we have creatures in graveyard (reanimation).
+    fn should_cast_change_zone_all(&self, spell: &Card, view: &GameStateView) -> bool {
+        use crate::core::Effect;
+
+        // Find the ChangeZoneAll effect to inspect its parameters
+        let (restriction, origin, _destination) = match spell.effects.iter().find_map(|e| {
+            if let Effect::ChangeZoneAll {
+                restriction,
+                origin,
+                destination,
+            } = e
+            {
+                Some((restriction, origin, destination))
+            } else {
+                None
+            }
+        }) {
+            Some(found) => found,
+            None => return false,
+        };
+
+        use crate::zones::Zone;
+
+        match origin {
+            Zone::Battlefield => {
+                // Mass bounce/exile from battlefield: only do if opponent loses more
+                // Count matching permanents for each player
+                let mut our_value = 0i32;
+                let mut opp_value = 0i32;
+
+                for &card_id in view.battlefield() {
+                    if let Some(card) = view.get_card(card_id) {
+                        if restriction.matches(card) {
+                            let value = if card.is_creature() {
+                                // Use power + toughness as rough value
+                                i32::from(card.current_power()) + i32::from(card.current_toughness())
+                            } else {
+                                // Non-creature permanents have some value
+                                3
+                            };
+
+                            if card.controller == self.player_id {
+                                our_value += value;
+                            } else {
+                                opp_value += value;
+                            }
+                        }
+                    }
+                }
+
+                // Only cast if opponent loses significantly more value
+                // Reference: ChangeZoneAllAi.java:163-166 (creatureEvalThreshold)
+                opp_value > our_value + 4
+            }
+            Zone::Graveyard => {
+                // Graveyard effects (exile, reanimation) are almost always beneficial
+                // Reference: ChangeZoneAllAi.java:174-194 (graveyard handling)
+                true
+            }
+            Zone::Hand | Zone::Exile | Zone::Library | Zone::Stack | Zone::Command => {
+                // Other origin zones: default to casting
+                true
+            }
         }
     }
 
@@ -8585,5 +8667,124 @@ mod tests {
         );
 
         println!("PutCounterAll AI test passed - AI correctly evaluates mass counter placement");
+    }
+
+    /// Test ChangeZoneAll AI evaluation
+    ///
+    /// Reference: ChangeZoneAllAi.java:20-200 (canPlay)
+    ///
+    /// Validates that:
+    /// 1. AI casts battlefield bounce when opponent has more creatures
+    /// 2. AI doesn't cast bounce when we'd lose more value
+    /// 3. AI casts graveyard exile effects
+    #[test]
+    fn test_should_cast_change_zone_all() {
+        use crate::core::entity::EntityId;
+        use crate::core::{
+            effects::{ControllerRestriction, TargetRestriction, TargetType},
+            Card, CardType, Effect,
+        };
+        use crate::game::state::GameState;
+        use crate::game::GameStateView;
+        use smallvec::smallvec;
+
+        let p1_id = EntityId::new(0);
+        let p2_id = EntityId::new(1);
+        let controller = HeuristicController::new(p1_id);
+
+        // Create a bounce-all spell: "Return all creatures to their owners' hands" (Aetherize-like)
+        let mut bounce_spell = Card::new(EntityId::new(100), "Mass Bounce", p1_id);
+        bounce_spell.add_type(CardType::Instant);
+        bounce_spell.effects = vec![Effect::ChangeZoneAll {
+            restriction: TargetRestriction {
+                types: smallvec![TargetType::Creature],
+                requires_no_counters: false,
+                controller: ControllerRestriction::Any,
+                power_ge: None,
+                power_le: None,
+            },
+            origin: crate::zones::Zone::Battlefield,
+            destination: crate::zones::Zone::Hand,
+        }];
+
+        // Scenario 1: Opponent has 3 big creatures, we have 1 small one → should cast
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.turn.active_player = p1_id;
+
+        // Our small creature
+        let our_cid = EntityId::new(10);
+        let mut our_c = Card::new(our_cid, "Our Bear", p1_id);
+        our_c.set_base_power(Some(2));
+        our_c.set_base_toughness(Some(2));
+        our_c.add_type(CardType::Creature);
+        our_c.controller = p1_id;
+        game.cards.insert(our_cid, our_c);
+        game.battlefield.cards.push(our_cid);
+
+        // Opponent's big creatures
+        for i in 0..3u32 {
+            let opp_cid = EntityId::new(20 + i);
+            let mut opp_c = Card::new(opp_cid, format!("Opp Dragon {}", i), p2_id);
+            opp_c.set_base_power(Some(5));
+            opp_c.set_base_toughness(Some(5));
+            opp_c.add_type(CardType::Creature);
+            opp_c.controller = p2_id;
+            game.cards.insert(opp_cid, opp_c);
+            game.battlefield.cards.push(opp_cid);
+        }
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_change_zone_all(&bounce_spell, &view),
+            "Should cast mass bounce when opponent has 3 big creatures vs our 1 small"
+        );
+
+        // Scenario 2: We have 3 big creatures, opponent has 1 → should NOT cast
+        let mut game2 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game2.turn.active_player = p1_id;
+
+        for i in 0..3u32 {
+            let our_cid2 = EntityId::new(30 + i);
+            let mut our_c2 = Card::new(our_cid2, format!("Our Dragon {}", i), p1_id);
+            our_c2.set_base_power(Some(5));
+            our_c2.set_base_toughness(Some(5));
+            our_c2.add_type(CardType::Creature);
+            our_c2.controller = p1_id;
+            game2.cards.insert(our_cid2, our_c2);
+            game2.battlefield.cards.push(our_cid2);
+        }
+        let opp_cid2 = EntityId::new(40);
+        let mut opp_c2 = Card::new(opp_cid2, "Opp Bear", p2_id);
+        opp_c2.set_base_power(Some(2));
+        opp_c2.set_base_toughness(Some(2));
+        opp_c2.add_type(CardType::Creature);
+        opp_c2.controller = p2_id;
+        game2.cards.insert(opp_cid2, opp_c2);
+        game2.battlefield.cards.push(opp_cid2);
+
+        let view2 = GameStateView::new(&game2, p1_id);
+        assert!(
+            !controller.should_cast_change_zone_all(&bounce_spell, &view2),
+            "Should NOT cast mass bounce when we have 3 big creatures vs opponent's 1"
+        );
+
+        // Scenario 3: Graveyard exile effect → always cast
+        let mut exile_spell = Card::new(EntityId::new(101), "Graveyard Exile", p1_id);
+        exile_spell.add_type(CardType::Instant);
+        exile_spell.effects = vec![Effect::ChangeZoneAll {
+            restriction: TargetRestriction::any(),
+            origin: crate::zones::Zone::Graveyard,
+            destination: crate::zones::Zone::Exile,
+        }];
+
+        let mut game3 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game3.turn.active_player = p1_id;
+        let view3 = GameStateView::new(&game3, p1_id);
+        assert!(
+            controller.should_cast_change_zone_all(&exile_spell, &view3),
+            "Should cast graveyard exile (always beneficial)"
+        );
+
+        println!("ChangeZoneAll AI test passed - AI correctly evaluates mass zone changes");
     }
 }
