@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev play-web play-web-pvp play-web-local build-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
 
 # Configuration variables
 # PORT: web server port (use: make PORT=7999 play-web-local-dev)
@@ -154,13 +154,44 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-wasm-e2e-step
 	@echo ""
+	@$(MAKE) validate-network-e2e-step
+	@echo ""
+	@echo "=== All validation steps completed ==="
+	@echo ""
+
+# No-network variants - skip network E2E test for faster iteration
+# Use: make validate ARGS=--no-network
+validate-impl-no-network:
+	@echo "=== Starting parallel validation (no network) ==="
+	@echo ""
+	@$(MAKE) -j4 validate-parallel-steps-no-network
+	@echo ""
+	@echo "=== All validation steps completed ==="
+	@echo ""
+
+validate-impl-sequential-no-network:
+	@echo "=== Starting sequential validation (no network) ==="
+	@echo ""
+	@$(MAKE) validate-clippy-step
+	@echo ""
+	@$(MAKE) validate-clippy-wasm-step
+	@echo ""
+	@$(MAKE) validate-test-step
+	@echo ""
+	@$(MAKE) validate-examples-step
+	@echo ""
+	@$(MAKE) validate-wasm-step
+	@echo ""
+	@$(MAKE) validate-wasm-e2e-step
+	@echo ""
 	@echo "=== All validation steps completed ==="
 	@echo ""
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-impl-sequential validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step
-validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step
+validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
+validate-parallel-steps-no-network: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy
@@ -189,6 +220,17 @@ validate-wasm-e2e-step: validate-wasm-step
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo "✓ wasm-e2e tests completed"
+
+# Network E2E test: builds native server + WASM client, runs a full networked game
+# Depends on build-network and wasm-network targets, runs test_network_gui_e2e.js
+validate-network-e2e-step:
+	@echo "=== Building network components ==="
+	@$(MAKE) build-network
+	@$(MAKE) wasm-network
+	@echo "=== Running Network GUI E2E test ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_network_gui_e2e.js
+	@echo "✓ network-e2e test completed"
 
 # Generate documentation and open in browser
 doc:
@@ -655,3 +697,16 @@ wasm-e2e-dev: wasm-dev
 	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
+
+# Run WASM Network GUI E2E test (random controller auto-play)
+# NOT part of 'make validate' - requires full network build
+wasm-e2e-network: build-network wasm-network
+	@echo "=== Running WASM Network GUI E2E test ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_network_gui_e2e.js
+
+# Run WASM Network GUI E2E test (human controller with Playwright key presses)
+wasm-e2e-network-human: build-network wasm-network
+	@echo "=== Running WASM Network Human E2E test ==="
+	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && node test_network_gui_e2e.js --human

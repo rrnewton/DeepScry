@@ -18,6 +18,7 @@
 #   --help                     Show this help message and exit
 #   --force                    Skip cache checks and always run validation
 #   --sequential               Run tests sequentially, failing on first failure (easier debugging)
+#   --no-network               Skip network E2E test (faster iteration)
 #   --no-wip-commit            Completely suppress temporary WIP commit creation (fail if dirty)
 #   --force-wip-commit         Force WIP commit creation even if submodules have changes
 #   --no-monitor-utilization   Disable CPU utilization monitoring during validation
@@ -48,6 +49,7 @@ Options:
   --help                     Show this help message and exit
   --force                    Skip cache checks and always run validation
   --sequential               Run tests sequentially, failing on first failure (easier debugging)
+  --no-network               Skip network E2E test (faster iteration)
   --no-wip-commit            Completely suppress temporary WIP commit creation (fail if dirty)
   --force-wip-commit         Force WIP commit creation even if submodules have changes
   --no-monitor-utilization   Disable CPU utilization monitoring during validation
@@ -58,6 +60,7 @@ Examples:
   ./validate.sh                              # Run validation with caching
   ./validate.sh --force                      # Force validation even if cached
   ./validate.sh --sequential                 # Run sequentially for easier debugging
+  ./validate.sh --no-network                 # Skip network E2E test
   ./validate.sh --no-monitor-utilization     # Skip CPU monitoring
   ./validate.sh --no-wip-commit              # Don't create temporary commit if dirty
 
@@ -67,6 +70,7 @@ EOF
 # Parse command line arguments
 FORCE_VALIDATION=false
 SEQUENTIAL_MODE=false
+NO_NETWORK=false
 NO_WIP_COMMIT=false
 FORCE_WIP_COMMIT=false
 MONITOR_UTILIZATION=true
@@ -82,6 +86,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --sequential)
             SEQUENTIAL_MODE=true
+            shift
+            ;;
+        --no-network)
+            NO_NETWORK=true
             shift
             ;;
         --no-wip-commit)
@@ -195,8 +203,14 @@ release_lock() {
 acquire_lock
 
 # Default validation commands (can be overridden via CLI flags)
-VALIDATE_CMD="make validate-impl"
-VALIDATE_CMD_SEQUENTIAL="make validate-impl-sequential"
+if [ "$NO_NETWORK" = true ]; then
+    VALIDATE_CMD="${VALIDATE_CMD:-make validate-impl-no-network}"
+    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-make validate-impl-sequential-no-network}"
+    echo -e "${YELLOW}Network E2E test disabled (--no-network)${NC}"
+else
+    VALIDATE_CMD="${VALIDATE_CMD:-make validate-impl}"
+    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-make validate-impl-sequential}"
+fi
 
 # Create log directory if it doesn't exist
 mkdir -p "$LOG_DIR"

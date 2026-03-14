@@ -104,6 +104,61 @@ jobs:
           name: wasm-e2e-screenshots
           path: web/screenshots/
 
+  network:
+    name: Network E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-network-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build native server (release + network)
+        run: make build-network
+
+      - name: Build WASM (network)
+        run: make wasm-network
+
+      - name: Install Playwright and dependencies
+        run: |
+          cd web
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Run Network GUI E2E test
+        run: cd web && node test_network_gui_e2e.js
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-e2e-screenshots
+          path: web/screenshots/
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
