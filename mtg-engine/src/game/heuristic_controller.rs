@@ -2960,6 +2960,16 @@ impl HeuristicController {
             return true;
         }
 
+        // Check for PutCounterAll effects (mass counter placement)
+        // Reference: CountersPutAllAi.java:25-115 (checkApiLogic)
+        let has_put_counter_all = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::PutCounterAll { .. }));
+        if has_put_counter_all && self.should_cast_put_counter_all(spell, view) {
+            return true;
+        }
+
         false
     }
 
@@ -3496,14 +3506,73 @@ impl HeuristicController {
         false
     }
 
-    /// Evaluate whether to cast a GainControl spell (steal creature)
+    /// Evaluate whether to cast a PutCounterAll spell
     ///
-    /// Reference: ControlGainAi.java (checkApiLogic)
+    /// Reference: CountersPutAllAi.java:25-115 (checkApiLogic)
     ///
-    /// Key logic:
-    /// 1. Need a valuable target to steal
-    /// 2. Prefer stealing high-value creatures
-    /// 3. Always good if opponent has creatures
+    /// For beneficial counters (+1/+1): Only cast if we have more creatures benefiting than opponent.
+    /// For curse counters (-1/-1): Only cast if 3+ opponent creatures would be killed.
+    fn should_cast_put_counter_all(&self, spell: &Card, view: &GameStateView) -> bool {
+        use crate::core::{CounterType, Effect};
+
+        // Find the PutCounterAll effect to inspect its parameters
+        let (restriction, counter_type, amount) = match spell.effects.iter().find_map(|e| {
+            if let Effect::PutCounterAll {
+                restriction,
+                counter_type,
+                amount,
+            } = e
+            {
+                Some((restriction, counter_type, amount))
+            } else {
+                None
+            }
+        }) {
+            Some(found) => found,
+            None => return false,
+        };
+
+        // Count how many of our creatures match the restriction vs opponent's
+        let mut our_count = 0u32;
+        let mut opp_count = 0u32;
+
+        for &card_id in view.battlefield() {
+            if let Some(card) = view.get_card(card_id) {
+                if restriction.matches(card) {
+                    if card.controller == self.player_id {
+                        our_count += 1;
+                    } else {
+                        opp_count += 1;
+                    }
+                }
+            }
+        }
+
+        let is_curse = *counter_type == CounterType::M1M1;
+
+        if is_curse {
+            // For -1/-1 counters: only cast if we can kill 3+ opponent creatures
+            // Reference: CountersPutAllAi.java:72-76
+            let mut killable = 0u32;
+            for &card_id in view.battlefield() {
+                if let Some(card) = view.get_card(card_id) {
+                    if restriction.matches(card)
+                        && card.controller != self.player_id
+                        && card.current_toughness() <= i8::try_from(*amount).unwrap_or(i8::MAX)
+                    {
+                        killable += 1;
+                    }
+                }
+            }
+            killable >= 3
+        } else {
+            // For beneficial counters: only cast if we benefit more creatures
+            // Reference: CountersPutAllAi.java:86-88
+            // Also need at least 1 creature of our own to benefit
+            our_count > 0 && our_count > opp_count
+        }
+    }
+
     fn should_cast_gain_control(&self, view: &GameStateView) -> bool {
         // Get opponent creatures on the battlefield
         let opp_creatures: Vec<_> = view
@@ -8404,5 +8473,117 @@ mod tests {
         );
 
         println!("Instant spell bluffing test passed - AI correctly holds instant-speed spells for better timing");
+    }
+
+    /// Test PutCounterAll AI evaluation
+    ///
+    /// Reference: CountersPutAllAi.java:25-115 (checkApiLogic)
+    ///
+    /// Validates that:
+    /// 1. AI casts beneficial PutCounterAll when we have creatures
+    /// 2. AI doesn't cast when we have no creatures
+    /// 3. AI casts when restriction filters to our creatures only (YouCtrl)
+    #[test]
+    fn test_should_cast_put_counter_all() {
+        use crate::core::entity::EntityId;
+        use crate::core::{
+            effects::{ControllerRestriction, TargetRestriction, TargetType},
+            Card, CardType, CounterType, Effect,
+        };
+        use crate::game::state::GameState;
+        use crate::game::GameStateView;
+        use smallvec::smallvec;
+
+        let p1_id = EntityId::new(0);
+        let p2_id = EntityId::new(1);
+        let controller = HeuristicController::new(p1_id);
+
+        // Create a PutCounterAll spell: "Put a +1/+1 counter on each creature you control"
+        let mut spell = Card::new(EntityId::new(100), "Anthem Spell", p1_id);
+        spell.add_type(CardType::Sorcery);
+        spell.effects = vec![Effect::PutCounterAll {
+            restriction: TargetRestriction {
+                types: smallvec![TargetType::Creature],
+                requires_no_counters: false,
+                controller: ControllerRestriction::YouCtrl,
+                power_ge: None,
+                power_le: None,
+            },
+            counter_type: CounterType::P1P1,
+            amount: 1,
+        }];
+
+        // Scenario 1: We have 3 creatures → should cast (YouCtrl means only our creatures match)
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.turn.active_player = p1_id;
+        for i in 0..3u32 {
+            let cid = EntityId::new(10 + i);
+            let mut c = Card::new(cid, format!("Our Creature {}", i), p1_id);
+            c.set_base_power(Some(2));
+            c.set_base_toughness(Some(2));
+            c.add_type(CardType::Creature);
+            c.controller = p1_id;
+            game.cards.insert(cid, c);
+            game.battlefield.cards.push(cid);
+        }
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_put_counter_all(&spell, &view),
+            "Should cast PutCounterAll when we have 3 creatures"
+        );
+
+        // Scenario 2: No creatures → should NOT cast
+        let mut game2 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game2.turn.active_player = p1_id;
+        let view2 = GameStateView::new(&game2, p1_id);
+        assert!(
+            !controller.should_cast_put_counter_all(&spell, &view2),
+            "Should NOT cast PutCounterAll when we have no creatures"
+        );
+
+        // Scenario 3: Spell with "any creature" restriction - cast only if we have more creatures
+        let mut global_spell = Card::new(EntityId::new(101), "Global Anthem", p1_id);
+        global_spell.add_type(CardType::Sorcery);
+        global_spell.effects = vec![Effect::PutCounterAll {
+            restriction: TargetRestriction {
+                types: smallvec![TargetType::Creature],
+                requires_no_counters: false,
+                controller: ControllerRestriction::Any,
+                power_ge: None,
+                power_le: None,
+            },
+            counter_type: CounterType::P1P1,
+            amount: 1,
+        }];
+
+        // Add equal creatures for both players
+        let mut game3 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game3.turn.active_player = p1_id;
+        for i in 0..2u32 {
+            let our_cid = EntityId::new(30 + i);
+            let mut our_c = Card::new(our_cid, format!("Our {}", i), p1_id);
+            our_c.set_base_power(Some(2));
+            our_c.set_base_toughness(Some(2));
+            our_c.add_type(CardType::Creature);
+            our_c.controller = p1_id;
+            game3.cards.insert(our_cid, our_c);
+            game3.battlefield.cards.push(our_cid);
+
+            let their_cid = EntityId::new(40 + i);
+            let mut their_c = Card::new(their_cid, format!("Their {}", i), p2_id);
+            their_c.set_base_power(Some(2));
+            their_c.set_base_toughness(Some(2));
+            their_c.add_type(CardType::Creature);
+            their_c.controller = p2_id;
+            game3.cards.insert(their_cid, their_c);
+            game3.battlefield.cards.push(their_cid);
+        }
+        let view3 = GameStateView::new(&game3, p1_id);
+        assert!(
+            !controller.should_cast_put_counter_all(&global_spell, &view3),
+            "Should NOT cast global PutCounterAll when opponent has equal creatures"
+        );
+
+        println!("PutCounterAll AI test passed - AI correctly evaluates mass counter placement");
     }
 }
