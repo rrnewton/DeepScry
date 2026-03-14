@@ -11,7 +11,17 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-10_#1912)
+## Latest Optimization (2026-03-14_#1928(87675a5))
+
+✅ **Eliminate inner Vec allocation in check_triggers** - **-2% to -4.6% time**
+- Replaced filter_map + collect::<Vec<TriggerInfo>> + flatten with filter_map + flat_map
+- Eliminated intermediate Vec allocation for each card on battlefield
+- Most cards have zero matching triggers, so Vecs were allocated empty and dropped
+- robots_mirror/mem_logging: -3.2% to -4.6% time (p = 0.00)
+- simple_bolt: -2.0% time (p = 0.00)
+- Tracked: mem_logging 2,235,556 actions/sec, simple_bolt 6,654,001 actions/sec
+
+## Previous Optimization (2026-03-10_#1912)
 
 ✅ **Defer card_name clone in check_triggers until matching triggers found** - **-5% to -20% time**
 - Moved `card.name.clone()` from outer loop into inner `map()` closure
