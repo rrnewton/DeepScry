@@ -485,6 +485,13 @@ pub enum Effect {
         no_regenerate: bool,
     },
 
+    /// Each player sacrifices all permanents matching a filter
+    /// Example: "Each player sacrifices all permanents they control that are one or more colors" (All is Dust)
+    SacrificeAll {
+        /// Filter for which permanents to sacrifice
+        restriction: TargetRestriction,
+    },
+
     /// Deal damage to all creatures (and optionally players) matching a filter
     /// Example: "Deal 2 damage to each creature" (Pyroclasm)
     DamageAll {
@@ -1115,6 +1122,7 @@ impl Effect {
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
             | Effect::DestroyAll { .. }
+            | Effect::SacrificeAll { .. }
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }

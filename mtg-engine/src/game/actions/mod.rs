@@ -28,6 +28,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Loot { .. }
         | Effect::DestroyPermanent { .. }
         | Effect::DestroyAll { .. }
+        | Effect::SacrificeAll { .. }
         | Effect::DamageAll { .. }
         | Effect::TapAll { .. }
         | Effect::UntapAll { .. }
@@ -115,6 +116,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Loot { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::DestroyAll { .. }
+            | Effect::SacrificeAll { .. }
             | Effect::DamageAll { .. }
             | Effect::TapAll { .. }
             | Effect::UntapAll { .. }
@@ -3025,6 +3027,37 @@ impl GameState {
                         self.logger
                             .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
                     }
+                }
+            }
+
+            Effect::SacrificeAll { restriction } => {
+                // Each player sacrifices all permanents matching the restriction (e.g., All is Dust)
+                // Sacrifice bypasses indestructible and regeneration (CR 701.17)
+                let targets: Vec<(CardId, PlayerId)> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter_map(|card_id| {
+                        let card = self.cards.try_get(card_id)?;
+                        if restriction.matches(card) {
+                            Some((card_id, card.owner))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                for (card_id, owner) in targets {
+                    let _ = self.check_death_triggers(card_id);
+                    let card_name = self
+                        .cards
+                        .try_get(card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    self.logger
+                        .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
                 }
             }
 

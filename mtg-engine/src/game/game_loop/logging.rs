@@ -705,6 +705,11 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) destroys all matching permanents{regen_note}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::SacrificeAll { .. } => {
+                let message =
+                    format!("{source_name} ({source_id}) forces all players to sacrifice matching permanents");
+                self.game.logger.gamelog(&message);
+            }
             Effect::DamageAll {
                 amount, damage_players, ..
             } => {

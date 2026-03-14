@@ -989,6 +989,18 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::SacrificeAll => {
+            // SacrificeAll: Each player sacrifices all permanents matching ValidCards$
+            // Example: "SP$ SacrificeAll | ValidCards$ Permanent.nonColorless" (All is Dust)
+            // Also handles Defined$ for targeted sacrifice (simpler form)
+            let restriction = params
+                .get("ValidCards")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            Some(Effect::SacrificeAll { restriction })
+        }
+
         ApiType::TapAll => {
             // TapAll: Tap all permanents matching ValidCards$
             // Example: "DB$ TapAll | ValidCards$ Creature.OppCtrl" (Cryptic Command mode)

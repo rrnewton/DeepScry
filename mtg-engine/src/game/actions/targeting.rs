@@ -440,6 +440,7 @@ impl GameState {
                             | Effect::ModalChoice { .. }
                             | Effect::PumpAllCreatures { .. }
                             | Effect::DestroyAll { .. }
+                            | Effect::SacrificeAll { .. }
                             | Effect::DamageAll { .. }
                             | Effect::LoseLife { .. }
                             | Effect::ForceSacrifice { .. }
@@ -520,6 +521,7 @@ impl GameState {
                 | Effect::CopyPermanent { .. }
                 | Effect::PumpAllCreatures { .. }
                 | Effect::DestroyAll { .. }
+                | Effect::SacrificeAll { .. }
                 | Effect::DamageAll { .. }
                 | Effect::LoseLife { .. }
                 | Effect::CreateDelayedTrigger { .. }
@@ -927,6 +929,7 @@ impl GameState {
                 | Effect::AttachEquipment { .. }
                 | Effect::PumpAllCreatures { .. }
                 | Effect::DestroyAll { .. }
+                | Effect::SacrificeAll { .. }
                 | Effect::DamageAll { .. }
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
@@ -1132,6 +1135,7 @@ impl GameState {
             | Effect::EachDamage { .. }
             | Effect::UnlessCostWrapper { .. }
             | Effect::DestroyAll { .. }
+            | Effect::SacrificeAll { .. }
             | Effect::DamageAll { .. }
             | Effect::LoseLife { .. }
             | Effect::ForceSacrifice { .. }

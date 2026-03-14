@@ -2951,6 +2951,7 @@ impl GameState {
                     | crate::core::Effect::Regenerate { .. }
                     | crate::core::Effect::LoseLife { .. }
                     | crate::core::Effect::DestroyAll { .. }
+                    | crate::core::Effect::SacrificeAll { .. }
                     | crate::core::Effect::DamageAll { .. }
                     | crate::core::Effect::ForceSacrifice { .. }
                     | crate::core::Effect::TapAll { .. }
