@@ -36,6 +36,12 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Recent Completions
 
+**ChangeZoneAll Effect (2026-03-14_#1940(a6fb17e)):**
+- ✅ AB$ ChangeZoneAll: mass zone changes (636 cards)
+- Moves cards matching ChangeType$ filter between Origin$ and Destination$ zones
+- Supports Battlefield and Graveyard origins
+- Examples: Aetherize, Tormod's Crypt, All Hallow's Eve, Aether Snap
+
 **PutCounterAll Effect (2026-03-14_#1933(3e3513d)):**
 - ✅ AB$ PutCounterAll: mass counter placement (264 cards)
 - Puts counters on all permanents matching ValidCards$ filter
