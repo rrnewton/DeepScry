@@ -113,9 +113,16 @@ Track completion of heuristic AI port from Java Forge to Rust.
 - ✅ **Comprehensive test coverage with real cards**
 - ✅ **Bluffing/deception** - Land drop timing AND instant-speed spell timing
 
+---- ✅ **PutCounterAll spell casting AI (2026-03-14_#1935(d85204a))**
+  - should_cast_put_counter_all() evaluates mass counter effects
+  - Beneficial (+1/+1): only cast when we benefit more creatures than opponent
+  - Curse (-1/-1): only cast when 3+ opponent creatures would be killed
+  - Reference: CountersPutAllAi.java:25-115
+  - Test: test_should_cast_put_counter_all with 3 scenarios
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
-2. Additional bluffing contexts (if any gaps remain)
+2. Additional effect AI evaluations (ChangeZoneAll, Play, etc.)
 
-**Checked up-to-date as of 2026-03-12_#1922 - 940 tests passing**
+**Checked up-to-date as of 2026-03-14_#1935(d85204a) - 941 tests passing**
