@@ -29,27 +29,28 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-12_#1920(aa94be5):**
-- Tests: 938 unit/integration tests passing
-- All 55 determinism tests passing
+**Current status as of 2026-03-14_#1942(3ebb7a2):**
+- Tests: 941 unit/integration tests passing
+- All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
-- Performance: 5.6M actions/sec (simple_bolt benchmark)
+- Performance: 7.0M actions/sec (simple_bolt benchmark)
+- Keyword warnings: 346 remaining (down from 706)
 
-**Recent accomplishments (2026-03):**
+**Recent accomplishments (2026-03-14):**
+- ChangeZoneAll effect (636 cards) - mass zone changes (Aetherize, Tormod's Crypt)
+- PutCounterAll effect (264 cards) - mass counter placement (Ajani, Arcbound Overseer)
+- PutCounterAll AI evaluation (CountersPutAllAi port)
+- 15 new keyword variants: combat restrictions, damage prevention, alternate costs
+- Keyword warnings reduced from 706 → 346 (51% reduction)
+- AI: Land drop bluffing + instant-speed spell timing bluffing
+- Fix: Sacrifice cost checking prevents infinite loop on activated abilities
+- Optimization: check_triggers Vec elimination (-3-5%), sort_unstable + SBA guard (-5-7.5%)
+
+**Previous accomplishments (2026-03 early):**
 - DealsCombatDamage trigger firing at runtime
-- Keyword text variant fixes (For Mirrodin, Living Weapon, Umbra armor, Partner variants)
-- 124 fewer keyword warnings (706 → 582)
 - AB$ GainControl (steal target creature) effect
-- Removal timing AI for smart spell usage
-- bounds_check_payment optimization (+6.6% perf)
-- MtgError boxing optimization (+10% perf)
-- Network reveal logic centralization (desync prevention)
-
-**Previous accomplishments (2026-01-17):**
-- PlayerTurn$ True parsing for activated abilities
-- Fixed Waterbend cost affordability/payment
-- SMART multi-blocker damage assignment
-- Combat death and blocker logging improvements
+- Removal timing AI, bounds_check_payment optimization (+6.6%)
+- MtgError boxing optimization (+10%)
 
 **Conventions:**
 - Tracking issues (priority 1) reference granular issues
@@ -59,4 +60,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-12_#1920(aa94be5).
+Checked up-to-date as of 2026-03-14_#1942(3ebb7a2).

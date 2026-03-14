@@ -6,15 +6,17 @@ This document provides guidance on high-performance Rust patterns for the MTG Fo
 
 ### KEY TRACKING METRIC: robots_mirror/mem_logging_rewind_play_again
 
-This is our primary optimization target metric (as of 2025-11-25_#901(efd29a7)):
+This is our primary optimization target metric (as of 2026-03-14_#1936):
 
-- **Actions/sec**: 2,684,892 (2.68M/sec)
-- **Bytes/action**: 228.59 bytes
-- **Games/sec**: 325.71
-- **Time/game**: 3.09 ms
-- **Avg bytes/game**: 1.88 MB
+- **Actions/sec**: 2,265,401 (2.27M/sec)
+- **Bytes/game**: 207,412 bytes
 
-**Note:** This benchmark uses the rewind+replay pattern with memory logging enabled, which isolates forward gameplay performance from initialization overhead. It's the standard metric for tracking optimization progress.
+**Secondary metric: simple_bolt/rewind_play_again:**
+
+- **Actions/sec**: 7,045,777 (7.05M/sec)
+- **Bytes/game**: 1,752 bytes
+
+**Note:** The mem_logging benchmark uses the rewind+replay pattern with memory logging enabled, which isolates forward gameplay performance from initialization overhead. The simple_bolt benchmark is a simpler scenario (bolt mirror) used for tracking raw throughput. See `experiment_results/*/perf_history.csv` for full historical data.
 
 ## Zero-Copy Patterns and Best Practices
 
@@ -339,28 +341,28 @@ make heapprofile
 
 **Output**: `experiment_results/<CPU>/perf_history.csv` with historical data for all key metrics.
 
-### Current Profiling Results
+### Current Profiling Results (2026-03-14_#1942)
 
-**Top CPU Hotspots** (from Callgrind profiling of 250 games, 10.9B instructions):
+**Top CPU Hotspots** (from perf profiling of rewind_bench, ~5B cycles):
 
-1. **ManaEngine::update** (30.2%) - Mana source calculation and tracking
-2. **cast_spell_8_step** (23.6%) - Full spell casting pipeline
-3. **tap_for_mana_for_cost** (12.6%) - Mana payment execution
-4. **GreedyManaResolver::check_payment** (12.3%) - Payment validation
-5. **core::fmt::write** (11.8%) - String formatting for logging
-6. **alloc::fmt::format_inner** (11.8%) - String allocation for logging
+1. **priority_round** (30.7%) - Dominated by push_activatable_abilities and push_castable_spells
+2. **ManaEngine::read_from_cache** (9.4%) - Building mana source list from cache
+3. **bounds_check_payment** (7.4%) - Mana payment validation
+4. **check_triggers iterator** (3.3%) - Trigger matching on battlefield
+5. **GreedyManaResolver::check_payment** (2.8%) - Greedy mana resolution
+6. **GameState::undo** (2.8%) - Undo log replay
 
-**Key insight**: Logging/formatting accounts for ~23% of CPU time even in "silent" mode due to string construction.
+**Key insight**: Priority round (ability enumeration + mana checks) dominates at ~31% of CPU. Previous logging overhead has been eliminated via log_enabled! guards.
 
-**Top Allocation Hotspots** (from DHAT profiling of 100 iterations, 1.05 MB total):
+**Top Allocation Hotspots** (from DHAT profiling of 100 iterations, 1.06 MB total):
 
-1. **get_available_spell_abilities** (8.3%) - Vec allocations per priority round
-2. **UndoLog::log** (4.4%) - Undo log growth during gameplay
-3. **ManaEngine::update** (1.7%) - Mana source tracking
-4. **get_castable_spells** (1.7%) - Spell filtering operations
-5. **resolve_spell operations** (3.2% combined) - Stack resolution
+1. **EntityStore::with_capacity** (32.1%) - Game initialization (2 allocations)
+2. **UndoLog::new** (8.6%) - Undo log pre-allocation
+3. **SpellAbility buffer** (5.8%) - Per-GameLoop allocation
+4. **parse_effects** (7.0%) - Card instantiation (40 blocks)
+5. **ManaEngine::default** (1.4%) - ManaSource buffer pre-allocation
 
-**Key insight**: Spell ability enumeration allocates heavily on every priority round. Consider caching when board state is unchanged.
+**Key insight**: Most allocations are now at initialization. Forward gameplay allocations are minimal thanks to buffer reuse and Arc<str> for card names.
 
 ## Common Anti-Patterns to Avoid
 

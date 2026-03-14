@@ -91,7 +91,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-14_#1933(3e3513d) - 940 tests passing
+Checked up-to-date as of 2026-03-14_#1942(3ebb7a2) - 941 tests passing
 
 # Notes
 
