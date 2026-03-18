@@ -16,7 +16,7 @@ Before beginning ANY work:
 
 1. **Clean State Verification**: Always verify you're starting in a clean state:
    - Check for uncommitted changes with `git status`
-   - Pull latest changes with `git pull origin main`
+   - Pull latest changes with `git pull origin integration` (or the appropriate feature branch)
    - Verify `make validate` passes in the starting state
    - Check GitHub Actions CI status if available (ignore if pending, address if red)
 
@@ -158,7 +158,7 @@ Before committing, you MUST:
 8. **Tournament Retest**: Run tournament test again and compare to baseline
 9. **Document**: Write comprehensive commit message with all required sections (including win rate data)
 10. **Commit**: Commit changes with proper documentation
-11. **Push**: Push to origin main (pull and merge if needed)
+11. **Push**: Push to origin integration or the appropriate feature branch (pull and merge if needed). NEVER push directly to main.
 
 ## Error Handling
 

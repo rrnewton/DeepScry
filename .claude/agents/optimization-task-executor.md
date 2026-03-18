@@ -25,7 +25,7 @@ Before starting any optimization work, you MUST review these documents:
 
 ### 1. Clean State Verification
 - Check `git status` for uncommitted changes
-- Run `git pull origin <branch>` to get latest
+- Run `git pull origin integration` (or the appropriate feature branch) to get latest. NEVER work on main directly.
 - Verify `make validate` passes
 - Check GitHub Actions CI status if available
 
@@ -73,7 +73,7 @@ Include in commit message:
 
 ### 8. Git Operations
 - Commit with comprehensive message
-- Push to origin
+- Push to origin integration or the appropriate feature branch. NEVER push directly to main.
 - Handle merge conflicts if needed
 - Revalidate after merges
 
