@@ -1837,7 +1837,7 @@ impl CardDefinition {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Landfall".to_string());
 
-                // Create trigger with [landfall] marker for runtime filtering
+                // Create trigger with [landfall] flag for runtime filtering
                 // Use trigger_self_only = false since this triggers on OTHER cards entering
                 let mut trigger = Trigger::new_any(
                     TriggerEvent::EntersBattlefield,
@@ -1845,6 +1845,7 @@ impl CardDefinition {
                     format!("[landfall] {}", description),
                 );
                 trigger.trigger_self_only = false;
+                trigger.requires_landfall = true;
                 triggers.push(trigger);
             }
 
@@ -2226,9 +2227,12 @@ impl CardDefinition {
                 // Use new_any() to mark trigger_self_only = false
                 let mut trigger = Trigger::new_any(TriggerEvent::Sacrificed, effects, description);
 
-                // Store "other-only" flag in description for runtime filtering
-                if is_other_only && !trigger.description.contains("[other]") {
-                    trigger.description = format!("[other] {}", trigger.description);
+                // Set structured filter flag for "other-only" triggers
+                if is_other_only {
+                    trigger.requires_other = true;
+                    if !trigger.description.contains("[other]") {
+                        trigger.description = format!("[other] {}", trigger.description);
+                    }
                 }
 
                 triggers.push(trigger);

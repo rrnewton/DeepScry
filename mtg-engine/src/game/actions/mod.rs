@@ -4253,14 +4253,16 @@ impl GameState {
 
                         // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
                         // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
-                        if trigger.description.contains("[other]") && card_id == source_card_id {
+                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                        if trigger.requires_other && card_id == source_card_id {
                             return false;
                         }
 
                         // "[landfall]" triggers only fire when:
                         // 1. The entering card is a Land
                         // 2. The entering card is controlled by the trigger's controller
-                        if trigger.description.contains("[landfall]") {
+                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                        if trigger.requires_landfall {
                             if !source_card_is_land {
                                 return false;
                             }
