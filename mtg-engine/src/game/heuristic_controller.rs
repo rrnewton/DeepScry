@@ -669,6 +669,31 @@ impl HeuristicController {
             }
         }
 
+        // Equipment/Aura attachment bonus
+        // Creatures with attachments are more valuable because losing them
+        // causes the equipment/aura to fall off (losing investment).
+        // Reference: Java ComputerUtilCard uses enchantment count in evaluation
+        let attachment_count = view
+            .battlefield()
+            .iter()
+            .filter(|&&other_id| {
+                view.get_card(other_id).is_some_and(|other| {
+                    other.attached_to == Some(card_id) && (other.is_equipment() || other.is_aura())
+                })
+            })
+            .count() as i32;
+        if attachment_count > 0 {
+            // Each attachment adds value (equipment/aura investment)
+            value += attachment_count * 15;
+        }
+
+        // +1/+1 counter bonus (beyond the P/T already counted)
+        // Creatures with counters represent accumulated investment
+        let p1p1_counters = i32::from(card.get_counter(crate::core::CounterType::P1P1));
+        if p1p1_counters > 0 {
+            value += p1p1_counters * 5; // Each counter adds extra value beyond raw stats
+        }
+
         value
     }
 
