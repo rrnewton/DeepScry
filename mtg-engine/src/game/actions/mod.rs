@@ -533,14 +533,36 @@ impl GameState {
         }
         let aura_name = aura.name.to_string();
 
-        // Validate target type based on enchant restriction
-        // For now, assume "Enchant creature" (most common case)
-        // TODO: Parse enchant restriction from KeywordArgs::Enchant
+        // Validate target type based on enchant restriction from KeywordArgs::Enchant
+        // Parse the Aura's "Enchant X" keyword to determine valid targets
+        let enchant_type = aura.keywords.get_args(crate::core::Keyword::Enchant).and_then(|args| {
+            if let crate::core::KeywordArgs::Enchant { card_type } = args {
+                Some(card_type.as_str().to_string())
+            } else {
+                None
+            }
+        });
+
         let target = self.cards.get(target_id)?;
-        if !target.is_creature() {
-            return Err(MtgError::InvalidAction(
-                "This Aura can only enchant creatures".to_string(),
-            ));
+        let target_valid = match enchant_type.as_deref() {
+            Some("Creature") | None => target.is_creature(), // Default: Enchant creature
+            Some("Land") => target.is_land(),
+            Some("Artifact") => target.is_artifact(),
+            Some("Enchantment") => target.is_enchantment(),
+            Some("Permanent" | "permanent") => true, // Any permanent
+            Some("Player" | "player") => false,      // Player auras handled separately
+            Some(other) => {
+                // Check if it matches a creature subtype (e.g., "Enchant Goblin")
+                target.is_creature() && target.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
+            }
+        };
+
+        if !target_valid {
+            let type_desc = enchant_type.as_deref().unwrap_or("creature");
+            return Err(MtgError::InvalidAction(format!(
+                "This Aura can only enchant {}s",
+                type_desc.to_lowercase()
+            )));
         }
 
         // Detach from previous target if needed (unlikely for newly-resolved Aura)

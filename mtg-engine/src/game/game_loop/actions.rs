@@ -567,13 +567,33 @@ impl<'a> GameLoop<'a> {
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {
                                     // Check if there are valid enchantment targets on the battlefield
+                                    // Parse enchant restriction from KeywordArgs::Enchant
+                                    let enchant_type =
+                                        card.keywords.get_args(crate::core::Keyword::Enchant).and_then(|args| {
+                                            if let crate::core::KeywordArgs::Enchant { card_type } = args {
+                                                Some(card_type.as_str().to_string())
+                                            } else {
+                                                None
+                                            }
+                                        });
+
                                     let has_valid_targets = self.game.battlefield.cards.iter().any(|&target_id| {
-                                        // Using try_get() to avoid Result drop overhead in hot path
                                         self.game.cards.try_get(target_id).is_some_and(|target_card| {
-                                            // Paralyze enchants creatures, so check for creatures
-                                            // TODO: Parse enchant restrictions from card data (e.g., "Enchant creature")
-                                            // For now, assume Auras enchant creatures
-                                            target_card.is_creature()
+                                            match enchant_type.as_deref() {
+                                                Some("Creature") | None => target_card.is_creature(),
+                                                Some("Land") => target_card.is_land(),
+                                                Some("Artifact") => target_card.is_artifact(),
+                                                Some("Enchantment") => target_card.is_enchantment(),
+                                                Some("Permanent" | "permanent") => true,
+                                                Some(other) => {
+                                                    // Creature subtype check
+                                                    target_card.is_creature()
+                                                        && target_card
+                                                            .subtypes
+                                                            .iter()
+                                                            .any(|st| st.as_str().eq_ignore_ascii_case(other))
+                                                }
+                                            }
                                         })
                                     });
 
