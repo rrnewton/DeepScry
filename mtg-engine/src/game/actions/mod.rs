@@ -2379,7 +2379,14 @@ impl GameState {
             }
             Effect::CounterSpell { target } => {
                 // Counter a spell on the stack
-                self.counter_spell(*target)?;
+                // Fizzle if target is placeholder (no valid target found) or not on stack
+                // This happens when triggered counter effects (e.g., Ulamog's Nullifier ETB)
+                // fire when no spell is on the stack to target
+                if target.is_placeholder() || !self.stack.contains(*target) {
+                    log::debug!("CounterSpell fizzles - target {} not on stack", target.as_u32());
+                } else {
+                    self.counter_spell(*target)?;
+                }
             }
             Effect::AddMana {
                 player,
