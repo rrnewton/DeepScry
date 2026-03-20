@@ -127,9 +127,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Reference: ChangeZoneAllAi.java:20-200
   - Test: test_should_cast_change_zone_all with 3 scenarios
 
+---- ✅ **Always-beneficial spell casting (2026-03-14_#1956(cbf568e7))**
+  - AI now casts SearchLibrary, CreateToken, Scry, CopyPermanent, ExilePermanent, Balance
+  - Previously the AI was passing priority holding these spells (e.g., Demonic Tutor)
+  - Catch-all for effects that always benefit the caster with no conditions
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
+3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-14_#1945(e6856211) - 942 tests passing**
+**Checked up-to-date as of 2026-03-14_#1956(cbf568e7) - 942 tests passing**
