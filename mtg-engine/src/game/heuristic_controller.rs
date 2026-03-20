@@ -2980,6 +2980,25 @@ impl HeuristicController {
             return true;
         }
 
+        // Always-beneficial effects: search library, create tokens, scry, surveil
+        // These effects always benefit the caster and should be cast when possible.
+        // Examples: Demonic Tutor (SearchLibrary), Dragon Fodder (CreateToken),
+        //           Opt (Scry), Thought Erasure (Surveil)
+        let has_always_beneficial = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::SearchLibrary { .. }
+                    | crate::core::Effect::CreateToken { .. }
+                    | crate::core::Effect::Scry { .. }
+                    | crate::core::Effect::CopyPermanent { .. }
+                    | crate::core::Effect::ExilePermanent { .. }
+                    | crate::core::Effect::Balance { .. }
+            )
+        });
+        if has_always_beneficial {
+            return true;
+        }
+
         false
     }
 
