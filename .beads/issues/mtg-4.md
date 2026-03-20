@@ -13,29 +13,28 @@ updated_at: 2026-01-02T20:06:08.227468534+00:00
 
 Track user-facing gameplay features and interaction improvements.
 
-**TUI (Terminal User Interface):**
-- Current: ✅  command with --p1/--p2 agent types (zero/random), --seed for deterministic games
-- mtg-25: Interactive TUI controller (--p1=tui) for human play
-- mtg-26: Display game state during play (life, hand, battlefield)
-- mtg-27: Show available actions to player
-- mtg-28: Better formatting and colors in output
-- mtg-29: Game state visualization improvements
-- mtg-p9svf: Agentplay CLI turn sequence and display bugs (HIGH - blocks usability)
-- mtg-el58f: Combat attack action not available during Declare Attackers phase (CRITICAL - blocks combat testing)
+**TUI (Terminal User Interface) - ALL CORE FEATURES COMPLETE:**
+- ✅ mtg-25: Interactive TUI controller (--p1=tui) - 1310-line InteractiveController (CLOSED)
+- ✅ mtg-26: Display game state (life, hand, battlefield) (CLOSED)
+- ✅ mtg-27: Show available actions (numbered list, rich text input) (CLOSED)
+- ✅ mtg-28: Better formatting and colors (Fancy TUI, 4369-line renderer) (CLOSED)
+- ✅ mtg-29: Game state visualization (battlefield layout, combat, stack) (CLOSED)
+- mtg-p9svf: Agentplay CLI turn sequence and display bugs
+- mtg-el58f: Combat attack action not available during Declare Attackers phase
 
-**Advanced gameplay mechanics:**
-- mtg-30: Stack interaction (responding to spells at instant speed)
-- mtg-31: Card draw triggers and replacement effects
-- mtg-32: Discard mechanics beyond cleanup step
-- mtg-33: Graveyard interactions (flashback, recursion)
-- ✅ mtg-34: Token creation (CLOSED - fully implemented)
-- mtg-35: +1/+1 and -1/-1 counters on creatures
+**Advanced gameplay mechanics - MOSTLY COMPLETE:**
+- ✅ mtg-30: Stack interaction (instants, counterspells, priority) (CLOSED)
+- ✅ mtg-31: Card draw triggers and replacement effects (CLOSED)
+- ✅ mtg-32: Discard mechanics (DiscardCards effect, AI evaluation) (CLOSED)
+- ✅ mtg-33: Graveyard interactions (Flashback, death triggers, ChangeZoneAll) (CLOSED)
+- ✅ mtg-34: Token creation (CLOSED)
+- mtg-35: +1/+1 and -1/-1 counters on creatures (PutCounter implemented, counter tracking works)
+
+**Serialization & Testing - ALL COMPLETE:**
+- ✅ mtg-36: GameState text file format (.pzl files) (CLOSED)
+- ✅ mtg-37: Load game states from files (CLOSED)
+- ✅ mtg-38: Puzzle mode for testing (CLOSED)
+- ✅ mtg-39: Replay recorded games (CLOSED)
 
 ---
-Checked up-to-date as of 2026-03-10_#1898(7de2da0).
-
-**Serialization & Testing:**
-- mtg-36: GameState text file format (.pzl files)
-- mtg-37: Load game states from files for testing
-- mtg-38: Puzzle mode for testing specific scenarios
-- mtg-39: Replay recorded games from file
+Checked up-to-date as of 2026-03-14_#1953(42ab0056).
