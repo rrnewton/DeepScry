@@ -1911,9 +1911,9 @@ impl GameState {
                     self.deal_damage_to_creature(*card_id, *amount)?;
                 }
                 TargetRef::None => {
-                    return Err(MtgError::InvalidAction(
-                        "DealDamage effect requires a target".to_string(),
-                    ));
+                    // Spell fizzles - no valid target (CR 608.2b)
+                    // This happens when triggered damage effects fire with no valid target
+                    log::debug!("DealDamage fizzles - no target specified");
                 }
             },
 
@@ -2788,12 +2788,13 @@ impl GameState {
                         }
                     }
                 } else {
-                    // Token definition not found - this is an error
-                    // The token should have been preloaded during game initialization
-                    return Err(crate::MtgError::InvalidAction(format!(
-                        "Token definition not found: '{}' (should have been preloaded)",
+                    // Token definition not found - log warning and skip
+                    // Some token scripts are missing from the forge-java cardsfolder
+                    // (e.g., special tokens from newer sets not yet in our token library)
+                    log::warn!(
+                        "Token definition not found: '{}' - skipping token creation",
                         token_script
-                    )));
+                    );
                 }
             }
 
