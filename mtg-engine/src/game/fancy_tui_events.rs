@@ -69,6 +69,7 @@ pub enum KeyInput {
     Random,          // R
     CtrlC,           // Exit
     Digit(u8),       // 0-9 for quick choice selection
+    Backspace,       // Backspace - delete last digit in buffer
     ShowBattlefield, // B - log battlefield state
     Help,            // ? - show keyboard shortcuts
     ToggleWrap,      // W - toggle line wrapping in log
@@ -159,8 +160,15 @@ pub fn handle_key_event(
         // Enter key
         KeyInput::Enter => handle_enter(state, view),
 
-        // Pass/Cancel
-        KeyInput::Pass | KeyInput::Escape => EventResult::Pass,
+        // Pass/Cancel - but if digit buffer is non-empty, clear it first
+        KeyInput::Pass | KeyInput::Escape => {
+            if !state.digit_buffer.is_empty() {
+                state.digit_buffer.clear();
+                EventResult::Handled
+            } else {
+                EventResult::Pass
+            }
+        }
 
         // Exit
         KeyInput::CtrlC => EventResult::Exit,
@@ -180,12 +188,40 @@ pub fn handle_key_event(
         // Digit selection (only in Actions pane)
         KeyInput::Digit(d) => {
             if state.focused_pane == FocusedPane::Actions {
-                let digit = d as usize;
-                if digit < num_choices {
-                    EventResult::SelectChoice(digit)
+                if num_choices > 10 {
+                    // Multi-digit mode: accumulate in buffer, auto-highlight
+                    state.digit_buffer.push(char::from(b'0' + d));
+                    if let Ok(idx) = state.digit_buffer.parse::<usize>() {
+                        if idx < num_choices {
+                            state.highlighted_choice = idx;
+                        }
+                    }
+                    EventResult::Handled
                 } else {
-                    EventResult::NotHandled
+                    // Single-digit mode: instant select (existing behavior)
+                    let digit = d as usize;
+                    if digit < num_choices {
+                        EventResult::SelectChoice(digit)
+                    } else {
+                        EventResult::NotHandled
+                    }
                 }
+            } else {
+                EventResult::NotHandled
+            }
+        }
+
+        // Backspace: remove last digit from buffer
+        KeyInput::Backspace => {
+            if !state.digit_buffer.is_empty() {
+                state.digit_buffer.pop();
+                // Update highlight based on remaining buffer
+                if let Ok(idx) = state.digit_buffer.parse::<usize>() {
+                    if idx < num_choices {
+                        state.highlighted_choice = idx;
+                    }
+                }
+                EventResult::Handled
             } else {
                 EventResult::NotHandled
             }
@@ -417,6 +453,16 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
 
 /// Handle Enter key
 fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
+    // If digit buffer is non-empty, parse and select that choice index
+    if !state.digit_buffer.is_empty() {
+        if let Ok(idx) = state.digit_buffer.parse::<usize>() {
+            state.digit_buffer.clear();
+            return EventResult::SelectChoice(idx);
+        }
+        state.digit_buffer.clear();
+        return EventResult::Handled;
+    }
+
     // In Actions pane, select the highlighted choice
     if state.focused_pane == FocusedPane::Actions {
         return EventResult::SelectChoice(state.highlighted_choice);
@@ -667,7 +713,7 @@ pub fn get_help_text(include_wasm_only: bool) -> String {
     help.push_str("  Arrow Keys  - Navigate within panes\n");
     help.push_str("  Tab         - Cycle through panes\n");
     help.push_str("  Enter       - Select/Confirm\n");
-    help.push_str("  1-9         - Quick select (Actions pane)\n");
+    help.push_str("  0-9         - Quick select / type number + Enter (>10 choices)\n");
     help.push_str("  PgUp/PgDn   - Page scroll (Info pane)\n");
     help.push_str("  Home/End    - Jump to start/end (Info pane)\n");
     help.push_str("  Left/Right  - Scroll by turn (Info pane)\n");

@@ -675,6 +675,18 @@ impl FancyTuiController {
                                 }
                             }
                             KeyCode::Enter => {
+                                // If digit buffer is non-empty, parse and select that index
+                                if !self.renderer.state.digit_buffer.is_empty() {
+                                    if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
+                                        self.renderer.state.digit_buffer.clear();
+                                        if idx < num_choices {
+                                            return Ok(InputAction::Select(idx));
+                                        }
+                                    } else {
+                                        self.renderer.state.digit_buffer.clear();
+                                    }
+                                    return Ok(InputAction::Continue);
+                                }
                                 // In Actions pane, select the highlighted choice
                                 if self.renderer.state.focused_pane == FocusedPane::Actions {
                                     return Ok(InputAction::Select(self.renderer.state.highlighted_choice));
@@ -709,6 +721,11 @@ impl FancyTuiController {
                                 return Ok(InputAction::Continue);
                             }
                             KeyCode::Char('p') | KeyCode::Esc => {
+                                // If digit buffer is non-empty, clear it instead of passing
+                                if !self.renderer.state.digit_buffer.is_empty() {
+                                    self.renderer.state.digit_buffer.clear();
+                                    return Ok(InputAction::Continue);
+                                }
                                 return Ok(InputAction::Pass);
                             }
                             KeyCode::Char('q') => {
@@ -733,9 +750,31 @@ impl FancyTuiController {
                             KeyCode::Char(c) if c.is_ascii_digit() => {
                                 // Digit selection only works when Actions pane is focused
                                 if self.renderer.state.focused_pane == FocusedPane::Actions {
-                                    let digit = c.to_digit(10).unwrap() as usize;
-                                    if digit < num_choices {
-                                        return Ok(InputAction::Select(digit));
+                                    if num_choices > 10 {
+                                        // Multi-digit mode: accumulate in buffer, auto-highlight
+                                        self.renderer.state.digit_buffer.push(c);
+                                        if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
+                                            if idx < num_choices {
+                                                self.renderer.state.highlighted_choice = idx;
+                                            }
+                                        }
+                                    } else {
+                                        // Single-digit mode: instant select (existing behavior)
+                                        let digit = c.to_digit(10).unwrap() as usize;
+                                        if digit < num_choices {
+                                            return Ok(InputAction::Select(digit));
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if !self.renderer.state.digit_buffer.is_empty() {
+                                    self.renderer.state.digit_buffer.pop();
+                                    // Update highlight based on remaining buffer
+                                    if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
+                                        if idx < num_choices {
+                                            self.renderer.state.highlighted_choice = idx;
+                                        }
                                     }
                                 }
                             }
@@ -800,6 +839,7 @@ impl FancyTuiController {
         choices: &[String],
     ) -> io::Result<PromptResult> {
         self.renderer.state.highlighted_choice = 0;
+        self.renderer.state.digit_buffer.clear();
 
         let mut terminal = Self::setup_terminal()?;
 

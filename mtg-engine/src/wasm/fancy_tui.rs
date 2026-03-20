@@ -1481,6 +1481,7 @@ impl WasmFancyTuiState {
                 // Need human input - display choices
                 self.pending_context = Some(context.clone());
                 self.selected_choice_idx = 0;
+                self.renderer.state.digit_buffer.clear();
                 self.update_choices_from_context(&context);
 
                 // Debug logging: show game state when waiting for input
@@ -1858,6 +1859,7 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
         KeyCode::Home => Some(KeyInput::Home),
         KeyCode::End => Some(KeyInput::End),
         KeyCode::Enter => Some(KeyInput::Enter),
+        KeyCode::Backspace => Some(KeyInput::Backspace),
         KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
         _ => None,
     };
@@ -1876,20 +1878,66 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
                 return;
             }
             KeyInput::Enter | KeyInput::Space => {
+                // If digit buffer is non-empty, parse and select that index
+                if !state.renderer.state.digit_buffer.is_empty() {
+                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                        if idx < state.current_choices.len() {
+                            state.selected_choice_idx = idx;
+                            state.update_choice_highlights();
+                            state.select_current_choice();
+                        }
+                    }
+                    state.renderer.state.digit_buffer.clear();
+                    state.needs_redraw = true;
+                    return;
+                }
                 state.select_current_choice();
                 state.needs_redraw = true;
                 return;
             }
             KeyInput::Digit(n) => {
-                // 1-based selection: press '1' for first choice, '0' for 10th
-                let idx = if n == 0 { 9 } else { (n - 1) as usize };
-                if idx < state.current_choices.len() {
-                    state.selected_choice_idx = idx;
-                    state.update_choice_highlights();
-                    state.select_current_choice();
+                let num_choices = state.current_choices.len();
+                if num_choices > 10 {
+                    // Multi-digit mode: accumulate in buffer, auto-highlight
+                    state.renderer.state.digit_buffer.push(char::from(b'0' + n));
+                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                        if idx < num_choices {
+                            state.selected_choice_idx = idx;
+                            state.update_choice_highlights();
+                        }
+                    }
+                    state.needs_redraw = true;
+                } else {
+                    // 1-based selection: press '1' for first choice, '0' for 10th
+                    let idx = if n == 0 { 9 } else { (n - 1) as usize };
+                    if idx < num_choices {
+                        state.selected_choice_idx = idx;
+                        state.update_choice_highlights();
+                        state.select_current_choice();
+                        state.needs_redraw = true;
+                    }
+                }
+                return;
+            }
+            KeyInput::Backspace => {
+                if !state.renderer.state.digit_buffer.is_empty() {
+                    state.renderer.state.digit_buffer.pop();
+                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                        if idx < state.current_choices.len() {
+                            state.selected_choice_idx = idx;
+                            state.update_choice_highlights();
+                        }
+                    }
                     state.needs_redraw = true;
                 }
                 return;
+            }
+            KeyInput::Escape => {
+                if !state.renderer.state.digit_buffer.is_empty() {
+                    state.renderer.state.digit_buffer.clear();
+                    state.needs_redraw = true;
+                    return;
+                }
             }
             _ => {}
         }

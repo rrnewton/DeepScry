@@ -671,6 +671,8 @@ pub struct FancyTuiState {
     pub log_visible_lines: usize,
     /// Cache of wrapped log lines for efficient scrolling
     pub log_wrap_cache: LogWrapCache,
+    /// Buffer for multi-digit choice input (>10 choices)
+    pub digit_buffer: String,
 }
 
 impl Default for FancyTuiState {
@@ -702,6 +704,7 @@ impl FancyTuiState {
             log_wrap_lines: false,    // Default: no line wrapping (truncate)
             log_visible_lines: 20,    // Default estimate, updated during render
             log_wrap_cache: LogWrapCache::default(),
+            digit_buffer: String::new(),
         }
     }
 
@@ -1935,6 +1938,15 @@ impl FancyTuiRenderer {
                 Style::default().fg(Color::White)
             };
             lines.push(Line::from(Span::styled(text.as_str(), style)));
+        }
+
+        // Show digit buffer when non-empty (multi-digit input mode)
+        if !self.state.digit_buffer.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("Select: {}_ (Enter to confirm)", self.state.digit_buffer),
+                Style::default().fg(Color::Cyan),
+            )));
         }
 
         // Show navigation hints
