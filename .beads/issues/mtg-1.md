@@ -29,11 +29,12 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-21_#1960(3dc514bd):**
+**Current status as of 2026-03-21_#1966(40d375aa):**
 - Tests: 942 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
-- Performance: 7.0M actions/sec (simple_bolt benchmark)
+- Performance: 7.2M actions/sec (simple_bolt benchmark)
+- AddTurn effect (64 cards) - Time Walk, extra turns now work
 - Keyword warnings: 338 remaining (down from 2672 original)
 - Random deck compatibility: ~98% success rate (200 random decks tested)
 - 21 stale issues closed (features already implemented)
@@ -64,4 +65,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-21_#1960(3dc514bd).
+Checked up-to-date as of 2026-03-21_#1966(40d375aa).
