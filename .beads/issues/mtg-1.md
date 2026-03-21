@@ -29,25 +29,26 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-14_#1953(42ab0056):**
+**Current status as of 2026-03-21_#1960(3dc514bd):**
 - Tests: 942 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
 - Performance: 7.0M actions/sec (simple_bolt benchmark)
-- Keyword warnings: 338 remaining (down from 706)
+- Keyword warnings: 338 remaining (down from 2672 original)
+- Random deck compatibility: ~98% success rate (200 random decks tested)
+- 21 stale issues closed (features already implemented)
 
-**Recent accomplishments (2026-03-14):**
-- SacrificeAll effect (143 cards) - mass sacrifice (All is Dust, Archfiend of Depravity)
-- ChangeZoneAll effect (636 cards) - mass zone changes (Aetherize, Tormod's Crypt)
-- PutCounterAll effect (264 cards) - mass counter placement (Ajani, Arcbound Overseer)
-- PutCounterAll AI evaluation (CountersPutAllAi port)
-- 15 new keyword variants: combat restrictions, damage prevention, alternate costs
-- Keyword warnings reduced from 706 → 346 (51% reduction)
+**Recent accomplishments (2026-03-14 to 2026-03-21):**
+- SacrificeAll effect (143 cards), ChangeZoneAll (636 cards), PutCounterAll (264 cards)
+- AI: PutCounterAll, ChangeZoneAll, always-beneficial spell casting, equipment/counter evaluation
 - AI: Land drop bluffing + instant-speed spell timing bluffing
+- Fix: Aura enchanting supports Land/Artifact/Enchantment/Permanent targets
 - Fix: Sacrifice cost checking prevents infinite loop on activated abilities
-- Fix: Aura enchanting now supports Land, Artifact, Enchantment, Permanent targets
-- Optimization: check_triggers Vec elimination (-3-5%), sort_unstable + SBA guard (-5-7.5%)
-- Optimization: check_phase_triggers String allocation elimination (-3.2%)
+- Fix: CounterSpell fizzle when no target on stack
+- Fix: DealDamage fizzle + missing token graceful handling
+- Refactor: Trigger flags (requires_other, requires_landfall) replace string matching
+- 15+ new keyword variants, keyword warnings 706 → 338 (52% reduction)
+- Optimization: check_triggers Vec (-3-5%), sort_unstable + SBA guard (-5-7.5%)
 
 **Previous accomplishments (2026-03 early):**
 - DealsCombatDamage trigger firing at runtime
@@ -63,4 +64,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-14_#1953(42ab0056).
+Checked up-to-date as of 2026-03-21_#1960(3dc514bd).
