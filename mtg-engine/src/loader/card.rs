@@ -598,8 +598,7 @@ impl CardDefinition {
             use crate::core::{Effect, Trigger, TriggerEvent};
 
             // Create SpellCast trigger with PumpCreature effect
-            // The [noncreature] marker tells check_spellcast_triggers to only fire for noncreature spells
-            let prowess_trigger = Trigger::new(
+            let mut prowess_trigger = Trigger::new(
                 TriggerEvent::SpellCast,
                 vec![Effect::PumpCreature {
                     target: CardId::new(0), // Placeholder - resolved at runtime to self
@@ -609,6 +608,7 @@ impl CardDefinition {
                 }],
                 "[noncreature] Prowess (+1/+1 until end of turn)".to_string(),
             );
+            prowess_trigger.requires_noncreature = true;
             card.triggers.push(prowess_trigger);
         }
 
@@ -2002,15 +2002,18 @@ impl CardDefinition {
                     }
 
                     // Create trigger with parsed effects
-                    // Note: is_controller_only flag is stored in description for now
-                    // A proper implementation would add a field to Trigger struct
+                    // Set structured filter flag for controller-only triggers
                     let desc_with_flag = if is_controller_only && !effects.is_empty() {
                         format!("[controller_only] {}", description)
                     } else {
                         description
                     };
 
-                    triggers.push(Trigger::new(event, effects, desc_with_flag));
+                    let mut trigger = Trigger::new(event, effects, desc_with_flag);
+                    if is_controller_only {
+                        trigger.controller_turn_only = true;
+                    }
+                    triggers.push(trigger);
                 }
             }
 
@@ -2189,10 +2192,12 @@ impl CardDefinition {
                 // Use new_any() to mark trigger_self_only = false
                 let mut trigger = Trigger::new_any(TriggerEvent::SpellCast, effects, description);
 
-                // Store noncreature-only flag in trigger for runtime filtering
-                // We'll use a naming convention in the description for now
-                if is_noncreature_only && !trigger.description.contains("noncreature") {
-                    trigger.description = format!("[noncreature] {}", trigger.description);
+                // Set structured filter flag for noncreature-only triggers
+                if is_noncreature_only {
+                    trigger.requires_noncreature = true;
+                    if !trigger.description.contains("noncreature") {
+                        trigger.description = format!("[noncreature] {}", trigger.description);
+                    }
                 }
 
                 triggers.push(trigger);

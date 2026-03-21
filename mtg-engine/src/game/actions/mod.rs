@@ -4664,9 +4664,9 @@ impl GameState {
                     if trigger.event != event {
                         return false;
                     }
-                    // [controller_only] triggers should only fire on the controller's turn
-                    // This was already checked in check_phase_triggers, but verify here too
-                    if trigger.description.starts_with("[controller_only]") {
+                    // Controller-only triggers should only fire on the controller's turn
+                    // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
+                    if trigger.controller_turn_only {
                         return card.controller == active_player;
                     }
                     true
@@ -4798,15 +4798,10 @@ impl GameState {
                                 return false;
                             }
 
-                            // Check noncreature-only triggers using structured field or description
-                            if trigger.requires_noncreature
-                                || trigger.description.contains("[noncreature]")
-                                || trigger.description.contains("noncreature")
-                            {
-                                // This trigger only fires on noncreature spells
-                                if is_creature_spell {
-                                    return false;
-                                }
+                            // Check noncreature-only triggers using pre-parsed flag
+                            // OPTIMIZATION: Use boolean flag instead of runtime .contains()
+                            if trigger.requires_noncreature && is_creature_spell {
+                                return false;
                             }
 
                             true
