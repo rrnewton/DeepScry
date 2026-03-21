@@ -451,6 +451,7 @@ impl GameState {
                             | Effect::CopySpellAbility { .. }
                             | Effect::ImmediateTrigger { .. }
                             | Effect::ClearRemembered
+                            | Effect::AddTurn { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. } => {
@@ -528,6 +529,7 @@ impl GameState {
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
+                | Effect::AddTurn { .. }
                 | Effect::EachDamage { .. }
                 | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
@@ -934,6 +936,7 @@ impl GameState {
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
                 | Effect::GainControl { .. }
+                | Effect::AddTurn { .. }
                 | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
@@ -1145,6 +1148,7 @@ impl GameState {
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
+            | Effect::AddTurn { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====

@@ -1828,8 +1828,14 @@ impl GameState {
 
         if !self.turn.advance_step() {
             // End of turn, move to next player
+            // Check for extra turns first (CR 500.7 - Time Walk, etc.)
             let from_player = self.turn.active_player;
-            let next_player = self.get_next_player(self.turn.active_player)?;
+            let next_player = if !self.turn.extra_turns.is_empty() {
+                // Extra turn: take from front of queue (FIFO)
+                self.turn.extra_turns.remove(0)
+            } else {
+                self.get_next_player(self.turn.active_player)?
+            };
             let old_turn_number = self.turn.turn_number;
 
             // Serialize RNG state BEFORE changing turns
@@ -2963,6 +2969,7 @@ impl GameState {
                     | crate::core::Effect::CopySpellAbility { .. }
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
+                    | crate::core::Effect::AddTurn { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. } => {

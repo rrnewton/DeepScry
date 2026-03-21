@@ -604,6 +604,15 @@ pub enum Effect {
     /// AI heuristic: Keep spells, put excess lands on bottom
     Scry { player: PlayerId, count: u8 },
 
+    /// Take an extra turn after this one (CR 500.7)
+    /// Example: "Take an extra turn after this one" (Time Walk)
+    AddTurn {
+        /// Player who takes the extra turn
+        player: PlayerId,
+        /// Number of extra turns to add
+        num_turns: u8,
+    },
+
     /// Surveil N - look at top N cards, put any number into graveyard, rest on top (CR 701.42)
     /// Example: "Surveil 2" (Thought Erasure)
     ///
@@ -1117,7 +1126,8 @@ impl Effect {
             | Effect::Firebend { .. }
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
-            | Effect::ClearRemembered => EffectTargetCategory::NoTargetNeeded,
+            | Effect::ClearRemembered
+            | Effect::AddTurn { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

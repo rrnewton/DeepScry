@@ -3018,6 +3018,7 @@ impl HeuristicController {
                     | crate::core::Effect::CopyPermanent { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::Balance { .. }
+                    | crate::core::Effect::AddTurn { .. }
             )
         });
         if has_always_beneficial {

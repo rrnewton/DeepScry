@@ -65,6 +65,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CopySpellAbility { .. }
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
+        | Effect::AddTurn { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -153,6 +154,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::AddTurn { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -1705,6 +1707,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
+                player: card_owner,
+                num_turns: *num_turns,
+            },
             Effect::Loot {
                 player,
                 discard_count,
@@ -2376,6 +2382,21 @@ impl GameState {
             Effect::Surveil { player, count } => {
                 // Surveil - look at top N cards, put any into graveyard, rest on top (CR 701.42)
                 self.surveil_cards(*player, *count)?;
+            }
+            Effect::AddTurn { player, num_turns } => {
+                // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.
+                // Add extra turns to the turn queue for the specified player
+                for _ in 0..*num_turns {
+                    self.turn.extra_turns.push(*player);
+                }
+                let player_name = self
+                    .get_player(*player)
+                    .map(|p| p.name.as_str().to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                self.logger.gamelog(&format!(
+                    "{} takes {} extra turn(s) after this one",
+                    player_name, num_turns
+                ));
             }
             Effect::CounterSpell { target } => {
                 // Counter a spell on the stack
