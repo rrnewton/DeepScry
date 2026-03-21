@@ -961,6 +961,15 @@ impl ManaEngine {
     /// 1. First use mana from the pool to satisfy colored requirements
     /// 2. Then check if remaining requirements can be satisfied by tapping sources
     pub fn can_pay_with_pool(&self, cost: &ManaCost, pool: &crate::core::ManaPool) -> bool {
+        // OPTIMIZATION: If pool is empty (most common case - no Dark Ritual/mana floating),
+        // skip pool calculations entirely and go straight to mana source check
+        if pool.is_empty() {
+            if self.use_greedy_resolver {
+                return self.greedy_resolver.can_pay(cost, &self.mana_sources);
+            }
+            return self.simple_resolver.can_pay(cost, &self.mana_sources);
+        }
+
         // If the pool alone can pay, return true immediately
         if pool.can_pay(cost) {
             return true;
