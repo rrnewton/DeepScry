@@ -37,4 +37,4 @@ Track user-facing gameplay features and interaction improvements.
 - ✅ mtg-39: Replay recorded games (CLOSED)
 
 ---
-Checked up-to-date as of 2026-03-14_#1953(42ab0056).
+Checked up-to-date as of 2026-03-25_#1984(71aba549).
