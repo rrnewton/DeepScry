@@ -3018,6 +3018,7 @@ impl HeuristicController {
         // These effects always benefit the caster and should be cast when possible.
         // Examples: Demonic Tutor (SearchLibrary), Dragon Fodder (CreateToken),
         //           Opt (Scry), Thought Erasure (Surveil), Time Walk (AddTurn)
+        //           Mind Sculpt (Mill), Healing Salve (GainLife), Overrun (PumpAllCreatures)
         let has_always_beneficial = spell.effects.iter().any(|e| {
             matches!(
                 e,
@@ -3031,6 +3032,11 @@ impl HeuristicController {
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::Balance { .. }
                     | crate::core::Effect::AddTurn { .. }
+                    | crate::core::Effect::Mill { .. }
+                    | crate::core::Effect::GainLife { .. }
+                    | crate::core::Effect::PumpAllCreatures { .. }
+                    | crate::core::Effect::MultiplyCounter { .. }
+                    | crate::core::Effect::PutCounter { .. }
             )
         });
         if has_always_beneficial {
