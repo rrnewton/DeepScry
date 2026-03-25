@@ -36,6 +36,12 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Recent Completions
 
+**MultiplyCounter Effect (2026-03-25_#1978(911880cb)):**
+- ✅ AB$ MultiplyCounter: counter doubling/multiplying (44 cards)
+- Doubles (or multiplies by N) counters on a permanent
+- Supports specific counter types or "all counters" mode
+- Examples: Ascendant Acolyte, Aetheric Amplifier, Aragorn Hornburg Hero
+
 **SacrificeAll Effect (2026-03-14_#1950(46f42a1e)):**
 - ✅ AB$ SacrificeAll: mass sacrifice (143 cards)
 - Each player sacrifices all permanents matching ValidCards$ filter
@@ -97,7 +103,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-14_#1950(46f42a1e) - 942 tests passing
+Checked up-to-date as of 2026-03-25_#1978(911880cb) - 942 tests passing
 
 # Notes
 
