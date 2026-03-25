@@ -322,6 +322,25 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::MultiplyCounter {
+                target,
+                counter_type,
+                multiplier,
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let ct_desc = counter_type
+                    .map(|ct| format!("{ct:?}"))
+                    .unwrap_or_else(|| "all".to_string());
+                let message = format!(
+                    "{source_name} ({source_id}) multiplies {ct_desc} counters on {target_name} ({target}) by {multiplier}"
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::PutCounterAll {
                 restriction,
                 counter_type,

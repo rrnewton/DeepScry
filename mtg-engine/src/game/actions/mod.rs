@@ -44,6 +44,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CounterSpell { .. }
         | Effect::AddMana { .. }
         | Effect::PutCounter { .. }
+        | Effect::MultiplyCounter { .. }
         | Effect::PutCounterAll { .. }
         | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
@@ -133,6 +134,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CounterSpell { .. }
             | Effect::AddMana { .. }
             | Effect::PutCounter { .. }
+            | Effect::MultiplyCounter { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
@@ -1792,6 +1794,23 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::MultiplyCounter {
+                target,
+                counter_type,
+                multiplier,
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    Effect::MultiplyCounter {
+                        target: resolved_target,
+                        counter_type: *counter_type,
+                        multiplier: *multiplier,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // CopyPermanent: Create token copy of target permanent
             Effect::CopyPermanent {
                 target,
@@ -2478,6 +2497,47 @@ impl GameState {
                 }
                 // Add counters using the GameState method (which logs for undo)
                 self.add_counters(*target, *counter_type, *amount)?;
+            }
+            Effect::MultiplyCounter {
+                target,
+                counter_type,
+                multiplier,
+            } => {
+                if target.is_placeholder() {
+                    return Ok(());
+                }
+                // Multiply counters on the target card
+                if let Some(card) = self.cards.try_get(*target) {
+                    let counters_to_add: smallvec::SmallVec<[(crate::core::CounterType, u8); 4]> =
+                        if let Some(ct) = counter_type {
+                            // Multiply specific counter type
+                            let current = card.get_counter(*ct);
+                            if current > 0 {
+                                let to_add = current.saturating_mul(*multiplier - 1);
+                                smallvec::smallvec![(*ct, to_add)]
+                            } else {
+                                smallvec::SmallVec::new()
+                            }
+                        } else {
+                            // Multiply ALL counter types on the card
+                            card.counters
+                                .iter()
+                                .filter_map(|(ct, count)| {
+                                    if *count > 0 {
+                                        Some((*ct, count.saturating_mul(*multiplier - 1)))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        };
+
+                    for (ct, amount) in counters_to_add {
+                        if amount > 0 {
+                            self.add_counters(*target, ct, amount)?;
+                        }
+                    }
+                }
             }
             Effect::PutCounterAll {
                 restriction,

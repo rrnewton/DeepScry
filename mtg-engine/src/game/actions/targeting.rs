@@ -434,6 +434,7 @@ impl GameState {
                             | Effect::Regenerate { .. }
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
+                            | Effect::MultiplyCounter { .. }
                             | Effect::PutCounterAll { .. }
                             | Effect::ChangeZoneAll { .. }
                             | Effect::AttachEquipment { .. }
@@ -517,6 +518,7 @@ impl GameState {
                 | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
+                | Effect::MultiplyCounter { .. }
                 | Effect::PutCounterAll { .. }
                 | Effect::ChangeZoneAll { .. }
                 | Effect::CopyPermanent { .. }
@@ -925,6 +927,7 @@ impl GameState {
                 | Effect::Regenerate { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
+                | Effect::MultiplyCounter { .. }
                 | Effect::PutCounterAll { .. }
                 | Effect::ChangeZoneAll { .. }
                 | Effect::CopyPermanent { .. }
@@ -1167,6 +1170,7 @@ impl GameState {
             | Effect::Regenerate { .. }
             | Effect::RemoveCounter { .. }
             | Effect::PutCounter { .. }
+            | Effect::MultiplyCounter { .. }
             | Effect::CopyPermanent { .. } => {
                 // Target already specified (guard failed: target.as_u32() != 0)
                 // If a target was pre-assigned, we assume it's valid

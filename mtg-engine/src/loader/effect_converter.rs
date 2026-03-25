@@ -449,6 +449,23 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::MultiplyCounter => {
+            // MultiplyCounter: Double (or multiply) counters on a permanent
+            // Example: "DB$ MultiplyCounter | Defined$ Self | CounterType$ P1P1" (double +1/+1 counters)
+            // Example: "DB$ MultiplyCounter | ValidTgts$ Permanent | Multiplier$ 2" (double all counters)
+            use crate::core::CounterType;
+
+            let counter_type = params.get("CounterType").and_then(CounterType::parse);
+
+            let multiplier = params.get_u8("Multiplier").unwrap_or(2); // Default: double
+
+            Some(Effect::MultiplyCounter {
+                target: CardId::new(0), // Placeholder - filled in at targeting/trigger time
+                counter_type,
+                multiplier,
+            })
+        }
+
         ApiType::Animate => {
             // Animate effect: AB$ Animate | Defined$ Self | Power$ 5 | Toughness$ 2
             // Example: Flexible Waterbender - "This creature has base power and toughness 5/2 until end of turn"

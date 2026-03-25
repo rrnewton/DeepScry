@@ -2943,6 +2943,7 @@ impl GameState {
                     | crate::core::Effect::CounterSpell { .. }
                     | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }
+                    | crate::core::Effect::MultiplyCounter { .. }
                     | crate::core::Effect::PutCounterAll { .. }
                     | crate::core::Effect::ChangeZoneAll { .. }
                     | crate::core::Effect::RemoveCounter { .. }

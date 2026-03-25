@@ -663,6 +663,17 @@ pub enum Effect {
         amount: u8,
     },
 
+    /// Multiply (double) counters on a permanent
+    /// Example: "Double the number of +1/+1 counters on target creature"
+    /// If counter_type is None, doubles ALL counter types on the target
+    MultiplyCounter {
+        target: CardId,
+        /// Counter type to multiply (None = all types)
+        counter_type: Option<crate::core::CounterType>,
+        /// Multiplier (default 2 = double)
+        multiplier: u8,
+    },
+
     /// Exile a permanent
     /// Example: "Exile target creature" (Swords to Plowshares)
     /// Moves a card from the battlefield to the exile zone
@@ -1156,6 +1167,7 @@ impl Effect {
             | Effect::PumpCreature { .. }
             | Effect::CounterSpell { .. }
             | Effect::PutCounter { .. }
+            | Effect::MultiplyCounter { .. }
             | Effect::RemoveCounter { .. }
             | Effect::ExilePermanent { .. }
             | Effect::AttachEquipment { .. }
