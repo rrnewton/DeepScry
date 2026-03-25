@@ -22,13 +22,13 @@ Track user-facing gameplay features and interaction improvements.
 - mtg-p9svf: Agentplay CLI turn sequence and display bugs
 - mtg-el58f: Combat attack action not available during Declare Attackers phase
 
-**Advanced gameplay mechanics - MOSTLY COMPLETE:**
+**Advanced gameplay mechanics - ALL COMPLETE:**
 - ✅ mtg-30: Stack interaction (instants, counterspells, priority) (CLOSED)
 - ✅ mtg-31: Card draw triggers and replacement effects (CLOSED)
 - ✅ mtg-32: Discard mechanics (DiscardCards effect, AI evaluation) (CLOSED)
 - ✅ mtg-33: Graveyard interactions (Flashback, death triggers, ChangeZoneAll) (CLOSED)
 - ✅ mtg-34: Token creation (CLOSED)
-- mtg-35: +1/+1 and -1/-1 counters on creatures (PutCounter implemented, counter tracking works)
+- ✅ mtg-35: +1/+1 and -1/-1 counters (PutCounter, MultiplyCounter, counter tracking) (CLOSED)
 
 **Serialization & Testing - ALL COMPLETE:**
 - ✅ mtg-36: GameState text file format (.pzl files) (CLOSED)
