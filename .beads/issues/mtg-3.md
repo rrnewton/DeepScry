@@ -36,6 +36,11 @@ Track implementation of MTG game features including keywords, abilities, card ef
 
 ## Recent Completions
 
+**TapOrUntap Effect (2026-03-25_#1987(38586cdb)):**
+- ✅ AB$ TapOrUntap: tap or untap target permanent (49 cards)
+- AI heuristic: untap our permanents, tap opponent's
+- Examples: Bounding Krasis, Captain of the Mists, Component Collector
+
 **MultiplyCounter Effect (2026-03-25_#1978(911880cb)):**
 - ✅ AB$ MultiplyCounter: counter doubling/multiplying (44 cards)
 - Doubles (or multiplies by N) counters on a permanent
@@ -103,7 +108,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ UntapAll (100 card usages) - Mobilize, Aggravated Assault
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
-Checked up-to-date as of 2026-03-25_#1978(911880cb) - 942 tests passing
+Checked up-to-date as of 2026-03-25_#1987(38586cdb) - 942 tests passing
 
 # Notes
 
