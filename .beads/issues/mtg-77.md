@@ -138,10 +138,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Previously gave flat bonuses regardless, overvaluing already-triggered creatures
   - Reference: Java ComputerUtilCard.java:1872-1883 (hasActiveUndyingOrPersist)
 
+---- ✅ **Surveil/Loot/Dig always-beneficial + SacrificeAll board wipe AI (2026-03-25_#1976(de75f815))**
+  - Added Surveil, Loot, Dig to always-beneficial spell casting list
+  - Added SacrificeAll routing through board wipe evaluator (alongside DestroyAll/DamageAll)
+  - Previously AI wouldn't cast Thought Erasure (Surveil) or All is Dust (SacrificeAll)
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
 3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-25_#1974(bfd9503b) - 942 tests passing**
+**Checked up-to-date as of 2026-03-25_#1976(de75f815) - 942 tests passing**
