@@ -29,26 +29,27 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-21_#1966(40d375aa):**
+**Current status as of 2026-03-25_#1981(d5c362f5):**
 - Tests: 942 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
 - Performance: 7.2M actions/sec (simple_bolt benchmark)
-- AddTurn effect (64 cards) - Time Walk, extra turns now work
+- Random deck compatibility: ~99.5% success rate (200 random decks tested)
 - Keyword warnings: 338 remaining (down from 2672 original)
-- Random deck compatibility: ~98% success rate (200 random decks tested)
-- 21 stale issues closed (features already implemented)
+- AI casts 18+ effect types automatically
 
-**Recent accomplishments (2026-03-14 to 2026-03-21):**
-- SacrificeAll effect (143 cards), ChangeZoneAll (636 cards), PutCounterAll (264 cards)
-- AI: PutCounterAll, ChangeZoneAll, always-beneficial spell casting, equipment/counter evaluation
-- AI: Land drop bluffing + instant-speed spell timing bluffing
-- Fix: Aura enchanting supports Land/Artifact/Enchantment/Permanent targets
-- Fix: Sacrifice cost checking prevents infinite loop on activated abilities
-- Fix: CounterSpell fizzle when no target on stack
-- Fix: DealDamage fizzle + missing token graceful handling
-- Refactor: Trigger flags (requires_other, requires_landfall) replace string matching
-- 15+ new keyword variants, keyword warnings 706 → 338 (52% reduction)
+**Recent accomplishments (2026-03-25):**
+- MultiplyCounter effect (44 cards) - counter doubling
+- AI: Undying/Persist counter-state awareness (Java parity)
+- AI: Surveil/Loot/Dig always-beneficial + SacrificeAll board wipe routing
+- AI: Mill, GainLife, PumpAllCreatures, MultiplyCounter, PutCounter always-beneficial
+- Optimization: trigger boolean flags -14.6%, empty pool fast-path -2.9%, SmallVec SBA -1.9%
+
+**Previous accomplishments (2026-03-14 to 2026-03-21):**
+- AddTurn effect (64 cards), SacrificeAll (143), ChangeZoneAll (636), PutCounterAll (264)
+- AI: PutCounterAll, ChangeZoneAll, equipment/counter evaluation, bluffing
+- Fixes: Aura non-creature enchanting, sacrifice cost infinite loop, CounterSpell/DealDamage fizzle
+- Trigger flags refactor, 15+ keyword variants, warnings 706→338
 - Optimization: check_triggers Vec (-3-5%), sort_unstable + SBA guard (-5-7.5%)
 
 **Previous accomplishments (2026-03 early):**
@@ -65,4 +66,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-21_#1966(40d375aa).
+Checked up-to-date as of 2026-03-25_#1981(d5c362f5).
