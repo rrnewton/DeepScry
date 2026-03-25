@@ -341,18 +341,18 @@ make heapprofile
 
 **Output**: `experiment_results/<CPU>/perf_history.csv` with historical data for all key metrics.
 
-### Current Profiling Results (2026-03-14_#1942)
+### Current Profiling Results (2026-03-25_#1988)
 
 **Top CPU Hotspots** (from perf profiling of rewind_bench, ~5B cycles):
 
-1. **priority_round** (30.7%) - Dominated by push_activatable_abilities and push_castable_spells
-2. **ManaEngine::read_from_cache** (9.4%) - Building mana source list from cache
-3. **bounds_check_payment** (7.4%) - Mana payment validation
-4. **check_triggers iterator** (3.3%) - Trigger matching on battlefield
-5. **GreedyManaResolver::check_payment** (2.8%) - Greedy mana resolution
-6. **GameState::undo** (2.8%) - Undo log replay
+1. **priority_round** (25-27%) - Dominated by push_activatable_abilities and push_castable_spells
+2. **bounds_check_payment** (10-12%) - Mana payment validation
+3. **ManaEngine::read_from_cache** (7-9%) - Building mana source list from cache
+4. **GameState::undo** (3-4%) - Undo log replay
+5. **check_triggers iterator** (3-4%) - Trigger matching on battlefield
+6. **GreedyManaResolver::check_payment** (3-4%) - Greedy mana resolution
 
-**Key insight**: Priority round (ability enumeration + mana checks) dominates at ~31% of CPU. Previous logging overhead has been eliminated via log_enabled! guards.
+**Key insight**: Priority round (ability enumeration + mana checks) dominates at ~26% of CPU. Trigger checking overhead was significantly reduced by replacing runtime string matching (.contains(), .starts_with()) with pre-parsed boolean flags on the Trigger struct (-14.6% improvement).
 
 **Top Allocation Hotspots** (from DHAT profiling of 100 iterations, 1.06 MB total):
 
