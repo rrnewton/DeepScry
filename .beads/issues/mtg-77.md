@@ -143,10 +143,15 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Added SacrificeAll routing through board wipe evaluator (alongside DestroyAll/DamageAll)
   - Previously AI wouldn't cast Thought Erasure (Surveil) or All is Dust (SacrificeAll)
 
+---- ✅ **Expanded always-beneficial spell list (2026-03-25_#1980(6a81181c))**
+  - Added Mill, GainLife, PumpAllCreatures, MultiplyCounter, PutCounter
+  - AI now casts 18+ effect types automatically when affordable
+  - Previously passed on Mind Sculpt (Mill), Overrun (PumpAll), etc.
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
 3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-25_#1976(de75f815) - 942 tests passing**
+**Checked up-to-date as of 2026-03-25_#1980(6a81181c) - 942 tests passing**
