@@ -20,14 +20,17 @@ This module contains the game engine that implements MTG rules and manages game 
 - Provides API for game actions (play land, cast spell, etc.)
 - Integrates with undo log for rewind functionality
 
-#### [`game_loop.rs`](game_loop.rs)
-**Purpose:** Main game loop and rules engine
+#### [`game_loop/`](game_loop/)
+**Purpose:** Main game loop and rules engine (split into multiple files)
 
-- `GameLoop` - Orchestrates game flow
-- Turn structure (untap, upkeep, draw, main, combat, end)
-- Priority system
-- Stack resolution
-- Win condition checking
+- `mod.rs` - `GameLoop` struct, game orchestration, turn management
+- `priority.rs` - Priority passing, spell/ability resolution, controller interaction
+- `actions.rs` - Available spell/ability enumeration, mana cost checks
+- `combat.rs` - Combat phase (attackers, blockers, damage)
+- `steps.rs` - Turn step transitions, phase triggers
+- `logging.rs` - Game action logging for effects
+- `snapshot.rs` - Game state snapshot/resume
+- `network_choice.rs` - Network multiplayer choice handling
 
 **Game flow:**
 1. Turn phases and steps (MTG Rules 500-514)
@@ -67,11 +70,14 @@ This module contains the game engine that implements MTG rules and manages game 
 - Used for testing and baseline performance
 
 ##### [`heuristic_controller.rs`](heuristic_controller.rs)
-- Evaluation-based AI ported from Java Forge
-- Creature quality evaluation
-- Combat simulation
-- Removal and threat assessment
-- Most sophisticated AI currently available
+- Evaluation-based AI ported from Java Forge (8600+ lines)
+- Creature quality evaluation with keyword/ability scoring
+- Smart attack/block decisions with aggression levels
+- Spell casting evaluation: removal timing, board wipes, counters, fight
+- AI for mass effects: PutCounterAll, ChangeZoneAll, SacrificeAll
+- Always-beneficial spell casting (search, tokens, scry, exile)
+- Bluffing: land drop timing, instant-speed spell holding
+- Sacrifice cost checking prevents infinite loops
 
 ##### [`interactive_controller.rs`](interactive_controller.rs)
 - Human player via stdin/stdout
@@ -95,23 +101,20 @@ This module contains the game engine that implements MTG rules and manages game 
 
 ### Game Actions and Effects
 
-#### [`actions.rs`](actions.rs)
-**Purpose:** High-level game actions
+#### [`actions/`](actions/)
+**Purpose:** High-level game actions (split into multiple files)
 
-- Playing lands
-- Casting spells
-- Activating abilities
-- Resolving effects
-- Combat actions
+- `mod.rs` - Core game actions: play land, cast spell, activate ability, resolve effects
+- `targeting.rs` - Target selection and validation (TargetRestriction matching)
+- `combat.rs` - Combat damage calculation and assignment
+- `triggers.rs` - Triggered ability execution and effect resolution
+- `tests/` - Unit tests for game actions
 
 #### [`combat.rs`](combat.rs)
-**Purpose:** Combat phase implementation
+**Purpose:** Combat data structures
 
-- Declare attackers step
-- Declare blockers step
-- Combat damage calculation
-- Damage assignment order
-- First strike / double strike handling
+- Combat state tracking (attackers, blockers, damage assignment)
+- Combat restrictions and evasion checks
 
 #### [`mana_engine.rs`](mana_engine.rs)
 **Purpose:** Mana management

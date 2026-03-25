@@ -223,6 +223,12 @@ impl ManaPool {
         }
     }
 
+    /// Check if the mana pool is empty (no floating mana)
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.white == 0 && self.blue == 0 && self.black == 0 && self.red == 0 && self.green == 0 && self.colorless == 0
+    }
+
     pub fn add_color(&mut self, color: Color) {
         match color {
             Color::White => self.white += 1,

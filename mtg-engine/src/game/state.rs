@@ -1577,7 +1577,8 @@ impl GameState {
     /// Returns an error if zone operations fail.
     pub fn check_lethal_damage(&mut self) -> Result<()> {
         // Collect creatures that need to die (to avoid borrow checker issues)
-        let creatures_to_destroy: Vec<(CardId, PlayerId)> = self
+        // OPTIMIZATION: SmallVec avoids heap allocation when no creatures have lethal damage (common case)
+        let creatures_to_destroy: smallvec::SmallVec<[(CardId, PlayerId); 4]> = self
             .battlefield
             .cards
             .iter()
@@ -1696,8 +1697,9 @@ impl GameState {
     ///
     /// Returns an error if zone operations fail.
     pub fn check_aura_attachment(&mut self) -> Result<()> {
-        // Collect auras that need to go to graveyard
-        let auras_to_destroy: Vec<(CardId, PlayerId, crate::core::CardName)> = self
+        // OPTIMIZATION: Collect only CardId+PlayerId (avoid Arc<str> clone for card name).
+        // Use SmallVec to avoid heap allocation when no auras are orphaned (common case).
+        let auras_to_destroy: smallvec::SmallVec<[(CardId, PlayerId); 2]> = self
             .battlefield
             .cards
             .iter()
@@ -1712,24 +1714,24 @@ impl GameState {
 
                 // Check if the attached target still exists on battlefield
                 if !self.battlefield.cards.contains(&attached_to) {
-                    log::debug!(target: "sba", "Aura {} ({}) attached to {} which is no longer on battlefield",
-                        card.name, card_id.as_u32(), attached_to.as_u32());
-                    return Some((card_id, card.owner, card.name.clone()));
+                    return Some((card_id, card.owner));
                 }
 
-                // Check if the attached target is a legal target for this aura
-                // For now, we just check it exists - full legality would require
-                // checking the aura's enchant restriction (e.g., "Enchant creature")
                 None
             })
             .collect();
 
         // Move orphaned auras to graveyard
-        for (card_id, owner, name) in auras_to_destroy {
+        for (card_id, owner) in auras_to_destroy {
+            let card_name = self
+                .cards
+                .try_get(card_id)
+                .map(|c| c.name.to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
             self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
             self.logger.gamelog(&format!(
                 "{} ({}) goes to graveyard (aura not attached to valid permanent)",
-                name, card_id
+                card_name, card_id
             ));
         }
 
@@ -1828,8 +1830,14 @@ impl GameState {
 
         if !self.turn.advance_step() {
             // End of turn, move to next player
+            // Check for extra turns first (CR 500.7 - Time Walk, etc.)
             let from_player = self.turn.active_player;
-            let next_player = self.get_next_player(self.turn.active_player)?;
+            let next_player = if !self.turn.extra_turns.is_empty() {
+                // Extra turn: take from front of queue (FIFO)
+                self.turn.extra_turns.remove(0)
+            } else {
+                self.get_next_player(self.turn.active_player)?
+            };
             let old_turn_number = self.turn.turn_number;
 
             // Serialize RNG state BEFORE changing turns
@@ -2963,6 +2971,7 @@ impl GameState {
                     | crate::core::Effect::CopySpellAbility { .. }
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
+                    | crate::core::Effect::AddTurn { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. } => {

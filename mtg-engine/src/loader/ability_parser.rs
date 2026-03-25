@@ -171,6 +171,9 @@ pub enum ApiType {
     PlayLandVariant,
     Effect,
     DelayedTrigger,
+    /// Take an extra turn after this one
+    /// Example: "SP$ AddTurn | NumTurns$ 1" (Time Walk)
+    AddTurn,
     /// Copy a spell on the stack
     /// Used by Jeong Jeong: "copy it and you may choose new targets"
     /// Parameters:
@@ -323,6 +326,7 @@ impl ApiType {
             "PlayLandVariant" => Self::PlayLandVariant,
             "Effect" => Self::Effect,
             "DelayedTrigger" => Self::DelayedTrigger,
+            "AddTurn" => Self::AddTurn,
             "CopySpellAbility" => Self::CopySpellAbility,
             "ImmediateTrigger" => Self::ImmediateTrigger,
             "Cleanup" => Self::Cleanup,
@@ -417,6 +421,7 @@ impl ApiType {
             Self::PlayLandVariant => "PlayLandVariant",
             Self::Effect => "Effect",
             Self::DelayedTrigger => "DelayedTrigger",
+            Self::AddTurn => "AddTurn",
             Self::CopySpellAbility => "CopySpellAbility",
             Self::Scry => "Scry",
             Self::Surveil => "Surveil",

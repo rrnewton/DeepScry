@@ -11,7 +11,23 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimization (2026-03-14_#1937(3a67f89))
+## Latest Optimizations (2026-03-21_#1966)
+
+✅ **Pre-parsed boolean flags for trigger checking** - **-14.6% time** (da13db67)
+- Replaced runtime .starts_with("[controller_only]") and .contains("[noncreature]") with pre-parsed
+  boolean flags (controller_turn_only, requires_noncreature) on Trigger struct
+- robots_mirror/mem_logging: -14.6% time (p = 0.00) - largest single optimization win
+- Massive because robots deck has many creatures with upkeep/combat triggers
+
+✅ **Empty mana pool fast-path** - **-2.9% time** (0771ab02)
+- Skip pool calculations when mana pool is empty (common case - no Dark Ritual)
+- robots_mirror/mem_logging: -2.9% time (p = 0.00)
+
+✅ **SmallVec for SBA collections** - **-1.9% time** (40d375aa)
+- check_aura_attachment and check_lethal_damage use SmallVec instead of Vec
+- simple_bolt: -1.9% time (p = 0.00)
+
+## Previous Optimization (2026-03-14_#1937(3a67f89))
 
 ✅ **sort_unstable + SBA debug logging guard** - **-5% to -7.5% time**
 - Used sort_unstable_by_key for abilities_buffer (avoids allocation overhead of stable sort)

@@ -165,6 +165,14 @@ pub struct TurnStructure {
     /// This must persist across NeedInput returns for WASM non-blocking controllers.
     pub consecutive_passes: u8,
 
+    /// Queue of extra turns to take (CR 500.7)
+    /// Each entry is the player who gets the extra turn.
+    /// When the current turn ends, if this queue is non-empty, the next turn
+    /// is given to the player at the front of the queue instead of the normal rotation.
+    /// Most recent AddTurn effects add to the back (FIFO order).
+    #[serde(default)]
+    pub extra_turns: Vec<crate::core::PlayerId>,
+
     /// Tracks which turn the mandatory Draw step card draw was executed.
     /// Prevents double-draw when WASM harness re-creates GameLoop mid-step (the harness creates
     /// a new GameLoop on each step_harness() call; if priority_round blocks with NeedInput,
@@ -250,6 +258,7 @@ impl TurnStructure {
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
             combat_damage_dealt_turn: None,
+            extra_turns: Vec::new(),
         }
     }
 
@@ -268,6 +277,7 @@ impl TurnStructure {
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
             combat_damage_dealt_turn: None,
+            extra_turns: Vec::new(),
         }
     }
 

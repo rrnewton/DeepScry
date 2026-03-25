@@ -1089,6 +1089,16 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::AddTurn => {
+            // AddTurn: Take extra turns
+            // Example: "SP$ AddTurn | NumTurns$ 1" (Time Walk)
+            let num_turns = params.get_u8("NumTurns").unwrap_or(1);
+            Some(Effect::AddTurn {
+                player: PlayerId::new(0), // Placeholder - filled in at cast time
+                num_turns,
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

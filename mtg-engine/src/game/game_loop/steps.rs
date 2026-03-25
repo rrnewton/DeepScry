@@ -124,8 +124,9 @@ impl<'a> GameLoop<'a> {
                         if t.event != trigger_event {
                             return false;
                         }
-                        // Check [controller_only] flag - if present, only fire on controller's turn
-                        if t.description.starts_with("[controller_only]") {
+                        // Check controller_turn_only flag - if set, only fire on controller's turn
+                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
+                        if t.controller_turn_only {
                             return card.controller == active_player;
                         }
                         true

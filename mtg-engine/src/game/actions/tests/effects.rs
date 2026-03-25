@@ -841,15 +841,17 @@ mod tests {
         djinn.set_base_toughness(Some(5));
         djinn.controller = p1_id;
 
-        // [controller_only] trigger should only fire when controller is active
-        djinn.triggers.push(Trigger::new(
+        // controller_turn_only trigger should only fire when controller is active
+        let mut upkeep_trigger = Trigger::new(
             TriggerEvent::BeginningOfUpkeep,
             vec![Effect::DealDamage {
                 target: TargetRef::Player(crate::core::PlayerId::new(0)),
                 amount: 1,
             }],
             "[controller_only] At the beginning of your upkeep, Juzám Djinn deals 1 damage to you.".to_string(),
-        ));
+        );
+        upkeep_trigger.controller_turn_only = true;
+        djinn.triggers.push(upkeep_trigger);
 
         game.cards.insert(djinn_id, djinn);
         game.battlefield.add(djinn_id);

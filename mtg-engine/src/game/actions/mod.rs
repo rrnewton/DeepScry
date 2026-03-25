@@ -65,6 +65,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::CopySpellAbility { .. }
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
+        | Effect::AddTurn { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -153,6 +154,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::AddTurn { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -533,14 +535,36 @@ impl GameState {
         }
         let aura_name = aura.name.to_string();
 
-        // Validate target type based on enchant restriction
-        // For now, assume "Enchant creature" (most common case)
-        // TODO: Parse enchant restriction from KeywordArgs::Enchant
+        // Validate target type based on enchant restriction from KeywordArgs::Enchant
+        // Parse the Aura's "Enchant X" keyword to determine valid targets
+        let enchant_type = aura.keywords.get_args(crate::core::Keyword::Enchant).and_then(|args| {
+            if let crate::core::KeywordArgs::Enchant { card_type } = args {
+                Some(card_type.as_str().to_string())
+            } else {
+                None
+            }
+        });
+
         let target = self.cards.get(target_id)?;
-        if !target.is_creature() {
-            return Err(MtgError::InvalidAction(
-                "This Aura can only enchant creatures".to_string(),
-            ));
+        let target_valid = match enchant_type.as_deref() {
+            Some("Creature") | None => target.is_creature(), // Default: Enchant creature
+            Some("Land") => target.is_land(),
+            Some("Artifact") => target.is_artifact(),
+            Some("Enchantment") => target.is_enchantment(),
+            Some("Permanent" | "permanent") => true, // Any permanent
+            Some("Player" | "player") => false,      // Player auras handled separately
+            Some(other) => {
+                // Check if it matches a creature subtype (e.g., "Enchant Goblin")
+                target.is_creature() && target.subtypes.iter().any(|st| st.as_str().eq_ignore_ascii_case(other))
+            }
+        };
+
+        if !target_valid {
+            let type_desc = enchant_type.as_deref().unwrap_or("creature");
+            return Err(MtgError::InvalidAction(format!(
+                "This Aura can only enchant {}s",
+                type_desc.to_lowercase()
+            )));
         }
 
         // Detach from previous target if needed (unlikely for newly-resolved Aura)
@@ -1683,6 +1707,10 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
+                player: card_owner,
+                num_turns: *num_turns,
+            },
             Effect::Loot {
                 player,
                 discard_count,
@@ -1889,9 +1917,9 @@ impl GameState {
                     self.deal_damage_to_creature(*card_id, *amount)?;
                 }
                 TargetRef::None => {
-                    return Err(MtgError::InvalidAction(
-                        "DealDamage effect requires a target".to_string(),
-                    ));
+                    // Spell fizzles - no valid target (CR 608.2b)
+                    // This happens when triggered damage effects fire with no valid target
+                    log::debug!("DealDamage fizzles - no target specified");
                 }
             },
 
@@ -2355,9 +2383,31 @@ impl GameState {
                 // Surveil - look at top N cards, put any into graveyard, rest on top (CR 701.42)
                 self.surveil_cards(*player, *count)?;
             }
+            Effect::AddTurn { player, num_turns } => {
+                // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.
+                // Add extra turns to the turn queue for the specified player
+                for _ in 0..*num_turns {
+                    self.turn.extra_turns.push(*player);
+                }
+                let player_name = self
+                    .get_player(*player)
+                    .map(|p| p.name.as_str().to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                self.logger.gamelog(&format!(
+                    "{} takes {} extra turn(s) after this one",
+                    player_name, num_turns
+                ));
+            }
             Effect::CounterSpell { target } => {
                 // Counter a spell on the stack
-                self.counter_spell(*target)?;
+                // Fizzle if target is placeholder (no valid target found) or not on stack
+                // This happens when triggered counter effects (e.g., Ulamog's Nullifier ETB)
+                // fire when no spell is on the stack to target
+                if target.is_placeholder() || !self.stack.contains(*target) {
+                    log::debug!("CounterSpell fizzles - target {} not on stack", target.as_u32());
+                } else {
+                    self.counter_spell(*target)?;
+                }
             }
             Effect::AddMana {
                 player,
@@ -2759,12 +2809,13 @@ impl GameState {
                         }
                     }
                 } else {
-                    // Token definition not found - this is an error
-                    // The token should have been preloaded during game initialization
-                    return Err(crate::MtgError::InvalidAction(format!(
-                        "Token definition not found: '{}' (should have been preloaded)",
+                    // Token definition not found - log warning and skip
+                    // Some token scripts are missing from the forge-java cardsfolder
+                    // (e.g., special tokens from newer sets not yet in our token library)
+                    log::warn!(
+                        "Token definition not found: '{}' - skipping token creation",
                         token_script
-                    )));
+                    );
                 }
             }
 
@@ -4223,14 +4274,16 @@ impl GameState {
 
                         // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
                         // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
-                        if trigger.description.contains("[other]") && card_id == source_card_id {
+                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                        if trigger.requires_other && card_id == source_card_id {
                             return false;
                         }
 
                         // "[landfall]" triggers only fire when:
                         // 1. The entering card is a Land
                         // 2. The entering card is controlled by the trigger's controller
-                        if trigger.description.contains("[landfall]") {
+                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                        if trigger.requires_landfall {
                             if !source_card_is_land {
                                 return false;
                             }
@@ -4611,9 +4664,9 @@ impl GameState {
                     if trigger.event != event {
                         return false;
                     }
-                    // [controller_only] triggers should only fire on the controller's turn
-                    // This was already checked in check_phase_triggers, but verify here too
-                    if trigger.description.starts_with("[controller_only]") {
+                    // Controller-only triggers should only fire on the controller's turn
+                    // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
+                    if trigger.controller_turn_only {
                         return card.controller == active_player;
                     }
                     true
@@ -4745,15 +4798,10 @@ impl GameState {
                                 return false;
                             }
 
-                            // Check noncreature-only triggers using structured field or description
-                            if trigger.requires_noncreature
-                                || trigger.description.contains("[noncreature]")
-                                || trigger.description.contains("noncreature")
-                            {
-                                // This trigger only fires on noncreature spells
-                                if is_creature_spell {
-                                    return false;
-                                }
+                            // Check noncreature-only triggers using pre-parsed flag
+                            // OPTIMIZATION: Use boolean flag instead of runtime .contains()
+                            if trigger.requires_noncreature && is_creature_spell {
+                                return false;
                             }
 
                             true
