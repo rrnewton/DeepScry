@@ -2914,17 +2914,17 @@ impl HeuristicController {
             }
         }
 
-        // Check for board wipes (DestroyAll, DamageAll)
+        // Check for board wipes (DestroyAll, DamageAll, SacrificeAll)
         // Reference: DestroyAllAi.java:52-175 (doMassRemovalLogic)
-        let has_destroy_all = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DestroyAll { .. }));
-        let has_damage_all = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DamageAll { .. }));
-        if (has_destroy_all || has_damage_all) && self.should_cast_board_wipe(spell, view) {
+        let has_mass_removal = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DestroyAll { .. }
+                    | crate::core::Effect::DamageAll { .. }
+                    | crate::core::Effect::SacrificeAll { .. }
+            )
+        });
+        if has_mass_removal && self.should_cast_board_wipe(spell, view) {
             return true;
         }
 
@@ -3014,16 +3014,19 @@ impl HeuristicController {
             return true;
         }
 
-        // Always-beneficial effects: search library, create tokens, scry, surveil
+        // Always-beneficial effects: search library, create tokens, scry, surveil, etc.
         // These effects always benefit the caster and should be cast when possible.
         // Examples: Demonic Tutor (SearchLibrary), Dragon Fodder (CreateToken),
-        //           Opt (Scry), Thought Erasure (Surveil)
+        //           Opt (Scry), Thought Erasure (Surveil), Time Walk (AddTurn)
         let has_always_beneficial = spell.effects.iter().any(|e| {
             matches!(
                 e,
                 crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::CreateToken { .. }
                     | crate::core::Effect::Scry { .. }
+                    | crate::core::Effect::Surveil { .. }
+                    | crate::core::Effect::Loot { .. }
+                    | crate::core::Effect::Dig { .. }
                     | crate::core::Effect::CopyPermanent { .. }
                     | crate::core::Effect::ExilePermanent { .. }
                     | crate::core::Effect::Balance { .. }
