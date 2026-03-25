@@ -2934,6 +2934,7 @@ impl GameState {
                     | crate::core::Effect::DestroyPermanent { .. }
                     | crate::core::Effect::TapPermanent { .. }
                     | crate::core::Effect::UntapPermanent { .. }
+                    | crate::core::Effect::TapOrUntapPermanent { .. }
                     | crate::core::Effect::PumpCreature { .. }
                     | crate::core::Effect::PumpCreatureVariable { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }

@@ -208,6 +208,16 @@ impl GameState {
                         }
                     }
                 }
+                Effect::TapOrUntapPermanent { target } if target.is_placeholder() => {
+                    // Tap or untap can target any permanent (creature, land, etc.)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::CounterSpell { target } if target.is_placeholder() => {
                     // Counter can target spells on the stack (except self)
                     for &card_id in &self.stack.cards {
@@ -427,6 +437,7 @@ impl GameState {
                             | Effect::PumpCreatureVariable { .. }
                             | Effect::TapPermanent { .. }
                             | Effect::UntapPermanent { .. }
+                            | Effect::TapOrUntapPermanent { .. }
                             | Effect::ExilePermanent { .. }
                             | Effect::Airbend { .. }
                             | Effect::Earthbend { .. }
@@ -511,6 +522,7 @@ impl GameState {
                 | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
+                | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
                 | Effect::ExilePermanent { .. }
                 | Effect::Airbend { .. }
@@ -770,6 +782,16 @@ impl GameState {
                         }
                     }
                 }
+                Effect::TapOrUntapPermanent { target } if target.is_placeholder() => {
+                    // Tap or untap any permanent
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if is_legal_target(card, ability_controller) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::DealDamage {
                     target: TargetRef::None,
                     ..
@@ -920,6 +942,7 @@ impl GameState {
                 | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
+                | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
                 | Effect::ExilePermanent { .. }
                 | Effect::Airbend { .. }
@@ -1093,6 +1116,10 @@ impl GameState {
                     }
                 })
             }
+            Effect::TapOrUntapPermanent { target } if target.is_placeholder() => {
+                // Tap or untap can target any permanent
+                !self.battlefield.cards.is_empty()
+            }
             Effect::DealDamage {
                 target: TargetRef::None,
                 ..
@@ -1163,6 +1190,7 @@ impl GameState {
             | Effect::PumpCreatureVariable { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
+            | Effect::TapOrUntapPermanent { .. }
             | Effect::CounterSpell { .. }
             | Effect::ExilePermanent { .. }
             | Effect::Airbend { .. }

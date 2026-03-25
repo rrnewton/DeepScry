@@ -558,6 +558,11 @@ pub enum Effect {
     /// Example: "Untap target land"
     UntapPermanent { target: CardId },
 
+    /// Tap or untap target permanent (player chooses which)
+    /// Example: "You may tap or untap target creature" (Bounding Krasis ETB)
+    /// AI heuristic: tap opponent's creatures, untap our own
+    TapOrUntapPermanent { target: CardId },
+
     /// Pump (temporary stat boost and/or keyword grant) until end of turn
     /// Example: "Target creature gets +3/+3 until end of turn"
     /// Example with keyword: "Target creature gains double strike until end of turn"
@@ -1164,6 +1169,7 @@ impl Effect {
             | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
+            | Effect::TapOrUntapPermanent { .. }
             | Effect::PumpCreature { .. }
             | Effect::CounterSpell { .. }
             | Effect::PutCounter { .. }

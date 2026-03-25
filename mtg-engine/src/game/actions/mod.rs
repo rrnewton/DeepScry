@@ -36,6 +36,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Fight { .. }
         | Effect::TapPermanent { .. }
         | Effect::UntapPermanent { .. }
+        | Effect::TapOrUntapPermanent { .. }
         | Effect::PumpCreature { .. }
         | Effect::PumpAllCreatures { .. }
         | Effect::PumpCreatureVariable { .. }
@@ -126,6 +127,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Fight { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
+            | Effect::TapOrUntapPermanent { .. }
             | Effect::PumpCreature { .. }
             | Effect::PumpAllCreatures { .. }
             | Effect::PumpCreatureVariable { .. }
@@ -1637,6 +1639,18 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::TapOrUntapPermanent { target } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::TapOrUntapPermanent {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             Effect::CounterSpell { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -2246,6 +2260,24 @@ impl GameState {
             Effect::UntapPermanent { target } => {
                 // Use helper that handles untap + undo log + mana version
                 self.untap_permanent(*target)?;
+            }
+            Effect::TapOrUntapPermanent { target } => {
+                // Tap or untap target permanent (AI chooses)
+                // Heuristic: untap our own creatures, tap opponent's
+                if target.is_placeholder() {
+                    return Ok(());
+                }
+                if let Some(card) = self.cards.try_get(*target) {
+                    let is_ours = card.controller == self.turn.active_player;
+                    if is_ours {
+                        // Untap our own permanent (free mana, ready to block)
+                        self.untap_permanent(*target)?;
+                    } else {
+                        // Tap opponent's permanent (remove blocker, deny mana)
+                        self.tap_permanent(*target)?;
+                        self.check_triggers(TriggerEvent::Taps, *target)?;
+                    }
+                }
             }
             Effect::PumpCreature {
                 target,

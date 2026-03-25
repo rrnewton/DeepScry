@@ -1116,6 +1116,14 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::TapOrUntap => {
+            // TapOrUntap: Tap or untap target permanent (player chooses)
+            // Example: "DB$ TapOrUntap | ValidTgts$ Creature" (Bounding Krasis)
+            Some(Effect::TapOrUntapPermanent {
+                target: CardId::placeholder(),
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }

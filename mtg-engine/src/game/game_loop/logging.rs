@@ -223,6 +223,16 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) untaps {target_name} ({target})");
                 self.game.logger.gamelog(&message);
             }
+            Effect::TapOrUntapPermanent { target } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!("{source_name} ({source_id}) taps or untaps {target_name} ({target})");
+                self.game.logger.gamelog(&message);
+            }
             Effect::PumpCreature {
                 target,
                 power_bonus,
