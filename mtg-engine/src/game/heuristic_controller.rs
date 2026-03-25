@@ -483,15 +483,24 @@ impl HeuristicController {
         // Resurrection keywords (creature comes back)
 
         // Undying: Creature returns with +1/+1 counter (very valuable)
-        // Java: if (c.hasKeyword(Keyword.UNDYING)) { value += addValue(25, "undying"); }
+        // Java: ComputerUtilCard.java:1872-1883 (hasActiveUndyingOrPersist)
+        // Only valuable if creature has NO +1/+1 counters (otherwise it won't return)
         if card.has_keyword(Keyword::Undying) {
-            value += 25;
+            let has_p1p1 = card.get_counter(crate::core::CounterType::P1P1) > 0;
+            if !has_p1p1 {
+                value += 25; // Will return from death
+            }
+            // No bonus if already has counters - Undying won't trigger
         }
 
         // Persist: Creature returns with -1/-1 counter (valuable but weaker return)
-        // Java: if (c.hasKeyword(Keyword.PERSIST)) { value += addValue(20, "persist"); }
+        // Only valuable if creature has NO -1/-1 counters (otherwise it won't return)
         if card.has_keyword(Keyword::Persist) {
-            value += 20;
+            let has_m1m1 = card.get_counter(crate::core::CounterType::M1M1) > 0;
+            if !has_m1m1 {
+                value += 20; // Will return from death
+            }
+            // No bonus if already has counters - Persist won't trigger
         }
 
         // Negative keywords
