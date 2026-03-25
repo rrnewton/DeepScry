@@ -132,10 +132,16 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Previously the AI was passing priority holding these spells (e.g., Demonic Tutor)
   - Catch-all for effects that always benefit the caster with no conditions
 
+---- ✅ **Undying/Persist counter-state awareness (2026-03-25_#1974(bfd9503b))**
+  - Undying bonus (+25) only applied when creature has NO +1/+1 counters
+  - Persist bonus (+20) only applied when creature has NO -1/-1 counters
+  - Previously gave flat bonuses regardless, overvaluing already-triggered creatures
+  - Reference: Java ComputerUtilCard.java:1872-1883 (hasActiveUndyingOrPersist)
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
 3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-14_#1956(cbf568e7) - 942 tests passing**
+**Checked up-to-date as of 2026-03-25_#1974(bfd9503b) - 942 tests passing**
