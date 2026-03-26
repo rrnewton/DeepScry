@@ -132,7 +132,8 @@ pub fn process_card_reveal<P: CardDefProvider>(
                 // For Draw/OpeningHand, add to hand ONLY if:
                 // 1. This is OUR card (owner == local_player), AND
                 // 2. Card is NOT in hand, AND
-                // 3. Card is NOT in library (i.e., WASM clients with empty game state)
+                // 3. Card is NOT in library (i.e., WASM clients with empty game state), AND
+                // 4. Card is NOT in graveyard/exile (already drawn+discarded/exiled)
                 //
                 // CRITICAL: For OPPONENT cards, we must NOT try to add to hand!
                 // The opponent's library is empty in our shadow state, so the
@@ -146,6 +147,13 @@ pub fn process_card_reveal<P: CardDefProvider>(
                 //
                 // WASM clients may start with empty game state where libraries are empty,
                 // so we need to add to hand directly for them (only for LOCAL player).
+                //
+                // CRITICAL FIX: Also check graveyard and exile zones. When a card is
+                // drawn and then discarded in the same ability (e.g., Bazaar of Baghdad:
+                // "draw 2, discard 3"), the reveal for the drawn card may arrive AFTER
+                // the discard has already moved it to graveyard. Without this check,
+                // the "empty library mode" condition (!in_hand && !in_library) would
+                // incorrectly re-add the card to hand, causing a network desync.
                 let is_our_card = local_player.is_some_and(|lp| lp == owner);
                 if !is_our_card {
                     log::debug!(
@@ -164,7 +172,16 @@ pub fn process_card_reveal<P: CardDefProvider>(
                     let card_in_library = game
                         .get_player_zones(owner)
                         .is_some_and(|z| z.library.contains(card_id));
-                    if !card_in_hand && !card_in_library {
+                    // Check if card has already moved to another zone (graveyard, exile).
+                    // This happens when draw+discard effects execute in the same ability
+                    // and the reveal is processed after the discard.
+                    let card_in_graveyard = game
+                        .get_player_zones(owner)
+                        .is_some_and(|z| z.graveyard.contains(card_id));
+                    let card_in_exile = game.get_player_zones(owner).is_some_and(|z| z.exile.contains(card_id));
+                    let card_on_battlefield = game.battlefield.contains(card_id);
+                    let card_elsewhere = card_in_graveyard || card_in_exile || card_on_battlefield;
+                    if !card_in_hand && !card_in_library && !card_elsewhere {
                         if let Some(zones) = game.get_player_zones_mut(owner) {
                             zones.hand.add(card_id);
                             log::debug!(
@@ -180,6 +197,21 @@ pub fn process_card_reveal<P: CardDefProvider>(
                                 card_id.as_u32()
                             );
                         }
+                    } else if card_elsewhere {
+                        log::debug!(
+                            "{}: {} {} (id={}) already in another zone (gy={} exile={} bf={}), not re-adding to hand",
+                            log_prefix,
+                            if matches!(reason, RevealReason::Draw) {
+                                "Drawn card"
+                            } else {
+                                "Opening hand card"
+                            },
+                            reveal.name,
+                            card_id.as_u32(),
+                            card_in_graveyard,
+                            card_in_exile,
+                            card_on_battlefield,
+                        );
                     } else if !card_in_hand && card_in_library {
                         log::debug!(
                             "{}: {} {} (id={}) is in library, letting draw_card() handle zone movement",

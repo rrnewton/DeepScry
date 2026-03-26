@@ -213,6 +213,20 @@ pub struct GameState {
     #[serde(skip)]
     pub pending_activation: Option<(PlayerId, CardId, usize)>,
 
+    /// Effect resume index for interrupted activated ability execution (WASM).
+    ///
+    /// When an activated ability's effects loop is interrupted by NeedInput
+    /// (e.g., DiscardCards routing needing a ChoiceRequest), this stores the
+    /// index of the effect to resume from. On re-entry, costs are NOT re-paid
+    /// and effects before this index are skipped.
+    ///
+    /// Also stores the chosen targets from the first entry, since target
+    /// selection happens before cost payment and effects.
+    ///
+    /// Not serialized — transient game loop state for WASM resumption only.
+    #[serde(skip)]
+    pub pending_activation_effect_idx: Option<(usize, Vec<CardId>)>,
+
     /// Targets chosen for spells currently on the stack (spell_id -> chosen_targets).
     ///
     /// Targets are selected at CAST time but consumed at RESOLUTION time. In the WASM
@@ -307,6 +321,7 @@ impl GameState {
             pending_cycling_search: None,
             pending_cast: None,
             pending_activation: None,
+            pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
         }
     }
@@ -2654,6 +2669,7 @@ impl GameState {
                 self.turn.reset_transient_guards();
                 self.pending_cast = None;
                 self.pending_activation = None;
+                self.pending_activation_effect_idx = None;
                 self.pending_cycling_search = None;
                 self.spell_targets.clear();
             }
@@ -3088,6 +3104,7 @@ impl Clone for GameState {
             pending_cycling_search: None,
             pending_cast: None,
             pending_activation: None,
+            pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
         }
     }

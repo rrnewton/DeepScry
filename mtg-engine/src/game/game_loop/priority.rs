@@ -1074,6 +1074,13 @@ impl<'a> GameLoop<'a> {
                                 // Don't log the "activates ability" message again on re-entry.
                                 let is_activation_resumption = self.game.pending_activation.is_some();
 
+                                // Check if we're resuming mid-effects (e.g., after NeedInput from
+                                // DiscardCards routing). If so, skip target selection, cost payment,
+                                // and already-executed effects. This prevents double-draws when
+                                // abilities like Bazaar of Baghdad (draw 2, discard 3) have their
+                                // DrawCards effects executed before DiscardCards returns NeedInput.
+                                let effect_resume = self.game.pending_activation_effect_idx.take();
+
                                 if let Some(ability) = ability {
                                     // Log "activates ability" only on first entry (not WASM resumption)
                                     if !is_activation_resumption
@@ -1092,198 +1099,242 @@ impl<'a> GameLoop<'a> {
                                     // choose_spell_ability_to_play, resuming here instead.
                                     self.game.pending_activation = Some((current_priority, card_id, ability_index));
 
-                                    // Get valid targets for the ability (before paying costs)
-                                    let valid_targets = self
-                                        .game
-                                        .get_valid_targets_for_ability(card_id, ability_index)
-                                        .unwrap_or_else(|_| SmallVec::new());
+                                    // When resuming mid-effects, use saved targets and skip
+                                    // target selection + cost payment (already done on first entry).
+                                    let chosen_targets_vec: Vec<CardId>;
+                                    let effect_start_idx: usize;
 
-                                    // Ask controller to choose targets (only if there are valid targets)
-                                    let chosen_targets_vec: Vec<CardId> = if valid_targets.is_empty() {
-                                        // No targets needed - ability has no targeting effects
-                                        Vec::new()
-                                    } else if valid_targets.len() == 1 {
-                                        // Only one valid target - auto-select without calling controller
-                                        // This is not a choice, so don't log ChoicePoint
-                                        vec![valid_targets[0]]
+                                    if let Some((resume_idx, saved_targets)) = effect_resume {
+                                        // WASM effect resumption: skip targets + costs, resume effects
+                                        log::debug!(
+                                            "[WASM EFFECT RESUME] Resuming ability effects from index {} (saved {} targets)",
+                                            resume_idx,
+                                            saved_targets.len()
+                                        );
+                                        chosen_targets_vec = saved_targets;
+                                        effect_start_idx = resume_idx;
                                     } else {
-                                        // Multiple valid targets - ask controller to choose
-                                        // Capture log size BEFORE asking controller (before controller logs its choice)
-                                        let prior_log_size = self.game.logger.log_count();
-                                        let choice = self.choose_targets_with_hook(
-                                            controller,
-                                            current_priority,
-                                            card_id,
-                                            &valid_targets,
-                                        );
-                                        let chosen_targets =
-                                            handle_choice_result_break!(choice, self.game, current_priority);
+                                        effect_start_idx = 0;
+                                        // Get valid targets for the ability (before paying costs)
+                                        let valid_targets = self
+                                            .game
+                                            .get_valid_targets_for_ability(card_id, ability_index)
+                                            .unwrap_or_else(|_| SmallVec::new());
 
-                                        // Log this choice point for snapshot/replay
-                                        let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
-                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
-
-                                        chosen_targets.into_iter().collect()
-                                    };
-
-                                    // Log target selection to gamelog (if any targets were chosen)
-                                    if !chosen_targets_vec.is_empty()
-                                        && self.verbosity >= VerbosityLevel::Normal
-                                        && !self.replaying
-                                    {
-                                        // Get target names for display
-                                        let target_names: Vec<String> = chosen_targets_vec
-                                            .iter()
-                                            .filter_map(|&tid| {
-                                                self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
-                                            })
-                                            .collect();
-                                        if !target_names.is_empty() {
-                                            let message = format!("  → targeting {}", target_names.join(", "));
-                                            self.game.logger.gamelog(&message);
-                                        }
-                                    }
-
-                                    // Auto-tap lands for mana costs (if the ability has a mana cost)
-                                    // This is the same logic as spell casting (step 6 of cast_spell_8_step)
-                                    if let Some(mana_cost) = ability.cost.get_mana_cost() {
-                                        // Reuse self.mana_engine to avoid allocation on each activated ability
-                                        use crate::game::mana_payment::{
-                                            GreedyManaResolver, ManaPaymentResolver, ManaSource,
-                                        };
-
-                                        self.mana_engine.update_mut(self.game, current_priority);
-
-                                        // Get ManaSource list from engine (already built with proper production info)
-                                        let all_sources = self.mana_engine.all_sources();
-
-                                        // If the ability cost includes tapping this card, we can't use it for mana
-                                        // because it will already be tapped as part of paying the activation cost.
-                                        // Filter out the source card in this case.
-                                        let filtered_sources: smallvec::SmallVec<[ManaSource; 8]>;
-                                        let mana_sources: &[ManaSource] = if ability.cost.includes_tap() {
-                                            filtered_sources =
-                                                all_sources.iter().filter(|s| s.card_id != card_id).cloned().collect();
-                                            &filtered_sources
+                                        // Ask controller to choose targets (only if there are valid targets)
+                                        chosen_targets_vec = if valid_targets.is_empty() {
+                                            // No targets needed - ability has no targeting effects
+                                            Vec::new()
+                                        } else if valid_targets.len() == 1 {
+                                            // Only one valid target - auto-select without calling controller
+                                            // This is not a choice, so don't log ChoicePoint
+                                            vec![valid_targets[0]]
                                         } else {
-                                            all_sources
-                                        };
-
-                                        // Use GreedyManaResolver to compute proper tap order
-                                        // Reuse sources_to_tap_buffer to avoid allocation
-                                        let resolver = GreedyManaResolver::new();
-                                        self.sources_to_tap_buffer.clear();
-                                        resolver.compute_tap_order(
-                                            mana_cost,
-                                            mana_sources,
-                                            &mut self.sources_to_tap_buffer,
-                                        );
-
-                                        // Track remaining cost as hint for each land tap
-                                        // This ensures dual lands produce the right color based on what's still needed
-                                        let mut remaining_hint = *mana_cost;
-
-                                        // Tap lands to add mana to pool
-                                        for &source_id in &self.sources_to_tap_buffer {
-                                            if let Err(e) = self.game.tap_for_mana_for_cost(
+                                            // Multiple valid targets - ask controller to choose
+                                            // Capture log size BEFORE asking controller (before controller logs its choice)
+                                            let prior_log_size = self.game.logger.log_count();
+                                            let choice = self.choose_targets_with_hook(
+                                                controller,
                                                 current_priority,
-                                                source_id,
-                                                &remaining_hint,
-                                            ) {
-                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                                    eprintln!("    Failed to tap land for mana: {e}");
-                                                }
-                                                // Continue to next source - partial payment might still work
-                                            }
+                                                card_id,
+                                                &valid_targets,
+                                            );
+                                            let chosen_targets =
+                                                handle_choice_result_break!(choice, self.game, current_priority);
 
-                                            // Update remaining hint based on what color this source produced
-                                            if let Some(card) = self.game.cards.try_get(source_id) {
-                                                use crate::core::{ManaColor, ManaProductionKind};
-                                                match &card.definition.cache.mana_production.kind {
-                                                    ManaProductionKind::Fixed(color) => match color {
-                                                        ManaColor::White => {
-                                                            remaining_hint.white =
-                                                                remaining_hint.white.saturating_sub(1)
-                                                        }
-                                                        ManaColor::Blue => {
-                                                            remaining_hint.blue = remaining_hint.blue.saturating_sub(1)
-                                                        }
-                                                        ManaColor::Black => {
-                                                            remaining_hint.black =
-                                                                remaining_hint.black.saturating_sub(1)
-                                                        }
-                                                        ManaColor::Red => {
-                                                            remaining_hint.red = remaining_hint.red.saturating_sub(1)
-                                                        }
-                                                        ManaColor::Green => {
-                                                            remaining_hint.green =
-                                                                remaining_hint.green.saturating_sub(1)
-                                                        }
-                                                    },
-                                                    ManaProductionKind::Colorless => {
-                                                        if remaining_hint.colorless > 0 {
-                                                            remaining_hint.colorless =
-                                                                remaining_hint.colorless.saturating_sub(1);
-                                                        } else {
-                                                            remaining_hint.generic =
-                                                                remaining_hint.generic.saturating_sub(1);
-                                                        }
-                                                    }
-                                                    ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
-                                                        // Deduct in same priority order as tap_for_mana_for_cost
-                                                        if remaining_hint.white > 0 {
-                                                            remaining_hint.white =
-                                                                remaining_hint.white.saturating_sub(1);
-                                                        } else if remaining_hint.blue > 0 {
-                                                            remaining_hint.blue = remaining_hint.blue.saturating_sub(1);
-                                                        } else if remaining_hint.black > 0 {
-                                                            remaining_hint.black =
-                                                                remaining_hint.black.saturating_sub(1);
-                                                        } else if remaining_hint.red > 0 {
-                                                            remaining_hint.red = remaining_hint.red.saturating_sub(1);
-                                                        } else if remaining_hint.green > 0 {
-                                                            remaining_hint.green =
-                                                                remaining_hint.green.saturating_sub(1);
-                                                        } else {
-                                                            remaining_hint.generic =
-                                                                remaining_hint.generic.saturating_sub(1);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                            // Log this choice point for snapshot/replay
+                                            let replay_choice =
+                                                crate::game::ReplayChoice::Targets(chosen_targets.clone());
+                                            self.log_choice_point(
+                                                current_priority,
+                                                Some(replay_choice),
+                                                prior_log_size,
+                                            );
 
-                                    // Pay costs
-                                    if let Err(e) = self.game.pay_ability_cost(current_priority, card_id, &ability.cost)
-                                    {
-                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                            eprintln!("    Failed to pay cost: {e}");
-                                        }
-                                        log::warn!(
-                                            "pay_ability_cost failed for {:?} ability {} (player {:?}): {}",
-                                            card_id,
-                                            ability.description,
-                                            current_priority,
-                                            e
-                                        );
-                                        // Clear pending_activation — ability failed, no resumption needed
-                                        self.game.pending_activation = None;
-                                        // Treat failed ability activation like passing priority to prevent infinite loops
-                                        consecutive_passes += 1;
-                                        self.game.turn.consecutive_passes = consecutive_passes;
-                                        current_priority = if current_priority == active_player {
-                                            non_active_player
-                                        } else {
-                                            active_player
+                                            chosen_targets.into_iter().collect()
                                         };
-                                        self.game.turn.priority_player = Some(current_priority);
-                                        continue;
-                                    }
+
+                                        // Log target selection to gamelog (if any targets were chosen)
+                                        if !chosen_targets_vec.is_empty()
+                                            && self.verbosity >= VerbosityLevel::Normal
+                                            && !self.replaying
+                                        {
+                                            // Get target names for display
+                                            let target_names: Vec<String> = chosen_targets_vec
+                                                .iter()
+                                                .filter_map(|&tid| {
+                                                    self.game
+                                                        .cards
+                                                        .try_get(tid)
+                                                        .map(|c| format!("{} ({})", c.name, tid))
+                                                })
+                                                .collect();
+                                            if !target_names.is_empty() {
+                                                let message = format!("  -> targeting {}", target_names.join(", "));
+                                                self.game.logger.gamelog(&message);
+                                            }
+                                        }
+
+                                        // Auto-tap lands for mana costs (if the ability has a mana cost)
+                                        // This is the same logic as spell casting (step 6 of cast_spell_8_step)
+                                        // SKIP when resuming mid-effects: costs were already paid on first entry.
+                                        if effect_start_idx == 0 {
+                                            if let Some(mana_cost) = ability.cost.get_mana_cost() {
+                                                // Reuse self.mana_engine to avoid allocation on each activated ability
+                                                use crate::game::mana_payment::{
+                                                    GreedyManaResolver, ManaPaymentResolver, ManaSource,
+                                                };
+
+                                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                                // Get ManaSource list from engine (already built with proper production info)
+                                                let all_sources = self.mana_engine.all_sources();
+
+                                                // If the ability cost includes tapping this card, we can't use it for mana
+                                                // because it will already be tapped as part of paying the activation cost.
+                                                // Filter out the source card in this case.
+                                                let filtered_sources: smallvec::SmallVec<[ManaSource; 8]>;
+                                                let mana_sources: &[ManaSource] = if ability.cost.includes_tap() {
+                                                    filtered_sources = all_sources
+                                                        .iter()
+                                                        .filter(|s| s.card_id != card_id)
+                                                        .cloned()
+                                                        .collect();
+                                                    &filtered_sources
+                                                } else {
+                                                    all_sources
+                                                };
+
+                                                // Use GreedyManaResolver to compute proper tap order
+                                                // Reuse sources_to_tap_buffer to avoid allocation
+                                                let resolver = GreedyManaResolver::new();
+                                                self.sources_to_tap_buffer.clear();
+                                                resolver.compute_tap_order(
+                                                    mana_cost,
+                                                    mana_sources,
+                                                    &mut self.sources_to_tap_buffer,
+                                                );
+
+                                                // Track remaining cost as hint for each land tap
+                                                // This ensures dual lands produce the right color based on what's still needed
+                                                let mut remaining_hint = *mana_cost;
+
+                                                // Tap lands to add mana to pool
+                                                for &source_id in &self.sources_to_tap_buffer {
+                                                    if let Err(e) = self.game.tap_for_mana_for_cost(
+                                                        current_priority,
+                                                        source_id,
+                                                        &remaining_hint,
+                                                    ) {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                            eprintln!("    Failed to tap land for mana: {e}");
+                                                        }
+                                                        // Continue to next source - partial payment might still work
+                                                    }
+
+                                                    // Update remaining hint based on what color this source produced
+                                                    if let Some(card) = self.game.cards.try_get(source_id) {
+                                                        use crate::core::{ManaColor, ManaProductionKind};
+                                                        match &card.definition.cache.mana_production.kind {
+                                                            ManaProductionKind::Fixed(color) => match color {
+                                                                ManaColor::White => {
+                                                                    remaining_hint.white =
+                                                                        remaining_hint.white.saturating_sub(1)
+                                                                }
+                                                                ManaColor::Blue => {
+                                                                    remaining_hint.blue =
+                                                                        remaining_hint.blue.saturating_sub(1)
+                                                                }
+                                                                ManaColor::Black => {
+                                                                    remaining_hint.black =
+                                                                        remaining_hint.black.saturating_sub(1)
+                                                                }
+                                                                ManaColor::Red => {
+                                                                    remaining_hint.red =
+                                                                        remaining_hint.red.saturating_sub(1)
+                                                                }
+                                                                ManaColor::Green => {
+                                                                    remaining_hint.green =
+                                                                        remaining_hint.green.saturating_sub(1)
+                                                                }
+                                                            },
+                                                            ManaProductionKind::Colorless => {
+                                                                if remaining_hint.colorless > 0 {
+                                                                    remaining_hint.colorless =
+                                                                        remaining_hint.colorless.saturating_sub(1);
+                                                                } else {
+                                                                    remaining_hint.generic =
+                                                                        remaining_hint.generic.saturating_sub(1);
+                                                                }
+                                                            }
+                                                            ManaProductionKind::Choice(_)
+                                                            | ManaProductionKind::AnyColor => {
+                                                                // Deduct in same priority order as tap_for_mana_for_cost
+                                                                if remaining_hint.white > 0 {
+                                                                    remaining_hint.white =
+                                                                        remaining_hint.white.saturating_sub(1);
+                                                                } else if remaining_hint.blue > 0 {
+                                                                    remaining_hint.blue =
+                                                                        remaining_hint.blue.saturating_sub(1);
+                                                                } else if remaining_hint.black > 0 {
+                                                                    remaining_hint.black =
+                                                                        remaining_hint.black.saturating_sub(1);
+                                                                } else if remaining_hint.red > 0 {
+                                                                    remaining_hint.red =
+                                                                        remaining_hint.red.saturating_sub(1);
+                                                                } else if remaining_hint.green > 0 {
+                                                                    remaining_hint.green =
+                                                                        remaining_hint.green.saturating_sub(1);
+                                                                } else {
+                                                                    remaining_hint.generic =
+                                                                        remaining_hint.generic.saturating_sub(1);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Pay costs
+                                            if let Err(e) =
+                                                self.game.pay_ability_cost(current_priority, card_id, &ability.cost)
+                                            {
+                                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                    eprintln!("    Failed to pay cost: {e}");
+                                                }
+                                                log::warn!(
+                                                    "pay_ability_cost failed for {:?} ability {} (player {:?}): {}",
+                                                    card_id,
+                                                    ability.description,
+                                                    current_priority,
+                                                    e
+                                                );
+                                                // Clear pending_activation — ability failed, no resumption needed
+                                                self.game.pending_activation = None;
+                                                self.game.pending_activation_effect_idx = None;
+                                                // Treat failed ability activation like passing priority to prevent infinite loops
+                                                consecutive_passes += 1;
+                                                self.game.turn.consecutive_passes = consecutive_passes;
+                                                current_priority = if current_priority == active_player {
+                                                    non_active_player
+                                                } else {
+                                                    active_player
+                                                };
+                                                self.game.turn.priority_player = Some(current_priority);
+                                                continue;
+                                            }
+                                        } // end if effect_start_idx == 0 (skip costs on effect resumption)
+                                    } // end else (not resuming from effect_resume)
 
                                     // Execute effects immediately (not on the stack)
                                     // TODO(mtg-70): Put non-mana abilities on the stack
-                                    for effect in &ability.effects {
+                                    // Use enumerate to track index for WASM effect resumption.
+                                    // When resuming from a NeedInput mid-effects, skip effects
+                                    // that were already executed on the first entry.
+                                    for (effect_idx, effect) in ability.effects.iter().enumerate() {
+                                        if effect_idx < effect_start_idx {
+                                            continue; // Skip already-executed effects on resumption
+                                        }
                                         // Fix placeholder player IDs and targets for effects
                                         let fixed_effect = match effect {
                                             crate::core::Effect::AddMana {
@@ -1521,8 +1572,17 @@ impl<'a> GameLoop<'a> {
                                                     current_priority,
                                                     &valid_cards,
                                                 );
-                                                let chosen_card_opt =
-                                                    handle_choice_result_break!(choice, self.game, current_priority);
+                                                // Handle NeedInput: save effect index for resumption
+                                                let chosen_card_opt = match choice {
+                                                    crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                                        self.game.pending_activation_effect_idx =
+                                                            Some((effect_idx, chosen_targets_vec));
+                                                        return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                                    }
+                                                    other => {
+                                                        handle_choice_result_break!(other, self.game, current_priority)
+                                                    }
+                                                };
 
                                                 // Log the choice for replay - convert CardId to index
                                                 let chosen_index = chosen_card_opt
@@ -1619,8 +1679,20 @@ impl<'a> GameLoop<'a> {
                                                     &hand,
                                                     actual_count,
                                                 );
-                                                let cards_to_discard =
-                                                    handle_choice_result_break!(choice, self.game, current_priority);
+                                                // Handle NeedInput specially: save effect index for
+                                                // WASM resumption so we don't re-execute prior effects
+                                                // (especially DrawCards) on re-entry.
+                                                let cards_to_discard = match choice {
+                                                    crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                                        // Save effect index and targets for resumption
+                                                        self.game.pending_activation_effect_idx =
+                                                            Some((effect_idx, chosen_targets_vec));
+                                                        return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                                    }
+                                                    other => {
+                                                        handle_choice_result_break!(other, self.game, current_priority)
+                                                    }
+                                                };
 
                                                 for card_id in cards_to_discard {
                                                     if remember {
@@ -1682,11 +1754,21 @@ impl<'a> GameLoop<'a> {
                                                             &hand,
                                                             actual_count,
                                                         );
-                                                        let cards_to_discard = handle_choice_result_break!(
-                                                            choice,
-                                                            self.game,
-                                                            current_priority
-                                                        );
+                                                        // Handle NeedInput: save effect index for resumption
+                                                        let cards_to_discard = match choice {
+                                                            crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                                                self.game.pending_activation_effect_idx =
+                                                                    Some((effect_idx, chosen_targets_vec));
+                                                                return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                                            }
+                                                            other => {
+                                                                handle_choice_result_break!(
+                                                                    other,
+                                                                    self.game,
+                                                                    current_priority
+                                                                )
+                                                            }
+                                                        };
                                                         for card_id in cards_to_discard {
                                                             if let Err(e) = self.game.discard_card(loot_player, card_id)
                                                             {
@@ -1783,6 +1865,7 @@ impl<'a> GameLoop<'a> {
 
                                     // Clear pending_activation — ability executed successfully
                                     self.game.pending_activation = None;
+                                    self.game.pending_activation_effect_idx = None;
                                 } else {
                                     log::warn!(
                                         "ActivateAbility: ability not found for card {:?} '{}' ability_index={} (player {:?})",
