@@ -3164,10 +3164,35 @@ impl HeuristicController {
             .effects
             .iter()
             .any(|e| matches!(e, crate::core::Effect::PumpCreature { .. }));
+        let is_board_wipe = top_spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DestroyAll { .. }
+                    | crate::core::Effect::SacrificeAll { .. }
+                    | crate::core::Effect::DamageAll { .. }
+                    | crate::core::Effect::ChangeZoneAll { .. }
+            )
+        });
+        let is_extra_turn = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::AddTurn { .. }));
+        let is_gain_control = top_spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::GainControl { .. }));
 
         // Always counter dangerous spell types
         // Reference: CounterAi.java:151-182 (configurable countering preferences)
-        if is_creature || is_damage_spell || is_removal_spell || is_counter_spell || is_pump_spell {
+        if is_creature
+            || is_damage_spell
+            || is_removal_spell
+            || is_counter_spell
+            || is_pump_spell
+            || is_board_wipe
+            || is_extra_turn
+            || is_gain_control
+        {
             return true;
         }
 
