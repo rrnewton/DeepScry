@@ -8,6 +8,7 @@
 //! - Broadcasts card reveals and opponent choices
 
 use crate::core::{CardId, PlayerId, SpellAbility};
+use crate::game::state_hash::compute_network_state_hash;
 use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::protocol::{
@@ -1270,6 +1271,15 @@ async fn run_coordinator(
                                                 &server_debug_info,
                                                 &client_debug_info,
                                             );
+                                            // Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal
+                                            let error_msg = format!(
+                                                "FATAL: P1 state hash mismatch! server={:016x} client={:016x} at choice_seq={} action_count={}",
+                                                server_state_hash, client_hash, choice_seq, action_count
+                                            );
+                                            log::error!("Coordinator: {}", error_msg);
+                                            let _ = p1_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                            let _ = p2_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                            return Err(anyhow!("{}", error_msg));
                                         }
                                     }
                                 }
@@ -1425,6 +1435,15 @@ async fn run_coordinator(
                                                 &server_debug_info,
                                                 &client_debug_info,
                                             );
+                                            // Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal
+                                            let error_msg = format!(
+                                                "FATAL: P2 state hash mismatch! server={:016x} client={:016x} at choice_seq={} action_count={}",
+                                                server_state_hash, client_hash, choice_seq, action_count
+                                            );
+                                            log::error!("Coordinator: {}", error_msg);
+                                            let _ = p1_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                            let _ = p2_to_handler_tx.send(GameToHandler::FatalError(error_msg.clone())).await;
+                                            return Err(anyhow!("{}", error_msg));
                                         }
                                     }
                                 }
@@ -1977,14 +1996,13 @@ fn peek_opening_hand(game: &GameState, player_id: PlayerId) -> Result<Vec<CardRe
 }
 
 /// Compute network-safe state hash
+///
+/// Delegates to `state_hash::compute_network_state_hash` which hashes all PUBLIC
+/// game state (battlefield, stack, graveyard, exile, life totals, turn/step,
+/// hand/library SIZES) while excluding hidden information (hand contents,
+/// library order, RNG state). This produces identical hashes on server and client.
 fn compute_network_hash(game: &GameState) -> u64 {
-    // FIXME-UNFINISHED: Use proper network hash from state_hash::compute_hash with HashMode::Network
-    // Currently only hashes turn number and life totals, missing battlefield state etc.
-    let mut hash: u64 = u64::from(game.turn.turn_number);
-    for player in &game.players {
-        hash = hash.wrapping_mul(31).wrapping_add(player.life as u64);
-    }
-    hash
+    compute_network_state_hash(game)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

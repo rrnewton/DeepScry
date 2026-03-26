@@ -55,6 +55,7 @@ function log(msg) {
             'server', '--port', SERVER_PORT.toString(),
             '--password', SERVER_PASSWORD,
             '--seed', GAME_SEED.toString(),
+            '--network-debug',
         ], { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'] });
 
         let serverLogs = [];
