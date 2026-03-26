@@ -154,4 +154,4 @@ Track completion of heuristic AI port from Java Forge to Rust.
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
 3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-25_#1980(6a81181c) - 942 tests passing**
+**Checked up-to-date as of 2026-03-26_#1992(61aed16d) - 942 tests passing**
