@@ -13,10 +13,11 @@ updated_at: 2026-03-10T00:57:44.149159574+00:00
 
 Track architectural improvements, API design, and testing infrastructure.
 
-**Testing status as of 2026-03-25_#1984(71aba549):**
+**Testing status as of 2026-03-26_#1991(92d363e7):**
 - Current: 942 passing tests (nextest, all categories)
 - Includes 55+ determinism tests across all major decks
 - Performance: 7.44M actions/sec (simple_bolt), 2.40M (mem_logging)
+- Random deck compatibility: 100% success rate (100 games, 0 engine errors)
 
 **Controller architecture:**
 - Current: Unified PlayerController trait (documented in ai_docs/CONTROLLER_DESIGN.md)
@@ -68,4 +69,4 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-53: SIMD optimizations where applicable
 
 ---
-Checked up-to-date as of 2026-03-25_#1984(71aba549).
+Checked up-to-date as of 2026-03-26_#1991(92d363e7).
