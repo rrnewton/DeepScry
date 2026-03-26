@@ -148,10 +148,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - AI now casts 18+ effect types automatically when affordable
   - Previously passed on Mind Sculpt (Mill), Overrun (PumpAll), etc.
 
+---- ✅ **Counter board wipes, extra turns, and steal effects (2026-03-26_#1994(9a98d0d7))**
+  - Expanded should_counter_spell() to prioritize high-value targets:
+    DestroyAll (Wrath), SacrificeAll (All is Dust), DamageAll (Pyroclasm),
+    ChangeZoneAll (Aetherize), AddTurn (Time Walk), GainControl (Control Magic)
+  - Previously only countered creatures, damage, removal, counters, pump
+  - Reference: Java CounterAi.java:151-182 (configurable counter preferences)
+
 ## Next Steps (Priority Order)
 
 1. More static abilities handling (if needed beyond current keyword coverage)
 2. Additional effect AI evaluations (Play, ChooseCard, etc.)
 3. Conditional casting improvements (when NOT to cast beneficial spells)
 
-**Checked up-to-date as of 2026-03-26_#1992(61aed16d) - 942 tests passing**
+**Checked up-to-date as of 2026-03-26_#1994(9a98d0d7) - 942 tests passing**
