@@ -6,14 +6,14 @@ This document provides guidance on high-performance Rust patterns for the MTG Fo
 
 ### KEY TRACKING METRIC: robots_mirror/mem_logging_rewind_play_again
 
-This is our primary optimization target metric (as of 2026-03-25_#1982):
+This is our primary optimization target metric (as of 2026-03-26_#1996):
 
-- **Actions/sec**: 2,399,236 (2.40M/sec)
-- **Bytes/game**: ~200,000 bytes
+- **Actions/sec**: 2,091,075 (2.09M/sec)
+- **Bytes/game**: ~232,000 bytes
 
 **Secondary metric: simple_bolt/rewind_play_again:**
 
-- **Actions/sec**: 7,440,429 (7.44M/sec)
+- **Actions/sec**: 7,445,390 (7.45M/sec)
 - **Bytes/game**: 1,752 bytes
 
 **Note:** The mem_logging benchmark uses the rewind+replay pattern with memory logging enabled, which isolates forward gameplay performance from initialization overhead. The simple_bolt benchmark is a simpler scenario (bolt mirror) used for tracking raw throughput. See `experiment_results/*/perf_history.csv` for full historical data.
