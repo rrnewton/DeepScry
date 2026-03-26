@@ -3241,8 +3241,39 @@ impl HeuristicController {
             .collect();
 
         if modify_pt_abilities.is_empty() {
-            // No PT modification, so not a buff enchantment we can evaluate yet
-            // For now, don't cast unknown enchantments
+            // No PT modification - check for keyword-granting or other beneficial statics
+            // Cast keyword-granting enchantments if we have 2+ creatures that benefit
+            let has_keyword_grant = spell.static_abilities.iter().any(|ability| {
+                matches!(
+                    ability,
+                    crate::core::StaticAbility::GrantKeyword { .. } | crate::core::StaticAbility::GrantAbility { .. }
+                )
+            });
+
+            if has_keyword_grant {
+                // Count our creatures on battlefield - cast if we have 2+ to benefit
+                let our_creature_count = view
+                    .battlefield()
+                    .iter()
+                    .filter(|&&card_id| {
+                        view.get_card(card_id)
+                            .is_some_and(|c| c.is_creature() && c.controller == self.player_id)
+                    })
+                    .count();
+                return our_creature_count >= 2;
+            }
+
+            // Check for enchantments with triggered abilities (beneficial ETB/upkeep triggers)
+            if !spell.triggers.is_empty() {
+                // Enchantments with triggers are usually beneficial - cast if we have creatures
+                let has_creatures = view.battlefield().iter().any(|&card_id| {
+                    view.get_card(card_id)
+                        .is_some_and(|c| c.is_creature() && c.controller == self.player_id)
+                });
+                return has_creatures;
+            }
+
+            // Unknown enchantment type - don't cast
             return false;
         }
 
