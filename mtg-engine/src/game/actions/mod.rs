@@ -291,6 +291,21 @@ impl GameState {
     ///
     /// Returns an error if the card is not found or if spell resolution fails.
     pub fn resolve_spell(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
+        self.resolve_spell_execute_effects(card_id, chosen_targets)?;
+        self.resolve_spell_finalize(card_id, chosen_targets)
+    }
+
+    /// Execute the effects of a resolving spell (target resolution + effect execution).
+    ///
+    /// This is the first phase of spell resolution: resolve placeholder targets
+    /// and execute each effect. Separated from `resolve_spell_finalize` so that
+    /// the game loop can intercept specific effects (e.g., discard choices that
+    /// need to go through the controller protocol for network play).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not found or if effect execution fails.
+    pub fn resolve_spell_execute_effects(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
         // Get card owner and effects count (without cloning effects)
         let (card_owner, effects_len) = {
             let card = self.cards.get(card_id)?;
@@ -350,6 +365,21 @@ impl GameState {
             }
         }
 
+        Ok(())
+    }
+
+    /// Finalize a spell after its effects have executed.
+    ///
+    /// This is the second phase of spell resolution: move the card from the stack
+    /// to its destination (graveyard for instants/sorceries, battlefield for
+    /// permanents), handle ETB triggers, and attach Auras.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found or moved.
+    pub fn resolve_spell_finalize(&mut self, card_id: CardId, chosen_targets: &[CardId]) -> Result<()> {
+        let card_owner = self.cards.get(card_id)?.owner;
+
         // Determine destination based on card type
         let destination = {
             let card = self.cards.get(card_id)?;
@@ -404,6 +434,67 @@ impl GameState {
         }
 
         Ok(())
+    }
+
+    /// Resolve a spell's effects, returning them as a Vec instead of executing.
+    ///
+    /// This resolves placeholder targets and expands all-player effects, but does
+    /// NOT execute the effects. The caller can then iterate and selectively intercept
+    /// effects that need controller input (e.g., discard choices for network play).
+    ///
+    /// Returns `None` if all targets are illegal (spell fizzles).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card cannot be found.
+    pub fn resolve_spell_collect_effects(
+        &mut self,
+        card_id: CardId,
+        chosen_targets: &[CardId],
+    ) -> Result<Option<Vec<Effect>>> {
+        let (card_owner, effects_len) = {
+            let card = self.cards.get(card_id)?;
+            (card.owner, card.effects.len())
+        };
+
+        log::debug!(target: "resolve_spell", "resolve_spell_collect_effects card_id={}, chosen_targets={:?}, effects_len={}", card_id.as_u32(), chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(), effects_len);
+
+        let opponent_id = self.players.iter().map(|p| p.id).find(|id| *id != card_owner);
+
+        // MTG Rules 608.2b: If all targets are illegal, the spell doesn't resolve
+        let all_targets_illegal = if !chosen_targets.is_empty() {
+            chosen_targets
+                .iter()
+                .any(|&target_id| !self.battlefield.contains(target_id) && !self.stack.contains(target_id))
+        } else {
+            false
+        };
+
+        if all_targets_illegal {
+            return Ok(None);
+        }
+
+        let mut result = Vec::new();
+        let mut target_index = 0;
+        let mut last_resolved_target: Option<CardId> = None;
+        for effect_index in 0..effects_len {
+            let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
+            if let Some(effect) = effect {
+                let resolved = self.resolve_effect_target(
+                    &effect,
+                    chosen_targets,
+                    &mut target_index,
+                    card_owner,
+                    opponent_id,
+                    &mut last_resolved_target,
+                );
+                let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+                let expanded = expand_all_players_effect(&resolved, &player_ids);
+                result.extend(expanded.into_iter());
+            }
+        }
+
+        Ok(Some(result))
     }
 
     /// Attach Equipment or Aura to a target card

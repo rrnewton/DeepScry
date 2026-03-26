@@ -1572,6 +1572,163 @@ impl<'a> GameLoop<'a> {
                                                     num_counters: *num_counters,
                                                 }
                                             }
+                                            // DiscardCards with choice (count != u8::MAX): Route through
+                                            // controller for network-safe discard decisions (mtg-xomxx).
+                                            //
+                                            // Without this, choose_card_to_discard() runs independently
+                                            // on both server and shadow. The shadow can't see cards drawn
+                                            // in the same ability (e.g., Bazaar of Baghdad: draw 2, discard 3)
+                                            // because CardRevealed messages haven't arrived yet.
+                                            crate::core::Effect::DiscardCards {
+                                                player,
+                                                count,
+                                                remember_discarded,
+                                            } if *count != u8::MAX => {
+                                                let discard_player = if player.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *player
+                                                };
+                                                let discard_count = *count as usize;
+                                                let remember = *remember_discarded;
+
+                                                // Sync reveals so shadow sees newly drawn cards
+                                                self.push_reveals(discard_player);
+                                                if let Some(opp) = self.game.get_other_player_id(discard_player) {
+                                                    self.push_reveals(opp);
+                                                }
+                                                self.sync_to_action();
+
+                                                // Get current hand
+                                                let hand: SmallVec<[CardId; 8]> = self
+                                                    .game
+                                                    .get_player_zones(discard_player)
+                                                    .map(|zones| zones.hand.cards.iter().copied().collect())
+                                                    .unwrap_or_default();
+
+                                                // Clamp count to actual hand size
+                                                let actual_count = discard_count.min(hand.len());
+                                                if actual_count == 0 {
+                                                    continue;
+                                                }
+
+                                                // Route through controller protocol
+                                                let choice = self.choose_discard_with_hook(
+                                                    controller,
+                                                    discard_player,
+                                                    &hand,
+                                                    actual_count,
+                                                );
+                                                let cards_to_discard =
+                                                    handle_choice_result_break!(choice, self.game, current_priority);
+
+                                                for card_id in cards_to_discard {
+                                                    if remember {
+                                                        self.game.remembered_cards.push(card_id);
+                                                    }
+                                                    if let Err(e) = self.game.discard_card(discard_player, card_id) {
+                                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                            eprintln!("    Failed to discard: {e}");
+                                                        }
+                                                    }
+                                                }
+
+                                                // Skip execute_effect — handled above
+                                                continue;
+                                            }
+                                            // DiscardCards with placeholder player (full hand, u8::MAX):
+                                            // Just fix the placeholder, let execute_effect handle it
+                                            // (no choice needed — discards everything deterministically)
+                                            crate::core::Effect::DiscardCards {
+                                                player,
+                                                count,
+                                                remember_discarded,
+                                            } if player.is_placeholder() => crate::core::Effect::DiscardCards {
+                                                player: current_priority,
+                                                count: *count,
+                                                remember_discarded: *remember_discarded,
+                                            },
+                                            // Loot (discard then draw): Route discard through controller
+                                            // for network-safe decisions (mtg-xomxx).
+                                            crate::core::Effect::Loot {
+                                                player,
+                                                discard_count,
+                                                draw_count,
+                                            } => {
+                                                let loot_player = if player.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *player
+                                                };
+                                                let d_count = *discard_count as usize;
+                                                let dr_count = *draw_count;
+
+                                                // Sync reveals before looting
+                                                self.sync_to_action();
+
+                                                // Discard phase: route through controller
+                                                if d_count > 0 {
+                                                    let hand: SmallVec<[CardId; 8]> = self
+                                                        .game
+                                                        .get_player_zones(loot_player)
+                                                        .map(|zones| zones.hand.cards.iter().copied().collect())
+                                                        .unwrap_or_default();
+
+                                                    let actual_count = d_count.min(hand.len());
+                                                    if actual_count > 0 {
+                                                        let choice = self.choose_discard_with_hook(
+                                                            controller,
+                                                            loot_player,
+                                                            &hand,
+                                                            actual_count,
+                                                        );
+                                                        let cards_to_discard = handle_choice_result_break!(
+                                                            choice,
+                                                            self.game,
+                                                            current_priority
+                                                        );
+                                                        for card_id in cards_to_discard {
+                                                            if let Err(e) = self.game.discard_card(loot_player, card_id)
+                                                            {
+                                                                if self.verbosity >= VerbosityLevel::Normal
+                                                                    && !self.replaying
+                                                                {
+                                                                    eprintln!("    Failed to discard: {e}");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // Draw phase: execute directly
+                                                for _ in 0..dr_count {
+                                                    match self.game.draw_card(loot_player) {
+                                                        Ok((_, draw_num)) => {
+                                                            if let Err(e) = self
+                                                                .game
+                                                                .check_card_drawn_triggers(loot_player, draw_num)
+                                                            {
+                                                                if self.verbosity >= VerbosityLevel::Normal
+                                                                    && !self.replaying
+                                                                {
+                                                                    eprintln!("    Failed draw trigger: {e}");
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            if self.verbosity >= VerbosityLevel::Normal
+                                                                && !self.replaying
+                                                            {
+                                                                eprintln!("    Failed to draw: {e}");
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                // Skip execute_effect — handled above
+                                                continue;
+                                            }
                                             _ => effect.clone(),
                                         };
 
@@ -1965,18 +2122,19 @@ impl<'a> GameLoop<'a> {
     /// Resolve a spell from the stack with interactive effect handling
     ///
     /// This wraps `resolve_top_spell_from_stack` and handles interactive effects
-    /// like Balance that require player choices.
+    /// like Balance and DiscardCards that require player choices routed through
+    /// the controller protocol (mtg-xomxx network desync fix).
     fn resolve_top_spell_from_stack_interactive(
         &mut self,
         spell_id: CardId,
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<()> {
-        // Check if this spell has any Balance effects before resolving
+        // Check if this spell has any Balance or choice-based discard effects before resolving
         // Also capture SVars for SubAbility resolution
-        let (balance_effects, svars): (Vec<_>, std::collections::HashMap<String, String>) =
+        let (balance_effects, has_choice_discard, svars): (Vec<_>, bool, std::collections::HashMap<String, String>) =
             if let Some(card) = self.game.cards.try_get(spell_id) {
-                let effects = card
+                let balances = card
                     .effects
                     .iter()
                     .filter_map(|e| {
@@ -1992,13 +2150,25 @@ impl<'a> GameLoop<'a> {
                         }
                     })
                     .collect();
-                (effects, card.svars.clone())
+                let has_discard = card.effects.iter().any(|e| {
+                    matches!(
+                        e,
+                        crate::core::Effect::DiscardCards { count, .. } if *count != u8::MAX
+                    ) || matches!(e, crate::core::Effect::Loot { .. })
+                });
+                (balances, has_discard, card.svars.clone())
             } else {
-                (Vec::new(), std::collections::HashMap::new())
+                (Vec::new(), false, std::collections::HashMap::new())
             };
 
-        // Resolve the spell normally (Balance effects are no-ops in execute_effect)
-        self.resolve_top_spell_from_stack(spell_id)?;
+        if has_choice_discard {
+            // Use effect-by-effect resolution so we can intercept discard choices
+            // and route them through the controller protocol (mtg-xomxx).
+            self.resolve_top_spell_with_discard_hook(spell_id, controller1, controller2)?;
+        } else {
+            // Resolve the spell normally (Balance effects are no-ops in execute_effect)
+            self.resolve_top_spell_from_stack(spell_id)?;
+        }
 
         // Now handle any Balance effects interactively, including SubAbility chains
         for (card_type, zone, sub_ability) in balance_effects {
@@ -2010,6 +2180,282 @@ impl<'a> GameLoop<'a> {
                 controller1,
                 controller2,
             )?;
+        }
+
+        Ok(())
+    }
+
+    /// Resolve a spell effect-by-effect, intercepting discard choices through
+    /// the controller protocol for network-safe operation (mtg-xomxx).
+    ///
+    /// This is used instead of `resolve_top_spell_from_stack` when a spell
+    /// contains choice-based DiscardCards or Loot effects.
+    fn resolve_top_spell_with_discard_hook(
+        &mut self,
+        spell_id: CardId,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+    ) -> Result<()> {
+        // Look up targets
+        let targets: SmallVec<[CardId; 2]> = self
+            .game
+            .spell_targets
+            .iter()
+            .find(|(id, _)| *id == spell_id)
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default();
+
+        let should_log = self.verbosity >= VerbosityLevel::Normal && !self.replaying;
+
+        if self.game.cards.get(spell_id).is_err() {
+            return Err(crate::MtgError::EntityNotFound(spell_id.as_u32()));
+        }
+
+        let spell_owner = self.game.cards.get(spell_id).unwrap().owner;
+
+        // Get card info for logging
+        let (card_name, card_effects, card_owner) = if should_log {
+            let card = self.game.cards.get(spell_id).unwrap();
+            (card.name.to_string(), card.effects.clone(), card.owner)
+        } else {
+            (String::new(), Vec::new(), crate::core::PlayerId::new(0))
+        };
+
+        if should_log {
+            let message = format!("{} ({}) resolves", card_name, spell_id);
+            self.game.logger.gamelog(&message);
+        }
+
+        // Collect resolved effects without executing
+        let effects = self.game.resolve_spell_collect_effects(spell_id, &targets)?;
+
+        if let Some(effects) = effects {
+            for effect in &effects {
+                match effect {
+                    // Choice-based discard: route through controller
+                    crate::core::Effect::DiscardCards {
+                        player,
+                        count,
+                        remember_discarded,
+                    } if *count != u8::MAX => {
+                        let discard_count = *count as usize;
+                        let remember = *remember_discarded;
+
+                        // Push reveals so shadow sees any cards drawn earlier
+                        self.push_reveals(*player);
+                        if let Some(opp) = self.game.get_other_player_id(*player) {
+                            self.push_reveals(opp);
+                        }
+                        self.sync_to_action();
+
+                        let hand: SmallVec<[CardId; 8]> = self
+                            .game
+                            .get_player_zones(*player)
+                            .map(|zones| zones.hand.cards.iter().copied().collect())
+                            .unwrap_or_default();
+
+                        let actual_count = discard_count.min(hand.len());
+                        if actual_count > 0 {
+                            let controller: &mut dyn PlayerController = if *player == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
+                            let cards_to_discard = match choice {
+                                crate::game::controller::ChoiceResult::Ok(v) => v,
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during spell discard".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during spell discard: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => {
+                                    // Undo during spell resolution: skip this discard
+                                    SmallVec::new()
+                                }
+                            };
+                            for card_id in cards_to_discard {
+                                if remember {
+                                    self.game.remembered_cards.push(card_id);
+                                }
+                                if let Err(e) = self.game.discard_card(*player, card_id) {
+                                    if should_log {
+                                        eprintln!("    Failed to discard: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Loot: discard through controller, then draw
+                    crate::core::Effect::Loot {
+                        player,
+                        discard_count,
+                        draw_count,
+                    } => {
+                        let d_count = *discard_count as usize;
+
+                        // Sync reveals before looting
+                        self.sync_to_action();
+
+                        if d_count > 0 {
+                            let hand: SmallVec<[CardId; 8]> = self
+                                .game
+                                .get_player_zones(*player)
+                                .map(|zones| zones.hand.cards.iter().copied().collect())
+                                .unwrap_or_default();
+
+                            let actual_count = d_count.min(hand.len());
+                            if actual_count > 0 {
+                                let controller: &mut dyn PlayerController = if *player == controller1.player_id() {
+                                    controller1
+                                } else {
+                                    controller2
+                                };
+                                let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
+                                let cards_to_discard = choice.into_result().map_err(|e| {
+                                    crate::MtgError::InvalidAction(format!(
+                                        "Loot discard choice failed during spell resolution: {e}"
+                                    ))
+                                })?;
+                                for card_id in cards_to_discard {
+                                    if let Err(e) = self.game.discard_card(*player, card_id) {
+                                        if should_log {
+                                            eprintln!("    Failed to discard: {e}");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        for _ in 0..*draw_count {
+                            match self.game.draw_card(*player) {
+                                Ok((_, draw_num)) => {
+                                    let _ = self.game.check_card_drawn_triggers(*player, draw_num);
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    // All other effects: execute normally
+                    _ => {
+                        if let Err(e) = self.game.execute_effect(effect) {
+                            if should_log {
+                                eprintln!("    Failed to execute effect: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Finalize the spell (move from stack to destination, ETB, etc.)
+        self.game.resolve_spell_finalize(spell_id, &targets)?;
+
+        // Push reveals after spell resolution
+        self.push_reveals(spell_owner);
+        if let Some(opponent) = self.game.get_other_player_id(spell_owner) {
+            self.push_reveals(opponent);
+        }
+
+        // Log effects for display
+        if should_log {
+            use crate::core::{Effect, TargetRef};
+            let mut target_index = 0;
+            for effect in &card_effects {
+                let effect_to_log = match effect {
+                    Effect::DealDamage {
+                        target: TargetRef::None,
+                        amount,
+                    } if target_index < targets.len() => {
+                        let replaced = Effect::DealDamage {
+                            target: TargetRef::Permanent(targets[target_index]),
+                            amount: *amount,
+                        };
+                        target_index += 1;
+                        replaced
+                    }
+                    Effect::CounterSpell { target } if target.is_placeholder() && target_index < targets.len() => {
+                        let replaced = Effect::CounterSpell {
+                            target: targets[target_index],
+                        };
+                        target_index += 1;
+                        replaced
+                    }
+                    Effect::DestroyPermanent { target, restriction }
+                        if target.is_placeholder() && target_index < targets.len() =>
+                    {
+                        let replaced = Effect::DestroyPermanent {
+                            target: targets[target_index],
+                            restriction: restriction.clone(),
+                        };
+                        target_index += 1;
+                        replaced
+                    }
+                    Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
+                        player: card_owner,
+                        count: *count,
+                    },
+                    Effect::DiscardCards {
+                        player,
+                        count,
+                        remember_discarded,
+                    } if player.is_placeholder() => Effect::DiscardCards {
+                        player: card_owner,
+                        count: *count,
+                        remember_discarded: *remember_discarded,
+                    },
+                    _ => effect.clone(),
+                };
+                self.log_effect_execution(&card_name, spell_id, &effect_to_log, card_owner);
+            }
+
+            if let Some(card) = self.game.cards.try_get(spell_id) {
+                if card.is_creature() {
+                    let power = self
+                        .game
+                        .get_effective_power(spell_id)
+                        .unwrap_or_else(|_| i32::from(card.current_power()));
+                    let toughness = self
+                        .game
+                        .get_effective_toughness(spell_id)
+                        .unwrap_or_else(|_| i32::from(card.current_toughness()));
+                    let message = format!(
+                        "{} ({}) enters the battlefield as a {}/{} creature",
+                        card_name, spell_id, power, toughness
+                    );
+                    self.game.logger.gamelog(&message);
+                }
+            }
+        }
+
+        // Check state-based actions
+        if let Err(e) = self.game.check_lethal_damage() {
+            if should_log {
+                eprintln!("    Failed to check lethal damage: {e}");
+            }
+        }
+        if let Err(e) = self.game.check_legendary_rule() {
+            if should_log {
+                eprintln!("    Failed to check legendary rule: {e}");
+            }
+        }
+        if let Err(e) = self.game.check_aura_attachment() {
+            if should_log {
+                eprintln!("    Failed to check aura attachment: {e}");
+            }
+        }
+        if let Err(e) = self.game.check_equipment_attachment() {
+            if should_log {
+                eprintln!("    Failed to check equipment attachment: {e}");
+            }
         }
 
         Ok(())

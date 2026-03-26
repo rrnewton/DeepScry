@@ -2520,13 +2520,19 @@ impl CardDefinition {
             let is_mana_ability = matches!(params.api_type, ApiType::Mana);
 
             // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
-            let effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
+            let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
                 vec![effect]
             } else {
                 // Fallback to old parsing for unsupported API types
                 // TODO: Remove this once all API types are migrated
                 vec![]
             };
+
+            // Follow SubAbility$ chain to parse additional effects
+            // (e.g., Bazaar of Baghdad: AB$ Draw | SubAbility$ DBDiscard)
+            if !effects.is_empty() {
+                self.follow_sub_ability_chain(&params, &mut effects);
+            }
 
             // Extract description
             let description = params
