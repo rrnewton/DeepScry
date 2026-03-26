@@ -1105,10 +1105,16 @@ impl GameState {
             color_counts.remove(color);
         }
 
-        // Return the most prominent color, or a default if none found
+        // Return the most prominent color, or a default if none found.
+        // Sort entries deterministically to break ties by Color discriminant (WUBRG order).
+        // HashMap iteration is non-deterministic and would cause network desync on tied counts.
         color_counts
             .into_iter()
-            .max_by_key(|(_color, count)| *count)
+            .max_by(|(color_a, count_a), (color_b, count_b)| {
+                count_a
+                    .cmp(count_b)
+                    .then_with(|| (*color_b as u8).cmp(&(*color_a as u8)))
+            })
             .map(|(color, _)| color)
             .unwrap_or_else(|| {
                 // Default: pick first non-excluded color
@@ -1672,7 +1678,12 @@ impl GameState {
         // Store: (card_id_to_sacrifice, owner, name, kept_card_id)
         let mut cards_to_sacrifice: Vec<(CardId, PlayerId, CardName, CardId)> = Vec::new();
 
-        for ((_controller, name), cards) in legendary_groups {
+        // Sort groups by (PlayerId, CardName) for deterministic iteration order.
+        // HashMap iteration is non-deterministic and would cause network desync.
+        let mut sorted_groups: Vec<_> = legendary_groups.into_iter().collect();
+        sorted_groups.sort_by(|a, b| a.0 .0.cmp(&b.0 .0).then_with(|| a.0 .1.as_str().cmp(b.0 .1.as_str())));
+
+        for ((_controller, name), cards) in sorted_groups {
             if cards.len() > 1 {
                 // Keep the first one (index 0), sacrifice the rest
                 // TODO: Let player choose which one to keep

@@ -668,7 +668,10 @@ impl GameState {
         // Apply lifelink BEFORE dealing damage (since creatures might die)
         // MTG Rules 702.15: Damage dealt by a source with lifelink also causes
         // its controller to gain that much life
-        for (creature_id, total_damage) in &damage_dealt_by_creature {
+        // Sort by CardId for deterministic ordering -- HashMap iteration is non-deterministic.
+        let mut damage_dealt_sorted: Vec<_> = damage_dealt_by_creature.into_iter().collect();
+        damage_dealt_sorted.sort_by_key(|(cid, _)| *cid);
+        for (creature_id, total_damage) in &damage_dealt_sorted {
             // Uses has_keyword_with_effects to account for granted lifelink
             if self.has_keyword_with_effects(*creature_id, Keyword::Lifelink) {
                 if let Ok(creature) = self.cards.get(*creature_id) {
@@ -681,7 +684,10 @@ impl GameState {
         }
 
         // Deal all damage to players first (they don't die from damage in combat)
-        for (player_id, damage) in damage_to_players {
+        // Sort by PlayerId for deterministic ordering -- HashMap iteration is non-deterministic.
+        let mut damage_to_players_sorted: Vec<_> = damage_to_players.into_iter().collect();
+        damage_to_players_sorted.sort_by_key(|(pid, _)| *pid);
+        for (player_id, damage) in damage_to_players_sorted {
             self.deal_damage(player_id, damage)?;
         }
 
@@ -704,7 +710,10 @@ impl GameState {
         let mut creatures_to_destroy = std::collections::HashSet::new();
 
         // Check creatures for lethal damage
-        for (creature_id, damage) in damage_to_creatures {
+        // Sort by CardId for deterministic ordering -- HashMap iteration is non-deterministic.
+        let mut damage_to_creatures_sorted: Vec<_> = damage_to_creatures.into_iter().collect();
+        damage_to_creatures_sorted.sort_by_key(|(cid, _)| *cid);
+        for (creature_id, damage) in damage_to_creatures_sorted {
             if self.battlefield.contains(creature_id) {
                 if let Ok(creature) = self.cards.get(creature_id) {
                     // Uses has_keyword_with_effects to account for granted indestructible
