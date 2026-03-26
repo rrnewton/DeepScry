@@ -155,10 +155,17 @@ Track completion of heuristic AI port from Java Forge to Rust.
   - Previously only countered creatures, damage, removal, counters, pump
   - Reference: Java CounterAi.java:151-182 (configurable counter preferences)
 
+---- ✅ **Keyword-granting and trigger enchantment casting (2026-03-26_#1999(b4176f5f))**
+  - Expanded should_cast_global_enchantment() beyond ModifyPT anthems
+  - Keyword-granting enchantments: cast when 2+ creatures benefit (Levitation, Fervor)
+  - Trigger enchantments: cast when creatures on battlefield (Bident of Thassa)
+  - Previously only ModifyPT enchantments were evaluated for casting
+  - Reference: Java PumpAllAi.java, StaticAbilityAi.java
+
 ## Next Steps (Priority Order)
 
-1. More static abilities handling (if needed beyond current keyword coverage)
-2. Additional effect AI evaluations (Play, ChooseCard, etc.)
-3. Conditional casting improvements (when NOT to cast beneficial spells)
+1. Additional effect AI evaluations (Play, ChooseCard, etc.)
+2. Conditional casting improvements (when NOT to cast beneficial spells)
+3. SVar sub-ability chaining for FlipACoin, RollDice, Attach, Play effects
 
-**Checked up-to-date as of 2026-03-26_#1994(9a98d0d7) - 942 tests passing**
+**Checked up-to-date as of 2026-03-26_#1999(b4176f5f) - 942 tests passing**
