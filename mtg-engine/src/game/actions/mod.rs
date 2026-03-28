@@ -4234,9 +4234,10 @@ impl GameState {
     ///
     /// Returns an error if the player's zones cannot be found.
     pub fn choose_card_to_discard(&self, player_id: PlayerId) -> Result<Option<CardId>> {
-        let zones = self
-            .get_player_zones(player_id)
-            .ok_or_else(|| MtgError::InvalidAction("Player zones not found".to_string()))?;
+        // Gracefully handle missing zones (can happen if player has lost the game)
+        let Some(zones) = self.get_player_zones(player_id) else {
+            return Ok(None);
+        };
 
         if zones.hand.is_empty() {
             return Ok(None);

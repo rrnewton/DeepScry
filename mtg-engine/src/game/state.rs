@@ -1258,10 +1258,12 @@ impl GameState {
     /// Returns Ok(()) even if library has fewer than N cards.
     pub fn scry_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
         // Get the top N cards from library (without removing them yet)
+        // Gracefully handle missing zones (can happen if player has lost the game
+        // but triggered effects are still resolving)
         let top_cards: SmallVec<[CardId; 4]> = {
-            let zones = self
-                .get_player_zones(player_id)
-                .ok_or_else(|| crate::MtgError::InvalidAction("Player zones not found".to_string()))?;
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(());
+            };
 
             zones
                 .library
@@ -1374,10 +1376,12 @@ impl GameState {
     /// Returns an error if player zones cannot be found.
     pub fn surveil_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
         // Get the top N cards from library
+        // Gracefully handle missing zones (can happen if player has lost the game
+        // but triggered effects are still resolving)
         let top_cards: SmallVec<[CardId; 4]> = {
-            let zones = self
-                .get_player_zones(player_id)
-                .ok_or_else(|| crate::MtgError::InvalidAction("Player zones not found".to_string()))?;
+            let Some(zones) = self.get_player_zones(player_id) else {
+                return Ok(());
+            };
 
             zones.library.cards.iter().rev().take(count as usize).copied().collect()
         };
