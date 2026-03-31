@@ -504,7 +504,7 @@ impl GameState {
         // Maps creature_id -> (target_player_id, damage_amount)
         let mut creatures_that_dealt_player_damage: Vec<(CardId, PlayerId, i32)> = Vec::new();
         // Track creatures dealt deathtouch damage (for state-based destruction)
-        let mut deathtouch_damaged_creatures: std::collections::HashSet<CardId> = std::collections::HashSet::new();
+        let mut deathtouch_damaged_creatures: std::collections::BTreeSet<CardId> = std::collections::BTreeSet::new();
 
         // Use iterator again for second pass (zero allocation)
         for attacker_id in self.combat.attackers_iter() {
@@ -705,7 +705,7 @@ impl GameState {
         // 1. They have lethal damage (damage >= toughness), OR
         // 2. They were dealt any damage by a source with deathtouch
         // MTG Rules 702.12b: Permanents with indestructible can't be destroyed
-        let mut creatures_to_destroy = std::collections::HashSet::new();
+        let mut creatures_to_destroy = std::collections::BTreeSet::new();
 
         // Check creatures for lethal damage
         // BTreeMap iterates in CardId order -- deterministic for network play.
@@ -743,11 +743,8 @@ impl GameState {
         // Process dying creatures: check death triggers, then move to graveyard
         // (MTG Rules 704.5f: State-based actions move creatures with lethal damage to graveyard)
         // (MTG Rules 603.6c: Death triggers check the game state as it was just before the creature left)
-        // Sort by CardId for deterministic ordering when multiple creatures die simultaneously
-        let mut creatures_to_destroy_sorted: Vec<_> = creatures_to_destroy.into_iter().collect();
-        creatures_to_destroy_sorted.sort_by_key(|id| id.as_u32());
-
-        for creature_id in creatures_to_destroy_sorted {
+        // BTreeSet iterates in CardId order -- deterministic for network play.
+        for creature_id in creatures_to_destroy {
             // CR 701.15a: Check regeneration shields before destruction
             let has_regen_shield = self
                 .cards
