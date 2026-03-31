@@ -2285,10 +2285,9 @@ impl GameState {
                 toughness_bonus,
                 keywords_granted,
             } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
-                    // Spell fizzles - no valid targets
-                    log::warn!(target: "pump", "PumpCreature fizzled: target is still placeholder 0");
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
+                    log::warn!(target: "pump", "PumpCreature fizzled: unresolved target {}", target.as_u32());
                     return Ok(());
                 }
                 log::debug!(target: "pump", "PumpCreature executing: target={}, power_bonus={}, toughness_bonus={}, keywords={:?}", target.as_u32(), power_bonus, toughness_bonus, keywords_granted);
@@ -2522,9 +2521,8 @@ impl GameState {
                 counter_type,
                 amount,
             } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
-                    // Spell fizzles - no valid targets
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
                     return Ok(());
                 }
                 // Add counters using the GameState method (which logs for undo)
@@ -2672,9 +2670,8 @@ impl GameState {
                 }
             }
             Effect::ExilePermanent { target } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
-                    // Spell fizzles - no valid targets
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
                     return Ok(());
                 }
                 // Exile the permanent by moving it from battlefield to exile

@@ -917,9 +917,16 @@ impl GameState {
                     from
                 );
             } else {
-                return Err(crate::MtgError::InvalidAction(format!(
-                    "Card {card_id} not found in source zone"
-                )));
+                // Card not in source zone - this can happen when:
+                // 1. A trigger moved the card before SBA could process it
+                // 2. Multiple effects target the same card (first move succeeds, second fizzles)
+                // Log warning and return Ok to avoid crashing the game
+                log::warn!(
+                    target: "zone",
+                    "Card {} not found in source zone {:?} - likely already moved by another effect",
+                    card_id, from
+                );
+                return Ok(());
             }
         }
 
