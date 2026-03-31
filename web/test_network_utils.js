@@ -3,11 +3,61 @@
 // Extracted from test_network_human_input.js for reuse across tests.
 
 const WebSocket = require('ws');
+const net = require('net');
 
 // Timestamped logging
 function log(message) {
     const timestamp = new Date().toISOString().substring(11, 23);
     console.log(`[${timestamp}] ${message}`);
+}
+
+// Check if a TCP port is available by attempting to bind to it, then releasing.
+// Returns a promise that resolves to true if available, false if in use.
+function isPortAvailable(port) {
+    return new Promise((resolve) => {
+        const srv = net.createServer();
+        srv.once('error', () => resolve(false));
+        srv.once('listening', () => {
+            srv.close(() => resolve(true));
+        });
+        try {
+            srv.listen(port, '127.0.0.1');
+        } catch (_) {
+            resolve(false);
+        }
+    });
+}
+
+// Allocate a pair of random available ports (one for the game server WebSocket,
+// one for the HTTP static file server). Picks from range 10000-60000 to avoid
+// collisions with well-known ports and other test processes.
+// Returns { serverPort, httpPort }.
+async function getRandomPorts() {
+    const MIN_PORT = 10000;
+    const MAX_PORT = 60000;
+    const range = MAX_PORT - MIN_PORT;
+    const MAX_ATTEMPTS = 20;
+
+    async function findAvailablePort() {
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            const port = MIN_PORT + Math.floor(Math.random() * range);
+            if (await isPortAvailable(port)) {
+                return port;
+            }
+        }
+        throw new Error(`Failed to find an available port after ${MAX_ATTEMPTS} attempts`);
+    }
+
+    const serverPort = await findAvailablePort();
+    // Ensure httpPort is different from serverPort
+    let httpPort;
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        httpPort = MIN_PORT + Math.floor(Math.random() * range);
+        if (httpPort !== serverPort && await isPortAvailable(httpPort)) {
+            return { serverPort, httpPort };
+        }
+    }
+    throw new Error('Failed to find two distinct available ports');
 }
 
 // Wait for server to be ready by attempting WebSocket connection
@@ -214,6 +264,8 @@ async function waitForChoicePrompt(page, timeout = 20000, previousText = null) {
 
 module.exports = {
     log,
+    isPortAvailable,
+    getRandomPorts,
     waitForServer,
     extractTerminalText,
     checkForFatalErrors,

@@ -16,11 +16,10 @@ const { chromium } = require('playwright');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { getRandomPorts } = require('./test_network_utils');
 
-// Configuration
-const SERVER_PORT = 17771;
+// Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test123';
-const HTTP_PORT = 8767;
 const GAME_SEED = 42;
 const DECK_NAME = 'grizzly_bears.dck';
 
@@ -70,6 +69,10 @@ async function runTest() {
     if (!fs.existsSync(screenshotDir)) {
         fs.mkdirSync(screenshotDir);
     }
+
+    // Allocate random ports to avoid conflicts with other tests
+    const { serverPort: SERVER_PORT, httpPort: HTTP_PORT } = await getRandomPorts();
+    log(`Using ports: server=${SERVER_PORT}, http=${HTTP_PORT}`);
 
     try {
         // Check if wasm-network build exists

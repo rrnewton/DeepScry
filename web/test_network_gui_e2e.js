@@ -17,6 +17,7 @@ const path = require('path');
 const fs = require('fs');
 const {
     log,
+    getRandomPorts,
     waitForServer,
     extractTerminalText,
     checkForFatalErrors,
@@ -26,10 +27,8 @@ const {
     waitForChoicePrompt,
 } = require('./test_network_utils');
 
-// Configuration - unique ports to avoid conflicts with other tests
-const SERVER_PORT = 17775;
+// Configuration - ports allocated dynamically to avoid conflicts
 const SERVER_PASSWORD = 'test_gui';
-const HTTP_PORT = 8771;
 const GAME_SEED = 42;
 const DECK_NAME = 'grizzly_bears.dck';
 
@@ -57,8 +56,12 @@ async function runTest() {
 
     const prefix = HUMAN_MODE ? 'gui_human' : 'gui_random';
 
+    // Allocate random ports to avoid conflicts with other tests
+    const { serverPort: SERVER_PORT, httpPort: HTTP_PORT } = await getRandomPorts();
+
     try {
         log(`=== Network GUI E2E Test (${HUMAN_MODE ? 'human' : 'random'} mode) ===`);
+        log(`Using ports: server=${SERVER_PORT}, http=${HTTP_PORT}`);
 
         // Check prerequisites
         const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_forge_rs.js');

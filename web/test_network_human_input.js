@@ -17,11 +17,10 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { getRandomPorts } = require('./test_network_utils');
 
-// Configuration
-const SERVER_PORT = 17773;
+// Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test_human';
-const HTTP_PORT = 8769;
 const GAME_SEED = 42;
 const DECK_NAME = 'grizzly_bears.dck';
 
@@ -297,7 +296,11 @@ async function runTest() {
         fs.mkdirSync(screenshotDir);
     }
 
+    // Allocate random ports to avoid conflicts with other tests
+    const { serverPort: SERVER_PORT, httpPort: HTTP_PORT } = await getRandomPorts();
+
     try {
+        log(`Using ports: server=${SERVER_PORT}, http=${HTTP_PORT}`);
         // Check prerequisites
         const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_forge_rs.js');
         if (!fs.existsSync(wasmPkgPath)) {

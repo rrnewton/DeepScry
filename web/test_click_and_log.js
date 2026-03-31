@@ -14,8 +14,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-
-const HTTP_PORT = 8791;
+const { getRandomPorts } = require('./test_network_utils');
 
 function log(msg) {
     const ts = new Date().toISOString().substring(11, 23);
@@ -28,8 +27,12 @@ function log(msg) {
     const screenshotDir = path.join(projectRoot, 'debug');
     let errors = [];
 
+    // Allocate a random HTTP port to avoid conflicts
+    const { httpPort: HTTP_PORT } = await getRandomPorts();
+
     try {
         fs.mkdirSync(screenshotDir, { recursive: true });
+        log(`Using HTTP port: ${HTTP_PORT}`);
 
         // Start HTTP server
         httpServer = spawn('python3', ['-m', 'http.server', HTTP_PORT.toString()], {

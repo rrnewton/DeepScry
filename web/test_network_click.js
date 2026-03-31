@@ -15,10 +15,10 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { getRandomPorts } = require('./test_network_utils');
 
-const SERVER_PORT = 17799;
+// Configuration - ports allocated dynamically below
 const SERVER_PASSWORD = 'clicktest';
-const HTTP_PORT = 8799;
 const GAME_SEED = 42;
 const DECK_NAME = '01_rogue_rogerbrand';
 
@@ -33,8 +33,12 @@ function log(msg) {
     const screenshotDir = path.join(projectRoot, 'debug');
     let errors = [];
 
+    // Allocate random ports to avoid conflicts with other tests
+    const { serverPort: SERVER_PORT, httpPort: HTTP_PORT } = await getRandomPorts();
+
     try {
         fs.mkdirSync(screenshotDir, { recursive: true });
+        log(`Using ports: server=${SERVER_PORT}, http=${HTTP_PORT}`);
 
         // Check binary exists
         const mtgBinary = path.join(projectRoot, 'target', 'release', 'mtg');
