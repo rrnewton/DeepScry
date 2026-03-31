@@ -302,6 +302,12 @@ where
     /// Returns `MtgError::EntityNotFound` if the entity ID does not exist.
     #[inline]
     pub fn get(&self, id: EntityId<T>) -> Result<&T> {
+        // Guard against sentinel values (REUSE_PREVIOUS_TARGET=u32::MAX, ALL_PLAYERS=u32::MAX-1)
+        // These are control-flow markers, not real entity IDs.
+        // Note: is_placeholder() (id==0) is NOT guarded here because 0 IS a valid entity index.
+        if id.is_reuse_previous() || id.as_u32() == ALL_PLAYERS_ID {
+            return Err(MtgError::EntityNotFound(id.as_u32()));
+        }
         self.entities
             .get(id.as_u32() as usize)
             .and_then(|opt| opt.as_ref())
