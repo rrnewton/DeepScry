@@ -149,15 +149,23 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
-      - name: Run Network GUI E2E test
+      - name: Run Network GUI E2E test (baseline)
         run: cd web && node test_network_gui_e2e.js
+
+      - name: Run Network multi-deck E2E test
+        run: cd web && node test_network_multideck.js --quick
+
+      - name: Run Network click and log test
+        run: cd web && node test_network_click.js
 
       - name: Upload screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: network-e2e-screenshots
-          path: web/screenshots/
+          path: |
+            web/screenshots/
+            debug/
 
   fmt:
     name: Format

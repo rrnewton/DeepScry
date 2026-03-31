@@ -221,16 +221,19 @@ validate-wasm-e2e-step: validate-wasm-step
 	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
 	@echo "✓ wasm-e2e tests completed"
 
-# Network E2E test: builds native server + WASM client, runs a full networked game
-# Depends on build-network and wasm-network targets, runs test_network_gui_e2e.js
+# Network E2E test: builds native server + WASM client, runs networked games
+# Depends on build-network and wasm-network targets
+# Runs: baseline single-deck test, multi-deck test (quick), and click+log test
 validate-network-e2e-step:
 	@echo "=== Building network components ==="
 	@$(MAKE) build-network
 	@$(MAKE) wasm-network
-	@echo "=== Running Network GUI E2E test ==="
+	@echo "=== Running Network E2E tests ==="
 	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js
-	@echo "✓ network-e2e test completed"
+	@cd web && node test_network_multideck.js --quick
+	@cd web && node test_network_click.js
+	@echo "✓ network-e2e tests completed"
 
 # Generate documentation and open in browser
 doc:

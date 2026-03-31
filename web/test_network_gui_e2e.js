@@ -29,16 +29,33 @@ const {
 
 // Configuration - ports allocated dynamically to avoid conflicts
 const SERVER_PASSWORD = 'test_gui';
-const GAME_SEED = 42;
-const DECK_NAME = 'grizzly_bears.dck';
+
+// Parse CLI arguments: --deck <name> --seed <n> --human
+function parseArgs() {
+    const args = process.argv.slice(2);
+    let deckName = 'grizzly_bears.dck';
+    let seed = 42;
+    let humanMode = false;
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--deck' && args[i + 1]) {
+            deckName = args[++i];
+            if (!deckName.endsWith('.dck')) deckName += '.dck';
+        } else if (args[i] === '--seed' && args[i + 1]) {
+            seed = parseInt(args[++i]);
+        } else if (args[i] === '--human') {
+            humanMode = true;
+        }
+    }
+    return { deckName, seed, humanMode };
+}
+
+const { deckName: DECK_NAME, seed: GAME_SEED, humanMode: HUMAN_MODE } = parseArgs();
 
 // Test limits
 const MAX_CHOICES = 200;            // Maximum human choices before declaring success
 const GAME_TIMEOUT_MS = 180000;     // 3 minute overall game timeout
 const CHOICE_TIMEOUT_MS = 20000;    // 20 second timeout per choice prompt
 const POST_CHOICE_WAIT_MS = 500;    // Wait after pressing key before checking
-
-const HUMAN_MODE = process.argv.includes('--human');
 
 async function runTest() {
     let server = null;
@@ -119,7 +136,10 @@ async function runTest() {
 
         // Start native AI client as P1
         log('Starting native AI client as P1...');
-        const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
+        // Resolve deck path: accepts "grizzly_bears.dck" or "decks/old_school/foo.dck"
+        const deckPath = DECK_NAME.includes('/')
+            ? path.join(projectRoot, DECK_NAME)
+            : path.join(projectRoot, 'decks', DECK_NAME);
         nativeClient = spawn(mtgBinary, [
             'connect',
             '--server', `localhost:${SERVER_PORT}`,
