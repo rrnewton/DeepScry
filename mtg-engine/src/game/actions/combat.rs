@@ -19,7 +19,7 @@ use crate::game::state::GameState;
 use crate::zones::Zone;
 use crate::{MtgError, Result};
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 impl GameState {
     /// Declare a creature as an attacker
@@ -463,7 +463,7 @@ impl GameState {
         first_strike_step: bool,
     ) -> Result<()> {
         // First pass: collect SMART damage assignments for attackers with multiple blockers
-        let mut damage_assignments: HashMap<CardId, SmallVec<[(CardId, i32); 4]>> = HashMap::new();
+        let mut damage_assignments: BTreeMap<CardId, SmallVec<[(CardId, i32); 4]>> = BTreeMap::new();
 
         // Collect attackers to avoid borrow conflict
         let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
@@ -494,10 +494,12 @@ impl GameState {
         }
 
         // Second pass: assign all damage
-        let mut damage_to_creatures: HashMap<CardId, i32> = HashMap::new();
-        let mut damage_to_players: HashMap<PlayerId, i32> = HashMap::new();
+        // BTreeMap provides deterministic iteration order by key,
+        // which is required for network determinism.
+        let mut damage_to_creatures: BTreeMap<CardId, i32> = BTreeMap::new();
+        let mut damage_to_players: BTreeMap<PlayerId, i32> = BTreeMap::new();
         // Track damage dealt by each creature for lifelink (creature_id -> total damage dealt)
-        let mut damage_dealt_by_creature: HashMap<CardId, i32> = HashMap::new();
+        let mut damage_dealt_by_creature: BTreeMap<CardId, i32> = BTreeMap::new();
         // Track creatures that dealt combat damage to players (for DealsCombatDamage triggers)
         // Maps creature_id -> (target_player_id, damage_amount)
         let mut creatures_that_dealt_player_damage: Vec<(CardId, PlayerId, i32)> = Vec::new();
@@ -668,10 +670,8 @@ impl GameState {
         // Apply lifelink BEFORE dealing damage (since creatures might die)
         // MTG Rules 702.15: Damage dealt by a source with lifelink also causes
         // its controller to gain that much life
-        // Sort by CardId for deterministic ordering -- HashMap iteration is non-deterministic.
-        let mut damage_dealt_sorted: Vec<_> = damage_dealt_by_creature.into_iter().collect();
-        damage_dealt_sorted.sort_by_key(|(cid, _)| *cid);
-        for (creature_id, total_damage) in &damage_dealt_sorted {
+        // BTreeMap iterates in CardId order -- deterministic for network play.
+        for (creature_id, total_damage) in &damage_dealt_by_creature {
             // Uses has_keyword_with_effects to account for granted lifelink
             if self.has_keyword_with_effects(*creature_id, Keyword::Lifelink) {
                 if let Ok(creature) = self.cards.get(*creature_id) {
@@ -684,10 +684,8 @@ impl GameState {
         }
 
         // Deal all damage to players first (they don't die from damage in combat)
-        // Sort by PlayerId for deterministic ordering -- HashMap iteration is non-deterministic.
-        let mut damage_to_players_sorted: Vec<_> = damage_to_players.into_iter().collect();
-        damage_to_players_sorted.sort_by_key(|(pid, _)| *pid);
-        for (player_id, damage) in damage_to_players_sorted {
+        // BTreeMap iterates in PlayerId order -- deterministic for network play.
+        for (player_id, damage) in damage_to_players {
             self.deal_damage(player_id, damage)?;
         }
 
@@ -710,10 +708,8 @@ impl GameState {
         let mut creatures_to_destroy = std::collections::HashSet::new();
 
         // Check creatures for lethal damage
-        // Sort by CardId for deterministic ordering -- HashMap iteration is non-deterministic.
-        let mut damage_to_creatures_sorted: Vec<_> = damage_to_creatures.into_iter().collect();
-        damage_to_creatures_sorted.sort_by_key(|(cid, _)| *cid);
-        for (creature_id, damage) in damage_to_creatures_sorted {
+        // BTreeMap iterates in CardId order -- deterministic for network play.
+        for (creature_id, damage) in damage_to_creatures {
             if self.battlefield.contains(creature_id) {
                 if let Ok(creature) = self.cards.get(creature_id) {
                     // Uses has_keyword_with_effects to account for granted indestructible

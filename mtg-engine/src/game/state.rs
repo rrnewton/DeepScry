@@ -1081,9 +1081,11 @@ impl GameState {
     /// Used for "choose a color" ETB abilities like Thriving lands.
     /// Analyzes mana costs in hand, library, and graveyard to find the most needed color.
     fn pick_prominent_color(&self, player_id: PlayerId, exclude: &[Color]) -> Color {
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
 
-        let mut color_counts: HashMap<Color, u32> = HashMap::new();
+        // BTreeMap provides deterministic iteration order by Color discriminant (WUBRG),
+        // which is required for network determinism when breaking ties.
+        let mut color_counts: BTreeMap<Color, u32> = BTreeMap::new();
 
         // Count colors from cards in hand, library, and graveyard
         let zones_to_check = if let Some(zones) = self.get_player_zones(player_id) {
@@ -1121,8 +1123,8 @@ impl GameState {
         }
 
         // Return the most prominent color, or a default if none found.
-        // Sort entries deterministically to break ties by Color discriminant (WUBRG order).
-        // HashMap iteration is non-deterministic and would cause network desync on tied counts.
+        // BTreeMap iteration is deterministic (WUBRG order); ties are broken
+        // by Color discriminant via the then_with comparator below.
         color_counts
             .into_iter()
             .max_by(|(color_a, count_a), (color_b, count_b)| {
@@ -1675,10 +1677,12 @@ impl GameState {
     /// Returns an error if a card cannot be found or moved to graveyard.
     pub fn check_legendary_rule(&mut self) -> Result<()> {
         use crate::core::CardName;
-        use std::collections::HashMap;
+        use std::collections::BTreeMap;
 
         // Group legendary permanents by (controller, name)
-        let mut legendary_groups: HashMap<(PlayerId, CardName), Vec<CardId>> = HashMap::new();
+        // BTreeMap provides deterministic iteration order by (PlayerId, CardName),
+        // which is required for network determinism.
+        let mut legendary_groups: BTreeMap<(PlayerId, CardName), Vec<CardId>> = BTreeMap::new();
 
         for &card_id in &self.battlefield.cards {
             if let Some(card) = self.cards.try_get(card_id) {
@@ -1693,12 +1697,7 @@ impl GameState {
         // Store: (card_id_to_sacrifice, owner, name, kept_card_id)
         let mut cards_to_sacrifice: Vec<(CardId, PlayerId, CardName, CardId)> = Vec::new();
 
-        // Sort groups by (PlayerId, CardName) for deterministic iteration order.
-        // HashMap iteration is non-deterministic and would cause network desync.
-        let mut sorted_groups: Vec<_> = legendary_groups.into_iter().collect();
-        sorted_groups.sort_by(|a, b| a.0 .0.cmp(&b.0 .0).then_with(|| a.0 .1.as_str().cmp(b.0 .1.as_str())));
-
-        for ((_controller, name), cards) in sorted_groups {
+        for ((_controller, name), cards) in legendary_groups {
             if cards.len() > 1 {
                 // Keep the first one (index 0), sacrifice the rest
                 // TODO: Let player choose which one to keep

@@ -820,6 +820,18 @@ impl fmt::Display for CounterType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CardName(std::sync::Arc<str>);
 
+impl PartialOrd for CardName {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CardName {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
 impl CardName {
     pub fn new(s: impl Into<String>) -> Self {
         CardName(s.into().into())
