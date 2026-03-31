@@ -69,4 +69,4 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-53: SIMD optimizations where applicable
 
 ---
-Checked up-to-date as of 2026-03-26_#1991(92d363e7).
+Checked up-to-date as of 2026-03-28_#2003(e040a402).

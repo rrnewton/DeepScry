@@ -29,23 +29,23 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
 
-**Current status as of 2026-03-26_#1995(fff908a7):**
+**Current status as of 2026-03-28_#2003(e040a402):**
 - Tests: 942 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
-- Performance: 7.44M actions/sec (simple_bolt), 2.40M (mem_logging)
+- Performance: 7.45M actions/sec (simple_bolt), 2.09M (mem_logging)
 - Random deck compatibility: 100% success rate (200 games, 0 engine errors)
 - Keyword warnings: 338 remaining (down from 2672 original)
-- AI casts 18+ effect types automatically, counters board wipes/extra turns/steals
+- AI casts 18+ effect types, counters board wipes/extra turns/steals
+- mtg-159 (Spiderman draft decks) CLOSED - 20/20 games flawless
 
-**Recent accomplishments (2026-03-25 to 2026-03-26):**
+**Recent accomplishments (2026-03-25 to 2026-03-28):**
+- AI: Keyword-granting and trigger enchantment casting (Levitation, Fervor)
 - AI: Counter board wipes, extra turns, steal effects (CounterAi parity)
-- TapOrUntap effect (49 cards) - tap/untap target permanent
-- MultiplyCounter effect (44 cards) - counter doubling
-- AI: Undying/Persist counter-state awareness (Java parity)
-- AI: Surveil/Loot/Dig always-beneficial + SacrificeAll board wipe routing
-- AI: Mill, GainLife, PumpAllCreatures, MultiplyCounter, PutCounter always-beneficial
-- Optimization: trigger boolean flags -14.6%, empty pool fast-path -2.9%, SmallVec SBA -1.9%
+- Fix: Gracefully handle missing player zones in scry/surveil/discard
+- TapOrUntap effect (49 cards), MultiplyCounter (44 cards)
+- AI: Undying/Persist counter-state, Surveil/Loot/Dig, SacrificeAll board wipe
+- Optimization: trigger boolean flags -14.6%, empty pool -2.9%, SmallVec SBA -1.9%
 
 **Previous accomplishments (2026-03-14 to 2026-03-21):**
 - AddTurn effect (64 cards), SacrificeAll (143), ChangeZoneAll (636), PutCounterAll (264)
@@ -68,4 +68,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-26_#1995(fff908a7).
+Checked up-to-date as of 2026-03-28_#2003(e040a402).
