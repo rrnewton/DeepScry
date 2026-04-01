@@ -2528,7 +2528,14 @@ impl CardDefinition {
             use super::effect_converter::params_to_effect_with_svars;
 
             // Special handling for mana abilities (need is_mana_ability = true)
-            let is_mana_ability = matches!(params.api_type, ApiType::Mana);
+            // BUT: Planeswalker loyalty abilities that produce mana (e.g., Chandra's +1: Add {R}{R})
+            // are NOT regular mana abilities for the mana engine - they have loyalty costs
+            // and can only be activated once per turn at sorcery speed.
+            let is_planeswalker_ability = params
+                .get("Planeswalker")
+                .map(|s| s.eq_ignore_ascii_case("True"))
+                .unwrap_or(false);
+            let is_mana_ability = matches!(params.api_type, ApiType::Mana) && !is_planeswalker_ability;
 
             // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
             let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
