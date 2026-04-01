@@ -949,17 +949,27 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
-                    // Check loyalty cost (SubLoyalty: must have enough loyalty counters)
+                    // Check loyalty cost: once-per-turn rule (MTG CR 606.3) and affordability
                     if can_activate {
                         match &ability.cost {
                             crate::core::Cost::SubLoyalty { amount } => {
-                                let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
-                                if loyalty < *amount {
+                                // Can only activate one loyalty ability per turn per planeswalker
+                                if card.loyalty_activated_this_turn {
+                                    can_activate = false;
+                                } else {
+                                    let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
+                                    if loyalty < *amount {
+                                        can_activate = false;
+                                    }
+                                }
+                            }
+                            crate::core::Cost::AddLoyalty { .. } => {
+                                // Once-per-turn check for + abilities too
+                                if card.loyalty_activated_this_turn {
                                     can_activate = false;
                                 }
                             }
-                            crate::core::Cost::AddLoyalty { .. }
-                            | crate::core::Cost::Tap
+                            crate::core::Cost::Tap
                             | crate::core::Cost::Untap
                             | crate::core::Cost::Mana(_)
                             | crate::core::Cost::TapAndMana(_)

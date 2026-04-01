@@ -621,6 +621,12 @@ pub struct Card {
     #[serde(default)]
     pub is_token: bool,
 
+    /// Has a loyalty ability been activated on this permanent this turn?
+    /// MTG CR 606.3: Only one loyalty ability per planeswalker per turn.
+    /// Reset at the start of each turn.
+    #[serde(default)]
+    pub loyalty_activated_this_turn: bool,
+
     /// Regeneration shields active on this permanent (cleared at end of turn)
     /// Each successful AB$ Regenerate activation adds one shield.
     /// When the creature would be destroyed, a shield is consumed instead:
@@ -687,6 +693,7 @@ impl Card {
             is_legendary: false,
             is_commander: false,
             is_token: false,
+            loyalty_activated_this_turn: false,
             regeneration_shields: 0,
             exhausted_abilities: SmallVec::new(),
             definition,

@@ -6296,6 +6296,7 @@ impl GameState {
                 use crate::core::CounterType;
                 let card = self.cards.get_mut(card_id)?;
                 card.add_counter(CounterType::Loyalty, *amount);
+                card.loyalty_activated_this_turn = true; // MTG CR 606.3: once per turn
                 let new_loyalty = card.get_counter(CounterType::Loyalty);
                 self.logger
                     .verbose(&format!("{} gains {} loyalty (now {})", card.name, amount, new_loyalty));
@@ -6316,6 +6317,7 @@ impl GameState {
                 }
                 let card = self.cards.get_mut(card_id)?;
                 card.remove_counter(CounterType::Loyalty, *amount);
+                card.loyalty_activated_this_turn = true; // MTG CR 606.3: once per turn
                 let new_loyalty = card.get_counter(CounterType::Loyalty);
                 let card_name = card.name.to_string();
                 self.logger
