@@ -369,4 +369,50 @@ mod tests {
         player.reset_lands_played();
         assert!(player.can_play_land());
     }
+
+    #[test]
+    fn test_commander_tax() {
+        let id = PlayerId::new(1);
+        let mut player = Player::new(id, "Commander Player", 40);
+
+        // Initially no tax
+        assert_eq!(player.commander_tax(), 0);
+        assert_eq!(player.commander_cast_count, 0);
+
+        // First cast from command zone
+        player.record_commander_cast();
+        assert_eq!(player.commander_cast_count, 1);
+        assert_eq!(player.commander_tax(), 2); // {2} more
+
+        // Second cast
+        player.record_commander_cast();
+        assert_eq!(player.commander_cast_count, 2);
+        assert_eq!(player.commander_tax(), 4); // {4} more
+
+        // Third cast
+        player.record_commander_cast();
+        assert_eq!(player.commander_tax(), 6); // {6} more
+    }
+
+    #[test]
+    fn test_commander_damage() {
+        let id = PlayerId::new(1);
+        let opponent_id = PlayerId::new(2);
+        let mut player = Player::new(id, "Defender", 40);
+
+        // No damage initially
+        assert_eq!(player.commander_damage_from(opponent_id), 0);
+
+        // Take 10 commander damage
+        assert!(!player.record_commander_damage(opponent_id, 10));
+        assert_eq!(player.commander_damage_from(opponent_id), 10);
+
+        // Take 10 more (total 20, not lethal yet)
+        assert!(!player.record_commander_damage(opponent_id, 10));
+        assert_eq!(player.commander_damage_from(opponent_id), 20);
+
+        // Take 1 more (total 21, lethal!)
+        assert!(player.record_commander_damage(opponent_id, 1));
+        assert_eq!(player.commander_damage_from(opponent_id), 21);
+    }
 }
