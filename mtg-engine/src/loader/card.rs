@@ -105,6 +105,7 @@ impl CardLoader {
         let mut etb_choose_color = false;
         let mut etb_exclude_colors = Vec::new();
         let mut is_legendary = false;
+        let mut loyalty: Option<u8> = None;
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -156,6 +157,9 @@ impl CardLoader {
                                 value
                             )));
                         }
+                    }
+                    "Loyalty" => {
+                        loyalty = value.trim().parse().ok();
                     }
                     "Oracle" => oracle = value.replace("\\n", "\n"),
                     // Keyword lines (K:)
@@ -275,6 +279,7 @@ impl CardLoader {
             etb_exclude_colors,
             script_name: None, // Set by token loader
             is_legendary,
+            loyalty,
             cache,
         })
     }
@@ -323,6 +328,9 @@ pub struct CardDefinition {
     /// Derived from "Legendary" in Types line (e.g., "Types:Legendary Creature Human Noble")
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
+    /// Starting loyalty for planeswalkers (from Loyalty: field in card script)
+    /// Applied as loyalty counters when the planeswalker enters the battlefield.
+    pub loyalty: Option<u8>,
     /// Precomputed cache for static card properties (computed at load time)
     /// Avoids repeated string operations during gameplay
     pub cache: CardCache,
@@ -348,6 +356,7 @@ impl Default for CardDefinition {
             etb_exclude_colors: Vec::new(),
             script_name: None,
             is_legendary: false,
+            loyalty: None,
             cache: CardCache::default(),
         }
     }

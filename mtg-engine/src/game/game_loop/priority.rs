@@ -237,6 +237,22 @@ impl<'a> GameLoop<'a> {
                     self.game.logger.gamelog(&message);
                 }
             }
+
+            // Set starting loyalty counters for planeswalkers (MTG CR 306.5b)
+            if let Some(card) = self.game.cards.try_get(spell_id) {
+                if let Some(loyalty) = card.definition.loyalty {
+                    let card_name_str = card.name.to_string();
+                    if let Ok(card_mut) = self.game.cards.get_mut(spell_id) {
+                        card_mut.add_counter(crate::core::CounterType::Loyalty, loyalty);
+                    }
+                    if should_log {
+                        self.game.logger.gamelog(&format!(
+                            "{} ({}) enters with {} loyalty",
+                            card_name_str, spell_id, loyalty
+                        ));
+                    }
+                }
+            }
         }
 
         // Check state-based actions after spell effects resolve (MTG Rules 704.3)
@@ -2646,6 +2662,22 @@ impl<'a> GameLoop<'a> {
                         card_name, spell_id, power, toughness
                     );
                     self.game.logger.gamelog(&message);
+                }
+            }
+
+            // Set starting loyalty counters for planeswalkers (MTG CR 306.5b)
+            if let Some(card) = self.game.cards.try_get(spell_id) {
+                if let Some(loyalty) = card.definition.loyalty {
+                    let card_name_str = card.name.to_string();
+                    if let Ok(card_mut) = self.game.cards.get_mut(spell_id) {
+                        card_mut.add_counter(crate::core::CounterType::Loyalty, loyalty);
+                    }
+                    if should_log {
+                        self.game.logger.gamelog(&format!(
+                            "{} ({}) enters with {} loyalty",
+                            card_name_str, spell_id, loyalty
+                        ));
+                    }
                 }
             }
         }

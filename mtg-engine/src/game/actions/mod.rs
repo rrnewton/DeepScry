@@ -5802,7 +5802,9 @@ impl GameState {
                     | Cost::TapAndMana(_)
                     | Cost::PayLife { .. }
                     | Cost::Discard { .. }
-                    | Cost::Waterbend { .. } => {
+                    | Cost::Waterbend { .. }
+                    | Cost::AddLoyalty { .. }
+                    | Cost::SubLoyalty { .. } => {
                         // These cost types aren't currently used in mana ability costs
                     }
                 }
@@ -6268,6 +6270,44 @@ impl GameState {
                     }
                 }
 
+                Ok(())
+            }
+
+            Cost::AddLoyalty { amount } => {
+                // Planeswalker +N loyalty ability: add N loyalty counters
+                use crate::core::CounterType;
+                let card = self.cards.get_mut(card_id)?;
+                card.add_counter(CounterType::Loyalty, *amount);
+                let new_loyalty = card.get_counter(CounterType::Loyalty);
+                self.logger
+                    .verbose(&format!("{} gains {} loyalty (now {})", card.name, amount, new_loyalty));
+                Ok(())
+            }
+
+            Cost::SubLoyalty { amount } => {
+                // Planeswalker -N loyalty ability: remove N loyalty counters
+                use crate::core::CounterType;
+                let current = self.cards.get(card_id)?.get_counter(CounterType::Loyalty);
+                if current < *amount {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Not enough loyalty counters ({} < {}) on {}",
+                        current, amount, self.cards.get(card_id)?.name
+                    )));
+                }
+                let card = self.cards.get_mut(card_id)?;
+                card.remove_counter(CounterType::Loyalty, *amount);
+                let new_loyalty = card.get_counter(CounterType::Loyalty);
+                let card_name = card.name.to_string();
+                self.logger
+                    .verbose(&format!("{} loses {} loyalty (now {})", card_name, amount, new_loyalty));
+
+                // Check if loyalty reaches 0 - planeswalker dies (MTG CR 704.5i)
+                if new_loyalty == 0 {
+                    self.logger
+                        .normal(&format!("{} has 0 loyalty and is put into the graveyard", card_name));
+                    let owner = self.cards.get(card_id)?.owner;
+                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                }
                 Ok(())
             }
         }

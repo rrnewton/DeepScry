@@ -44,6 +44,14 @@ pub enum Cost {
     /// While paying a waterbend cost, you can tap your artifacts and creatures to help.
     /// Each one pays for {1}. For now, treated as generic mana cost of `amount`.
     Waterbend { amount: u8 },
+
+    /// Add loyalty counters (planeswalker + ability cost, e.g., "AddCounter<1/LOYALTY>")
+    /// The amount is the number of loyalty counters to add.
+    AddLoyalty { amount: u8 },
+
+    /// Remove loyalty counters (planeswalker - ability cost, e.g., "SubCounter<3/LOYALTY>")
+    /// The amount is the number of loyalty counters to remove.
+    SubLoyalty { amount: u8 },
 }
 
 impl Cost {
@@ -109,7 +117,9 @@ impl Cost {
                         | Cost::PayLife { .. }
                         | Cost::Discard { .. }
                         | Cost::Composite(_)
-                        | Cost::Waterbend { .. } => costs.push(parsed),
+                        | Cost::Waterbend { .. }
+                        | Cost::AddLoyalty { .. }
+                        | Cost::SubLoyalty { .. } => costs.push(parsed),
                     }
                 } else {
                     // Might be mana symbol
@@ -185,6 +195,28 @@ impl Cost {
             }
         }
 
+        // Planeswalker loyalty costs
+        // AddCounter<N/LOYALTY> - add N loyalty counters (+ ability)
+        if trimmed.starts_with("AddCounter<") && trimmed.contains("LOYALTY") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("AddCounter<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(amount_str) = spec.split('/').next() {
+                    if let Ok(amount) = amount_str.parse::<u8>() {
+                        return Some(Cost::AddLoyalty { amount });
+                    }
+                }
+            }
+        }
+        // SubCounter<N/LOYALTY> - remove N loyalty counters (- ability)
+        if trimmed.starts_with("SubCounter<") && trimmed.contains("LOYALTY") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("SubCounter<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(amount_str) = spec.split('/').next() {
+                    if let Ok(amount) = amount_str.parse::<u8>() {
+                        return Some(Cost::SubLoyalty { amount });
+                    }
+                }
+            }
+        }
+
         // Waterbend cost (e.g., "Waterbend<3>") - Avatar set mechanic
         // While paying a waterbend cost, you can tap your artifacts and creatures to help.
         // Each one pays for {1}. For now, treat as generic mana.
@@ -234,7 +266,9 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => false,
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -248,7 +282,9 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
-            | Cost::Discard { .. } => false,
+            | Cost::Discard { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -263,7 +299,9 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 
@@ -279,7 +317,9 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 
@@ -294,7 +334,9 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => false,
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -310,7 +352,9 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
-            | Cost::Discard { .. } => None,
+            | Cost::Discard { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 
@@ -327,7 +371,9 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 }
