@@ -958,7 +958,7 @@ impl HeuristicController {
         // Reference: PumpAi.checkPhaseRestrictions() lines 98-103
         // Instant-speed pumps should NOT be cast outside of combat (with exceptions)
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(spell_card) = view.get_card(*card_id) {
                     // Check if this is a pump spell (has PumpCreature effect)
                     for effect in &spell_card.effects {
@@ -1034,7 +1034,7 @@ impl HeuristicController {
         let available_mana = self.count_available_mana(view);
 
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
                         // Use mana-efficient evaluation in early game (turns 1-5)
@@ -1119,7 +1119,7 @@ impl HeuristicController {
 
         // Phase 4: Cast other spells (removal, damage, etc.)
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(spell_card) = view.get_card(*card_id) {
                     // Skip creatures and pumps (already handled above)
                     if spell_card.is_creature() {
@@ -3011,6 +3011,11 @@ impl HeuristicController {
             .iter()
             .any(|e| matches!(e, crate::core::Effect::ChangeZoneAll { .. }));
         if has_change_zone_all && self.should_cast_change_zone_all(spell, view) {
+            return true;
+        }
+
+        // Planeswalkers are always worth casting (they provide ongoing value via loyalty abilities)
+        if spell.types.iter().any(|t| matches!(t, crate::core::CardType::Planeswalker)) {
             return true;
         }
 
