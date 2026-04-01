@@ -38,7 +38,10 @@ pub fn print_battlefield_state(game: &GameState, viewer: Option<PlayerId>) {
                 );
             } else {
                 // Show command zone info for Commander games
-                let cmd_names: Vec<String> = zones.command.cards.iter()
+                let cmd_names: Vec<String> = zones
+                    .command
+                    .cards
+                    .iter()
                     .filter_map(|&cid| game.cards.try_get(cid).map(|c| c.name.to_string()))
                     .collect();
                 println!(
