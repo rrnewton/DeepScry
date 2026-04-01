@@ -1023,6 +1023,28 @@ impl HeuristicController {
             }
         }
 
+        // 2a2: Cast mana-producing artifacts early (Sol Ring, Arcane Signet, etc.)
+        // In the early game (turns 1-5), mana rocks are extremely valuable for ramping.
+        // Cast them before creatures to accelerate future turns.
+        let turn_number = view.turn_number();
+        if turn_number <= 5 {
+            for ability in available {
+                if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
+                    if let Some(card) = view.get_card(*card_id) {
+                        // Check if this is a mana-producing artifact (not a creature)
+                        // Check both cache flag AND activated abilities for mana production
+                        if card.is_artifact() && !card.is_creature() {
+                            let has_mana_ability = card.definition.cache.is_mana_source
+                                || card.activated_abilities.iter().any(|ab| ab.is_mana_ability);
+                            if has_mana_ability {
+                                return Some(ability.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 2b: Cast creatures (best evaluation first, with mana efficiency)
         // Evaluate all castable creatures considering both raw value and mana efficiency
         // This prioritizes curving out in early game while still preferring high-value threats
@@ -1030,7 +1052,6 @@ impl HeuristicController {
         let mut best_creature_value = i32::MIN;
 
         // Get game state for mana efficiency calculation
-        let turn_number = view.turn_number();
         let available_mana = self.count_available_mana(view);
 
         for ability in available {
