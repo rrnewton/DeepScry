@@ -709,6 +709,7 @@ fn submission_to_decklist(submission: &DeckSubmission) -> DeckList {
                 count: *count,
             })
             .collect(),
+        commanders: Vec::new(),
     }
 }
 

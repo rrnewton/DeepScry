@@ -385,7 +385,11 @@ impl WasmCardDatabase {
             }
         }
 
-        let deck = DeckList { main_deck, sideboard };
+        let deck = DeckList {
+            main_deck,
+            sideboard,
+            commanders: Vec::new(),
+        };
         let card_count = deck.total_cards();
 
         web_sys::console::log_1(&format!("Registered custom deck '{}' with {} cards", deck_name, card_count).into());

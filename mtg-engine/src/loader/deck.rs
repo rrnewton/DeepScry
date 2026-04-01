@@ -63,6 +63,14 @@ pub struct DeckParseResult {
     pub problems: Vec<ImportProblem>,
 }
 
+/// Which section of the deck file we're currently parsing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeckSection {
+    Main,
+    Sideboard,
+    Commander,
+}
+
 /// Deck loader for .dck files
 pub struct DeckLoader;
 
@@ -110,8 +118,9 @@ impl DeckLoader {
     pub fn parse_with_problems(content: &str) -> DeckParseResult {
         let mut main_deck = Vec::new();
         let mut sideboard = Vec::new();
+        let mut commanders = Vec::new();
         let mut problems = Vec::new();
-        let mut in_sideboard = false;
+        let mut current_section = DeckSection::Main;
 
         for line in content.lines() {
             let original_line = line;
@@ -125,7 +134,11 @@ impl DeckLoader {
             // Check for section markers
             if line.starts_with('[') {
                 if line.contains("Sideboard") {
-                    in_sideboard = true;
+                    current_section = DeckSection::Sideboard;
+                } else if line.contains("Commander") {
+                    current_section = DeckSection::Commander;
+                } else if line.contains("Main") {
+                    current_section = DeckSection::Main;
                 }
                 continue;
             }
@@ -164,13 +177,11 @@ impl DeckLoader {
             };
 
             match parsed {
-                Some(entry) => {
-                    if in_sideboard {
-                        sideboard.push(entry);
-                    } else {
-                        main_deck.push(entry);
-                    }
-                }
+                Some(entry) => match current_section {
+                    DeckSection::Main => main_deck.push(entry),
+                    DeckSection::Sideboard => sideboard.push(entry),
+                    DeckSection::Commander => commanders.push(entry),
+                },
                 None => {
                     // Line failed to parse - track it as a problem
                     problems.push(ImportProblem::parse_fail(original_line));
@@ -179,7 +190,11 @@ impl DeckLoader {
         }
 
         DeckParseResult {
-            deck_list: DeckList { main_deck, sideboard },
+            deck_list: DeckList {
+                main_deck,
+                sideboard,
+                commanders,
+            },
             problems,
         }
     }
@@ -220,6 +235,9 @@ pub struct DeckEntry {
 pub struct DeckList {
     pub main_deck: Vec<DeckEntry>,
     pub sideboard: Vec<DeckEntry>,
+    /// Commander card(s) - populated from [Commander] section in .dck files.
+    /// When non-empty, the game should use Commander format rules (40 life, command zone, etc.)
+    pub commanders: Vec<DeckEntry>,
 }
 
 impl DeckList {
@@ -233,13 +251,21 @@ impl DeckList {
         self.sideboard.iter().map(|e| e.count as usize).sum()
     }
 
-    /// Get unique card names from main deck and sideboard
+    /// Returns true if this deck has a commander (uses Commander format)
+    pub fn is_commander(&self) -> bool {
+        !self.commanders.is_empty()
+    }
+
+    /// Get unique card names from main deck, sideboard, and commanders
     pub fn unique_card_names(&self) -> Vec<String> {
         let mut names = std::collections::HashSet::new();
         for entry in &self.main_deck {
             names.insert(entry.card_name.clone());
         }
         for entry in &self.sideboard {
+            names.insert(entry.card_name.clone());
+        }
+        for entry in &self.commanders {
             names.insert(entry.card_name.clone());
         }
         names.into_iter().collect()
@@ -252,6 +278,14 @@ impl DeckList {
         // Metadata section
         content.push_str("[metadata]\n");
         content.push_str(&format!("Name={}\n", name.unwrap_or("Deck")));
+
+        // Commander section (if any)
+        if !self.commanders.is_empty() {
+            content.push_str("\n[Commander]\n");
+            for entry in &self.commanders {
+                content.push_str(&format!("{} {}\n", entry.count, entry.card_name));
+            }
+        }
 
         // Main deck section
         content.push_str("\n[Main]\n");
@@ -397,6 +431,7 @@ Name=Foil Test
                 card_name: "Shock".to_string(),
                 count: 2,
             }],
+            commanders: vec![],
         };
 
         // Convert to .dck format
@@ -467,6 +502,7 @@ abc def ghi
                 card_name: "Another Fake".to_string(),
                 count: 3,
             }],
+            commanders: vec![],
         };
 
         let known_cards: HashSet<&str> = ["Lightning Bolt", "Mountain", "Forest"].iter().cloned().collect();
@@ -489,5 +525,29 @@ abc def ghi
         let card_missing = ImportProblem::card_missing("Fake Card", "4 Fake Card");
         assert!(card_missing.label().contains("[CARD_MISSING]"));
         assert!(card_missing.label().contains("4 Fake Card"));
+    }
+
+    #[test]
+    fn test_parse_commander_deck() {
+        let content = r#"
+[metadata]
+Name=Commander Test
+
+[Commander]
+1 Chandra, Torch of Defiance
+
+[Main]
+18 Mountain
+1 Lightning Bolt
+
+[Sideboard]
+"#;
+
+        let deck = DeckLoader::parse(content).unwrap();
+        assert_eq!(deck.commanders.len(), 1);
+        assert_eq!(deck.commanders[0].card_name, "Chandra, Torch of Defiance");
+        assert_eq!(deck.commanders[0].count, 1);
+        assert_eq!(deck.main_deck.len(), 2);
+        assert!(deck.is_commander());
     }
 }

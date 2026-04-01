@@ -609,6 +609,12 @@ pub struct Card {
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
 
+    /// Is this card a commander? (Commander format only)
+    /// Set during game initialization for cards designated as commander.
+    /// Used for commander tax, commander damage tracking, and zone-change replacement.
+    #[serde(default)]
+    pub is_commander: bool,
+
     /// Regeneration shields active on this permanent (cleared at end of turn)
     /// Each successful AB$ Regenerate activation adds one shield.
     /// When the creature would be destroyed, a shield is consumed instead:
@@ -673,6 +679,7 @@ impl Card {
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
+            is_commander: false,
             regeneration_shields: 0,
             exhausted_abilities: SmallVec::new(),
             definition,

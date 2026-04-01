@@ -107,10 +107,13 @@ impl<'a> GameInitializer<'a> {
         use rand_chacha::ChaCha12Rng;
         use std::sync::Arc;
 
-        // Calculate deck sizes
+        // Calculate deck sizes (main deck + commanders)
         let p1_deck_size: usize = player1_deck.main_deck.iter().map(|e| e.count as usize).sum();
         let p2_deck_size: usize = player2_deck.main_deck.iter().map(|e| e.count as usize).sum();
-        let total_cards = p1_deck_size + p2_deck_size;
+        let p1_commander_count: usize = player1_deck.commanders.iter().map(|e| e.count as usize).sum();
+        let p2_commander_count: usize = player2_deck.commanders.iter().map(|e| e.count as usize).sum();
+        let total_cards = p1_deck_size + p2_deck_size + p1_commander_count + p2_commander_count;
+        let is_commander = player1_deck.is_commander() || player2_deck.is_commander();
 
         // Create game state
         let mut game = GameState::new_two_player_with_capacity(
@@ -123,12 +126,16 @@ impl<'a> GameInitializer<'a> {
         let player1_id = game.players[0].id;
         let player2_id = game.players[1].id;
 
+        if is_commander {
+            game.is_commander_game = true;
+        }
+
         // Pre-load all unique cards to ensure cache is populated
         let mut unique_cards = std::collections::HashSet::new();
-        for entry in &player1_deck.main_deck {
+        for entry in player1_deck.main_deck.iter().chain(player1_deck.commanders.iter()) {
             unique_cards.insert(entry.card_name.clone());
         }
-        for entry in &player2_deck.main_deck {
+        for entry in player2_deck.main_deck.iter().chain(player2_deck.commanders.iter()) {
             unique_cards.insert(entry.card_name.clone());
         }
 
@@ -230,14 +237,64 @@ impl<'a> GameInitializer<'a> {
             }
         }
 
+        // Load commander cards into command zone (after library cards)
+        let mut next_id = (p1_deck_size + p2_deck_size) as u32;
+        if is_commander {
+            // P1 commander(s)
+            for entry in &player1_deck.commanders {
+                let card_def =
+                    self.card_db.get_card(&entry.card_name).await?.ok_or_else(|| {
+                        MtgError::InvalidCardFormat(format!("Commander not found: {}", entry.card_name))
+                    })?;
+                for _ in 0..entry.count {
+                    let card_id = CardId::new(next_id);
+                    next_id += 1;
+                    let mut card = card_def.instantiate(card_id, player1_id);
+                    card.is_commander = true;
+                    game.cards.insert(card_id, card);
+                    if let Some(zones) = game.get_player_zones_mut(player1_id) {
+                        zones.command.add(card_id);
+                    }
+                    // Set commander_id on the player (first commander wins for now)
+                    if game.players[0].commander_id.is_none() {
+                        game.players[0].commander_id = Some(card_id);
+                    }
+                    log::info!("P1 commander: {} (id={})", entry.card_name, card_id.as_u32());
+                }
+            }
+
+            // P2 commander(s)
+            for entry in &player2_deck.commanders {
+                let card_def =
+                    self.card_db.get_card(&entry.card_name).await?.ok_or_else(|| {
+                        MtgError::InvalidCardFormat(format!("Commander not found: {}", entry.card_name))
+                    })?;
+                for _ in 0..entry.count {
+                    let card_id = CardId::new(next_id);
+                    next_id += 1;
+                    let mut card = card_def.instantiate(card_id, player2_id);
+                    card.is_commander = true;
+                    game.cards.insert(card_id, card);
+                    if let Some(zones) = game.get_player_zones_mut(player2_id) {
+                        zones.command.add(card_id);
+                    }
+                    if game.players[1].commander_id.is_none() {
+                        game.players[1].commander_id = Some(card_id);
+                    }
+                    log::info!("P2 commander: {} (id={})", entry.card_name, card_id.as_u32());
+                }
+            }
+        }
+
         // Set next_entity_id past the card range so tokens get unique IDs
-        game.set_next_entity_id(total_cards as u32);
+        game.set_next_entity_id(next_id);
 
         log::debug!(
-            "Positional-ID game initialized: P1=[0..{}), P2=[{}..{}), seed={}",
+            "Positional-ID game initialized: P1=[0..{}), P2=[{}..{}), commander={}, seed={}",
             p1_deck_size,
             p1_deck_size,
-            total_cards,
+            p1_deck_size + p2_deck_size,
+            is_commander,
             seed
         );
 
@@ -259,9 +316,15 @@ impl<'a> GameInitializer<'a> {
     ) -> Result<GameState> {
         // Calculate total cards for pre-sizing EntityStore
         let total_cards: usize = player1_deck.main_deck.iter().map(|e| e.count as usize).sum::<usize>()
-            + player2_deck.main_deck.iter().map(|e| e.count as usize).sum::<usize>();
+            + player2_deck.main_deck.iter().map(|e| e.count as usize).sum::<usize>()
+            + player1_deck.commanders.iter().map(|e| e.count as usize).sum::<usize>()
+            + player2_deck.commanders.iter().map(|e| e.count as usize).sum::<usize>();
 
+        let is_commander = player1_deck.is_commander() || player2_deck.is_commander();
         let mut game = GameState::new_two_player_with_capacity(player1_name, player2_name, starting_life, total_cards);
+        if is_commander {
+            game.is_commander_game = true;
+        }
 
         // Get player IDs
         let player1_id = game.players[0].id;
@@ -270,10 +333,10 @@ impl<'a> GameInitializer<'a> {
         // Pre-load all unique cards from both decks to ensure deterministic CardID allocation
         // This populates the card database cache before we start allocating CardIDs
         let mut unique_cards = std::collections::HashSet::new();
-        for entry in &player1_deck.main_deck {
+        for entry in player1_deck.main_deck.iter().chain(player1_deck.commanders.iter()) {
             unique_cards.insert(entry.card_name.clone());
         }
-        for entry in &player2_deck.main_deck {
+        for entry in player2_deck.main_deck.iter().chain(player2_deck.commanders.iter()) {
             unique_cards.insert(entry.card_name.clone());
         }
 
@@ -315,7 +378,50 @@ impl<'a> GameInitializer<'a> {
 
         self.load_deck_into_game(&mut game, player2_id, player2_deck).await?;
 
+        // Load commander cards into command zone
+        if is_commander {
+            self.load_commanders_into_game(&mut game, player1_id, player1_deck, 0)
+                .await?;
+            self.load_commanders_into_game(&mut game, player2_id, player2_deck, 1)
+                .await?;
+        }
+
         Ok(game)
+    }
+
+    /// Load commander cards into the command zone
+    async fn load_commanders_into_game(
+        &self,
+        game: &mut GameState,
+        player_id: PlayerId,
+        deck: &DeckList,
+        player_index: usize,
+    ) -> Result<()> {
+        for entry in &deck.commanders {
+            let card_def = self.card_db.get_card(&entry.card_name).await?.ok_or_else(|| {
+                MtgError::InvalidCardFormat(format!("Commander not found in database: {}", entry.card_name))
+            })?;
+
+            for _ in 0..entry.count {
+                let card_id = game.next_card_id();
+                let mut card = card_def.instantiate(card_id, player_id);
+                card.is_commander = true;
+                game.cards.insert(card_id, card);
+                if let Some(zones) = game.get_player_zones_mut(player_id) {
+                    zones.command.add(card_id);
+                }
+                if game.players[player_index].commander_id.is_none() {
+                    game.players[player_index].commander_id = Some(card_id);
+                }
+                log::info!(
+                    "P{} commander: {} (id={})",
+                    player_index + 1,
+                    entry.card_name,
+                    card_id.as_u32()
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Load a deck into a player's library
@@ -404,6 +510,7 @@ mod tests {
                 count: 1,
             }],
             sideboard: vec![],
+            commanders: vec![],
         };
 
         let initializer = GameInitializer::new(&db);

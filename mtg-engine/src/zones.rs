@@ -172,6 +172,9 @@ pub struct PlayerZones {
     pub hand: CardZone,
     pub graveyard: CardZone,
     pub exile: CardZone,
+    /// Per-player command zone (for Commander format).
+    /// Contains the player's commander card(s) when they are in the command zone.
+    pub command: CardZone,
 }
 
 impl PlayerZones {
@@ -181,6 +184,7 @@ impl PlayerZones {
             hand: CardZone::new(Zone::Hand, player_id),
             graveyard: CardZone::new(Zone::Graveyard, player_id),
             exile: CardZone::new(Zone::Exile, player_id),
+            command: CardZone::new(Zone::Command, player_id),
         }
     }
 
@@ -190,8 +194,9 @@ impl PlayerZones {
             Zone::Hand => Some(&self.hand),
             Zone::Graveyard => Some(&self.graveyard),
             Zone::Exile => Some(&self.exile),
-            // Battlefield, Stack, and Command are shared zones on GameState, not per-player
-            Zone::Battlefield | Zone::Stack | Zone::Command => None,
+            Zone::Command => Some(&self.command),
+            // Battlefield and Stack are shared zones on GameState, not per-player
+            Zone::Battlefield | Zone::Stack => None,
         }
     }
 
@@ -201,8 +206,9 @@ impl PlayerZones {
             Zone::Hand => Some(&mut self.hand),
             Zone::Graveyard => Some(&mut self.graveyard),
             Zone::Exile => Some(&mut self.exile),
-            // Battlefield, Stack, and Command are shared zones on GameState, not per-player
-            Zone::Battlefield | Zone::Stack | Zone::Command => None,
+            Zone::Command => Some(&mut self.command),
+            // Battlefield and Stack are shared zones on GameState, not per-player
+            Zone::Battlefield | Zone::Stack => None,
         }
     }
 }

@@ -1987,6 +1987,102 @@ impl<'a> GameLoop<'a> {
                                 // Spell is now on the stack - will resolve when both players pass
                             }
 
+                            crate::core::SpellAbility::CastFromCommand { card_id, total_cost } => {
+                                // Cast commander from command zone (MTG CR 903.8)
+                                // Similar to CastFromExile but card comes from command zone
+
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let player_idx = self
+                                        .game
+                                        .players
+                                        .iter()
+                                        .position(|p| p.id == current_priority)
+                                        .unwrap_or(0);
+                                    let tax = self.game.players[player_idx].commander_tax();
+                                    let message = if tax > 0 {
+                                        format!(
+                                            "{} casts {} from command zone for {} (includes {{{}}} commander tax)",
+                                            self.get_player_name(current_priority),
+                                            card_name,
+                                            total_cost,
+                                            tax
+                                        )
+                                    } else {
+                                        format!(
+                                            "{} casts {} from command zone for {}",
+                                            self.get_player_name(current_priority),
+                                            card_name,
+                                            total_cost
+                                        )
+                                    };
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                // Move card from command zone to stack
+                                let owner = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.owner)
+                                    .unwrap_or(current_priority);
+
+                                if let Err(e) = self.game.move_card(
+                                    card_id,
+                                    crate::zones::Zone::Command,
+                                    crate::zones::Zone::Stack,
+                                    owner,
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!("Error moving from command zone: {e}"));
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Pay the total cost (base + commander tax)
+                                self.mana_engine.update_mut(self.game, current_priority);
+                                use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+                                let mana_sources = self.mana_engine.all_sources();
+                                let resolver = GreedyManaResolver::new();
+                                self.sources_to_tap_buffer.clear();
+                                resolver.compute_tap_order(&total_cost, mana_sources, &mut self.sources_to_tap_buffer);
+
+                                let mut remaining_hint = total_cost;
+                                for &source_id in &self.sources_to_tap_buffer {
+                                    if let Err(e) =
+                                        self.game
+                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
+                                    {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game.logger.normal(&format!("Failed to tap: {e}"));
+                                        }
+                                    }
+                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                }
+
+                                // Record commander cast for commander tax tracking
+                                if let Some(player) = self.game.players.iter_mut().find(|p| p.id == current_priority) {
+                                    player.record_commander_cast();
+                                }
+
+                                // Spell is now on the stack - will resolve when both players pass
+                            }
+
                             crate::core::SpellAbility::Cycle {
                                 card_id,
                                 cost,

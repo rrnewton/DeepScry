@@ -1373,13 +1373,22 @@ async fn run_tui(
         // This ensures CardIDs reflect shuffled library position, matching server behavior
         let game_seed = seed_resolved.unwrap_or_else(rand::random::<u64>);
         let game_init = GameInitializer::new(&card_db);
+        // Commander format: 40 starting life; standard: 20
+        let starting_life = if deck1.is_commander() || deck2.is_commander() {
+            40
+        } else {
+            20
+        };
+        if starting_life == 40 && !suppress_output {
+            log::info!("Commander format detected - starting life: 40");
+        }
         game_init
             .init_game_with_positional_ids(
                 p1_name.clone(),
                 &deck1,
                 p2_name.clone(),
                 &deck2,
-                20, // starting life
+                starting_life,
                 game_seed,
             )
             .await?

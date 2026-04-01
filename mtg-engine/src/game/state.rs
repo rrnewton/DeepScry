@@ -171,6 +171,17 @@ pub struct GameState {
     #[serde(default)]
     pub is_shadow_game: bool,
 
+    /// Whether this is a Commander format game.
+    ///
+    /// When `true`, commander-specific rules apply:
+    /// - Starting life is 40
+    /// - Commanders start in the command zone
+    /// - Commander tax applies when casting from command zone
+    /// - Commander damage tracking is active (21+ = loss)
+    /// - When a commander would go to graveyard/exile, owner may return to command zone
+    #[serde(default)]
+    pub is_commander_game: bool,
+
     /// Pending typecycling library search (WASM game loop resumption).
     ///
     /// When the WASM game loop is interrupted (NeedInput) during the library
@@ -318,6 +329,7 @@ impl GameState {
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             is_shadow_game: false, // Default: not a shadow game
+            is_commander_game: false,
             pending_cycling_search: None,
             pending_cast: None,
             pending_activation: None,
@@ -839,7 +851,24 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if zone operations fail.
-    pub fn move_card(&mut self, card_id: CardId, from: Zone, to: Zone, owner: PlayerId) -> Result<()> {
+    pub fn move_card(&mut self, card_id: CardId, from: Zone, mut to: Zone, owner: PlayerId) -> Result<()> {
+        // Commander zone-change replacement (MTG CR 903.9a):
+        // If a commander would be put into its owner's graveyard or exile from anywhere,
+        // its owner may put it into the command zone instead.
+        // For now, this is automatic (always returns to command zone).
+        // TODO(mtg-4s1lq): Add player choice for commander zone replacement
+        if self.is_commander_game && (to == Zone::Graveyard || to == Zone::Exile) {
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.is_commander {
+                    self.logger.normal(&format!(
+                        "{} returns to the command zone (commander replacement)",
+                        card.name
+                    ));
+                    to = Zone::Command;
+                }
+            }
+        }
+
         // NETWORK: Auto-reveal cards transitioning from hidden to public zones.
         // This ensures the server logs RevealCard actions for all zone moves,
         // preventing desync when clients don't know the card's identity.
@@ -3056,6 +3085,9 @@ impl GameState {
             if zones.exile.cards.contains(&card_id) {
                 return Some(Zone::Exile);
             }
+            if zones.command.cards.contains(&card_id) {
+                return Some(Zone::Command);
+            }
         }
 
         None
@@ -3099,6 +3131,7 @@ impl Clone for GameState {
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             is_shadow_game: self.is_shadow_game,
+            is_commander_game: self.is_commander_game,
             // pending_cycling_search, pending_cast, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).
             pending_cycling_search: None,
             pending_cast: None,
