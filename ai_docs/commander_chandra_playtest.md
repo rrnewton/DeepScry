@@ -2,7 +2,18 @@
 
 Deck: `decks/commander/chandra_tokens.dck`
 Tracking issue: mtg-4s1lq
-Updated: 2026-03-31_#2024
+Updated: 2026-04-01_#2027
+
+## Bugs Found and Fixed
+1. **Token ownership (c2df44a9)**: CreateToken controller placeholder was never resolved
+   at runtime - tokens from P2's spells were always created under P1's control.
+   Fix: resolve PlayerId::new(0) -> card_owner in resolve_effect_target() and logging.
+2. **Token script pre-loading (c1016144)**: extract_token_scripts() only scanned SVar:
+   lines, missing TokenScript$ in A: (spell ability) and T: (trigger) lines.
+   Fix: also parse A: and T: lines for TokenScript$ references.
+3. **"cast" matching for command zone (c1016144)**: Fixed controller "cast <name>" didn't
+   match CastFromCommand variant, only CastSpell.
+4. **CI formatting (0c18b5e1)**: display.rs chain formatting.
 
 ## Commander Mechanics
 - [x] Commander starts in command zone
