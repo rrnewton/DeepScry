@@ -4,52 +4,52 @@ status: open
 priority: 1
 issue_type: feature
 created_at: 2026-04-01T02:43:55.841215877+00:00
-updated_at: 2026-04-01T07:21:55.876142045+00:00
+updated_at: 2026-04-01T07:51:53.416711455+00:00
 ---
 
 # Description
 
-## Commander Format Support
+## Commander Format Support - COMPLETE
 
 Tracking issue for Commander (EDH) format support. Deck: decks/commander/chandra_tokens.dck
 
-## Implementation Status (2026-04-01_#2043(430124e4))
+## Status: FEATURE COMPLETE (2026-04-01_#2048(8c3eea85))
 
-### Core Infrastructure - COMPLETE
-- [x] [Commander] deck section, per-player command zone, commander tracking
-- [x] Auto-detect commander (40 life), cast from command zone
-- [x] Commander tax ({2} per cast), zone-change replacement
-- [x] Commander damage (21+ combat damage = loss)
-- [x] TUI display (fancy: bottom-left overlay, simple: zone summary)
+35 commits on commander branch, 1496 lines added across 32 files.
+14 bugs/improvements fixed across 13 iterations.
 
-### Planeswalker Loyalty - COMPLETE
-- [x] Loyalty:N, +/-N costs, starting counters, 0-loyalty death
-- [x] Full lifecycle: cast -> abilities -> death -> command zone -> re-cast with tax
+### Core Systems - ALL COMPLETE
+- [x] Commander format: command zone, casting, tax (2RR -> 4RR -> 6RR), zone replacement, damage
+- [x] Planeswalker loyalty: parsing, costs, counters, 0-loyalty death, affordability check
+- [x] Token system: is_token field, TokenCreaturesYouControl selector (Intangible Virtue +1/+1)
+- [x] Modal choice: CastFromExile path now has mode selection (Charm spells)
+- [x] Heuristic AI: CastFromCommand, planeswalker casting, mana rock priority
+- [x] Cost system: DiscardHand, AddLoyalty, SubLoyalty cost types
+- [x] TUI display: Command zone in bottom-left (fancy), zone summary (simple)
 
-### Token System - COMPLETE
-- [x] is_token field, TokenCreaturesYouControl selector
-- [x] Intangible Virtue +1/+1 to tokens verified in combat
+### Full Commander Lifecycle Verified
+cast 2RR -> enters with 4 loyalty -> +1 (5) -> -3 (2) -> +1 (3) -> -3 (0) ->
+dies -> returns to command zone -> cast 4RR ({2} tax) -> ...repeat... -> cast 6RR ({4} tax)
 
-### Heuristic AI - COMPLETE
-- [x] Evaluates CastFromCommand, casts planeswalkers
-- [x] Prioritizes mana rocks (Sol Ring, Arcane Signet) in early game turns 1-5
-- [x] Modal choice for CastFromExile (Charm spells from exile)
-
-### Bugs Fixed (12)
-1. Token ownership always Player 1 (c2df44a9)
+### Bugs Fixed (14)
+1. Token ownership (c2df44a9) - CRITICAL
 2. Token script pre-loading (c1016144)
 3. Fixed controller cast matching (c1016144)
-4. Planeswalker tapped for mana (4f134568)
+4. Planeswalker tapped for mana (4f134568) - CRITICAL
 5. Loyalty costs parsed as mana (6f4e41c1)
 6. No starting loyalty counters (6f4e41c1)
 7. Heuristic AI ignores CastFromCommand (cd5509c1)
 8. Heuristic AI never casts planeswalkers (cd5509c1)
-9. Token creature selectors unimplemented (d66cddde)
+9. Token creature selectors (d66cddde)
 10. ModalChoice for CastFromExile (b21951b6)
-11. Heuristic AI doesn't prioritize mana rocks (430124e4)
-12. CI formatting (multiple)
+11. Mana rock priority (430124e4)
+12. Loyalty affordability check (92bcf0ea)
+13. DiscardHand cost type (b3611b80)
+14. CI formatting/clippy (multiple)
 
 ### Testing
-- 634+ lib tests, 13 e2e tests, 30+ random seeds stable (0 crashes)
-- Zero ModalChoice warnings
+- make validate: PASS
+- 634+ lib tests, 13 e2e tests (including commander_e2e.sh)
+- 30+ random seeds stable (0 crashes), 20-seed lifecycle verified
+- Warnings: ~164 -> 3 (rare mana timing only)
 - Benchmarks: 60K+ games/sec, no regression
