@@ -958,10 +958,20 @@ impl<'a> GameLoop<'a> {
                                     can_activate = false;
                                 }
                             }
-                            crate::core::Cost::AddLoyalty { .. } => {
-                                // AddLoyalty always affordable (just adds counters)
+                            crate::core::Cost::AddLoyalty { .. }
+                            | crate::core::Cost::Tap
+                            | crate::core::Cost::Untap
+                            | crate::core::Cost::Mana(_)
+                            | crate::core::Cost::TapAndMana(_)
+                            | crate::core::Cost::Sacrifice { .. }
+                            | crate::core::Cost::SacrificePattern { .. }
+                            | crate::core::Cost::PayLife { .. }
+                            | crate::core::Cost::Discard { .. }
+                            | crate::core::Cost::DiscardHand
+                            | crate::core::Cost::Composite(_)
+                            | crate::core::Cost::Waterbend { .. } => {
+                                // These costs are checked elsewhere or always affordable
                             }
-                            _ => {}
                         }
                     }
 
