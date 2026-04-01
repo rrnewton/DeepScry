@@ -200,6 +200,17 @@ impl<'a> GameLoop<'a> {
                         enters_tapped: *enters_tapped,
                         shuffle: *shuffle,
                     },
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                        for_each_player,
+                    } if *controller == crate::core::PlayerId::new(0) => Effect::CreateToken {
+                        controller: card_owner,
+                        token_script: token_script.clone(),
+                        amount: *amount,
+                        for_each_player: *for_each_player,
+                    },
                     _ => effect.clone(),
                 };
 
@@ -2603,6 +2614,17 @@ impl<'a> GameLoop<'a> {
                         player: card_owner,
                         count: *count,
                         remember_discarded: *remember_discarded,
+                    },
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                        for_each_player,
+                    } if *controller == crate::core::PlayerId::new(0) => Effect::CreateToken {
+                        controller: card_owner,
+                        token_script: token_script.clone(),
+                        amount: *amount,
+                        for_each_player: *for_each_player,
                     },
                     _ => effect.clone(),
                 };

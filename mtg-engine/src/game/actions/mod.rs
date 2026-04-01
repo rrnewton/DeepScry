@@ -2021,6 +2021,31 @@ impl GameState {
                 }
             }
 
+            // Resolve CreateToken controller placeholder to the actual caster
+            // The loader sets controller to PlayerId::new(0) as a placeholder;
+            // at runtime we resolve it to the spell's owner (card_owner).
+            // "Opponent" tokens use PlayerId::new(1) as placeholder -> resolve to opponent.
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+                for_each_player,
+            } => {
+                let resolved_controller = if *controller == PlayerId::new(0) {
+                    card_owner
+                } else if *controller == PlayerId::new(1) {
+                    opponent_id.unwrap_or(*controller)
+                } else {
+                    *controller
+                };
+                Effect::CreateToken {
+                    controller: resolved_controller,
+                    token_script: token_script.clone(),
+                    amount: *amount,
+                    for_each_player: *for_each_player,
+                }
+            }
+
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
