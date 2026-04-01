@@ -114,14 +114,17 @@ pub fn parse_spell_ability_choice(
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("cast ") {
-        // Find matching CastSpell ability
+        // Find matching CastSpell or CastFromCommand ability
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
-                if let Some(card_name) = view.card_name(*card_id) {
-                    if card_matches(&card_name, card_pattern) {
-                        return Some(ability.clone());
+            match ability {
+                SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } => {
+                    if let Some(card_name) = view.card_name(*card_id) {
+                        if card_matches(&card_name, card_pattern) {
+                            return Some(ability.clone());
+                        }
                     }
                 }
+                _ => {}
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {

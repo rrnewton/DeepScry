@@ -382,17 +382,28 @@ impl CardDefinition {
         let mut token_scripts = std::collections::HashSet::new();
 
         for ability in &self.raw_abilities {
-            // Look for SVar lines with token-creating effects
             if ability.starts_with("SVar:") {
                 // Parse the SVar body for TokenScript$ parameter
                 // Format: "SVar:NAME:DB$ Token | TokenScript$ script_name | ..."
                 if let Some((_prefix, body)) = ability.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
-                    // Use tokenized parsing to check for Token API type
                     if let Some(params) = AbilityParams::parse_svar_body(body) {
                         if params.api_type == ApiType::Token {
                             if let Some(script) = params.get("TokenScript") {
                                 token_scripts.insert(script.to_string());
                             }
+                        }
+                    }
+                }
+            } else if ability.starts_with("A:") || ability.starts_with("T:") {
+                // Also scan spell ability lines (A:) and trigger lines (T:) for TokenScript$
+                // Format: "A:SP$ Token | TokenScript$ w_1_1_soldier | ..."
+                // Format: "T:Mode$ SpellCast | Execute$ TrigToken | ..."
+                // The A: line may contain TokenScript$ directly (e.g., Raise the Alarm)
+                let body = &ability[2..];
+                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                    if params.api_type == ApiType::Token {
+                        if let Some(script) = params.get("TokenScript") {
+                            token_scripts.insert(script.to_string());
                         }
                     }
                 }
