@@ -1980,6 +1980,72 @@ impl<'a> GameLoop<'a> {
                                     continue;
                                 }
 
+                                // Mode selection for modal spells cast from exile (Charm spells)
+                                // MTG Rule 601.2b: Modal choice happens BEFORE targeting/payment
+                                if let Ok(Some(crate::core::Effect::ModalChoice {
+                                    modes,
+                                    num_to_choose,
+                                    min_to_choose,
+                                    can_repeat_modes,
+                                })) = self.game.get_modal_choice_info(card_id)
+                                {
+                                    let valid_modes = self
+                                        .game
+                                        .get_valid_modes_for_spell(card_id, current_priority)
+                                        .unwrap_or_default();
+                                    let valid_mode_indices: Vec<usize> = valid_modes
+                                        .iter()
+                                        .filter(|(_, has_targets)| *has_targets)
+                                        .map(|(idx, _)| *idx)
+                                        .collect();
+
+                                    if !valid_mode_indices.is_empty() {
+                                        let mode_descriptions: Vec<String> = valid_mode_indices
+                                            .iter()
+                                            .filter_map(|&idx| modes.get(idx).map(|m| m.description.clone()))
+                                            .collect();
+
+                                        let prior_log_size = self.game.logger.log_count();
+                                        let choice = self.choose_modes_with_hook(
+                                            controller,
+                                            current_priority,
+                                            card_id,
+                                            &mode_descriptions,
+                                            num_to_choose as usize,
+                                            min_to_choose as usize,
+                                            can_repeat_modes,
+                                        );
+                                        let selected_modes =
+                                            handle_choice_result_break!(choice, self.game, current_priority);
+
+                                        let original_indices: Vec<usize> = selected_modes
+                                            .iter()
+                                            .filter_map(|&idx| valid_mode_indices.get(idx).copied())
+                                            .collect();
+
+                                        let replay_choice = crate::game::ReplayChoice::Modes(
+                                            original_indices.iter().copied().collect(),
+                                        );
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
+                                            log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                        }
+
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            for &mode_idx in &original_indices {
+                                                if let Some(mode) = modes.get(mode_idx) {
+                                                    self.game.logger.gamelog(&format!(
+                                                        "{} chooses mode: {}",
+                                                        self.get_player_name(current_priority),
+                                                        mode.description
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Pay the alternative cost (not the card's mana cost)
                                 self.mana_engine.update_mut(self.game, current_priority);
                                 use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
@@ -2004,7 +2070,6 @@ impl<'a> GameLoop<'a> {
                                             self.game.logger.normal(&format!("Failed to tap: {e}"));
                                         }
                                     }
-                                    // Deduct from remaining hint (simplified - assume 1 generic each)
                                     remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
                                 }
 
