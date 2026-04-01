@@ -615,6 +615,12 @@ pub struct Card {
     #[serde(default)]
     pub is_commander: bool,
 
+    /// Is this a token? (created by effects, not in a deck)
+    /// Set when tokens are created via Effect::CreateToken.
+    /// Used by continuous effects (e.g., Intangible Virtue: "Creature tokens you control get +1/+1").
+    #[serde(default)]
+    pub is_token: bool,
+
     /// Regeneration shields active on this permanent (cleared at end of turn)
     /// Each successful AB$ Regenerate activation adds one shield.
     /// When the creature would be destroyed, a shield is consumed instead:
@@ -680,6 +686,7 @@ impl Card {
             revealed_to_mask: 0,
             is_legendary: false,
             is_commander: false,
+            is_token: false,
             regeneration_shields: 0,
             exhausted_abilities: SmallVec::new(),
             definition,

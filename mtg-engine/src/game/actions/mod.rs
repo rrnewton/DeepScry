@@ -2985,7 +2985,8 @@ impl GameState {
                             // Instantiate token from definition
                             let mut token = token_def.instantiate(token_id, player_id);
 
-                            // Ensure controller is set correctly (owner and controller are the same for tokens)
+                            // Mark as token and set controller
+                            token.is_token = true;
                             token.controller = player_id;
 
                             // Add token to game
