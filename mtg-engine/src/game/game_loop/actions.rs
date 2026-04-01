@@ -949,6 +949,22 @@ impl<'a> GameLoop<'a> {
                         }
                     }
 
+                    // Check loyalty cost (SubLoyalty: must have enough loyalty counters)
+                    if can_activate {
+                        match &ability.cost {
+                            crate::core::Cost::SubLoyalty { amount } => {
+                                let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
+                                if loyalty < *amount {
+                                    can_activate = false;
+                                }
+                            }
+                            crate::core::Cost::AddLoyalty { .. } => {
+                                // AddLoyalty always affordable (just adds counters)
+                            }
+                            _ => {}
+                        }
+                    }
+
                     // TODO: Check other cost types (discard, etc.)
                     // TODO: Check activation limits
 
