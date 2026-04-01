@@ -37,6 +37,9 @@ pub enum Cost {
     /// Discard a card
     Discard { card_id: CardId },
 
+    /// Discard entire hand (e.g., "Discard<1/Hand>")
+    DiscardHand,
+
     /// Composite cost (multiple costs combined)
     Composite(Vec<Cost>),
 
@@ -116,6 +119,7 @@ impl Cost {
                         | Cost::SacrificePattern { .. }
                         | Cost::PayLife { .. }
                         | Cost::Discard { .. }
+                        | Cost::DiscardHand
                         | Cost::Composite(_)
                         | Cost::Waterbend { .. }
                         | Cost::AddLoyalty { .. }
@@ -195,6 +199,11 @@ impl Cost {
             }
         }
 
+        // Discard hand cost (e.g., "Discard<1/Hand>")
+        if trimmed.starts_with("Discard<") && trimmed.contains("Hand") && trimmed.ends_with('>') {
+            return Some(Cost::DiscardHand);
+        }
+
         // Planeswalker loyalty costs
         // AddCounter<N/LOYALTY> - add N loyalty counters (+ ability)
         if trimmed.starts_with("AddCounter<") && trimmed.contains("LOYALTY") && trimmed.ends_with('>') {
@@ -266,6 +275,7 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => false,
@@ -283,6 +293,7 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => false,
         }
@@ -299,6 +310,7 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => None,
@@ -317,6 +329,7 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => None,
@@ -334,6 +347,7 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => false,
@@ -353,6 +367,7 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => None,
         }
@@ -371,6 +386,7 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
+            | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
             | Cost::SubLoyalty { .. } => None,

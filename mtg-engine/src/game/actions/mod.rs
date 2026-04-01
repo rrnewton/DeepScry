@@ -5803,6 +5803,7 @@ impl GameState {
                     | Cost::TapAndMana(_)
                     | Cost::PayLife { .. }
                     | Cost::Discard { .. }
+                    | Cost::DiscardHand
                     | Cost::Waterbend { .. }
                     | Cost::AddLoyalty { .. }
                     | Cost::SubLoyalty { .. } => {
@@ -6157,10 +6158,26 @@ impl GameState {
             }
 
             Cost::Discard { card_id: _ } => {
-                // TODO: Implement discard cost
+                // TODO: Implement discard cost for specific card
                 Err(MtgError::InvalidAction(format!(
                     "Cost type {cost:?} not yet implemented"
                 )))
+            }
+
+            Cost::DiscardHand => {
+                // Discard entire hand (e.g., Slate of Ancestry)
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    let hand_cards: Vec<CardId> = zones.hand.cards.clone();
+                    for &hand_card_id in &hand_cards {
+                        self.move_card(hand_card_id, Zone::Hand, Zone::Graveyard, player_id)?;
+                    }
+                    self.logger.normal(&format!(
+                        "{} discards their hand ({} cards)",
+                        self.get_player(player_id)?.name,
+                        hand_cards.len()
+                    ));
+                }
+                Ok(())
             }
 
             Cost::Composite(costs) => {
