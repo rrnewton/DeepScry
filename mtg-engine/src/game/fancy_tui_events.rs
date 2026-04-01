@@ -97,10 +97,10 @@ pub fn handle_key_event(
         KeyInput::FocusHand => {
             state.focused_pane = FocusedPane::Hand;
             // Initialize selection to first card if hand not empty
-            let hand = view.hand();
-            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
+            let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+            if !sorted_hand.is_empty() && state.selected_card_in_hand.is_none() {
                 state.selected_card_in_hand = Some(0);
-                state.selected_card_id = Some(hand[0]);
+                state.selected_card_id = Some(sorted_hand[0]);
             }
             EventResult::Handled
         }
@@ -290,12 +290,12 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
             EventResult::Handled
         }
         FocusedPane::Hand => {
-            let hand = view.hand();
-            if !hand.is_empty() {
+            let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+            if !sorted_hand.is_empty() {
                 let current = state.selected_card_in_hand.unwrap_or(0);
                 if current > 0 {
                     state.selected_card_in_hand = Some(current - 1);
-                    state.selected_card_id = Some(hand[current - 1]);
+                    state.selected_card_id = Some(sorted_hand[current - 1]);
                 }
             }
             EventResult::Handled
@@ -339,12 +339,12 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
             EventResult::Handled
         }
         FocusedPane::Hand => {
-            let hand = view.hand();
-            if !hand.is_empty() {
+            let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+            if !sorted_hand.is_empty() {
                 let current = state.selected_card_in_hand.unwrap_or(0);
-                if current + 1 < hand.len() {
+                if current + 1 < sorted_hand.len() {
                     state.selected_card_in_hand = Some(current + 1);
-                    state.selected_card_id = Some(hand[current + 1]);
+                    state.selected_card_id = Some(sorted_hand[current + 1]);
                 }
             }
             EventResult::Handled
@@ -472,9 +472,9 @@ fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult 
     match state.focused_pane {
         FocusedPane::Hand => {
             if let Some(idx) = state.selected_card_in_hand {
-                let hand = view.hand();
-                if idx < hand.len() {
-                    state.selected_card_id = Some(hand[idx]);
+                let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+                if idx < sorted_hand.len() {
+                    state.selected_card_id = Some(sorted_hand[idx]);
                 }
             }
         }
@@ -684,11 +684,11 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
             && y < hand_area.y + hand_area.height
         {
             state.focused_pane = FocusedPane::Hand;
-            // Initialize selection to first card if hand not empty
-            let hand = view.hand();
-            if !hand.is_empty() && state.selected_card_in_hand.is_none() {
+            // Initialize selection to first card if hand not empty (use sorted order)
+            let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+            if !sorted_hand.is_empty() && state.selected_card_in_hand.is_none() {
                 state.selected_card_in_hand = Some(0);
-                state.selected_card_id = Some(hand[0]);
+                state.selected_card_id = Some(sorted_hand[0]);
             }
             return true;
         }

@@ -1089,6 +1089,35 @@ impl FancyTuiRenderer {
         result
     }
 
+    /// Get the hand sorted in display order: lands first, then by descending CMC.
+    ///
+    /// This must be used by both the renderer and event handler so that
+    /// index-based hand navigation matches the visual display order.
+    pub fn get_sorted_hand(view: &GameStateView) -> Vec<CardId> {
+        let hand = view.hand();
+        let mut sorted: Vec<CardId> = hand.to_vec();
+        sorted.sort_by(|&a, &b| {
+            let card_a = view.get_card(a);
+            let card_b = view.get_card(b);
+
+            // Lands first
+            let a_is_land = card_a.map(|c| c.is_land()).unwrap_or(false);
+            let b_is_land = card_b.map(|c| c.is_land()).unwrap_or(false);
+
+            match (a_is_land, b_is_land) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    // Both lands or both non-lands: sort by descending CMC
+                    let a_cmc = card_a.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    let b_cmc = card_b.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    b_cmc.cmp(&a_cmc) // Descending order
+                }
+            }
+        });
+        sorted
+    }
+
     /// Group cards into battlefield entities
     ///
     /// Groups cards by name (and P/T for creatures), then uses a mode-specific constructor
@@ -3311,27 +3340,8 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Sort hand: lands first, then by descending CMC
-        let mut sorted_hand: Vec<CardId> = hand.to_vec();
-        sorted_hand.sort_by(|&a, &b| {
-            let card_a = view.get_card(a);
-            let card_b = view.get_card(b);
-
-            // Lands first
-            let a_is_land = card_a.map(|c| c.is_land()).unwrap_or(false);
-            let b_is_land = card_b.map(|c| c.is_land()).unwrap_or(false);
-
-            match (a_is_land, b_is_land) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    // Both lands or both non-lands: sort by descending CMC
-                    let a_cmc = card_a.map(|c| c.mana_cost.cmc()).unwrap_or(0);
-                    let b_cmc = card_b.map(|c| c.mana_cost.cmc()).unwrap_or(0);
-                    b_cmc.cmp(&a_cmc) // Descending order
-                }
-            }
-        });
+        // Sort hand in display order (shared with event handler for consistent indexing)
+        let sorted_hand = Self::get_sorted_hand(view);
 
         // Track entity positions for each hand card (for mouse click detection)
         // Each list item is 1 row tall, positioned starting from inner_area.y
