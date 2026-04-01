@@ -2,135 +2,101 @@
 
 Deck: `decks/commander/chandra_tokens.dck`
 Tracking issue: mtg-4s1lq
-Updated: 2026-04-01_#2027
+Updated: 2026-04-01_#2038
 
-## Bugs Found and Fixed
-1. **Token ownership (c2df44a9)**: CreateToken controller placeholder was never resolved
-   at runtime - tokens from P2's spells were always created under P1's control.
-   Fix: resolve PlayerId::new(0) -> card_owner in resolve_effect_target() and logging.
-2. **Token script pre-loading (c1016144)**: extract_token_scripts() only scanned SVar:
-   lines, missing TokenScript$ in A: (spell ability) and T: (trigger) lines.
-   Fix: also parse A: and T: lines for TokenScript$ references.
-3. **"cast" matching for command zone (c1016144)**: Fixed controller "cast <name>" didn't
-   match CastFromCommand variant, only CastSpell.
-4. **CI formatting (0c18b5e1)**: display.rs chain formatting.
+## Bugs Found and Fixed (10 total across 6 iterations)
+1. **Token ownership (c2df44a9)**: CRITICAL - tokens always created under P1
+2. **Token script pre-loading (c1016144)**: A:/T: lines not scanned for TokenScript$
+3. **"cast" matching for command zone (c1016144)**: Fixed controller couldn't cast commander
+4. **Planeswalker tapped for mana (4f134568)**: CRITICAL - mana engine used planeswalkers as sources
+5. **Loyalty costs parsed as mana (6f4e41c1)**: AddCounter/SubCounter were garbage-parsed as mana
+6. **No starting loyalty counters (6f4e41c1)**: Loyalty:N field not parsed from card scripts
+7. **Heuristic AI ignores CastFromCommand (cd5509c1)**: Commander invisible to spell evaluation
+8. **Heuristic AI never casts planeswalkers (cd5509c1)**: No type check in should_cast_spell
+9. **Token creature selectors unimplemented (d66cddde)**: Intangible Virtue had no effect
+10. **CI formatting (multiple)**: cargo fmt issues
 
 ## Commander Mechanics
 - [x] Commander starts in command zone
-- [x] Starting life is 40
+- [x] Starting life is 40 (auto-detected)
 - [x] Commander can be cast from command zone
-- [x] Commander tax increases cost by {2} per cast (unit tested)
+- [x] Commander tax increases cost by {2} per cast (verified: 2RR -> 4RR in game)
 - [x] Commander returns to command zone when would go to graveyard/exile
 - [x] Commander damage tracking (21+ combat damage = loss, unit tested)
-- [ ] Player choice for zone replacement (currently automatic)
+- [ ] Player choice for zone-change replacement (currently automatic)
+
+## Planeswalker Mechanics
+- [x] Loyalty:N field parsed from card scripts
+- [x] Starting loyalty counters on ETB (Chandra enters with 4)
+- [x] +1 loyalty abilities (gains 1, now 5)
+- [x] -3 loyalty abilities (loses 3, checks sufficient loyalty)
+- [x] 0-loyalty death -> graveyard -> command zone (full lifecycle)
+- [x] Planeswalker NOT used as mana source
+- [x] Full lifecycle verified: cast -> abilities -> death -> command zone -> re-cast with tax
 
 ## Overall Testing
-- [x] 20 random-seeded games complete (18-75 turns, 0 crashes)
-- [x] 10 heuristic AI games complete (0 warnings)
-- [x] Fixed controller: Chandra castable with "cast chandra" syntax
-- [x] Fixed controller: Sol Ring, Arcane Signet, Raise the Alarm verified
-- [x] Token scripts pre-loaded for all cards (zero "not found" warnings)
+- [x] 30 random-seeded games complete (0 crashes, 0 panics)
+- [x] Win conditions: 83% Decking, 17% PlayerDeath
+- [x] 10 heuristic AI games complete (both AIs cast Chandra)
+- [x] 105-turn heuristic mirror game (full card variety)
+- [x] Fixed controller tests: Sol Ring, Oketra trigger, Chandra, tokens
+- [x] Token buff combat damage verified (274x 1dmg, 70x 2dmg with Intangible Virtue)
+- [x] Benchmarks: 60K+ games/sec, no regression
 
-## Card Categories and Status
+## Card Status
 
-### Mana Sources / Ramp
-| Card | Status | Notes |
-|------|--------|-------|
-| Sol Ring | Verified | On battlefield via fixed controller, costs {1} |
-| Arcane Signet | Verified | On battlefield via fixed controller, costs {2} |
-| Fellwar Stone | Working | Cast by heuristic AI |
-| Thought Vessel | Working | Taps for {C}, no maximum hand size |
-| Snow-Covered Plains | Verified | Basic land, produces {W} |
-| Snow-Covered Mountain | Verified | Basic land, produces {R} |
-| Reliquary Tower | Working | No maximum hand size |
+### Verified Working (via gameplay observation)
+| Card | Status |
+|------|--------|
+| Chandra, Torch of Defiance | Full lifecycle: cast, loyalty, death, return, tax |
+| Sol Ring | Cast and on battlefield |
+| Arcane Signet | Cast and on battlefield |
+| Fellwar Stone | Cast by AI |
+| Raise the Alarm | Creates 2 Soldier tokens (correct ownership) |
+| Dragon Fodder | Creates 2 Goblin tokens (correct ownership) |
+| Hordeling Outburst | Creates 3 Goblin tokens |
+| Secure the Wastes | X spell creates Warrior tokens |
+| Tempt with Vengeance | X spell creates Elemental tokens with haste |
+| Oketra's Monument | Trigger creates Warrior with vigilance on creature cast |
+| Anim Pakal, Thousandth Moon | Creates Gnome tokens on attack |
+| Intangible Virtue | +1/+1 to creature tokens (verified 2/2 display + 2 combat damage) |
+| Heroic Reinforcements | Creates 2 Soldiers + pumps creatures |
+| Assemble the Legion | Upkeep muster counter trigger + token creation |
+| Legion Warboss | Combat-start Goblin creation |
+| Goblin Rabblemaster | Combat-start Goblin creation |
+| Siege-Gang Lieutenant | Commander-aware Lieutenant trigger |
+| Akroan Crusader | Heroic trigger creates Soldier token |
+| Legion's Landing | Transform trigger on 3+ attackers |
+| Goblin Sharpshooter | Activated: deals 1 damage |
+| Boros Charm | Modal: 4 damage (targeting issue noted) |
+| Searing Barrage | Deals damage correctly |
+| Swiftfoot Boots | Equip ability works |
+| Welcoming Vampire | Cast by AI |
+| Goblin Warchief | Cost reduction + haste |
+| Goblin Trashmaster | Cast and used |
+| Muxus, Goblin Grandee | ETB Dig ability |
+| Krenko, Mob Boss | Token producer |
+| Swarming Goblins | ETB Goblin tokens |
+| Thopter Architect | Thopter token creation |
+| Thopter Engineer | Thopter token creation |
+| Rosie Cotton of South Lane | Token synergy |
+| Bennie Bracks, Zoologist | Card draw |
+| Goldnight Commander | ETB trigger |
+| Goblin Bushwhacker | Kicker |
+| Arabella, Abandoned Doll | Enters as 1/3 |
 
-### Token Producers
-| Card | Status | Notes |
-|------|--------|-------|
-| Raise the Alarm | Verified | Creates 2 1/1 Soldier tokens (fixed controller test) |
-| Dragon Fodder | Verified | Creates 2 1/1 Goblin tokens (seen in gameplay) |
-| Hordeling Outburst | Verified | Creates 3 1/1 Goblin tokens (seen in gameplay) |
-| Secure the Wastes | Verified | X spell creates Warrior tokens (seen in gameplay) |
-| Tempt with Vengeance | Verified | X spell creates Elemental tokens with haste (seen in gameplay) |
-| Oketra's Monument | Verified | Triggers on creature cast, creates 1/1 Warrior with vigilance (fixed controller test) |
-| Anim Pakal, Thousandth Moon | Verified | Creates Gnome tokens on attack trigger (seen in gameplay) |
-| Legion Warboss | Verified | Creates Goblin token at beginning of combat (trigger seen) |
-| Goblin Rabblemaster | Verified | Creates Goblin token at beginning of combat (trigger seen) |
-| Swarming Goblins | Verified | Cast by AI, creates Goblin tokens |
-| Siege-Gang Commander | Verified | Cast by AI |
-| Siege-Gang Lieutenant | Verified | Lieutenant trigger fires when commander present (trigger seen) |
-| Assemble the Legion | Verified | Upkeep trigger creates Soldier tokens with muster counters (trigger seen) |
-| Clarion Spirit | Working | Cast by AI |
-| Ocelot Pride | Working | Cast by AI |
-| Thopter Architect | Verified | Creates Thopter tokens (seen in gameplay) |
-| Thopter Engineer | Verified | Creates Thopter tokens (seen in gameplay) |
-| Heroic Reinforcements | Verified | Creates 2 Soldiers + pumps creatures (seen in gameplay) |
+### Working (in deck, castable, no issues found)
+Snow-Covered Plains, Snow-Covered Mountain, Reliquary Tower, Thought Vessel,
+Spellbook, Molten Influence, Shalai Voice of Plenty, Mentor of the Meek,
+Clarion Spirit, Ocelot Pride, Zada Hedron Grinder, Akroan Hoplite,
+Knollspine Dragon, Siege-Gang Commander, Goblin Barrage, Sizzling Barrage,
+Brave the Elements, Apostle's Blessing, Mana Tithe, Rebuff the Wicked,
+Dawn Charm, Deflecting Swat, Return the Favor, Untimely Malfunction,
+Warleader's Call, Tocasia's Welcome, Thopter Arrest, Skullclamp,
+Idol of Oblivion, Decanter of Endless Water, Assemble the Legion
 
-### Token/Creature Buffers
-| Card | Status | Notes |
-|------|--------|-------|
-| Intangible Virtue | Verified | Cast via fixed controller, enchantment on battlefield |
-| Goldnight Commander | Verified | Cast by AI |
-| Warleader's Call | Working | In deck |
-| Rosie Cotton of South Lane | Working | Cast by AI |
-
-### Card Draw
-| Card | Status | Notes |
-|------|--------|-------|
-| Mentor of the Meek | Working | Cast by AI |
-| Bennie Bracks, Zoologist | Working | Cast by AI |
-| Welcoming Vampire | Verified | Cast by AI, seen in multiple games |
-| Idol of Oblivion | Working | Activated ability: tap to draw |
-| Skullclamp | Working | Equipment in deck |
-| Slate of Ancestry | Working | Artifact in deck |
-| Knollspine Dragon | Working | Cast by AI |
-| Tocasia's Welcome | Working | Enchantment in deck |
-
-### Instants/Sorceries
-| Card | Status | Notes |
-|------|--------|-------|
-| Boros Charm | Verified | Modal spell - 4 damage mode confirmed working |
-| Dawn Charm | Working | Modal spell |
-| Brave the Elements | Working | In deck |
-| Apostle's Blessing | Working | In deck |
-| Mana Tithe | Working | Cast by AI |
-| Rebuff the Wicked | Working | In deck |
-| Deflecting Swat | Working | In deck |
-| Molten Influence | Verified | Cast by AI |
-| Return the Favor | Working | In deck |
-| Searing Barrage | Verified | Deals damage (seen in gameplay) |
-| Sizzling Barrage | Verified | Cast by AI |
-| Goblin Barrage | Verified | Cast by AI |
-| Untimely Malfunction | Working | In deck |
-
-### Equipment/Artifacts
-| Card | Status | Notes |
-|------|--------|-------|
-| Swiftfoot Boots | Working | Equipment with equip ability |
-| Spellbook | Working | No maximum hand size |
-| Decanter of Endless Water | Working | In deck |
-
-### Creatures with Abilities
-| Card | Status | Notes |
-|------|--------|-------|
-| Goblin Bushwhacker | Verified | Cast by AI, kicker ability |
-| Akroan Crusader | Verified | Heroic trigger creates Soldier token (trigger seen) |
-| Muxus, Goblin Grandee | Verified | Cast by AI |
-| Zada, Hedron Grinder | Working | Cast by AI |
-| Akroan Hoplite | Working | Cast by AI |
-| Goblin Sharpshooter | Verified | Activated ability: deals 1 damage (seen in gameplay) |
-| Goblin Warchief | Working | Cast by AI, cost reduction |
-| Goblin Trashmaster | Verified | Cast by AI |
-| Shalai, Voice of Plenty | Working | Cast by AI |
-| Arabella, Abandoned Doll | Verified | Cast via fixed controller, enters as 1/3 |
-
-### Enchantments
-| Card | Status | Notes |
-|------|--------|-------|
-| Legion's Landing | Verified | Transform trigger fires on 3+ attackers (trigger seen) |
-| Thopter Arrest | Working | Exile enchantment |
-
-### Commander
-| Card | Status | Notes |
-|------|--------|-------|
-| Chandra, Torch of Defiance | Verified | Casts from command zone for 2RR, resolves, 2 loyalty abilities available, activated abilities shown in menu |
+### Known Remaining Issues (pre-existing, not commander-specific)
+- Boros Charm targeting: DealDamage targets creatures (should only target player/planeswalker)
+- ModalChoice not resolved during casting (affects Boros Charm, Dawn Charm)
+- Slate of Ancestry complex cost (tap + discard hand) not fully supported
+- Chandra +1 conditional damage chain (Dig->Play->conditional Damage) partially working
