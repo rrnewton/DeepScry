@@ -132,6 +132,7 @@ pub fn handle_key_event(
         }
         KeyInput::FocusActions => {
             state.focused_pane = FocusedPane::Actions;
+            update_card_id_from_action(state);
             EventResult::Handled
         }
         KeyInput::FocusStack => {
@@ -148,6 +149,10 @@ pub fn handle_key_event(
                 FocusedPane::OpponentBattlefield => FocusedPane::Actions,
                 FocusedPane::Actions => FocusedPane::Hand,
             };
+            // When tabbing to Actions, show the card for the highlighted action
+            if state.focused_pane == FocusedPane::Actions {
+                update_card_id_from_action(state);
+            }
             EventResult::Handled
         }
 
@@ -196,6 +201,7 @@ pub fn handle_key_event(
                             state.highlighted_choice = idx;
                         }
                     }
+                    update_card_id_from_action(state);
                     EventResult::Handled
                 } else {
                     // Single-digit mode: instant select (existing behavior)
@@ -280,6 +286,22 @@ pub fn handle_key_event(
     }
 }
 
+/// Update selected_card_id based on the currently highlighted action.
+///
+/// In all choice contexts, index 0 is a non-card option (pass/done/skip/no-target),
+/// and indices 1..N map to valid_choices[0..N-1]. When the focused pane is not
+/// Actions, this is a no-op.
+fn update_card_id_from_action(state: &mut FancyTuiState) {
+    if state.focused_pane != FocusedPane::Actions {
+        return;
+    }
+    if state.highlighted_choice > 0 {
+        if let Some(&card_id) = state.valid_choices.get(state.highlighted_choice - 1) {
+            state.selected_card_id = Some(card_id);
+        }
+    }
+}
+
 /// Handle Up arrow key navigation
 fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_choices: usize) -> EventResult {
     match state.focused_pane {
@@ -287,6 +309,7 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
             if state.highlighted_choice > 0 {
                 state.highlighted_choice -= 1;
             }
+            update_card_id_from_action(state);
             EventResult::Handled
         }
         FocusedPane::Hand => {
@@ -336,6 +359,7 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
             if state.highlighted_choice + 1 < num_choices {
                 state.highlighted_choice += 1;
             }
+            update_card_id_from_action(state);
             EventResult::Handled
         }
         FocusedPane::Hand => {
