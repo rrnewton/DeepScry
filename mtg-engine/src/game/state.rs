@@ -2679,6 +2679,46 @@ impl GameState {
                         zones.library.cards = previous_order;
                     }
                 }
+
+                crate::undo::GameAction::SetLoyaltyActivated {
+                    card_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.loyalty_activated_this_turn = old_value;
+                    }
+                }
+
+                crate::undo::GameAction::SetCommanderCastCount {
+                    player_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
+                        player.commander_cast_count = old_value;
+                    }
+                }
+
+                crate::undo::GameAction::SetCommanderDamage {
+                    player_id,
+                    from_player,
+                    old_damage,
+                    new_damage: _,
+                } => {
+                    if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
+                        if old_damage == 0 {
+                            // Entry was newly added - remove it
+                            player.commander_damage_taken.retain(|(pid, _)| *pid != from_player);
+                        } else if let Some(entry) = player
+                            .commander_damage_taken
+                            .iter_mut()
+                            .find(|(pid, _)| *pid == from_player)
+                        {
+                            entry.1 = old_damage;
+                        }
+                    }
+                }
             }
 
             // After undo, mark all mana caches as needing rebuild

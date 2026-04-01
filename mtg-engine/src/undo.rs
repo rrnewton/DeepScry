@@ -221,6 +221,35 @@ pub enum GameAction {
         new_value: u8,
     },
 
+    /// Set loyalty_activated_this_turn flag on a card (for planeswalker once-per-turn rule)
+    SetLoyaltyActivated {
+        card_id: CardId,
+        /// Previous value (for undo)
+        old_value: bool,
+        /// New value
+        new_value: bool,
+    },
+
+    /// Set commander_cast_count on a player (for commander tax tracking)
+    SetCommanderCastCount {
+        player_id: PlayerId,
+        /// Previous count (for undo)
+        old_value: u8,
+        /// New count
+        new_value: u8,
+    },
+
+    /// Record commander damage taken (for 21-damage loss condition tracking)
+    SetCommanderDamage {
+        player_id: PlayerId,
+        /// The opponent whose commander dealt damage
+        from_player: PlayerId,
+        /// Previous cumulative damage (for undo)
+        old_damage: u16,
+        /// New cumulative damage
+        new_damage: u16,
+    },
+
     /// Shuffle a player's library
     ///
     /// Stores the previous order of CardIds so it can be restored on undo.
@@ -383,6 +412,24 @@ impl fmt::Display for GameAction {
             GameAction::ShuffleLibrary { player, previous_order } => {
                 write!(f, "ShuffleLibrary(P{} {} cards)", player.as_u32(), previous_order.len())
             }
+            GameAction::SetLoyaltyActivated { card_id, new_value, .. } => {
+                write!(f, "SetLoyaltyActivated({} = {})", card_id.as_u32(), new_value)
+            }
+            GameAction::SetCommanderCastCount {
+                player_id, new_value, ..
+            } => write!(f, "CmdrCastCount(P{} = {})", player_id.as_u32(), new_value),
+            GameAction::SetCommanderDamage {
+                player_id,
+                from_player,
+                new_damage,
+                ..
+            } => write!(
+                f,
+                "CmdrDmg(P{} from P{} = {})",
+                player_id.as_u32(),
+                from_player.as_u32(),
+                new_damage
+            ),
         }
     }
 }
@@ -666,6 +713,63 @@ impl GameAction {
                     return Err(format!(
                         "Player {} zones not found for ShuffleLibrary undo",
                         player.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetLoyaltyActivated {
+                card_id,
+                old_value,
+                new_value: _,
+            } => {
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.loyalty_activated_this_turn = *old_value;
+                } else {
+                    return Err(format!(
+                        "Card {} not found for SetLoyaltyActivated undo",
+                        card_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetCommanderCastCount {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.commander_cast_count = *old_value;
+                } else {
+                    return Err(format!(
+                        "Player {} not found for SetCommanderCastCount undo",
+                        player_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetCommanderDamage {
+                player_id,
+                from_player,
+                old_damage,
+                new_damage: _,
+            } => {
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    if let Some(entry) = player
+                        .commander_damage_taken
+                        .iter_mut()
+                        .find(|(pid, _)| *pid == *from_player)
+                    {
+                        entry.1 = *old_damage;
+                    }
+                    // If old_damage was 0 and there's no entry, the entry was added during the
+                    // forward action - remove it on undo
+                    if *old_damage == 0 {
+                        player.commander_damage_taken.retain(|(pid, _)| *pid != *from_player);
+                    }
+                } else {
+                    return Err(format!(
+                        "Player {} not found for SetCommanderDamage undo",
+                        player_id.as_u32()
                     ));
                 }
             }

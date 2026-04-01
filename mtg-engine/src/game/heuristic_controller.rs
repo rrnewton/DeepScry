@@ -214,9 +214,9 @@ impl HeuristicController {
 
         // Tokens are worth less than actual cards
         // Java: if (!c.isToken()) { value += addValue(20, "non-token"); }
-        // TODO: Add is_token flag to Card struct
-        // For now, assume all cards are non-tokens
-        value += 20;
+        if !card.is_token {
+            value += 20;
+        }
 
         // Use effective P/T after all continuous effects (anthem, equipment, counters)
         // CRITICAL: get_effective_power should ALWAYS succeed for battlefield creatures.

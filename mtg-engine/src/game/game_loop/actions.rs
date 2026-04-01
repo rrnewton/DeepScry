@@ -797,7 +797,7 @@ impl<'a> GameLoop<'a> {
                     if can_cast_now {
                         // Calculate total cost = base mana cost + commander tax as generic mana
                         let mut total_cost = card.mana_cost;
-                        total_cost.generic += commander_tax;
+                        total_cost.generic = total_cost.generic.saturating_add(commander_tax);
 
                         // Check if we can afford it
                         let can_afford = self.mana_engine.can_pay_with_pool(&total_cost, &mana_pool);
@@ -950,37 +950,15 @@ impl<'a> GameLoop<'a> {
                     }
 
                     // Check loyalty cost: once-per-turn rule (MTG CR 606.3) and affordability
-                    if can_activate {
-                        match &ability.cost {
-                            crate::core::Cost::SubLoyalty { amount } => {
-                                // Can only activate one loyalty ability per turn per planeswalker
-                                if card.loyalty_activated_this_turn {
-                                    can_activate = false;
-                                } else {
-                                    let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
-                                    if loyalty < *amount {
-                                        can_activate = false;
-                                    }
-                                }
-                            }
-                            crate::core::Cost::AddLoyalty { .. } => {
-                                // Once-per-turn check for + abilities too
-                                if card.loyalty_activated_this_turn {
-                                    can_activate = false;
-                                }
-                            }
-                            crate::core::Cost::Tap
-                            | crate::core::Cost::Untap
-                            | crate::core::Cost::Mana(_)
-                            | crate::core::Cost::TapAndMana(_)
-                            | crate::core::Cost::Sacrifice { .. }
-                            | crate::core::Cost::SacrificePattern { .. }
-                            | crate::core::Cost::PayLife { .. }
-                            | crate::core::Cost::Discard { .. }
-                            | crate::core::Cost::DiscardHand
-                            | crate::core::Cost::Composite(_)
-                            | crate::core::Cost::Waterbend { .. } => {
-                                // These costs are checked elsewhere or always affordable
+                    // Uses contains_loyalty_cost() to handle loyalty costs inside Composite
+                    if can_activate && ability.cost.contains_loyalty_cost() {
+                        if card.loyalty_activated_this_turn {
+                            can_activate = false;
+                        } else if let Some(amount) = ability.cost.get_sub_loyalty_amount() {
+                            // Check affordability for SubLoyalty (works for top-level and Composite)
+                            let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
+                            if loyalty < amount {
+                                can_activate = false;
                             }
                         }
                     }

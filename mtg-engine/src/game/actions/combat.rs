@@ -700,7 +700,19 @@ impl GameState {
                     if card.is_commander {
                         let attacker_owner = card.owner;
                         if let Some(player) = self.players.iter_mut().find(|p| p.id == *target_player) {
+                            let old_damage = player.commander_damage_from(attacker_owner);
                             let lethal = player.record_commander_damage(attacker_owner, *damage as u16);
+                            let new_damage = player.commander_damage_from(attacker_owner);
+                            let prior_log_size = self.logger.log_count();
+                            self.undo_log.log(
+                                crate::undo::GameAction::SetCommanderDamage {
+                                    player_id: *target_player,
+                                    from_player: attacker_owner,
+                                    old_damage,
+                                    new_damage,
+                                },
+                                prior_log_size,
+                            );
                             if lethal {
                                 self.logger.normal(&format!(
                                     "{} has taken 21+ combat damage from {}'s commander - game loss!",

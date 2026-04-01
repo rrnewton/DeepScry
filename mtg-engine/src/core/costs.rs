@@ -373,6 +373,45 @@ impl Cost {
         }
     }
 
+    /// Check if this cost contains a loyalty cost (AddLoyalty or SubLoyalty),
+    /// recursing into Composite costs.
+    pub fn contains_loyalty_cost(&self) -> bool {
+        match self {
+            Cost::AddLoyalty { .. } | Cost::SubLoyalty { .. } => true,
+            Cost::Composite(costs) => costs.iter().any(|c| c.contains_loyalty_cost()),
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. } => false,
+        }
+    }
+
+    /// Get the SubLoyalty amount if this cost contains a SubLoyalty component,
+    /// recursing into Composite costs. Returns None for AddLoyalty or non-loyalty costs.
+    pub fn get_sub_loyalty_amount(&self) -> Option<u8> {
+        match self {
+            Cost::SubLoyalty { amount } => Some(*amount),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_sub_loyalty_amount()),
+            Cost::AddLoyalty { .. }
+            | Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. } => None,
+        }
+    }
+
     /// Get the sacrifice pattern if this is a SacrificePattern cost
     /// Returns (count, card_type) where card_type is the pattern string
     pub fn get_sacrifice_pattern(&self) -> Option<(u8, &str)> {

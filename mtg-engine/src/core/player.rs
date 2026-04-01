@@ -120,7 +120,7 @@ impl Player {
     /// Returns 2 * commander_cast_count (MTG CR 903.8).
     #[inline]
     pub fn commander_tax(&self) -> u8 {
-        self.commander_cast_count * 2
+        self.commander_cast_count.saturating_mul(2)
     }
 
     /// Record that the commander was cast from the command zone.
@@ -136,7 +136,7 @@ impl Player {
             .iter_mut()
             .find(|(pid, _)| *pid == from_player)
         {
-            entry.1 += damage;
+            entry.1 = entry.1.saturating_add(damage);
             entry.1 >= 21
         } else {
             self.commander_damage_taken.push((from_player, damage));
