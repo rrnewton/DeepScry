@@ -3012,6 +3012,9 @@ impl FancyTuiRenderer {
 
         // Render graveyard overlay in bottom-right corner
         self.render_graveyard_overlay(f, inner_area, view, owner_id);
+
+        // Render command zone overlay in bottom-left corner (Commander format)
+        self.render_command_zone_overlay(f, inner_area, view, owner_id);
     }
 
     /// Compute the bounding box for graveyard overlay (without rendering)
@@ -3117,6 +3120,61 @@ impl FancyTuiRenderer {
                 area: card_area,
                 layout_area_px: None,
             });
+        }
+    }
+
+    /// Render command zone as a simple text overlay in the bottom-left corner of the battlefield
+    /// Mirrors the graveyard overlay style but positioned on the opposite side
+    fn render_command_zone_overlay(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId) {
+        let command_zone = view.player_command_zone(owner_id);
+        if command_zone.is_empty() {
+            return;
+        }
+
+        let card_entries: Vec<(CardId, String)> = command_zone
+            .iter()
+            .map(|&card_id| {
+                (
+                    card_id,
+                    view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string()),
+                )
+            })
+            .collect();
+
+        let header = "Command:";
+        let max_name_len = card_entries.iter().map(|(_, n)| n.len()).max().unwrap_or(0);
+        let content_width = max_name_len.max(header.len()) as u16;
+        let box_height = (1 + card_entries.len()) as u16;
+
+        if area.width < content_width || area.height < box_height {
+            return;
+        }
+
+        // Position in bottom-left corner (opposite of graveyard)
+        let x_start = area.x;
+        let y_start = area.y + area.height - box_height;
+
+        let style = Style::default().fg(Color::LightMagenta);
+
+        let header_area = Rect {
+            x: x_start,
+            y: y_start,
+            width: content_width,
+            height: 1,
+        };
+        f.render_widget(
+            ratatui::widgets::Paragraph::new(header).style(style.add_modifier(ratatui::style::Modifier::BOLD)),
+            header_area,
+        );
+
+        for (i, (_card_id, name)) in card_entries.iter().enumerate() {
+            let card_area = Rect {
+                x: x_start,
+                y: y_start + 1 + i as u16,
+                width: content_width,
+                height: 1,
+            };
+            f.render_widget(ratatui::widgets::Paragraph::new(name.as_str()).style(style), card_area);
         }
     }
 

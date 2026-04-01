@@ -559,6 +559,14 @@ impl<'a> GameStateView<'a> {
             .unwrap_or(&[])
     }
 
+    /// Get cards in a player's command zone
+    pub fn player_command_zone(&self, player_id: PlayerId) -> &[CardId] {
+        self.game
+            .get_player_zones(player_id)
+            .map(|zones| zones.command.cards.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Get number of cards in a player's graveyard
     pub fn player_graveyard_size(&self, player_id: PlayerId) -> usize {
         self.game
