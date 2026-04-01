@@ -3015,7 +3015,11 @@ impl HeuristicController {
         }
 
         // Planeswalkers are always worth casting (they provide ongoing value via loyalty abilities)
-        if spell.types.iter().any(|t| matches!(t, crate::core::CardType::Planeswalker)) {
+        if spell
+            .types
+            .iter()
+            .any(|t| matches!(t, crate::core::CardType::Planeswalker))
+        {
             return true;
         }
 

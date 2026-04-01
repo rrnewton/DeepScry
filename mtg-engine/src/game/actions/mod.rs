@@ -6291,7 +6291,9 @@ impl GameState {
                 if current < *amount {
                     return Err(MtgError::InvalidAction(format!(
                         "Not enough loyalty counters ({} < {}) on {}",
-                        current, amount, self.cards.get(card_id)?.name
+                        current,
+                        amount,
+                        self.cards.get(card_id)?.name
                     )));
                 }
                 let card = self.cards.get_mut(card_id)?;
