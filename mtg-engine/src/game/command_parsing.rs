@@ -124,7 +124,10 @@ pub fn parse_spell_ability_choice(
                         }
                     }
                 }
-                _ => {}
+                SpellAbility::PlayLand { .. }
+                | SpellAbility::ActivateAbility { .. }
+                | SpellAbility::CastFromExile { .. }
+                | SpellAbility::Cycle { .. } => {}
             }
         }
     } else if let Some(card_pattern) = cmd.strip_prefix("equip ") {
