@@ -609,6 +609,24 @@ pub struct Card {
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
 
+    /// Is this card a commander? (Commander format only)
+    /// Set during game initialization for cards designated as commander.
+    /// Used for commander tax, commander damage tracking, and zone-change replacement.
+    #[serde(default)]
+    pub is_commander: bool,
+
+    /// Is this a token? (created by effects, not in a deck)
+    /// Set when tokens are created via Effect::CreateToken.
+    /// Used by continuous effects (e.g., Intangible Virtue: "Creature tokens you control get +1/+1").
+    #[serde(default)]
+    pub is_token: bool,
+
+    /// Has a loyalty ability been activated on this permanent this turn?
+    /// MTG CR 606.3: Only one loyalty ability per planeswalker per turn.
+    /// Reset at the start of each turn.
+    #[serde(default)]
+    pub loyalty_activated_this_turn: bool,
+
     /// Regeneration shields active on this permanent (cleared at end of turn)
     /// Each successful AB$ Regenerate activation adds one shield.
     /// When the creature would be destroyed, a shield is consumed instead:
@@ -673,6 +691,9 @@ impl Card {
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,
+            is_commander: false,
+            is_token: false,
+            loyalty_activated_this_turn: false,
             regeneration_shields: 0,
             exhausted_abilities: SmallVec::new(),
             definition,

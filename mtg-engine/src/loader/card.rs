@@ -105,6 +105,7 @@ impl CardLoader {
         let mut etb_choose_color = false;
         let mut etb_exclude_colors = Vec::new();
         let mut is_legendary = false;
+        let mut loyalty: Option<u8> = None;
 
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
@@ -156,6 +157,9 @@ impl CardLoader {
                                 value
                             )));
                         }
+                    }
+                    "Loyalty" => {
+                        loyalty = value.trim().parse().ok();
                     }
                     "Oracle" => oracle = value.replace("\\n", "\n"),
                     // Keyword lines (K:)
@@ -275,6 +279,7 @@ impl CardLoader {
             etb_exclude_colors,
             script_name: None, // Set by token loader
             is_legendary,
+            loyalty,
             cache,
         })
     }
@@ -323,6 +328,9 @@ pub struct CardDefinition {
     /// Derived from "Legendary" in Types line (e.g., "Types:Legendary Creature Human Noble")
     /// Used for legendary rule (MTG CR 704.5j)
     pub is_legendary: bool,
+    /// Starting loyalty for planeswalkers (from Loyalty: field in card script)
+    /// Applied as loyalty counters when the planeswalker enters the battlefield.
+    pub loyalty: Option<u8>,
     /// Precomputed cache for static card properties (computed at load time)
     /// Avoids repeated string operations during gameplay
     pub cache: CardCache,
@@ -348,6 +356,7 @@ impl Default for CardDefinition {
             etb_exclude_colors: Vec::new(),
             script_name: None,
             is_legendary: false,
+            loyalty: None,
             cache: CardCache::default(),
         }
     }
@@ -382,17 +391,28 @@ impl CardDefinition {
         let mut token_scripts = std::collections::HashSet::new();
 
         for ability in &self.raw_abilities {
-            // Look for SVar lines with token-creating effects
             if ability.starts_with("SVar:") {
                 // Parse the SVar body for TokenScript$ parameter
                 // Format: "SVar:NAME:DB$ Token | TokenScript$ script_name | ..."
                 if let Some((_prefix, body)) = ability.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
-                    // Use tokenized parsing to check for Token API type
                     if let Some(params) = AbilityParams::parse_svar_body(body) {
                         if params.api_type == ApiType::Token {
                             if let Some(script) = params.get("TokenScript") {
                                 token_scripts.insert(script.to_string());
                             }
+                        }
+                    }
+                }
+            } else if ability.starts_with("A:") || ability.starts_with("T:") {
+                // Also scan spell ability lines (A:) and trigger lines (T:) for TokenScript$
+                // Format: "A:SP$ Token | TokenScript$ w_1_1_soldier | ..."
+                // Format: "T:Mode$ SpellCast | Execute$ TrigToken | ..."
+                // The A: line may contain TokenScript$ directly (e.g., Raise the Alarm)
+                let body = &ability[2..];
+                if let Some(params) = AbilityParams::parse_svar_body(body) {
+                    if params.api_type == ApiType::Token {
+                        if let Some(script) = params.get("TokenScript") {
+                            token_scripts.insert(script.to_string());
                         }
                     }
                 }
@@ -2517,7 +2537,14 @@ impl CardDefinition {
             use super::effect_converter::params_to_effect_with_svars;
 
             // Special handling for mana abilities (need is_mana_ability = true)
-            let is_mana_ability = matches!(params.api_type, ApiType::Mana);
+            // BUT: Planeswalker loyalty abilities that produce mana (e.g., Chandra's +1: Add {R}{R})
+            // are NOT regular mana abilities for the mana engine - they have loyalty costs
+            // and can only be activated once per turn at sorcery speed.
+            let is_planeswalker_ability = params
+                .get("Planeswalker")
+                .map(|s| s.eq_ignore_ascii_case("True"))
+                .unwrap_or(false);
+            let is_mana_ability = matches!(params.api_type, ApiType::Mana) && !is_planeswalker_ability;
 
             // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
             let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {

@@ -1,6 +1,6 @@
 //! Player representation
 
-use crate::core::{GameEntity, ManaPool, PlayerId, PlayerName};
+use crate::core::{CardId, GameEntity, ManaPool, PlayerId, PlayerName};
 use serde::{Deserialize, Serialize};
 
 /// Represents a player in the game
@@ -39,6 +39,24 @@ pub struct Player {
 
     /// Cards drawn this turn (for "second card drawn" triggers like T:Mode$ Drawn)
     pub cards_drawn_this_turn: u8,
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // COMMANDER FORMAT FIELDS
+    // ═══════════════════════════════════════════════════════════════════════
+    /// CardId of this player's commander (None if not a Commander game)
+    #[serde(default)]
+    pub commander_id: Option<CardId>,
+
+    /// Number of times the commander has been cast from the command zone.
+    /// Each cast adds {2} to the commander tax (MTG CR 903.8).
+    #[serde(default)]
+    pub commander_cast_count: u8,
+
+    /// Combat damage dealt to this player by each opponent's commander.
+    /// If any single commander deals 21+ combat damage, this player loses (MTG CR 903.10a).
+    /// Maps opponent PlayerId -> cumulative combat damage from their commander.
+    #[serde(default)]
+    pub commander_damage_taken: Vec<(PlayerId, u16)>,
 }
 
 impl Player {
@@ -54,6 +72,9 @@ impl Player {
             max_lands_per_turn: 1,
             max_hand_size: 7, // Standard MTG hand size limit
             cards_drawn_this_turn: 0,
+            commander_id: None,
+            commander_cast_count: 0,
+            commander_damage_taken: Vec::new(),
         }
     }
 
@@ -89,6 +110,47 @@ impl Player {
     /// Reset cards drawn counter at the start of each turn
     pub fn reset_cards_drawn(&mut self) {
         self.cards_drawn_this_turn = 0;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // COMMANDER METHODS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Get the additional mana cost for casting the commander (commander tax).
+    /// Returns 2 * commander_cast_count (MTG CR 903.8).
+    #[inline]
+    pub fn commander_tax(&self) -> u8 {
+        self.commander_cast_count.saturating_mul(2)
+    }
+
+    /// Record that the commander was cast from the command zone.
+    pub fn record_commander_cast(&mut self) {
+        self.commander_cast_count += 1;
+    }
+
+    /// Record combat damage from an opponent's commander.
+    /// Returns true if this player has now taken 21+ damage from that commander (loss condition).
+    pub fn record_commander_damage(&mut self, from_player: PlayerId, damage: u16) -> bool {
+        if let Some(entry) = self
+            .commander_damage_taken
+            .iter_mut()
+            .find(|(pid, _)| *pid == from_player)
+        {
+            entry.1 = entry.1.saturating_add(damage);
+            entry.1 >= 21
+        } else {
+            self.commander_damage_taken.push((from_player, damage));
+            damage >= 21
+        }
+    }
+
+    /// Get total commander damage taken from a specific opponent.
+    pub fn commander_damage_from(&self, from_player: PlayerId) -> u16 {
+        self.commander_damage_taken
+            .iter()
+            .find(|(pid, _)| *pid == from_player)
+            .map(|(_, dmg)| *dmg)
+            .unwrap_or(0)
     }
 
     pub fn empty_mana_pool(&mut self) {
@@ -306,5 +368,51 @@ mod tests {
 
         player.reset_lands_played();
         assert!(player.can_play_land());
+    }
+
+    #[test]
+    fn test_commander_tax() {
+        let id = PlayerId::new(1);
+        let mut player = Player::new(id, "Commander Player", 40);
+
+        // Initially no tax
+        assert_eq!(player.commander_tax(), 0);
+        assert_eq!(player.commander_cast_count, 0);
+
+        // First cast from command zone
+        player.record_commander_cast();
+        assert_eq!(player.commander_cast_count, 1);
+        assert_eq!(player.commander_tax(), 2); // {2} more
+
+        // Second cast
+        player.record_commander_cast();
+        assert_eq!(player.commander_cast_count, 2);
+        assert_eq!(player.commander_tax(), 4); // {4} more
+
+        // Third cast
+        player.record_commander_cast();
+        assert_eq!(player.commander_tax(), 6); // {6} more
+    }
+
+    #[test]
+    fn test_commander_damage() {
+        let id = PlayerId::new(1);
+        let opponent_id = PlayerId::new(2);
+        let mut player = Player::new(id, "Defender", 40);
+
+        // No damage initially
+        assert_eq!(player.commander_damage_from(opponent_id), 0);
+
+        // Take 10 commander damage
+        assert!(!player.record_commander_damage(opponent_id, 10));
+        assert_eq!(player.commander_damage_from(opponent_id), 10);
+
+        // Take 10 more (total 20, not lethal yet)
+        assert!(!player.record_commander_damage(opponent_id, 10));
+        assert_eq!(player.commander_damage_from(opponent_id), 20);
+
+        // Take 1 more (total 21, lethal!)
+        assert!(player.record_commander_damage(opponent_id, 1));
+        assert_eq!(player.commander_damage_from(opponent_id), 21);
     }
 }

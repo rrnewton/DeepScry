@@ -413,6 +413,7 @@ impl DeckBuilderState {
         DeckList {
             main_deck,
             sideboard: Vec::new(),
+            commanders: Vec::new(),
         }
     }
 

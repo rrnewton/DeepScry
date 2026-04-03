@@ -1344,6 +1344,14 @@ impl<'a> GameLoop<'a> {
             }
         }
 
+        // Reset planeswalker loyalty activation flag (MTG CR 606.3)
+        // Each planeswalker can have one loyalty ability activated per turn.
+        for &card_id in &self.game.battlefield.cards {
+            if let Ok(card) = self.game.cards.get_mut(card_id) {
+                card.loyalty_activated_this_turn = false;
+            }
+        }
+
         Ok(())
     }
 

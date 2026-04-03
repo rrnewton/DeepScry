@@ -200,6 +200,17 @@ impl<'a> GameLoop<'a> {
                         enters_tapped: *enters_tapped,
                         shuffle: *shuffle,
                     },
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                        for_each_player,
+                    } if *controller == crate::core::PlayerId::new(0) => Effect::CreateToken {
+                        controller: card_owner,
+                        token_script: token_script.clone(),
+                        amount: *amount,
+                        for_each_player: *for_each_player,
+                    },
                     _ => effect.clone(),
                 };
 
@@ -224,6 +235,22 @@ impl<'a> GameLoop<'a> {
                     );
                     // Use gamelog for official game action
                     self.game.logger.gamelog(&message);
+                }
+            }
+
+            // Set starting loyalty counters for planeswalkers (MTG CR 306.5b)
+            if let Some(card) = self.game.cards.try_get(spell_id) {
+                if let Some(loyalty) = card.definition.loyalty {
+                    let card_name_str = card.name.to_string();
+                    if let Ok(card_mut) = self.game.cards.get_mut(spell_id) {
+                        card_mut.add_counter(crate::core::CounterType::Loyalty, loyalty);
+                    }
+                    if should_log {
+                        self.game.logger.gamelog(&format!(
+                            "{} ({}) enters with {} loyalty",
+                            card_name_str, spell_id, loyalty
+                        ));
+                    }
                 }
             }
         }
@@ -1905,7 +1932,7 @@ impl<'a> GameLoop<'a> {
                                 effect_id,
                             } => {
                                 // Cast from exile using alternative cost (Airbend, Suspend, etc.)
-                                // Similar to CastSpell but card comes from exile instead of hand
+                                // Uses the generalized 8-step casting process from exile zone.
 
                                 let card_name = self
                                     .game
@@ -1924,23 +1951,115 @@ impl<'a> GameLoop<'a> {
                                     self.game.logger.gamelog(&message);
                                 }
 
-                                // Move card from exile to stack
-                                // First, find which player's exile zone has this card
-                                let owner = self
-                                    .game
-                                    .cards
-                                    .get(card_id)
-                                    .map(|c| c.owner)
-                                    .unwrap_or(current_priority);
+                                // Mode selection for modal spells cast from exile (Charm spells)
+                                // MTG Rule 601.2b: Modal choice happens BEFORE targeting/payment
+                                if let Ok(Some(crate::core::Effect::ModalChoice {
+                                    modes,
+                                    num_to_choose,
+                                    min_to_choose,
+                                    can_repeat_modes,
+                                })) = self.game.get_modal_choice_info(card_id)
+                                {
+                                    let valid_modes = self
+                                        .game
+                                        .get_valid_modes_for_spell(card_id, current_priority)
+                                        .unwrap_or_default();
+                                    let valid_mode_indices: Vec<usize> = valid_modes
+                                        .iter()
+                                        .filter(|(_, has_targets)| *has_targets)
+                                        .map(|(idx, _)| *idx)
+                                        .collect();
 
-                                if let Err(e) = self.game.move_card(
+                                    if !valid_mode_indices.is_empty() {
+                                        let mode_descriptions: Vec<String> = valid_mode_indices
+                                            .iter()
+                                            .filter_map(|&idx| modes.get(idx).map(|m| m.description.clone()))
+                                            .collect();
+
+                                        let prior_log_size = self.game.logger.log_count();
+                                        let choice = self.choose_modes_with_hook(
+                                            controller,
+                                            current_priority,
+                                            card_id,
+                                            &mode_descriptions,
+                                            num_to_choose as usize,
+                                            min_to_choose as usize,
+                                            can_repeat_modes,
+                                        );
+                                        let selected_modes =
+                                            handle_choice_result_break!(choice, self.game, current_priority);
+
+                                        let original_indices: Vec<usize> = selected_modes
+                                            .iter()
+                                            .filter_map(|&idx| valid_mode_indices.get(idx).copied())
+                                            .collect();
+
+                                        let replay_choice = crate::game::ReplayChoice::Modes(
+                                            original_indices.iter().copied().collect(),
+                                        );
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                        if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
+                                            log::warn!(target: "priority", "Failed to apply modes: {}", e);
+                                        }
+
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            for &mode_idx in &original_indices {
+                                                if let Some(mode) = modes.get(mode_idx) {
+                                                    self.game.logger.gamelog(&format!(
+                                                        "{} chooses mode: {}",
+                                                        self.get_player_name(current_priority),
+                                                        mode.description
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Target selection (same as CastSpell path)
+                                let valid_targets = self
+                                    .game
+                                    .get_valid_targets_for_spell(card_id)
+                                    .unwrap_or_else(|_| SmallVec::new());
+
+                                let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
+                                    SmallVec::new()
+                                } else if valid_targets.len() == 1 {
+                                    smallvec::smallvec![valid_targets[0]]
+                                } else {
+                                    let prior_log_size = self.game.logger.log_count();
+                                    let choice = self.choose_targets_with_hook(
+                                        controller,
+                                        current_priority,
+                                        card_id,
+                                        &valid_targets,
+                                    );
+                                    let chosen_targets =
+                                        handle_choice_result_break!(choice, self.game, current_priority);
+                                    let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
+                                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+                                    chosen_targets.into_iter().collect()
+                                };
+
+                                let targets_for_callback = chosen_targets_vec.clone();
+                                let targeting_callback =
+                                    move |_game: &GameState, _spell_id: CardId| targets_for_callback;
+
+                                // Cast using generalized 8-step process from exile with alternative cost
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
                                     card_id,
+                                    targeting_callback,
+                                    &self.mana_engine,
                                     crate::zones::Zone::Exile,
-                                    crate::zones::Zone::Stack,
-                                    owner,
+                                    Some(alternative_cost),
                                 ) {
                                     if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                        self.game.logger.normal(&format!("Error moving from exile: {e}"));
+                                        let message = format!("Error casting from exile: {e}");
+                                        self.game.logger.normal(&message);
                                     }
                                     consecutive_passes += 1;
                                     self.game.turn.consecutive_passes = consecutive_passes;
@@ -1953,36 +2072,130 @@ impl<'a> GameLoop<'a> {
                                     continue;
                                 }
 
-                                // Pay the alternative cost (not the card's mana cost)
-                                self.mana_engine.update_mut(self.game, current_priority);
-                                use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
-
-                                let mana_sources = self.mana_engine.all_sources();
-                                // Reuse sources_to_tap_buffer to avoid allocation
-                                let resolver = GreedyManaResolver::new();
-                                self.sources_to_tap_buffer.clear();
-                                resolver.compute_tap_order(
-                                    &alternative_cost,
-                                    mana_sources,
-                                    &mut self.sources_to_tap_buffer,
-                                );
-
-                                let mut remaining_hint = alternative_cost;
-                                for &source_id in &self.sources_to_tap_buffer {
-                                    if let Err(e) =
-                                        self.game
-                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
-                                    {
-                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                            self.game.logger.normal(&format!("Failed to tap: {e}"));
-                                        }
-                                    }
-                                    // Deduct from remaining hint (simplified - assume 1 generic each)
-                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                // Store targets for resolution
+                                if !chosen_targets_vec.is_empty() {
+                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
                                 }
 
                                 // Remove the persistent effect that granted this cast permission
                                 self.game.persistent_effects.remove(effect_id);
+
+                                // Spell is now on the stack - will resolve when both players pass
+                            }
+
+                            crate::core::SpellAbility::CastFromCommand { card_id, total_cost } => {
+                                // Cast commander from command zone (MTG CR 903.8)
+                                // Uses the generalized 8-step casting process from command zone.
+
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let player_idx = self
+                                        .game
+                                        .players
+                                        .iter()
+                                        .position(|p| p.id == current_priority)
+                                        .unwrap_or(0);
+                                    let tax = self.game.players[player_idx].commander_tax();
+                                    let message = if tax > 0 {
+                                        format!(
+                                            "{} casts {} from command zone for {} (includes {{{}}} commander tax)",
+                                            self.get_player_name(current_priority),
+                                            card_name,
+                                            total_cost,
+                                            tax
+                                        )
+                                    } else {
+                                        format!(
+                                            "{} casts {} from command zone for {}",
+                                            self.get_player_name(current_priority),
+                                            card_name,
+                                            total_cost
+                                        )
+                                    };
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                // Target selection (same as CastSpell path)
+                                let valid_targets = self
+                                    .game
+                                    .get_valid_targets_for_spell(card_id)
+                                    .unwrap_or_else(|_| SmallVec::new());
+
+                                let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
+                                    SmallVec::new()
+                                } else if valid_targets.len() == 1 {
+                                    smallvec::smallvec![valid_targets[0]]
+                                } else {
+                                    let prior_log_size = self.game.logger.log_count();
+                                    let choice = self.choose_targets_with_hook(
+                                        controller,
+                                        current_priority,
+                                        card_id,
+                                        &valid_targets,
+                                    );
+                                    let chosen_targets =
+                                        handle_choice_result_break!(choice, self.game, current_priority);
+                                    let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
+                                    self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+                                    chosen_targets.into_iter().collect()
+                                };
+
+                                let targets_for_callback = chosen_targets_vec.clone();
+                                let targeting_callback =
+                                    move |_game: &GameState, _spell_id: CardId| targets_for_callback;
+
+                                // Cast using generalized 8-step process from command zone
+                                // total_cost already includes commander tax (computed at ability generation time)
+                                self.mana_engine.update_mut(self.game, current_priority);
+
+                                if let Err(e) = self.game.cast_spell_8_step_from(
+                                    current_priority,
+                                    card_id,
+                                    targeting_callback,
+                                    &self.mana_engine,
+                                    crate::zones::Zone::Command,
+                                    Some(total_cost),
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        let message = format!("Error casting from command zone: {e}");
+                                        self.game.logger.normal(&message);
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Store targets for resolution
+                                if !chosen_targets_vec.is_empty() {
+                                    self.game.spell_targets.push((card_id, chosen_targets_vec));
+                                }
+
+                                // Record commander cast for commander tax tracking
+                                if let Some(player) = self.game.players.iter_mut().find(|p| p.id == current_priority) {
+                                    let old_count = player.commander_cast_count;
+                                    player.record_commander_cast();
+                                    let prior_log_size = self.game.logger.log_count();
+                                    self.game.undo_log.log(
+                                        crate::undo::GameAction::SetCommanderCastCount {
+                                            player_id: current_priority,
+                                            old_value: old_count,
+                                            new_value: player.commander_cast_count,
+                                        },
+                                        prior_log_size,
+                                    );
+                                }
 
                                 // Spell is now on the stack - will resolve when both players pass
                             }
@@ -2508,6 +2721,17 @@ impl<'a> GameLoop<'a> {
                         count: *count,
                         remember_discarded: *remember_discarded,
                     },
+                    Effect::CreateToken {
+                        controller,
+                        token_script,
+                        amount,
+                        for_each_player,
+                    } if *controller == crate::core::PlayerId::new(0) => Effect::CreateToken {
+                        controller: card_owner,
+                        token_script: token_script.clone(),
+                        amount: *amount,
+                        for_each_player: *for_each_player,
+                    },
                     _ => effect.clone(),
                 };
                 self.log_effect_execution(&card_name, spell_id, &effect_to_log, card_owner);
@@ -2528,6 +2752,22 @@ impl<'a> GameLoop<'a> {
                         card_name, spell_id, power, toughness
                     );
                     self.game.logger.gamelog(&message);
+                }
+            }
+
+            // Set starting loyalty counters for planeswalkers (MTG CR 306.5b)
+            if let Some(card) = self.game.cards.try_get(spell_id) {
+                if let Some(loyalty) = card.definition.loyalty {
+                    let card_name_str = card.name.to_string();
+                    if let Ok(card_mut) = self.game.cards.get_mut(spell_id) {
+                        card_mut.add_counter(crate::core::CounterType::Loyalty, loyalty);
+                    }
+                    if should_log {
+                        self.game.logger.gamelog(&format!(
+                            "{} ({}) enters with {} loyalty",
+                            card_name_str, spell_id, loyalty
+                        ));
+                    }
                 }
             }
         }

@@ -367,13 +367,14 @@ impl GameState {
             }
             AffectedSelector::AllLands => creature.is_land(),
             AffectedSelector::PermanentsYouControl => creature.controller == source.controller,
-            // TODO(mtg-147): Implement TokenCreaturesYouControl when is_token field is added to Card
-            AffectedSelector::TokenCreaturesYouControl => false, // Not yet implemented - need is_token field
-            // TODO(mtg-147): Implement TokenCreatureTypeYouControl when is_token field is added
+            AffectedSelector::TokenCreaturesYouControl => {
+                creature.is_token && creature.is_creature() && creature.controller == source.controller
+            }
             AffectedSelector::TokenCreatureTypeYouControl { subtype } => {
-                // When is_token is added: creature.is_token && creature.controller == source.controller && creature.subtypes.contains(subtype)
-                let _ = subtype; // Suppress unused warning
-                false // Not yet implemented
+                creature.is_token
+                    && creature.is_creature()
+                    && creature.controller == source.controller
+                    && creature.subtypes.iter().any(|st| st == subtype)
             }
             AffectedSelector::AttackingCreaturesYouControl => {
                 creature.controller == source.controller && self.combat.is_attacking(creature_id)
@@ -1156,17 +1157,26 @@ impl GameState {
                                     toughness_bonus += toughness;
                                 }
                             }
-                            // Token creatures you control
-                            // TODO(mtg-147): Implement when is_token field is added to Card
                             AffectedSelector::TokenCreaturesYouControl => {
-                                // Would need is_token field on Card struct
-                                // For now, this selector is parsed but not evaluated
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_token
+                                    && creature.is_creature()
+                                    && creature.controller == source.controller
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
-                            // Token creatures of a specific type you control
-                            // TODO(mtg-147): Implement when is_token field is added to Card
-                            AffectedSelector::TokenCreatureTypeYouControl { .. } => {
-                                // Would need: creature.is_token && creature.controller == source.controller && creature.subtypes.contains(subtype)
-                                // For now, this selector is parsed but not evaluated
+                            AffectedSelector::TokenCreatureTypeYouControl { subtype } => {
+                                let creature = self.cards.get(creature_id)?;
+                                if creature.is_token
+                                    && creature.is_creature()
+                                    && creature.controller == source.controller
+                                    && creature.subtypes.iter().any(|st| st == subtype)
+                                {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             // Attacking creatures you control
                             AffectedSelector::AttackingCreaturesYouControl => {

@@ -753,6 +753,65 @@ impl<'a> GameLoop<'a> {
         }
     }
 
+    /// Push castable commander from command zone to abilities_buffer
+    ///
+    /// In Commander format, the commander can be cast from the command zone
+    /// by paying its mana cost plus commander tax ({2} per previous cast).
+    /// MTG CR 903.8.
+    fn push_castable_from_command(&mut self, player_id: PlayerId) {
+        use crate::core::SpellAbility;
+
+        // Update the mana engine for this player
+        self.mana_engine.update_mut(self.game, player_id);
+
+        let mana_pool = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.mana_pool)
+            .unwrap_or_default();
+
+        let is_active_player = self.game.turn.active_player == player_id;
+        let is_sorcery_speed = self.game.turn.current_step.is_sorcery_speed();
+        let stack_is_empty = self.game.stack.is_empty();
+
+        // Get commander tax from the player
+        let commander_tax = self
+            .game
+            .try_get_player(player_id)
+            .map(|p| p.commander_tax())
+            .unwrap_or(0);
+
+        if let Some(zones) = self.game.get_player_zones(player_id) {
+            for &card_id in &zones.command.cards {
+                if let Some(card) = self.game.cards.try_get(card_id) {
+                    // Check timing restrictions
+                    // Commander follows normal casting timing rules
+                    let has_flash = card.has_keyword(crate::core::Keyword::Flash);
+                    let can_cast_now = if card.is_instant() || has_flash {
+                        true
+                    } else {
+                        // Sorcery-speed casting rules
+                        is_sorcery_speed && is_active_player && stack_is_empty
+                    };
+
+                    if can_cast_now {
+                        // Calculate total cost = base mana cost + commander tax as generic mana
+                        let mut total_cost = card.mana_cost;
+                        total_cost.generic = total_cost.generic.saturating_add(commander_tax);
+
+                        // Check if we can afford it
+                        let can_afford = self.mana_engine.can_pay_with_pool(&total_cost, &mana_pool);
+
+                        if can_afford {
+                            self.abilities_buffer
+                                .push(SpellAbility::CastFromCommand { card_id, total_cost });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Push activatable abilities directly to abilities_buffer
     ///
     /// Zero allocation - pushes SpellAbility::ActivateAbility directly to the buffer
@@ -885,6 +944,20 @@ impl<'a> GameLoop<'a> {
                                 .game
                                 .can_pay_sacrifice_pattern(sac_pattern, sac_count, card_id, player_id)
                             {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    // Check loyalty cost: once-per-turn rule (MTG CR 606.3) and affordability
+                    // Uses contains_loyalty_cost() to handle loyalty costs inside Composite
+                    if can_activate && ability.cost.contains_loyalty_cost() {
+                        if card.loyalty_activated_this_turn {
+                            can_activate = false;
+                        } else if let Some(amount) = ability.cost.get_sub_loyalty_amount() {
+                            // Check affordability for SubLoyalty (works for top-level and Composite)
+                            let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
+                            if loyalty < amount {
                                 can_activate = false;
                             }
                         }
@@ -1077,6 +1150,11 @@ impl<'a> GameLoop<'a> {
 
         // Add castable spells from exile (Airbend, Suspend, etc.)
         self.push_castable_from_exile(player_id);
+
+        // Add castable commander from command zone (Commander format)
+        if self.game.is_commander_game {
+            self.push_castable_from_command(player_id);
+        }
 
         // Add activated abilities (pushes directly to abilities_buffer)
         self.push_activatable_abilities(player_id);

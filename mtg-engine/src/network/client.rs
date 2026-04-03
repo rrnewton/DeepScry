@@ -2183,6 +2183,7 @@ mod tests {
                 card_name: "Pyroclasm".to_string(),
                 count: 2,
             }],
+            commanders: Vec::new(),
         };
 
         let submission = deck_to_submission(&deck);

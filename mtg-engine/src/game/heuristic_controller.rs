@@ -214,9 +214,9 @@ impl HeuristicController {
 
         // Tokens are worth less than actual cards
         // Java: if (!c.isToken()) { value += addValue(20, "non-token"); }
-        // TODO: Add is_token flag to Card struct
-        // For now, assume all cards are non-tokens
-        value += 20;
+        if !card.is_token {
+            value += 20;
+        }
 
         // Use effective P/T after all continuous effects (anthem, equipment, counters)
         // CRITICAL: get_effective_power should ALWAYS succeed for battlefield creatures.
@@ -958,7 +958,7 @@ impl HeuristicController {
         // Reference: PumpAi.checkPhaseRestrictions() lines 98-103
         // Instant-speed pumps should NOT be cast outside of combat (with exceptions)
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(spell_card) = view.get_card(*card_id) {
                     // Check if this is a pump spell (has PumpCreature effect)
                     for effect in &spell_card.effects {
@@ -1023,6 +1023,28 @@ impl HeuristicController {
             }
         }
 
+        // 2a2: Cast mana-producing artifacts early (Sol Ring, Arcane Signet, etc.)
+        // In the early game (turns 1-5), mana rocks are extremely valuable for ramping.
+        // Cast them before creatures to accelerate future turns.
+        let turn_number = view.turn_number();
+        if turn_number <= 5 {
+            for ability in available {
+                if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
+                    if let Some(card) = view.get_card(*card_id) {
+                        // Check if this is a mana-producing artifact (not a creature)
+                        // Check both cache flag AND activated abilities for mana production
+                        if card.is_artifact() && !card.is_creature() {
+                            let has_mana_ability = card.definition.cache.is_mana_source
+                                || card.activated_abilities.iter().any(|ab| ab.is_mana_ability);
+                            if has_mana_ability {
+                                return Some(ability.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 2b: Cast creatures (best evaluation first, with mana efficiency)
         // Evaluate all castable creatures considering both raw value and mana efficiency
         // This prioritizes curving out in early game while still preferring high-value threats
@@ -1030,11 +1052,10 @@ impl HeuristicController {
         let mut best_creature_value = i32::MIN;
 
         // Get game state for mana efficiency calculation
-        let turn_number = view.turn_number();
         let available_mana = self.count_available_mana(view);
 
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(card) = view.get_card(*card_id) {
                     if card.is_creature() {
                         // Use mana-efficient evaluation in early game (turns 1-5)
@@ -1119,7 +1140,7 @@ impl HeuristicController {
 
         // Phase 4: Cast other spells (removal, damage, etc.)
         for ability in available {
-            if let SpellAbility::CastSpell { card_id } = ability {
+            if let SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } = ability {
                 if let Some(spell_card) = view.get_card(*card_id) {
                     // Skip creatures and pumps (already handled above)
                     if spell_card.is_creature() {
@@ -3011,6 +3032,15 @@ impl HeuristicController {
             .iter()
             .any(|e| matches!(e, crate::core::Effect::ChangeZoneAll { .. }));
         if has_change_zone_all && self.should_cast_change_zone_all(spell, view) {
+            return true;
+        }
+
+        // Planeswalkers are always worth casting (they provide ongoing value via loyalty abilities)
+        if spell
+            .types
+            .iter()
+            .any(|t| matches!(t, crate::core::CardType::Planeswalker))
+        {
             return true;
         }
 

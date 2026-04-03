@@ -656,7 +656,10 @@ impl GameState {
             | Cost::Sacrifice { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => false,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 

@@ -1089,6 +1089,35 @@ impl FancyTuiRenderer {
         result
     }
 
+    /// Get the hand sorted in display order: lands first, then by descending CMC.
+    ///
+    /// This must be used by both the renderer and event handler so that
+    /// index-based hand navigation matches the visual display order.
+    pub fn get_sorted_hand(view: &GameStateView) -> Vec<CardId> {
+        let hand = view.hand();
+        let mut sorted: Vec<CardId> = hand.to_vec();
+        sorted.sort_by(|&a, &b| {
+            let card_a = view.get_card(a);
+            let card_b = view.get_card(b);
+
+            // Lands first
+            let a_is_land = card_a.map(|c| c.is_land()).unwrap_or(false);
+            let b_is_land = card_b.map(|c| c.is_land()).unwrap_or(false);
+
+            match (a_is_land, b_is_land) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => {
+                    // Both lands or both non-lands: sort by descending CMC
+                    let a_cmc = card_a.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    let b_cmc = card_b.map(|c| c.mana_cost.cmc()).unwrap_or(0);
+                    b_cmc.cmp(&a_cmc) // Descending order
+                }
+            }
+        });
+        sorted
+    }
+
     /// Group cards into battlefield entities
     ///
     /// Groups cards by name (and P/T for creatures), then uses a mode-specific constructor
@@ -3012,6 +3041,9 @@ impl FancyTuiRenderer {
 
         // Render graveyard overlay in bottom-right corner
         self.render_graveyard_overlay(f, inner_area, view, owner_id);
+
+        // Render command zone overlay in bottom-left corner (Commander format)
+        self.render_command_zone_overlay(f, inner_area, view, owner_id);
     }
 
     /// Compute the bounding box for graveyard overlay (without rendering)
@@ -3117,6 +3149,61 @@ impl FancyTuiRenderer {
                 area: card_area,
                 layout_area_px: None,
             });
+        }
+    }
+
+    /// Render command zone as a simple text overlay in the bottom-left corner of the battlefield
+    /// Mirrors the graveyard overlay style but positioned on the opposite side
+    fn render_command_zone_overlay(&mut self, f: &mut Frame, area: Rect, view: &GameStateView, owner_id: PlayerId) {
+        let command_zone = view.player_command_zone(owner_id);
+        if command_zone.is_empty() {
+            return;
+        }
+
+        let card_entries: Vec<(CardId, String)> = command_zone
+            .iter()
+            .map(|&card_id| {
+                (
+                    card_id,
+                    view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string()),
+                )
+            })
+            .collect();
+
+        let header = "Command:";
+        let max_name_len = card_entries.iter().map(|(_, n)| n.len()).max().unwrap_or(0);
+        let content_width = max_name_len.max(header.len()) as u16;
+        let box_height = (1 + card_entries.len()) as u16;
+
+        if area.width < content_width || area.height < box_height {
+            return;
+        }
+
+        // Position in bottom-left corner (opposite of graveyard)
+        let x_start = area.x;
+        let y_start = area.y + area.height - box_height;
+
+        let style = Style::default().fg(Color::LightMagenta);
+
+        let header_area = Rect {
+            x: x_start,
+            y: y_start,
+            width: content_width,
+            height: 1,
+        };
+        f.render_widget(
+            ratatui::widgets::Paragraph::new(header).style(style.add_modifier(ratatui::style::Modifier::BOLD)),
+            header_area,
+        );
+
+        for (i, (_card_id, name)) in card_entries.iter().enumerate() {
+            let card_area = Rect {
+                x: x_start,
+                y: y_start + 1 + i as u16,
+                width: content_width,
+                height: 1,
+            };
+            f.render_widget(ratatui::widgets::Paragraph::new(name.as_str()).style(style), card_area);
         }
     }
 
@@ -3253,27 +3340,8 @@ impl FancyTuiRenderer {
             return;
         }
 
-        // Sort hand: lands first, then by descending CMC
-        let mut sorted_hand: Vec<CardId> = hand.to_vec();
-        sorted_hand.sort_by(|&a, &b| {
-            let card_a = view.get_card(a);
-            let card_b = view.get_card(b);
-
-            // Lands first
-            let a_is_land = card_a.map(|c| c.is_land()).unwrap_or(false);
-            let b_is_land = card_b.map(|c| c.is_land()).unwrap_or(false);
-
-            match (a_is_land, b_is_land) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    // Both lands or both non-lands: sort by descending CMC
-                    let a_cmc = card_a.map(|c| c.mana_cost.cmc()).unwrap_or(0);
-                    let b_cmc = card_b.map(|c| c.mana_cost.cmc()).unwrap_or(0);
-                    b_cmc.cmp(&a_cmc) // Descending order
-                }
-            }
-        });
+        // Sort hand in display order (shared with event handler for consistent indexing)
+        let sorted_hand = Self::get_sorted_hand(view);
 
         // Track entity positions for each hand card (for mouse click detection)
         // Each list item is 1 row tall, positioned starting from inner_area.y

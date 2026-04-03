@@ -395,6 +395,10 @@ impl NetworkController {
                 let name = view.card_name(*card_id).unwrap_or_default();
                 format!("Cast from exile: {} (for {})", name, alternative_cost)
             }
+            SpellAbility::CastFromCommand { card_id, total_cost } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                format!("Cast from command zone: {} ({})", name, total_cost)
+            }
             SpellAbility::Cycle {
                 card_id,
                 cost,

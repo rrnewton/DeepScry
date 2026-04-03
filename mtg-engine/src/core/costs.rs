@@ -37,6 +37,9 @@ pub enum Cost {
     /// Discard a card
     Discard { card_id: CardId },
 
+    /// Discard entire hand (e.g., "Discard<1/Hand>")
+    DiscardHand,
+
     /// Composite cost (multiple costs combined)
     Composite(Vec<Cost>),
 
@@ -44,6 +47,14 @@ pub enum Cost {
     /// While paying a waterbend cost, you can tap your artifacts and creatures to help.
     /// Each one pays for {1}. For now, treated as generic mana cost of `amount`.
     Waterbend { amount: u8 },
+
+    /// Add loyalty counters (planeswalker + ability cost, e.g., "AddCounter<1/LOYALTY>")
+    /// The amount is the number of loyalty counters to add.
+    AddLoyalty { amount: u8 },
+
+    /// Remove loyalty counters (planeswalker - ability cost, e.g., "SubCounter<3/LOYALTY>")
+    /// The amount is the number of loyalty counters to remove.
+    SubLoyalty { amount: u8 },
 }
 
 impl Cost {
@@ -108,8 +119,11 @@ impl Cost {
                         | Cost::SacrificePattern { .. }
                         | Cost::PayLife { .. }
                         | Cost::Discard { .. }
+                        | Cost::DiscardHand
                         | Cost::Composite(_)
-                        | Cost::Waterbend { .. } => costs.push(parsed),
+                        | Cost::Waterbend { .. }
+                        | Cost::AddLoyalty { .. }
+                        | Cost::SubLoyalty { .. } => costs.push(parsed),
                     }
                 } else {
                     // Might be mana symbol
@@ -185,6 +199,33 @@ impl Cost {
             }
         }
 
+        // Discard hand cost (e.g., "Discard<1/Hand>")
+        if trimmed.starts_with("Discard<") && trimmed.contains("Hand") && trimmed.ends_with('>') {
+            return Some(Cost::DiscardHand);
+        }
+
+        // Planeswalker loyalty costs
+        // AddCounter<N/LOYALTY> - add N loyalty counters (+ ability)
+        if trimmed.starts_with("AddCounter<") && trimmed.contains("LOYALTY") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("AddCounter<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(amount_str) = spec.split('/').next() {
+                    if let Ok(amount) = amount_str.parse::<u8>() {
+                        return Some(Cost::AddLoyalty { amount });
+                    }
+                }
+            }
+        }
+        // SubCounter<N/LOYALTY> - remove N loyalty counters (- ability)
+        if trimmed.starts_with("SubCounter<") && trimmed.contains("LOYALTY") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("SubCounter<").and_then(|s| s.strip_suffix('>')) {
+                if let Some(amount_str) = spec.split('/').next() {
+                    if let Ok(amount) = amount_str.parse::<u8>() {
+                        return Some(Cost::SubLoyalty { amount });
+                    }
+                }
+            }
+        }
+
         // Waterbend cost (e.g., "Waterbend<3>") - Avatar set mechanic
         // While paying a waterbend cost, you can tap your artifacts and creatures to help.
         // Each one pays for {1}. For now, treat as generic mana.
@@ -234,7 +275,10 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => false,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -248,7 +292,10 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
-            | Cost::Discard { .. } => false,
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -263,7 +310,10 @@ impl Cost {
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 
@@ -279,7 +329,10 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 
@@ -294,7 +347,10 @@ impl Cost {
             | Cost::TapAndMana(_)
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => false,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => false,
         }
     }
 
@@ -310,7 +366,49 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::SacrificePattern { .. }
             | Cost::PayLife { .. }
-            | Cost::Discard { .. } => None,
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
+        }
+    }
+
+    /// Check if this cost contains a loyalty cost (AddLoyalty or SubLoyalty),
+    /// recursing into Composite costs.
+    pub fn contains_loyalty_cost(&self) -> bool {
+        match self {
+            Cost::AddLoyalty { .. } | Cost::SubLoyalty { .. } => true,
+            Cost::Composite(costs) => costs.iter().any(|c| c.contains_loyalty_cost()),
+            Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. } => false,
+        }
+    }
+
+    /// Get the SubLoyalty amount if this cost contains a SubLoyalty component,
+    /// recursing into Composite costs. Returns None for AddLoyalty or non-loyalty costs.
+    pub fn get_sub_loyalty_amount(&self) -> Option<u8> {
+        match self {
+            Cost::SubLoyalty { amount } => Some(*amount),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_sub_loyalty_amount()),
+            Cost::AddLoyalty { .. }
+            | Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. } => None,
         }
     }
 
@@ -327,7 +425,10 @@ impl Cost {
             | Cost::Sacrifice { .. }
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
-            | Cost::Waterbend { .. } => None,
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. }
+            | Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. } => None,
         }
     }
 }

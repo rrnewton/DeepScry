@@ -737,6 +737,7 @@ impl DeckListInfo {
                     count: *count,
                 })
                 .collect(),
+            commanders: Vec::new(),
         }
     }
 }

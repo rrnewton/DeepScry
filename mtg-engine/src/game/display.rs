@@ -28,13 +28,31 @@ pub fn print_battlefield_state(game: &GameState, viewer: Option<PlayerId>) {
 
         // Zone sizes
         if let Some(zones) = game.get_player_zones(player.id) {
-            println!(
-                "  Hand: {} | Library: {} | Graveyard: {} | Exile: {}",
-                zones.hand.len(),
-                zones.library.len(),
-                zones.graveyard.len(),
-                zones.exile.len()
-            );
+            if zones.command.is_empty() {
+                println!(
+                    "  Hand: {} | Library: {} | Graveyard: {} | Exile: {}",
+                    zones.hand.len(),
+                    zones.library.len(),
+                    zones.graveyard.len(),
+                    zones.exile.len()
+                );
+            } else {
+                // Show command zone info for Commander games
+                let cmd_names: Vec<String> = zones
+                    .command
+                    .cards
+                    .iter()
+                    .filter_map(|&cid| game.cards.try_get(cid).map(|c| c.name.to_string()))
+                    .collect();
+                println!(
+                    "  Hand: {} | Library: {} | Graveyard: {} | Exile: {} | Command: [{}]",
+                    zones.hand.len(),
+                    zones.library.len(),
+                    zones.graveyard.len(),
+                    zones.exile.len(),
+                    cmd_names.join(", ")
+                );
+            }
 
             // Show hand contents for viewer (or active player if not specified)
             let show_hand = viewer.map(|v| v == player.id).unwrap_or(is_active);

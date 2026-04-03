@@ -63,6 +63,17 @@ pub enum SpellAbility {
         effect_id: PersistentEffectId,
     },
 
+    /// Cast the commander from the command zone (Commander format)
+    ///
+    /// The commander can always be cast from the command zone by paying its
+    /// mana cost plus the commander tax ({2} per previous cast from command zone).
+    /// MTG CR 903.8.
+    CastFromCommand {
+        card_id: CardId,
+        /// The total cost to cast (base cost + commander tax)
+        total_cost: ManaCost,
+    },
+
     /// Activate a cycling ability from hand
     ///
     /// Cycling abilities are activated from hand (not battlefield).
@@ -88,11 +99,12 @@ impl SpellAbility {
     /// Get the card ID associated with this ability
     pub fn card_id(&self) -> CardId {
         match self {
-            SpellAbility::PlayLand { card_id } => *card_id,
-            SpellAbility::CastSpell { card_id } => *card_id,
+            SpellAbility::PlayLand { card_id }
+            | SpellAbility::CastSpell { card_id }
+            | SpellAbility::CastFromExile { card_id, .. }
+            | SpellAbility::CastFromCommand { card_id, .. }
+            | SpellAbility::Cycle { card_id, .. } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
-            SpellAbility::CastFromExile { card_id, .. } => *card_id,
-            SpellAbility::Cycle { card_id, .. } => *card_id,
         }
     }
 
@@ -101,12 +113,17 @@ impl SpellAbility {
         matches!(self, SpellAbility::PlayLand { .. })
     }
 
-    /// Check if this is a spell (includes casting from exile)
+    /// Check if this is a spell (includes casting from exile or command zone)
     pub fn is_spell(&self) -> bool {
         matches!(
             self,
-            SpellAbility::CastSpell { .. } | SpellAbility::CastFromExile { .. }
+            SpellAbility::CastSpell { .. } | SpellAbility::CastFromExile { .. } | SpellAbility::CastFromCommand { .. }
         )
+    }
+
+    /// Check if this is casting from the command zone
+    pub fn is_cast_from_command(&self) -> bool {
+        matches!(self, SpellAbility::CastFromCommand { .. })
     }
 
     /// Check if this is casting from exile with an alternative cost

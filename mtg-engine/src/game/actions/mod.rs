@@ -1274,16 +1274,76 @@ impl GameState {
     where
         TargetFn: FnOnce(&GameState, CardId) -> smallvec::SmallVec<[CardId; 2]>,
     {
-        // Verify card is in hand
-        if let Some(zones) = self.get_player_zones(player_id) {
-            if !zones.hand.contains(card_id) {
-                return Err(MtgError::InvalidAction("Card not in hand".to_string()));
+        self.cast_spell_8_step_from(player_id, card_id, choose_targets_fn, mana_engine, Zone::Hand, None)
+    }
+
+    /// Generalized 8-step spell casting process that works from any source zone.
+    ///
+    /// - `source_zone`: Where the card is being cast from (Hand, Exile, Command, etc.)
+    /// - `override_cost`: If Some, use this cost instead of the card's printed mana cost
+    ///   (e.g., alternative cost for Airbend, or base cost + commander tax for commanders)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the card is not in the expected source zone, the source zone
+    /// is not a valid casting zone, sacrifice costs cannot be paid, or mana payment fails.
+    pub fn cast_spell_8_step_from<TargetFn>(
+        &mut self,
+        player_id: PlayerId,
+        card_id: CardId,
+        choose_targets_fn: TargetFn,
+        mana_engine: &crate::game::mana_engine::ManaEngine,
+        source_zone: Zone,
+        override_cost: Option<crate::core::ManaCost>,
+    ) -> Result<()>
+    where
+        TargetFn: FnOnce(&GameState, CardId) -> smallvec::SmallVec<[CardId; 2]>,
+    {
+        // Verify card is in the expected source zone
+        match source_zone {
+            Zone::Hand => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    if !zones.hand.contains(card_id) {
+                        return Err(MtgError::InvalidAction("Card not in hand".to_string()));
+                    }
+                }
+            }
+            Zone::Exile => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    if !zones.exile.contains(card_id) {
+                        // Also check by owner since exile zone belongs to the card's owner
+                        let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(player_id);
+                        if owner != player_id {
+                            if let Some(owner_zones) = self.get_player_zones(owner) {
+                                if !owner_zones.exile.contains(card_id) {
+                                    return Err(MtgError::InvalidAction("Card not in exile".to_string()));
+                                }
+                            }
+                        } else {
+                            return Err(MtgError::InvalidAction("Card not in exile".to_string()));
+                        }
+                    }
+                }
+            }
+            Zone::Command => {
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    if !zones.command.contains(card_id) {
+                        return Err(MtgError::InvalidAction("Card not in command zone".to_string()));
+                    }
+                }
+            }
+            Zone::Library | Zone::Battlefield | Zone::Graveyard | Zone::Stack => {
+                return Err(MtgError::InvalidAction(format!(
+                    "Cannot cast spell from {:?}",
+                    source_zone
+                )));
             }
         }
 
         // Step 1: Propose the spell - move card to stack (move_card auto-reveals + logs MoveCard)
         // This happens BEFORE paying costs (unlike our old implementation)
-        self.move_card(card_id, Zone::Hand, Zone::Stack, player_id)?;
+        let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(player_id);
+        self.move_card(card_id, source_zone, Zone::Stack, owner)?;
 
         // Step 2: Make choices (modes, X values)
         // TODO: Implement modal spell choices and X value selection
@@ -1297,13 +1357,19 @@ impl GameState {
         // TODO: Implement dividing damage/counters among targets
 
         // Step 5: Determine total cost (after applying Affinity and other reductions)
-        let mana_cost = self.calculate_effective_cost(card_id, player_id);
+        // If an override cost is provided (e.g., alternative cost or commander cost),
+        // use that instead of calculating from the card's printed cost.
+        let mana_cost = if let Some(cost) = override_cost {
+            cost
+        } else {
+            self.calculate_effective_cost(card_id, player_id)
+        };
 
         // Step 5b: Pay additional costs (sacrifice costs from RaiseCost)
         // This must happen BEFORE mana payment so sacrificed lands aren't used for mana
         if let Err(e) = self.pay_sacrifice_costs(card_id, player_id) {
             // Cannot pay sacrifice cost - unwind the spell cast
-            self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+            self.move_card(card_id, Zone::Stack, source_zone, owner)?;
             return Err(e);
         }
 
@@ -1367,7 +1433,7 @@ impl GameState {
         // If remaining cost is zero, we don't need to tap any sources
         if remaining_cost.cmc() > 0 && !resolver.compute_tap_order(&remaining_cost, mana_sources, &mut sources_to_tap) {
             // Cannot pay the cost - unwind the spell cast
-            self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+            self.move_card(card_id, Zone::Stack, source_zone, owner)?;
             return Err(MtgError::InvalidAction(format!(
                 "Failed to pay mana cost {:?}: Insufficient mana",
                 mana_cost
@@ -1384,8 +1450,8 @@ impl GameState {
         for &source_id in &sources_to_tap {
             if let Err(e) = self.tap_for_mana_for_cost(player_id, source_id, &remaining_hint) {
                 // Tapping failed - unwind the spell cast
-                // Move card back to hand
-                self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+                // Move card back to source zone
+                self.move_card(card_id, Zone::Stack, source_zone, owner)?;
 
                 // Untap all sources that were successfully tapped so far
                 for &tapped_id in &tapped_sources {
@@ -1458,12 +1524,12 @@ impl GameState {
         let player = self.get_player_mut(player_id)?;
         if let Err(e) = player.pay_from_total_mana(&mana_cost) {
             // If we can't pay, we need to unwind:
-            // 1. Move card back to hand from stack
+            // 1. Move card back to source zone from stack
             // 2. Untap all mana sources that were tapped
             // 3. Clear the mana pool
 
-            // Move card back to hand
-            self.move_card(card_id, Zone::Stack, Zone::Hand, player_id)?;
+            // Move card back to source zone
+            self.move_card(card_id, Zone::Stack, source_zone, owner)?;
 
             // Untap all sources that were tapped
             for &source_id in &tapped_sources {
@@ -2018,6 +2084,31 @@ impl GameState {
                 Effect::UnlessCostWrapper {
                     inner_effect: Box::new(resolved_inner),
                     unless_cost: resolved_unless_cost,
+                }
+            }
+
+            // Resolve CreateToken controller placeholder to the actual caster
+            // The loader sets controller to PlayerId::new(0) as a placeholder;
+            // at runtime we resolve it to the spell's owner (card_owner).
+            // "Opponent" tokens use PlayerId::new(1) as placeholder -> resolve to opponent.
+            Effect::CreateToken {
+                controller,
+                token_script,
+                amount,
+                for_each_player,
+            } => {
+                let resolved_controller = if *controller == PlayerId::new(0) {
+                    card_owner
+                } else if *controller == PlayerId::new(1) {
+                    opponent_id.unwrap_or(*controller)
+                } else {
+                    *controller
+                };
+                Effect::CreateToken {
+                    controller: resolved_controller,
+                    token_script: token_script.clone(),
+                    amount: *amount,
+                    for_each_player: *for_each_player,
                 }
             }
 
@@ -2960,7 +3051,8 @@ impl GameState {
                             // Instantiate token from definition
                             let mut token = token_def.instantiate(token_id, player_id);
 
-                            // Ensure controller is set correctly (owner and controller are the same for tokens)
+                            // Mark as token and set controller
+                            token.is_token = true;
                             token.controller = player_id;
 
                             // Add token to game
@@ -5777,7 +5869,10 @@ impl GameState {
                     | Cost::TapAndMana(_)
                     | Cost::PayLife { .. }
                     | Cost::Discard { .. }
-                    | Cost::Waterbend { .. } => {
+                    | Cost::DiscardHand
+                    | Cost::Waterbend { .. }
+                    | Cost::AddLoyalty { .. }
+                    | Cost::SubLoyalty { .. } => {
                         // These cost types aren't currently used in mana ability costs
                     }
                 }
@@ -6129,10 +6224,26 @@ impl GameState {
             }
 
             Cost::Discard { card_id: _ } => {
-                // TODO: Implement discard cost
+                // TODO: Implement discard cost for specific card
                 Err(MtgError::InvalidAction(format!(
                     "Cost type {cost:?} not yet implemented"
                 )))
+            }
+
+            Cost::DiscardHand => {
+                // Discard entire hand (e.g., Slate of Ancestry)
+                if let Some(zones) = self.get_player_zones(player_id) {
+                    let hand_cards: Vec<CardId> = zones.hand.cards.clone();
+                    for &hand_card_id in &hand_cards {
+                        self.move_card(hand_card_id, Zone::Hand, Zone::Graveyard, player_id)?;
+                    }
+                    self.logger.normal(&format!(
+                        "{} discards their hand ({} cards)",
+                        self.get_player(player_id)?.name,
+                        hand_cards.len()
+                    ));
+                }
+                Ok(())
             }
 
             Cost::Composite(costs) => {
@@ -6243,6 +6354,68 @@ impl GameState {
                     }
                 }
 
+                Ok(())
+            }
+
+            Cost::AddLoyalty { amount } => {
+                // Planeswalker +N loyalty ability: add N loyalty counters
+                use crate::core::CounterType;
+                let prior_log_size = self.logger.log_count();
+                let card = self.cards.get_mut(card_id)?;
+                card.add_counter(CounterType::Loyalty, *amount);
+                let old_loyalty_flag = card.loyalty_activated_this_turn;
+                card.loyalty_activated_this_turn = true; // MTG CR 606.3: once per turn
+                self.undo_log.log(
+                    crate::undo::GameAction::SetLoyaltyActivated {
+                        card_id,
+                        old_value: old_loyalty_flag,
+                        new_value: true,
+                    },
+                    prior_log_size,
+                );
+                let new_loyalty = card.get_counter(CounterType::Loyalty);
+                self.logger
+                    .verbose(&format!("{} gains {} loyalty (now {})", card.name, amount, new_loyalty));
+                Ok(())
+            }
+
+            Cost::SubLoyalty { amount } => {
+                // Planeswalker -N loyalty ability: remove N loyalty counters
+                use crate::core::CounterType;
+                let prior_log_size = self.logger.log_count();
+                let current = self.cards.get(card_id)?.get_counter(CounterType::Loyalty);
+                if current < *amount {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Not enough loyalty counters ({} < {}) on {}",
+                        current,
+                        amount,
+                        self.cards.get(card_id)?.name
+                    )));
+                }
+                let card = self.cards.get_mut(card_id)?;
+                card.remove_counter(CounterType::Loyalty, *amount);
+                let old_loyalty_flag = card.loyalty_activated_this_turn;
+                card.loyalty_activated_this_turn = true; // MTG CR 606.3: once per turn
+                self.undo_log.log(
+                    crate::undo::GameAction::SetLoyaltyActivated {
+                        card_id,
+                        old_value: old_loyalty_flag,
+                        new_value: true,
+                    },
+                    prior_log_size,
+                );
+                let new_loyalty = card.get_counter(CounterType::Loyalty);
+                let card_name = card.name.to_string();
+                self.logger
+                    .verbose(&format!("{} loses {} loyalty (now {})", card_name, amount, new_loyalty));
+
+                // Check if loyalty reaches 0 - planeswalker dies (MTG CR 704.5i)
+                if new_loyalty == 0 {
+                    self.logger
+                        .normal(&format!("{} has 0 loyalty and is put into the graveyard", card_name));
+                    let owner = self.cards.get(card_id)?.owner;
+                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                }
                 Ok(())
             }
         }

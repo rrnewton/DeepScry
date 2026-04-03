@@ -689,6 +689,43 @@ impl GameState {
             self.deal_damage(player_id, damage)?;
         }
 
+        // Commander damage tracking (MTG CR 903.10a):
+        // If a player has been dealt 21+ combat damage by a single commander, they lose.
+        if self.is_commander_game {
+            // Sort for deterministic processing
+            let mut sorted_cmdr_damage = creatures_that_dealt_player_damage.clone();
+            sorted_cmdr_damage.sort_by_key(|(card_id, _, _)| card_id.as_u32());
+            for (creature_id, target_player, damage) in &sorted_cmdr_damage {
+                if let Some(card) = self.cards.try_get(*creature_id) {
+                    if card.is_commander {
+                        let attacker_owner = card.owner;
+                        if let Some(player) = self.players.iter_mut().find(|p| p.id == *target_player) {
+                            let old_damage = player.commander_damage_from(attacker_owner);
+                            let lethal = player.record_commander_damage(attacker_owner, *damage as u16);
+                            let new_damage = player.commander_damage_from(attacker_owner);
+                            let prior_log_size = self.logger.log_count();
+                            self.undo_log.log(
+                                crate::undo::GameAction::SetCommanderDamage {
+                                    player_id: *target_player,
+                                    from_player: attacker_owner,
+                                    old_damage,
+                                    new_damage,
+                                },
+                                prior_log_size,
+                            );
+                            if lethal {
+                                self.logger.normal(&format!(
+                                    "{} has taken 21+ combat damage from {}'s commander - game loss!",
+                                    player.name, card.name
+                                ));
+                                player.has_lost = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Fire DealsCombatDamage triggers for creatures that dealt combat damage to players
         // MTG Rule 702.18: "Whenever this creature deals combat damage to a player..."
         // Sort by card ID for deterministic trigger ordering
