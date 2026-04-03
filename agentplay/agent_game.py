@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import random
 import subprocess
 import sys
@@ -61,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="Safety limit on game turn number before aborting.",
+    )
+    parser.add_argument(
+        "--continue-past-bug-reports",
+        action="store_true",
+        help="Keep playing after an agent emits a BUG_REPORT section instead of exiting immediately.",
     )
     parser.add_argument(
         "mtg_args",
@@ -140,6 +146,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.verbose:
             print(f"[turn {turn_number if turn_number is not None else '?'}] {player} -> {choice_number}: {choice_text}")
             print(f"[claude] {raw_response.strip()}")
+
+        bug_report_text = _extract_bug_report(raw_response)
+        if bug_report_text is not None:
+            bug_report_path = _append_bug_report(
+                engine.game_dir,
+                player=player,
+                turn_number=turn_number,
+                bug_report_text=bug_report_text,
+                raw_response=raw_response,
+            )
+            if args.verbose:
+                print(f"[bug-report] logged to {bug_report_path}")
+            if not args.continue_past_bug_reports:
+                print(
+                    f"Stopped: BUG_REPORT detected in {player} response. Logged to {bug_report_path}",
+                    file=sys.stderr,
+                )
+                return 0
 
         engine.append_choice(player, choice_text)
         try:
@@ -250,6 +274,33 @@ def _extract_game_state_summary(prompt_text: str) -> str:
     start = prompt_text.index(start_marker) + len(start_marker)
     end = prompt_text.index(end_marker, start)
     return prompt_text[start:end].strip()
+
+
+def _extract_bug_report(response: str) -> str | None:
+    marker = "BUG_REPORT"
+    if marker not in response:
+        return None
+    _, bug_report = response.split(marker, 1)
+    return bug_report.lstrip(" :\n\t").strip() or "(BUG_REPORT marker present, but no details were provided)"
+
+
+def _append_bug_report(
+    game_dir: Path,
+    *,
+    player: str,
+    turn_number: int | None,
+    bug_report_text: str,
+    raw_response: str,
+) -> Path:
+    bug_report_path = game_dir / "bug_reports.log"
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    with bug_report_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] player={player} turn={turn_number if turn_number is not None else '?'}\n")
+        handle.write(bug_report_text.strip())
+        handle.write("\n\n--- RAW RESPONSE ---\n")
+        handle.write(raw_response.strip())
+        handle.write("\n\n")
+    return bug_report_path
 
 
 if __name__ == "__main__":

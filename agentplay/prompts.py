@@ -82,9 +82,11 @@ def build_choice_prompt(
             "- In combat, attackers are declared before blockers, then damage happens. Evaluate lethal attacks, favorable trades, and crack-backs.",
             "",
             "Response format:",
-            "Output ONLY the choice number on the last line.",
+            "Include the chosen choice number clearly in your response so automation can parse it.",
+            "If you are not reporting a bug, put the choice number alone on the final line.",
+            "If you notice the game engine behaving incorrectly according to the official MTG rules, add a section labeled BUG_REPORT at the end of your response describing: what happened, what should have happened per the rules, and which rule was violated.",
+            "If you include a BUG_REPORT section, mention the choice number before that section.",
             "Do not output the choice text.",
-            "Do not add explanation after the final number.",
         ]
     )
 
