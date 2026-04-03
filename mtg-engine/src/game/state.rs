@@ -2578,6 +2578,17 @@ impl GameState {
                         }
                     }
                 }
+                crate::undo::GameAction::DebuffCreature {
+                    card_id,
+                    keywords_removed,
+                } => {
+                    // Reverse the debuff by re-adding removed keywords
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
+                        for keyword in keywords_removed {
+                            card.keywords.insert(keyword);
+                        }
+                    }
+                }
                 crate::undo::GameAction::SetTurnEnteredBattlefield {
                     card_id,
                     old_value,
@@ -3042,6 +3053,7 @@ impl GameState {
                     | crate::core::Effect::UntapPermanent { .. }
                     | crate::core::Effect::TapOrUntapPermanent { .. }
                     | crate::core::Effect::PumpCreature { .. }
+                    | crate::core::Effect::DebuffCreature { .. }
                     | crate::core::Effect::PumpCreatureVariable { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::Mill { .. }

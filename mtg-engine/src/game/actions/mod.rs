@@ -41,6 +41,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::UntapPermanent { .. }
         | Effect::TapOrUntapPermanent { .. }
         | Effect::PumpCreature { .. }
+        | Effect::DebuffCreature { .. }
         | Effect::PumpAllCreatures { .. }
         | Effect::PumpCreatureVariable { .. }
         | Effect::Scry { .. }
@@ -139,6 +140,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::UntapPermanent { .. }
             | Effect::TapOrUntapPermanent { .. }
             | Effect::PumpCreature { .. }
+            | Effect::DebuffCreature { .. }
             | Effect::PumpAllCreatures { .. }
             | Effect::PumpCreatureVariable { .. }
             | Effect::Scry { .. }
@@ -1768,6 +1770,22 @@ impl GameState {
                     effect.clone()
                 }
             }
+            Effect::DebuffCreature {
+                target,
+                keywords_removed,
+            } if target.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(resolved_target);
+                    Effect::DebuffCreature {
+                        target: resolved_target,
+                        keywords_removed: keywords_removed.clone(),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             Effect::TapPermanent { target } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
@@ -2641,6 +2659,33 @@ impl GameState {
                         power_delta: power_bonus,
                         toughness_delta: toughness_bonus,
                         keywords_granted: keywords_granted.clone(),
+                    },
+                    prior_log_size,
+                );
+            }
+            Effect::DebuffCreature {
+                target,
+                keywords_removed,
+            } => {
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_reuse_previous() {
+                    log::warn!(target: "debuff", "DebuffCreature fizzled: unresolved target {}", target.as_u32());
+                    return Ok(());
+                }
+                log::debug!(target: "debuff", "DebuffCreature executing: target={}, keywords_removed={:?}", target.as_u32(), keywords_removed);
+
+                let prior_log_size = self.logger.log_count();
+                let card = self.cards.get_mut(*target)?;
+                // Remove keywords
+                for keyword in keywords_removed.iter() {
+                    card.keywords.remove(*keyword);
+                }
+
+                // Log the debuff effect for undo
+                self.undo_log.log(
+                    crate::undo::GameAction::DebuffCreature {
+                        card_id: *target,
+                        keywords_removed: keywords_removed.clone(),
                     },
                     prior_log_size,
                 );
@@ -5038,6 +5083,32 @@ impl GameState {
                             };
                         }
                     }
+                    Effect::DebuffCreature {
+                        target,
+                        keywords_removed,
+                    } if target.is_placeholder() => {
+                        // Find a valid target creature for debuff
+                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                            .battlefield
+                            .cards
+                            .iter()
+                            .filter(|&card_id| {
+                                if let Some(card) = self.cards.try_get(*card_id) {
+                                    card.is_creature() && targeting::is_legal_target(card, controller)
+                                } else {
+                                    false
+                                }
+                            })
+                            .copied()
+                            .collect();
+                        candidates.sort_by_key(|id| id.as_u32());
+                        if let Some(&target_id) = candidates.first() {
+                            effect = Effect::DebuffCreature {
+                                target: target_id,
+                                keywords_removed: keywords_removed.clone(),
+                            };
+                        }
+                    }
                     // Note: CreateToken is handled by resolve_effect_placeholder
                     Effect::ExilePermanent { target } if target.is_placeholder() => {
                         // Find a valid target (opponent's nonland permanent),
@@ -5654,6 +5725,20 @@ impl GameState {
                             power_bonus: *power_bonus,
                             toughness_bonus: *toughness_bonus,
                             keywords_granted: keywords_granted.clone(),
+                        };
+                    }
+                }
+
+                // DebuffCreature with placeholder → "self" for triggers
+                if let Effect::DebuffCreature {
+                    target,
+                    keywords_removed,
+                } = &resolved_effect
+                {
+                    if target.is_placeholder() {
+                        resolved_effect = Effect::DebuffCreature {
+                            target: trigger_info.card_id,
+                            keywords_removed: keywords_removed.clone(),
                         };
                     }
                 }

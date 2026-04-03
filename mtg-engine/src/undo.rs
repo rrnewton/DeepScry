@@ -99,6 +99,13 @@ pub enum GameAction {
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
+    /// Debuff creature (keyword removal)
+    DebuffCreature {
+        card_id: CardId,
+        /// Keywords removed by this debuff effect (restored on undo)
+        keywords_removed: smallvec::SmallVec<[Keyword; 2]>,
+    },
+
     /// Set turn_entered_battlefield field (for summoning sickness tracking)
     SetTurnEnteredBattlefield {
         card_id: CardId,
@@ -346,6 +353,12 @@ impl fmt::Display for GameAction {
                     )
                 }
             }
+            GameAction::DebuffCreature {
+                card_id,
+                keywords_removed,
+            } => {
+                write!(f, "Debuff({} -{:?})", card_id.as_u32(), keywords_removed)
+            }
             GameAction::SetTurnEnteredBattlefield { card_id, new_value, .. } => {
                 write!(f, "SetETB({} turn={:?})", card_id.as_u32(), new_value)
             }
@@ -584,6 +597,20 @@ impl GameAction {
                     }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::DebuffCreature {
+                card_id,
+                keywords_removed,
+            } => {
+                // Reverse the debuff by re-adding the removed keywords
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    for keyword in keywords_removed {
+                        card.keywords.insert(*keyword);
+                    }
+                } else {
+                    return Err(format!("Card {} not found for DebuffCreature undo", card_id.as_u32()));
                 }
             }
 

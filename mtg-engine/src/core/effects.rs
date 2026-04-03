@@ -654,6 +654,15 @@ pub enum Effect {
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
     },
 
+    /// Debuff: Remove keywords from a creature (inverse of Pump keyword granting)
+    /// Example: "CARDNAME loses defender until end of turn"
+    /// Example: "Target creature loses flying until end of turn"
+    DebuffCreature {
+        target: CardId,
+        /// Keywords to remove (from Keywords$ parameter, separated by " & ")
+        keywords_removed: smallvec::SmallVec<[Keyword; 2]>,
+    },
+
     /// Pump all creatures matching a filter until end of turn
     /// Example: "Creatures you control get +1/+0 until end of turn"
     PumpAllCreatures {
@@ -1283,6 +1292,7 @@ impl Effect {
             | Effect::UntapPermanent { .. }
             | Effect::TapOrUntapPermanent { .. }
             | Effect::PumpCreature { .. }
+            | Effect::DebuffCreature { .. }
             | Effect::CounterSpell { .. }
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }

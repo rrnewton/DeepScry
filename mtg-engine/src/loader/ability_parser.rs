@@ -84,6 +84,13 @@ pub enum ApiType {
     // === Creatures & Combat ===
     Pump,
     PumpAll,
+    /// Remove keywords from a creature (inverse of Pump's keyword granting)
+    /// Parameters:
+    ///   Keywords$ - keywords to remove, separated by " & "
+    ///   Defined$ Self - target is self (e.g., lose Defender)
+    ///   ValidTgts$ Creature - target restriction for opponent's creatures
+    ///   Duration$ Permanent - if present, keyword removal is permanent
+    Debuff,
     UntilEOT,
     Animate,
     BecomesCreature,
@@ -263,6 +270,7 @@ impl ApiType {
             // Creatures & Combat
             "Pump" => Self::Pump,
             "PumpAll" => Self::PumpAll,
+            "Debuff" => Self::Debuff,
             "UntilEOT" => Self::UntilEOT,
             "Animate" => Self::Animate,
             "BecomesCreature" => Self::BecomesCreature,
@@ -378,6 +386,7 @@ impl ApiType {
             Self::StoreMana => "StoreMana",
             Self::Pump => "Pump",
             Self::PumpAll => "PumpAll",
+            Self::Debuff => "Debuff",
             Self::UntilEOT => "UntilEOT",
             Self::Animate => "Animate",
             Self::BecomesCreature => "BecomesCreature",

@@ -296,6 +296,22 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::DebuffCreature {
+                target,
+                keywords_removed,
+            } => {
+                let target_name = self
+                    .game
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("Unknown");
+                let message = format!(
+                    "{source_name} ({source_id}) removes {:?} from {target_name} ({target})",
+                    keywords_removed
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::Mill { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to mill {count} card(s)");

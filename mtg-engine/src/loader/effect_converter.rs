@@ -195,6 +195,31 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             }
         }
 
+        ApiType::Debuff => {
+            // Debuff: Remove keywords from a creature
+            // Example: AB$ Debuff | Keywords$ Defender | Defined$ Self
+            // Example: AB$ Debuff | Keywords$ Flying | ValidTgts$ Creature
+            // Note: Uses Keywords$ (not KW$ like Pump)
+            let keywords_removed: SmallVec<[Keyword; 2]> = params
+                .get("Keywords")
+                .map(|kw_str| {
+                    kw_str
+                        .split(" & ")
+                        .filter_map(|kw| Keyword::from_string(kw.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !keywords_removed.is_empty() || params.contains_key("SubAbility") {
+                Some(Effect::DebuffCreature {
+                    target: CardId::new(0), // Placeholder - filled in at cast time
+                    keywords_removed,
+                })
+            } else {
+                None
+            }
+        }
+
         ApiType::PumpAll => {
             // Mass pump: "Creatures you control get +1/+0 until end of turn"
             // Example: DB$ PumpAll | ValidCards$ Creature.YouCtrl | NumAtt$ +1
@@ -2462,5 +2487,47 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert_eq!(params.api_type, ApiType::ChooseColor);
         let effect = params_to_effect(&params);
         assert!(effect.is_some(), "ChooseColor should produce an effect");
+    }
+
+    #[test]
+    fn test_convert_debuff_single_keyword() {
+        // Grozoth: "AB$ Debuff | Cost$ 4 | Keywords$ Defender | Defined$ Self"
+        let params = AbilityParams::parse("A:AB$ Debuff | Cost$ 4 | Keywords$ Defender | Defined$ Self").unwrap();
+        assert_eq!(params.api_type, ApiType::Debuff);
+        let effect = params_to_effect(&params).unwrap();
+        match effect {
+            Effect::DebuffCreature { keywords_removed, .. } => {
+                assert_eq!(keywords_removed.len(), 1);
+                assert_eq!(keywords_removed[0], Keyword::Defender);
+            }
+            _ => panic!("Expected DebuffCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_debuff_flying() {
+        // Swooping Talon: "AB$ Debuff | Cost$ 1 | Keywords$ Flying | Defined$ Self"
+        let params = AbilityParams::parse("A:AB$ Debuff | Cost$ 1 | Keywords$ Flying | Defined$ Self").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        match effect {
+            Effect::DebuffCreature { keywords_removed, .. } => {
+                assert_eq!(keywords_removed.len(), 1);
+                assert_eq!(keywords_removed[0], Keyword::Flying);
+            }
+            _ => panic!("Expected DebuffCreature effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_debuff_with_sub_ability() {
+        // Manor Gargoyle: "AB$ Debuff | Cost$ 1 | Keywords$ Defender | Defined$ Self | SubAbility$ DBFlight"
+        let params =
+            AbilityParams::parse("A:AB$ Debuff | Cost$ 1 | Keywords$ Defender | Defined$ Self | SubAbility$ DBFlight")
+                .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(effect, Effect::DebuffCreature { .. }),
+            "Debuff with SubAbility should produce DebuffCreature effect"
+        );
     }
 }

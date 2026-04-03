@@ -65,6 +65,9 @@ enum ActivatedAbilityType {
     /// Regenerate ability - adds a regeneration shield
     /// Example: Drudge Skeletons "{B}: Regenerate CARDNAME."
     Regenerate,
+    /// Debuff ability - removes keywords from a creature
+    /// Example: Grozoth "{4}: Lose defender until end of turn"
+    Debuff,
     /// Other abilities not yet categorized
     Other,
 }
@@ -619,6 +622,10 @@ impl HeuristicController {
                     // Regeneration makes creatures harder to kill (Drudge Skeletons, Sedge Troll)
                     // Roughly equivalent to a toughness bonus
                     value += 20;
+                }
+                ActivatedAbilityType::Debuff => {
+                    // Debuff abilities (lose Defender) add value since they unlock attacking
+                    value += 15;
                 }
                 ActivatedAbilityType::Other => {}
             }
@@ -2486,6 +2493,28 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::Debuff => {
+                    // Debuff abilities: primarily "lose Defender" to enable attacking
+                    // Activate before combat (Main1) so the creature can attack
+                    // Reference: DebuffEffect.java - typically self-targeting
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main1 {
+                        // Check if this removes Defender from self — enables attacking
+                        let removes_defender = ability.effects.iter().any(|e| {
+                            if let crate::core::Effect::DebuffCreature { keywords_removed, .. } = e {
+                                keywords_removed.contains(&crate::core::Keyword::Defender)
+                            } else {
+                                false
+                            }
+                        });
+                        if removes_defender && source.keywords.contains(crate::core::Keyword::Defender) {
+                            return true;
+                        }
+                        // For other keyword removals from self, also activate in Main1
+                        // (e.g., Xathrid Slyblade loses Hexproof to gain FirstStrike+Deathtouch)
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2533,6 +2562,13 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::Regenerate { .. }) {
                 return ActivatedAbilityType::Regenerate;
+            }
+        }
+
+        // Check for debuff effects (Grozoth, Gargoyle Sentinel - lose Defender, etc.)
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::DebuffCreature { .. }) {
+                return ActivatedAbilityType::Debuff;
             }
         }
 
@@ -5076,6 +5112,18 @@ impl PlayerController for HeuristicController {
                 })
         });
 
+        // Check if the spell has debuff effects targeting others (remove keywords from opponent)
+        let has_debuff_effect = spell_card.is_some_and(|c| {
+            c.effects
+                .iter()
+                .any(|e| matches!(e, crate::core::Effect::DebuffCreature { .. }))
+                || c.activated_abilities.iter().any(|a| {
+                    a.effects
+                        .iter()
+                        .any(|e| matches!(e, crate::core::Effect::DebuffCreature { .. }))
+                })
+        });
+
         // Check if the spell has destroy effects (Sinkhole, Terror, etc.)
         // These should target opponent's permanents, not our own
         let has_destroy_effect = spell_card.is_some_and(|c| {
@@ -5130,6 +5178,14 @@ impl PlayerController for HeuristicController {
             valid_targets
                 .iter()
                 .filter(|&&id| view.get_card(id).map(|c| c.owner == self.player_id).unwrap_or(false))
+                .copied()
+                .collect()
+        } else if has_debuff_effect {
+            // Debuff effects targeting opponent's creatures (remove protection, etc.)
+            // Reference: DebuffEffect.java - target opponent's creatures with the keyword
+            valid_targets
+                .iter()
+                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
                 .copied()
                 .collect()
         } else if has_destroy_effect {

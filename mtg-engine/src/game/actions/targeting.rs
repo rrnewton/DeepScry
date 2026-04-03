@@ -145,6 +145,16 @@ impl GameState {
                         }
                     }
                 }
+                Effect::DebuffCreature { target, .. } if target.is_placeholder() => {
+                    // Debuff can target any creature
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::PumpCreatureVariable { target, .. } if target.is_placeholder() => {
                     // Variable pump can target any creature
                     for &card_id in &self.battlefield.cards {
@@ -440,6 +450,7 @@ impl GameState {
                             | Effect::SetBasePowerToughness { .. }
                             | Effect::CounterSpell { .. }
                             | Effect::PumpCreature { .. }
+                            | Effect::DebuffCreature { .. }
                             | Effect::PumpCreatureVariable { .. }
                             | Effect::TapPermanent { .. }
                             | Effect::UntapPermanent { .. }
@@ -530,6 +541,7 @@ impl GameState {
                 Effect::DestroyPermanent { .. }
                 | Effect::GainControl { .. }
                 | Effect::PumpCreature { .. }
+                | Effect::DebuffCreature { .. }
                 | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
@@ -955,6 +967,7 @@ impl GameState {
                 }
                 Effect::DestroyPermanent { .. }
                 | Effect::PumpCreature { .. }
+                | Effect::DebuffCreature { .. }
                 | Effect::PumpCreatureVariable { .. }
                 | Effect::TapPermanent { .. }
                 | Effect::UntapPermanent { .. }
@@ -1114,6 +1127,16 @@ impl GameState {
                     }
                 })
             }
+            Effect::DebuffCreature { target, .. } if target.is_placeholder() => {
+                // Debuff requires a creature target
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        card.is_creature() && is_legal_target(card, spell_owner)
+                    } else {
+                        false
+                    }
+                })
+            }
             Effect::TapPermanent { target } if target.is_placeholder() => {
                 // Tap requires an untapped permanent
                 self.battlefield.cards.iter().any(|&card_id| {
@@ -1211,6 +1234,7 @@ impl GameState {
             Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
             | Effect::PumpCreature { .. }
+            | Effect::DebuffCreature { .. }
             | Effect::PumpCreatureVariable { .. }
             | Effect::TapPermanent { .. }
             | Effect::UntapPermanent { .. }
