@@ -18,8 +18,13 @@ use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkContr
 use crate::zones::Zone;
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use std::path::PathBuf;
+use serde::Serialize;
+use std::collections::HashSet;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
+use tokio::fs;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
@@ -35,6 +40,8 @@ pub struct ServerConfig {
     pub port: u16,
     /// Password required to join
     pub password: String,
+    /// Optional password for elevated/trusted bug report handling
+    pub trusted_bug_report_password: String,
     /// Maximum concurrent games (0 = unlimited)
     pub max_games: usize,
     /// Starting life total
@@ -55,6 +62,8 @@ pub struct ServerConfig {
     pub no_color_logs: bool,
     /// Loop mode: keep running and accept new games after each one completes
     pub loop_mode: bool,
+    /// Directory where submitted bug reports are stored
+    pub bug_reports_dir: PathBuf,
 }
 
 impl Default for ServerConfig {
@@ -62,6 +71,7 @@ impl Default for ServerConfig {
         Self {
             port: DEFAULT_PORT,
             password: String::new(),
+            trusted_bug_report_password: String::new(),
             max_games: 0,
             starting_life: 20,
             deck_visibility: false,
@@ -72,8 +82,50 @@ impl Default for ServerConfig {
             network_debug: false,
             no_color_logs: false,
             loop_mode: false,
+            bug_reports_dir: PathBuf::from("bug_reports"),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct BugReportRequest {
+    description: String,
+    game_logs: String,
+    console_logs: String,
+    trusted_password: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct BugReportMetadata {
+    timestamp_ms: u64,
+    reporter_player_id: Option<u32>,
+    trusted: bool,
+    trusted_password_supplied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GitHubIssueOutcome {
+    issue_url: String,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredBugReport {
+    report_dir: PathBuf,
+    trusted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AutoFixLaunchRequest {
+    issue_url: String,
+    prompt: String,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -496,8 +548,8 @@ impl GameServer {
     /// Returns `Ok(Some(handle))` when a game was started (second player connected),
     /// or `Ok(None)` when still waiting for the second player.
     ///
-    /// Note: Wildcard is intentional - ClientMessage has 4+ variants;
-    /// we expect Authenticate at connection time, others are errors.
+    /// Note: Wildcard is intentional - ClientMessage has several variants;
+    /// we allow Authenticate or BugReport at connection time, others are errors.
     #[allow(clippy::wildcard_enum_match_arm)]
     async fn handle_connection(&mut self, stream: TcpStream) -> Result<Option<tokio::task::JoinHandle<()>>> {
         let ws_stream = accept_async(stream).await?;
@@ -531,9 +583,30 @@ impl GameServer {
                 player_name,
                 deck,
             } => self.handle_auth(ws_stream, password, player_name, deck).await,
+            ClientMessage::BugReport {
+                description,
+                game_logs,
+                console_logs,
+                trusted_password,
+            } => {
+                let mut ws_stream = ws_stream;
+                let response = submit_bug_report(
+                    &self.config,
+                    BugReportRequest {
+                        description,
+                        game_logs,
+                        console_logs,
+                        trusted_password,
+                    },
+                    None,
+                )
+                .await;
+                send_message(&mut ws_stream, &response).await?;
+                Ok(None)
+            }
             _ => {
                 let mut ws_stream = ws_stream;
-                send_error(&mut ws_stream, "Expected authentication message", true).await?;
+                send_error(&mut ws_stream, "Expected authentication or bug_report message", true).await?;
                 Ok(None)
             }
         }
@@ -1053,10 +1126,14 @@ async fn run_game(
 
     // Spawn WebSocket handlers for each player
     let game_clone = Arc::clone(&game);
-    let mut p1_handler = tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone).await });
+    let p1_config = config.clone();
+    let mut p1_handler =
+        tokio::spawn(async move { handle_player_websocket(p1_conn, p1_ws_rx, game_clone, p1_config).await });
 
     let game_clone = Arc::clone(&game);
-    let mut p2_handler = tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone).await });
+    let p2_config = config.clone();
+    let mut p2_handler =
+        tokio::spawn(async move { handle_player_websocket(p2_conn, p2_ws_rx, game_clone, p2_config).await });
 
     // Create channel for game end notification to coordinator
     let (game_end_tx, game_end_rx) = oneshot::channel::<GameEndInfo>();
@@ -1616,6 +1693,7 @@ async fn handle_player_websocket(
     mut conn: PlayerConnection,
     mut ws_rx: futures_util::stream::SplitStream<WebSocketStream<TcpStream>>,
     game: Arc<Mutex<GameState>>,
+    server_config: ServerConfig,
 ) -> Result<()> {
     log::debug!("Handler P{}: Started", conn.player_id);
 
@@ -1913,6 +1991,26 @@ async fn handle_player_websocket(
                                 conn.send(&ServerMessage::Pong { timestamp_ms }).await?;
                             }
 
+                            Ok(ClientMessage::BugReport {
+                                description,
+                                game_logs,
+                                console_logs,
+                                trusted_password,
+                            }) => {
+                                let response = submit_bug_report(
+                                    &server_config,
+                                    BugReportRequest {
+                                        description,
+                                        game_logs,
+                                        console_logs,
+                                        trusted_password,
+                                    },
+                                    Some(conn.player_id),
+                                )
+                                .await;
+                                conn.send(&response).await?;
+                            }
+
                             Ok(ClientMessage::Disconnect) => {
                                 log::info!("Handler P{}: Client disconnected gracefully", conn.player_id);
                                 conn.game_tx.send(HandlerToGame::ClientDisconnected).await?;
@@ -2084,6 +2182,470 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
     }
 }
 
+fn validate_trusted_bug_report_password(expected_password: &str, provided_password: Option<&str>) -> Result<bool> {
+    match provided_password {
+        Some(_) if expected_password.is_empty() => Ok(false),
+        Some(password) if password == expected_password => Ok(true),
+        Some(_) => Err(anyhow!("Invalid trusted bug report password")),
+        None => Ok(false),
+    }
+}
+
+async fn create_bug_report_dir(root: &std::path::Path, timestamp_ms: u64) -> Result<PathBuf> {
+    fs::create_dir_all(root).await?;
+
+    let mut attempt = 0usize;
+    loop {
+        let dir_name = if attempt == 0 {
+            timestamp_ms.to_string()
+        } else {
+            format!("{timestamp_ms}-{attempt}")
+        };
+        let report_dir = root.join(dir_name);
+
+        match fs::create_dir(&report_dir).await {
+            Ok(()) => return Ok(report_dir),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                attempt += 1;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn bug_report_repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("mtg-engine crate should live under repo root")
+        .to_path_buf()
+}
+
+fn bug_report_issue_title(report: &BugReportRequest) -> String {
+    let summary = report
+        .description
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Bug report")
+        .chars()
+        .take(72)
+        .collect::<String>();
+    format!("Bug report: {}", summary)
+}
+
+fn build_claude_autofix_prompt(
+    report: &BugReportRequest,
+    report_dir: &Path,
+    issue_url: &str,
+    reporter_player_id: Option<PlayerId>,
+) -> String {
+    format!(
+        "Fix this bug report and file a PR.\n\n\
+GitHub issue: {issue_url}\n\
+Stored report directory: {report_dir}\n\
+Reporter player id: {reporter}\n\n\
+Requirements:\n\
+- Reproduce and fix the bug described below.\n\
+- File a PR for the fix.\n\
+- Link the PR to the issue by mentioning {issue_url} in the PR body.\n\
+- After fixing, ensure the PR is cross-referenced back to the issue.\n\n\
+Bug description:\n\
+```text\n\
+{description}\n\
+```\n\n\
+Game logs:\n\
+```text\n\
+{game_logs}\n\
+```\n\n\
+Console logs:\n\
+```text\n\
+{console_logs}\n\
+```",
+        issue_url = issue_url,
+        report_dir = report_dir.display(),
+        reporter = reporter_player_id
+            .map(|player_id| player_id.as_u32().to_string())
+            .unwrap_or_else(|| "pre_auth".to_string()),
+        description = report.description,
+        game_logs = report.game_logs,
+        console_logs = report.console_logs,
+    )
+}
+
+fn parse_first_url(text: &str) -> Result<String> {
+    text.split_whitespace()
+        .find(|token| token.starts_with("http://") || token.starts_with("https://"))
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("gh output did not contain a URL: {}", text.trim()))
+}
+
+fn format_command_for_error(args: &[String]) -> String {
+    args.join(" ")
+}
+
+fn run_command(args: &[String], cwd: &Path) -> std::io::Result<CommandOutput> {
+    let mut command = Command::new(&args[0]);
+    command.args(&args[1..]).current_dir(cwd);
+    let output = command.output()?;
+    Ok(CommandOutput {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn run_gh_command_with_runner(
+    runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
+    repo_root: &Path,
+    gh_args: &[String],
+) -> Result<String> {
+    let mut command_args = vec!["/usr/bin/with-proxy".to_string(), "/usr/bin/gh".to_string()];
+    command_args.extend_from_slice(gh_args);
+    let output = runner(&command_args, repo_root)?;
+    if output.success {
+        Ok(output.stdout)
+    } else {
+        Err(anyhow!(
+            "command failed: {}\nstdout: {}\nstderr: {}",
+            format_command_for_error(&command_args),
+            output.stdout.trim(),
+            output.stderr.trim()
+        ))
+    }
+}
+
+fn spawn_claude_autofix_process(args: &[String], cwd: &Path) -> std::io::Result<Option<u32>> {
+    let mut command = Command::new(&args[0]);
+    command.args(&args[1..]).current_dir(cwd);
+    let child = command.spawn()?;
+    Ok(Some(child.id()))
+}
+
+fn launch_claude_autofix_with_spawner(
+    spawner: &dyn Fn(&[String], &Path) -> std::io::Result<Option<u32>>,
+    repo_root: &Path,
+    request: &AutoFixLaunchRequest,
+) -> Result<Option<u32>> {
+    let command_args = vec![
+        "/usr/bin/with-proxy".to_string(),
+        "claude".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+        "-p".to_string(),
+        request.prompt.clone(),
+    ];
+    let pid = spawner(&command_args, repo_root)?;
+    Ok(pid)
+}
+
+fn maybe_schedule_claude_autofix(
+    report: &BugReportRequest,
+    report_dir: &Path,
+    reporter_player_id: Option<PlayerId>,
+    stored_report: &StoredBugReport,
+    issue_url: Option<&str>,
+) {
+    if !stored_report.trusted {
+        log::debug!("Skipping Claude auto-fix launch because bug report was not trusted");
+        return;
+    }
+
+    let Some(issue_url) = issue_url else {
+        log::warn!("Skipping Claude auto-fix launch because no GitHub issue URL was created");
+        return;
+    };
+
+    let repo_root = bug_report_repo_root();
+    let request = AutoFixLaunchRequest {
+        issue_url: issue_url.to_string(),
+        prompt: build_claude_autofix_prompt(report, report_dir, issue_url, reporter_player_id),
+    };
+
+    log::info!(
+        "Scheduling Claude auto-fix launch for trusted bug report {} linked to {}",
+        report_dir.display(),
+        issue_url
+    );
+
+    schedule_claude_autofix_with_spawner(Arc::new(spawn_claude_autofix_process), repo_root, request);
+}
+
+fn schedule_claude_autofix_with_spawner(
+    spawner: Arc<dyn Fn(&[String], &Path) -> std::io::Result<Option<u32>> + Send + Sync>,
+    repo_root: PathBuf,
+    request: AutoFixLaunchRequest,
+) {
+    tokio::spawn(async move {
+        log::info!("Starting Claude auto-fix attempt for {}", request.issue_url);
+        match launch_claude_autofix_with_spawner(spawner.as_ref(), &repo_root, &request) {
+            Ok(pid) => {
+                log::info!("Claude auto-fix launched for {} (pid={:?})", request.issue_url, pid);
+            }
+            Err(error) => {
+                log::error!("Failed to launch Claude auto-fix for {}: {}", request.issue_url, error);
+            }
+        }
+    });
+}
+
+fn available_bug_report_labels_with_runner(
+    runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
+    repo_root: &Path,
+) -> Result<HashSet<String>> {
+    let stdout = run_gh_command_with_runner(
+        runner,
+        repo_root,
+        &[
+            "label".to_string(),
+            "list".to_string(),
+            "--json".to_string(),
+            "name".to_string(),
+            "--limit".to_string(),
+            "200".to_string(),
+        ],
+    )?;
+    let labels: Vec<serde_json::Value> = serde_json::from_str(&stdout)?;
+    Ok(labels
+        .into_iter()
+        .filter_map(|label| {
+            label
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect())
+}
+
+fn upload_bug_report_logs_with_runner(
+    runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
+    repo_root: &Path,
+    report_dir: &Path,
+) -> Result<String> {
+    let stdout = run_gh_command_with_runner(
+        runner,
+        repo_root,
+        &[
+            "gist".to_string(),
+            "create".to_string(),
+            report_dir.join("game_logs.txt").display().to_string(),
+            report_dir.join("console_logs.txt").display().to_string(),
+            "-d".to_string(),
+            format!("MTG Forge bug report logs {}", report_dir.display()),
+        ],
+    )?;
+    parse_first_url(&stdout)
+}
+
+fn build_bug_report_issue_body(
+    report: &BugReportRequest,
+    report_dir: &Path,
+    reporter_player_id: Option<PlayerId>,
+    log_artifact_url: Option<&str>,
+    log_artifact_warning: Option<&str>,
+) -> String {
+    let mut body = String::new();
+    body.push_str("## User Report\n\n");
+    body.push_str(&report.description);
+    body.push_str("\n\n## Server Metadata\n\n");
+    body.push_str(&format!("- Stored report directory: `{}`\n", report_dir.display()));
+    body.push_str(&format!(
+        "- Reporter player id: {}\n",
+        reporter_player_id
+            .map(|player_id| player_id.as_u32().to_string())
+            .unwrap_or_else(|| "pre_auth".to_string())
+    ));
+    body.push_str(&format!(
+        "- Trusted password supplied: {}\n",
+        if report.trusted_password.is_some() { "yes" } else { "no" }
+    ));
+
+    body.push_str("\n## Logs\n\n");
+    match log_artifact_url {
+        Some(url) => {
+            body.push_str(&format!(
+                "Uploaded `game_logs.txt` and `console_logs.txt` via `gh gist create`: {url}\n"
+            ));
+        }
+        None => body.push_str(
+            "Automated GitHub log artifact upload was not available. The logs remain stored on the server in the report directory above.\n",
+        ),
+    }
+
+    if let Some(warning) = log_artifact_warning {
+        body.push_str("\nUpload warning:\n\n");
+        body.push_str("```text\n");
+        body.push_str(warning);
+        body.push_str("\n```\n");
+    }
+
+    body
+}
+
+fn create_github_issue_with_runner(
+    runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
+    report: &BugReportRequest,
+    report_dir: &Path,
+    reporter_player_id: Option<PlayerId>,
+) -> Result<GitHubIssueOutcome> {
+    let repo_root = bug_report_repo_root();
+
+    let available_labels = match available_bug_report_labels_with_runner(runner, &repo_root) {
+        Ok(labels) => labels,
+        Err(error) => {
+            log::warn!("Failed to fetch GitHub labels for bug report issue: {}", error);
+            HashSet::new()
+        }
+    };
+    let chosen_labels: Vec<&str> = ["bug", "bug-report", "triage"]
+        .into_iter()
+        .filter(|label| available_labels.contains(*label))
+        .collect();
+
+    let (log_artifact_url, log_artifact_warning) =
+        match upload_bug_report_logs_with_runner(runner, &repo_root, report_dir) {
+            Ok(url) => (Some(url), None),
+            Err(error) => {
+                log::warn!("Failed to upload bug report logs with gh gist create: {}", error);
+                (None, Some(error.to_string()))
+            }
+        };
+
+    let issue_body = build_bug_report_issue_body(
+        report,
+        report_dir,
+        reporter_player_id,
+        log_artifact_url.as_deref(),
+        log_artifact_warning.as_deref(),
+    );
+    let issue_body_path = report_dir.join("github_issue_body.md");
+    std::fs::write(&issue_body_path, issue_body)?;
+
+    let mut issue_args = vec![
+        "issue".to_string(),
+        "create".to_string(),
+        "--title".to_string(),
+        bug_report_issue_title(report),
+        "--body-file".to_string(),
+        issue_body_path.display().to_string(),
+    ];
+    for label in &chosen_labels {
+        issue_args.push("--label".to_string());
+        issue_args.push((*label).to_string());
+    }
+
+    let issue_stdout = run_gh_command_with_runner(runner, &repo_root, &issue_args)?;
+    let issue_url = parse_first_url(&issue_stdout)?;
+    std::fs::write(report_dir.join("github_issue_url.txt"), format!("{issue_url}\n"))?;
+
+    Ok(GitHubIssueOutcome {
+        issue_url,
+        warning: log_artifact_warning,
+    })
+}
+
+fn bug_report_result_from_github_result(github_result: Result<GitHubIssueOutcome>) -> ServerMessage {
+    match github_result {
+        Ok(issue) => ServerMessage::BugReportResult {
+            success: true,
+            issue_url: Some(issue.issue_url),
+            error: issue.warning,
+        },
+        Err(error) => {
+            log::warn!("Bug report stored locally, but GitHub issue creation failed: {}", error);
+            ServerMessage::BugReportResult {
+                success: true,
+                issue_url: None,
+                error: Some(format!(
+                    "Bug report stored locally, but GitHub issue creation failed: {}",
+                    error
+                )),
+            }
+        }
+    }
+}
+
+async fn store_bug_report(
+    config: &ServerConfig,
+    report: &BugReportRequest,
+    reporter_player_id: Option<PlayerId>,
+) -> Result<StoredBugReport> {
+    let trusted =
+        validate_trusted_bug_report_password(&config.trusted_bug_report_password, report.trusted_password.as_deref())?;
+    let timestamp_ms = now_ms();
+    let report_dir = create_bug_report_dir(&config.bug_reports_dir, timestamp_ms).await?;
+
+    fs::write(report_dir.join("user_report.txt"), &report.description).await?;
+    fs::write(report_dir.join("game_logs.txt"), &report.game_logs).await?;
+    fs::write(report_dir.join("console_logs.txt"), &report.console_logs).await?;
+
+    let metadata = BugReportMetadata {
+        timestamp_ms,
+        reporter_player_id: reporter_player_id.map(|player_id| player_id.as_u32()),
+        trusted,
+        trusted_password_supplied: report.trusted_password.is_some(),
+    };
+    fs::write(report_dir.join("metadata.json"), serde_json::to_vec_pretty(&metadata)?).await?;
+
+    Ok(StoredBugReport { report_dir, trusted })
+}
+
+async fn submit_bug_report(
+    config: &ServerConfig,
+    report: BugReportRequest,
+    reporter_player_id: Option<PlayerId>,
+) -> ServerMessage {
+    match store_bug_report(config, &report, reporter_player_id).await {
+        Ok(stored_report) => {
+            log::info!(
+                "Stored bug report from {:?} in {}",
+                reporter_player_id,
+                stored_report.report_dir.display()
+            );
+            let report_clone = report.clone();
+            let report_dir_clone = stored_report.report_dir.clone();
+            let github_result = tokio::task::spawn_blocking(move || {
+                create_github_issue_with_runner(&run_command, &report_clone, &report_dir_clone, reporter_player_id)
+            })
+            .await;
+
+            match github_result {
+                Ok(result) => {
+                    let issue_url = result.as_ref().ok().map(|issue| issue.issue_url.as_str());
+                    maybe_schedule_claude_autofix(
+                        &report,
+                        &stored_report.report_dir,
+                        reporter_player_id,
+                        &stored_report,
+                        issue_url,
+                    );
+                    bug_report_result_from_github_result(result)
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Bug report stored locally, but GitHub integration task failed: {}",
+                        error
+                    );
+                    ServerMessage::BugReportResult {
+                        success: true,
+                        issue_url: None,
+                        error: Some(format!(
+                            "Bug report stored locally, but GitHub integration task failed: {}",
+                            error
+                        )),
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            log::error!("Bug report submission failed: {}", error);
+            ServerMessage::BugReportResult {
+                success: false,
+                issue_url: None,
+                error: Some(error.to_string()),
+            }
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2114,6 +2676,19 @@ async fn send_error(ws: &mut WebSocketStream<TcpStream>, message: &str, fatal: b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs as stdfs;
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tempfile::tempdir;
+    use tokio::sync::oneshot as tokio_oneshot;
+    use tokio::time::{sleep, timeout, Duration};
+
+    fn make_output(stdout: &str, stderr: &str) -> CommandOutput {
+        CommandOutput {
+            success: true,
+            stdout: stdout.to_string(),
+            stderr: stderr.to_string(),
+        }
+    }
 
     #[test]
     fn test_server_config_default() {
@@ -2121,6 +2696,8 @@ mod tests {
         assert_eq!(config.port, DEFAULT_PORT);
         assert_eq!(config.starting_life, 20);
         assert!(!config.deck_visibility);
+        assert!(config.trusted_bug_report_password.is_empty());
+        assert_eq!(config.bug_reports_dir, PathBuf::from("bug_reports"));
     }
 
     #[test]
@@ -2147,5 +2724,283 @@ mod tests {
         assert_eq!(decklist.main_deck[0].count, 4);
         assert_eq!(decklist.sideboard.len(), 1);
         assert_eq!(decklist.sideboard[0].card_name, "Shock");
+    }
+
+    #[test]
+    fn test_validate_trusted_bug_report_password() {
+        assert!(!validate_trusted_bug_report_password("", None).expect("no password configured"));
+        assert!(!validate_trusted_bug_report_password("", Some("anything")).expect("ignored if not configured"));
+        assert!(validate_trusted_bug_report_password("trusted", Some("trusted")).expect("matching password"));
+        let error = validate_trusted_bug_report_password("trusted", Some("wrong")).expect_err("invalid password");
+        assert!(error.to_string().contains("Invalid trusted bug report password"));
+    }
+
+    #[tokio::test]
+    async fn test_store_bug_report_writes_expected_files() {
+        let temp = tempdir().expect("tempdir");
+        let config = ServerConfig {
+            trusted_bug_report_password: "trusted".to_string(),
+            bug_reports_dir: temp.path().join("bug_reports"),
+            ..Default::default()
+        };
+        let report = BugReportRequest {
+            description: "The client froze after combat damage.".to_string(),
+            game_logs: "[GAMELOG] Combat damage step".to_string(),
+            console_logs: "TypeError: Cannot read properties of undefined".to_string(),
+            trusted_password: Some("trusted".to_string()),
+        };
+
+        let stored_report = store_bug_report(&config, &report, Some(PlayerId::new(1)))
+            .await
+            .expect("store report");
+        let report_dir = stored_report.report_dir;
+
+        assert!(report_dir.starts_with(&config.bug_reports_dir));
+        assert!(stored_report.trusted);
+        assert_eq!(
+            stdfs::read_to_string(report_dir.join("user_report.txt")).expect("user report"),
+            report.description
+        );
+        assert_eq!(
+            stdfs::read_to_string(report_dir.join("game_logs.txt")).expect("game logs"),
+            report.game_logs
+        );
+        assert_eq!(
+            stdfs::read_to_string(report_dir.join("console_logs.txt")).expect("console logs"),
+            report.console_logs
+        );
+
+        let metadata: serde_json::Value =
+            serde_json::from_str(&stdfs::read_to_string(report_dir.join("metadata.json")).expect("metadata"))
+                .expect("parse metadata");
+        assert_eq!(metadata["reporter_player_id"], 1);
+        assert_eq!(metadata["trusted"], true);
+        assert_eq!(metadata["trusted_password_supplied"], true);
+        assert!(metadata["timestamp_ms"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_store_bug_report_rejects_invalid_trusted_password() {
+        let temp = tempdir().expect("tempdir");
+        let config = ServerConfig {
+            trusted_bug_report_password: "trusted".to_string(),
+            bug_reports_dir: temp.path().join("bug_reports"),
+            ..Default::default()
+        };
+        let report = BugReportRequest {
+            description: "desc".to_string(),
+            game_logs: "game".to_string(),
+            console_logs: "console".to_string(),
+            trusted_password: Some("wrong".to_string()),
+        };
+
+        let error = store_bug_report(&config, &report, None)
+            .await
+            .expect_err("invalid password should fail");
+        assert!(error.to_string().contains("Invalid trusted bug report password"));
+        assert!(!config.bug_reports_dir.exists());
+    }
+
+    #[test]
+    fn test_create_github_issue_with_runner_builds_expected_commands() {
+        let temp = tempdir().expect("tempdir");
+        let report_dir = temp.path().join("bug_report");
+        stdfs::create_dir_all(&report_dir).expect("report dir");
+        stdfs::write(report_dir.join("game_logs.txt"), "game log").expect("game logs");
+        stdfs::write(report_dir.join("console_logs.txt"), "console log").expect("console logs");
+
+        let report = BugReportRequest {
+            description: "Priority pass caused a client hang.\nSecond line.".to_string(),
+            game_logs: "game log".to_string(),
+            console_logs: "console log".to_string(),
+            trusted_password: None,
+        };
+
+        let calls = Arc::new(StdMutex::new(Vec::<Vec<String>>::new()));
+        let calls_clone = Arc::clone(&calls);
+        let runner = move |args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            calls_clone.lock().expect("lock calls").push(args.to_vec());
+            if args.get(2).map(String::as_str) == Some("label") {
+                Ok(make_output(r#"[{"name":"bug"},{"name":"triage"}]"#, ""))
+            } else if args.get(2).map(String::as_str) == Some("gist") {
+                Ok(make_output("https://gist.github.com/example/logs\n", ""))
+            } else if args.get(2).map(String::as_str) == Some("issue") {
+                Ok(make_output("https://github.com/rrnewton/mtg-forge-rs/issues/123\n", ""))
+            } else {
+                panic!("unexpected command: {args:?}");
+            }
+        };
+
+        let outcome =
+            create_github_issue_with_runner(&runner, &report, &report_dir, Some(PlayerId::new(1))).expect("issue");
+
+        assert_eq!(
+            outcome,
+            GitHubIssueOutcome {
+                issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/123".to_string(),
+                warning: None,
+            }
+        );
+
+        let calls = calls.lock().expect("lock calls");
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0][0], "/usr/bin/with-proxy");
+        assert_eq!(calls[0][1], "/usr/bin/gh");
+        assert_eq!(calls[0][2], "label");
+        assert_eq!(calls[1][2], "gist");
+        assert!(calls[1].iter().any(|arg| arg.ends_with("game_logs.txt")));
+        assert!(calls[1].iter().any(|arg| arg.ends_with("console_logs.txt")));
+        assert_eq!(calls[2][2], "issue");
+        assert!(calls[2].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
+        assert!(calls[2].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
+        assert!(calls[2]
+            .windows(2)
+            .any(|w| w[0] == "--body-file" && w[1].ends_with("github_issue_body.md")));
+
+        let issue_body = stdfs::read_to_string(report_dir.join("github_issue_body.md")).expect("issue body");
+        assert!(issue_body.contains("Priority pass caused a client hang."));
+        assert!(issue_body.contains("https://gist.github.com/example/logs"));
+        assert!(stdfs::read_to_string(report_dir.join("github_issue_url.txt"))
+            .expect("issue url")
+            .contains("/issues/123"));
+    }
+
+    #[test]
+    fn test_create_github_issue_with_runner_handles_missing_gh() {
+        let temp = tempdir().expect("tempdir");
+        let report_dir = temp.path().join("bug_report");
+        stdfs::create_dir_all(&report_dir).expect("report dir");
+        stdfs::write(report_dir.join("game_logs.txt"), "game log").expect("game logs");
+        stdfs::write(report_dir.join("console_logs.txt"), "console log").expect("console logs");
+
+        let report = BugReportRequest {
+            description: "Desync after combat".to_string(),
+            game_logs: "game log".to_string(),
+            console_logs: "console log".to_string(),
+            trusted_password: None,
+        };
+
+        let runner = |_args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            Err(std::io::Error::new(ErrorKind::NotFound, "gh not found"))
+        };
+
+        let error =
+            create_github_issue_with_runner(&runner, &report, &report_dir, None).expect_err("missing gh should fail");
+        assert!(error.to_string().contains("gh not found"));
+    }
+
+    #[test]
+    fn test_bug_report_result_from_github_error_preserves_local_success() {
+        let response = bug_report_result_from_github_result(Err(anyhow!("gh not found")));
+        match response {
+            ServerMessage::BugReportResult {
+                success,
+                issue_url,
+                error,
+            } => {
+                assert!(success);
+                assert_eq!(issue_url, None);
+                assert!(error.expect("error message").contains("stored locally"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_launch_claude_autofix_with_spawner_builds_expected_command() {
+        let repo_root = PathBuf::from("/tmp/mtg-repo");
+        let request = AutoFixLaunchRequest {
+            issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/123".to_string(),
+            prompt: "Fix the bug".to_string(),
+        };
+        let seen_args = Arc::new(StdMutex::new(Vec::<String>::new()));
+        let seen_args_clone = Arc::clone(&seen_args);
+        let seen_cwd = Arc::new(StdMutex::new(PathBuf::new()));
+        let seen_cwd_clone = Arc::clone(&seen_cwd);
+        let spawner = move |args: &[String], cwd: &Path| -> std::io::Result<Option<u32>> {
+            *seen_args_clone.lock().expect("lock args") = args.to_vec();
+            *seen_cwd_clone.lock().expect("lock cwd") = cwd.to_path_buf();
+            Ok(Some(4242))
+        };
+
+        let pid = launch_claude_autofix_with_spawner(&spawner, &repo_root, &request).expect("launch");
+
+        assert_eq!(pid, Some(4242));
+        let args = seen_args.lock().expect("lock args");
+        assert_eq!(
+            args.as_slice(),
+            &[
+                "/usr/bin/with-proxy".to_string(),
+                "claude".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "-p".to_string(),
+                "Fix the bug".to_string(),
+            ]
+        );
+        assert_eq!(*seen_cwd.lock().expect("lock cwd"), repo_root);
+    }
+
+    #[tokio::test]
+    async fn test_schedule_claude_autofix_with_spawner_is_fire_and_forget() {
+        let (started_tx, started_rx) = tokio_oneshot::channel::<()>();
+        let started_tx = Arc::new(StdMutex::new(Some(started_tx)));
+        let spawner = {
+            let started_tx = Arc::clone(&started_tx);
+            move |_args: &[String], _cwd: &Path| -> std::io::Result<Option<u32>> {
+                if let Some(tx) = started_tx.lock().expect("lock sender").take() {
+                    let _ = tx.send(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                Ok(Some(777))
+            }
+        };
+
+        let before = std::time::Instant::now();
+        schedule_claude_autofix_with_spawner(
+            Arc::new(spawner),
+            PathBuf::from("/tmp/mtg-repo"),
+            AutoFixLaunchRequest {
+                issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/9".to_string(),
+                prompt: "Prompt".to_string(),
+            },
+        );
+        let elapsed = before.elapsed();
+
+        assert!(elapsed < Duration::from_millis(50));
+        timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("spawned task should run")
+            .expect("sender should send");
+        sleep(Duration::from_millis(250)).await;
+    }
+
+    #[tokio::test]
+    async fn test_maybe_schedule_claude_autofix_skips_untrusted_or_missing_issue() {
+        let report = BugReportRequest {
+            description: "desc".to_string(),
+            game_logs: "game".to_string(),
+            console_logs: "console".to_string(),
+            trusted_password: None,
+        };
+        maybe_schedule_claude_autofix(
+            &report,
+            Path::new("/tmp/report"),
+            None,
+            &StoredBugReport {
+                report_dir: PathBuf::from("/tmp/report"),
+                trusted: false,
+            },
+            Some("https://github.com/rrnewton/mtg-forge-rs/issues/1"),
+        );
+        maybe_schedule_claude_autofix(
+            &report,
+            Path::new("/tmp/report"),
+            None,
+            &StoredBugReport {
+                report_dir: PathBuf::from("/tmp/report"),
+                trusted: true,
+            },
+            None,
+        );
     }
 }

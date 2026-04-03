@@ -213,6 +213,31 @@ pub fn tui_get_battlefield_cards() -> String {
     })
 }
 
+/// Get current game logs as a JSON array of strings
+#[wasm_bindgen]
+pub fn tui_get_logs_json() -> String {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let s = state.borrow();
+            let logs: Vec<String> = s.game.logger.logs().iter().map(|entry| entry.message.clone()).collect();
+            serde_json::to_string(&logs).unwrap_or_else(|_| "[]".to_string())
+        } else {
+            "[]".to_string()
+        }
+    })
+}
+
+/// Clear current game logs
+#[wasm_bindgen]
+pub fn tui_clear_logs() {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            s.game.logger.clear_logs();
+        }
+    });
+}
+
 /// Helper function to export card positions from renderer state
 /// This is called from within the render loop, so it doesn't need to borrow GLOBAL_TUI_STATE
 ///

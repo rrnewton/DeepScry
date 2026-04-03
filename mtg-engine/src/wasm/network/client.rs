@@ -389,6 +389,13 @@ impl WasmNetworkClient {
                 }
             }
 
+            ServerMessage::BugReportResult { success, error, .. } => {
+                if !success {
+                    log::error!("WasmNetworkClient: Bug report submission failed: {:?}", error);
+                    self.last_error = error;
+                }
+            }
+
             ServerMessage::WaitingForOpponent => {
                 log::info!("WasmNetworkClient: Waiting for opponent");
                 self.state = NetworkState::WaitingForOpponent;

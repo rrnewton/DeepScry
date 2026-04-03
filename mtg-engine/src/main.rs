@@ -536,6 +536,10 @@ enum Commands {
         #[arg(long)]
         password: Option<String>,
 
+        /// Optional password that marks bug report submissions as trusted
+        #[arg(long)]
+        trusted_bug_report_password: Option<String>,
+
         /// Path to cardsfolder (default: cardsfolder)
         #[arg(long, default_value = "cardsfolder")]
         cardsfolder: PathBuf,
@@ -845,6 +849,7 @@ async fn main() -> Result<()> {
         Commands::Server {
             port,
             password,
+            trusted_bug_report_password,
             cardsfolder,
             starting_life,
             deck_visibility,
@@ -858,6 +863,7 @@ async fn main() -> Result<()> {
             run_server(
                 port,
                 password,
+                trusted_bug_report_password,
                 cardsfolder,
                 starting_life,
                 deck_visibility,
@@ -978,6 +984,7 @@ async fn run_tourney_cmd(
 async fn run_server(
     port: u16,
     password: Option<String>,
+    trusted_bug_report_password: Option<String>,
     cardsfolder: PathBuf,
     starting_life: i32,
     deck_visibility: bool,
@@ -995,6 +1002,7 @@ async fn run_server(
     let config = ServerConfig {
         port,
         password: password.unwrap_or_default(),
+        trusted_bug_report_password: trusted_bug_report_password.unwrap_or_default(),
         cardsfolder,
         starting_life,
         deck_visibility,
@@ -3595,4 +3603,26 @@ async fn run_download(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "network")]
+    #[test]
+    fn test_server_cli_parses_trusted_bug_report_password() {
+        let cli = Cli::try_parse_from(["mtg", "server", "--trusted-bug-report-password", "trusted-secret"])
+            .expect("parse server CLI");
+
+        match cli.command {
+            Commands::Server {
+                trusted_bug_report_password,
+                ..
+            } => {
+                assert_eq!(trusted_bug_report_password, Some("trusted-secret".to_string()));
+            }
+            _ => panic!("expected server command"),
+        }
+    }
 }

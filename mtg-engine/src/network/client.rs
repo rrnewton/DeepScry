@@ -171,6 +171,7 @@ impl NetworkMessage {
             }
             // Ignore connection/setup messages - handled during connection setup, not gameplay
             ServerMessage::AuthResult { .. }
+            | ServerMessage::BugReportResult { .. }
             | ServerMessage::WaitingForOpponent
             | ServerMessage::GameStarted { .. }
             | ServerMessage::SyncError { .. }

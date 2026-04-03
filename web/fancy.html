@@ -233,6 +233,148 @@
             margin-top: 15px;
             text-align: center;
         }
+        /* Bug report modal */
+        #bug-report-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.78);
+            z-index: 1099;
+        }
+        #bug-report-overlay.show {
+            display: block;
+        }
+        #bug-report-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(680px, calc(100vw - 32px));
+            max-height: min(720px, calc(100vh - 32px));
+            overflow-y: auto;
+            background: linear-gradient(180deg, rgba(15, 26, 51, 0.98) 0%, rgba(10, 17, 33, 0.98) 100%);
+            border: 1px solid #4361ee;
+            border-radius: 12px;
+            box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            z-index: 1100;
+        }
+        #bug-report-modal.show {
+            display: block;
+        }
+        .bug-report-title {
+            color: #ffd700;
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .bug-report-copy {
+            color: #9fb3d1;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+        .bug-report-field {
+            margin-bottom: 14px;
+        }
+        .bug-report-label {
+            display: block;
+            color: #4cc9f0;
+            font-size: 12px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .bug-report-input {
+            width: 100%;
+            background: rgba(6, 11, 23, 0.96);
+            color: #f1f5ff;
+            border: 1px solid #29447c;
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 14px;
+        }
+        .bug-report-input:focus {
+            outline: none;
+            border-color: #4cc9f0;
+            box-shadow: 0 0 0 2px rgba(76, 201, 240, 0.18);
+        }
+        #bug-report-description {
+            min-height: 170px;
+            resize: vertical;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            line-height: 1.45;
+        }
+        .bug-report-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px;
+            margin: 14px 0 10px;
+        }
+        .bug-report-meta-card {
+            background: rgba(18, 31, 58, 0.85);
+            border: 1px solid rgba(67, 97, 238, 0.45);
+            border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .bug-report-meta-card strong {
+            display: block;
+            color: #ffd700;
+            font-size: 11px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .bug-report-meta-card span {
+            color: #dfe7f5;
+            font-size: 13px;
+        }
+        #bug-report-status {
+            min-height: 20px;
+            color: #9fb3d1;
+            font-size: 13px;
+            margin: 8px 0 14px;
+        }
+        #bug-report-status.error {
+            background: none;
+            margin: 8px 0 14px;
+            padding: 0;
+            text-align: left;
+            color: #ff8f8f;
+        }
+        #bug-report-status a {
+            color: #4cc9f0;
+            text-decoration: underline;
+        }
+        #bug-report-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .bug-report-button {
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        #btn-bug-report-cancel {
+            background: #2b3550;
+            color: #dfe7f5;
+        }
+        #btn-bug-report-submit {
+            background: linear-gradient(135deg, #4361ee 0%, #2a9d8f 100%);
+            color: white;
+            min-width: 160px;
+        }
+        #btn-bug-report-submit:disabled,
+        #btn-bug-report-cancel:disabled {
+            opacity: 0.65;
+            cursor: wait;
+        }
 
         /* Three-pane launcher layout */
         .launcher-container {
@@ -540,6 +682,38 @@
         <div class="help-dialog-close">Press any key to close</div>
     </div>
 
+    <!-- Bug report modal -->
+    <div id="bug-report-overlay"></div>
+        <div id="bug-report-modal" role="dialog" aria-modal="true" aria-labelledby="bug-report-title">
+        <div class="bug-report-title" id="bug-report-title">Report Bug</div>
+        <div class="bug-report-copy">
+            Capture what happened in the current game. When a remote game WebSocket is connected, the form sends recent browser console output and current game logs to the server with your report.
+        </div>
+        <div class="bug-report-field">
+            <label class="bug-report-label" for="bug-report-description">Describe the expected behavior and the deviant behavior</label>
+            <textarea id="bug-report-description" class="bug-report-input" placeholder="Describe the expected behavior and the deviant behavior"></textarea>
+        </div>
+        <div class="bug-report-field">
+            <label class="bug-report-label" for="bug-report-password">Trusted bug-report password</label>
+            <input id="bug-report-password" class="bug-report-input" type="password" placeholder="Optional">
+        </div>
+        <div class="bug-report-meta">
+            <div class="bug-report-meta-card">
+                <strong>Console Capture</strong>
+                <span id="bug-report-console-count">0 buffered lines</span>
+            </div>
+            <div class="bug-report-meta-card">
+                <strong>Game Log Capture</strong>
+                <span id="bug-report-game-log-count">0 buffered lines</span>
+            </div>
+        </div>
+        <div id="bug-report-status"></div>
+        <div id="bug-report-actions">
+            <button id="btn-bug-report-cancel" class="bug-report-button" type="button">Cancel</button>
+            <button id="btn-bug-report-submit" class="bug-report-button" type="button">Submit</button>
+        </div>
+    </div>
+
     <!-- Floating game controls - collapsible widget in corner -->
     <div id="game-controls" style="display: none; position: fixed; top: 10px; right: 10px; z-index: 100;">
         <!-- Collapsed state: small toggle button -->
@@ -554,6 +728,9 @@
             </div>
             <div style="margin-bottom: 8px;">
                 <button id="btn-toggle-images" style="background: #4361ee; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Show Images</button>
+            </div>
+            <div style="margin-bottom: 8px;">
+                <button id="btn-bug-report" style="background: #9c6644; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Report Bug</button>
             </div>
             <div>
                 <button id="btn-exit" style="background: #a03030; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin: 2px;">Exit Game</button>
@@ -761,6 +938,63 @@ Name=My Deck
         <div id="js-error-messages"></div>
     </div>
 
+    <script>
+        (function() {
+            if (window.__bugReportConsoleCaptureInitialized) {
+                return;
+            }
+            window.__bugReportConsoleCaptureInitialized = true;
+
+            const MAX_CONSOLE_LINES = 500;
+            const originalConsole = {
+                log: console.log.bind(console),
+                warn: console.warn.bind(console),
+                error: console.error.bind(console),
+            };
+            const consoleBuffer = [];
+
+            function stringifyConsoleArg(arg) {
+                if (arg instanceof Error) {
+                    return arg.stack || `${arg.name}: ${arg.message}`;
+                }
+                if (typeof arg === 'string') {
+                    return arg;
+                }
+                if (typeof arg === 'undefined') {
+                    return 'undefined';
+                }
+                try {
+                    return JSON.stringify(arg);
+                } catch (err) {
+                    return String(arg);
+                }
+            }
+
+            function recordConsoleLine(level, args) {
+                const rendered = args.map(stringifyConsoleArg).join(' ');
+                consoleBuffer.push(`[${new Date().toISOString()}] [${level.toUpperCase()}] ${rendered}`);
+                if (consoleBuffer.length > MAX_CONSOLE_LINES) {
+                    consoleBuffer.splice(0, consoleBuffer.length - MAX_CONSOLE_LINES);
+                }
+            }
+
+            ['log', 'warn', 'error'].forEach((level) => {
+                console[level] = (...args) => {
+                    recordConsoleLine(level, args);
+                    originalConsole[level](...args);
+                };
+            });
+
+            window.getRecentConsoleLogs = function() {
+                return consoleBuffer.slice();
+            };
+            window.clearRecentConsoleLogs = function() {
+                consoleBuffer.length = 0;
+            };
+            window.__originalConsole = originalConsole;
+        })();
+    </script>
+
     <!-- Global error handler - catches uncaught JS errors and displays them visibly -->
     <script>
         (function() {
@@ -837,6 +1071,7 @@ Name=My Deck
             tui_run_turn,
             tui_toggle_auto,
             tui_get_battlefield_cards,
+            tui_get_logs_json,
             set_p1_fixed_script,
             clear_p1_fixed_script,
             cleanup_tui_state,
@@ -2335,6 +2570,13 @@ Name=My Deck
         // Network client instance (created when connecting)
         let networkClient = null;
 
+        function wireBugReportNetworkClient(client) {
+            if (client) {
+                client.onBugReportResult = handleBugReportResult;
+            }
+            return client;
+        }
+
         async function launchTui() {
             const gameMode = document.getElementById('game-mode').value;
             const isNetworkMode = gameMode === 'network';
@@ -2478,7 +2720,7 @@ Name=My Deck
                         network_is_game_ready,
                         network_get_our_player_id
                     };
-                    networkClient = getNetworkClient(wasmExports);
+                    networkClient = wireBugReportNetworkClient(getNetworkClient(wasmExports));
 
                     // Set up callbacks
                     networkClient.onStateChange = (state) => {
@@ -2496,6 +2738,10 @@ Name=My Deck
                         if (statusEl) {
                             statusEl.textContent = `Error: ${msg}`;
                             statusEl.style.color = '#ff6b6b';
+                        }
+                        if (bugReportSubmitting) {
+                            setBugReportSubmitting(false);
+                            setBugReportStatus(`Bug report submission failed: ${msg}`, { isError: true });
                         }
                     };
 
@@ -2597,6 +2843,214 @@ Name=My Deck
         }
 
         let autoRunning = false;
+        let bugReportSubmitting = false;
+
+        function parseJsonArray(json, fallback = []) {
+            if (!json) {
+                return fallback;
+            }
+            try {
+                const parsed = JSON.parse(json);
+                return Array.isArray(parsed) ? parsed : fallback;
+            } catch (error) {
+                console.warn('[BugReport] Failed to parse JSON payload:', error);
+                return fallback;
+            }
+        }
+
+        function getBugReportConsoleLogs() {
+            if (typeof window.getRecentConsoleLogs === 'function') {
+                return window.getRecentConsoleLogs();
+            }
+            return [];
+        }
+
+        function getBugReportGameLogs() {
+            return parseJsonArray(tui_get_logs_json(), []);
+        }
+
+        function refreshBugReportCaptureCounts() {
+            const consoleCount = document.getElementById('bug-report-console-count');
+            const gameLogCount = document.getElementById('bug-report-game-log-count');
+            if (consoleCount) {
+                consoleCount.textContent = `${getBugReportConsoleLogs().length} buffered lines`;
+            }
+            if (gameLogCount) {
+                gameLogCount.textContent = `${getBugReportGameLogs().length} buffered lines`;
+            }
+        }
+
+        function setBugReportStatus(message = '', { isError = false, issueUrl = null } = {}) {
+            const status = document.getElementById('bug-report-status');
+            if (!status) {
+                return;
+            }
+            status.innerHTML = '';
+            status.classList.toggle('error', isError);
+            if (!message && !issueUrl) {
+                return;
+            }
+
+            if (message) {
+                status.appendChild(document.createTextNode(message));
+            }
+            if (issueUrl) {
+                if (message) {
+                    status.appendChild(document.createTextNode(' '));
+                }
+                const link = document.createElement('a');
+                link.href = issueUrl;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = issueUrl;
+                status.appendChild(link);
+            }
+        }
+
+        function setBugReportSubmitting(isSubmitting) {
+            bugReportSubmitting = isSubmitting;
+            const submitButton = document.getElementById('btn-bug-report-submit');
+            const cancelButton = document.getElementById('btn-bug-report-cancel');
+            if (submitButton) {
+                submitButton.disabled = isSubmitting;
+                submitButton.textContent = isSubmitting ? 'Preparing Report...' : 'Submit';
+            }
+            if (cancelButton) {
+                cancelButton.disabled = isSubmitting;
+            }
+        }
+
+        function openBugReportModal() {
+            refreshBugReportCaptureCounts();
+            setBugReportStatus('');
+            setBugReportSubmitting(false);
+            document.getElementById('bug-report-overlay').classList.add('show');
+            document.getElementById('bug-report-modal').classList.add('show');
+            document.getElementById('bug-report-description').focus();
+        }
+
+        function clearBugReportFormState() {
+            document.getElementById('bug-report-description').value = '';
+            document.getElementById('bug-report-password').value = '';
+            setBugReportStatus('');
+        }
+
+        function closeBugReportModal({ resetStatus = true } = {}) {
+            if (bugReportSubmitting) {
+                return;
+            }
+            document.getElementById('bug-report-overlay').classList.remove('show');
+            document.getElementById('bug-report-modal').classList.remove('show');
+            if (resetStatus) {
+                clearBugReportFormState();
+            }
+        }
+
+        function resetBugReportUi() {
+            setBugReportSubmitting(false);
+            document.getElementById('bug-report-overlay').classList.remove('show');
+            document.getElementById('bug-report-modal').classList.remove('show');
+            clearBugReportFormState();
+            delete window.lastBugReportDraft;
+            delete window.lastBugReportResult;
+            delete window.lastBugReportSubmissionMessage;
+            refreshBugReportCaptureCounts();
+        }
+
+        async function submitBugReportDraft() {
+            const descriptionEl = document.getElementById('bug-report-description');
+            const passwordEl = document.getElementById('bug-report-password');
+            const description = descriptionEl.value.trim();
+            if (!description) {
+                setBugReportStatus('Enter a bug description before submitting.', { isError: true });
+                descriptionEl.focus();
+                return;
+            }
+
+            setBugReportSubmitting(true);
+            setBugReportStatus('Capturing current logs and assembling bug report payload...');
+
+            await new Promise((resolve) => setTimeout(resolve, 150));
+
+            const bugReportPayload = {
+                description,
+                trustedPassword: passwordEl.value.trim(),
+                capturedAt: new Date().toISOString(),
+                turnInfo: document.getElementById('turn-info')?.textContent || '',
+                mode: document.getElementById('game-mode')?.value || 'unknown',
+                consoleLogs: getBugReportConsoleLogs(),
+                gameLogs: getBugReportGameLogs(),
+            };
+
+            const bugReportMessage = {
+                type: 'bug_report',
+                description: bugReportPayload.description,
+                game_logs: bugReportPayload.gameLogs.join('\n'),
+                console_logs: bugReportPayload.consoleLogs.join('\n'),
+                trusted_password: bugReportPayload.trustedPassword || undefined,
+            };
+
+            window.lastBugReportDraft = bugReportPayload;
+            window.lastBugReportSubmissionMessage = bugReportMessage;
+            refreshBugReportCaptureCounts();
+            console.log('[BugReport] Captured draft payload', {
+                descriptionLength: bugReportPayload.description.length,
+                trustedPasswordProvided: Boolean(bugReportPayload.trustedPassword),
+                consoleLogCount: bugReportPayload.consoleLogs.length,
+                gameLogCount: bugReportPayload.gameLogs.length,
+                turnInfo: bugReportPayload.turnInfo,
+            });
+
+            if (!networkClient || typeof networkClient.isConnected !== 'function' || !networkClient.isConnected()) {
+                setBugReportSubmitting(false);
+                setBugReportStatus('Bug report submission requires an active network WebSocket connection.', { isError: true });
+                return;
+            }
+
+            if (typeof networkClient.send !== 'function') {
+                setBugReportSubmitting(false);
+                setBugReportStatus('Bug report submission is unavailable because the network client cannot send messages.', { isError: true });
+                return;
+            }
+
+            try {
+                setBugReportStatus('Submitting bug report to server...');
+                networkClient.send(JSON.stringify(bugReportMessage));
+            } catch (error) {
+                setBugReportSubmitting(false);
+                setBugReportStatus(`Failed to send bug report: ${error.message}`, { isError: true });
+            }
+        }
+
+        function handleBugReportResult(result) {
+            window.lastBugReportResult = result;
+            setBugReportSubmitting(false);
+
+            if (!result?.success) {
+                setBugReportStatus(result?.error || 'Bug report submission failed.', { isError: true });
+                return;
+            }
+
+            document.getElementById('bug-report-description').value = '';
+            document.getElementById('bug-report-password').value = '';
+            refreshBugReportCaptureCounts();
+
+            if (result.issue_url) {
+                setBugReportStatus('Bug report filed:', { issueUrl: result.issue_url });
+            } else {
+                setBugReportStatus('Bug report saved locally');
+            }
+        }
+
+        window.__bugReportTestHelpers = {
+            setNetworkClient(client) {
+                networkClient = wireBugReportNetworkClient(client);
+                window.__bugReportTestTransport = networkClient;
+            },
+            handleResult(result) {
+                handleBugReportResult(result);
+            }
+        };
 
         // Post-render callback: called by WASM after every frame render
         // This is event-driven (no polling!) - synchronized with TUI rendering
@@ -2715,6 +3169,22 @@ Name=My Deck
             if (nowEnabled) {
                 CardImageOverlay.displayBattlefieldCards();
             }
+        });
+
+        document.getElementById('btn-bug-report').addEventListener('click', function() {
+            openBugReportModal();
+        });
+
+        document.getElementById('btn-bug-report-cancel').addEventListener('click', function() {
+            closeBugReportModal();
+        });
+
+        document.getElementById('bug-report-overlay').addEventListener('click', function() {
+            closeBugReportModal();
+        });
+
+        document.getElementById('btn-bug-report-submit').addEventListener('click', function() {
+            submitBugReportDraft();
         });
 
         // Show exit confirmation dialog when Escape is pressed
@@ -2854,6 +3324,7 @@ Name=My Deck
             // Clean up JavaScript state
             tuiLaunched = false;
             cardImagesEnabled = false;
+            resetBugReportUi();
 
             // Clear card image overlays
             CardImageOverlay.disable();

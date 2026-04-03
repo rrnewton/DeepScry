@@ -104,6 +104,18 @@ pub enum ClientMessage {
         deck: DeckSubmission,
     },
 
+    /// Submit a bug report to the server for local persistence
+    BugReport {
+        /// User-provided description of the issue
+        description: String,
+        /// Game log output captured on the client
+        game_logs: String,
+        /// Browser/dev console logs captured on the client
+        console_logs: String,
+        /// Optional trusted password for elevated handling
+        trusted_password: Option<String>,
+    },
+
     /// Response to a choice request from server
     SubmitChoice {
         /// Sequence number matching the ChoiceRequest
@@ -199,6 +211,16 @@ pub enum ServerMessage {
         your_player_id: Option<PlayerId>,
         /// Assigned player name (includes suffix if server-generated)
         your_name: Option<String>,
+    },
+
+    /// Result of a bug report submission
+    BugReportResult {
+        /// Whether the report was accepted and stored
+        success: bool,
+        /// Future-facing issue URL if the report was escalated automatically
+        issue_url: Option<String>,
+        /// Error message if submission failed
+        error: Option<String>,
     },
 
     /// Waiting for opponent to connect
@@ -1068,6 +1090,35 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn test_bug_report_client_message_serialization() {
+        let msg = ClientMessage::BugReport {
+            description: "UI froze after mulligan".to_string(),
+            game_logs: "[GAMELOG] draw step".to_string(),
+            console_logs: "TypeError: undefined is not a function".to_string(),
+            trusted_password: Some("trusted".to_string()),
+        };
+
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let roundtrip: ClientMessage = serde_json::from_str(&json).expect("deserialize");
+
+        match roundtrip {
+            ClientMessage::BugReport {
+                description,
+                game_logs,
+                console_logs,
+                trusted_password,
+            } => {
+                assert_eq!(description, "UI froze after mulligan");
+                assert_eq!(game_logs, "[GAMELOG] draw step");
+                assert_eq!(console_logs, "TypeError: undefined is not a function");
+                assert_eq!(trusted_password, Some("trusted".to_string()));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_server_message_serialization() {
         let msg = ServerMessage::ChoiceRequest {
@@ -1179,6 +1230,11 @@ mod tests {
                 your_player_id: None,
                 your_name: None,
             },
+            ServerMessage::BugReportResult {
+                success: true,
+                issue_url: None,
+                error: None,
+            },
             ServerMessage::WaitingForOpponent,
             ServerMessage::GameStarted {
                 your_player_id: player_id,
@@ -1275,6 +1331,12 @@ mod tests {
                     vec![("Forest".to_string(), 20), ("Grizzly Bears".to_string(), 4)],
                     vec![],
                 ),
+            },
+            ClientMessage::BugReport {
+                description: "Network desync after combat".to_string(),
+                game_logs: "combat log".to_string(),
+                console_logs: "console log".to_string(),
+                trusted_password: None,
             },
             ClientMessage::SubmitChoice {
                 choice_seq: 42,

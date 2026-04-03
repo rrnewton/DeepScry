@@ -23,6 +23,7 @@ export class MTGNetworkClient {
         this.onError = null;  // Callback for error display
         this.onGameReady = null;  // Callback when game starts
         this.onMessageProcessed = null;  // Callback after each message (for triggering game loop)
+        this.onBugReportResult = null;  // Callback for bug report submission results
         this.gameReadyFired = false;  // Track if onGameReady was already called
     }
 
@@ -71,6 +72,20 @@ export class MTGNetworkClient {
             const data = event.data;
             console.log('[Network] Received:', data.substring(0, 200) + (data.length > 200 ? '...' : ''));
 
+            let msg = null;
+            try {
+                msg = JSON.parse(data);
+            } catch (e) {
+                // Non-JSON messages still flow into WASM for normal handling/error reporting
+            }
+
+            if (msg?.type === 'bug_report_result') {
+                if (this.onBugReportResult) {
+                    this.onBugReportResult(msg);
+                }
+                return;
+            }
+
             // Pass to WASM for processing
             this.wasm.network_on_message(data);
             this._notifyStateChange();
@@ -82,9 +97,7 @@ export class MTGNetworkClient {
             }
 
             // Notify that a message was processed (triggers game loop for Human controller)
-            // Parse message to check if it's one that advances the game
-            try {
-                const msg = JSON.parse(data);
+            if (msg) {
                 if (msg.type === 'choice_request' ||
                     msg.type === 'choice_accepted' ||
                     msg.type === 'opponent_choice' ||
@@ -93,8 +106,6 @@ export class MTGNetworkClient {
                         this.onMessageProcessed(msg.type);
                     }
                 }
-            } catch (e) {
-                // Ignore parse errors, just don't trigger callback
             }
         };
 
@@ -167,6 +178,14 @@ export class MTGNetworkClient {
             console.log('[Network] Queuing message (not connected)');
             this.messageQueue.push(json);
         }
+    }
+
+    /**
+     * Check whether the underlying WebSocket is currently open.
+     * @returns {boolean}
+     */
+    isConnected() {
+        return !!(this.ws && this.ws.readyState === WebSocket.OPEN);
     }
 
     // --- Private methods ---

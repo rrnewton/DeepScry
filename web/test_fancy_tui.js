@@ -195,6 +195,129 @@ async function runTest() {
 
         log('Screenshot: 03_turn_XX.png (for each turn)');
 
+        // Test bug report modal, payload capture, disconnected error, and response handling
+        log('Testing bug report modal...');
+        await page.evaluate(() => {
+            console.log('[TestBugReport] console-log-marker');
+            console.warn('[TestBugReport] console-warn-marker');
+            console.error('[TestBugReport] console-error-marker');
+        });
+        await page.click('#btn-bug-report');
+        await page.waitForSelector('#bug-report-modal', { state: 'visible', timeout: 5000 });
+        await page.fill('#bug-report-description', 'Expected the game to advance cleanly; instead it deviated during the browser test.');
+        await page.fill('#bug-report-password', 'trusted-secret');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status')?.textContent || '';
+            return status.includes('requires an active network WebSocket connection');
+        }, { timeout: 5000 });
+        const bugReportDraft = await page.evaluate(() => window.lastBugReportDraft || null);
+        if (!bugReportDraft) {
+            throw new Error('Bug report draft payload was not captured');
+        }
+        if (bugReportDraft.description !== 'Expected the game to advance cleanly; instead it deviated during the browser test.') {
+            throw new Error('Bug report description was not captured correctly');
+        }
+        if (bugReportDraft.trustedPassword !== 'trusted-secret') {
+            throw new Error('Bug report password was not captured correctly');
+        }
+        if (!Array.isArray(bugReportDraft.consoleLogs) || !bugReportDraft.consoleLogs.some(line => line.includes('console-error-marker'))) {
+            throw new Error('Bug report console log capture missing expected marker');
+        }
+        if (!Array.isArray(bugReportDraft.gameLogs) || bugReportDraft.gameLogs.length === 0) {
+            throw new Error('Bug report game logs were not captured');
+        }
+        const disconnectedMessage = await page.evaluate(() => window.lastBugReportSubmissionMessage || null);
+        if (!disconnectedMessage || disconnectedMessage.type !== 'bug_report') {
+            throw new Error('Bug report submission message was not assembled correctly');
+        }
+        if (disconnectedMessage.trusted_password !== 'trusted-secret') {
+            throw new Error('Bug report trusted_password field was not serialized correctly');
+        }
+        if (!disconnectedMessage.console_logs.includes('console-error-marker')) {
+            throw new Error('Bug report console_logs string missing expected marker');
+        }
+
+        await page.evaluate(() => {
+            window.__bugReportSentMessages = [];
+            window.__bugReportTestHelpers.setNetworkClient({
+                isConnected() {
+                    return true;
+                },
+                send(json) {
+                    window.__bugReportSentMessages.push(JSON.parse(json));
+                }
+            });
+        });
+
+        await page.fill('#bug-report-description', 'Expected remote submission success.');
+        await page.fill('#bug-report-password', 'trusted-secret');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 5000 });
+        const sentBugReport = await page.evaluate(() => window.__bugReportSentMessages[0]);
+        if (sentBugReport.type !== 'bug_report') {
+            throw new Error('Bug report was not sent with the correct message type');
+        }
+        if (sentBugReport.description !== 'Expected remote submission success.') {
+            throw new Error('Bug report send payload used the wrong description');
+        }
+        if (!sentBugReport.game_logs || !sentBugReport.console_logs) {
+            throw new Error('Bug report send payload did not include serialized logs');
+        }
+
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportResult({
+                success: true,
+                issue_url: 'https://github.com/example/issues/123',
+                error: null
+            });
+        });
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status');
+            const link = status?.querySelector('a');
+            return link && link.href.includes('/issues/123');
+        }, { timeout: 5000 });
+        const clearedAfterSuccess = await page.evaluate(() => ({
+            description: document.getElementById('bug-report-description')?.value || '',
+            password: document.getElementById('bug-report-password')?.value || ''
+        }));
+        if (clearedAfterSuccess.description !== '' || clearedAfterSuccess.password !== '') {
+            throw new Error('Bug report form did not reset after successful submission');
+        }
+
+        await page.fill('#bug-report-description', 'Expected local-save success without issue URL.');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 2, { timeout: 5000 });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportResult({
+                success: true,
+                issue_url: null,
+                error: null
+            });
+        });
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status')?.textContent || '';
+            return status.includes('Bug report saved locally');
+        }, { timeout: 5000 });
+
+        await page.fill('#bug-report-description', 'Expected server-side validation error.');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 3, { timeout: 5000 });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportResult({
+                success: false,
+                issue_url: null,
+                error: 'Trusted bug-report password was rejected'
+            });
+        });
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status')?.textContent || '';
+            return status.includes('Trusted bug-report password was rejected');
+        }, { timeout: 5000 });
+
+        await page.click('#btn-bug-report-cancel');
+        await page.waitForSelector('#bug-report-modal', { state: 'hidden', timeout: 5000 });
+
         // Test auto-run briefly
         log('Testing auto-run mode...');
         const autoStart = Date.now();
