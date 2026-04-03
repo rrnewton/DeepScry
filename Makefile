@@ -600,7 +600,7 @@ play-web-pvp: build-network wasm-network
 		--pvp
 
 # Build WASM and start local web server
-wasm-serve: wasm
+wasm-serve: wasm-network
 	@echo ""
 	@echo "=== Starting web server ==="
 	@echo "Open http://localhost:$(PORT) in your browser"
