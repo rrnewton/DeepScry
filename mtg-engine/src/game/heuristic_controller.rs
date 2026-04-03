@@ -71,6 +71,10 @@ enum ActivatedAbilityType {
     /// PreventDamage ability - creates a damage prevention shield
     /// Example: Militant Monk "{T}: Prevent the next 1 damage to any target"
     PreventDamage,
+    /// TapTarget ability - taps a target permanent
+    /// Example: Icy Manipulator "{1}, {T}: Tap target artifact, creature, or land"
+    /// Reference: TapAi.java in forge-ai
+    TapTarget,
     /// Other abilities not yet categorized
     Other,
 }
@@ -633,6 +637,10 @@ impl HeuristicController {
                 ActivatedAbilityType::Debuff => {
                     // Debuff abilities (lose Defender) add value since they unlock attacking
                     value += 15;
+                }
+                ActivatedAbilityType::TapTarget => {
+                    // Tap-target abilities (Icy Manipulator) provide repeatable control
+                    value += 25;
                 }
                 ActivatedAbilityType::Other => {}
             }
@@ -2536,6 +2544,35 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::TapTarget => {
+                    // Tap-target abilities (Icy Manipulator, etc.)
+                    // Reference: TapAi.java - best used before combat to tap blockers,
+                    // or during opponent's turn to tap attackers/mana
+                    let current_step = view.current_step();
+
+                    // Before our combat: tap opponent's potential blockers
+                    if current_step == crate::game::Step::BeginCombat || current_step == crate::game::Step::Main1 {
+                        // Check for untapped opponent creatures
+                        let has_target = view.battlefield().iter().any(|&card_id| {
+                            view.get_card(card_id)
+                                .is_some_and(|c| c.is_creature() && c.controller != self.player_id && !c.tapped)
+                        });
+                        if has_target {
+                            return true;
+                        }
+                    }
+
+                    // End of opponent's turn: tap their best creature
+                    if current_step == crate::game::Step::End {
+                        let has_target = view.battlefield().iter().any(|&card_id| {
+                            view.get_card(card_id)
+                                .is_some_and(|c| c.is_creature() && c.controller != self.player_id && !c.tapped)
+                        });
+                        if has_target {
+                            return true;
+                        }
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2597,6 +2634,14 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::DebuffCreature { .. }) {
                 return ActivatedAbilityType::Debuff;
+            }
+        }
+
+        // Check for tap-target effects (Icy Manipulator, etc.)
+        // Reference: TapAi.java in forge-ai
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::TapPermanent { .. }) {
+                return ActivatedAbilityType::TapTarget;
             }
         }
 
@@ -2937,6 +2982,9 @@ impl HeuristicController {
     /// Reference: Various spell AI classes in forge-ai/src/main/java/forge/ai/ability/
     fn should_cast_spell(&self, spell: &Card, view: &GameStateView) -> bool {
         // Check for card draw spells
+        // Reference: DrawAi.java:30-120 (checkApiLogic)
+        // Cast draw spells when hand is getting low (4 or fewer cards)
+        // More aggressive than before (was 2) to keep card advantage flowing
         let has_draw = spell.effects.iter().any(|e| {
             matches!(
                 e,
@@ -2945,8 +2993,9 @@ impl HeuristicController {
         });
         if has_draw {
             let hand_size = view.hand().len();
-            // Draw if we have 2 or fewer cards in hand
-            if hand_size <= 2 {
+            // Draw if we have 4 or fewer cards in hand
+            // Reference: DrawAi.java - Java Forge draws when hand < 4-5
+            if hand_size <= 4 {
                 // Check timing for instant-speed draw - prefer opponent's end step for bluffing
                 if spell.is_instant() && !self.should_cast_instant_now(view, spell) {
                     return false;
@@ -3103,6 +3152,77 @@ impl HeuristicController {
             .any(|e| matches!(e, crate::core::Effect::ChangeZoneAll { .. }));
         if has_change_zone_all && self.should_cast_change_zone_all(spell, view) {
             return true;
+        }
+
+        // Check for Discard effects (Hymn to Tourach, Mind Rot, etc.)
+        // Reference: DiscardAi.java:27-120 (checkApiLogic)
+        // Discard is almost always good when opponent has cards in hand
+        let has_discard = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DiscardCards { .. } | crate::core::Effect::DiscardCardsXPaid { .. }
+            )
+        });
+        if has_discard && self.should_cast_discard(view) {
+            return true;
+        }
+
+        // Check for single-target Tap effects (Icy Manipulator spell mode, etc.)
+        // Reference: TapAi.java:26-100 (checkApiLogic)
+        let has_tap = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }));
+        if has_tap && self.should_cast_tap_permanent(view) {
+            return true;
+        }
+
+        // Check for single-target Untap effects
+        let has_untap = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::UntapPermanent { .. }));
+        if has_untap {
+            // Untapping our own permanents is almost always good
+            return true;
+        }
+
+        // Check for TapOrUntap effects (Bounding Krasis ETB, etc.)
+        let has_tap_or_untap = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::TapOrUntapPermanent { .. }));
+        if has_tap_or_untap {
+            // Flexible effect - always worth casting
+            return true;
+        }
+
+        // Check for DebuffCreature effects (removing keywords from opponent creatures)
+        let has_debuff = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::DebuffCreature { .. }));
+        if has_debuff && self.should_cast_debuff(view) {
+            return true;
+        }
+
+        // Check for Regenerate spell effects (cast proactively to protect creatures)
+        let has_regenerate = spell
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::Regenerate { .. }));
+        if has_regenerate {
+            // Only cast during combat when our creatures are in danger
+            let current_step = view.current_step();
+            let is_combat = matches!(
+                current_step,
+                crate::game::Step::DeclareAttackers
+                    | crate::game::Step::DeclareBlockers
+                    | crate::game::Step::CombatDamage
+            );
+            if is_combat {
+                return true;
+            }
         }
 
         // Planeswalkers are always worth casting (they provide ongoing value via loyalty abilities)
@@ -3639,6 +3759,65 @@ impl HeuristicController {
             }
         }
         false
+    }
+
+    /// Evaluate whether to cast a Discard spell (Hymn to Tourach, Mind Rot, etc.)
+    ///
+    /// Reference: DiscardAi.java:30-80 (checkApiLogic)
+    /// Cast when opponent has cards in hand. More valuable early game.
+    fn should_cast_discard(&self, view: &GameStateView) -> bool {
+        // Check if any opponent has cards to discard
+        let opp_hand_size: usize = view.opponents().map(|opp_id| view.player_hand_size(opp_id)).sum();
+
+        // Don't cast if opponent has no cards to discard
+        if opp_hand_size == 0 {
+            return false;
+        }
+
+        // Always cast if opponent has cards (removing cards is always valuable)
+        true
+    }
+
+    /// Evaluate whether to cast a single-target Tap spell
+    ///
+    /// Reference: TapAi.java:30-80 (checkApiLogic)
+    /// Best used before combat to tap opponent's best blocker,
+    /// or during opponent's turn to tap their best attacker.
+    fn should_cast_tap_permanent(&self, view: &GameStateView) -> bool {
+        // Check if opponent has untapped creatures we'd want to tap
+        let has_untapped_opp_creature = view
+            .battlefield()
+            .iter()
+            .filter_map(|&card_id| view.get_card(card_id))
+            .any(|c| c.is_creature() && c.controller != self.player_id && !c.tapped);
+
+        if has_untapped_opp_creature {
+            return true;
+        }
+
+        // Also worthwhile if opponent has untapped mana sources we want to deny
+        // (especially before they can cast something)
+        false
+    }
+
+    /// Evaluate whether to cast a Debuff spell (remove keywords from opponent creature)
+    ///
+    /// Cast when opponent has creatures with relevant keywords (flying, etc.)
+    fn should_cast_debuff(&self, view: &GameStateView) -> bool {
+        // Check if opponent has creatures with evasion or other important keywords
+        view.battlefield()
+            .iter()
+            .filter_map(|&card_id| view.get_card(card_id))
+            .any(|c| {
+                c.is_creature()
+                    && c.controller != self.player_id
+                    && (c.keywords.contains(crate::core::Keyword::Flying)
+                        || c.keywords.contains(crate::core::Keyword::FirstStrike)
+                        || c.keywords.contains(crate::core::Keyword::DoubleStrike)
+                        || c.keywords.contains(crate::core::Keyword::Trample)
+                        || c.keywords.contains(crate::core::Keyword::Hexproof)
+                        || c.keywords.contains(crate::core::Keyword::Indestructible))
+            })
     }
 
     /// Evaluate whether to cast a Fight spell
@@ -9035,5 +9214,291 @@ mod tests {
         );
 
         println!("ChangeZoneAll AI test passed - AI correctly evaluates mass zone changes");
+    }
+
+    // ==================== 4ED Card AI Tests ====================
+
+    /// Test: AI should cast discard spells when opponent has cards in hand
+    #[test]
+    fn test_should_cast_discard() {
+        use crate::core::Card;
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        game.turn.active_player = p1_id;
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Scenario 1: Opponent has cards in hand → should cast
+        // Give opponent some cards in hand
+        for i in 0..3u32 {
+            let cid = EntityId::new(50 + i);
+            let card = Card::new(cid, format!("Opp Card {}", i), p2_id);
+            game.cards.insert(cid, card);
+            if let Some(zones) = game.get_player_zones_mut(p2_id) {
+                zones.hand.cards.push(cid);
+            }
+        }
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_discard(&view),
+            "Should cast discard when opponent has 3 cards in hand"
+        );
+
+        // Scenario 2: Opponent has empty hand → should NOT cast
+        let mut game2 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game2.turn.active_player = p1_id;
+        let view2 = GameStateView::new(&game2, p1_id);
+        assert!(
+            !controller.should_cast_discard(&view2),
+            "Should NOT cast discard when opponent has no cards in hand"
+        );
+
+        println!("Discard AI test passed - correctly evaluates opponent hand size");
+    }
+
+    /// Test: AI should cast tap spells when opponent has untapped creatures
+    #[test]
+    fn test_should_cast_tap_permanent() {
+        use crate::core::{Card, CardType};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        game.turn.active_player = p1_id;
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Scenario 1: Opponent has untapped creature → should cast
+        let opp_cid = EntityId::new(50);
+        let mut opp_creature = Card::new(opp_cid, "Opp Bear", p2_id);
+        opp_creature.add_type(CardType::Creature);
+        opp_creature.set_base_power(Some(4));
+        opp_creature.set_base_toughness(Some(4));
+        opp_creature.controller = p2_id;
+        opp_creature.tapped = false;
+        game.cards.insert(opp_cid, opp_creature);
+        game.battlefield.cards.push(opp_cid);
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_tap_permanent(&view),
+            "Should cast tap when opponent has untapped creature"
+        );
+
+        // Scenario 2: Only our creatures on battlefield → should NOT cast
+        let mut game2 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game2.turn.active_player = p1_id;
+
+        let our_cid = EntityId::new(60);
+        let mut our_creature = Card::new(our_cid, "Our Bear", p1_id);
+        our_creature.add_type(CardType::Creature);
+        our_creature.set_base_power(Some(2));
+        our_creature.set_base_toughness(Some(2));
+        our_creature.controller = p1_id;
+        game2.cards.insert(our_cid, our_creature);
+        game2.battlefield.cards.push(our_cid);
+
+        let view2 = GameStateView::new(&game2, p1_id);
+        assert!(
+            !controller.should_cast_tap_permanent(&view2),
+            "Should NOT cast tap when no opponent creatures"
+        );
+
+        println!("Tap permanent AI test passed");
+    }
+
+    /// Test: Icy Manipulator's tap ability is classified as TapTarget
+    #[test]
+    fn test_icy_manipulator_from_cardsfolder() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/i/icy_manipulator.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Icy Manipulator");
+        assert_eq!(def.name.as_str(), "Icy Manipulator");
+
+        let game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        assert!(card.is_artifact(), "Icy Manipulator should be an artifact");
+
+        // Find the non-mana tap ability
+        let tap_abilities: Vec<_> = card.activated_abilities.iter().filter(|a| !a.is_mana_ability).collect();
+
+        assert!(
+            !tap_abilities.is_empty(),
+            "Icy Manipulator should have at least one non-mana activated ability"
+        );
+
+        // Verify the ability has a TapPermanent effect
+        let ability = tap_abilities[0];
+        let has_tap_effect = ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }));
+
+        assert!(
+            has_tap_effect,
+            "Icy Manipulator's ability should have a TapPermanent effect"
+        );
+
+        // Test AI classification
+        let controller = HeuristicController::new(p1_id);
+        let ability_type = controller.classify_activated_ability(ability);
+        assert!(
+            matches!(ability_type, ActivatedAbilityType::TapTarget),
+            "Icy Manipulator's ability should be classified as TapTarget by AI"
+        );
+
+        println!("Icy Manipulator test passed - ability correctly classified as TapTarget");
+    }
+
+    /// Test: Hymn to Tourach parsed correctly and AI evaluates casting
+    #[test]
+    fn test_hymn_to_tourach_from_cardsfolder() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/h/hymn_to_tourach.txt");
+        if !path.exists() {
+            println!("Skipping test: cardsfolder not present");
+            return;
+        }
+
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load Hymn to Tourach");
+        assert_eq!(def.name.as_str(), "Hymn to Tourach");
+
+        let game = crate::game::GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = crate::core::CardId::new(100);
+        let card = def.instantiate(card_id, p1_id);
+
+        // Verify it has a DiscardCards effect
+        let has_discard = card.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DiscardCards { .. } | crate::core::Effect::DiscardCardsXPaid { .. }
+            )
+        });
+
+        assert!(has_discard, "Hymn to Tourach should have a Discard effect");
+
+        println!("Hymn to Tourach test passed - discard effect correctly parsed");
+    }
+
+    /// Test: Draw spell AI casts at higher hand-size threshold
+    #[test]
+    fn test_draw_spell_hand_threshold() {
+        use crate::core::{Card, CardType, Effect};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        game.turn.active_player = p1_id;
+
+        // Create a draw spell (sorcery speed)
+        let draw_card_id = EntityId::new(100);
+        let mut draw_spell = Card::new(draw_card_id, "Divination", p1_id);
+        draw_spell.add_type(CardType::Sorcery);
+        draw_spell.effects = vec![Effect::DrawCards {
+            player: p1_id,
+            count: 2,
+        }];
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Scenario 1: 3 cards in hand → should cast (was too restrictive before at <= 2)
+        for i in 0..3u32 {
+            let cid = EntityId::new(50 + i);
+            let c = Card::new(cid, format!("Card {}", i), p1_id);
+            game.cards.insert(cid, c);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.hand.cards.push(cid);
+            }
+        }
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_spell(&draw_spell, &view),
+            "Should cast draw spell with 3 cards in hand (threshold is now 4)"
+        );
+
+        // Scenario 2: 5 cards in hand → should NOT cast
+        let mut game2 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game2.turn.active_player = p1_id;
+        for i in 0..5u32 {
+            let cid = EntityId::new(60 + i);
+            let c = Card::new(cid, format!("Card {}", i), p1_id);
+            game2.cards.insert(cid, c);
+            if let Some(zones) = game2.get_player_zones_mut(p1_id) {
+                zones.hand.cards.push(cid);
+            }
+        }
+
+        let view2 = GameStateView::new(&game2, p1_id);
+        assert!(
+            !controller.should_cast_spell(&draw_spell, &view2),
+            "Should NOT cast draw spell with 5 cards in hand"
+        );
+
+        println!("Draw spell hand threshold test passed");
+    }
+
+    /// Test: Discard spells route through should_cast_spell correctly
+    #[test]
+    fn test_discard_spell_routing() {
+        use crate::core::{Card, CardType, Effect};
+        use crate::game::controller::GameStateView;
+        use crate::game::GameState;
+
+        let p1_id = crate::core::PlayerId::new(0);
+
+        // Create a Hymn to Tourach-like spell
+        let spell_id = EntityId::new(100);
+        let mut hymn = Card::new(spell_id, "Hymn to Tourach", p1_id);
+        hymn.add_type(CardType::Sorcery);
+        hymn.effects = vec![Effect::DiscardCards {
+            player: crate::core::PlayerId::new(1), // opponent
+            count: 2,
+            remember_discarded: false,
+        }];
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Scenario: opponent has cards → should cast
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.turn.active_player = p1_id;
+        let p2_id = game.players[1].id;
+
+        // Give opponent cards
+        for i in 0..3u32 {
+            let cid = EntityId::new(50 + i);
+            let c = Card::new(cid, format!("Opp Card {}", i), p2_id);
+            game.cards.insert(cid, c);
+            if let Some(zones) = game.get_player_zones_mut(p2_id) {
+                zones.hand.cards.push(cid);
+            }
+        }
+
+        let view = GameStateView::new(&game, p1_id);
+        assert!(
+            controller.should_cast_spell(&hymn, &view),
+            "should_cast_spell should route Discard effects and approve with opponent hand > 0"
+        );
+
+        println!("Discard spell routing test passed");
     }
 }
