@@ -470,6 +470,7 @@ impl GameState {
                             | Effect::ImmediateTrigger { .. }
                             | Effect::ClearRemembered
                             | Effect::AddTurn { .. }
+                            | Effect::ChooseColor { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. } => {
@@ -514,9 +515,11 @@ impl GameState {
                 | Effect::ForceSacrifice { .. }
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
-                | Effect::SetLife { .. } => {
+                | Effect::SetLife { .. }
+                | Effect::ChooseColor { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
+                    // ChooseColor is a player choice effect (no permanent targets)
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -976,10 +979,12 @@ impl GameState {
                 | Effect::Earthbend { .. }
                 | Effect::GainControl { .. }
                 | Effect::AddTurn { .. }
-                | Effect::Fight { .. } => {
+                | Effect::Fight { .. }
+                | Effect::ChooseColor { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
+                    // ChooseColor doesn't require any targets - it's a player choice effect
                 }
             }
         }
@@ -1197,6 +1202,7 @@ impl GameState {
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
             | Effect::AddTurn { .. }
+            | Effect::ChooseColor { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====

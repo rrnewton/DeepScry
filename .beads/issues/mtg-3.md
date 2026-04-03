@@ -6,10 +6,11 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-12T02:04:32.634560831+00:00
+updated_at: 2026-04-03T15:08:47.080370589+00:00
 ---
 
 # Description
+
 
 Track implementation of MTG game features including keywords, abilities, card effects, and the card script parsing infrastructure.
 
@@ -29,6 +30,14 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ Bare Vanishing (no counter) fixed (4 cards)
 - ✅ Protection variants fixed (8 cards)
 - ✅ Lure effects (must be blocked) fixed (50 cards)
+
+**AB$ ChooseColor Effect (2026-04-03_#2059):**
+- ✅ AB$ ChooseColor: choose a color and store on source card (30 cards)
+- AI heuristic: pick most prominent color in deck (pick_prominent_color)
+- SubAbility chaining enables color change, protection, discard filtering
+- Examples: Caldera Kavu, Spiritmonger, Crosis the Purger, Skrelv
+- Tests: 4 new tests (unit + integration)
+- Issue: mtg-dxjtq (CLOSED)
 
 **Variable P/T:**
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)

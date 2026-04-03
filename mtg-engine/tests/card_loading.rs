@@ -2172,3 +2172,80 @@ fn test_ba_sing_se_earthbend_ability() -> Result<()> {
 
     Ok(())
 }
+
+/// Test loading Caldera Kavu (ChooseColor activated ability)
+#[test]
+fn test_load_caldera_kavu_choose_color() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/c/caldera_kavu.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Caldera Kavu");
+    assert!(def.types.contains(&CardType::Creature));
+    assert_eq!(def.power, Some(2));
+    assert_eq!(def.toughness, Some(2));
+
+    // Instantiate to get parsed activated abilities
+    let card = def.instantiate(CardId::new(1), PlayerId::new(1));
+
+    // Should have 2 activated abilities: Pump ({1}{B}) and ChooseColor ({G})
+    assert!(
+        card.activated_abilities.len() >= 2,
+        "Caldera Kavu should have at least 2 activated abilities, found {}",
+        card.activated_abilities.len()
+    );
+
+    // Find the ChooseColor ability
+    let choose_color_ability = card.activated_abilities.iter().find(|a| {
+        a.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::ChooseColor { .. }))
+    });
+    assert!(
+        choose_color_ability.is_some(),
+        "Caldera Kavu should have a ChooseColor ability. Abilities: {:?}",
+        card.activated_abilities
+            .iter()
+            .map(|a| format!("effects={:?}", a.effects))
+            .collect::<Vec<_>>()
+    );
+
+    Ok(())
+}
+
+/// Test loading Spiritmonger (ChooseColor with Animate sub-ability)
+#[test]
+fn test_load_spiritmonger_choose_color() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/s/spiritmonger.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Spiritmonger");
+    assert!(def.types.contains(&CardType::Creature));
+    assert_eq!(def.power, Some(6));
+    assert_eq!(def.toughness, Some(6));
+
+    // Instantiate to get parsed activated abilities
+    let card = def.instantiate(CardId::new(1), PlayerId::new(1));
+
+    // Should have ChooseColor ability
+    let has_choose_color = card.activated_abilities.iter().any(|a| {
+        a.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::ChooseColor { .. }))
+    });
+    assert!(
+        has_choose_color,
+        "Spiritmonger should have a ChooseColor ability. Abilities: {:?}",
+        card.activated_abilities
+            .iter()
+            .map(|a| format!("effects={:?}", a.effects))
+            .collect::<Vec<_>>()
+    );
+
+    Ok(())
+}

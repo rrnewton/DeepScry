@@ -71,6 +71,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
         | Effect::AddTurn { .. }
+        | Effect::ChooseColor { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -168,6 +169,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
+            | Effect::ChooseColor { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -370,6 +372,9 @@ impl GameState {
                     );
                     log::debug!(target: "resolve_spell", "Effect[{}] after resolve: {:?}", effect_index, resolved);
 
+                    // Patch up ChooseColor source placeholder with the spell's card_id
+                    let resolved = Self::resolve_choose_color_source(resolved, card_id);
+
                     // Expand "all players" effects (e.g., Wheel of Fortune: each player discards/draws)
                     let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                     let expanded = expand_all_players_effect(&resolved, &player_ids);
@@ -400,6 +405,20 @@ impl GameState {
                 player,
                 count: x_paid,
                 remember_discarded,
+            },
+            other => other,
+        }
+    }
+
+    /// Replace ChooseColor source placeholder with the actual spell card_id.
+    /// Called at resolution time when the source card is known.
+    #[inline]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn resolve_choose_color_source(effect: Effect, source_card_id: CardId) -> Effect {
+        match effect {
+            Effect::ChooseColor { player, source } if source.is_placeholder() => Effect::ChooseColor {
+                player,
+                source: source_card_id,
             },
             other => other,
         }
@@ -525,6 +544,7 @@ impl GameState {
                     opponent_id,
                     &mut last_resolved_target,
                 );
+                let resolved = Self::resolve_choose_color_source(resolved, card_id);
                 let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                 let expanded = expand_all_players_effect(&resolved, &player_ids);
                 result.extend(expanded.into_iter());
@@ -1958,6 +1978,10 @@ impl GameState {
             Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
                 player: card_owner,
                 num_turns: *num_turns,
+            },
+            Effect::ChooseColor { player, source } if player.is_placeholder() => Effect::ChooseColor {
+                player: card_owner,
+                source: *source,
             },
             Effect::Loot {
                 player,
@@ -4243,6 +4267,25 @@ impl GameState {
                         paid,
                         unless_cost.switched
                     );
+                }
+            }
+
+            Effect::ChooseColor { player, source } => {
+                // Choose a color using AI heuristic (pick most prominent color in deck)
+                let chosen = self.pick_prominent_color(*player, &[]);
+
+                // Store the chosen color on the source card
+                if let Ok(card) = self.cards.get_mut(*source) {
+                    let card_name = card.name.clone();
+                    card.chosen_color = Some(chosen);
+                    let player_name = self
+                        .get_player(*player)
+                        .map(|p| p.name.to_string())
+                        .unwrap_or_else(|_| format!("Player {}", player.as_u32()));
+                    self.logger
+                        .normal(&format!("{} chooses color: {:?} ({})", player_name, chosen, card_name));
+                } else {
+                    log::warn!("ChooseColor: source card {} not found", source.as_u32());
                 }
             }
 

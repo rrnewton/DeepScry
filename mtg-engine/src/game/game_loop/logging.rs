@@ -720,6 +720,11 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) clears remembered cards");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ChooseColor { player, .. } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) {player_name} chooses a color");
+                self.game.logger.gamelog(&message);
+            }
             Effect::EachDamage { damagers, receiver, .. } => {
                 let damager_count = damagers.len();
                 let receiver_name = self

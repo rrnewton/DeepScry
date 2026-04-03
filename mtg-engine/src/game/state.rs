@@ -1109,7 +1109,7 @@ impl GameState {
     ///
     /// Used for "choose a color" ETB abilities like Thriving lands.
     /// Analyzes mana costs in hand, library, and graveyard to find the most needed color.
-    fn pick_prominent_color(&self, player_id: PlayerId, exclude: &[Color]) -> Color {
+    pub(crate) fn pick_prominent_color(&self, player_id: PlayerId, exclude: &[Color]) -> Color {
         use std::collections::BTreeMap;
 
         // BTreeMap provides deterministic iteration order by Color discriminant (WUBRG),
@@ -3080,6 +3080,7 @@ impl GameState {
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
                     | crate::core::Effect::AddTurn { .. }
+                    | crate::core::Effect::ChooseColor { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. }

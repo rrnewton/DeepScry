@@ -1060,6 +1060,26 @@ pub enum Effect {
     /// This effect clears the game.remembered_cards storage after ImmediateTrigger has checked it.
     ClearRemembered,
 
+    /// Choose a color (WUBRG) and store it on the source card.
+    ///
+    /// Corresponds to: `AB$ ChooseColor | Cost$ ... | Defined$ You`
+    ///
+    /// The chosen color is stored in `Card::chosen_color` and can be referenced by
+    /// subsequent abilities via "ChosenColor" (e.g., protection from chosen color,
+    /// "Colors$ ChosenColor" in Animate effects, "Card.ChosenColor" in filters).
+    ///
+    /// Cards using this:
+    /// - Caldera Kavu, Spiritmonger: "G: CARDNAME becomes the color of your choice until EOT"
+    /// - Crosis, the Purger: Triggered ability choosing a color for discard
+    /// - Skrelv, Defector Mite: Choose color for hexproof/blocking restrictions
+    /// - Govern the Guildless: Choose colors for Animate effect
+    ChooseColor {
+        /// The player making the choice (placeholder resolved to card_owner)
+        player: PlayerId,
+        /// The card to store the chosen color on (usually the source card)
+        source: CardId,
+    },
+
     /// Wraps an effect with an UnlessCost condition
     ///
     /// The wrapped effect only executes if the payer pays (or doesn't pay, depending on switched flag).
@@ -1164,7 +1184,8 @@ impl Effect {
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
-            | Effect::AddTurn { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::AddTurn { .. }
+            | Effect::ChooseColor { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

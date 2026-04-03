@@ -1143,6 +1143,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::ChooseColor => {
+            // ChooseColor: Player chooses a color (WUBRG), stored on source card
+            // Example: "AB$ ChooseColor | Cost$ G | Defined$ You | SubAbility$ Animate"
+            // The chosen color is stored in Card::chosen_color and referenced by
+            // subsequent abilities via "ChosenColor" patterns.
+            Some(Effect::ChooseColor {
+                player: PlayerId::new(0),      // Placeholder - resolved to card_owner at cast time
+                source: CardId::placeholder(), // Placeholder - resolved to spell card_id at cast time
+            })
+        }
+
         // All other API types not yet implemented
         _ => None,
     }
@@ -2400,5 +2411,32 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             effect.is_none(),
             "Pump with no bonuses/keywords/SubAbility should return None"
         );
+    }
+
+    #[test]
+    fn test_convert_choose_color() {
+        let ability = "A:AB$ ChooseColor | Cost$ G | Defined$ You | SubAbility$ Animate";
+        let params = AbilityParams::parse(ability).unwrap();
+        let effect = params_to_effect(&params).unwrap();
+
+        match effect {
+            Effect::ChooseColor { player, source } => {
+                // Player should be placeholder (0) - resolved at cast time
+                assert_eq!(player.as_u32(), 0);
+                // Source should be placeholder - resolved at cast time
+                assert!(source.is_placeholder());
+            }
+            _ => panic!("Expected ChooseColor effect, got {:?}", effect),
+        }
+    }
+
+    #[test]
+    fn test_choose_color_from_cardsfolder() {
+        // Test that Caldera Kavu's ChooseColor ability parses correctly
+        let ability = "A:AB$ ChooseColor | Cost$ G | Defined$ You | SpellDescription$ CARDNAME becomes the color of your choice until end of turn.";
+        let params = AbilityParams::parse(ability).unwrap();
+        assert_eq!(params.api_type, ApiType::ChooseColor);
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "ChooseColor should produce an effect");
     }
 }
