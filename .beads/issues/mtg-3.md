@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T16:45:20.368462328+00:00
+updated_at: 2026-04-03T18:04:50.192649170+00:00
 ---
 
 # Description
@@ -152,6 +152,16 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 - Full undo support restores removed keywords
 - Examples: Grozoth, Gargoyle Sentinel, Manor Gargoyle, Phyrexian Splicer
 - Tests: 3 new unit tests (parsing)
+
+## AB$ AnimateAll Effect (2026-04-03_#2069(f772a07a))
+
+**Mass animation implementation (26 card files, mtg-tquvf CLOSED):**
+- ✅ AB$ AnimateAll: set base P/T and/or grant keywords to all matching permanents
+- ValidCards$ filter: Creature.YouCtrl, Planeswalker.YouCtrl, Permanent.OppCtrl, etc.
+- Optional Power$/Toughness$ base P/T setting + Keywords$ granting
+- AI heuristic: classified as always-beneficial (like PumpAllCreatures)
+- Examples: Sarkhan the Masterless, Oko the Trickster, Shadowspear, Mirror Entity
+- Tests: 4 new unit tests (parsing variants)
 
 # Notes
 
