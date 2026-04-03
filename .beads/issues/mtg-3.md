@@ -6,11 +6,10 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T15:08:47.080370589+00:00
+updated_at: 2026-04-03T16:45:20.368462328+00:00
 ---
 
 # Description
-
 
 Track implementation of MTG game features including keywords, abilities, card effects, and the card script parsing infrastructure.
 
@@ -118,6 +117,19 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - ✅ SetLife (39 card usages) - Angel of Grace, Blessed Wind
 
 Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
+
+## AB$ Dig Enhancement (2026-04-03_#2063(5d3489e8))
+
+**Full Dig effect implementation (192 cards):**
+- ✅ ChangeValid$ filter: AI selects only matching card types (Creature, Land, etc.)
+- ✅ DestinationZone2$: Non-selected cards go to correct zone (Graveyard, Exile, etc.)
+- ✅ Partial selection (ChangeNum < DigNum): AI ranks and picks best N cards
+- ✅ Optional$ support: AI skips when no good cards available
+- ✅ RestRandomOrder$: shuffle non-selected cards before putting on bottom
+- ✅ Reveal$ logging: proper 'reveals' vs 'looks at' messages
+- ✅ DigFilter enum: 9 card type variants including Permanent
+- ✅ Library ordering fix: dig from top (not bottom)
+- Examples: Impulse, Wrenn and Seven, Seismic Sense, Trail of Crumbs
 
 # Notes
 
