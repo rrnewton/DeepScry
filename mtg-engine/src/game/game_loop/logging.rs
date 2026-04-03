@@ -392,6 +392,10 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Proliferate => {
+                let message = format!("{source_name} ({source_id}) proliferates");
+                self.game.logger.gamelog(&message);
+            }
             Effect::ChangeZoneAll {
                 restriction,
                 origin,

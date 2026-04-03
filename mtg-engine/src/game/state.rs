@@ -3096,6 +3096,7 @@ impl GameState {
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. }
+                    | crate::core::Effect::Proliferate
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. } => {

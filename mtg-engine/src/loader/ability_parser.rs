@@ -150,6 +150,9 @@ pub enum ApiType {
     RemoveCounter,
     MoveCounter,
     MultiplyCounter,
+    /// Proliferate: choose any number of permanents and/or players with counters,
+    /// then give each one additional counter of each kind already there (CR 701.34a)
+    Proliferate,
 
     // === Zone Changes ===
     ChangeZone,
@@ -306,6 +309,7 @@ impl ApiType {
             "RemoveCounter" => Self::RemoveCounter,
             "MoveCounter" => Self::MoveCounter,
             "MultiplyCounter" => Self::MultiplyCounter,
+            "Proliferate" => Self::Proliferate,
 
             // Zone Changes
             "ChangeZone" => Self::ChangeZone,
@@ -412,6 +416,7 @@ impl ApiType {
             Self::RemoveCounter => "RemoveCounter",
             Self::MoveCounter => "MoveCounter",
             Self::MultiplyCounter => "MultiplyCounter",
+            Self::Proliferate => "Proliferate",
             Self::ChangeZone => "ChangeZone",
             Self::ChangeZoneAll => "ChangeZoneAll",
             Self::Counter => "Counter",

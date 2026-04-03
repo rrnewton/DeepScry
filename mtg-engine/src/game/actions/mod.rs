@@ -51,6 +51,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PutCounter { .. }
         | Effect::MultiplyCounter { .. }
         | Effect::PutCounterAll { .. }
+        | Effect::Proliferate
         | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
         | Effect::ExilePermanent { .. }
@@ -150,6 +151,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
             | Effect::PutCounterAll { .. }
+            | Effect::Proliferate
             | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
             | Effect::ExilePermanent { .. }
@@ -2915,6 +2917,45 @@ impl GameState {
 
                 for card_id in targets {
                     self.add_counters(card_id, *counter_type, *amount)?;
+                }
+            }
+            Effect::Proliferate => {
+                // Proliferate (CR 701.34a): choose any number of permanents and/or players
+                // that have a counter, then give each one additional counter of each kind
+                // that permanent or player already has.
+                //
+                // For automated play: proliferate all permanents with counters.
+                // The AI/controller choice of which permanents to skip is handled
+                // at the should_cast level; once resolved, we proliferate everything.
+                let permanents_with_counters: Vec<(CardId, Vec<crate::core::CounterType>)> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .copied()
+                    .filter_map(|card_id| {
+                        let card = self.cards.try_get(card_id)?;
+                        if card.has_counters() {
+                            let counter_types: Vec<crate::core::CounterType> = card
+                                .counters
+                                .iter()
+                                .filter(|(_, count)| *count > 0)
+                                .map(|(ct, _)| *ct)
+                                .collect();
+                            if counter_types.is_empty() {
+                                None
+                            } else {
+                                Some((card_id, counter_types))
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                for (card_id, counter_types) in permanents_with_counters {
+                    for ct in counter_types {
+                        self.add_counters(card_id, ct, 1)?;
+                    }
                 }
             }
             Effect::ChangeZoneAll {

@@ -3109,6 +3109,7 @@ impl HeuristicController {
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::MultiplyCounter { .. }
                     | crate::core::Effect::PutCounter { .. }
+                    | crate::core::Effect::Proliferate
             )
         });
         if has_always_beneficial {

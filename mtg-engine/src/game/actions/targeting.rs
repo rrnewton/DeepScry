@@ -482,6 +482,7 @@ impl GameState {
                             | Effect::ClearRemembered
                             | Effect::AddTurn { .. }
                             | Effect::ChooseColor { .. }
+                            | Effect::Proliferate
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. } => {
@@ -527,10 +528,12 @@ impl GameState {
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
-                | Effect::ChooseColor { .. } => {
+                | Effect::ChooseColor { .. }
+                | Effect::Proliferate => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
+                    // Proliferate: player chooses permanents/players during resolution, no targeting
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -953,6 +956,7 @@ impl GameState {
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
+                | Effect::Proliferate
                 | Effect::UnlessCostWrapper { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
@@ -960,6 +964,7 @@ impl GameState {
                     // ImmediateTrigger/ClearRemembered work with remembered state, no targeting
                     // EachDamage targeting is handled via parent ability's ValidTgts$
                     // UnlessCostWrapper delegates targeting to inner effect
+                    // Proliferate: player chooses during resolution, no targeting
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
@@ -1226,6 +1231,7 @@ impl GameState {
             | Effect::ChangeZoneAll { .. }
             | Effect::AddTurn { .. }
             | Effect::ChooseColor { .. }
+            | Effect::Proliferate
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====

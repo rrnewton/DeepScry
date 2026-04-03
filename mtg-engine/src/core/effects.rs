@@ -747,6 +747,11 @@ pub enum Effect {
         amount: u8,
     },
 
+    /// Proliferate: choose any number of permanents and/or players that have
+    /// a counter, then give each one additional counter of each kind already there (CR 701.34a)
+    /// Example: "Martyr for the Cause: When CARDNAME dies, proliferate."
+    Proliferate,
+
     /// Remove counters from a permanent
     /// Example: "Remove a +1/+1 counter from target creature"
     /// When counter_type is None, removes counters of any type (CounterType$ Any)
@@ -1263,7 +1268,8 @@ impl Effect {
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
-            | Effect::ChooseColor { .. } => EffectTargetCategory::NoTargetNeeded,
+            | Effect::ChooseColor { .. }
+            | Effect::Proliferate => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

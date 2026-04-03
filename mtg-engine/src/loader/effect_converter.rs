@@ -459,6 +459,12 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Proliferate => {
+            // Proliferate: no parameters needed - pure effect (CR 701.34a)
+            // Example: "DB$ Proliferate" or "AB$ Proliferate | Cost$ B B Discard<1/Card>"
+            Some(Effect::Proliferate)
+        }
+
         ApiType::RemoveCounter => {
             // RemoveCounter effect: DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True
             // Example: Heartless Act mode 2 - "Remove up to three counters from target creature"
@@ -2528,6 +2534,40 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert!(
             matches!(effect, Effect::DebuffCreature { .. }),
             "Debuff with SubAbility should produce DebuffCreature effect"
+        );
+    }
+
+    #[test]
+    fn test_convert_proliferate_basic() {
+        // Yawgmoth, Thran Physician: "AB$ Proliferate | Cost$ B B Discard<1/Card>"
+        let params =
+            AbilityParams::parse("A:AB$ Proliferate | Cost$ B B Discard<1/Card> | SpellDescription$ Proliferate.")
+                .unwrap();
+        assert_eq!(params.api_type, ApiType::Proliferate);
+        let effect = params_to_effect(&params).unwrap();
+        assert!(matches!(effect, Effect::Proliferate), "Expected Proliferate effect");
+    }
+
+    #[test]
+    fn test_convert_proliferate_no_cost() {
+        // Proliferate as a sub-ability (no cost): "A:DB$ Proliferate"
+        let params = AbilityParams::parse("A:DB$ Proliferate").unwrap();
+        assert_eq!(params.api_type, ApiType::Proliferate);
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(effect, Effect::Proliferate),
+            "Expected Proliferate effect from DB$"
+        );
+    }
+
+    #[test]
+    fn test_convert_proliferate_with_sub_ability() {
+        // Proliferate with chained SubAbility
+        let params = AbilityParams::parse("A:DB$ Proliferate | SubAbility$ DBDraw").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(effect, Effect::Proliferate),
+            "Proliferate with SubAbility should parse"
         );
     }
 }

@@ -131,6 +131,17 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 - ✅ Library ordering fix: dig from top (not bottom)
 - Examples: Impulse, Wrenn and Seven, Seismic Sense, Trail of Crumbs
 
+## AB$ Proliferate Effect (2026-04-03_#2067(pending))
+
+**Full Proliferate implementation (89 card files, mtg-mr0v1 CLOSED):**
+- ✅ AB$ Proliferate: choose any number of permanents with counters, give each one additional counter of each kind (CR 701.34a)
+- No parameters needed - pure effect (simplest AB$ type)
+- AI heuristic: classified as always-beneficial (like PutCounter, MultiplyCounter)
+- Targeting: NoTargetNeeded (choices made during resolution)
+- Execution: iterates battlefield permanents with counters, adds 1 of each counter type
+- Examples: Yawgmoth Thran Physician, Martyr for the Cause, Metastatic Evangel, Merfolk Skydiver
+- Tests: 3 new unit tests (basic, no-cost, with SubAbility)
+
 ## AB$ Debuff Effect (2026-04-03_#2065(819fc050))
 
 **Full Debuff implementation (23 cards, 26 usages):**
