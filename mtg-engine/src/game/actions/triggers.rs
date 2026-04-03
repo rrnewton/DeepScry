@@ -276,6 +276,23 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         },
 
         // =========================================================================
+        // Mass animate: controller placeholder
+        // =========================================================================
+        Effect::AnimateAll {
+            controller,
+            filter,
+            power,
+            toughness,
+            keywords_granted,
+        } if controller.is_placeholder() => Effect::AnimateAll {
+            controller: ctx.controller,
+            filter: filter.clone(),
+            power: *power,
+            toughness: *toughness,
+            keywords_granted: keywords_granted.clone(),
+        },
+
+        // =========================================================================
         // Default: return clone unchanged
         // =========================================================================
         other => other.clone(),

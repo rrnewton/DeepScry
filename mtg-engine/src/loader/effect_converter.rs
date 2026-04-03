@@ -559,6 +559,47 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::AnimateAll => {
+            // AnimateAll: set base P/T and/or grant keywords to all matching permanents
+            // Example: AB$ AnimateAll | ValidCards$ Planeswalker.YouCtrl | Power$ 4 | Toughness$ 4
+            //          | Types$ Creature,Dragon | Keywords$ Flying | AILogic$ Always
+            // Example: AB$ AnimateAll | ValidCards$ Creature.YouCtrl | Keywords$ Deathtouch
+            // Example: AB$ AnimateAll | ValidCards$ Permanent.OppCtrl | RemoveKeywords$ Hexproof & Indestructible
+
+            let power = params.get_i32("Power").ok();
+            let toughness = params.get_i32("Toughness").ok();
+
+            let filter = params.get("ValidCards").unwrap_or("Creature").to_string();
+
+            let keywords_granted = if let Some(kw_str) = params.get("Keywords") {
+                use crate::core::Keyword;
+                let mut keywords = smallvec::SmallVec::new();
+                for kw_part in kw_str.split('&').map(|s| s.trim()) {
+                    if !kw_part.is_empty() {
+                        if let Some(kw) = Keyword::from_string(kw_part) {
+                            keywords.push(kw);
+                        }
+                    }
+                }
+                keywords
+            } else {
+                smallvec::smallvec![]
+            };
+
+            // At least one of power, toughness, or keywords must be set
+            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() {
+                return None;
+            }
+
+            Some(Effect::AnimateAll {
+                controller: PlayerId::new(0), // Placeholder - filled at execution
+                filter,
+                power,
+                toughness,
+                keywords_granted,
+            })
+        }
+
         ApiType::Airbend => {
             // Airbend effect: DB$ Airbend | ValidTgts$ Creature
             // Example: Aang, the Last Airbender - "Airbend target creature"
@@ -2568,6 +2609,92 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert!(
             matches!(effect, Effect::Proliferate),
             "Proliferate with SubAbility should parse"
+        );
+    }
+
+    #[test]
+    fn test_convert_animate_all_power_toughness_keywords() {
+        // Sarkhan the Masterless: planeswalkers become 4/4 Dragons with Flying
+        let params = AbilityParams::parse(
+            "A:AB$ AnimateAll | ValidCards$ Planeswalker.YouCtrl | Power$ 4 | Toughness$ 4 | Keywords$ Flying | AILogic$ Always",
+        )
+        .unwrap();
+        assert_eq!(params.api_type, ApiType::AnimateAll);
+        let effect = params_to_effect(&params).unwrap();
+        match effect {
+            Effect::AnimateAll {
+                filter,
+                power,
+                toughness,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(filter, "Planeswalker.YouCtrl");
+                assert_eq!(power, Some(4));
+                assert_eq!(toughness, Some(4));
+                assert_eq!(keywords_granted.len(), 1);
+                assert_eq!(keywords_granted[0], Keyword::Flying);
+            }
+            _ => panic!("Expected AnimateAll effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_animate_all_keywords_only() {
+        // Vraska: creatures gain Deathtouch
+        let params =
+            AbilityParams::parse("A:AB$ AnimateAll | ValidCards$ Creature.YouCtrl | Keywords$ Deathtouch").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        match effect {
+            Effect::AnimateAll {
+                filter,
+                power,
+                toughness,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(filter, "Creature.YouCtrl");
+                assert_eq!(power, None);
+                assert_eq!(toughness, None);
+                assert_eq!(keywords_granted.len(), 1);
+                assert_eq!(keywords_granted[0], Keyword::Deathtouch);
+            }
+            _ => panic!("Expected AnimateAll effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_animate_all_multiple_keywords() {
+        // Oko-style: creatures become 10/10 with Trample
+        let params = AbilityParams::parse(
+            "A:AB$ AnimateAll | ValidCards$ Creature.YouCtrl | Power$ 10 | Toughness$ 10 | Keywords$ Trample",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        match effect {
+            Effect::AnimateAll {
+                power,
+                toughness,
+                keywords_granted,
+                ..
+            } => {
+                assert_eq!(power, Some(10));
+                assert_eq!(toughness, Some(10));
+                assert_eq!(keywords_granted.len(), 1);
+                assert_eq!(keywords_granted[0], Keyword::Trample);
+            }
+            _ => panic!("Expected AnimateAll effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_animate_all_no_effects_returns_none() {
+        // AnimateAll with no power, toughness, or keywords should return None
+        let params = AbilityParams::parse("A:AB$ AnimateAll | ValidCards$ Creature.YouCtrl").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_none(),
+            "AnimateAll with no P/T or keywords should return None"
         );
     }
 }

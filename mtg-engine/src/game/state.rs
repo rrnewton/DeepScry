@@ -3056,6 +3056,7 @@ impl GameState {
                     | crate::core::Effect::DebuffCreature { .. }
                     | crate::core::Effect::PumpCreatureVariable { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }
+                    | crate::core::Effect::AnimateAll { .. }
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }

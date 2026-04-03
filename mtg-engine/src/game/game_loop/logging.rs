@@ -701,6 +701,39 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::AnimateAll {
+                controller,
+                filter,
+                power,
+                toughness,
+                keywords_granted,
+            } => {
+                let controller_name = self.get_player_name(*controller);
+                let target_desc = if filter.contains("YouCtrl") {
+                    format!("{}'s permanents", controller_name)
+                } else if filter.contains("OppCtrl") {
+                    "opponent's permanents".to_string()
+                } else {
+                    "all permanents".to_string()
+                };
+                let pt_str = match (power, toughness) {
+                    (Some(p), Some(t)) => format!(" become {}/{}", p, t),
+                    (Some(p), None) => format!(" become {}/X", p),
+                    (None, Some(t)) => format!(" become X/{}", t),
+                    (None, None) => String::new(),
+                };
+                let kw_str = if keywords_granted.is_empty() {
+                    String::new()
+                } else {
+                    let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
+                    format!(" gain {}", kws.join(", "))
+                };
+                let message = format!(
+                    "{source_name} ({source_id}) animates {}{}{} until end of turn",
+                    target_desc, pt_str, kw_str
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::CreateDelayedTrigger {
                 tracked_card,
                 effect: delayed_effect,

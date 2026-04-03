@@ -3107,6 +3107,7 @@ impl HeuristicController {
                     | crate::core::Effect::Mill { .. }
                     | crate::core::Effect::GainLife { .. }
                     | crate::core::Effect::PumpAllCreatures { .. }
+                    | crate::core::Effect::AnimateAll { .. }
                     | crate::core::Effect::MultiplyCounter { .. }
                     | crate::core::Effect::PutCounter { .. }
                     | crate::core::Effect::Proliferate

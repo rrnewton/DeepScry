@@ -43,6 +43,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PumpCreature { .. }
         | Effect::DebuffCreature { .. }
         | Effect::PumpAllCreatures { .. }
+        | Effect::AnimateAll { .. }
         | Effect::PumpCreatureVariable { .. }
         | Effect::Scry { .. }
         | Effect::Surveil { .. }
@@ -143,6 +144,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PumpCreature { .. }
             | Effect::DebuffCreature { .. }
             | Effect::PumpAllCreatures { .. }
+            | Effect::AnimateAll { .. }
             | Effect::PumpCreatureVariable { .. }
             | Effect::Scry { .. }
             | Effect::Surveil { .. }
@@ -2747,6 +2749,82 @@ impl GameState {
                         },
                         prior_log_size,
                     );
+                }
+            }
+            Effect::AnimateAll {
+                controller,
+                filter,
+                power,
+                toughness,
+                keywords_granted,
+            } => {
+                // AnimateAll: set base P/T and/or grant keywords to all matching permanents
+                // Similar to PumpAllCreatures but sets base P/T instead of bonuses
+                let targets: Vec<CardId> = self
+                    .battlefield
+                    .cards
+                    .iter()
+                    .filter_map(|&card_id| {
+                        let card = self.cards.try_get(card_id)?;
+                        // Check controller filters
+                        if filter.contains("YouCtrl") && card.controller != *controller {
+                            return None;
+                        }
+                        if filter.contains("OppCtrl") && card.controller == *controller {
+                            return None;
+                        }
+                        // Check type filters
+                        if filter.contains("Creature") && !card.is_creature() {
+                            return None;
+                        }
+                        if filter.contains("Planeswalker") && !card.is_planeswalker() {
+                            return None;
+                        }
+                        if filter.contains("Land") && !card.is_land() {
+                            return None;
+                        }
+                        Some(card_id)
+                    })
+                    .collect();
+
+                for target in targets {
+                    if let Ok(card) = self.cards.get_mut(target) {
+                        let card_name = card.name.clone();
+
+                        // Set base P/T if specified
+                        if let Some(p) = power {
+                            card.set_temp_base_power(*p as i8);
+                        }
+                        if let Some(t) = toughness {
+                            card.set_temp_base_toughness(*t as i8);
+                        }
+
+                        // Grant keywords
+                        for kw in keywords_granted {
+                            card.keywords.insert(*kw);
+                        }
+
+                        if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
+                            let kws: Vec<_> = keywords_granted.iter().map(|k| format!("{:?}", k)).collect();
+                            let kw_str = if kws.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" and gains {}", kws.join(", "))
+                            };
+
+                            if power.is_some() || toughness.is_some() {
+                                self.logger.gamelog(&format!(
+                                    "{} becomes {}/{}{}",
+                                    card_name,
+                                    card.current_power(),
+                                    card.current_toughness(),
+                                    kw_str
+                                ));
+                            } else if !kws.is_empty() {
+                                self.logger.gamelog(&format!("{} gains {}", card_name, kws.join(", ")));
+                            }
+                        }
+                    }
                 }
             }
             Effect::Mill { player, count } => {

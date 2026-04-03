@@ -93,6 +93,12 @@ pub enum ApiType {
     Debuff,
     UntilEOT,
     Animate,
+    /// Mass animate: set base P/T and/or grant keywords to all matching permanents
+    /// Parameters:
+    ///   ValidCards$ - filter for which cards to animate (e.g., "Creature.YouCtrl")
+    ///   Power$ / Toughness$ - base P/T to set (optional)
+    ///   Keywords$ - keywords to grant, separated by " & " (optional)
+    AnimateAll,
     BecomesCreature,
 
     // === Removal ===
@@ -276,6 +282,7 @@ impl ApiType {
             "Debuff" => Self::Debuff,
             "UntilEOT" => Self::UntilEOT,
             "Animate" => Self::Animate,
+            "AnimateAll" => Self::AnimateAll,
             "BecomesCreature" => Self::BecomesCreature,
 
             // Removal
@@ -393,6 +400,7 @@ impl ApiType {
             Self::Debuff => "Debuff",
             Self::UntilEOT => "UntilEOT",
             Self::Animate => "Animate",
+            Self::AnimateAll => "AnimateAll",
             Self::BecomesCreature => "BecomesCreature",
             Self::Destroy => "Destroy",
             Self::DestroyAll => "DestroyAll",

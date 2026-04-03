@@ -468,6 +468,7 @@ impl GameState {
                             | Effect::AttachEquipment { .. }
                             | Effect::ModalChoice { .. }
                             | Effect::PumpAllCreatures { .. }
+                            | Effect::AnimateAll { .. }
                             | Effect::DestroyAll { .. }
                             | Effect::SacrificeAll { .. }
                             | Effect::DamageAll { .. }
@@ -561,6 +562,7 @@ impl GameState {
                 | Effect::ChangeZoneAll { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::PumpAllCreatures { .. }
+                | Effect::AnimateAll { .. }
                 | Effect::DestroyAll { .. }
                 | Effect::SacrificeAll { .. }
                 | Effect::DamageAll { .. }
@@ -990,6 +992,7 @@ impl GameState {
                 | Effect::CopyPermanent { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::PumpAllCreatures { .. }
+                | Effect::AnimateAll { .. }
                 | Effect::DestroyAll { .. }
                 | Effect::SacrificeAll { .. }
                 | Effect::DamageAll { .. }
@@ -1212,6 +1215,7 @@ impl GameState {
             | Effect::AttachEquipment { .. }
             | Effect::ModalChoice { .. }
             | Effect::PumpAllCreatures { .. }
+            | Effect::AnimateAll { .. }
             | Effect::CreateDelayedTrigger { .. }
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }

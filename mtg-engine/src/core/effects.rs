@@ -673,6 +673,21 @@ pub enum Effect {
         toughness_bonus: i32,
     },
 
+    /// Set base P/T and/or grant keywords to all matching permanents until end of turn
+    /// Example: "All creatures you control become 4/4 Dragons with Flying"
+    /// Combines SetBasePowerToughness + PumpAllCreatures semantics for mass animation.
+    AnimateAll {
+        controller: PlayerId,
+        /// Filter string like "Creature.YouCtrl", "Planeswalker.YouCtrl"
+        filter: String,
+        /// Base power to set (None = don't change)
+        power: Option<i32>,
+        /// Base toughness to set (None = don't change)
+        toughness: Option<i32>,
+        /// Keywords to grant (e.g., Flying, Trample)
+        keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+    },
+
     /// Pump with variable bonus based on counting game state
     /// Example: "This creature gets +X/+X until end of turn, where X is the number of artifacts your opponents control"
     ///
@@ -1273,6 +1288,7 @@ impl Effect {
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }
+            | Effect::AnimateAll { .. }
             | Effect::DestroyAll { .. }
             | Effect::SacrificeAll { .. }
             | Effect::DamageAll { .. }
