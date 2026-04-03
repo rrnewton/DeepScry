@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-12T02:07:15.887412443+00:00
+updated_at: 2026-04-03T15:18:13.625816317+00:00
 ---
 
 # Description
@@ -28,18 +28,31 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-6n8rl: Avatar set mechanics (Waterbend, Airbend) support
 - mtg-0iad2: Ryan Avatar Deck compatibility testing
 - mtg-5hvly: Gabriel Avatar Deck compatibility testing
+- mtg-4s1lq: Commander format support (FEATURE COMPLETE 2026-04-01)
+- mtg-fmm68: Julian Avatar Deck Compatibility
 
-**Current status as of 2026-03-31_#2006(1c03855e):**
-- Tests: 942 unit/integration tests passing
+**Current status as of 2026-04-03_#2060(79616d6b):**
+- Tests: 924 unit/integration tests passing
 - All 55+ determinism tests passing
 - Network multiplayer: Full WebSocket support with deterministic sync
-- Performance: 7.45M actions/sec (simple_bolt), 2.09M (mem_logging)
+- Performance: 7.33M actions/sec (simple_bolt), 2.03M (mem_logging) at commit #2059
 - Random deck compatibility: 100% success rate (200 games, 0 engine errors)
 - Keyword warnings: 338 remaining (down from 2672 original)
 - AI casts 18+ effect types, counters board wipes/extra turns/steals
 - mtg-159 (Spiderman draft decks) CLOSED - 20/20 games flawless
+- Commander format: fully supported with command zone, tax, planeswalker loyalty
+- X-cost spell casting implemented (mtg-113)
+- AB$ ChooseColor effect (30 cards, mtg-dxjtq CLOSED)
 
-**Recent accomplishments (2026-03-25 to 2026-03-31):**
+**Recent accomplishments (2026-04-01 to 2026-04-03):**
+- feat: AB$ ChooseColor effect type (30 cards) - AI picks prominent color
+- feat: X-cost spell casting (mtg-113) - proper X mana calculation
+- Commander format FEATURE COMPLETE (35 commits, 14 bugs fixed)
+  - Planeswalker loyalty system, commander tax, zone replacement
+  - Token is_token field, ModalChoice for CastFromExile
+  - Heuristic AI: CastFromCommand, planeswalker casting, mana rock priority
+
+**Previous accomplishments (2026-03-25 to 2026-03-31):**
 - Fix: Guard EntityStore::get() against sentinel CardId values (u32::MAX)
 - Fix: Handle sentinel CardId + missing source zone gracefully
 - Fix: Gracefully handle missing player zones in scry/surveil/discard
@@ -70,4 +83,4 @@ This is the main tracking issue for MTG Forge Rust development.
 - Transient info includes timestamp: YYYY-MM-DD_#depth(hash)
 
 ---
-Checked up-to-date as of 2026-03-31_#2006(1c03855e).
+Checked up-to-date as of 2026-04-03_#2060(79616d6b).

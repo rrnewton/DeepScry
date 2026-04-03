@@ -6,40 +6,42 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-03-10T00:57:44.149159574+00:00
+updated_at: 2026-04-03T15:17:36.307852161+00:00
 ---
 
 # Description
 
 Track architectural improvements, API design, and testing infrastructure.
 
-**Testing status as of 2026-03-26_#1991(92d363e7):**
-- Current: 942 passing tests (nextest, all categories)
+**Testing status as of 2026-04-03_#2060(79616d6b):**
+- Current: 924 passing tests (nextest, all categories)
 - Includes 55+ determinism tests across all major decks
-- Performance: 7.44M actions/sec (simple_bolt), 2.40M (mem_logging)
-- Random deck compatibility: 100% success rate (100 games, 0 engine errors)
+- Performance: 7.33M actions/sec (simple_bolt), 2.03M (mem_logging) at commit #2059
+- Random deck compatibility: 100% success rate (200 games, 0 engine errors)
 
 **Controller architecture:**
-- Current: Unified PlayerController trait (documented in ai_docs/CONTROLLER_DESIGN.md)
+- Core: Unified PlayerController trait (defined in game/controller.rs:1214, documented in ai_docs/CONTROLLER_DESIGN.md)
   - Single `choose_spell_ability_to_play()` method for lands, spells, and abilities
   - GameStateView provides read-only access with zero-copy patterns
   - Callback-based casting with proper mana timing (step 6 of 8)
-- Implementations:
-  - RandomController: Random decisions with seeded RNG
-  - ZeroController: Always chooses first option (deterministic)
-  - HeuristicController: Evaluation-based AI (faithful Java port)
-  - FixedScriptController: Script-based decisions for testing
-  - InteractiveController: Human player via stdin/stdout
-  - NetworkController: Remote player over WebSocket (for web GUI)
-- mtg-40: Migrate game loop from v1 to v2 controller interface (OBSOLETE - already unified)
-- mtg-41: Controller API consistency and documentation
+- 13 controller implementations across 3 subsystems:
+  - Core (game/): ZeroController, RandomController, HeuristicController, FixedScriptController, ReplayController, InteractiveController, RichInputController, FancyTuiController, FancyFixedController
+  - Network (network/): NetworkLocalController (generic wrapper), RemoteController (client-side opponent)
+  - WASM (wasm/): WasmHumanController, WasmRichInputController
+- ControllerType enum (game/snapshot.rs:30): Zero, Random, Tui, Heuristic, Fixed, FancyFixed, Remote, Network
 - mtg-144: Missing player choices (mulligan, activated abilities)
+
+**Game format support:**
+- Standard 60-card constructed: fully supported
+- Commander (EDH): fully supported (mtg-4s1lq FEATURE COMPLETE 2026-04-01)
+  - Command zone, commander tax, zone replacement, commander damage tracking
+  - Planeswalker loyalty system: costs, counters, 0-loyalty death SBA, once-per-turn rule
 
 **Network Architecture (2026-03):**
 - Deterministic sequential simulation model (see docs/NETWORK_ARCHITECTURE.md)
 - Server authoritative, clients maintain shadow state
 - Zero-desync tolerance: any mismatch is FATAL
-- Validation layer in NetworkController checks all moves
+- Validation layer in NetworkLocalController checks all moves
 - RevealCard mechanism for hidden information disclosure
 
 **UI/TUI Event Architecture:**
@@ -61,7 +63,7 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-47: Board state evaluation function - IMPLEMENTED (GameStateEvaluator)
 - mtg-48: Tree search using undo log
 - mtg-49: MCTS or minimax search implementation
-- mtg-50: Measure boardstates-per-second - tracked in mtg-2 (5.6M actions/sec)
+- mtg-50: Measure boardstates-per-second - tracked in mtg-2
 
 **Serialization:**
 - mtg-51: Fast binary game snapshots (rkyv)
@@ -69,4 +71,4 @@ Track architectural improvements, API design, and testing infrastructure.
 - mtg-53: SIMD optimizations where applicable
 
 ---
-Checked up-to-date as of 2026-03-28_#2003(e040a402).
+Checked up-to-date as of 2026-04-03_#2060(79616d6b).
