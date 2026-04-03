@@ -314,6 +314,19 @@ impl GameState {
                         }
                     }
                 }
+                Effect::PreventDamage {
+                    target: TargetRef::None,
+                    ..
+                } => {
+                    // PreventDamage can target any creature (or player, handled separately)
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(target_card) = self.cards.get(card_id) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::RemoveCounter { target, .. } if target.is_placeholder() => {
                     // RemoveCounter targets creatures (e.g., Heartless Act mode 2)
                     // TODO: Some RemoveCounter effects can target any permanent
@@ -460,6 +473,7 @@ impl GameState {
                             | Effect::Earthbend { .. }
                             | Effect::GrantCantBeBlocked { .. }
                             | Effect::Regenerate { .. }
+                            | Effect::PreventDamage { .. }
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
                             | Effect::MultiplyCounter { .. }
@@ -540,6 +554,10 @@ impl GameState {
                 // The handlers above only match when target.is_placeholder()
                 Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
                     // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
+                    // TargetRef::None case handled above
+                }
+                Effect::PreventDamage { .. } => {
+                    // PreventDamage with Defined$ Self or Defined$ You - target already specified
                     // TargetRef::None case handled above
                 }
                 Effect::DestroyPermanent { .. }
@@ -984,6 +1002,7 @@ impl GameState {
                 | Effect::Airbend { .. }
                 | Effect::GrantCantBeBlocked { .. }
                 | Effect::Regenerate { .. }
+                | Effect::PreventDamage { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::MultiplyCounter { .. }
@@ -1254,6 +1273,7 @@ impl GameState {
             | Effect::Airbend { .. }
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
+            | Effect::PreventDamage { .. }
             | Effect::RemoveCounter { .. }
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }

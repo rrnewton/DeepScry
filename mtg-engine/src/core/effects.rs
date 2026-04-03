@@ -1011,6 +1011,21 @@ pub enum Effect {
         target: CardId,
     },
 
+    /// Prevent damage: Create a damage prevention shield on a target (CR 615.1).
+    /// "Prevent the next N damage that would be dealt to [target] this turn."
+    ///
+    /// The shield is stored on the target's `damage_prevention` field and is consumed
+    /// when damage would be dealt, reducing or eliminating the damage. Multiple shields
+    /// stack additively. Cleared during the cleanup step.
+    ///
+    /// Cards using this: Militant Monk, Master Healer, Eiganjo Castle, etc. (81 cards)
+    PreventDamage {
+        /// The target to protect - can be a creature (CardId) or player
+        target: TargetRef,
+        /// Amount of damage to prevent
+        amount: i32,
+    },
+
     /// Modal spell choice - player selects modes from multiple predefined effects.
     ///
     /// Example: Heartless Act - "Choose one — Destroy target creature with no counters on it;
@@ -1327,6 +1342,7 @@ impl Effect {
             | Effect::Earthbend { .. }
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
+            | Effect::PreventDamage { .. }
             | Effect::CreateDelayedTrigger { .. }
             | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
         }

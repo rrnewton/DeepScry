@@ -633,6 +633,12 @@ pub struct Card {
     /// tap, remove all damage, remove from combat (CR 701.15a).
     pub regeneration_shields: u8,
 
+    /// Damage prevention shield (cleared at end of turn)
+    /// Prevents the next N damage that would be dealt to this permanent.
+    /// Set by AB$ PreventDamage effects (CR 615.1).
+    #[serde(default)]
+    pub damage_prevention: i32,
+
     /// The value of X chosen when casting this spell (MTG CR 601.2b)
     /// Set during step 2 of the 8-step casting process for spells with X in their mana cost.
     /// Used at resolution time to determine effect amounts (damage, cards drawn, etc.)
@@ -702,6 +708,7 @@ impl Card {
             is_token: false,
             loyalty_activated_this_turn: false,
             regeneration_shields: 0,
+            damage_prevention: 0,
             x_paid: 0,
             exhausted_abilities: SmallVec::new(),
             definition,

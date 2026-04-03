@@ -543,14 +543,20 @@ impl<'a> GameLoop<'a> {
             }
         }
 
-        // Remove damage from creatures and clear regeneration shields (CR 514.2)
+        // Remove damage from creatures and clear regeneration/prevention shields (CR 514.2)
         for &card_id in &self.game.battlefield.cards {
             if let Ok(card) = self.game.cards.get_mut(card_id) {
                 if card.is_creature() {
                     card.damage = 0;
                     card.regeneration_shields = 0;
                 }
+                card.damage_prevention = 0;
             }
+        }
+
+        // Clear player damage prevention shields at end of turn
+        for player in &mut self.game.players {
+            player.damage_prevention = 0;
         }
 
         Ok(None)

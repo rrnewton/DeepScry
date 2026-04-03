@@ -216,6 +216,13 @@ pub enum ApiType {
     /// Regenerate: Create a regeneration shield on target permanent (CR 701.15)
     /// Example: AB$ Regenerate | Cost$ B | SpellDescription$ Regenerate CARDNAME.
     Regenerate,
+    /// Prevent damage: Create a damage prevention shield on a target (CR 615.1)
+    /// Parameters:
+    ///   Amount$ - damage to prevent (integer or X)
+    ///   ValidTgts$ - target restriction (Any, Creature, Player, etc.)
+    ///   Defined$ - predefined target (Self, You)
+    /// Example: AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 1
+    PreventDamage,
 
     // === Special ===
     Clash,
@@ -358,6 +365,7 @@ impl ApiType {
             "Protection" => Self::Protection,
             "ProtectionAll" => Self::ProtectionAll,
             "Regenerate" => Self::Regenerate,
+            "PreventDamage" => Self::PreventDamage,
 
             // Special
             "Clash" => Self::Clash,
@@ -450,6 +458,7 @@ impl ApiType {
             Self::Protection => "Protection",
             Self::ProtectionAll => "ProtectionAll",
             Self::Regenerate => "Regenerate",
+            Self::PreventDamage => "PreventDamage",
             Self::Clash => "Clash",
             Self::Planeswalk => "Planeswalk",
             Self::RollDice => "RollDice",
@@ -796,7 +805,7 @@ mod tests {
         let params2 = AbilityParams::parse(ability2).unwrap();
 
         assert_eq!(params1.api_type, ApiType::DealDamage);
-        assert!(matches!(params2.api_type, ApiType::Unknown(_))); // PreventDamage not in enum yet
+        assert_eq!(params2.api_type, ApiType::PreventDamage); // PreventDamage is now a known type
     }
 
     #[test]

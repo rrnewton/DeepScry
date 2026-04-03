@@ -3078,6 +3078,7 @@ impl GameState {
                     | crate::core::Effect::Firebend { .. }
                     | crate::core::Effect::GrantCantBeBlocked { .. }
                     | crate::core::Effect::Regenerate { .. }
+                    | crate::core::Effect::PreventDamage { .. }
                     | crate::core::Effect::LoseLife { .. }
                     | crate::core::Effect::DestroyAll { .. }
                     | crate::core::Effect::SacrificeAll { .. }

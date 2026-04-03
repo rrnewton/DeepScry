@@ -1056,6 +1056,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::PreventDamage => {
+            // PreventDamage: Create a damage prevention shield (CR 615.1)
+            // Examples: "AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 1"
+            //           "AB$ PreventDamage | Cost$ W T | Defined$ Self | Amount$ 1"
+            //           "AB$ PreventDamage | Cost$ PayLife<2> | ValidTgts$ Creature | Amount$ 1"
+            let amount = params.get_i32("Amount").unwrap_or(1);
+
+            // Determine target type from Defined$ or ValidTgts$
+            let target = match params.get("Defined") {
+                Some("Self" | "ParentTarget") => {
+                    TargetRef::Permanent(CardId::new(0)) // Placeholder - resolved at activation
+                }
+                Some("You" | "Player") => {
+                    TargetRef::Player(PlayerId::new(0)) // Placeholder - resolved at activation
+                }
+                _ => TargetRef::None, // Will be resolved from ValidTgts$ at cast time
+            };
+
+            Some(Effect::PreventDamage { target, amount })
+        }
+
         ApiType::LoseLife => {
             // LoseLife: Target player or defined players lose life
             // Examples: "AB$ LoseLife | LifeAmount$ 2 | Defined$ Opponent"
@@ -2685,6 +2706,84 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             }
             _ => panic!("Expected AnimateAll effect"),
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // AB$ PreventDamage parsing tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_convert_prevent_damage_any_target() {
+        // Militant Monk: "AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 1"
+        let params = AbilityParams::parse(
+            "A:AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 1 | SpellDescription$ Prevent the next 1 damage.",
+        )
+        .unwrap();
+        assert_eq!(params.api_type, ApiType::PreventDamage);
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(
+                effect,
+                Effect::PreventDamage {
+                    target: TargetRef::None,
+                    amount: 1
+                }
+            ),
+            "Expected PreventDamage with amount 1 and no pre-resolved target, got {:?}",
+            effect
+        );
+    }
+
+    #[test]
+    fn test_convert_prevent_damage_defined_self() {
+        // Ursine Fylgja: "AB$ PreventDamage | Cost$ SubCounter<1/HEALING> | Defined$ Self | Amount$ 1"
+        let params =
+            AbilityParams::parse("A:AB$ PreventDamage | Cost$ SubCounter<1/HEALING> | Defined$ Self | Amount$ 1")
+                .unwrap();
+        assert_eq!(params.api_type, ApiType::PreventDamage);
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(
+                effect,
+                Effect::PreventDamage {
+                    target: TargetRef::Permanent(_),
+                    amount: 1
+                }
+            ),
+            "Expected PreventDamage targeting self (Permanent placeholder), got {:?}",
+            effect
+        );
+    }
+
+    #[test]
+    fn test_convert_prevent_damage_defined_you() {
+        // Esper Battlemage: "AB$ PreventDamage | Cost$ W T | Defined$ You | Amount$ 2"
+        let params = AbilityParams::parse("A:AB$ PreventDamage | Cost$ W T | Defined$ You | Amount$ 2").unwrap();
+        assert_eq!(params.api_type, ApiType::PreventDamage);
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(
+                effect,
+                Effect::PreventDamage {
+                    target: TargetRef::Player(_),
+                    amount: 2
+                }
+            ),
+            "Expected PreventDamage targeting player with amount 2, got {:?}",
+            effect
+        );
+    }
+
+    #[test]
+    fn test_convert_prevent_damage_amount_4() {
+        // Master Healer: "AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 4"
+        let params = AbilityParams::parse("A:AB$ PreventDamage | Cost$ T | ValidTgts$ Any | Amount$ 4").unwrap();
+        let effect = params_to_effect(&params).unwrap();
+        assert!(
+            matches!(effect, Effect::PreventDamage { amount: 4, .. }),
+            "Expected PreventDamage with amount 4, got {:?}",
+            effect
+        );
     }
 
     #[test]

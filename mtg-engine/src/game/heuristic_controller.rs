@@ -68,6 +68,9 @@ enum ActivatedAbilityType {
     /// Debuff ability - removes keywords from a creature
     /// Example: Grozoth "{4}: Lose defender until end of turn"
     Debuff,
+    /// PreventDamage ability - creates a damage prevention shield
+    /// Example: Militant Monk "{T}: Prevent the next 1 damage to any target"
+    PreventDamage,
     /// Other abilities not yet categorized
     Other,
 }
@@ -622,6 +625,10 @@ impl HeuristicController {
                     // Regeneration makes creatures harder to kill (Drudge Skeletons, Sedge Troll)
                     // Roughly equivalent to a toughness bonus
                     value += 20;
+                }
+                ActivatedAbilityType::PreventDamage => {
+                    // Damage prevention is defensive value, similar to regenerate
+                    value += 15;
                 }
                 ActivatedAbilityType::Debuff => {
                     // Debuff abilities (lose Defender) add value since they unlock attacking
@@ -2493,6 +2500,20 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::PreventDamage => {
+                    // Damage prevention: activate during combat when damage is imminent
+                    // Similar to Regenerate - proactively shield before combat damage
+                    let current_step = view.current_step();
+                    let is_combat = matches!(
+                        current_step,
+                        crate::game::Step::DeclareAttackers
+                            | crate::game::Step::DeclareBlockers
+                            | crate::game::Step::CombatDamage
+                    );
+                    if is_combat {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Debuff => {
                     // Debuff abilities: primarily "lose Defender" to enable attacking
                     // Activate before combat (Main1) so the creature can attack
@@ -2562,6 +2583,13 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::Regenerate { .. }) {
                 return ActivatedAbilityType::Regenerate;
+            }
+        }
+
+        // Check for damage prevention effects (Militant Monk, Master Healer, etc.)
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::PreventDamage { .. }) {
+                return ActivatedAbilityType::PreventDamage;
             }
         }
 
@@ -3111,6 +3139,7 @@ impl HeuristicController {
                     | crate::core::Effect::MultiplyCounter { .. }
                     | crate::core::Effect::PutCounter { .. }
                     | crate::core::Effect::Proliferate
+                    | crate::core::Effect::PreventDamage { .. }
             )
         });
         if has_always_beneficial {

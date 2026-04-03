@@ -67,6 +67,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Firebend { .. }
         | Effect::GrantCantBeBlocked { .. }
         | Effect::Regenerate { .. }
+        | Effect::PreventDamage { .. }
         | Effect::ModalChoice { .. }
         | Effect::Dig { .. }
         | Effect::CreateDelayedTrigger { .. }
@@ -168,6 +169,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Firebend { .. }
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
+            | Effect::PreventDamage { .. }
             | Effect::ModalChoice { .. }
             | Effect::Dig { .. }
             | Effect::CreateDelayedTrigger { .. }
@@ -1696,6 +1698,55 @@ impl GameState {
                     effect.clone()
                 }
             }
+
+            // PreventDamage with no target: resolve from chosen_targets
+            Effect::PreventDamage {
+                target: TargetRef::None,
+                amount,
+            } => {
+                if *target_index < chosen_targets.len() {
+                    let target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(target);
+                    Effect::PreventDamage {
+                        target: TargetRef::Permanent(target),
+                        amount: *amount,
+                    }
+                } else {
+                    // No target chosen - default to self-prevention via controller
+                    Effect::PreventDamage {
+                        target: TargetRef::Player(card_owner),
+                        amount: *amount,
+                    }
+                }
+            }
+
+            // PreventDamage with Defined$ Self: resolve placeholder to source card
+            Effect::PreventDamage {
+                target: TargetRef::Permanent(card_id),
+                amount,
+            } if card_id.is_placeholder() => {
+                if *target_index < chosen_targets.len() {
+                    let target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(target);
+                    Effect::PreventDamage {
+                        target: TargetRef::Permanent(target),
+                        amount: *amount,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+
+            // PreventDamage with Defined$ You: resolve placeholder to controller
+            Effect::PreventDamage {
+                target: TargetRef::Player(player_id),
+                amount,
+            } if player_id.is_placeholder() => Effect::PreventDamage {
+                target: TargetRef::Player(card_owner),
+                amount: *amount,
+            },
 
             // EachDamage: multiple creatures deal damage to one target
             // Empty damagers vector means "use parent targets" - all chosen_targets except last
@@ -3572,6 +3623,44 @@ impl GameState {
                 let card_name = self.cards.get(*target).map(|c| c.name.as_str()).unwrap_or("Unknown");
                 self.logger
                     .gamelog(&format!("{} ({}) gains a regeneration shield", card_name, target));
+            }
+
+            Effect::PreventDamage { target, amount } => {
+                // Prevent damage: Add a damage prevention shield (CR 615.1)
+                // "Prevent the next N damage that would be dealt to [target] this turn."
+                match target {
+                    TargetRef::Permanent(card_id) => {
+                        if card_id.is_placeholder() {
+                            return Ok(());
+                        }
+                        if !self.battlefield.contains(*card_id) {
+                            return Ok(()); // Target left battlefield - fizzle
+                        }
+                        let card = self.cards.get_mut(*card_id)?;
+                        card.damage_prevention += amount;
+                        let card_name = self.cards.get(*card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                        self.logger.gamelog(&format!(
+                            "Prevent the next {} damage that would be dealt to {} ({}) this turn",
+                            amount, card_name, card_id
+                        ));
+                    }
+                    TargetRef::Player(player_id) => {
+                        let player = self.get_player_mut(*player_id)?;
+                        player.damage_prevention += amount;
+                        let player_name = self
+                            .get_player(*player_id)
+                            .map(|p| p.name.to_string())
+                            .unwrap_or_else(|_| "Unknown".to_string());
+                        self.logger.gamelog(&format!(
+                            "Prevent the next {} damage that would be dealt to {} this turn",
+                            amount, player_name
+                        ));
+                    }
+                    TargetRef::None => {
+                        // No target specified - shouldn't happen for PreventDamage
+                        log::warn!("PreventDamage with no target");
+                    }
+                }
             }
 
             Effect::DestroyAll {
@@ -6034,23 +6123,44 @@ impl GameState {
     pub fn deal_damage(&mut self, target_id: PlayerId, amount: i32) -> Result<()> {
         // Check if target is a player
         if self.players.iter().any(|p| p.id == target_id) {
+            // Apply damage prevention shield (CR 615.1)
+            let (actual_amount, prevented) = {
+                let player = self.get_player_mut(target_id)?;
+                if player.damage_prevention > 0 {
+                    let prevented = amount.min(player.damage_prevention);
+                    player.damage_prevention -= prevented;
+                    (amount - prevented, prevented)
+                } else {
+                    (amount, 0)
+                }
+            };
+
+            if prevented > 0 {
+                let player = self.get_player(target_id)?;
+                self.logger.normal(&format!(
+                    "{} damage prevented to {} ({} remaining shield)",
+                    prevented, player.name, player.damage_prevention
+                ));
+            }
+
+            if actual_amount <= 0 {
+                return Ok(());
+            }
+
             // Capture log size before life change
             let prior_log_size = self.logger.log_count();
 
             let player = self.get_player_mut(target_id)?;
-            player.lose_life(amount);
+            player.lose_life(actual_amount);
 
             // Log the life change for undo system
             self.undo_log.log(
                 crate::undo::GameAction::ModifyLife {
                     player_id: target_id,
-                    delta: -amount,
+                    delta: -actual_amount,
                 },
                 prior_log_size,
             );
-
-            // Note: Display logging is handled by callers (combat.rs, logging.rs)
-            // to avoid duplicate "deals X damage" and "takes X damage" messages
 
             return Ok(());
         }
@@ -6074,14 +6184,37 @@ impl GameState {
         };
 
         if is_creature {
+            // Apply damage prevention shield (CR 615.1)
+            let actual_amount = {
+                let card = self.cards.get_mut(target_id)?;
+                if card.damage_prevention > 0 {
+                    let prevented = amount.min(card.damage_prevention);
+                    card.damage_prevention -= prevented;
+                    let remaining = amount - prevented;
+                    if prevented > 0 {
+                        self.logger.normal(&format!(
+                            "{} damage prevented to {} ({}) ({} remaining shield)",
+                            prevented, creature_name, target_id, card.damage_prevention
+                        ));
+                    }
+                    remaining
+                } else {
+                    amount
+                }
+            };
+
+            if actual_amount <= 0 {
+                return Ok(());
+            }
+
             // Mark damage on the creature (MTG CR 120.3)
             // Damage persists until cleanup step (CR 704.5f)
             let card = self.cards.get_mut(target_id)?;
-            card.damage += amount;
+            card.damage += actual_amount;
 
             let message = format!(
                 "{} ({}) takes {} damage (total: {})",
-                creature_name, target_id, amount, card.damage
+                creature_name, target_id, actual_amount, card.damage
             );
             self.logger.normal(&message);
 

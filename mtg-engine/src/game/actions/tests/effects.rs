@@ -1,4 +1,4 @@
-use crate::core::{Card, CardId, CardType, Effect, Keyword, ManaCost, PlayerId};
+use crate::core::{Card, CardId, CardType, Effect, Keyword, ManaCost, PlayerId, TargetRef};
 use crate::game::state::GameState;
 use crate::loader::CardDatabase;
 use crate::MtgError;
@@ -1423,5 +1423,144 @@ mod tests {
         let p2_graveyard = &game.get_player_zones(p2_id).unwrap().graveyard;
         let discarded_count = p2_cards.iter().filter(|&&cid| p2_graveyard.contains(cid)).count();
         assert_eq!(discarded_count, 3, "3 cards should be in P2's graveyard after discard");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // AB$ PreventDamage tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_prevent_damage_to_creature() {
+        // Test: PreventDamage creates a shield that absorbs damage to a creature
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create a 2/2 creature
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Test Creature".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Cast a PreventDamage spell targeting the creature (prevent 3)
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Shield".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("W");
+        spell.effects.push(Effect::PreventDamage {
+            target: TargetRef::Permanent(creature_id),
+            amount: 3,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        let result = game.resolve_spell(spell_id, &[]);
+        assert!(result.is_ok(), "PreventDamage spell should resolve");
+
+        // Creature should have a prevention shield
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.damage_prevention, 3, "Creature should have 3 prevention shield");
+
+        // Deal 2 damage - should be fully prevented
+        let result = game.deal_damage_to_creature(creature_id, 2);
+        assert!(result.is_ok());
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.damage, 0, "All 2 damage should be prevented");
+        assert_eq!(card.damage_prevention, 1, "1 prevention shield should remain");
+
+        // Deal 2 more damage - 1 prevented, 1 gets through
+        let result = game.deal_damage_to_creature(creature_id, 2);
+        assert!(result.is_ok());
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.damage, 1, "1 damage should get through");
+        assert_eq!(card.damage_prevention, 0, "No prevention shield remaining");
+    }
+
+    #[test]
+    fn test_prevent_damage_to_player() {
+        // Test: PreventDamage creates a shield that absorbs damage to a player
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Apply prevention shield to player (prevent 2)
+        let spell_id = game.next_entity_id();
+        let mut spell = Card::new(spell_id, "Shield".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("W");
+        spell.effects.push(Effect::PreventDamage {
+            target: TargetRef::Player(p1_id),
+            amount: 2,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        let result = game.resolve_spell(spell_id, &[]);
+        assert!(result.is_ok(), "PreventDamage spell should resolve");
+
+        let player = game.get_player(p1_id).unwrap();
+        assert_eq!(player.damage_prevention, 2, "Player should have 2 prevention shield");
+        assert_eq!(player.life, 20, "Life should be unchanged");
+
+        // Deal 3 damage - 2 prevented, 1 gets through
+        let result = game.deal_damage(p1_id, 3);
+        assert!(result.is_ok());
+        let player = game.get_player(p1_id).unwrap();
+        assert_eq!(player.life, 19, "Only 1 damage should get through (20 - 1 = 19)");
+        assert_eq!(player.damage_prevention, 0, "Shield should be depleted");
+    }
+
+    #[test]
+    fn test_prevent_damage_stacks() {
+        // Test: Multiple prevention shields stack additively
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create creature and apply two prevention shields
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Test Creature".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Apply two shields (1 + 2 = 3 total)
+        for amount in [1, 2] {
+            let spell_id = game.next_entity_id();
+            let mut spell = Card::new(spell_id, "Shield".to_string(), p1_id);
+            spell.add_type(CardType::Instant);
+            spell.mana_cost = ManaCost::from_string("W");
+            spell.effects.push(Effect::PreventDamage {
+                target: TargetRef::Permanent(creature_id),
+                amount,
+            });
+            game.cards.insert(spell_id, spell);
+            game.stack.add(spell_id);
+            game.resolve_spell(spell_id, &[]).unwrap();
+        }
+
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.damage_prevention, 3, "Shields should stack to 3");
+    }
+
+    #[test]
+    fn test_prevent_damage_fully_absorbed() {
+        // Test: When shield fully absorbs damage, no damage is dealt
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Set up player prevention shield of 5
+        game.get_player_mut(p1_id).unwrap().damage_prevention = 5;
+
+        // Deal 3 damage - fully absorbed
+        let result = game.deal_damage(p1_id, 3);
+        assert!(result.is_ok());
+        let player = game.get_player(p1_id).unwrap();
+        assert_eq!(player.life, 20, "Life should be unchanged");
+        assert_eq!(player.damage_prevention, 2, "2 prevention remaining");
     }
 }

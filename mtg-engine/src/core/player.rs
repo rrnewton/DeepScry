@@ -57,6 +57,12 @@ pub struct Player {
     /// Maps opponent PlayerId -> cumulative combat damage from their commander.
     #[serde(default)]
     pub commander_damage_taken: Vec<(PlayerId, u16)>,
+
+    /// Damage prevention shield (cleared at end of turn)
+    /// Prevents the next N damage that would be dealt to this player.
+    /// Set by AB$ PreventDamage effects (CR 615.1).
+    #[serde(default)]
+    pub damage_prevention: i32,
 }
 
 impl Player {
@@ -75,6 +81,7 @@ impl Player {
             commander_id: None,
             commander_cast_count: 0,
             commander_damage_taken: Vec::new(),
+            damage_prevention: 0,
         }
     }
 

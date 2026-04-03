@@ -582,6 +582,21 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{target_name} ({target}) gains a regeneration shield");
                 self.game.logger.gamelog(&message);
             }
+            Effect::PreventDamage { target, amount } => {
+                let target_desc = match target {
+                    TargetRef::Player(pid) => self.get_player_name(*pid),
+                    TargetRef::Permanent(cid) => {
+                        let name = self.game.cards.get(*cid).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                        format!("{} ({})", name, cid)
+                    }
+                    TargetRef::None => "target".to_string(),
+                };
+                let message = format!(
+                    "{source_name} ({source_id}) prevents the next {} damage to {} this turn",
+                    amount, target_desc
+                );
+                self.game.logger.gamelog(&message);
+            }
             Effect::Firebend { controller, amount } => {
                 let player_name = self.get_player_name(*controller);
                 let message = format!(
