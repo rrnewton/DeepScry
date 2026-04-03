@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T18:04:50.192649170+00:00
+updated_at: 2026-04-03T18:38:14.799322924+00:00
 ---
 
 # Description
@@ -162,6 +162,17 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 - AI heuristic: classified as always-beneficial (like PumpAllCreatures)
 - Examples: Sarkhan the Masterless, Oko the Trickster, Shadowspear, Mirror Entity
 - Tests: 4 new unit tests (parsing variants)
+
+## AB$ PreventDamage Effect (2026-04-03_#2071(pending))
+
+**Damage prevention shield implementation (81 card files, mtg-rhqes CLOSED):**
+- ✅ AB$ PreventDamage: create damage prevention shield on target (CR 615.1)
+- damage_prevention field on Card and Player, cleared at cleanup step
+- Prevention checked in deal_damage() and deal_damage_to_creature()
+- Supports ValidTgts$ (Any, Creature) and Defined$ (Self, You)
+- AI heuristic: activates during combat phases (like Regenerate)
+- Examples: Militant Monk, Master Healer, Eiganjo Castle, Esper Battlemage
+- Tests: 8 new tests (4 parsing + 4 execution)
 
 # Notes
 
