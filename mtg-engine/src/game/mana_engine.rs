@@ -113,7 +113,7 @@
 //! - **Cost reduction**: Handle effects like Goblin Electromancer that reduce spell costs
 
 use crate::core::{CardId, ManaColor, ManaCost, ManaProduction, ManaProductionKind, PlayerId};
-use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource, SimpleManaResolver};
+use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver, ManaSource};
 use crate::game::GameState;
 
 /// Maximum mana production capacity
@@ -194,7 +194,9 @@ pub struct ManaEngine {
     /// All mana sources as ManaSource structs (for resolver)
     mana_sources: Vec<ManaSource>,
     /// Simple payment resolver (for basic lands only)
-    simple_resolver: SimpleManaResolver,
+    // Note: SimpleManaResolver no longer needed for can_pay() hot path.
+    // We use precomputed simple_capacity directly (OPT-8).
+    // SimpleManaResolver is still available as a standalone type for testing.
     /// Greedy payment resolver (for complex mana sources)
     greedy_resolver: GreedyManaResolver,
     /// Flag indicating which resolver to use (true = use greedy, false = use simple)
@@ -224,7 +226,6 @@ impl Default for ManaEngine {
             complex_sources: Vec::with_capacity(DEFAULT_MANA_SOURCE_CAPACITY),
             simple_capacity: ManaCapacity::new(),
             mana_sources: Vec::with_capacity(DEFAULT_MANA_SOURCE_CAPACITY),
-            simple_resolver: SimpleManaResolver::new(),
             greedy_resolver: GreedyManaResolver::new(),
             use_greedy_resolver: false,
             cached_player: None,
@@ -943,11 +944,15 @@ impl ManaEngine {
     /// NOTE: This method does NOT consider mana already in the player's mana pool.
     /// Use `can_pay_with_pool()` to include floating mana from rituals like Dark Ritual.
     pub fn can_pay(&self, cost: &ManaCost) -> bool {
-        // Use the appropriate resolver based on source complexity
         if self.use_greedy_resolver {
             self.greedy_resolver.can_pay(cost, &self.mana_sources)
         } else {
-            self.simple_resolver.can_pay(cost, &self.mana_sources)
+            // OPT-8: Use precomputed simple_capacity for O(1) bounds check
+            // instead of iterating all sources via SimpleManaResolver.
+            // simple_capacity already has exact untapped counts per color
+            // (computed once in read_from_cache/update), making the full
+            // source iteration in bounds_check_payment redundant.
+            self.simple_capacity.can_pay_simple(cost)
         }
     }
 
@@ -964,10 +969,7 @@ impl ManaEngine {
         // OPTIMIZATION: If pool is empty (most common case - no Dark Ritual/mana floating),
         // skip pool calculations entirely and go straight to mana source check
         if pool.is_empty() {
-            if self.use_greedy_resolver {
-                return self.greedy_resolver.can_pay(cost, &self.mana_sources);
-            }
-            return self.simple_resolver.can_pay(cost, &self.mana_sources);
+            return self.can_pay(cost);
         }
 
         // If the pool alone can pay, return true immediately
@@ -1024,7 +1026,8 @@ impl ManaEngine {
         if self.use_greedy_resolver {
             self.greedy_resolver.can_pay(&remaining_cost, &self.mana_sources)
         } else {
-            self.simple_resolver.can_pay(&remaining_cost, &self.mana_sources)
+            // OPT-8: Use precomputed capacity for O(1) check
+            self.simple_capacity.can_pay_simple(&remaining_cost)
         }
     }
 

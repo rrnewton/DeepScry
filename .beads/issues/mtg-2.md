@@ -11,7 +11,18 @@ updated_at: 2026-03-10T00:51:25.960442323+00:00
 
 # Description
 
-## Latest Optimizations (2026-03-21_#1966)
+## Latest Optimization (2026-04-03_#2062)
+
+✅ **OPT-8: Use precomputed ManaCapacity for O(1) can_pay() on simple sources** - **-2% to -5% time**
+- Replaced SimpleManaResolver's O(n) source iteration with O(1) lookup against precomputed simple_capacity
+- simple_capacity already has exact untapped counts per color from read_from_cache()
+- Eliminates redundant has_complex check + bounds_check_payment iteration on every can_pay() call
+- simple_bolt: -4.2% time (p = 0.00), -1.6% time (p = 0.01) across two runs
+- whiteweenie_mirror: -3.8% time (p = 0.00)
+- jeskai_trolldisk: -2.2% time (p = 0.00)
+- robots_mirror/rewind: -1.8% time (p = 0.00)
+
+## Previous Optimizations (2026-03-21_#1966)
 
 ✅ **Pre-parsed boolean flags for trigger checking** - **-14.6% time** (da13db67)
 - Replaced runtime .starts_with("[controller_only]") and .contains("[noncreature]") with pre-parsed
