@@ -131,6 +131,17 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 - ✅ Library ordering fix: dig from top (not bottom)
 - Examples: Impulse, Wrenn and Seven, Seismic Sense, Trail of Crumbs
 
+## AB$ Debuff Effect (2026-04-03_#2065(819fc050))
+
+**Full Debuff implementation (23 cards, 26 usages):**
+- ✅ AB$ Debuff: remove keywords from creatures (inverse of Pump keyword granting)
+- Parses Keywords$ parameter (split by " & ") for keyword removal
+- AI heuristic: activates "lose Defender" in Main1 to enable attacking
+- Supports self-targeting (Defined$ Self) and opponent targeting (ValidTgts$)
+- Full undo support restores removed keywords
+- Examples: Grozoth, Gargoyle Sentinel, Manor Gargoyle, Phyrexian Splicer
+- Tests: 3 new unit tests (parsing)
+
 # Notes
 
 2026-03-07_#1869: LoseLife (108 cards), DestroyAll (34 cards), DamageAll (58 cards) implemented. Board wipes (Wrath of God) and mass damage (Pyroclasm) now work.
