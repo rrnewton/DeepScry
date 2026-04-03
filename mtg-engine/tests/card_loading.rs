@@ -5,8 +5,9 @@
 // TODO(mtg-0et0f): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
-use mtg_forge_rs::core::{CardId, CardType, Keyword, KeywordArgs, PlayerId};
+use mtg_forge_rs::core::{CardId, CardType, DigFilter, Keyword, KeywordArgs, PlayerId};
 use mtg_forge_rs::loader::CardLoader;
+use mtg_forge_rs::zones::Zone;
 use mtg_forge_rs::{MtgError, Result};
 use std::path::PathBuf;
 
@@ -2248,4 +2249,145 @@ fn test_load_spiritmonger_choose_color() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Test loading Impulse (basic Dig: look at 4, put 1 in hand, rest on bottom)
+#[test]
+fn test_load_impulse_dig() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/i/impulse.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Impulse");
+    assert!(def.types.contains(&CardType::Instant));
+
+    let card = def.instantiate(CardId::new(1), PlayerId::new(1));
+
+    // Impulse should have a Dig effect when it resolves
+    let has_dig = card.effects.iter().any(|e| {
+        matches!(
+            e,
+            mtg_forge_rs::core::Effect::Dig {
+                dig_count: 4,
+                change_count: 1,
+                change_all: false,
+                destination: Zone::Hand,
+                rest_destination: Zone::Library,
+                optional: false,
+                ..
+            }
+        )
+    });
+    assert!(
+        has_dig,
+        "Impulse should have a Dig effect (4 cards, pick 1 for hand). Effects: {:?}",
+        card.effects
+    );
+
+    Ok(())
+}
+
+/// Test loading Wrenn and Seven (Dig with ChangeValid$ Land, Reveal, DestinationZone2$ Graveyard)
+#[test]
+fn test_load_wrenn_and_seven_dig() -> Result<()> {
+    let path = PathBuf::from("cardsfolder/w/wrenn_and_seven.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let def = CardLoader::load_from_file(&path)?;
+    assert_eq!(def.name.as_str(), "Wrenn and Seven");
+
+    let card = def.instantiate(CardId::new(1), PlayerId::new(1));
+
+    // Wrenn's +1 should be: Dig 4, ChangeNum All, ChangeValid Land, Reveal, rest→Graveyard
+    let dig_ability = card.activated_abilities.iter().find(|a| {
+        a.effects
+            .iter()
+            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Dig { .. }))
+    });
+    assert!(dig_ability.is_some(), "Wrenn and Seven should have a Dig ability");
+
+    let dig_effect = dig_ability
+        .unwrap()
+        .effects
+        .iter()
+        .find(|e| matches!(e, mtg_forge_rs::core::Effect::Dig { .. }));
+
+    if let Some(mtg_forge_rs::core::Effect::Dig {
+        dig_count,
+        change_all,
+        destination,
+        rest_destination,
+        reveal,
+        change_valid,
+        ..
+    }) = dig_effect
+    {
+        assert_eq!(*dig_count, 4, "Should dig 4 cards");
+        assert!(*change_all, "Should move ALL matching cards");
+        assert_eq!(*destination, Zone::Hand, "Selected cards go to hand");
+        assert_eq!(*rest_destination, Zone::Graveyard, "Rest goes to graveyard");
+        assert!(*reveal, "Should reveal cards");
+        assert!(
+            change_valid.contains(&DigFilter::Land),
+            "Should filter for Land cards, got {:?}",
+            change_valid
+        );
+    } else {
+        panic!("Expected Dig effect");
+    }
+
+    Ok(())
+}
+
+/// Test DigFilter::matches correctly identifies card types
+#[test]
+fn test_dig_filter_matches() {
+    use mtg_forge_rs::core::{Card, DigFilter};
+
+    let owner = PlayerId::new(1);
+
+    use smallvec::smallvec;
+
+    // Create a creature card
+    let mut creature = Card::new(CardId::new(1), "Test Creature", owner);
+    creature.set_types(smallvec![CardType::Creature]);
+
+    // Create a land card
+    let mut land = Card::new(CardId::new(2), "Test Land", owner);
+    land.set_types(smallvec![CardType::Land]);
+
+    // Create an instant card
+    let mut instant = Card::new(CardId::new(3), "Test Instant", owner);
+    instant.set_types(smallvec![CardType::Instant]);
+
+    // Create an artifact creature
+    let mut artifact_creature = Card::new(CardId::new(4), "Test Artifact Creature", owner);
+    artifact_creature.set_types(smallvec![CardType::Artifact, CardType::Creature]);
+
+    // Test DigFilter::Creature
+    assert!(DigFilter::Creature.matches(&creature));
+    assert!(!DigFilter::Creature.matches(&land));
+    assert!(DigFilter::Creature.matches(&artifact_creature));
+
+    // Test DigFilter::Land
+    assert!(DigFilter::Land.matches(&land));
+    assert!(!DigFilter::Land.matches(&creature));
+
+    // Test DigFilter::Card (matches anything)
+    assert!(DigFilter::Card.matches(&creature));
+    assert!(DigFilter::Card.matches(&land));
+    assert!(DigFilter::Card.matches(&instant));
+
+    // Test DigFilter::Permanent (not instant/sorcery)
+    assert!(DigFilter::Permanent.matches(&creature));
+    assert!(DigFilter::Permanent.matches(&land));
+    assert!(!DigFilter::Permanent.matches(&instant));
+
+    // Test DigFilter::Artifact
+    assert!(DigFilter::Artifact.matches(&artifact_creature));
+    assert!(!DigFilter::Artifact.matches(&creature));
 }

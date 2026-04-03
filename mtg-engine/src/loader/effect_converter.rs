@@ -785,6 +785,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Parse RestRandomOrder$ - whether to randomize non-selected cards
             let rest_random = params.get("RestRandomOrder").is_some_and(|v| v == "True");
 
+            // Parse Reveal$ - whether to reveal dug cards to all players
+            let reveal = params.get("Reveal").is_some_and(|v| v == "True");
+
+            // Parse DestinationZone2$ - where non-selected cards go (default: Library bottom)
+            let rest_destination = params
+                .get("DestinationZone2")
+                .and_then(crate::zones::Zone::from_str_lenient)
+                .unwrap_or(crate::zones::Zone::Library);
+
+            // Parse ChangeValid$ - filter for which cards are valid to select
+            // e.g. "Creature,Land" or "Artifact" or "Permanent"
+            let change_valid: smallvec::SmallVec<[crate::core::DigFilter; 2]> =
+                if let Some(valid_str) = params.get("ChangeValid") {
+                    valid_str
+                        .split(',')
+                        .filter_map(|s| crate::core::DigFilter::parse(s.trim()))
+                        .collect()
+                } else {
+                    smallvec::SmallVec::new() // empty = any card
+                };
+
             // Check for may play options (usually in SubAbility$ DBEffect)
             // For now, we detect may_play by presence of SubAbility with Effect
             let has_sub_ability = params.contains_key("SubAbility");
@@ -793,8 +814,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
             log::debug!(
                 target: "effect_converter",
-                "Dig: {} cards, change {} (all={}), dest={:?}, may_play={}, free={}, target_self={}, optional={}, rest_random={}",
-                dig_count, change_count, change_all, destination, may_play, may_play_without_mana_cost, target_self, optional, rest_random
+                "Dig: {} cards, change {} (all={}), dest={:?}, rest_dest={:?}, may_play={}, free={}, target_self={}, optional={}, rest_random={}, reveal={}, filters={:?}",
+                dig_count, change_count, change_all, destination, rest_destination, may_play, may_play_without_mana_cost, target_self, optional, rest_random, reveal, change_valid
             );
 
             Some(Effect::Dig {
@@ -802,11 +823,14 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 change_count,
                 change_all,
                 destination,
+                rest_destination,
                 may_play,
                 may_play_without_mana_cost,
                 target_self,
                 optional,
                 rest_random,
+                reveal,
+                change_valid,
             })
         }
 

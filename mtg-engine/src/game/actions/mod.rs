@@ -3872,37 +3872,33 @@ impl GameState {
 
             Effect::Dig {
                 dig_count,
-                change_count: _,
-                change_all: _, // TODO: implement partial dig (change fewer than looked at)
+                change_count,
+                change_all,
                 destination,
+                rest_destination,
                 may_play,
                 may_play_without_mana_cost,
                 target_self,
-                optional: _,    // TODO(mtg-dig-optional): implement optional card selection
-                rest_random: _, // TODO(mtg-dig-rest): implement putting rest on bottom in random order
+                optional,
+                rest_random,
+                reveal,
+                change_valid,
             } => {
                 // Dig effect: Look at top N cards of a library and move some to destination
                 //
                 // Two patterns:
-                // 1. target_self=false (Fire Lord Ozai): Exile top card from each opponent's library
-                // 2. target_self=true (Seismic Sense): Look at top X of your library, put one in hand
+                // 1. target_self=true (Impulse, Wrenn and Seven): Look at top N of your library,
+                //    select up to change_count matching ChangeValid$ to destination, rest elsewhere
+                // 2. target_self=false (Fire Lord Ozai): Exile top N from each opponent's library
                 //
-                // Implementation:
-                // 1. Get the digger (controller of the effect)
-                // 2. Determine whose library/libraries to dig from
-                // 3. Look at/move cards to destination
-                // 4. If may_play, create persistent effects for playing those cards
+                // AI heuristic for card selection: pick highest-value cards that match the filter,
+                // preferring creatures by P/T+CMC, then non-creatures by CMC.
 
                 let digger = self.turn.active_player;
-
-                // Collect card IDs that were moved
                 let mut moved_cards: Vec<CardId> = Vec::with_capacity(*dig_count as usize);
 
                 if *target_self {
-                    // Self-dig pattern (Seismic Sense, Impulse, etc.)
-                    // Look at top N cards of YOUR library, move some to hand
-
-                    // Get digger's library
+                    // Self-dig: look at top N cards of YOUR library
                     let library = self
                         .player_zones
                         .iter()
@@ -3910,54 +3906,164 @@ impl GameState {
                         .map(|(_, zones)| &zones.library);
 
                     if let Some(library) = library {
-                        // Collect card IDs to look at
                         let take_count = *dig_count as usize;
+                        // Library top is at the end of the Vec, so use .rev()
                         let card_ids: smallvec::SmallVec<[CardId; 8]> =
-                            library.cards.iter().take(take_count).copied().collect();
+                            library.cards.iter().rev().take(take_count).copied().collect();
 
                         let digger_name = self.get_player(digger)?.name.to_string();
 
-                        // Log looking at cards
                         if !card_ids.is_empty() {
+                            let verb = if *reveal { "reveals" } else { "looks at" };
                             self.logger.gamelog(&format!(
-                                "{} looks at top {} cards of their library",
+                                "{} {} the top {} card{} of their library",
                                 digger_name,
-                                card_ids.len()
+                                verb,
+                                card_ids.len(),
+                                if card_ids.len() == 1 { "" } else { "s" }
                             ));
                         }
 
-                        // For now, move all looked-at cards to destination (simplified)
-                        // TODO(mtg-dig-choice): Implement player choice for partial moves
-                        for card_id in card_ids {
-                            // Get card name if available - in network mode, library cards
-                            // may not be in the client's entity store until revealed
+                        // Separate cards into valid (matchable) and invalid (rest)
+                        // If change_valid is empty, all cards are valid
+                        let has_filter = !change_valid.is_empty();
+                        let mut valid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+                        let mut invalid_ids: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+
+                        for &card_id in &card_ids {
+                            if has_filter {
+                                let matches = self
+                                    .cards
+                                    .try_get(card_id)
+                                    .is_some_and(|card| change_valid.iter().any(|f| f.matches(card)));
+                                if matches {
+                                    valid_ids.push(card_id);
+                                } else {
+                                    invalid_ids.push(card_id);
+                                }
+                            } else {
+                                valid_ids.push(card_id);
+                            }
+                        }
+
+                        // Determine how many cards to select
+                        let max_select = if *change_all {
+                            valid_ids.len()
+                        } else {
+                            (*change_count as usize).min(valid_ids.len())
+                        };
+
+                        // AI heuristic: rank valid cards by value, pick best ones
+                        // Score: creatures by (power+toughness)*10 + cmc*5 + 80,
+                        //        lands by 100, others by 50 + cmc*30
+                        if valid_ids.len() > 1 && max_select < valid_ids.len() {
+                            valid_ids.sort_by(|&a, &b| {
+                                let score_a = self.dig_card_score(a);
+                                let score_b = self.dig_card_score(b);
+                                score_b.cmp(&score_a) // Descending: best first
+                            });
+                        }
+
+                        // If optional and no good cards, AI may choose to skip
+                        let select_count = if *optional && max_select > 0 {
+                            // Simple heuristic: skip only if best card scores very low
+                            let best_score = valid_ids.first().map(|&id| self.dig_card_score(id)).unwrap_or(0);
+                            if best_score < 30 {
+                                0
+                            } else {
+                                max_select
+                            }
+                        } else {
+                            max_select
+                        };
+
+                        // Move selected cards to destination
+                        let selected: smallvec::SmallVec<[CardId; 8]> =
+                            valid_ids.iter().take(select_count).copied().collect();
+                        let rest_from_valid: smallvec::SmallVec<[CardId; 8]> =
+                            valid_ids.iter().skip(select_count).copied().collect();
+
+                        for &card_id in &selected {
                             let card_name = self
                                 .cards
                                 .get(card_id)
                                 .map(|c| c.name.to_string())
                                 .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
 
-                            // Move card from library to destination (usually Hand)
                             self.move_card(card_id, Zone::Library, *destination, digger)?;
 
-                            self.logger
-                                .gamelog(&format!("{} puts {} into {:?}", digger_name, card_name, destination));
-
+                            let action = if *reveal { "reveals and puts" } else { "puts" };
+                            self.logger.gamelog(&format!(
+                                "{} {} {} into {:?}",
+                                digger_name, action, card_name, destination
+                            ));
                             moved_cards.push(card_id);
+                        }
+
+                        // Handle rest: non-selected valid cards + invalid cards
+                        let mut rest_cards: smallvec::SmallVec<[CardId; 8]> = smallvec::SmallVec::new();
+                        rest_cards.extend(rest_from_valid.iter().copied());
+                        rest_cards.extend(invalid_ids.iter().copied());
+
+                        if !rest_cards.is_empty() {
+                            // Shuffle rest if RestRandomOrder$ True
+                            if *rest_random {
+                                // Use a simple deterministic shuffle based on game state
+                                // (card IDs provide enough entropy for reasonable shuffling)
+                                let len = rest_cards.len();
+                                for i in (1..len).rev() {
+                                    let j = (rest_cards[i].as_u32() as usize + i) % (i + 1);
+                                    rest_cards.swap(i, j);
+                                }
+                            }
+
+                            // Move rest to rest_destination
+                            if *rest_destination == Zone::Library {
+                                // Put on bottom of library: remove from current position,
+                                // then insert at index 0 (bottom)
+                                if let Some(zones) = self.get_player_zones_mut(digger) {
+                                    for &card_id in &rest_cards {
+                                        zones.library.remove(card_id);
+                                        zones.library.add_to_bottom(card_id);
+                                    }
+                                }
+                                let rest_count = rest_cards.len();
+                                self.logger.gamelog(&format!(
+                                    "{} puts {} card{} on the bottom of their library",
+                                    digger_name,
+                                    rest_count,
+                                    if rest_count == 1 { "" } else { "s" }
+                                ));
+                            } else {
+                                for &card_id in &rest_cards {
+                                    let card_name = self
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.name.to_string())
+                                        .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
+
+                                    self.move_card(card_id, Zone::Library, *rest_destination, digger)?;
+
+                                    let dest_name = match rest_destination {
+                                        Zone::Graveyard => "their graveyard",
+                                        Zone::Exile => "exile",
+                                        Zone::Hand => "their hand",
+                                        Zone::Library | Zone::Battlefield | Zone::Stack | Zone::Command => {
+                                            "another zone"
+                                        }
+                                    };
+                                    self.logger
+                                        .gamelog(&format!("{} puts {} into {}", digger_name, card_name, dest_name));
+                                }
+                            }
                         }
                     }
                 } else {
                     // Opponent-dig pattern (Fire Lord Ozai, Xander's Pact)
-                    // Exile top N cards from each opponent's library
-
-                    // Collect opponent IDs first (SmallVec for stack allocation - typically 1-3 opponents)
-                    // This releases the borrow on self.players before we call self.move_card()
                     let opponent_ids: smallvec::SmallVec<[PlayerId; 4]> =
                         self.players.iter().filter(|p| p.id != digger).map(|p| p.id).collect();
 
-                    // For each opponent, exile top card(s) from their library
                     for opponent_id in opponent_ids {
-                        // Get opponent's library
                         let library = self
                             .player_zones
                             .iter()
@@ -3965,27 +4071,19 @@ impl GameState {
                             .map(|(_, zones)| &zones.library);
 
                         if let Some(library) = library {
-                            // Collect card IDs to exile first (SmallVec for stack allocation)
                             let take_count = *dig_count as usize;
+                            // Library top is at end of Vec, so use .rev()
                             let card_ids: smallvec::SmallVec<[CardId; 4]> =
-                                library.cards.iter().take(take_count).copied().collect();
+                                library.cards.iter().rev().take(take_count).copied().collect();
 
-                            // Now exile each card (move_card auto-reveals Library→public zones)
                             for card_id in card_ids {
-                                // Get opponent name for logging
                                 let opponent_name = self.get_player(opponent_id)?.name.to_string();
-
-                                // Get card name if available - in network mode, opponent's
-                                // library cards may not be in client's entity store
                                 let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("a card");
 
-                                // Log before move (need the names)
                                 self.logger
                                     .gamelog(&format!("{} exiled from {}'s library", card_name, opponent_name));
 
-                                // Move card from library to destination (usually exile)
                                 self.move_card(card_id, Zone::Library, *destination, opponent_id)?;
-
                                 moved_cards.push(card_id);
                             }
                         }
@@ -4005,20 +4103,12 @@ impl GameState {
                         mana_cost_text
                     ));
 
-                    // Create persistent effect for "may play one without paying mana cost"
-                    // This effect tracks all exiled cards and allows the digger to play ONE
                     use crate::core::{CleanupCondition, PersistentEffectKind};
 
-                    // For Fire Lord Ozai, we always grant may-play-without-cost
-                    // (other Dig effects might have different behavior)
                     if *may_play_without_mana_cost {
-                        // Get source card ID (if available) for the persistent effect
-                        // Since we're in an activated ability, the source should be on the battlefield
-                        // For now, use the first exiled card as the "source" for tracking
                         let source_card = moved_cards[0];
                         let num_moved = moved_cards.len();
 
-                        // Move moved_cards into the persistent effect (avoid clone)
                         self.persistent_effects.add(
                             PersistentEffectKind::MayPlayOneWithoutManaCost {
                                 tracked_cards: std::mem::take(&mut moved_cards),
@@ -4381,6 +4471,25 @@ impl GameState {
 
         // Generic subtype check
         Self::card_matches_subtype(card, filter)
+    }
+
+    /// Score a card for Dig selection AI heuristic.
+    /// Higher score = AI prefers to select this card.
+    /// Creatures scored by P/T + CMC, lands at fixed 100, spells by CMC.
+    fn dig_card_score(&self, card_id: CardId) -> i32 {
+        let Some(card) = self.cards.try_get(card_id) else {
+            return 0;
+        };
+        let cmc = i32::from(card.definition.mana_cost.cmc());
+        if card.is_creature() {
+            let power = i32::from(card.current_power());
+            let toughness = i32::from(card.current_toughness());
+            80 + (power + toughness) * 10 + cmc * 5
+        } else if card.is_land() {
+            100
+        } else {
+            50 + 30 * cmc
+        }
     }
 
     /// Check if a card matches a card type

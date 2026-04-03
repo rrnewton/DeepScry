@@ -64,6 +64,67 @@ impl TargetType {
     }
 }
 
+/// Filter for Dig effect's ChangeValid$ parameter
+///
+/// Specifies which card types are valid for selection when digging.
+/// Parsed from comma-separated values like "Creature,Land" or "Artifact".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DigFilter {
+    /// Any card is valid
+    Card,
+    /// Only creatures
+    Creature,
+    /// Only lands
+    Land,
+    /// Only artifacts
+    Artifact,
+    /// Only enchantments
+    Enchantment,
+    /// Only instants
+    Instant,
+    /// Only sorceries
+    Sorcery,
+    /// Only planeswalkers
+    Planeswalker,
+    /// Any permanent (creature, artifact, enchantment, land, planeswalker)
+    Permanent,
+}
+
+impl DigFilter {
+    /// Parse a single filter token from ChangeValid$ value
+    pub fn parse(s: &str) -> Option<Self> {
+        // Strip modifiers like ".cmcLE3", ".Legendary", ".nonLand" etc.
+        let base = s.split('.').next().unwrap_or(s);
+        match base {
+            "Card" => Some(DigFilter::Card),
+            "Creature" => Some(DigFilter::Creature),
+            "Land" => Some(DigFilter::Land),
+            "Artifact" => Some(DigFilter::Artifact),
+            "Enchantment" => Some(DigFilter::Enchantment),
+            "Instant" => Some(DigFilter::Instant),
+            "Sorcery" => Some(DigFilter::Sorcery),
+            "Planeswalker" => Some(DigFilter::Planeswalker),
+            "Permanent" => Some(DigFilter::Permanent),
+            _ => None,
+        }
+    }
+
+    /// Check if a card matches this filter
+    pub fn matches(&self, card: &crate::core::Card) -> bool {
+        match self {
+            DigFilter::Card => true,
+            DigFilter::Creature => card.is_creature(),
+            DigFilter::Land => card.is_land(),
+            DigFilter::Artifact => card.is_artifact(),
+            DigFilter::Enchantment => card.is_enchantment(),
+            DigFilter::Instant => card.is_instant(),
+            DigFilter::Sorcery => card.is_sorcery(),
+            DigFilter::Planeswalker => card.is_planeswalker(),
+            DigFilter::Permanent => !card.is_instant() && !card.is_sorcery(),
+        }
+    }
+}
+
 /// Count expression for variable effects
 ///
 /// Used by effects that depend on counting game state, like:
@@ -975,6 +1036,8 @@ pub enum Effect {
         change_all: bool,
         /// Destination zone for selected cards (Hand for most Dig, Exile for Fire Lord Ozai)
         destination: crate::zones::Zone,
+        /// Destination zone for non-selected cards (DestinationZone2$, default Library bottom)
+        rest_destination: crate::zones::Zone,
         /// Whether to grant "may play" permission for exiled cards
         may_play: bool,
         /// Whether "may play" costs no mana
@@ -987,6 +1050,12 @@ pub enum Effect {
         /// Whether to put non-selected cards on bottom of library in random order
         /// (RestRandomOrder$ True)
         rest_random: bool,
+        /// Whether to reveal dug cards to all players (Reveal$ True)
+        reveal: bool,
+        /// Filter for which cards are valid to select (ChangeValid$)
+        /// Comma-separated type names like "Creature,Land" or "Artifact"
+        /// Empty string means any card is valid for selection
+        change_valid: SmallVec<[DigFilter; 2]>,
     },
 
     /// Create a delayed trigger that fires when a condition is met.
