@@ -656,7 +656,9 @@ impl HeuristicController {
                         matches!(
                             e,
                             crate::core::Effect::DealDamage { .. }
+                                | crate::core::Effect::DealDamageXPaid { .. }
                                 | crate::core::Effect::DiscardCards { .. }
+                                | crate::core::Effect::DiscardCardsXPaid { .. }
                                 | crate::core::Effect::Mill { .. }
                         )
                     });
@@ -2871,10 +2873,12 @@ impl HeuristicController {
     /// Reference: Various spell AI classes in forge-ai/src/main/java/forge/ai/ability/
     fn should_cast_spell(&self, spell: &Card, view: &GameStateView) -> bool {
         // Check for card draw spells
-        let has_draw = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DrawCards { .. }));
+        let has_draw = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
+            )
+        });
         if has_draw {
             let hand_size = view.hand().len();
             // Draw if we have 2 or fewer cards in hand
@@ -2893,10 +2897,12 @@ impl HeuristicController {
             .effects
             .iter()
             .any(|e| matches!(e, crate::core::Effect::DestroyPermanent { .. }));
-        let has_damage = spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+        let has_damage = spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DealDamage { .. } | crate::core::Effect::DealDamageXPaid { .. }
+            )
+        });
 
         if has_destroy || has_damage {
             // Check if there's a valid removal target AND if timing is right
@@ -3178,10 +3184,12 @@ impl HeuristicController {
 
         // Evaluate what type of spell it is
         let is_creature = top_spell.is_creature();
-        let is_damage_spell = top_spell
-            .effects
-            .iter()
-            .any(|e| matches!(e, crate::core::Effect::DealDamage { .. }));
+        let is_damage_spell = top_spell.effects.iter().any(|e| {
+            matches!(
+                e,
+                crate::core::Effect::DealDamage { .. } | crate::core::Effect::DealDamageXPaid { .. }
+            )
+        });
         let is_removal_spell = top_spell
             .effects
             .iter()
@@ -3883,14 +3891,14 @@ impl HeuristicController {
     /// - Target opponent's best creature
     /// - Filter out indestructible
     /// - Filter out creatures already dying (toughness <= 0)
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn choose_best_removal_target(&self, spell: &Card, view: &GameStateView) -> Option<CardId> {
         // For damage-based removal, find the damage amount
-        let damage_amount = spell.effects.iter().find_map(|e| {
-            if let crate::core::Effect::DealDamage { amount, .. } = e {
-                Some(*amount)
-            } else {
-                None
-            }
+        // For XPaid spells, use the x_paid value stored on the card
+        let damage_amount = spell.effects.iter().find_map(|e| match e {
+            crate::core::Effect::DealDamage { amount, .. } => Some(*amount),
+            crate::core::Effect::DealDamageXPaid { .. } => Some(i32::from(spell.x_paid)),
+            _ => None,
         });
 
         // Get all valid opponent creatures using chained filters (zero intermediate allocations)
@@ -5013,6 +5021,7 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(choice)
     }
 
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn choose_targets(
         &mut self,
         view: &GameStateView,
@@ -5037,15 +5046,19 @@ impl PlayerController for HeuristicController {
             // First check activated abilities (Prodigal Sorcerer, Tim, etc.)
             for ability in &c.activated_abilities {
                 for effect in &ability.effects {
-                    if let crate::core::Effect::DealDamage { amount, .. } = effect {
-                        return Some(*amount);
+                    match effect {
+                        crate::core::Effect::DealDamage { amount, .. } => return Some(*amount),
+                        crate::core::Effect::DealDamageXPaid { .. } => return Some(i32::from(c.x_paid)),
+                        _ => {}
                     }
                 }
             }
-            // Then check spell effects (Lightning Bolt, Shock, etc.)
+            // Then check spell effects (Lightning Bolt, Shock, Fireball, etc.)
             for effect in &c.effects {
-                if let crate::core::Effect::DealDamage { amount, .. } = effect {
-                    return Some(*amount);
+                match effect {
+                    crate::core::Effect::DealDamage { amount, .. } => return Some(*amount),
+                    crate::core::Effect::DealDamageXPaid { .. } => return Some(i32::from(c.x_paid)),
+                    _ => {}
                 }
             }
             None

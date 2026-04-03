@@ -163,14 +163,29 @@ impl<'a> GameLoop<'a> {
                     }
                 }
             },
+            Effect::DealDamageXPaid { target } => {
+                // XPaid damage - will be resolved before actual execution
+                let message = format!("{source_name} ({source_id}) deals X damage to {:?}", target);
+                self.game.logger.gamelog(&message);
+            }
             Effect::DrawCards { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");
                 self.game.logger.gamelog(&message);
             }
+            Effect::DrawCardsXPaid { player } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) causes {player_name} to draw X card(s)");
+                self.game.logger.gamelog(&message);
+            }
             Effect::DiscardCards { player, count, .. } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to discard {count} card(s)");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::DiscardCardsXPaid { player, .. } => {
+                let player_name = self.get_player_name(*player);
+                let message = format!("{source_name} ({source_id}) causes {player_name} to discard X card(s)");
                 self.game.logger.gamelog(&message);
             }
             Effect::Loot {

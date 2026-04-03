@@ -113,9 +113,31 @@ impl ManaCost {
         cost
     }
 
-    /// Total converted mana cost
+    /// Total converted mana cost (not including X)
     pub fn cmc(&self) -> u8 {
         self.generic + self.white + self.blue + self.black + self.red + self.green + self.colorless
+    }
+
+    /// Returns true if this cost contains X (one or more X symbols)
+    #[inline]
+    pub fn has_x(&self) -> bool {
+        self.x_count > 0
+    }
+
+    /// Create a new ManaCost with X resolved to a specific value.
+    /// Each X symbol adds `x_value` to the generic cost.
+    /// The returned cost has x_count = 0.
+    pub fn with_x_value(&self, x_value: u8) -> Self {
+        ManaCost {
+            generic: self.generic.saturating_add(self.x_count.saturating_mul(x_value)),
+            white: self.white,
+            blue: self.blue,
+            black: self.black,
+            red: self.red,
+            green: self.green,
+            colorless: self.colorless,
+            x_count: 0,
+        }
     }
 
     /// Check if this cost can be paid with the given mana amounts.

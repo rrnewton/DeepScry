@@ -633,6 +633,13 @@ pub struct Card {
     /// tap, remove all damage, remove from combat (CR 701.15a).
     pub regeneration_shields: u8,
 
+    /// The value of X chosen when casting this spell (MTG CR 601.2b)
+    /// Set during step 2 of the 8-step casting process for spells with X in their mana cost.
+    /// Used at resolution time to determine effect amounts (damage, cards drawn, etc.)
+    /// via SVar:X:Count$xPaid references in card scripts.
+    #[serde(default)]
+    pub x_paid: u8,
+
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
@@ -695,6 +702,7 @@ impl Card {
             is_token: false,
             loyalty_activated_this_turn: false,
             regeneration_shields: 0,
+            x_paid: 0,
             exhausted_abilities: SmallVec::new(),
             definition,
         }

@@ -31,6 +31,8 @@ pub enum ReplayChoice {
     Sacrifice(SmallVec<[CardId; 8]>),
     /// Choice of modes for a modal spell
     Modes(SmallVec<[usize; 4]>),
+    /// Choice of X value for X-cost spells
+    XValue(u8),
 }
 
 /// Controller that replays a sequence of choices then delegates to another controller
@@ -337,6 +339,19 @@ impl PlayerController for ReplayController {
         // No replay choice available, delegate to inner controller
         self.inner
             .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
+    }
+
+    fn choose_x_value(&mut self, view: &GameStateView, spell_id: CardId, max_x: u8) -> ChoiceResult<u8> {
+        if let Some(x) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::XValue(x) = c {
+                Some(*x)
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(x);
+        }
+        self.inner.choose_x_value(view, spell_id, max_x)
     }
 
     fn prepare_for_priority_choice(&mut self) -> bool {

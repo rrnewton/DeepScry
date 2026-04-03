@@ -33,8 +33,6 @@ use std::collections::HashMap;
 pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
     match params.api_type {
         ApiType::DealDamage => {
-            // Extract damage amount from NumDmg$ parameter
-            let amount = params.get_i32("NumDmg").ok()?;
             // Check if Defined$ specifies a player target (e.g., City of Brass "Defined$ You")
             let target = match params.get("Defined") {
                 Some("You") => {
@@ -44,7 +42,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 }
                 _ => TargetRef::None, // Placeholder - filled in at cast time
             };
-            Some(Effect::DealDamage { target, amount })
+            // Extract damage amount from NumDmg$ parameter
+            // If the value is "X" referencing SVar X = Count$xPaid, use XPaid variant
+            if let Ok(amount) = params.get_i32("NumDmg") {
+                Some(Effect::DealDamage { target, amount })
+            } else if params.get("NumDmg") == Some("X") {
+                Some(Effect::DealDamageXPaid { target })
+            } else {
+                None
+            }
         }
 
         ApiType::EachDamage => {
@@ -77,25 +83,23 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Draw => {
-            // Extract card count from NumCards$ parameter (default to 1 if not specified)
-            let count = params.get_u8("NumCards").unwrap_or(1);
             // Defined$ Player = each player (Wheel of Fortune); otherwise controller placeholder
             let player = if params.get("Defined") == Some("Player") {
                 PlayerId::all_players()
             } else {
                 PlayerId::placeholder()
             };
-            Some(Effect::DrawCards { player, count })
+            // Extract card count from NumCards$ parameter (default to 1 if not specified)
+            // If the value is "X" referencing SVar X = Count$xPaid, use XPaid variant
+            if params.get("NumCards") == Some("X") {
+                Some(Effect::DrawCardsXPaid { player })
+            } else {
+                let count = params.get_u8("NumCards").unwrap_or(1);
+                Some(Effect::DrawCards { player, count })
+            }
         }
 
         ApiType::Discard => {
-            // Mode$ Hand = discard entire hand (Wheel of Fortune); otherwise fixed count
-            // We use u8::MAX (255) as sentinel for "all cards in hand"
-            let count = if params.get("Mode") == Some("Hand") {
-                u8::MAX // Sentinel: discard entire hand
-            } else {
-                params.get_u8("NumCards").unwrap_or(1)
-            };
             let remember_discarded = params.get("RememberDiscarded") == Some("True");
             // Defined$ Player = each player; otherwise controller placeholder
             let player = if params.get("Defined") == Some("Player") {
@@ -103,11 +107,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             } else {
                 PlayerId::placeholder()
             };
-            Some(Effect::DiscardCards {
-                player,
-                count,
-                remember_discarded,
-            })
+            // If NumCards$ is "X" referencing SVar X = Count$xPaid, use XPaid variant
+            if params.get("NumCards") == Some("X") {
+                Some(Effect::DiscardCardsXPaid {
+                    player,
+                    remember_discarded,
+                })
+            } else {
+                // Mode$ Hand = discard entire hand (Wheel of Fortune); otherwise fixed count
+                // We use u8::MAX (255) as sentinel for "all cards in hand"
+                let count = if params.get("Mode") == Some("Hand") {
+                    u8::MAX // Sentinel: discard entire hand
+                } else {
+                    params.get_u8("NumCards").unwrap_or(1)
+                };
+                Some(Effect::DiscardCards {
+                    player,
+                    count,
+                    remember_discarded,
+                })
+            }
         }
 
         ApiType::Destroy => {

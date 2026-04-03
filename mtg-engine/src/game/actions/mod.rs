@@ -16,7 +16,9 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
     // Check if this effect uses the all-players sentinel on its player field
     let is_all_players = match effect {
         Effect::DrawCards { player, .. }
+        | Effect::DrawCardsXPaid { player, .. }
         | Effect::DiscardCards { player, .. }
+        | Effect::DiscardCardsXPaid { player, .. }
         | Effect::GainLife { player, .. }
         | Effect::LoseLife { player, .. }
         | Effect::ForceSacrifice { player, .. }
@@ -24,6 +26,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Mill { player, .. } => player.is_all_players(),
         // All other effect variants don't have an expandable player field
         Effect::DealDamage { .. }
+        | Effect::DealDamageXPaid { .. }
         | Effect::EachDamage { .. }
         | Effect::Loot { .. }
         | Effect::DestroyPermanent { .. }
@@ -92,6 +95,11 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
                 count: *count,
                 remember_discarded: *remember_discarded,
             },
+            Effect::DrawCardsXPaid { .. } => Effect::DrawCardsXPaid { player: pid },
+            Effect::DiscardCardsXPaid { remember_discarded, .. } => Effect::DiscardCardsXPaid {
+                player: pid,
+                remember_discarded: *remember_discarded,
+            },
             Effect::GainLife { amount, .. } => Effect::GainLife {
                 player: pid,
                 amount: *amount,
@@ -113,8 +121,9 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
                 player: pid,
                 amount: *amount,
             },
-            // Unreachable: is_all_players only true for the above seven variants.
+            // Unreachable: is_all_players only true for player-targeted variants.
             Effect::DealDamage { .. }
+            | Effect::DealDamageXPaid { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
             | Effect::DestroyPermanent { .. }
@@ -334,6 +343,9 @@ impl GameState {
 
         // Execute effects only if targets are still valid
         if !all_targets_illegal {
+            // Read x_paid once for resolving XPaid effect variants
+            let x_paid = self.cards.get(card_id).map(|c| c.x_paid).unwrap_or(0);
+
             // Execute effects by index, resolving targets at execution time
             // This avoids cloning the entire Vec<Effect>
             let mut target_index = 0;
@@ -341,6 +353,9 @@ impl GameState {
             for effect_index in 0..effects_len {
                 // Re-fetch effect each iteration (card ref can't be held across execute calls)
                 let effect = self.cards.get(card_id)?.effects.get(effect_index).cloned();
+
+                // Resolve XPaid variants to concrete amounts
+                let effect = effect.map(|e| Self::resolve_x_paid_effect(e, x_paid));
 
                 if let Some(effect) = effect {
                     log::debug!(target: "resolve_spell", "Effect[{}] before resolve: {:?}", effect_index, effect);
@@ -366,6 +381,28 @@ impl GameState {
         }
 
         Ok(())
+    }
+
+    /// Replace XPaid effect variants with their concrete-amount equivalents.
+    /// Called at resolution time when the spell's x_paid value is known.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn resolve_x_paid_effect(effect: Effect, x_paid: u8) -> Effect {
+        match effect {
+            Effect::DealDamageXPaid { target } => Effect::DealDamage {
+                target,
+                amount: i32::from(x_paid),
+            },
+            Effect::DrawCardsXPaid { player } => Effect::DrawCards { player, count: x_paid },
+            Effect::DiscardCardsXPaid {
+                player,
+                remember_discarded,
+            } => Effect::DiscardCards {
+                player,
+                count: x_paid,
+                remember_discarded,
+            },
+            other => other,
+        }
     }
 
     /// Finalize a spell after its effects have executed.
@@ -1002,6 +1039,12 @@ impl GameState {
             }
         }
 
+        // Resolve X in mana cost: each X symbol adds x_paid generic mana
+        // x_paid is set by the priority loop before this is called
+        if effective_cost.has_x() {
+            effective_cost = effective_cost.with_x_value(card.x_paid);
+        }
+
         effective_cost
     }
 
@@ -1346,7 +1389,9 @@ impl GameState {
         self.move_card(card_id, source_zone, Zone::Stack, owner)?;
 
         // Step 2: Make choices (modes, X values)
-        // TODO: Implement modal spell choices and X value selection
+        // Modal choices and X value selection are handled in the priority loop
+        // (priority.rs) BEFORE this function is called. The card's x_paid field
+        // is set there, and calculate_effective_cost uses it below.
 
         // Step 3: Choose targets
         let _targets = choose_targets_fn(self, card_id);
@@ -1606,6 +1651,26 @@ impl GameState {
                 }
             }
 
+            // DealDamageXPaid with no target: resolve target like DealDamage
+            Effect::DealDamageXPaid {
+                target: TargetRef::None,
+            } => {
+                if *target_index < chosen_targets.len() {
+                    let target = chosen_targets[*target_index];
+                    *target_index += 1;
+                    *last_resolved_target = Some(target);
+                    Effect::DealDamageXPaid {
+                        target: TargetRef::Permanent(target),
+                    }
+                } else if let Some(opp) = opponent_id {
+                    Effect::DealDamageXPaid {
+                        target: TargetRef::Player(opp),
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
+
             // EachDamage: multiple creatures deal damage to one target
             // Empty damagers vector means "use parent targets" - all chosen_targets except last
             // Placeholder receiver means "use last chosen_target"
@@ -1835,6 +1900,9 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            Effect::DrawCardsXPaid { player } if player.is_placeholder() => {
+                Effect::DrawCardsXPaid { player: card_owner }
+            }
             Effect::DiscardCards {
                 player,
                 count,
@@ -1842,6 +1910,13 @@ impl GameState {
             } if player.is_placeholder() => Effect::DiscardCards {
                 player: card_owner,
                 count: *count,
+                remember_discarded: *remember_discarded,
+            },
+            Effect::DiscardCardsXPaid {
+                player,
+                remember_discarded,
+            } if player.is_placeholder() => Effect::DiscardCardsXPaid {
+                player: card_owner,
                 remember_discarded: *remember_discarded,
             },
             Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
@@ -4169,6 +4244,35 @@ impl GameState {
                         unless_cost.switched
                     );
                 }
+            }
+
+            // XPaid variants should be resolved to concrete variants before execution
+            // by resolve_x_paid_effect() in resolve_spell_execute_effects().
+            // If we reach here, treat as amount=0 (shouldn't happen in normal flow).
+            Effect::DealDamageXPaid { target } => {
+                log::warn!("DealDamageXPaid reached execute_effect without resolution, treating as 0 damage");
+                self.execute_effect(&Effect::DealDamage {
+                    target: target.clone(),
+                    amount: 0,
+                })?;
+            }
+            Effect::DrawCardsXPaid { player } => {
+                log::warn!("DrawCardsXPaid reached execute_effect without resolution, treating as 0 cards");
+                self.execute_effect(&Effect::DrawCards {
+                    player: *player,
+                    count: 0,
+                })?;
+            }
+            Effect::DiscardCardsXPaid {
+                player,
+                remember_discarded,
+            } => {
+                log::warn!("DiscardCardsXPaid reached execute_effect without resolution, treating as 0 cards");
+                self.execute_effect(&Effect::DiscardCards {
+                    player: *player,
+                    count: 0,
+                    remember_discarded: *remember_discarded,
+                })?;
             }
         }
         Ok(())
@@ -6605,6 +6709,14 @@ impl GameState {
                 } else {
                     Ok(0)
                 }
+            }
+            CountExpression::XPaid => {
+                // XPaid is typically resolved during spell resolution via
+                // resolve_x_paid_effect(). For variable P/T and other uses,
+                // return 0 as fallback (the card's x_paid isn't accessible here
+                // without knowing which card to look at).
+                log::debug!("evaluate_count_expression: XPaid evaluated as 0 (no card context)");
+                Ok(0)
             }
             CountExpression::Compare {
                 source,

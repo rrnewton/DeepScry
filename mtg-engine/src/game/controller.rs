@@ -1278,6 +1278,27 @@ pub trait PlayerController {
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>>;
 
+    /// Choose the value of X for a spell with X in its mana cost (MTG CR 601.2b)
+    ///
+    /// Called during step 2 of casting a spell when the spell's mana cost
+    /// contains one or more X symbols. The controller must choose a non-negative
+    /// integer for X. The chosen value is multiplied by x_count and added as
+    /// generic mana to the total cost.
+    ///
+    /// ## Parameters
+    /// - `view`: Read-only view of the game state
+    /// - `spell_id`: The spell being cast (on the stack)
+    /// - `max_x`: Maximum X value the player could pay (based on available mana)
+    ///
+    /// Returns ChoiceResult with the chosen X value (0 to max_x).
+    ///
+    /// ## Java Forge Equivalent
+    /// Matches `PlayerController.announceRequirements()` for X costs
+    fn choose_x_value(&mut self, _view: &GameStateView, _spell_id: CardId, max_x: u8) -> ChoiceResult<u8> {
+        // Default: choose maximum X value (spend all available mana)
+        ChoiceResult::Ok(max_x)
+    }
+
     /// Choose which creatures to declare as attackers
     ///
     /// Called during the declare attackers step.

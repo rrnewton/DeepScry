@@ -998,6 +998,65 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
 
+                                // Step 2b: X value selection (MTG CR 601.2b)
+                                // If the spell has X in its mana cost, ask controller to choose X
+                                {
+                                    let has_x = self
+                                        .game
+                                        .cards
+                                        .get(card_id)
+                                        .map(|c| c.mana_cost.has_x())
+                                        .unwrap_or(false);
+                                    if has_x {
+                                        // Calculate maximum X the player could pay
+                                        // max_x = (total untapped sources + pool - non-X cost) / x_count
+                                        self.mana_engine.update_mut(self.game, current_priority);
+                                        let untapped_sources =
+                                            self.mana_engine
+                                                .all_sources()
+                                                .iter()
+                                                .filter(|s| !s.is_tapped && !s.has_summoning_sickness)
+                                                .count() as u8;
+                                        let pool_mana = self
+                                            .game
+                                            .get_player(current_priority)
+                                            .map(|p| p.total_available_mana().total())
+                                            .unwrap_or(0);
+                                        let max_mana = untapped_sources.saturating_add(pool_mana);
+                                        let card = self.game.cards.get(card_id).unwrap();
+                                        let colored_cost = card.mana_cost.cmc(); // colored + generic (excluding X)
+                                        let x_count = card.mana_cost.x_count;
+                                        let max_x = if x_count > 0 && max_mana > colored_cost {
+                                            (max_mana - colored_cost) / x_count
+                                        } else {
+                                            0
+                                        };
+
+                                        let prior_log_size = self.game.logger.log_count();
+                                        let view = GameStateView::new(self.game, current_priority);
+                                        let x_choice = controller.choose_x_value(&view, card_id, max_x);
+                                        let x_value =
+                                            handle_choice_result_break!(x_choice, self.game, current_priority);
+
+                                        // Clamp to max
+                                        let x_value = x_value.min(max_x);
+
+                                        // Store X paid on the card
+                                        if let Ok(card) = self.game.cards.get_mut(card_id) {
+                                            card.x_paid = x_value;
+                                        }
+
+                                        // Log X value choice
+                                        let replay_choice = crate::game::ReplayChoice::XValue(x_value);
+                                        self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
+
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            let message = format!("  → X = {}", x_value);
+                                            self.game.logger.gamelog(&message);
+                                        }
+                                    }
+                                }
+
                                 // Get valid targets BEFORE calling cast_spell_8_step
                                 // (we can't borrow controller inside the closure)
                                 // Note: For modal spells, this runs AFTER mode selection

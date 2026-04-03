@@ -92,6 +92,9 @@ impl GameState {
                 Effect::DealDamage {
                     target: TargetRef::None,
                     ..
+                }
+                | Effect::DealDamageXPaid {
+                    target: TargetRef::None,
                 } => {
                     // Damage can target any creature or player
                     // Add all creatures that can be legally targeted
@@ -417,9 +420,12 @@ impl GameState {
                             // Modal effects that don't need permanent/creature targets
                             // (target players, self, or have targets pre-specified)
                             Effect::DealDamage { .. }
+                            | Effect::DealDamageXPaid { .. }
                             | Effect::EachDamage { .. }
                             | Effect::DrawCards { .. }
+                            | Effect::DrawCardsXPaid { .. }
                             | Effect::DiscardCards { .. }
+                            | Effect::DiscardCardsXPaid { .. }
                             | Effect::Loot { .. }
                             | Effect::GainLife { .. }
                             | Effect::Mill { .. }
@@ -488,7 +494,9 @@ impl GameState {
                 //
                 // Effects targeting players or with no target
                 Effect::DrawCards { .. }
+                | Effect::DrawCardsXPaid { .. }
                 | Effect::DiscardCards { .. }
+                | Effect::DiscardCardsXPaid { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
@@ -512,7 +520,7 @@ impl GameState {
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
-                Effect::DealDamage { .. } => {
+                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
                     // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
                     // TargetRef::None case handled above
                 }
@@ -905,7 +913,9 @@ impl GameState {
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
                 Effect::DrawCards { .. }
+                | Effect::DrawCardsXPaid { .. }
                 | Effect::DiscardCards { .. }
+                | Effect::DiscardCardsXPaid { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
                 | Effect::Mill { .. }
@@ -937,7 +947,7 @@ impl GameState {
                     // UnlessCostWrapper delegates targeting to inner effect
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
-                Effect::DealDamage { .. } => {
+                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
                     // TargetRef::Player/Permanent - target already specified
                 }
                 Effect::DestroyPermanent { .. }
@@ -1126,6 +1136,9 @@ impl GameState {
             Effect::DealDamage {
                 target: TargetRef::None,
                 ..
+            }
+            | Effect::DealDamageXPaid {
+                target: TargetRef::None,
             } => {
                 // Damage can target creatures or players - always has targets if there's a creature
                 // (players are always valid targets)
@@ -1147,7 +1160,9 @@ impl GameState {
             }
             // Effects that don't require targeting always "have targets"
             Effect::DrawCards { .. }
+            | Effect::DrawCardsXPaid { .. }
             | Effect::DiscardCards { .. }
+            | Effect::DiscardCardsXPaid { .. }
             | Effect::Loot { .. }
             | Effect::GainLife { .. }
             | Effect::Mill { .. }
@@ -1187,7 +1202,7 @@ impl GameState {
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
             // These already have targets, so they "have valid targets"
-            Effect::DealDamage { .. } => true, // TargetRef::Player/Permanent already specified
+            Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
             | Effect::PumpCreature { .. }
             | Effect::PumpCreatureVariable { .. }

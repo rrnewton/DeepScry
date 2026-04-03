@@ -84,6 +84,10 @@ pub enum CountExpression {
     /// Count cards drawn this turn (Count$YouDrewThisTurn)
     CardsDrawnThisTurn,
 
+    /// The value of X paid when casting this spell (Count$xPaid)
+    /// Resolved at effect execution time by reading Card::x_paid
+    XPaid,
+
     /// Compare a source count against a condition and return true/false value
     /// Pattern: Count$Compare SourceSVar Condition.TrueValue.FalseValue
     /// Example: Count$Compare Y GE1.2.1 → if Y >= 1 then 2 else 1
@@ -182,7 +186,9 @@ impl CountExpression {
         if let Some(svar_value) = svars.get(var_name) {
             // Parse Count$ expressions
             if let Some(rest) = svar_value.strip_prefix("Count$") {
-                if rest.starts_with("Valid ") {
+                if rest == "xPaid" {
+                    return CountExpression::XPaid;
+                } else if rest.starts_with("Valid ") {
                     // Count$Valid filter
                     let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
                     return CountExpression::ValidPermanents { filter };
@@ -415,6 +421,11 @@ pub enum Effect {
     /// Example: "Lightning Bolt deals 3 damage to any target"
     DealDamage { target: TargetRef, amount: i32 },
 
+    /// Deal X damage to a target, where X is the value paid when casting
+    /// Example: "Fireball deals X damage" (SVar:X:Count$xPaid)
+    /// Amount is read from Card::x_paid at resolution time
+    DealDamageXPaid { target: TargetRef },
+
     /// Multiple creatures deal damage to a single target
     /// Example: "Up to two target creatures you control each deal damage equal to their power
     /// to target creature an opponent controls"
@@ -441,6 +452,10 @@ pub enum Effect {
     /// Example: "Draw a card"
     DrawCards { player: PlayerId, count: u8 },
 
+    /// Draw X cards, where X is the value paid when casting
+    /// Example: "Target player draws X cards" (Braingeyser, SVar:X:Count$xPaid)
+    DrawCardsXPaid { player: PlayerId },
+
     /// Looting effect (discard then draw)
     /// Example: "Discard a card, then draw a card"
     /// Corresponds to: AB$ Draw | Cost$ Discard<N/Card> (requires discarding N cards first)
@@ -459,6 +474,10 @@ pub enum Effect {
         /// If true, store discarded cards in game.remembered_cards for ImmediateTrigger
         remember_discarded: bool,
     },
+
+    /// Discard X cards, where X is the value paid when casting
+    /// Example: "Target player discards X cards at random" (Mind Twist, SVar:X:Count$xPaid)
+    DiscardCardsXPaid { player: PlayerId, remember_discarded: bool },
 
     /// Gain life
     /// Example: "You gain 3 life"
@@ -1125,8 +1144,10 @@ impl Effect {
         match self {
             // Effects targeting players or with no target
             Effect::DrawCards { .. }
+            | Effect::DrawCardsXPaid { .. }
             | Effect::Loot { .. }
             | Effect::DiscardCards { .. }
+            | Effect::DiscardCardsXPaid { .. }
             | Effect::GainLife { .. }
             | Effect::LoseLife { .. }
             | Effect::ForceSacrifice { .. }
@@ -1163,6 +1184,7 @@ impl Effect {
 
             // Effects requiring creature/permanent/spell targets
             Effect::DealDamage { .. }
+            | Effect::DealDamageXPaid { .. }
             | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::GainControl { .. }
@@ -2710,6 +2732,7 @@ mod tests {
                     }
                     CountExpression::Fixed(_)
                     | CountExpression::CardsDrawnThisTurn
+                    | CountExpression::XPaid
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -2722,7 +2745,8 @@ mod tests {
             }
             CountExpression::Fixed(_)
             | CountExpression::ValidPermanents { .. }
-            | CountExpression::CardsDrawnThisTurn => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::CardsDrawnThisTurn
+            | CountExpression::XPaid => panic!("Expected Compare, got {:?}", expr),
         }
     }
 
