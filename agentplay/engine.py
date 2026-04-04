@@ -142,7 +142,10 @@ class GameEngine:
                 "Run `git submodule update --init forge-java` or provide a valid CARDSFOLDER path."
             )
         if not self.binary_path.exists():
-            raise RuntimeError(f"mtg binary not found at {self.binary_path}. Run `cargo build --release --bin mtg` first.")
+            raise RuntimeError(
+                f"Error: MTG engine binary not found at {self.binary_path}\n"
+                "Build it with: cargo build --release"
+            )
 
         p1_script = ";".join(self._read_lines(self.p1_choices_path))
         p2_script = ";".join(self._read_lines(self.p2_choices_path))

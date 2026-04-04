@@ -262,6 +262,16 @@ async function runTest() {
         await page.selectOption('#p1-controller', 'human');
         await page.selectOption('#p2-controller', 'zero');
 
+        // Select same deck for both players to avoid missing-card errors
+        await page.evaluate(() => {
+            const sel = document.getElementById('p1-deck');
+            const firstDeck = sel?.options[0]?.value || '';
+            if (firstDeck) {
+                sel.value = firstDeck;
+                document.getElementById('p2-deck').value = firstDeck;
+            }
+        });
+
         // Take screenshot of setup
         const screenshotDir = path.join(__dirname, 'screenshots');
         if (!fs.existsSync(screenshotDir)) {

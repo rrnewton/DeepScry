@@ -35,12 +35,33 @@ async function launchLocalFancyTui(page, testResults) {
         throw new Error('No decks loaded! Make sure to run "mtg export-wasm" first.');
     }
 
+    // Select same deck for both players to avoid missing-card errors
+    await page.evaluate(() => {
+        const sel = document.getElementById('p1-deck');
+        const firstDeck = sel?.options[0]?.value || '';
+        if (firstDeck) {
+            sel.value = firstDeck;
+            document.getElementById('p2-deck').value = firstDeck;
+        }
+    });
+
+    // Set both controllers to heuristic AI so turns auto-advance
+    await page.selectOption('#p1-controller', 'heuristic');
+    await page.selectOption('#p2-controller', 'heuristic');
+
     await page.click('#btn-launch');
     await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
     await page.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });
     await page.waitForTimeout(500);
     await page.click('#btn-toggle-controls');
     await page.waitForSelector('#controls-panel', { state: 'visible', timeout: 5000 });
+
+    // Run a few turns so game logs are populated for bug report testing
+    for (let i = 0; i < 3; i++) {
+        await page.click('#btn-run-turn');
+        await page.waitForTimeout(300);
+    }
+
     testResults.steps.push({ name: 'tui_launch', timestamp: new Date().toISOString() });
 }
 

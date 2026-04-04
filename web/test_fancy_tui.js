@@ -126,6 +126,23 @@ async function runTest() {
         await page.screenshot({ path: path.join(screenshotDir, '01_setup.png'), fullPage: true });
         log('Screenshot: 01_setup.png');
 
+        // Select same deck for both players to avoid missing-card errors
+        const firstDeck = await page.evaluate(() => {
+            const sel = document.getElementById('p1-deck');
+            return sel?.options[0]?.value || '';
+        });
+        if (firstDeck) {
+            await page.evaluate((deck) => {
+                document.getElementById('p1-deck').value = deck;
+                document.getElementById('p2-deck').value = deck;
+            }, firstDeck);
+            log(`Selected deck for both players: ${firstDeck}`);
+        }
+
+        // Set both controllers to heuristic AI so turns auto-advance
+        await page.selectOption('#p1-controller', 'heuristic');
+        await page.selectOption('#p2-controller', 'heuristic');
+
         // Launch the fancy TUI
         log('Clicking "Launch Fancy TUI" button...');
         const launchStart = Date.now();

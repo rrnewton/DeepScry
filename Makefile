@@ -4,6 +4,9 @@
 .PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
 
 # Configuration variables
+# NODE: Node.js binary (Playwright requires Node 18+)
+# Auto-detect: prefer node18 wrapper, fall back to claude_code's bundled node, then system node
+NODE := $(shell which node18 2>/dev/null || (test -x /usr/local/bin/claude_code/node && echo /usr/local/bin/claude_code/node) || which node 2>/dev/null)
 # PORT: web server port (use: make PORT=7999 play-web-local-dev)
 PORT ?= 8080
 # SERVER_PORT: MTG game server port (use: make play-web SERVER_PORT=9999)
@@ -217,8 +220,8 @@ validate-wasm-step:
 # This step depends on validate-wasm-step finishing first
 validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games
@@ -546,17 +549,15 @@ full_deck_list.txt:
 
 # Export card database and decks for WASM
 # Set MTG_SKIP_WASM_EXPORT=1 to skip this step (useful when data already exists)
-# Uses existing release binary if available to avoid clobbering network-enabled binary
+# Always run the current source tree's exporter. Reusing an existing release
+# binary can silently generate stale decks.bin/cards.bin data that no longer
+# matches the freshly built WASM loader.
 wasm-export:
 	@if [ "$$MTG_SKIP_WASM_EXPORT" = "1" ]; then \
 		echo "=== Skipping WASM export (MTG_SKIP_WASM_EXPORT=1) ==="; \
-	elif [ -f "target/release/mtg" ]; then \
-		echo "=== Exporting card database using existing binary ==="; \
-		./target/release/mtg export-wasm; \
-		echo "=== Export complete! ==="; \
 	else \
-		echo "=== Exporting card database (building binary) ==="; \
-		cargo run --release --bin mtg -- export-wasm; \
+		echo "=== Exporting card database using current sources ==="; \
+		cargo run --bin mtg -- export-wasm; \
 		echo "=== Export complete! ==="; \
 	fi
 
@@ -657,14 +658,14 @@ play-web-local: wasm-network
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
 	@echo "=== Testing WASM in headless browser ==="
-	@cd web && npm install --silent 2>/dev/null && node test_wasm.js
+	@cd web && npm install --silent 2>/dev/null && $(NODE) test_wasm.js
 
 # Test fancy TUI in browser with Playwright (e2e screenshot test)
 # Launches game, steps through turns, takes screenshots, logs performance
 wasm-test-fancy: wasm
 	@echo "=== Testing Fancy TUI in browser (Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_fancy_tui.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/"
 	@echo "Test results: web/screenshots/test_results.json"
@@ -672,15 +673,15 @@ wasm-test-fancy: wasm
 # Quick fancy TUI test using dev build (faster iteration)
 wasm-test-fancy-dev: wasm-dev
 	@echo "=== Testing Fancy TUI (dev build, Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_fancy_tui.js
 
 # Test human input in browser with Playwright (e2e test)
 # Tests human controller by pressing keys and verifying battlefield state
 wasm-test-human: wasm-dev
 	@echo "=== Testing Human Input (Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_human_input.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_human_input.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/"
 	@echo "Test results: web/screenshots/human_test_results.json"
@@ -688,16 +689,16 @@ wasm-test-human: wasm-dev
 # Run all WASM e2e tests (production build)
 wasm-e2e: wasm
 	@echo "=== Running all WASM e2e tests (production) ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
 
 # Run all WASM e2e tests (dev build for faster iteration)
 wasm-e2e-dev: wasm-dev
 	@echo "=== Running all WASM e2e tests (dev build) ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
-	@cd web && node test_fancy_tui.js && node test_human_input.js && node test_click_and_log.js
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
 
