@@ -1,0 +1,17 @@
+[metadata]
+Name=White Aggro Fuzz
+Description=White creatures + removal for fuzzing
+
+[Main]
+16 Plains
+4 Strip Mine
+4 Savannah Lions
+4 White Knight
+4 Tundra Wolves
+4 Serra Angel
+4 Moorish Cavalry
+4 Crusade
+4 Swords to Plowshares
+4 Disenchant
+4 Armageddon
+4 Army of Allah

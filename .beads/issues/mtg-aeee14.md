@@ -1,0 +1,48 @@
+---
+title: 'Time Walk: infinite extra turns loop'
+status: open
+priority: 3
+issue_type: task
+labels:
+- single-card
+created_at: 2026-04-03T20:52:51.924800161+00:00
+updated_at: 2026-04-03T21:33:22.981518845+00:00
+---
+
+# Description
+
+## Time Walk: extra turns completely unimplemented
+
+**Card script:** `cardsfolder/t/time_walk.txt`
+**Ability:** `A:SP$ TakeExtraTurn | SpellDescription$ Take an extra turn after this one.`
+
+### Root Cause Analysis (2026-04-03, thread-0)
+
+**Three confirmed issues:**
+
+1. **TakeExtraTurn is not a recognized ApiType.** The ability_parser.rs ApiType enum has no TakeExtraTurn variant. It parses as ApiType::Unknown("TakeExtraTurn"), producing zero effects. Since Time Walk is a sorcery (not a permanent), the castability check at actions.rs:606 rejects it: \`if is_permanent || !card.effects.is_empty()\` — card.effects IS empty, so Time Walk is never offered as a castable spell.
+
+2. **No extra turn queue exists.** There is no \`extra_turns_queue\`, \`extra_turns\`, or similar field anywhere in the game state. Turn progression is hardcoded alternation between two players. Even if Time Walk resolved, there is no mechanism to grant extra turns.
+
+3. **Original bug report said infinite extra turns.** This may have been from a different card script definition or a different code path. With the current implementation, Time Walk simply cannot be cast at all.
+
+### Reproduction
+
+    target/release/mtg tui --start-state puzzles/test_time_walk.pzl \
+      --p1 fixed --p1-fixed-inputs "cast Time Walk;0;0;0" \
+      --p2 zero --seed 42 -v verbose --no-color-logs --stop-when-fixed-exhausted
+
+**Expected:** Time Walk appears in available actions during Main Phase 1
+**Actual:** Error: "Command 'cast Time Walk' did not match any available action. Available actions: [cast Lightning Bolt, cast Lightning Bolt]"
+
+### What needs to be built
+- Add ApiType::TakeExtraTurn to ability_parser.rs
+- Add Effect::TakeExtraTurn to core effects
+- Add extra_turns_queue: VecDeque<PlayerId> to turn state
+- Modify turn progression to check queue before alternating
+- Handle edge cases: multiple extra turns stack (LIFO per CR 500.7)
+
+### Code Locations
+- `mtg-engine/src/loader/ability_parser.rs` — missing TakeExtraTurn variant
+- `mtg-engine/src/game/game_loop/actions.rs:606` — castability check blocks empty-effect spells
+- `mtg-engine/src/game/game_loop/priority.rs` — turn progression logic

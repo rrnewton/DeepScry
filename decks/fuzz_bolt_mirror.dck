@@ -1,0 +1,7 @@
+[metadata]
+Name=Bolt Mirror Fuzz
+Description=Simple deck for fuzzing: Mountains and Lightning Bolts
+
+[Main]
+20 Mountain
+40 Lightning Bolt

@@ -1,0 +1,20 @@
+---
+title: Install Playwright and test infrastructure
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-04-04T01:50:09.413714693+00:00
+updated_at: 2026-04-04T01:50:09.413714693+00:00
+---
+
+# Description
+
+Files: mtg-forge-rs/package.json, mtg-forge-rs/playwright.config.* (if needed)
+
+Action: Install Playwright and any needed test dependencies. Note: npm direct installs may be blocked on production paths — use with-proxy prefix if needed for internet access, and try local/user-scoped installs. Check if there's a local node_modules or a way to install via the project's existing setup.
+
+Why: E2E tests for the bug report UI require Playwright. Must be set up before tests can be written.
+
+Verify:
+- npx playwright test --help runs successfully
+- Playwright browsers are installed (npx playwright install chromium)

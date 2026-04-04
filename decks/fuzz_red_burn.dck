@@ -1,0 +1,16 @@
+[metadata]
+Name=Red Burn Fuzz
+Description=Red burn spells and creatures for fuzzing
+
+[Main]
+16 Mountain
+4 Lightning Bolt
+4 Chain Lightning
+4 Incinerate
+4 Fireball
+4 Ironclaw Orcs
+4 Shivan Dragon
+4 Earthquake
+4 Sol Ring
+4 Mox Ruby
+4 Strip Mine

@@ -1,0 +1,16 @@
+[metadata]
+Name=Blue Control Fuzz
+Description=Blue counterspells and bounce for fuzzing
+
+[Main]
+16 Island
+4 Counterspell
+4 Unsummon
+4 Boomerang
+4 Serendib Efreet
+4 Psionic Blast
+4 Mox Sapphire
+4 Sol Ring
+4 Mana Drain
+4 Power Sink
+4 Braingeyser

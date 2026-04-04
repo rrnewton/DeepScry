@@ -1,0 +1,16 @@
+---
+title: 'Agent-Play MTG: Python launcher for agent-driven games'
+status: open
+priority: 0
+issue_type: task
+created_at: 2026-04-04T02:16:36.519061475+00:00
+updated_at: 2026-04-04T02:16:36.519061475+00:00
+---
+
+# Description
+
+Milestone: End-to-end Python script for launching agent-based MTG games.
+
+Each choice is made by a claude -p headless agent invocation. Uses existing agentplay shell scripts (start_game.sh, continue_game.sh) to drive the engine. Produces enriched game logs with agent reasoning.
+
+Supports: agent vs heuristic/random, agent vs agent, puzzle file starts, max turns/choices limits, goal-directed play.

@@ -1,0 +1,26 @@
+---
+title: Install Chromium via Playwright with proxy
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-04-04T02:16:36.518234066+00:00
+updated_at: 2026-04-04T02:16:36.518234066+00:00
+---
+
+# Description
+
+Files: (system-level install, no code changes expected)
+
+Action: Install Chromium browser for Playwright E2E tests. Previous attempts failed with HTTP 403 — likely a proxy issue.
+
+Approaches to try:
+1. with-proxy npx playwright install chromium
+2. Set HTTPS_PROXY/HTTP_PROXY env vars and run npx playwright install chromium
+3. Check if system chromium/google-chrome is already available and can be used via PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+4. Try with-proxy to wrap the download
+
+Why: E2E browser tests can't run without a Chromium binary.
+
+Verify:
+- npx playwright install chromium succeeds OR system chromium is found
+- A simple Playwright script can launch a browser: node -e "const {chromium} = require('playwright'); (async () => { const b = await chromium.launch(); console.log('OK'); await b.close(); })()"

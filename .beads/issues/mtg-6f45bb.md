@@ -1,0 +1,12 @@
+---
+title: 'Research: Existing agentplay infrastructure'
+status: open
+priority: 0
+issue_type: task
+created_at: 2026-04-04T01:50:09.410639018+00:00
+updated_at: 2026-04-04T01:50:09.410639018+00:00
+---
+
+# Description
+
+Research the agentplay scripts, puzzle format, and engine CLI for the agent-play feature

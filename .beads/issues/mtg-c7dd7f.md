@@ -1,0 +1,28 @@
+---
+title: Agent vs heuristic/random and agent-vs-agent modes
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-04-04T02:16:36.521372897+00:00
+updated_at: 2026-04-04T02:16:36.521372897+00:00
+---
+
+# Description
+
+Files: agentplay/agent_game.py
+
+Action: Support multiple player controller configurations:
+1. --p1=agent --p2=heuristic (default: agent vs heuristic AI)
+2. --p1=agent --p2=random (agent vs random controller)
+3. --p1=agent --p2=agent (agent vs agent - both use claude -p)
+4. --p1=heuristic --p2=agent (heuristic vs agent)
+
+For non-agent players, pass their choices to the engine's built-in controllers.
+For agent-vs-agent, invoke claude -p for whichever player is active.
+
+Note: agent-vs-agent initially won't respect information hiding (both agents see full state). This is known and will be fixed later.
+
+Verify:
+- All four modes can be selected via CLI flags
+- Agent vs heuristic produces a complete game
+- Agent vs agent alternates correctly between players
