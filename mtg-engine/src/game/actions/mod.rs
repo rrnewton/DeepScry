@@ -4765,49 +4765,6 @@ impl GameState {
         Ok(())
     }
 
-    /// Check if a card matches a DestroyAll filter
-    ///
-    /// Filter is comma-separated card types: "Artifact,Creature,Enchantment"
-    /// A card matches if it has ANY of the listed types.
-    fn card_matches_destroy_all_filter(card: &crate::core::Card, filter: &str) -> bool {
-        filter.split(',').any(|type_str| match type_str.trim() {
-            "Artifact" => card.is_artifact(),
-            "Creature" => card.is_creature(),
-            "Enchantment" => card.is_enchantment(),
-            "Land" => card.is_land(),
-            "Permanent" => true,
-            _ => false,
-        })
-    }
-
-    /// Check if a card matches a ValidCards filter (used by PutCounterAll, UntapAll, etc.)
-    ///
-    /// Filter format: "Type.Controller" where:
-    /// - Type: "Creature", "Artifact", "Land", "Permanent", etc.
-    /// - Controller (optional): "YouCtrl", "OppCtrl"
-    ///
-    /// Examples: "Creature.YouCtrl", "Creature", "Permanent.YouCtrl"
-    fn card_matches_valid_filter(card: &crate::core::Card, filter: &str, controller: PlayerId) -> bool {
-        let parts: Vec<&str> = filter.split('.').collect();
-        let type_match = match parts.first().copied().unwrap_or("") {
-            "Creature" => card.is_creature(),
-            "Artifact" => card.is_artifact(),
-            "Enchantment" => card.is_enchantment(),
-            "Land" => card.is_land(),
-            "Permanent" => true,
-            _ => false,
-        };
-        if !type_match {
-            return false;
-        }
-        // Check controller restriction
-        match parts.get(1).copied() {
-            Some("YouCtrl") => card.owner == controller,
-            Some("OppCtrl") => card.owner != controller,
-            _ => true, // No controller restriction
-        }
-    }
-
     /// Check if a card matches a library search filter
     ///
     /// Filter formats supported:
