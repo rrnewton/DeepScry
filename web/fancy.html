@@ -824,6 +824,7 @@ cast dark ritual</textarea>
                     <select id="p1-collection">
                         <option value="old_school">Old School 1994</option>
                         <option value="booster_draft">Booster Draft</option>
+                        <option value="commander">Commander</option>
                         <option value="custom">Custom Decks (Local)</option>
                     </select>
                 </div>
@@ -858,6 +859,7 @@ cast dark ritual</textarea>
                     <select id="p2-collection">
                         <option value="old_school">Old School 1994</option>
                         <option value="booster_draft">Booster Draft</option>
+                        <option value="commander">Commander</option>
                         <option value="custom">Custom Decks (Local)</option>
                     </select>
                 </div>
@@ -3381,6 +3383,11 @@ Name=My Deck
                 name: 'Booster Draft',
                 // All decks from booster_draft/ directory (avatar, spiderman, etc.)
                 filter: (deckName) => deckName.includes('avatar') || deckName.includes('spiderman')
+            },
+            'commander': {
+                name: 'Commander',
+                // Commander decks from commander/ directory
+                filter: (deckName) => deckName.includes('chandra_tokens')
             },
             'custom': {
                 name: 'Custom Decks (Local)',
