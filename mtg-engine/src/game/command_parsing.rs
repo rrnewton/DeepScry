@@ -117,7 +117,9 @@ pub fn parse_spell_ability_choice(
         // Find matching CastSpell or CastFromCommand ability
         for ability in available {
             match ability {
-                SpellAbility::CastSpell { card_id } | SpellAbility::CastFromCommand { card_id, .. } => {
+                SpellAbility::CastSpell { card_id }
+                | SpellAbility::CastFromCommand { card_id, .. }
+                | SpellAbility::CastFromGraveyard { card_id, .. } => {
                     if let Some(card_name) = view.card_name(*card_id) {
                         if card_matches(&card_name, card_pattern) {
                             return Some(ability.clone());
@@ -127,7 +129,6 @@ pub fn parse_spell_ability_choice(
                 SpellAbility::PlayLand { .. }
                 | SpellAbility::ActivateAbility { .. }
                 | SpellAbility::CastFromExile { .. }
-                | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::Cycle { .. } => {}
             }
         }

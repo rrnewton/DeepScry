@@ -3096,6 +3096,7 @@ impl GameState {
                 amount,
             } => {
                 // Put counters on all permanents matching the restriction
+                let spell_controller = self.turn.active_player;
                 let targets: Vec<CardId> = self
                     .battlefield
                     .cards
@@ -3104,7 +3105,9 @@ impl GameState {
                     .filter(|&card_id| {
                         self.cards
                             .try_get(card_id)
-                            .is_some_and(|card| restriction.matches(card))
+                            .is_some_and(|card| {
+                                restriction.matches_with_controller(card, spell_controller, card.controller)
+                            })
                     })
                     .collect();
 
@@ -3941,6 +3944,7 @@ impl GameState {
 
             Effect::UntapAll { restriction } => {
                 // Untap all permanents matching the restriction
+                let spell_controller = self.turn.active_player;
                 let targets: Vec<CardId> = self
                     .battlefield
                     .cards
@@ -3949,7 +3953,14 @@ impl GameState {
                     .filter(|&card_id| {
                         self.cards
                             .get(card_id)
-                            .map(|card| card.tapped && restriction.matches(card))
+                            .map(|card| {
+                                card.tapped
+                                    && restriction.matches_with_controller(
+                                        card,
+                                        spell_controller,
+                                        card.controller,
+                                    )
+                            })
                             .unwrap_or(false)
                     })
                     .collect();

@@ -9474,6 +9474,8 @@ mod tests {
             player: crate::core::PlayerId::new(1), // opponent
             count: 2,
             remember_discarded: false,
+            optional: false,
+            remember_discarding_players: false,
         }];
 
         let controller = HeuristicController::new(p1_id);
