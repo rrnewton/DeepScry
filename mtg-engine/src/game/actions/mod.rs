@@ -75,6 +75,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ImmediateTrigger { .. }
         | Effect::ClearRemembered
         | Effect::AddTurn { .. }
+        | Effect::AddPhase { .. }
         | Effect::ChooseColor { .. }
         | Effect::Unimplemented { .. }
         | Effect::UnlessCostWrapper { .. } => false,
@@ -178,6 +179,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
+            | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
             | Effect::Unimplemented { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
@@ -4639,6 +4641,15 @@ impl GameState {
                 }
             }
 
+
+            Effect::AddPhase { count } => {
+                // Add extra combat phase(s) after the current step
+                for _ in 0..*count {
+                    self.extra_combat_phases += 1;
+                }
+                self.logger
+                    .gamelog(&format!("AddPhase: {} additional combat phase(s) this turn", count));
+            }
             Effect::Unimplemented { api_type } => {
                 // Log a warning instead of silently doing nothing
                 log::warn!(
@@ -4697,6 +4708,34 @@ impl GameState {
             "Permanent" => true,
             _ => false,
         })
+    }
+
+    /// Check if a card matches a ValidCards filter (used by PutCounterAll, UntapAll, etc.)
+    ///
+    /// Filter format: "Type.Controller" where:
+    /// - Type: "Creature", "Artifact", "Land", "Permanent", etc.
+    /// - Controller (optional): "YouCtrl", "OppCtrl"
+    ///
+    /// Examples: "Creature.YouCtrl", "Creature", "Permanent.YouCtrl"
+    fn card_matches_valid_filter(card: &crate::core::Card, filter: &str, controller: PlayerId) -> bool {
+        let parts: Vec<&str> = filter.split('.').collect();
+        let type_match = match parts.first().copied().unwrap_or("") {
+            "Creature" => card.is_creature(),
+            "Artifact" => card.is_artifact(),
+            "Enchantment" => card.is_enchantment(),
+            "Land" => card.is_land(),
+            "Permanent" => true,
+            _ => false,
+        };
+        if !type_match {
+            return false;
+        }
+        // Check controller restriction
+        match parts.get(1).copied() {
+            Some("YouCtrl") => card.owner == controller,
+            Some("OppCtrl") => card.owner != controller,
+            _ => true, // No controller restriction
+        }
     }
 
     /// Check if a card matches a library search filter
@@ -5610,6 +5649,11 @@ impl GameState {
     /// Returns an error if trigger effects fail to resolve.
     pub fn check_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
         use crate::core::Trigger;
+
+        // Increment spell cast counter for the caster
+        if let Ok(player) = self.get_player_mut(caster_id) {
+            player.spells_cast_this_turn += 1;
+        }
 
         // Check if the cast spell is a creature (for noncreature-only triggers)
         let is_creature_spell = self.cards.get(cast_spell_id).map(|c| c.is_creature()).unwrap_or(false);
@@ -7244,6 +7288,13 @@ impl GameState {
                 // without knowing which card to look at).
                 log::debug!("evaluate_count_expression: XPaid evaluated as 0 (no card context)");
                 Ok(0)
+            }
+            CountExpression::SpellsCastThisTurn => {
+                if let Ok(player) = self.get_player(controller) {
+                    Ok(i32::from(player.spells_cast_this_turn))
+                } else {
+                    Ok(0)
+                }
             }
             CountExpression::Compare {
                 source,

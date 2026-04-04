@@ -63,6 +63,10 @@ pub struct Player {
     /// Set by AB$ PreventDamage effects (CR 615.1).
     #[serde(default)]
     pub damage_prevention: i32,
+
+    /// Number of spells cast this turn (for storm-like effects and spell counting)
+    #[serde(default)]
+    pub spells_cast_this_turn: u8,
 }
 
 impl Player {
@@ -82,6 +86,7 @@ impl Player {
             commander_cast_count: 0,
             commander_damage_taken: Vec::new(),
             damage_prevention: 0,
+            spells_cast_this_turn: 0,
         }
     }
 

@@ -515,6 +515,7 @@ impl GameState {
                             | Effect::ImmediateTrigger { .. }
                             | Effect::ClearRemembered
                             | Effect::AddTurn { .. }
+                            | Effect::AddPhase { .. }
                             | Effect::ChooseColor { .. }
                             | Effect::Proliferate
                             | Effect::Unimplemented { .. }
@@ -558,6 +559,8 @@ impl GameState {
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
                 | Effect::Earthbend { .. }
+                | Effect::AddTurn { .. }
+                | Effect::AddPhase { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::ForceSacrifice { .. }
                 | Effect::TapAll { .. }
@@ -610,7 +613,6 @@ impl GameState {
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
-                | Effect::AddTurn { .. }
                 | Effect::EachDamage { .. }
                 | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
@@ -995,12 +997,14 @@ impl GameState {
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
                 | Effect::AddTurn { .. }
+                | Effect::AddPhase { .. }
                 | Effect::DestroyAll { .. }
+                | Effect::PutCounterAll { .. }
+                | Effect::UntapAll { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
                 | Effect::TapAll { .. }
-                | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Proliferate
@@ -1033,21 +1037,17 @@ impl GameState {
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::MultiplyCounter { .. }
-                | Effect::PutCounterAll { .. }
                 | Effect::ChangeZoneAll { .. }
                 | Effect::CopyPermanent { .. }
                 | Effect::AttachEquipment { .. }
                 | Effect::PumpAllCreatures { .. }
                 | Effect::AnimateAll { .. }
-                | Effect::DestroyAll { .. }
                 | Effect::SacrificeAll { .. }
                 | Effect::DamageAll { .. }
                 | Effect::LoseLife { .. }
                 | Effect::Earthbend { .. }
                 | Effect::GainControl { .. }
-                | Effect::AddTurn { .. }
-                | Effect::Fight { .. }
-                | Effect::ChooseColor { .. } => {
+                | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // PumpAllCreatures doesn't use explicit targets - it affects all matching creatures
                     // Earthbend target was handled above when target.is_placeholder()
@@ -1272,6 +1272,8 @@ impl GameState {
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::AddTurn { .. }
+            | Effect::AddPhase { .. }
             | Effect::Unimplemented { .. }
             | Effect::EachDamage { .. }
             | Effect::UnlessCostWrapper { .. }
@@ -1286,7 +1288,6 @@ impl GameState {
             | Effect::GainControl { .. }
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
-            | Effect::AddTurn { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
             | Effect::Fight { .. } => true, // Filter-based / no-target effects

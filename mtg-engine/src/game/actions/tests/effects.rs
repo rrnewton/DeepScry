@@ -1563,4 +1563,263 @@ mod tests {
         assert_eq!(player.life, 20, "Life should be unchanged");
         assert_eq!(player.damage_prevention, 2, "2 prevention remaining");
     }
+
+    #[test]
+    fn test_put_counter_all() {
+        use crate::core::{CardType, CounterType};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create 3 creatures on P1's battlefield
+        let mut p1_creatures = Vec::new();
+        for i in 0..3 {
+            let creature_id = game.next_card_id();
+            let mut creature = Card::new(creature_id, format!("Soldier {}", i + 1), p1_id);
+            creature.add_type(CardType::Creature);
+            creature.set_base_power(Some(1));
+            creature.set_base_toughness(Some(1));
+            creature.controller = p1_id;
+            game.cards.insert(creature_id, creature);
+            game.battlefield.add(creature_id);
+            p1_creatures.push(creature_id);
+        }
+
+        // Create 1 creature on P2's battlefield (should NOT get counters with YouCtrl filter)
+        let p2_creature_id = game.next_card_id();
+        let mut p2_creature = Card::new(p2_creature_id, "Opponent Bear".to_string(), p2_id);
+        p2_creature.add_type(CardType::Creature);
+        p2_creature.set_base_power(Some(2));
+        p2_creature.set_base_toughness(Some(2));
+        p2_creature.controller = p2_id;
+        game.cards.insert(p2_creature_id, p2_creature);
+        game.battlefield.add(p2_creature_id);
+
+        // Set active player to P1 (PutCounterAll uses turn.active_player for controller filter)
+        game.turn.active_player = p1_id;
+
+        // Execute PutCounterAll effect using TargetRestriction (upstream API)
+        let restriction = crate::core::TargetRestriction::parse("Creature.YouCtrl");
+        let effect = Effect::PutCounterAll {
+            restriction,
+            counter_type: CounterType::P1P1,
+            amount: 1,
+        };
+        game.execute_effect(&effect).unwrap();
+
+        // Verify P1's creatures got +1/+1 counters
+        for &cid in &p1_creatures {
+            let card = game.cards.get(cid).unwrap();
+            let counter_count = card
+                .counters
+                .iter()
+                .find(|(ct, _)| *ct == CounterType::P1P1)
+                .map(|(_, n)| *n)
+                .unwrap_or(0);
+            assert_eq!(counter_count, 1, "P1's creature should have 1 +1/+1 counter");
+            assert_eq!(card.current_power(), 2, "P1's creature should now be 2/2");
+            assert_eq!(card.current_toughness(), 2, "P1's creature should now be 2/2");
+        }
+
+        // Verify P2's creature did NOT get counters
+        let p2_card = game.cards.get(p2_creature_id).unwrap();
+        let p2_counter_count = p2_card
+            .counters
+            .iter()
+            .find(|(ct, _)| *ct == CounterType::P1P1)
+            .map(|(_, n)| *n)
+            .unwrap_or(0);
+        assert_eq!(p2_counter_count, 0, "P2's creature should have no counters");
+    }
+
+    #[test]
+    fn test_untap_all() {
+        use crate::core::CardType;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Create 3 tapped creatures on P1's battlefield
+        let mut p1_creatures = Vec::new();
+        for i in 0..3 {
+            let creature_id = game.next_card_id();
+            let mut creature = Card::new(creature_id, format!("Warrior {}", i + 1), p1_id);
+            creature.add_type(CardType::Creature);
+            creature.set_base_power(Some(2));
+            creature.set_base_toughness(Some(2));
+            creature.controller = p1_id;
+            creature.tapped = true; // All tapped (attacked this turn)
+            game.cards.insert(creature_id, creature);
+            game.battlefield.add(creature_id);
+            p1_creatures.push(creature_id);
+        }
+
+        // Create a tapped creature on P2's battlefield
+        let p2_creature_id = game.next_card_id();
+        let mut p2_creature = Card::new(p2_creature_id, "Opp Warrior".to_string(), p2_id);
+        p2_creature.add_type(CardType::Creature);
+        p2_creature.controller = p2_id;
+        p2_creature.tapped = true;
+        game.cards.insert(p2_creature_id, p2_creature);
+        game.battlefield.add(p2_creature_id);
+
+        game.turn.active_player = p1_id;
+
+        // Execute UntapAll using TargetRestriction (upstream API)
+        let restriction = crate::core::TargetRestriction::parse("Creature.YouCtrl");
+        let effect = Effect::UntapAll { restriction };
+        game.execute_effect(&effect).unwrap();
+
+        // Verify P1's creatures are untapped
+        for &cid in &p1_creatures {
+            let card = game.cards.get(cid).unwrap();
+            assert!(!card.tapped, "P1's creature should be untapped");
+        }
+
+        // Verify P2's creature is still tapped
+        let p2_card = game.cards.get(p2_creature_id).unwrap();
+        assert!(p2_card.tapped, "P2's creature should still be tapped");
+    }
+
+    #[test]
+    fn test_add_phase_extra_combat() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        // Execute AddPhase
+        let effect = Effect::AddPhase { count: 1 };
+        game.execute_effect(&effect).unwrap();
+
+        assert_eq!(game.extra_combat_phases, 1, "Should have 1 extra combat phase");
+
+        // Execute another AddPhase
+        game.execute_effect(&effect).unwrap();
+        assert_eq!(game.extra_combat_phases, 2, "Should have 2 extra combat phases");
+    }
+
+    #[test]
+    fn test_extra_combat_phase_step_progression() {
+        use crate::game::Step;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+
+        // Set up: we're at EndCombat with 1 extra combat phase pending
+        game.turn.current_step = Step::EndCombat;
+        game.extra_combat_phases = 1;
+
+        // Advance step - should go to BeginCombat (extra combat) instead of Main2
+        game.advance_step().unwrap();
+        assert_eq!(
+            game.turn.current_step,
+            Step::BeginCombat,
+            "Should go to BeginCombat for extra combat phase"
+        );
+        assert_eq!(game.extra_combat_phases, 0, "Extra combat phases should be decremented");
+
+        // Now advance through the extra combat normally
+        game.advance_step().unwrap();
+        assert_eq!(game.turn.current_step, Step::DeclareAttackers);
+
+        // Skip to EndCombat of the extra combat
+        game.turn.current_step = Step::EndCombat;
+        game.advance_step().unwrap();
+        // Now should go to Main2 since no more extra combat phases
+        assert_eq!(
+            game.turn.current_step,
+            Step::Main2,
+            "Should go to Main2 after all extra combats are done"
+        );
+    }
+
+    #[test]
+    fn test_spells_cast_this_turn_counter() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Initially zero
+        assert_eq!(game.get_player(p1_id).unwrap().spells_cast_this_turn, 0);
+
+        // Create a spell and simulate casting it
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Lightning Bolt".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("R");
+        spell.controller = p1_id;
+        game.cards.insert(spell_id, spell);
+
+        // Call check_spellcast_triggers (which increments the counter)
+        game.check_spellcast_triggers(spell_id, p1_id).unwrap();
+        assert_eq!(game.get_player(p1_id).unwrap().spells_cast_this_turn, 1);
+
+        // Cast another spell
+        let spell2_id = game.next_card_id();
+        let mut spell2 = Card::new(spell2_id, "Shock".to_string(), p1_id);
+        spell2.add_type(CardType::Instant);
+        spell2.controller = p1_id;
+        game.cards.insert(spell2_id, spell2);
+
+        game.check_spellcast_triggers(spell2_id, p1_id).unwrap();
+        assert_eq!(game.get_player(p1_id).unwrap().spells_cast_this_turn, 2);
+    }
+
+    #[test]
+    fn test_count_expression_spells_cast() {
+        use crate::core::CountExpression;
+        use std::collections::HashMap;
+
+        let mut svars = HashMap::new();
+        svars.insert("X".to_string(), "Count$YouCastThisTurn".to_string());
+
+        let expr = CountExpression::parse("X", &svars);
+        assert!(
+            matches!(expr, CountExpression::SpellsCastThisTurn),
+            "Should parse Count$YouCastThisTurn to SpellsCastThisTurn"
+        );
+    }
+
+    #[test]
+    fn test_effect_converter_put_counter_all() {
+        use crate::loader::ability_parser::AbilityParams;
+        use crate::loader::effect_converter::params_to_effect;
+
+        let params = AbilityParams::parse(
+            "A:DB$ PutCounterAll | CounterType$ P1P1 | CounterNum$ 2 | ValidCards$ Creature.YouCtrl",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).expect("PutCounterAll should produce an effect");
+        let Effect::PutCounterAll {
+            counter_type,
+            amount,
+            ..
+        } = effect
+        else {
+            panic!("Expected PutCounterAll");
+        };
+        assert_eq!(counter_type, crate::core::CounterType::P1P1);
+        assert_eq!(amount, 2);
+    }
+
+    #[test]
+    fn test_effect_converter_untap_all() {
+        use crate::loader::ability_parser::AbilityParams;
+        use crate::loader::effect_converter::params_to_effect;
+
+        let params = AbilityParams::parse("A:DB$ UntapAll | ValidCards$ Creature.YouCtrl").unwrap();
+        let effect = params_to_effect(&params).expect("UntapAll should produce an effect");
+        assert!(matches!(effect, Effect::UntapAll { .. }), "Expected UntapAll");
+    }
+
+    #[test]
+    fn test_effect_converter_add_phase() {
+        use crate::loader::ability_parser::AbilityParams;
+        use crate::loader::effect_converter::params_to_effect;
+
+        let params = AbilityParams::parse("A:DB$ AddPhase | PhaseType$ Combat").unwrap();
+        let effect = params_to_effect(&params).expect("AddPhase should produce an effect");
+        let Effect::AddPhase { count } = effect else {
+            panic!("Expected AddPhase");
+        };
+        assert_eq!(count, 1);
+    }
 }

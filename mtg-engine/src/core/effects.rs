@@ -149,6 +149,9 @@ pub enum CountExpression {
     /// Resolved at effect execution time by reading Card::x_paid
     XPaid,
 
+    /// Count spells cast this turn (Count$YouCastThisTurn)
+    SpellsCastThisTurn,
+
     /// Compare a source count against a condition and return true/false value
     /// Pattern: Count$Compare SourceSVar Condition.TrueValue.FalseValue
     /// Example: Count$Compare Y GE1.2.1 → if Y >= 1 then 2 else 1
@@ -255,6 +258,8 @@ impl CountExpression {
                     return CountExpression::ValidPermanents { filter };
                 } else if rest == "YouDrewThisTurn" {
                     return CountExpression::CardsDrawnThisTurn;
+                } else if rest == "YouCastThisTurn" {
+                    return CountExpression::SpellsCastThisTurn;
                 } else if rest.starts_with("Compare ") {
                     // Count$Compare SourceSVar Condition.TrueValue.FalseValue
                     // Example: "Compare Y GE1.2.1"
@@ -1215,6 +1220,16 @@ pub enum Effect {
         unless_cost: UnlessCost,
     },
 
+
+    /// Add an extra combat phase after the current one
+    /// Example: "After this main phase, there is an additional combat phase" (Raphael Tag Team Tough)
+    /// Corresponds to: DB$ AddPhase | PhaseType$ Combat
+    AddPhase {
+        /// Number of extra combat phases to add
+        count: u8,
+    },
+
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -1306,6 +1321,7 @@ impl Effect {
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
+            | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
             | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
@@ -2880,6 +2896,7 @@ mod tests {
                     CountExpression::Fixed(_)
                     | CountExpression::CardsDrawnThisTurn
                     | CountExpression::XPaid
+                    | CountExpression::SpellsCastThisTurn
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -2893,7 +2910,8 @@ mod tests {
             CountExpression::Fixed(_)
             | CountExpression::ValidPermanents { .. }
             | CountExpression::CardsDrawnThisTurn
-            | CountExpression::XPaid => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::XPaid
+            | CountExpression::SpellsCastThisTurn => panic!("Expected Compare, got {:?}", expr),
         }
     }
 

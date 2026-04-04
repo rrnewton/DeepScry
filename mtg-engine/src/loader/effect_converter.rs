@@ -465,6 +465,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::Proliferate)
         }
 
+
         ApiType::RemoveCounter => {
             // RemoveCounter effect: DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True
             // Example: Heartless Act mode 2 - "Remove up to three counters from target creature"
@@ -1088,6 +1089,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 player: PlayerId::new(0),
                 amount,
             })
+        }
+
+        ApiType::AddPhase => {
+            // Extra combat phase: DB$ AddPhase | PhaseType$ Combat
+            // Example: Raphael Tag Team Tough - "After this main phase, there is an additional combat phase"
+            let count = params.get_u8("NumPhases").unwrap_or(1);
+            Some(Effect::AddPhase { count })
         }
 
         ApiType::DestroyAll => {

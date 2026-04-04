@@ -73,6 +73,7 @@ const EXCLUDED_FIELDS_NETWORK: &[&str] = &[
     "mana_state_version",
     "lands_played_this_turn", // Turn-scoped counter
     "cards_drawn_this_turn",  // Turn-scoped counter
+    "spells_cast_this_turn",  // Turn-scoped counter
     // Hidden information
     "rng", // Server-only RNG state
            // Note: "hand" and "library" are handled specially - we keep SIZE but not contents
@@ -174,6 +175,7 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
             // Also remove turn-scoped counters which can differ after rewind in replay
             map.remove("lands_played_this_turn");
             map.remove("cards_drawn_this_turn");
+            map.remove("spells_cast_this_turn");
 
             // Recursively clean nested objects
             for (_, v) in map.iter_mut() {
@@ -468,9 +470,10 @@ fn strip_fields_recursive(value: serde_json::Value, excluded: &[&str], mode: Has
                     // Also remove turn-scoped counters which can differ after rewind
                     map.remove("lands_played_this_turn");
                     map.remove("cards_drawn_this_turn");
+                    map.remove("spells_cast_this_turn");
                 }
                 HashMode::UndoTest => {
-                    // Keep lands_played_this_turn and cards_drawn_this_turn - they're gameplay state
+                    // Keep lands_played_this_turn, cards_drawn_this_turn, and spells_cast_this_turn - they're gameplay state
                 }
                 HashMode::Network => {
                     // For network mode, we need to handle hand and library specially

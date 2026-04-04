@@ -167,6 +167,14 @@ pub struct GameState {
     #[serde(default)]
     pub extra_turns: std::collections::VecDeque<PlayerId>,
 
+    /// Number of extra combat phases remaining this turn.
+    ///
+    /// When a card adds extra combat phases (e.g., Raphael Tag Team Tough),
+    /// this counter is incremented. At end of the first combat's EndCombat step,
+    /// if extra_combat_phases > 0, the turn goes back to BeginCombat instead of Main2.
+    #[serde(default)]
+    pub extra_combat_phases: u8,
+
     /// Indicates this is a network client shadow game state.
     ///
     /// When `true`, zone tracking for opponent's hidden zones (library, hand)
@@ -338,6 +346,7 @@ impl GameState {
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             extra_turns: std::collections::VecDeque::new(),
+            extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
             is_commander_game: false,
             pending_cycling_search: None,
@@ -1903,6 +1912,26 @@ impl GameState {
             self.cleanup_temporary_effects();
         }
 
+        // Handle extra combat phases: when leaving EndCombat and we have extras,
+        // loop back to BeginCombat instead of advancing to Main2
+        if from_step == crate::game::Step::EndCombat && self.extra_combat_phases > 0 {
+            self.extra_combat_phases -= 1;
+            self.turn.current_step = crate::game::Step::BeginCombat;
+            // Reset combat-specific turn guards so combat steps work again
+            self.turn.attackers_declared_turn = None;
+            self.turn.blockers_declared_turn = None;
+            self.turn.combat_first_strike_damage_dealt_turn = None;
+            self.turn.combat_first_strike_priority_done_turn = None;
+            self.turn.combat_damage_dealt_turn = None;
+            self.logger.gamelog("Additional combat phase begins!");
+            return Ok(());
+        }
+
+        // Reset extra_combat_phases at end of turn
+        if from_step == crate::game::Step::Cleanup {
+            self.extra_combat_phases = 0;
+        }
+
         if !self.turn.advance_step() {
             // End of turn - check for extra turns before normal alternation
             // (CR 500.7 - Time Walk, etc.)
@@ -3111,6 +3140,7 @@ impl GameState {
                     | crate::core::Effect::ImmediateTrigger { .. }
                     | crate::core::Effect::ClearRemembered
                     | crate::core::Effect::AddTurn { .. }
+                    | crate::core::Effect::AddPhase { .. }
                     | crate::core::Effect::ChooseColor { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
@@ -3208,6 +3238,7 @@ impl Clone for GameState {
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             extra_turns: self.extra_turns.clone(),
+            extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,
             is_commander_game: self.is_commander_game,
             // pending_cycling_search, pending_cast, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).

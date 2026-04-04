@@ -134,6 +134,11 @@ pub enum ApiType {
 
     // === Tokens & Counters ===
     Token,
+    /// Replace token creation parameters (static replacement effect)
+    /// Example: "If one or more tokens would be created, instead create that many plus one"
+    /// Used by: Donatello the Brains
+    /// Note: This is a replacement effect (modifies token creation), not an active effect.
+    ReplaceToken,
 
     // === Equipment & Auras ===
     /// Attach Equipment or Aura to target
@@ -233,6 +238,15 @@ pub enum ApiType {
     // === Balance/Equalize Effects ===
     Balance,
 
+    // === Extra Turns & Phases ===
+
+    /// Add an extra combat phase after the current one
+    /// Example: "Untap all creatures you control. After this main phase, there is an additional combat phase"
+    /// Parameters:
+    ///   NumPhases$ 1 - number of extra combat phases
+    AddPhase,
+
+
     // === Avatar Set Mechanics ===
     /// Airbend: Exile target, owner may cast it for {2} from exile.
     /// CR 701.65b
@@ -320,6 +334,7 @@ impl ApiType {
             "CopyPermanent" => Self::CopyPermanent,
             "PutCounter" => Self::PutCounter,
             "PutCounterAll" => Self::PutCounterAll,
+            "ReplaceToken" => Self::ReplaceToken,
             "RemoveCounter" => Self::RemoveCounter,
             "MoveCounter" => Self::MoveCounter,
             "MultiplyCounter" => Self::MultiplyCounter,
@@ -376,6 +391,9 @@ impl ApiType {
             // Balance/Equalize
             "Balance" => Self::Balance,
 
+            // Extra Phases
+            "AddPhase" => Self::AddPhase,
+
             // Avatar Set Mechanics
             "Airbend" => Self::Airbend,
             "Earthbend" => Self::Earthbend,
@@ -429,6 +447,7 @@ impl ApiType {
             Self::CopyPermanent => "CopyPermanent",
             Self::PutCounter => "PutCounter",
             Self::PutCounterAll => "PutCounterAll",
+            Self::ReplaceToken => "ReplaceToken",
             Self::RemoveCounter => "RemoveCounter",
             Self::MoveCounter => "MoveCounter",
             Self::MultiplyCounter => "MultiplyCounter",
@@ -464,6 +483,7 @@ impl ApiType {
             Self::RollDice => "RollDice",
             Self::FlipACoin => "FlipACoin",
             Self::Balance => "Balance",
+            Self::AddPhase => "AddPhase",
             Self::Airbend => "Airbend",
             Self::Earthbend => "Earthbend",
             Self::Charm => "Charm",

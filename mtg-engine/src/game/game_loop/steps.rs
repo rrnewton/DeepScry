@@ -28,6 +28,8 @@ impl<'a> GameLoop<'a> {
         if let Ok(player) = self.game.get_player_mut(active_player) {
             let old_count = player.cards_drawn_this_turn;
             player.reset_cards_drawn();
+            // Reset spells cast counter for new turn
+            player.spells_cast_this_turn = 0;
             // Log for undo
             self.game.undo_log.log(
                 crate::undo::GameAction::SetCardsDrawnThisTurn {
