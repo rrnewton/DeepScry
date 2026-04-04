@@ -76,6 +76,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ClearRemembered
         | Effect::AddTurn { .. }
         | Effect::ChooseColor { .. }
+        | Effect::Unimplemented { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -178,6 +179,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
             | Effect::ChooseColor { .. }
+            | Effect::Unimplemented { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -1904,12 +1906,17 @@ impl GameState {
                         .get(resolved_fighter)
                         .map(|c| c.controller)
                         .unwrap_or(card_owner);
+                    let fighter_colors: smallvec::SmallVec<[crate::core::Color; 2]> = self
+                        .cards
+                        .get(resolved_fighter)
+                        .map(|c| c.colors.clone())
+                        .unwrap_or_default();
                     let mut best_target: Option<(CardId, i32)> = None;
                     for &cid in &self.battlefield.cards {
                         if let Ok(tc) = self.cards.get(cid) {
                             if tc.is_creature()
                                 && tc.controller != fighter_controller
-                                && is_legal_target(tc, fighter_controller)
+                                && is_legal_target(tc, fighter_controller, &fighter_colors)
                             {
                                 let power = i32::from(tc.base_power().unwrap_or(0)) + tc.power_bonus;
                                 if best_target.is_none_or(|(_, bp)| power > bp) {
@@ -4632,6 +4639,19 @@ impl GameState {
                 }
             }
 
+            Effect::Unimplemented { api_type } => {
+                // Log a warning instead of silently doing nothing
+                log::warn!(
+                    target: "actions",
+                    "Unimplemented effect '{}' resolved as no-op",
+                    api_type
+                );
+                self.logger.gamelog(&format!(
+                    "WARNING: Effect '{}' is not yet implemented - resolving as no-op",
+                    api_type
+                ));
+            }
+
             // XPaid variants should be resolved to concrete variants before execution
             // by resolve_x_paid_effect() in resolve_spell_execute_effects().
             // If we reach here, treat as amount=0 (shouldn't happen in normal flow).
@@ -4662,6 +4682,21 @@ impl GameState {
             }
         }
         Ok(())
+    }
+
+    /// Check if a card matches a DestroyAll filter
+    ///
+    /// Filter is comma-separated card types: "Artifact,Creature,Enchantment"
+    /// A card matches if it has ANY of the listed types.
+    fn card_matches_destroy_all_filter(card: &crate::core::Card, filter: &str) -> bool {
+        filter.split(',').any(|type_str| match type_str.trim() {
+            "Artifact" => card.is_artifact(),
+            "Creature" => card.is_creature(),
+            "Enchantment" => card.is_enchantment(),
+            "Land" => card.is_land(),
+            "Permanent" => true,
+            _ => false,
+        })
     }
 
     /// Check if a card matches a library search filter

@@ -164,7 +164,7 @@ impl GameState {
                     // Debuff can target any creature
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -197,7 +197,7 @@ impl GameState {
                                 // Default to creatures for GainControl
                                 target_card.is_creature()
                             };
-                            if type_matches && is_legal_target(target_card, spell_owner) {
+                            if type_matches && is_legal_target(target_card, spell_owner, &spell_colors) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -209,7 +209,7 @@ impl GameState {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature()
                                 && target_card.controller != spell_owner
-                                && is_legal_target(target_card, spell_owner)
+                                && is_legal_target(target_card, spell_owner, &spell_colors)
                             {
                                 valid_targets.push(card_id);
                             }
@@ -240,7 +240,7 @@ impl GameState {
                     // Tap or untap can target any permanent (creature, land, etc.)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if is_legal_target(target_card, spell_owner) {
+                            if is_legal_target(target_card, spell_owner, &spell_colors) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -322,7 +322,7 @@ impl GameState {
                         if let Ok(target_card) = self.cards.get(card_id) {
                             if target_card.is_creature()
                                 && target_card.controller == spell_owner
-                                && is_legal_target(target_card, spell_owner)
+                                && is_legal_target(target_card, spell_owner, &spell_colors)
                             {
                                 valid_targets.push(card_id);
                             }
@@ -336,7 +336,7 @@ impl GameState {
                     // PreventDamage can target any creature (or player, handled separately)
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && is_legal_target(target_card, spell_owner) {
+                            if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -517,6 +517,7 @@ impl GameState {
                             | Effect::AddTurn { .. }
                             | Effect::ChooseColor { .. }
                             | Effect::Proliferate
+                            | Effect::Unimplemented { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. } => {
@@ -563,6 +564,7 @@ impl GameState {
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
+                | Effect::Unimplemented { .. }
                 | Effect::Proliferate => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
@@ -855,7 +857,7 @@ impl GameState {
                     // Tap or untap any permanent
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
-                            if is_legal_target(card, ability_controller) {
+                            if is_legal_target(card, ability_controller, &source_colors) {
                                 valid_targets.push(card_id);
                             }
                         }
@@ -992,11 +994,15 @@ impl GameState {
                 | Effect::CopySpellAbility { .. }
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
+                | Effect::AddTurn { .. }
+                | Effect::DestroyAll { .. }
+                | Effect::Unimplemented { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
                 | Effect::TapAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
+                | Effect::ChooseColor { .. }
                 | Effect::Proliferate
                 | Effect::UnlessCostWrapper { .. } => {
                     // These effects target players or have no targeting requirements
@@ -1185,7 +1191,7 @@ impl GameState {
                 // Debuff requires a creature target
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
-                        card.is_creature() && is_legal_target(card, spell_owner)
+                        card.is_creature() && is_legal_target(card, spell_owner, source_colors)
                     } else {
                         false
                     }
@@ -1266,6 +1272,7 @@ impl GameState {
             | Effect::CopySpellAbility { .. }
             | Effect::ImmediateTrigger { .. }
             | Effect::ClearRemembered
+            | Effect::Unimplemented { .. }
             | Effect::EachDamage { .. }
             | Effect::UnlessCostWrapper { .. }
             | Effect::DestroyAll { .. }

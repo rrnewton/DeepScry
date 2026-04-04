@@ -6,20 +6,27 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T18:38:14.799322924+00:00
+updated_at: 2026-04-04T12:24:25.740557762+00:00
 ---
 
 # Description
 
 Track implementation of MTG game features including keywords, abilities, card effects, and the card script parsing infrastructure.
 
-## Active Issues
+## Effect Bugfixes (2026-04-04_#1870(98d588d1))
 
 **Card Parsing & Selectors:**
 - mtg-147: Unhandled Affected$ selectors tracking (270 Unknown Affected$ remaining)
 
 **ETB & Replacement Effects:**
 - mtg-zeuy0: Thriving Grove doesn't enter tapped or prompt for color choice (affects all Thriving lands)
+
+**Effect Bugfixes (incoming):**
+- mtg-e78d1f: Bazaar of Baghdad SubAbility chain fix in parse_activated_abilities()
+- mtg-fd5bf7: ExtraTurn effect (Time Walk) - AddTurn ApiType + extra_turns queue
+- mtg-9915fe: DestroyAll effect (Nevinyrral's Disk) - filter-based mass destroy
+- mtg-66e8cd: Replace silent no-ops with Effect::Unimplemented for visible warnings
+- ApiType::Attach now handled in params_to_effect() (was special-cased only in extract_effects_from_svar)
 
 **Keywords:**
 - ✅ Living Weapon keyword parsing fixed (38 cards)

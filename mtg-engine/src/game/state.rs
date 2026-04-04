@@ -158,6 +158,15 @@ pub struct GameState {
     #[serde(default)]
     pub remembered_cards: smallvec::SmallVec<[CardId; 4]>,
 
+    /// Queue of extra turns granted by effects (e.g., Time Walk).
+    ///
+    /// Each entry is the PlayerId who gets the extra turn.
+    /// Extra turns are consumed FIFO: the first-granted extra turn happens first.
+    /// At end of a turn, if extra_turns is non-empty, the front player gets
+    /// the next turn instead of the normal alternation.
+    #[serde(default)]
+    pub extra_turns: std::collections::VecDeque<PlayerId>,
+
     /// Indicates this is a network client shadow game state.
     ///
     /// When `true`, zone tracking for opponent's hidden zones (library, hand)
@@ -328,6 +337,7 @@ impl GameState {
             persistent_effects: PersistentEffectStore::new(),
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
+            extra_turns: std::collections::VecDeque::new(),
             is_shadow_game: false, // Default: not a shadow game
             is_commander_game: false,
             pending_cycling_search: None,
@@ -1894,13 +1904,20 @@ impl GameState {
         }
 
         if !self.turn.advance_step() {
-            // End of turn, move to next player
-            // Check for extra turns first (CR 500.7 - Time Walk, etc.)
+            // End of turn - check for extra turns before normal alternation
+            // (CR 500.7 - Time Walk, etc.)
             let from_player = self.turn.active_player;
-            let next_player = if !self.turn.extra_turns.is_empty() {
-                // Extra turn: take from front of queue (FIFO)
-                self.turn.extra_turns.remove(0)
+            let next_player = if let Some(extra_turn_player) = self.extra_turns.pop_front() {
+                // Extra turn granted (e.g., Time Walk)
+                self.logger.gamelog(&format!(
+                    "Extra turn for {}!",
+                    self.get_player(extra_turn_player)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("Unknown")
+                ));
+                extra_turn_player
             } else {
+                // Normal turn alternation
                 self.get_next_player(self.turn.active_player)?
             };
             let old_turn_number = self.turn.turn_number;
@@ -3099,6 +3116,7 @@ impl GameState {
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. }
                     | crate::core::Effect::Proliferate
+                    | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. } => {
@@ -3189,6 +3207,7 @@ impl Clone for GameState {
             persistent_effects: self.persistent_effects.clone(),
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
+            extra_turns: self.extra_turns.clone(),
             is_shadow_game: self.is_shadow_game,
             is_commander_game: self.is_commander_game,
             // pending_cycling_search, pending_cast, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).

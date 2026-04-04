@@ -1,0 +1,25 @@
+[metadata]
+Name:DestroyAll Board Wipe Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests DestroyAll effect. Player 0 has Nevinyrral's Disk (artifact with DestroyAll ability) and Ornithopter. Activate Disk to destroy all artifacts, creatures, and enchantments - including itself and Ornithopter. Opponent's creatures are also destroyed.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Ornithopter
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=3
+p1hand=
+p1battlefield=Grizzly Bears; Llanowar Elves
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

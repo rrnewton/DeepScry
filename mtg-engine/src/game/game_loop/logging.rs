@@ -909,6 +909,10 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::Unimplemented { api_type } => {
+                let message = format!("{source_name} ({source_id}) has unimplemented effect '{api_type}'");
+                self.game.logger.gamelog(&message);
+            }
         }
     }
 }

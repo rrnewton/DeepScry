@@ -5420,4 +5420,76 @@ Oracle:Lands you control have "{T}: Add one mana of any color."
             "Should have GrantAbility for lands with mana ability"
         );
     }
+
+    #[test]
+    fn test_triskelion_etb_trigger_with_put_counter() {
+        use crate::core::{Effect, TriggerEvent};
+
+        // Triskelion: ETB puts three +1/+1 counters on itself
+        let content = r#"
+Name:Triskelion
+ManaCost:6
+Types:Artifact Creature Construct
+PT:1/1
+T:Mode$ ChangesZone | Origin$ Any | Destination$ Battlefield | ValidCard$ Card.Self | Execute$ TrigPutCounters | TriggerDescription$ Triskelion enters the battlefield with three +1/+1 counters on it.
+SVar:TrigPutCounters:DB$ PutCounter | Defined$ Self | CounterType$ P1P1 | CounterNum$ 3
+Oracle:Triskelion enters the battlefield with three +1/+1 counters on it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let triggers = def.parse_triggers();
+
+        assert_eq!(triggers.len(), 1, "Should have one ETB trigger");
+
+        let trigger = &triggers[0];
+        assert_eq!(trigger.event, TriggerEvent::EntersBattlefield);
+
+        // Must have a PutCounter effect with amount 3
+        let has_put_counter_3 = trigger
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PutCounter { amount: 3, .. }));
+        assert!(
+            has_put_counter_3,
+            "ETB trigger should have PutCounter with amount 3, got effects: {:?}",
+            trigger.effects
+        );
+    }
+
+    #[test]
+    fn test_bazaar_of_baghdad_draw_discard_chain() {
+        use crate::core::{Effect, PlayerId};
+
+        // Bazaar of Baghdad: T: Draw 2, then discard 3
+        let content = r#"
+Name:Bazaar of Baghdad
+ManaCost:no cost
+Types:Land
+A:AB$ Draw | Cost$ T | NumCards$ 2 | SubAbility$ DBDiscard | SpellDescription$ Draw two cards, then discard three cards.
+SVar:DBDiscard:DB$ Discard | Defined$ You | NumCards$ 3
+Oracle:{T}: Draw two cards, then discard three cards.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let card = def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+
+        // Should have at least 1 activated ability with draw+discard effects
+        assert!(!card.activated_abilities.is_empty(), "Should have activated abilities");
+
+        let ability = &card.activated_abilities[0];
+        let effects = &ability.effects;
+
+        // Must have both Draw and Discard effects
+        let has_draw_2 = effects.iter().any(|e| matches!(e, Effect::DrawCards { count: 2, .. }));
+        let has_discard_3 = effects
+            .iter()
+            .any(|e| matches!(e, Effect::DiscardCards { count: 3, .. }));
+
+        assert!(has_draw_2, "Should have DrawCards with count 2, got: {:?}", effects);
+        assert!(
+            has_discard_3,
+            "Should have DiscardCards with count 3, got: {:?}",
+            effects
+        );
+    }
 }

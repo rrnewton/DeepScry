@@ -1214,6 +1214,14 @@ pub enum Effect {
         /// The UnlessCost condition
         unless_cost: UnlessCost,
     },
+
+    /// Placeholder for a recognized but unimplemented effect
+    /// Produced instead of silently dropping the effect, so that spell resolution
+    /// can warn/error instead of silently no-op'ing.
+    Unimplemented {
+        /// The API type name that was not implemented
+        api_type: String,
+    },
 }
 
 /// Condition for ImmediateTrigger effect
@@ -1299,7 +1307,8 @@ impl Effect {
             | Effect::ClearRemembered
             | Effect::AddTurn { .. }
             | Effect::ChooseColor { .. }
-            | Effect::Proliferate => EffectTargetCategory::NoTargetNeeded,
+            | Effect::Proliferate
+            | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
             Effect::PumpAllCreatures { .. }

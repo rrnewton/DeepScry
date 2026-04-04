@@ -1271,8 +1271,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
-        // All other API types not yet implemented
-        _ => None,
+        ApiType::Attach => {
+            // Attach Equipment or Aura to target
+            // Example: DB$ Attach | ValidTgts$ Creature.YouCtrl
+            Some(Effect::AttachEquipment {
+                source_equipment: CardId::new(0), // Placeholder
+                target_creature: CardId::new(0),  // Placeholder
+            })
+        }
+
+        // Recognized but not yet implemented API types produce an Unimplemented effect
+        // so that spell resolution can warn instead of silently no-op'ing
+        _ => {
+            let api_name = params.api_type.as_str().to_string();
+            log::debug!(
+                target: "effect_converter",
+                "API type '{}' not yet implemented, producing Unimplemented effect",
+                api_name
+            );
+            Some(Effect::Unimplemented { api_type: api_name })
+        }
     }
 }
 
@@ -1883,11 +1901,20 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
 
     #[test]
     fn test_convert_unsupported_api_type() {
-        // Unknown API types should return None
+        // Unknown API types should now return Unimplemented variant (not None)
         let params = AbilityParams::parse("A:SP$ UnsupportedAbility | Foo$ Bar").unwrap();
         let effect = params_to_effect(&params);
 
-        assert!(effect.is_none(), "Should return None for unsupported API types");
+        assert!(
+            effect.is_some(),
+            "Unsupported types should produce Unimplemented variant"
+        );
+        match effect.unwrap() {
+            Effect::Unimplemented { api_type } => {
+                assert_eq!(api_type, "UnsupportedAbility");
+            }
+            _ => panic!("Expected Unimplemented effect"),
+        }
     }
 
     #[test]
@@ -2795,5 +2822,67 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             effect.is_none(),
             "AnimateAll with no P/T or keywords should return None"
         );
+    }
+
+    #[test]
+    fn test_convert_add_turn() {
+        // Time Walk: "Take an extra turn after this one"
+        let params = AbilityParams::parse("A:SP$ AddTurn | NumTurns$ 1").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "AddTurn should produce an AddTurn effect");
+
+        match effect.unwrap() {
+            Effect::AddTurn { player, num_turns } => {
+                assert_eq!(num_turns, 1, "Should grant 1 extra turn");
+                assert_eq!(player.as_u32(), 0, "Player should be placeholder");
+            }
+            _ => panic!("Expected AddTurn effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_destroy_all() {
+        // Nevinyrral's Disk: "Destroy all artifacts, creatures, and enchantments"
+        let params =
+            AbilityParams::parse("A:AB$ DestroyAll | Cost$ 1 T | ValidCards$ Artifact,Creature,Enchantment").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "DestroyAll should produce a DestroyAll effect");
+
+        match effect.unwrap() {
+            Effect::DestroyAll { restriction, .. } => {
+                // TargetRestriction should parse the comma-separated types
+                assert!(!restriction.types.is_empty(), "Should have type restrictions");
+            }
+            _ => panic!("Expected DestroyAll effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_destroy_all_creatures_only() {
+        // Wrath of God: "Destroy all creatures"
+        let params = AbilityParams::parse("A:SP$ DestroyAll | ValidCards$ Creature").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(effect.is_some(), "DestroyAll should produce a DestroyAll effect");
+
+        assert!(matches!(effect.unwrap(), Effect::DestroyAll { .. }));
+    }
+
+    #[test]
+    fn test_unimplemented_effect_produces_variant() {
+        // Unknown effect types should produce Unimplemented, not None
+        // Use a truly unimplemented API type (not LoseLife, which is now implemented)
+        let params = AbilityParams::parse("A:SP$ RearrangeTopOfLibrary | NumCards$ 3").unwrap();
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_some(),
+            "Unimplemented effects should produce Unimplemented variant, not None"
+        );
+
+        match effect.unwrap() {
+            Effect::Unimplemented { api_type } => {
+                assert_eq!(api_type, "RearrangeTopOfLibrary", "Should record the API type name");
+            }
+            _ => panic!("Expected Unimplemented effect"),
+        }
     }
 }
