@@ -93,7 +93,8 @@ impl<'a> GameLoop<'a> {
                     // Check for summoning sickness
                     // Creatures can't attack the turn they entered unless they have haste
                     let has_summoning_sickness = if let Some(entered_turn) = card.turn_entered_battlefield {
-                        entered_turn == self.game.turn.turn_number && !card.has_keyword(Keyword::Haste)
+                        entered_turn == self.game.turn.turn_number
+                            && !self.game.has_keyword_with_effects(card_id, Keyword::Haste)
                     } else {
                         false
                     };
@@ -816,7 +817,7 @@ impl<'a> GameLoop<'a> {
     ///
     /// Zero allocation - pushes SpellAbility::ActivateAbility directly to the buffer
     /// instead of building an intermediate Vec.
-    fn push_activatable_abilities(&mut self, player_id: PlayerId) {
+    pub(crate) fn push_activatable_abilities(&mut self, player_id: PlayerId) {
         use crate::core::SpellAbility;
 
         // Update the mana engine for this player
@@ -852,6 +853,18 @@ impl<'a> GameLoop<'a> {
                     // Check tap cost
                     if ability.cost.includes_tap() && card.tapped {
                         can_activate = false;
+                    }
+
+                    // Summoning sickness: creatures can't use tap-activated abilities
+                    // the turn they enter the battlefield, unless they have haste (CR 302.6)
+                    if can_activate && ability.cost.includes_tap() && card.is_creature() {
+                        if let Some(entered_turn) = card.turn_entered_battlefield {
+                            if entered_turn == self.game.turn.turn_number
+                                && !self.game.has_keyword_with_effects(card_id, crate::core::Keyword::Haste)
+                            {
+                                can_activate = false;
+                            }
+                        }
                     }
 
                     // Check mana cost - use can_pay_with_pool to consider floating mana

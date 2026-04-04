@@ -416,8 +416,9 @@ impl<'a> GameLoop<'a> {
             .get_other_player_id(active_player)
             .expect("Should have non-active player");
 
-        // Process active player first, then non-active player
-        for &player_id in &[active_player, non_active_player] {
+        // CR 514.1: Only the active player discards to hand size during cleanup step
+        // (The non-active player discards during their own cleanup step)
+        for &player_id in &[active_player] {
             let hand_size = self.game.get_player_zones(player_id).map(|z| z.hand.len()).unwrap_or(0);
 
             let max_hand_size = self.game.get_player(player_id)?.max_hand_size;

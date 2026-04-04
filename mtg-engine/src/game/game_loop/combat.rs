@@ -543,6 +543,20 @@ impl<'a> GameLoop<'a> {
         // Filter out invalid blocks
         let mut validated_blocks = SmallVec::new();
         for (blocker_id, attacker_id) in blocks.iter() {
+            // Tapped creatures cannot block (CR 509.1a)
+            // Defense-in-depth: get_available_blocker_creatures already filters these,
+            // but verify in case controller bypasses the pre-filter
+            if let Ok(blocker_card) = self.game.cards.get(*blocker_id) {
+                if blocker_card.tapped {
+                    if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
+                        self.game
+                            .logger
+                            .verbose(&format!("{} is tapped and can't block", blocker_card.name));
+                    }
+                    continue;
+                }
+            }
+
             // Check if attacker has "can't be blocked" persistent effect
             let cant_be_blocked = self.game.persistent_effects.is_creature_unblockable(*attacker_id);
 

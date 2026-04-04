@@ -1454,6 +1454,33 @@ impl<'a> GameLoop<'a> {
     }
 }
 
+// Test helpers - only available in test builds
+#[cfg(test)]
+impl<'a> GameLoop<'a> {
+    /// Expose push_activatable_abilities for testing summoning sickness checks
+    pub fn push_activatable_abilities_for_test(&mut self, player_id: PlayerId) {
+        self.abilities_buffer.clear();
+        self.push_activatable_abilities(player_id);
+    }
+
+    /// Get a reference to the abilities buffer for test assertions
+    pub fn get_abilities_buffer(&self) -> &[crate::core::SpellAbility] {
+        &self.abilities_buffer
+    }
+
+    /// Expose cleanup_step for testing discard logic
+    ///
+    /// # Errors
+    /// Returns an error if the cleanup step encounters an invalid game state.
+    pub fn cleanup_step_for_test(
+        &mut self,
+        controller1: &mut dyn crate::game::controller::PlayerController,
+        controller2: &mut dyn crate::game::controller::PlayerController,
+    ) -> crate::Result<Option<crate::game::GameResult>> {
+        self.cleanup_step(controller1, controller2)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

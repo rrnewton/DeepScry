@@ -5175,7 +5175,9 @@ impl GameState {
             }
 
             // Build trigger context for placeholder resolution
-            let controller = self.cards.get(trigger_source)?.controller;
+            let trigger_card = self.cards.get(trigger_source)?;
+            let controller = trigger_card.controller;
+            let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> = trigger_card.colors.clone();
             let opponent = self.players.iter().find(|p| p.id != controller).map(|p| p.id);
             let ctx = TriggerContext::new(trigger_source, controller)
                 .with_event_source(source_card_id)
@@ -5212,7 +5214,7 @@ impl GameState {
                                 if let Some(card) = self.cards.try_get(*card_id) {
                                     card.is_creature()
                                         && card.controller != controller
-                                        && targeting::is_legal_target(card, controller)
+                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5245,7 +5247,7 @@ impl GameState {
                                 if let Some(card) = self.cards.try_get(*card_id) {
                                     restriction.matches(card)
                                         && card.controller != controller
-                                        && targeting::is_legal_target(card, controller)
+                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5274,7 +5276,8 @@ impl GameState {
                             .iter()
                             .filter(|&card_id| {
                                 if let Some(card) = self.cards.try_get(*card_id) {
-                                    card.is_creature() && targeting::is_legal_target(card, controller)
+                                    card.is_creature()
+                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5302,7 +5305,7 @@ impl GameState {
                             .iter()
                             .filter(|&card_id| {
                                 if let Some(card) = self.cards.try_get(*card_id) {
-                                    card.is_creature() && targeting::is_legal_target(card, controller)
+                                    card.is_creature() && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5331,7 +5334,7 @@ impl GameState {
                                 if let Some(card) = self.cards.try_get(*card_id) {
                                     !card.is_land()
                                         && card.controller != controller
-                                        && targeting::is_legal_target(card, controller)
+                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5414,7 +5417,7 @@ impl GameState {
                                     return None;
                                 }
                                 // Check for hexproof/shroud (CR 702.18a, CR 702.19a)
-                                if !targeting::is_legal_target(card, controller) {
+                                if !targeting::is_legal_target(card, controller, &trigger_source_colors) {
                                     return None;
                                 }
                                 // Score: prefer friendly permanents
