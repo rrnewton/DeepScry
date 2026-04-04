@@ -2321,6 +2321,7 @@ fn spawn_claude_autofix_process(args: &[String], cwd: &Path) -> std::io::Result<
     Ok(Some(child.id()))
 }
 
+#[allow(clippy::type_complexity)]
 fn launch_claude_autofix_with_spawner(
     spawner: &dyn Fn(&[String], &Path) -> std::io::Result<Option<u32>>,
     repo_root: &Path,
@@ -2369,6 +2370,7 @@ fn maybe_schedule_claude_autofix(
     schedule_claude_autofix_with_spawner(Arc::new(spawn_claude_autofix_process), repo_root, request);
 }
 
+#[allow(clippy::type_complexity)]
 fn schedule_claude_autofix_with_spawner(
     spawner: Arc<dyn Fn(&[String], &Path) -> std::io::Result<Option<u32>> + Send + Sync>,
     repo_root: PathBuf,
@@ -2890,6 +2892,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn test_bug_report_result_from_github_error_preserves_local_success() {
         let response = bug_report_result_from_github_result(Err(anyhow!("gh not found")));
         match response {

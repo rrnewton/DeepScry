@@ -3611,6 +3611,7 @@ mod tests {
 
     #[cfg(feature = "network")]
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn test_server_cli_parses_trusted_bug_report_password() {
         let cli = Cli::try_parse_from(["mtg", "server", "--trusted-bug-report-password", "trusted-secret"])
             .expect("parse server CLI");

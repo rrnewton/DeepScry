@@ -1954,6 +1954,7 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    #[test]
     fn test_draw_for_remembered_players_only() {
         // Test that draw with remembered_players sentinel only draws for remembered players
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
