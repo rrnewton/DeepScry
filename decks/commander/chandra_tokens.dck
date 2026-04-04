@@ -1,12 +1,12 @@
 [metadata]
 Name=Chandra Token Army (Commander)
-Description=Boros token-swarm commander deck with Chandra, Torch of Defiance at the helm
+Description=Boros token-swarm commander deck with Arabella, Abandoned Doll at the helm
 
 [Commander]
-1 Chandra, Torch of Defiance
+1 Arabella, Abandoned Doll
 
 [Main]
-1 Arabella, Abandoned Doll
+1 Chandra, Torch of Defiance
 1 Shalai, Voice of Plenty
 1 Mentor of the Meek
 1 Goblin Bushwhacker
