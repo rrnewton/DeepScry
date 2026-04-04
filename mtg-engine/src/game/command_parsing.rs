@@ -127,6 +127,7 @@ pub fn parse_spell_ability_choice(
                 SpellAbility::PlayLand { .. }
                 | SpellAbility::ActivateAbility { .. }
                 | SpellAbility::CastFromExile { .. }
+                | SpellAbility::CastFromGraveyard { .. }
                 | SpellAbility::Cycle { .. } => {}
             }
         }

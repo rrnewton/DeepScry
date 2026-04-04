@@ -93,6 +93,19 @@ pub enum SpellAbility {
         /// None for regular cycling (just draw a card)
         search_type: Option<crate::core::Subtype>,
     },
+
+    /// Cast a creature spell from graveyard with a MayPlayFromGraveyard effect
+    ///
+    /// Used by Leonardo, Sewer Samurai: "During your turn, you may cast creature
+    /// spells with power or toughness 1 or less from your graveyard. If you cast
+    /// a spell this way, that creature enters with a finality counter on it."
+    CastFromGraveyard {
+        card_id: CardId,
+        /// The persistent effect granting this permission
+        effect_id: PersistentEffectId,
+        /// If true, the creature enters with a finality counter
+        add_finality_counter: bool,
+    },
 }
 
 impl SpellAbility {
@@ -105,6 +118,7 @@ impl SpellAbility {
             | SpellAbility::CastFromCommand { card_id, .. }
             | SpellAbility::Cycle { card_id, .. } => *card_id,
             SpellAbility::ActivateAbility { card_id, .. } => *card_id,
+            SpellAbility::CastFromGraveyard { card_id, .. } => *card_id,
         }
     }
 
@@ -113,11 +127,14 @@ impl SpellAbility {
         matches!(self, SpellAbility::PlayLand { .. })
     }
 
-    /// Check if this is a spell (includes casting from exile or command zone)
+    /// Check if this is a spell (includes casting from exile, command zone, or graveyard)
     pub fn is_spell(&self) -> bool {
         matches!(
             self,
-            SpellAbility::CastSpell { .. } | SpellAbility::CastFromExile { .. } | SpellAbility::CastFromCommand { .. }
+            SpellAbility::CastSpell { .. }
+                | SpellAbility::CastFromExile { .. }
+                | SpellAbility::CastFromCommand { .. }
+                | SpellAbility::CastFromGraveyard { .. }
         )
     }
 

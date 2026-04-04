@@ -83,11 +83,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Draw => {
-            // Defined$ Player = each player (Wheel of Fortune); otherwise controller placeholder
-            let player = if params.get("Defined") == Some("Player") {
-                PlayerId::all_players()
-            } else {
-                PlayerId::placeholder()
+            // Defined$ Player = each player (Wheel of Fortune)
+            // Defined$ Remembered = draw for remembered players only (Raphael's Technique)
+            // otherwise controller placeholder
+            let player = match params.get("Defined") {
+                Some("Player") => PlayerId::all_players(),
+                Some("Remembered") => PlayerId::remembered_players(),
+                _ => PlayerId::placeholder(),
             };
             // Extract card count from NumCards$ parameter (default to 1 if not specified)
             // If the value is "X" referencing SVar X = Count$xPaid, use XPaid variant
@@ -101,6 +103,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
 
         ApiType::Discard => {
             let remember_discarded = params.get("RememberDiscarded") == Some("True");
+            let optional = params.get("Optional") == Some("True");
+            let remember_discarding_players = params.get("RememberDiscardingPlayers") == Some("True");
             // Defined$ Player = each player; otherwise controller placeholder
             let player = if params.get("Defined") == Some("Player") {
                 PlayerId::all_players()
@@ -125,6 +129,8 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     player,
                     count,
                     remember_discarded,
+                    optional,
+                    remember_discarding_players,
                 })
             }
         }

@@ -746,6 +746,64 @@ impl<'a> GameLoop<'a> {
                     }
                 }
 
+                PersistentEffectKind::MayPlayFromGraveyard {
+                    owner,
+                    max_power,
+                    max_toughness,
+                    your_turn_only,
+                    add_finality_counter,
+                } => {
+                    if *owner != player_id {
+                        continue;
+                    }
+                    // Check turn restriction
+                    if *your_turn_only && !is_active_player {
+                        continue;
+                    }
+
+                    // Check all creatures in the player's graveyard
+                    let graveyard_cards: smallvec::SmallVec<[CardId; 16]> = self
+                        .game
+                        .get_player_zones(player_id)
+                        .map(|zones| zones.graveyard.cards.iter().copied().collect())
+                        .unwrap_or_default();
+
+                    for card_id in graveyard_cards {
+                        if let Some(card) = self.game.cards.try_get(card_id) {
+                            // Must be a creature
+                            if !card.is_creature() {
+                                continue;
+                            }
+
+                            // Check power/toughness restrictions
+                            if let Some(max_p) = max_power {
+                                if i32::from(card.current_power()) > *max_p {
+                                    continue;
+                                }
+                            }
+                            if let Some(max_t) = max_toughness {
+                                if i32::from(card.current_toughness()) > *max_t {
+                                    continue;
+                                }
+                            }
+
+                            // Check timing (creatures are sorcery speed)
+                            if !(is_sorcery_speed && stack_is_empty) {
+                                continue;
+                            }
+
+                            // Check if we can pay the mana cost
+                            if self.mana_engine.can_pay_with_pool(&card.mana_cost, &mana_pool) {
+                                self.abilities_buffer.push(SpellAbility::CastFromGraveyard {
+                                    card_id,
+                                    effect_id: effect.id,
+                                    add_finality_counter: *add_finality_counter,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 // Other persistent effect kinds don't grant casting permission
                 PersistentEffectKind::Imprint { .. }
                 | PersistentEffectKind::Suspend { .. }

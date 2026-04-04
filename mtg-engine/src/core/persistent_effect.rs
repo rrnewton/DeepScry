@@ -155,6 +155,31 @@ pub enum PersistentEffectKind {
     // - Cascade (exile until you hit a cheaper spell)
     // - Hideaway (look at cards, exile one face-down)
     // - Adventure (in exile, can cast creature half)
+    /// MayPlayFromGraveyard: Grants permission to cast creature spells from graveyard.
+    ///
+    /// Created by: Leonardo, Sewer Samurai (static continuous ability)
+    /// Effect: "During your turn, you may cast creature spells with power or toughness 1
+    ///          or less from your graveyard. If you cast a spell this way, that creature
+    ///          enters with a finality counter on it."
+    ///
+    /// The source is the permanent granting this ability (e.g., Leonardo).
+    /// Cleanup: when source leaves the battlefield.
+    MayPlayFromGraveyard {
+        /// Player who may cast from graveyard
+        owner: PlayerId,
+
+        /// Maximum power for eligible creatures (None = no restriction)
+        max_power: Option<i32>,
+
+        /// Maximum toughness for eligible creatures (None = no restriction)
+        max_toughness: Option<i32>,
+
+        /// If true, only during controller's turn
+        your_turn_only: bool,
+
+        /// If true, creatures cast this way enter with a finality counter
+        add_finality_counter: bool,
+    },
 }
 
 /// Condition that triggers automatic cleanup of a persistent effect.
@@ -268,6 +293,19 @@ impl PersistentEffectStore {
                 &e.kind,
                 PersistentEffectKind::CantBeBlocked { creature }
                 if *creature == creature_id
+            )
+        })
+    }
+
+    /// Find MayPlayFromGraveyard effects for a specific player.
+    ///
+    /// Returns an iterator over effects that let the player cast creatures from graveyard.
+    pub fn find_may_play_from_graveyard(&self, player_id: PlayerId) -> impl Iterator<Item = &PersistentEffect> {
+        self.effects.iter().filter(move |e| {
+            matches!(
+                &e.kind,
+                PersistentEffectKind::MayPlayFromGraveyard { owner, .. }
+                if *owner == player_id
             )
         })
     }

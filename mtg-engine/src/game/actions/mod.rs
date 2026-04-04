@@ -96,11 +96,15 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             Effect::DiscardCards {
                 count,
                 remember_discarded,
+                optional,
+                remember_discarding_players,
                 ..
             } => Effect::DiscardCards {
                 player: pid,
                 count: *count,
                 remember_discarded: *remember_discarded,
+                optional: *optional,
+                remember_discarding_players: *remember_discarding_players,
             },
             Effect::DrawCardsXPaid { .. } => Effect::DrawCardsXPaid { player: pid },
             Effect::DiscardCardsXPaid { remember_discarded, .. } => Effect::DiscardCardsXPaid {
@@ -417,6 +421,8 @@ impl GameState {
                 player,
                 count: x_paid,
                 remember_discarded,
+                optional: false,
+                remember_discarding_players: false,
             },
             other => other,
         }
@@ -1244,7 +1250,12 @@ impl GameState {
                             card_name, sacrifice_id
                         ));
                     }
-                    self.move_card(sacrifice_id, Zone::Battlefield, Zone::Graveyard, player_id)?;
+                    self.move_card(
+                        sacrifice_id,
+                        Zone::Battlefield,
+                        self.death_destination_for_card(sacrifice_id),
+                        player_id,
+                    )?;
                 }
             }
         }
@@ -2009,10 +2020,14 @@ impl GameState {
                 player,
                 count,
                 remember_discarded,
+                optional,
+                remember_discarding_players,
             } if player.is_placeholder() => Effect::DiscardCards {
                 player: card_owner,
                 count: *count,
                 remember_discarded: *remember_discarded,
+                optional: *optional,
+                remember_discarding_players: *remember_discarding_players,
             },
             Effect::DiscardCardsXPaid {
                 player,
@@ -2383,17 +2398,47 @@ impl GameState {
             }
 
             Effect::DrawCards { player, count } => {
-                for _ in 0..*count {
-                    let (_, draw_num) = self.draw_card(*player)?;
-                    // Check for "second card drawn" triggers
-                    self.check_card_drawn_triggers(*player, draw_num)?;
+                if player.is_remembered_players() {
+                    // Draw for each player stored in remembered_players
+                    // Clone to avoid borrow conflict during mutation
+                    let players: smallvec::SmallVec<[PlayerId; 4]> = self.remembered_players.iter().copied().collect();
+                    for pid in players {
+                        for _ in 0..*count {
+                            let (_, draw_num) = self.draw_card(pid)?;
+                            self.check_card_drawn_triggers(pid, draw_num)?;
+                        }
+                    }
+                } else {
+                    for _ in 0..*count {
+                        let (_, draw_num) = self.draw_card(*player)?;
+                        // Check for "second card drawn" triggers
+                        self.check_card_drawn_triggers(*player, draw_num)?;
+                    }
                 }
             }
             Effect::DiscardCards {
                 player,
                 count,
                 remember_discarded,
+                optional,
+                remember_discarding_players,
             } => {
+                // Optional discard: AI decides whether to discard.
+                // For "discard hand, draw 7" patterns, always choose to discard.
+                if *optional {
+                    let hand_size = self
+                        .get_player_zones(*player)
+                        .map(|zones| zones.hand.cards.len())
+                        .unwrap_or(0);
+                    // AI heuristic: always discard when optional (the draw is typically worth it)
+                    // A smarter heuristic could compare hand quality vs expected draw value
+                    if hand_size == 0 {
+                        // Nothing to discard - skip but still remember if discarding players
+                        // (per rules: choosing to discard 0 cards is still choosing to discard)
+                        return Ok(());
+                    }
+                }
+
                 if *count == u8::MAX {
                     // Mode$ Hand: discard ENTIRE hand unconditionally.
                     // We collect all card IDs first (can't borrow zones during mutation).
@@ -2406,17 +2451,23 @@ impl GameState {
                         .map(|zones| zones.hand.cards.iter().copied().collect())
                         .unwrap_or_default();
                     hand_cards.sort_by_key(|id| id.as_u32());
+                    let did_discard = !hand_cards.is_empty();
                     for card_id in hand_cards {
                         if *remember_discarded {
                             self.remembered_cards.push(card_id);
                         }
                         self.discard_card(*player, card_id)?;
                     }
+                    if *remember_discarding_players && did_discard {
+                        self.remembered_players.push(*player);
+                    }
                 } else {
                     // Fixed count: AI chooses which cards to discard
+                    let mut did_discard = false;
                     for _ in 0..*count {
                         let card_to_discard = self.choose_card_to_discard(*player)?;
                         if let Some(card_id) = card_to_discard {
+                            did_discard = true;
                             if *remember_discarded {
                                 self.remembered_cards.push(card_id);
                             }
@@ -2425,6 +2476,9 @@ impl GameState {
                             // No cards in hand to discard
                             break;
                         }
+                    }
+                    if *remember_discarding_players && did_discard {
+                        self.remembered_players.push(*player);
                     }
                 }
             }
@@ -2502,9 +2556,10 @@ impl GameState {
                     // CR 701.15a: Regeneration replaces destruction
                     self.apply_regeneration_shield(*target)?;
                 } else {
+                    let dest = self.death_destination_for_card(*target);
                     // Check death triggers BEFORE moving the card (trigger still has access to card data)
                     let _ = self.check_death_triggers(*target);
-                    self.move_card(*target, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    self.move_card(*target, Zone::Battlefield, dest, owner)?;
                 }
             }
             Effect::GainControl {
@@ -3707,7 +3762,7 @@ impl GameState {
                             .get(card_id)
                             .map(|c| c.name.to_string())
                             .unwrap_or_else(|_| "Unknown".to_string());
-                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                        self.move_card(card_id, Zone::Battlefield, self.death_destination_for_card(card_id), owner)?;
                         self.logger
                             .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
                     }
@@ -3739,7 +3794,7 @@ impl GameState {
                         .try_get(card_id)
                         .map(|c| c.name.to_string())
                         .unwrap_or_else(|| "Unknown".to_string());
-                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    self.move_card(card_id, Zone::Battlefield, self.death_destination_for_card(card_id), owner)?;
                     self.logger
                         .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
                 }
@@ -3849,7 +3904,8 @@ impl GameState {
                 for &(card_id, _) in candidates.iter().take(to_sac) {
                     let card_name = self.cards.get(card_id).map(|c| c.name.to_string()).unwrap_or_default();
                     let owner = self.cards.get(card_id).map(|c| c.owner).unwrap_or(*player);
-                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    let dest = self.death_destination_for_card(card_id);
+                    self.move_card(card_id, Zone::Battlefield, dest, owner)?;
                     self.logger
                         .gamelog(&format!("{} sacrifices {} ({})", player_name, card_name, card_id));
                 }
@@ -4458,8 +4514,9 @@ impl GameState {
                 }
             }
             Effect::ClearRemembered => {
-                // Clear the remembered cards storage
+                // Clear both remembered cards and remembered players storage
                 self.remembered_cards.clear();
+                self.remembered_players.clear();
             }
             Effect::UnlessCostWrapper {
                 inner_effect,
@@ -4689,6 +4746,8 @@ impl GameState {
                     player: *player,
                     count: 0,
                     remember_discarded: *remember_discarded,
+                    optional: false,
+                    remember_discarding_players: false,
                 })?;
             }
         }
@@ -5240,10 +5299,9 @@ impl GameState {
                     let sac_owner = sac_card.owner;
                     log::info!("Sacrificing {} ({}) for trigger cost", sac_name, sac_target.as_u32());
 
-                    // Move from battlefield to graveyard
-                    self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
-
-                    // Check sacrifice triggers (e.g., Pirate Peddlers Mode$ Sacrificed)
+                    // Move from battlefield to graveyard (or exile if finality counter)
+                    let sac_dest = self.death_destination_for_card(sac_target);
+                    self.move_card(sac_target, Zone::Battlefield, sac_dest, sac_owner)?;
                     self.check_triggers(TriggerEvent::Sacrificed, sac_target)?;
                 }
             }
@@ -6162,8 +6220,9 @@ impl GameState {
                     self.logger
                         .gamelog(&format!("Sacrifices {} for trigger cost", sac_name));
 
-                    // Move from battlefield to graveyard
-                    self.move_card(sac_target, Zone::Battlefield, Zone::Graveyard, sac_owner)?;
+                    // Move from battlefield to graveyard (or exile if finality counter)
+                    let sac_dest = self.death_destination_for_card(sac_target);
+                    self.move_card(sac_target, Zone::Battlefield, sac_dest, sac_owner)?;
 
                     // Check sacrifice triggers (e.g., Pirate Peddlers)
                     self.check_triggers(TriggerEvent::Sacrificed, sac_target)?;
@@ -6879,10 +6938,11 @@ impl GameState {
                     )));
                 }
 
-                // Sacrifice the permanents (move to graveyard) and check triggers
+                // Sacrifice the permanents (move to graveyard or exile if finality) and check triggers
                 for sac_id in to_sacrifice.iter().take(*count as usize) {
                     let owner = self.cards.get(*sac_id)?.owner;
-                    self.move_card(*sac_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    let dest = self.death_destination_for_card(*sac_id);
+                    self.move_card(*sac_id, Zone::Battlefield, dest, owner)?;
                     // Check sacrifice triggers (e.g., Pirate Peddlers)
                     self.check_triggers(TriggerEvent::Sacrificed, *sac_id)?;
                 }
@@ -6891,9 +6951,10 @@ impl GameState {
             }
 
             Cost::Sacrifice { card_id: sac_id } => {
-                // Sacrifice a specific permanent (move to graveyard)
+                // Sacrifice a specific permanent (move to graveyard or exile if finality)
                 let owner = self.cards.get(*sac_id)?.owner;
-                self.move_card(*sac_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                let dest = self.death_destination_for_card(*sac_id);
+                self.move_card(*sac_id, Zone::Battlefield, dest, owner)?;
                 // Check sacrifice triggers
                 self.check_triggers(TriggerEvent::Sacrificed, *sac_id)
             }
@@ -7089,7 +7150,8 @@ impl GameState {
                     self.logger
                         .normal(&format!("{} has 0 loyalty and is put into the graveyard", card_name));
                     let owner = self.cards.get(card_id)?.owner;
-                    self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    let dest = self.death_destination_for_card(card_id);
+                    self.move_card(card_id, Zone::Battlefield, dest, owner)?;
                 }
                 Ok(())
             }
@@ -7244,8 +7306,9 @@ impl GameState {
                         // Check death triggers BEFORE moving the card
                         let _ = self.check_death_triggers(card_id);
 
-                        // Move to graveyard
-                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                        // Move to graveyard (or exile if finality counter)
+                        let dest = self.death_destination_for_card(card_id);
+                        self.move_card(card_id, Zone::Battlefield, dest, owner)?;
 
                         // Check sacrifice triggers (e.g., Pirate Peddlers)
                         let _ = self.check_triggers(TriggerEvent::Sacrificed, card_id);

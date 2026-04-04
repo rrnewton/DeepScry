@@ -92,6 +92,13 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
                 };
                 output.push_str(&format!("  [{}] {} {} ({})\n", display_idx, type_str, name, cost));
             }
+            SpellAbility::CastFromGraveyard { card_id, .. } => {
+                let name = view.card_name(*card_id).unwrap_or_default();
+                output.push_str(&format!(
+                    "  [{}] cast from graveyard: {} (with finality)\n",
+                    display_idx, name
+                ));
+            }
         }
     }
 
@@ -276,6 +283,7 @@ fn spell_ability_sort_key(ability: &SpellAbility) -> u8 {
         SpellAbility::CastFromExile { .. } => 3,
         SpellAbility::ActivateAbility { .. } => 4,
         SpellAbility::Cycle { .. } => 5,
+        SpellAbility::CastFromGraveyard { .. } => 6,
     }
 }
 
@@ -335,10 +343,13 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
             };
             format!("{} {} ({})", type_str, name, cost)
         }
+        SpellAbility::CastFromGraveyard { card_id, .. } => {
+            let name = view.card_name(*card_id).unwrap_or_default();
+            format!("cast from graveyard {} (with finality)", name)
+        }
     }
 }
 
-/// Format all spell ability choices as a Vec of strings
 ///
 /// Index 0 is always "pass", subsequent indices are formatted abilities
 /// using the rich input syntax (e.g., "play Mountain", "cast Lightning Bolt").

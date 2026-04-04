@@ -1742,6 +1742,7 @@ impl<'a> GameLoop<'a> {
                                                 player,
                                                 count,
                                                 remember_discarded,
+                                                ..
                                             } if *count != u8::MAX => {
                                                 let discard_player = if player.is_placeholder() {
                                                     current_priority
@@ -1814,10 +1815,13 @@ impl<'a> GameLoop<'a> {
                                                 player,
                                                 count,
                                                 remember_discarded,
+                                                ..
                                             } if player.is_placeholder() => crate::core::Effect::DiscardCards {
                                                 player: current_priority,
                                                 count: *count,
                                                 remember_discarded: *remember_discarded,
+                                                optional: false,
+                                                remember_discarding_players: false,
                                             },
                                             // Loot (discard then draw): Route discard through controller
                                             // for network-safe decisions (mtg-xomxx).
@@ -2448,6 +2452,95 @@ impl<'a> GameLoop<'a> {
 
                                 // Cycling is complete (doesn't use the stack)
                             }
+
+                            crate::core::SpellAbility::CastFromGraveyard {
+                                card_id,
+                                effect_id: _,
+                                add_finality_counter,
+                            } => {
+                                // Cast creature from graveyard (Leonardo, Sewer Samurai)
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| "Unknown".to_string());
+
+                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                    let message = format!(
+                                        "{} casts {} from graveyard (with finality counter)",
+                                        self.get_player_name(current_priority),
+                                        card_name,
+                                    );
+                                    self.game.logger.gamelog(&message);
+                                }
+
+                                // Move card from graveyard to stack
+                                let owner = self
+                                    .game
+                                    .cards
+                                    .get(card_id)
+                                    .map(|c| c.owner)
+                                    .unwrap_or(current_priority);
+
+                                if let Err(e) = self.game.move_card(
+                                    card_id,
+                                    crate::zones::Zone::Graveyard,
+                                    crate::zones::Zone::Stack,
+                                    owner,
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!("Error moving from graveyard: {e}"));
+                                    }
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
+
+                                // Pay the card's mana cost normally
+                                let mana_cost = self.game.cards.get(card_id).map(|c| c.mana_cost).unwrap_or_default();
+
+                                self.mana_engine.update_mut(self.game, current_priority);
+                                use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+                                let mana_sources = self.mana_engine.all_sources();
+                                self.sources_to_tap_buffer.clear();
+                                let resolver = GreedyManaResolver::new();
+                                resolver.compute_tap_order(&mana_cost, mana_sources, &mut self.sources_to_tap_buffer);
+
+                                let mut remaining_hint = mana_cost;
+                                for &source_id in &self.sources_to_tap_buffer {
+                                    if let Err(e) =
+                                        self.game
+                                            .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
+                                    {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            self.game.logger.normal(&format!("Failed to tap: {e}"));
+                                        }
+                                    }
+                                    remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                }
+
+                                // If add_finality_counter, mark the card so it gets a finality counter on ETB
+                                if add_finality_counter {
+                                    if let Ok(card) = self.game.cards.get_mut(card_id) {
+                                        card.add_counter(crate::core::CounterType::Finality, 1);
+                                        log::debug!(
+                                            "Added finality counter to {} ({}) cast from graveyard",
+                                            card_name,
+                                            card_id
+                                        );
+                                    }
+                                }
+
+                                // Spell is now on the stack - will resolve when both players pass
+                            }
                         }
 
                         // After taking an action, switch priority to other player
@@ -2605,6 +2698,7 @@ impl<'a> GameLoop<'a> {
                         player,
                         count,
                         remember_discarded,
+                        ..
                     } if *count != u8::MAX => {
                         let discard_count = *count as usize;
                         let remember = *remember_discarded;
@@ -2775,10 +2869,13 @@ impl<'a> GameLoop<'a> {
                         player,
                         count,
                         remember_discarded,
+                        ..
                     } if player.is_placeholder() => Effect::DiscardCards {
                         player: card_owner,
                         count: *count,
                         remember_discarded: *remember_discarded,
+                        optional: false,
+                        remember_discarding_players: false,
                     },
                     Effect::CreateToken {
                         controller,
@@ -2989,9 +3086,9 @@ impl<'a> GameLoop<'a> {
                     // Check death triggers
                     let _ = self.game.check_death_triggers(card_id);
 
-                    // Move to graveyard
-                    self.game
-                        .move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                    // Move to graveyard (or exile if finality counter)
+                    let dest = self.game.death_destination_for_card(card_id);
+                    self.game.move_card(card_id, Zone::Battlefield, dest, owner)?;
                 }
             }
         }

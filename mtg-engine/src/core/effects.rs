@@ -539,6 +539,14 @@ pub enum Effect {
         count: u8,
         /// If true, store discarded cards in game.remembered_cards for ImmediateTrigger
         remember_discarded: bool,
+        /// If true, each player may choose whether to discard (Optional$ True)
+        /// Used by Raphael's Technique: "Each player may discard their hand"
+        #[serde(default)]
+        optional: bool,
+        /// If true, store which players actually discarded in game.remembered_players
+        /// Used by Raphael's Technique: draw 7 only for players who discarded
+        #[serde(default)]
+        remember_discarding_players: bool,
     },
 
     /// Discard X cards, where X is the value paid when casting

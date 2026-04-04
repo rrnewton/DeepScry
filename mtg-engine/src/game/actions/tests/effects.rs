@@ -1778,6 +1778,137 @@ mod tests {
         );
     }
 
+    // =========================================================================
+    // Raphael's Technique: Optional discard + RememberDiscardingPlayers + Draw
+    // =========================================================================
+
+    #[test]
+    fn test_optional_discard_remember_discarding_players() {
+        // Test Raphael's Technique pattern: each player MAY discard hand, draw 7
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // Give P1 3 cards in hand
+        for i in 0..3 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P1 Card {i}"), p1_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p1_id).unwrap().hand.add(card_id);
+        }
+
+        // Give P2 2 cards in hand
+        for i in 0..2 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P2 Card {i}"), p2_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p2_id).unwrap().hand.add(card_id);
+        }
+
+        // Add plenty of cards to both libraries for draw
+        for i in 0..20 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P1 Library {i}"), p1_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p1_id).unwrap().library.add(card_id);
+        }
+        for i in 0..20 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P2 Library {i}"), p2_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p2_id).unwrap().library.add(card_id);
+        }
+
+        // Execute discard effect for P1 (optional, remember discarding players)
+        let discard_p1 = Effect::DiscardCards {
+            player: p1_id,
+            count: u8::MAX, // Mode$ Hand
+            remember_discarded: false,
+            optional: true,
+            remember_discarding_players: true,
+        };
+        game.execute_effect(&discard_p1).unwrap();
+
+        // P1 should have discarded (AI always discards when optional)
+        assert_eq!(
+            game.get_player_zones(p1_id).unwrap().hand.cards.len(),
+            0,
+            "P1 should have 0 cards after discarding hand"
+        );
+        assert!(
+            game.remembered_players.contains(&p1_id),
+            "P1 should be in remembered_players"
+        );
+
+        // Execute discard effect for P2
+        let discard_p2 = Effect::DiscardCards {
+            player: p2_id,
+            count: u8::MAX,
+            remember_discarded: false,
+            optional: true,
+            remember_discarding_players: true,
+        };
+        game.execute_effect(&discard_p2).unwrap();
+
+        assert_eq!(
+            game.get_player_zones(p2_id).unwrap().hand.cards.len(),
+            0,
+            "P2 should have 0 cards after discarding hand"
+        );
+        assert_eq!(game.remembered_players.len(), 2, "Both players should be remembered");
+
+        // Now draw 7 for remembered players
+        let draw = Effect::DrawCards {
+            player: PlayerId::remembered_players(),
+            count: 7,
+        };
+        game.execute_effect(&draw).unwrap();
+
+        assert_eq!(
+            game.get_player_zones(p1_id).unwrap().hand.cards.len(),
+            7,
+            "P1 should have drawn 7 cards"
+        );
+        assert_eq!(
+            game.get_player_zones(p2_id).unwrap().hand.cards.len(),
+            7,
+            "P2 should have drawn 7 cards"
+        );
+
+        // Clear remembered
+        game.execute_effect(&Effect::ClearRemembered).unwrap();
+        assert!(
+            game.remembered_players.is_empty(),
+            "remembered_players should be cleared"
+        );
+        assert!(game.remembered_cards.is_empty(), "remembered_cards should be cleared");
+    }
+
+    #[test]
+    fn test_optional_discard_empty_hand_skips() {
+        // Test that a player with empty hand is NOT added to remembered_players
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // P1 has empty hand (no cards given)
+
+        let discard = Effect::DiscardCards {
+            player: p1_id,
+            count: u8::MAX,
+            remember_discarded: false,
+            optional: true,
+            remember_discarding_players: true,
+        };
+        game.execute_effect(&discard).unwrap();
+
+        // P1 had nothing to discard - should not be remembered
+        assert!(
+            game.remembered_players.is_empty(),
+            "Player with empty hand should not be remembered"
+        );
+    }
+
     #[test]
     fn test_effect_converter_put_counter_all() {
         use crate::loader::ability_parser::AbilityParams;
@@ -1821,5 +1952,250 @@ mod tests {
             panic!("Expected AddPhase");
         };
         assert_eq!(count, 1);
+    }
+
+    fn test_draw_for_remembered_players_only() {
+        // Test that draw with remembered_players sentinel only draws for remembered players
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Add library cards for both
+        for i in 0..10 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P1 Lib {i}"), p1_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p1_id).unwrap().library.add(card_id);
+        }
+        for i in 0..10 {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, format!("P2 Lib {i}"), p2_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p2_id).unwrap().library.add(card_id);
+        }
+
+        // Only P1 is remembered
+        game.remembered_players.push(p1_id);
+
+        let draw = Effect::DrawCards {
+            player: PlayerId::remembered_players(),
+            count: 3,
+        };
+        game.execute_effect(&draw).unwrap();
+
+        assert_eq!(
+            game.get_player_zones(p1_id).unwrap().hand.cards.len(),
+            3,
+            "P1 (remembered) should have drawn 3"
+        );
+        assert_eq!(
+            game.get_player_zones(p2_id).unwrap().hand.cards.len(),
+            0,
+            "P2 (not remembered) should not have drawn"
+        );
+    }
+
+    // =========================================================================
+    // Finality Counter: creature with finality counter → exile on death
+    // =========================================================================
+
+    #[test]
+    fn test_finality_counter_destroy_exiles() {
+        use crate::core::CounterType;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create a creature with a finality counter
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Finality Bear".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p1_id;
+        creature.add_counter(CounterType::Finality, 1);
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Destroy it
+        let destroy = Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        };
+        game.execute_effect(&destroy).unwrap();
+
+        // Should be in exile, NOT graveyard
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Creature should not be on battlefield"
+        );
+        assert!(
+            game.get_player_zones(p1_id).unwrap().exile.contains(creature_id),
+            "Creature with finality counter should be exiled, not go to graveyard"
+        );
+        assert!(
+            !game.get_player_zones(p1_id).unwrap().graveyard.contains(creature_id),
+            "Creature with finality counter should NOT be in graveyard"
+        );
+    }
+
+    #[test]
+    fn test_no_finality_counter_goes_to_graveyard() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create a normal creature (no finality counter)
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Normal Bear".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Destroy it
+        let destroy = Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        };
+        game.execute_effect(&destroy).unwrap();
+
+        // Should be in graveyard
+        assert!(
+            game.get_player_zones(p1_id).unwrap().graveyard.contains(creature_id),
+            "Normal creature should go to graveyard"
+        );
+        assert!(
+            !game.get_player_zones(p1_id).unwrap().exile.contains(creature_id),
+            "Normal creature should NOT be exiled"
+        );
+    }
+
+    #[test]
+    fn test_finality_counter_lethal_damage_exiles() {
+        use crate::core::CounterType;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create a creature with finality counter
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Finality Soldier".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p1_id;
+        creature.add_counter(CounterType::Finality, 1);
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Deal lethal damage
+        let card = game.cards.get_mut(creature_id).unwrap();
+        card.damage = 3; // >= toughness of 2
+
+        // Check lethal damage (SBA)
+        game.check_lethal_damage().unwrap();
+
+        // Should be in exile
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "Creature should not be on battlefield"
+        );
+        assert!(
+            game.get_player_zones(p1_id).unwrap().exile.contains(creature_id),
+            "Creature with finality counter should be exiled from lethal damage"
+        );
+    }
+
+    #[test]
+    fn test_put_finality_counter_then_destroy() {
+        use crate::core::CounterType;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create a creature
+        let creature_id = game.next_card_id();
+        let mut creature = Card::new(creature_id, "Test Creature".to_string(), p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(1));
+        creature.set_base_toughness(Some(1));
+        creature.controller = p1_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // Put a finality counter on it via the PutCounter effect
+        let put_counter = Effect::PutCounter {
+            target: creature_id,
+            counter_type: CounterType::Finality,
+            amount: 1,
+        };
+        game.execute_effect(&put_counter).unwrap();
+
+        // Verify counter was placed
+        assert_eq!(
+            game.cards.get(creature_id).unwrap().get_counter(CounterType::Finality),
+            1,
+            "Finality counter should be on creature"
+        );
+
+        // Now destroy - should go to exile
+        let destroy = Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+        };
+        game.execute_effect(&destroy).unwrap();
+
+        assert!(
+            game.get_player_zones(p1_id).unwrap().exile.contains(creature_id),
+            "Creature with finality counter should be exiled on destroy"
+        );
+    }
+
+    // =========================================================================
+    // MayPlayFromGraveyard: persistent effect for casting from graveyard
+    // =========================================================================
+
+    #[test]
+    fn test_may_play_from_graveyard_persistent_effect() {
+        use crate::core::persistent_effect::{CleanupCondition, PersistentEffectKind};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Create Leonardo as the source on battlefield
+        let leonardo_id = game.next_card_id();
+        let mut leonardo = Card::new(leonardo_id, "Leonardo, Sewer Samurai".to_string(), p1_id);
+        leonardo.add_type(CardType::Creature);
+        leonardo.set_base_power(Some(3));
+        leonardo.set_base_toughness(Some(3));
+        leonardo.controller = p1_id;
+        game.cards.insert(leonardo_id, leonardo);
+        game.battlefield.add(leonardo_id);
+
+        // Add the persistent effect
+        game.persistent_effects.add(
+            PersistentEffectKind::MayPlayFromGraveyard {
+                owner: p1_id,
+                max_power: Some(1),
+                max_toughness: Some(1),
+                your_turn_only: true,
+                add_finality_counter: true,
+            },
+            leonardo_id,
+            p1_id,
+            CleanupCondition::SourceLeavesBattlefield { source: leonardo_id },
+        );
+
+        // Verify the effect was added
+        let effects: Vec<_> = game.persistent_effects.find_may_play_from_graveyard(p1_id).collect();
+        assert_eq!(effects.len(), 1, "Should have 1 MayPlayFromGraveyard effect");
+
+        // Verify cleanup when Leonardo leaves
+        let cleanup_ids = game
+            .persistent_effects
+            .find_effects_to_cleanup_on_zone_change(leonardo_id, crate::zones::Zone::Battlefield);
+        assert_eq!(cleanup_ids.len(), 1, "Should clean up when Leonardo leaves battlefield");
     }
 }

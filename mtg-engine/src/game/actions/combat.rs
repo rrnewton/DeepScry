@@ -806,14 +806,22 @@ impl GameState {
             // This handles cards like Su-Chi which adds mana when it dies
             let _ = self.check_death_triggers(creature_id);
 
-            // Now move the creature to graveyard
+            // Now move the creature to graveyard (or exile if finality counter)
             if let Ok(creature) = self.cards.get(creature_id) {
                 let owner = creature.owner;
-                self.move_card(creature_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                let dest = self.death_destination_for_card(creature_id);
+                self.move_card(creature_id, Zone::Battlefield, dest, owner)?;
 
                 // Log the death from combat damage (matching format of check_lethal_damage in state.rs)
-                self.logger
-                    .gamelog(&format!("{} ({}) dies from combat damage", creature_name, creature_id));
+                if dest == Zone::Exile {
+                    self.logger.gamelog(&format!(
+                        "{} ({}) exiled from combat damage (finality counter)",
+                        creature_name, creature_id
+                    ));
+                } else {
+                    self.logger
+                        .gamelog(&format!("{} ({}) dies from combat damage", creature_name, creature_id));
+                }
             }
         }
 

@@ -62,6 +62,10 @@ pub const REUSE_PREVIOUS_TARGET: u32 = u32::MAX;
 /// Used when parsing `Defined$ Player` to mean "each player".
 pub const ALL_PLAYERS_ID: u32 = u32::MAX - 1;
 
+/// Sentinel value indicating "remembered players" for conditional draw effects.
+/// Used when parsing `Defined$ Remembered` to mean "draw for each player that was remembered".
+pub const REMEMBERED_PLAYERS_ID: u32 = u32::MAX - 2;
+
 /// Sentinel value indicating "placeholder to be resolved".
 /// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
 pub const PLACEHOLDER_ID: u32 = 0;
@@ -104,6 +108,18 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn all_players() -> Self {
         EntityId::new(ALL_PLAYERS_ID)
+    }
+
+    /// Check if this ID means "remembered players" (for effects like Raphael's Technique).
+    #[inline]
+    pub fn is_remembered_players(&self) -> bool {
+        self.id == REMEMBERED_PLAYERS_ID
+    }
+
+    /// Create a sentinel ID meaning "remembered players".
+    #[inline]
+    pub fn remembered_players() -> Self {
+        EntityId::new(REMEMBERED_PLAYERS_ID)
     }
 
     /// Check if this ID is the "reuse previous target" sentinel.

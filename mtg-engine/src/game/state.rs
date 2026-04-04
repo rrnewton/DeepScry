@@ -158,6 +158,16 @@ pub struct GameState {
     #[serde(default)]
     pub remembered_cards: smallvec::SmallVec<[CardId; 4]>,
 
+    /// Remembered players for conditional effects.
+    ///
+    /// Temporary storage used during ability resolution chains to pass player
+    /// references between effects. For example:
+    /// - DB$ Discard with RememberDiscardingPlayers$ True stores discarding player IDs here
+    /// - DB$ Draw with Defined$ Remembered draws for each remembered player
+    /// - DB$ Cleanup clears this storage
+    #[serde(default)]
+    pub remembered_players: smallvec::SmallVec<[PlayerId; 4]>,
+
     /// Queue of extra turns granted by effects (e.g., Time Walk).
     ///
     /// Each entry is the PlayerId who gets the extra turn.
@@ -345,6 +355,7 @@ impl GameState {
             persistent_effects: PersistentEffectStore::new(),
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
+            remembered_players: smallvec::SmallVec::new(),
             extra_turns: std::collections::VecDeque::new(),
             extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
@@ -1647,6 +1658,19 @@ impl GameState {
         }
     }
 
+    /// Determine the destination zone when a creature dies.
+    ///
+    /// If the creature has a finality counter, it goes to exile instead of graveyard
+    /// (MTG CR 122.1c: "If a permanent with a finality counter on it would die, exile it instead.")
+    pub fn death_destination_for_card(&self, card_id: CardId) -> Zone {
+        if let Ok(card) = self.cards.get(card_id) {
+            if card.get_counter(crate::core::CounterType::Finality) > 0 {
+                return Zone::Exile;
+            }
+        }
+        Zone::Graveyard
+    }
+
     /// Check state-based actions for lethal damage (MTG CR 704.5g)
     ///
     /// If a creature has damage marked on it greater than or equal to its toughness,
@@ -1696,15 +1720,23 @@ impl GameState {
         // Destroy all creatures with lethal damage
         for (card_id, owner) in creatures_to_destroy {
             let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
+            let dest = self.death_destination_for_card(card_id);
 
             // Check death triggers BEFORE moving to graveyard (MTG Rules 603.6c)
             // The trigger sees the game state as it was just before the creature left
             let _ = self.check_death_triggers(card_id);
 
-            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
             if let Some(name) = card_name {
-                self.logger
-                    .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
+                if dest == Zone::Exile {
+                    self.logger.gamelog(&format!(
+                        "{} ({}) exiled from lethal damage (finality counter)",
+                        name, card_id
+                    ));
+                } else {
+                    self.logger
+                        .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
+                }
             }
         }
 
@@ -1762,7 +1794,8 @@ impl GameState {
         for (card_id, owner, name, kept_card) in cards_to_sacrifice {
             log::debug!(target: "sba", "Legendary rule: {} ({}) sacrificed as duplicate (keeping {})",
                 name, card_id.as_u32(), kept_card.as_u32());
-            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            let dest = self.death_destination_for_card(card_id);
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
             self.logger.gamelog(&format!(
                 "{} ({}) sacrificed due to legendary rule (duplicate of {} ({}))",
                 name, card_id, name, kept_card
@@ -1805,14 +1838,15 @@ impl GameState {
             })
             .collect();
 
-        // Move orphaned auras to graveyard
+        // Move orphaned auras to graveyard (or exile if finality counter)
         for (card_id, owner) in auras_to_destroy {
             let card_name = self
                 .cards
                 .try_get(card_id)
                 .map(|c| c.name.to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-            self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+            let dest = self.death_destination_for_card(card_id);
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
             self.logger.gamelog(&format!(
                 "{} ({}) goes to graveyard (aura not attached to valid permanent)",
                 card_name, card_id
@@ -2909,7 +2943,8 @@ impl GameState {
                 if let Some(zone) = self.find_card_zone(card_id) {
                     if zone == Zone::Battlefield {
                         let owner = self.cards.try_get(card_id).map_or(controller, |c| c.owner);
-                        self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, owner)?;
+                        let dest = self.death_destination_for_card(card_id);
+                        self.move_card(card_id, Zone::Battlefield, dest, owner)?;
                     }
                 }
             }
@@ -3237,6 +3272,7 @@ impl Clone for GameState {
             persistent_effects: self.persistent_effects.clone(),
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
+            remembered_players: self.remembered_players.clone(),
             extra_turns: self.extra_turns.clone(),
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,

@@ -230,6 +230,10 @@ impl PlayerController for FancyFixedController {
                     };
                     format!("{}: {} ({})", type_str, name, cost)
                 }
+                SpellAbility::CastFromGraveyard { card_id, .. } => {
+                    let name = view.card_name(*card_id).unwrap_or_default();
+                    format!("Cast from graveyard: {} (finality)", name)
+                }
             }))
             .collect();
 
