@@ -68,6 +68,9 @@ pub struct FancyTuiController {
     renderer: FancyTuiRenderer,
     /// Whether logger was configured for memory-only mode
     logger_memory_mode_enabled: bool,
+    /// Card image state for terminal-native image rendering
+    #[cfg(feature = "ratatui-image")]
+    card_image: crate::game::card_image::CardImageState,
 }
 
 impl FancyTuiController {
@@ -81,6 +84,8 @@ impl FancyTuiController {
             player_id,
             renderer: FancyTuiRenderer::new(player_id, visual_stacks),
             logger_memory_mode_enabled: false,
+            #[cfg(feature = "ratatui-image")]
+            card_image: crate::game::card_image::CardImageState::new(),
         })
     }
 
@@ -256,6 +261,21 @@ impl FancyTuiController {
 
             terminal.draw(|f| {
                 self.renderer.draw_ui(f, view, Some(prompt), &choice_tuples);
+                // Render card image in the card details pane if available
+                #[cfg(feature = "ratatui-image")]
+                if let Some(area) = self.renderer.state.card_details_pane_area {
+                    let card_name = self
+                        .renderer
+                        .state
+                        .selected_card_id
+                        .and_then(|id| view.card_name(id));
+                    if self
+                        .card_image
+                        .update_for_card(self.renderer.state.selected_card_id, card_name.as_deref())
+                    {
+                        self.card_image.render(f, area);
+                    }
+                }
             })?;
 
             match self.wait_for_choice_input(choices.len(), view)? {

@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MTG Forge - Native Web GUI</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0a0a14;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            padding: 10px 20px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            border-bottom: 1px solid #1a2a50;
+        }
+        .header h1 { color: #ffd700; font-size: 18px; }
+        .header a { color: #4cc9f0; text-decoration: none; font-size: 13px; }
+        .header a:hover { text-decoration: underline; }
+        #status { color: #888; font-size: 12px; }
+
+        /* Launcher */
+        .launcher {
+            display: none;
+            flex-direction: column;
+            gap: 15px;
+            padding: 15px;
+            background: #0a0a14;
+            min-height: calc(100vh - 50px);
+        }
+        .launcher.show { display: flex; }
+        .global-pane {
+            background: #16213e;
+            border: 1px solid #4361ee;
+            border-radius: 8px;
+            padding: 15px;
+        }
+        .global-pane h2 {
+            color: #ffd700;
+            font-size: 14px;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .global-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        .player-panes { display: flex; gap: 15px; flex: 1; }
+        .player-pane {
+            flex: 1;
+            background: #16213e;
+            border: 1px solid #4361ee;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            min-width: 300px;
+        }
+        .player-pane.p1 { border-color: #4cc9f0; }
+        .player-pane.p2 { border-color: #f72585; }
+        .player-pane h2 { font-size: 16px; margin-bottom: 15px; }
+        .player-pane.p1 h2 { color: #4cc9f0; }
+        .player-pane.p2 h2 { color: #f72585; }
+        .pane-row {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-bottom: 12px;
+        }
+        .pane-row label { color: #888; font-size: 12px; font-weight: 500; }
+        .pane-row select, .pane-row input {
+            background: #0f3460;
+            color: white;
+            border: 1px solid #444;
+            padding: 8px 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 100%;
+        }
+        .pane-row .hint { color: #666; font-size: 11px; }
+        .launch-area {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            padding: 15px;
+        }
+        .launch-area button {
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            border: none;
+            font-weight: 500;
+            background: #4361ee;
+            color: white;
+        }
+        .launch-area button:hover { background: #3a0ca3; }
+        .launch-area button:disabled { background: #333; cursor: not-allowed; }
+        .checkbox-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .checkbox-row input[type="checkbox"] { width: 16px; height: 16px; }
+        .checkbox-row label { color: #ccc; font-size: 13px; cursor: pointer; }
+        .image-sources {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding-left: 5px;
+            margin-top: 5px;
+        }
+        .image-sources label { font-size: 11px; color: #888; }
+
+        /* Game Area - 3-column grid */
+        .game-area {
+            display: none;
+            flex: 1;
+            min-height: 0;
+        }
+        .game-area.show {
+            display: grid;
+            grid-template-columns: 280px 1fr 260px;
+            grid-template-rows: 1fr auto;
+            gap: 4px;
+            padding: 4px;
+            height: calc(100vh - 80px);
+        }
+
+        /* Pane common styles */
+        .pane {
+            background: #12182a;
+            border: 1px solid #1e2d50;
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .pane-header {
+            padding: 6px 10px;
+            background: #16213e;
+            border-bottom: 1px solid #1e2d50;
+            color: #ffd700;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            flex-shrink: 0;
+        }
+        .pane-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px;
+            min-height: 0;
+        }
+
+        /* Left column */
+        .left-col {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            grid-row: 1 / 3;
+        }
+        #pane-log { flex: 1; }
+        #pane-actions { flex: 0 0 auto; max-height: 40%; }
+
+        /* Center column */
+        .center-col {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            grid-row: 1 / 3;
+            min-height: 0;
+        }
+        #pane-opp-info { flex: 0 0 auto; }
+        #pane-opp-field { flex: 1; }
+        #pane-stack { flex: 0 0 auto; min-height: 50px; }
+        #pane-player-field { flex: 1; }
+        #pane-hand { flex: 0 0 auto; min-height: 90px; }
+
+        /* Right column */
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            grid-row: 1 / 3;
+        }
+        #pane-card-details { flex: 1; }
+        #pane-player-info { flex: 0 0 auto; }
+
+        /* Status bar */
+        .status-bar {
+            grid-column: 1 / -1;
+            padding: 4px 12px;
+            background: #16213e;
+            border-top: 1px solid #1e2d50;
+            color: #888;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .status-bar .phase { color: #4cc9f0; }
+        .status-bar .turn { color: #ffd700; }
+
+        /* Log entries */
+        .log-entry {
+            padding: 2px 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            color: #b0b0b0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .log-entry:nth-child(odd) { background: rgba(255,255,255,0.02); }
+
+        /* Action items */
+        .action-item {
+            padding: 6px 10px;
+            margin: 2px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #c0c0c0;
+            border: 1px solid transparent;
+            transition: background 0.1s;
+        }
+        .action-item:hover {
+            background: #1e3060;
+            border-color: #4361ee;
+        }
+        .action-item.selected {
+            background: #1a3080;
+            border-color: #4cc9f0;
+            color: #fff;
+        }
+        .action-idx {
+            display: inline-block;
+            width: 22px;
+            text-align: right;
+            margin-right: 6px;
+            color: #4cc9f0;
+            font-weight: bold;
+        }
+
+        /* Prompt */
+        .prompt-text {
+            padding: 8px 10px;
+            background: #1a2040;
+            color: #ffd700;
+            font-size: 13px;
+            font-weight: 600;
+            border-bottom: 1px solid #2a3060;
+        }
+
+        /* Card rendering */
+        .card {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            border: 1px solid #2a3a60;
+            border-radius: 4px;
+            padding: 4px;
+            margin: 3px;
+            background: #161e30;
+            cursor: pointer;
+            min-width: 80px;
+            max-width: 110px;
+            transition: border-color 0.15s, transform 0.15s;
+            position: relative;
+            font-size: 11px;
+        }
+        .card:hover {
+            border-color: #4cc9f0;
+            transform: translateY(-2px);
+            z-index: 1;
+        }
+        .card.tapped {
+            transform: rotate(8deg);
+            opacity: 0.8;
+        }
+        .card.tapped:hover {
+            transform: rotate(8deg) translateY(-2px);
+        }
+        .card.selected-card {
+            border-color: #ffd700;
+            box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+        }
+        .card-image {
+            width: 76px;
+            height: 106px;
+            object-fit: cover;
+            border-radius: 3px;
+            background: #0a0f20;
+        }
+        .card-name {
+            text-align: center;
+            font-size: 10px;
+            color: #c0c0c0;
+            margin-top: 3px;
+            line-height: 1.2;
+            max-height: 2.4em;
+            overflow: hidden;
+            word-break: break-word;
+        }
+        .card-pt {
+            font-size: 11px;
+            font-weight: bold;
+            color: #ffd700;
+            margin-top: 2px;
+        }
+        .card-mana {
+            font-size: 9px;
+            color: #888;
+            margin-top: 1px;
+        }
+        .card.land { border-color: #2a5a2a; }
+        .card.creature { border-color: #5a2a2a; }
+
+        /* Card grid in battlefield */
+        .card-grid {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 2px;
+            padding: 4px;
+        }
+
+        /* Hand cards - horizontal strip */
+        .hand-cards {
+            display: flex;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            gap: 4px;
+            padding: 4px 8px;
+        }
+        .hand-cards .card {
+            flex-shrink: 0;
+        }
+
+        /* Graveyard in card details */
+        .graveyard-list {
+            font-size: 11px;
+            color: #888;
+        }
+        .graveyard-item {
+            padding: 2px 4px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        /* Player info */
+        .player-info-block {
+            padding: 8px 10px;
+        }
+        .life-total {
+            font-size: 28px;
+            font-weight: bold;
+            color: #4cc9f0;
+            text-align: center;
+        }
+        .life-total.low { color: #ff6b6b; }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 12px;
+            color: #888;
+        }
+        .info-label { color: #666; }
+        .mana-pool {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+            padding: 6px 0;
+        }
+        .mana-pip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .mana-pip.W { background: #f9fae5; color: #333; }
+        .mana-pip.U { background: #0e67ab; color: #fff; }
+        .mana-pip.B { background: #2b2b2b; color: #ccc; border: 1px solid #555; }
+        .mana-pip.R { background: #d32029; color: #fff; }
+        .mana-pip.G { background: #00733e; color: #fff; }
+        .mana-pip.C { background: #666; color: #fff; }
+        .mana-pip.empty { opacity: 0.3; }
+
+        /* Card details pane */
+        .card-detail-name {
+            font-size: 16px;
+            font-weight: bold;
+            color: #ffd700;
+            padding: 8px 10px 4px;
+        }
+        .card-detail-type {
+            font-size: 12px;
+            color: #888;
+            padding: 0 10px 4px;
+        }
+        .card-detail-image {
+            max-width: 100%;
+            padding: 4px 10px;
+        }
+        .card-detail-image img {
+            width: 100%;
+            border-radius: 6px;
+        }
+        .card-detail-pt {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4cc9f0;
+            padding: 4px 10px;
+        }
+
+        /* Stack items */
+        .stack-item {
+            padding: 4px 8px;
+            margin: 2px 0;
+            background: #1a2a50;
+            border: 1px solid #3a4a70;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #c0c0c0;
+        }
+        .stack-controller { color: #888; font-size: 10px; }
+
+        /* Scrollbar styling */
+        .pane-body::-webkit-scrollbar { width: 6px; }
+        .pane-body::-webkit-scrollbar-track { background: #0a0f1a; }
+        .pane-body::-webkit-scrollbar-thumb { background: #2a3a60; border-radius: 3px; }
+
+        /* Loading indicator */
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #888;
+        }
+
+        /* Error */
+        .error {
+            background: #4a1010;
+            color: #ff6b6b;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px;
+            text-align: center;
+        }
+
+        /* Controls overlay */
+        .game-controls {
+            position: fixed;
+            top: 50px;
+            right: 10px;
+            z-index: 100;
+        }
+        .controls-toggle {
+            background: rgba(22, 33, 62, 0.9);
+            color: #ffd700;
+            border: 1px solid #4361ee;
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .controls-panel {
+            display: none;
+            margin-top: 5px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #4361ee;
+        }
+        .controls-panel.show { display: block; }
+        .controls-panel button {
+            background: #4361ee;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 2px;
+            font-size: 12px;
+        }
+        .controls-panel button:hover { background: #3a0ca3; }
+        .controls-hint {
+            color: #666;
+            font-size: 10px;
+            margin-top: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header" id="header-bar">
+        <h1>MTG Forge - Native GUI</h1>
+        <a href="fancy.html">TUI View</a>
+        <a href="index.html">Simple View</a>
+        <span id="status">Loading...</span>
+    </div>
+
+    <!-- Launcher -->
+    <div id="launcher" class="launcher">
+        <div class="global-pane">
+            <h2>Game Setup</h2>
+            <div class="global-options">
+                <div class="pane-row">
+                    <label>Seed</label>
+                    <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
+                    <span class="hint">Leave empty for random</span>
+                </div>
+                <div>
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="show-card-images" checked>
+                        <label for="show-card-images">Show Card Images</label>
+                    </div>
+                    <div class="image-sources" id="image-source-options">
+                        <label><input type="checkbox" id="img-src-local" checked> Local (fastest)</label>
+                        <label><input type="checkbox" id="img-src-scryfall" checked> Scryfall</label>
+                        <label><input type="checkbox" id="img-src-gatherer" checked> Gatherer</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="player-panes">
+            <div class="player-pane p1">
+                <h2>Player 1</h2>
+                <div class="pane-row">
+                    <label>Controller</label>
+                    <select id="p1-controller">
+                        <option value="human">Human (You)</option>
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+                <div class="pane-row">
+                    <label>Deck Collection</label>
+                    <select id="p1-collection">
+                        <option value="old_school">Old School 1994</option>
+                        <option value="booster_draft">Booster Draft</option>
+                        <option value="commander">Commander</option>
+                    </select>
+                </div>
+                <div class="pane-row">
+                    <label>Deck</label>
+                    <select id="p1-deck"></select>
+                </div>
+            </div>
+
+            <div class="player-pane p2">
+                <h2>Player 2 (Opponent)</h2>
+                <div class="pane-row">
+                    <label>Controller</label>
+                    <select id="p2-controller">
+                        <option value="heuristic">Heuristic AI</option>
+                        <option value="random">Random</option>
+                        <option value="zero">Zero (Pass)</option>
+                    </select>
+                </div>
+                <div class="pane-row">
+                    <label>Deck Collection</label>
+                    <select id="p2-collection">
+                        <option value="old_school">Old School 1994</option>
+                        <option value="booster_draft">Booster Draft</option>
+                        <option value="commander">Commander</option>
+                    </select>
+                </div>
+                <div class="pane-row">
+                    <label>Deck</label>
+                    <select id="p2-deck"></select>
+                </div>
+            </div>
+        </div>
+
+        <div class="launch-area">
+            <button id="btn-launch">Launch Game</button>
+        </div>
+        <div style="text-align: center; color: #666; font-size: 12px;">
+            Human: Up/Down=select, Enter=confirm, 1-9=quick | AI: Space=turn, A=auto | Q=exit, ?=help
+        </div>
+    </div>
+
+    <!-- Game Area (3-column grid) -->
+    <div id="game-area" class="game-area">
+        <div class="left-col">
+            <div id="pane-log" class="pane">
+                <div class="pane-header">Game Log</div>
+                <div class="pane-body" id="log-body"></div>
+            </div>
+            <div id="pane-actions" class="pane">
+                <div class="pane-header">Actions</div>
+                <div id="actions-prompt" class="prompt-text" style="display:none;"></div>
+                <div class="pane-body" id="actions-body"></div>
+            </div>
+        </div>
+
+        <div class="center-col">
+            <div id="pane-opp-info" class="pane">
+                <div class="pane-header" id="opp-info-header">Opponent</div>
+                <div class="pane-body" id="opp-info-body"></div>
+            </div>
+            <div id="pane-opp-field" class="pane">
+                <div class="pane-header">Opponent Battlefield</div>
+                <div class="pane-body">
+                    <div class="card-grid" id="opp-field-cards"></div>
+                </div>
+            </div>
+            <div id="pane-stack" class="pane">
+                <div class="pane-header">Stack</div>
+                <div class="pane-body" id="stack-body"></div>
+            </div>
+            <div id="pane-player-field" class="pane">
+                <div class="pane-header">Your Battlefield</div>
+                <div class="pane-body">
+                    <div class="card-grid" id="player-field-cards"></div>
+                </div>
+            </div>
+            <div id="pane-hand" class="pane">
+                <div class="pane-header" id="hand-header">Hand</div>
+                <div class="pane-body">
+                    <div class="hand-cards" id="hand-cards"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-col">
+            <div id="pane-card-details" class="pane">
+                <div class="pane-header">Card Details</div>
+                <div class="pane-body" id="card-details-body">
+                    <div style="color: #666; padding: 20px; text-align: center; font-size: 12px;">Click a card to see details</div>
+                </div>
+            </div>
+            <div id="pane-player-info" class="pane">
+                <div class="pane-header" id="player-info-header">You</div>
+                <div class="pane-body" id="player-info-body"></div>
+            </div>
+        </div>
+
+        <div class="status-bar" id="status-bar">
+            <span class="phase">Loading...</span>
+            <span class="turn"></span>
+            <span>Space=turn A=auto ?=help Q=exit</span>
+        </div>
+    </div>
+
+    <!-- Hidden RatZilla terminal (TUI renderer still runs internally) -->
+    <div id="ratzilla-terminal" style="display: none; position: absolute; left: -9999px;"></div>
+
+    <!-- Game controls overlay -->
+    <div class="game-controls" id="game-controls" style="display:none;">
+        <button class="controls-toggle" id="btn-toggle-controls" title="Toggle Controls (C)">
+            <span id="toggle-icon">&#9776;</span> <span id="turn-mini">T1</span>
+        </button>
+        <div class="controls-panel" id="controls-panel">
+            <div>
+                <button id="btn-run-turn">Run 1 Turn</button>
+                <button id="btn-auto">Auto Run</button>
+            </div>
+            <div style="margin-top: 6px;">
+                <button id="btn-exit" style="background:#a03030;">Exit Game</button>
+            </div>
+            <div class="controls-hint">Space=turn A=auto Q=exit C=toggle ?=help</div>
+        </div>
+    </div>
+
+    <!-- JS Error Banner -->
+    <div id="js-error-banner" style="display: none; position: fixed; bottom: 0; left: 0; right: 0; background: #8b0000; color: white; padding: 10px 15px; font-family: monospace; font-size: 13px; z-index: 9999; max-height: 30vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <strong>JS Error</strong>
+            <button onclick="document.getElementById('js-error-banner').style.display='none'" style="background: #600; border: 1px solid #f88; color: white; padding: 2px 8px; cursor: pointer;">X</button>
+        </div>
+        <div id="js-error-messages"></div>
+    </div>
+
+    <!-- Global error handler -->
+    <script>
+        (function() {
+            const banner = document.getElementById('js-error-banner');
+            const msgs = document.getElementById('js-error-messages');
+            let count = 0;
+            function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+            window.onerror = function(msg, src, line, col, err) {
+                count++;
+                banner.style.display = 'block';
+                const d = document.createElement('div');
+                d.style.cssText = 'border-bottom: 1px solid #f66; padding-bottom: 5px; margin-bottom: 5px;';
+                d.innerHTML = `<div><strong>#${count}:</strong> ${esc(msg)}</div><div style="color:#faa;font-size:11px;">at ${esc(src||'?')}:${line}:${col}</div>`;
+                msgs.appendChild(d);
+                return false;
+            };
+            window.onunhandledrejection = function(e) {
+                const msg = e.reason?.message || String(e.reason);
+                if (msg.includes('Extension context')) return;
+                window.onerror('Unhandled: ' + msg, null, null, null, e.reason);
+            };
+        })();
+    </script>
+
+    <script type="module">
+        import init, {
+            version,
+            is_ready,
+            WasmCardDatabase,
+            WasmControllerType,
+            launch_fancy_tui,
+            tui_run_turn,
+            tui_toggle_auto,
+            tui_select_choice,
+            tui_prev_choice,
+            tui_next_choice,
+            tui_get_full_state_json,
+            tui_get_logs_json,
+            cleanup_tui_state,
+            set_log_level
+        } from './pkg/mtg_forge_rs.js';
+
+        // ==================== IMAGE SOURCE ====================
+        const ImageSource = {
+            LOCAL_SIZE_THRESHOLD_PX: 204,
+            FAILURE_THRESHOLD: 2,
+            failureCounts: { local: 0, scryfall: 0, gatherer: 0 },
+            disabledSources: new Set(),
+            recordFailure(id) {
+                if (!this.failureCounts.hasOwnProperty(id) || this.disabledSources.has(id)) return;
+                this.failureCounts[id]++;
+                if (this.failureCounts[id] >= this.FAILURE_THRESHOLD) {
+                    this.disabledSources.add(id);
+                    console.warn(`[ImageSource] ${id} disabled after failures`);
+                }
+            },
+            resetFailureCount(id) { if (this.failureCounts.hasOwnProperty(id)) this.failureCounts[id] = 0; },
+            sources: {
+                local: {
+                    getUrl(name, h) {
+                        const size = h <= ImageSource.LOCAL_SIZE_THRESHOLD_PX ? 'small' : 'normal';
+                        return `/images/${size}/${name.charAt(0).toLowerCase()}/${encodeURIComponent(name)}.jpg`;
+                    }
+                },
+                scryfall: {
+                    getUrl(name, h) {
+                        const v = h <= 204 ? 'small' : (h <= 680 ? 'normal' : 'large');
+                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=${v}`;
+                    }
+                },
+                gatherer: {
+                    getUrl(name) {
+                        return `https://gatherer.wizards.com/Handlers/Image.ashx?name=${encodeURIComponent(name)}&type=card`;
+                    }
+                }
+            },
+            getEnabledSources() {
+                const enabled = [];
+                if (document.getElementById('img-src-local')?.checked && !this.disabledSources.has('local')) enabled.push('local');
+                if (document.getElementById('img-src-scryfall')?.checked && !this.disabledSources.has('scryfall')) enabled.push('scryfall');
+                if (document.getElementById('img-src-gatherer')?.checked && !this.disabledSources.has('gatherer')) enabled.push('gatherer');
+                return enabled;
+            },
+            getImageUrl(name, h = 204) {
+                const enabled = this.getEnabledSources();
+                for (const id of enabled) {
+                    const src = this.sources[id];
+                    if (src) return src.getUrl(name, h);
+                }
+                return null;
+            }
+        };
+
+        // ==================== DECK COLLECTIONS ====================
+        const DECK_COLLECTIONS = {
+            'old_school': {
+                filter: (name) => name.includes('_') && (
+                    name.match(/^\d\d_/) || name.includes('classic') || name.includes('erhnam') ||
+                    name.includes('ponza') || name.includes('stasis') || name.includes('disco') ||
+                    name.includes('zoo') || name.includes('monolith')
+                )
+            },
+            'booster_draft': {
+                filter: (name) => name.includes('avatar') || name.includes('spiderman')
+            },
+            'commander': {
+                filter: (name) => name.includes('chandra_tokens')
+            }
+        };
+
+        // ==================== STATE ====================
+        let cardDb = null;
+        let deckIndex = null;
+        let tuiLaunched = false;
+        let autoRunning = false;
+        let showImages = true;
+        let selectedCardName = null;
+        let fullCardsLoaded = false;
+        let allDeckNames = [];
+
+        // ==================== CONTROLLER TYPE MAP ====================
+        function getControllerType(val) {
+            switch (val) {
+                case 'human': return WasmControllerType.Human;
+                case 'zero': return WasmControllerType.Zero;
+                case 'random': return WasmControllerType.Random;
+                case 'heuristic': return WasmControllerType.Heuristic;
+                default: return WasmControllerType.Heuristic;
+            }
+        }
+
+        // ==================== INIT ====================
+        async function main() {
+            const status = document.getElementById('status');
+            try {
+                await init();
+                status.textContent = `WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`;
+
+                cardDb = new WasmCardDatabase();
+
+                // Load decks metadata
+                const decksResp = await fetch('./data/decks.bin');
+                if (!decksResp.ok) throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
+                const decksData = new Uint8Array(await decksResp.arrayBuffer());
+                const deckCount = cardDb.load_decks(decksData);
+
+                // Load deck index
+                try {
+                    const indexResp = await fetch('./data/deck_index.json');
+                    if (indexResp.ok) deckIndex = await indexResp.json();
+                } catch (e) { /* optional */ }
+
+                allDeckNames = JSON.parse(cardDb.get_deck_names_json());
+                allDeckNames.sort();
+
+                status.textContent = `WASM v${version()} | ${deckCount} decks ready`;
+
+                document.getElementById('launcher').classList.add('show');
+                initDeckDropdowns();
+                document.getElementById('btn-launch').addEventListener('click', launchGame);
+
+                console.log(`MTG Forge Native GUI initialized: ${deckCount} decks`);
+            } catch (error) {
+                document.getElementById('launcher').innerHTML = `<div class="error"><strong>Failed to load:</strong><br>${error.message}<br><br>Run: <code>make wasm-dev</code> then <code>make wasm-dev-serve</code></div>`;
+                console.error('Init failed:', error);
+            }
+        }
+
+        // ==================== DECK DROPDOWNS ====================
+        function initDeckDropdowns() {
+            for (const player of ['p1', 'p2']) {
+                const collSelect = document.getElementById(`${player}-collection`);
+                collSelect.addEventListener('change', () => updateDeckDropdown(player));
+                updateDeckDropdown(player);
+            }
+        }
+
+        function updateDeckDropdown(player) {
+            const collId = document.getElementById(`${player}-collection`).value;
+            const deckSelect = document.getElementById(`${player}-deck`);
+            deckSelect.innerHTML = '';
+
+            const collection = DECK_COLLECTIONS[collId];
+            if (!collection) return;
+
+            const filtered = allDeckNames.filter(collection.filter);
+            for (const name of filtered) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                deckSelect.appendChild(opt);
+            }
+        }
+
+        // ==================== CARD LOADING ====================
+        async function loadCardsForDecks(p1Deck, p2Deck) {
+            const status = document.getElementById('status');
+            const uniqueDecks = [...new Set([p1Deck, p2Deck])];
+
+            for (const deckName of uniqueDecks) {
+                try {
+                    status.textContent = `Loading cards for ${deckName}...`;
+                    const packResp = await fetch(`./data/deck_cards/${encodeURIComponent(deckName)}.bin`);
+                    if (packResp.ok) {
+                        const packData = new Uint8Array(await packResp.arrayBuffer());
+                        cardDb.load_deck_pack(packData);
+                    } else {
+                        // Fall back to full cards.bin
+                        if (!fullCardsLoaded) {
+                            status.textContent = 'Loading full card database...';
+                            const cardsResp = await fetch('./data/cards.bin');
+                            if (!cardsResp.ok) throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                            cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
+                            fullCardsLoaded = true;
+                        }
+                    }
+                } catch (e) {
+                    if (!fullCardsLoaded) {
+                        status.textContent = 'Loading full card database...';
+                        const cardsResp = await fetch('./data/cards.bin');
+                        if (!cardsResp.ok) throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                        cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
+                        fullCardsLoaded = true;
+                    }
+                }
+            }
+
+            // Verify all cards loaded
+            for (const deckName of uniqueDecks) {
+                const missing = cardDb.get_missing_cards_for_deck(deckName);
+                if (missing.length > 0) throw new Error(`Missing cards for ${deckName}: ${missing.join(', ')}`);
+            }
+            status.textContent = `Cards loaded for ${uniqueDecks.join(' vs ')}`;
+        }
+
+        // ==================== LAUNCH GAME ====================
+        async function launchGame() {
+            const p1Deck = document.getElementById('p1-deck').value;
+            const p2Deck = document.getElementById('p2-deck').value;
+            const p1Controller = getControllerType(document.getElementById('p1-controller').value);
+            const p2Controller = getControllerType(document.getElementById('p2-controller').value);
+            showImages = document.getElementById('show-card-images').checked;
+
+            if (!p1Deck || !p2Deck) {
+                alert('Please select decks for both players');
+                return;
+            }
+
+            const launchBtn = document.getElementById('btn-launch');
+            launchBtn.disabled = true;
+            launchBtn.textContent = 'Loading cards...';
+
+            try {
+                await loadCardsForDecks(p1Deck, p2Deck);
+
+                const seedInput = document.getElementById('game-seed').value;
+                const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+
+                // Hide launcher, show game area
+                document.getElementById('launcher').classList.remove('show');
+                document.getElementById('game-area').classList.add('show');
+                document.getElementById('game-controls').style.display = 'block';
+
+                // Launch the TUI internally (hidden — we read state via JSON)
+                launch_fancy_tui(
+                    cardDb, p1Deck, p2Deck, 20, seed,
+                    p1Controller, p2Controller,
+                    window.innerWidth, window.innerHeight
+                );
+                tuiLaunched = true;
+
+                console.log(`Launched game: ${p1Deck} vs ${p2Deck} (seed: ${seed})`);
+
+                // Initial render
+                setTimeout(updateUI, 200);
+            } catch (error) {
+                launchBtn.disabled = false;
+                launchBtn.textContent = 'Launch Game';
+                alert(`Failed to launch: ${error}`);
+                console.error('Launch failed:', error);
+            }
+        }
+
+        // ==================== UI RENDERING ====================
+        function updateUI() {
+            if (!tuiLaunched) return;
+            let stateJson;
+            try {
+                stateJson = tui_get_full_state_json();
+            } catch (e) {
+                console.error('Failed to get state:', e);
+                return;
+            }
+            if (!stateJson || stateJson === '{}') return;
+
+            let state;
+            try {
+                state = JSON.parse(stateJson);
+            } catch (e) {
+                console.error('Failed to parse state JSON:', e);
+                return;
+            }
+
+            const ourIdx = state.our_player_idx || 0;
+            const oppIdx = ourIdx === 0 ? 1 : 0;
+            const ourPlayer = state.players[ourIdx];
+            const oppPlayer = state.players[oppIdx];
+
+            renderPlayerInfo(ourPlayer, 'player-info-body', 'player-info-header');
+            renderPlayerInfo(oppPlayer, 'opp-info-body', 'opp-info-header');
+            renderBattlefield(ourPlayer?.battlefield || [], 'player-field-cards');
+            renderBattlefield(oppPlayer?.battlefield || [], 'opp-field-cards');
+            renderHand(ourPlayer?.hand || []);
+            renderStack(state.stack || []);
+            renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0);
+            renderLog(state.logs || []);
+            renderStatusBar(state);
+
+            // Update hand header with count
+            document.getElementById('hand-header').textContent = `Hand (${ourPlayer?.hand_size || 0})`;
+        }
+
+        function renderPlayerInfo(player, bodyId, headerId) {
+            if (!player) return;
+            const body = document.getElementById(bodyId);
+            const header = document.getElementById(headerId);
+            if (header) header.textContent = player.name;
+
+            const mana = player.mana_pool || {};
+            const manaHtml = ['W','U','B','R','G','C'].map(c => {
+                const val = mana[c] || 0;
+                return `<span class="mana-pip ${c} ${val === 0 ? 'empty' : ''}">${val}</span>`;
+            }).join('');
+
+            const graveyardCount = player.graveyard ? player.graveyard.length : 0;
+            body.innerHTML = `
+                <div class="player-info-block">
+                    <div class="life-total ${player.life <= 5 ? 'low' : ''}">${player.life}</div>
+                    <div class="mana-pool">${manaHtml}</div>
+                    <div class="info-row"><span class="info-label">Library</span><span>${player.library_size}</span></div>
+                    <div class="info-row"><span class="info-label">Hand</span><span>${player.hand_size}</span></div>
+                    <div class="info-row"><span class="info-label">Graveyard</span><span>${graveyardCount}</span></div>
+                </div>
+            `;
+        }
+
+        function renderBattlefield(cards, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            for (const card of cards) {
+                const el = createCardElement(card, false);
+                container.appendChild(el);
+            }
+        }
+
+        function renderHand(cards) {
+            const container = document.getElementById('hand-cards');
+            container.innerHTML = '';
+            for (const card of cards) {
+                const el = createCardElement(card, true);
+                container.appendChild(el);
+            }
+        }
+
+        function createCardElement(card, showMana) {
+            const div = document.createElement('div');
+            div.className = 'card';
+            if (card.is_tapped) div.classList.add('tapped');
+            if (card.is_land) div.classList.add('land');
+            if (card.is_creature) div.classList.add('creature');
+            if (card.name === selectedCardName) div.classList.add('selected-card');
+
+            let imgHtml = '';
+            if (showImages) {
+                const url = ImageSource.getImageUrl(card.name, 106);
+                if (url) {
+                    imgHtml = `<img class="card-image" src="${escapeAttr(url)}" alt="${escapeAttr(card.name)}" loading="lazy" onerror="this.style.display='none'">`;
+                }
+            }
+
+            let ptHtml = '';
+            if (card.power !== undefined && card.power !== null) {
+                ptHtml = `<div class="card-pt">${card.power}/${card.toughness}</div>`;
+            }
+
+            let manaHtml = '';
+            if (showMana && card.mana_cost) {
+                manaHtml = `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`;
+            }
+
+            div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
+
+            div.addEventListener('click', () => {
+                selectedCardName = card.name;
+                showCardDetails(card);
+                updateUI(); // re-render to highlight selected
+            });
+
+            return div;
+        }
+
+        function showCardDetails(card) {
+            const body = document.getElementById('card-details-body');
+            let imgHtml = '';
+            if (showImages) {
+                const url = ImageSource.getImageUrl(card.name, 310);
+                if (url) {
+                    imgHtml = `<div class="card-detail-image"><img src="${escapeAttr(url)}" alt="${escapeAttr(card.name)}" onerror="this.style.display='none'"></div>`;
+                }
+            }
+            let ptHtml = '';
+            if (card.power !== undefined && card.power !== null) {
+                ptHtml = `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`;
+            }
+            body.innerHTML = `
+                <div class="card-detail-name">${escapeHtml(card.name)}</div>
+                <div class="card-detail-type">${escapeHtml(card.types || '')}</div>
+                ${card.mana_cost ? `<div style="padding: 0 10px; color: #888; font-size: 12px;">${escapeHtml(card.mana_cost)}</div>` : ''}
+                ${imgHtml}
+                ${ptHtml}
+            `;
+        }
+
+        function renderStack(stack) {
+            const body = document.getElementById('stack-body');
+            if (stack.length === 0) {
+                body.innerHTML = '<div style="color:#444; padding:4px; font-size:11px; text-align:center;">Empty</div>';
+                return;
+            }
+            body.innerHTML = stack.map(item => `
+                <div class="stack-item">
+                    <span>${escapeHtml(item.name)}</span>
+                    <span class="stack-controller">(P${item.controller_idx + 1})</span>
+                </div>
+            `).join('');
+        }
+
+        function renderActions(prompt, choices, selectedIdx) {
+            const promptEl = document.getElementById('actions-prompt');
+            const body = document.getElementById('actions-body');
+
+            if (prompt) {
+                promptEl.style.display = 'block';
+                promptEl.textContent = prompt;
+            } else {
+                promptEl.style.display = 'none';
+            }
+
+            if (choices.length === 0) {
+                body.innerHTML = '<div style="color:#444; padding:8px; font-size:12px; text-align:center;">No actions available</div>';
+                return;
+            }
+
+            body.innerHTML = choices.map((choice, i) => {
+                const isSelected = i === selectedIdx;
+                return `<div class="action-item ${isSelected ? 'selected' : ''}" data-idx="${i}">
+                    <span class="action-idx">${i + 1}.</span>${escapeHtml(choice.text)}
+                </div>`;
+            }).join('');
+
+            // Click handlers for actions
+            body.querySelectorAll('.action-item').forEach(el => {
+                el.addEventListener('click', () => {
+                    const idx = parseInt(el.dataset.idx);
+                    selectAction(idx);
+                });
+            });
+        }
+
+        function selectAction(idx) {
+            // Navigate to the desired choice and select it
+            // First, get current state to know where we are
+            const stateJson = tui_get_full_state_json();
+            if (!stateJson || stateJson === '{}') return;
+            const state = JSON.parse(stateJson);
+            const currentIdx = state.selected_choice_idx || 0;
+
+            // Navigate to the target index
+            if (idx > currentIdx) {
+                for (let i = 0; i < idx - currentIdx; i++) tui_next_choice();
+            } else if (idx < currentIdx) {
+                for (let i = 0; i < currentIdx - idx; i++) tui_prev_choice();
+            }
+
+            // Select the choice
+            tui_select_choice();
+
+            // After selecting, advance the game
+            setTimeout(() => {
+                tui_run_turn();
+                setTimeout(updateUI, 50);
+            }, 10);
+        }
+
+        function renderLog(logs) {
+            const body = document.getElementById('log-body');
+            // Only re-render if log count changed
+            const currentCount = body.children.length;
+            if (currentCount === logs.length) return;
+
+            body.innerHTML = logs.map(msg => `<div class="log-entry">${escapeHtml(msg)}</div>`).join('');
+            // Auto-scroll to bottom
+            body.scrollTop = body.scrollHeight;
+        }
+
+        function renderStatusBar(state) {
+            const bar = document.getElementById('status-bar');
+            const phase = bar.querySelector('.phase');
+            const turn = bar.querySelector('.turn');
+
+            phase.textContent = `Phase: ${state.current_step || '?'}`;
+            turn.textContent = `Turn ${state.turn_number || 0} | Active: P${(state.active_player_idx || 0) + 1}`;
+            if (state.game_over) {
+                turn.textContent += ' | GAME OVER';
+                turn.style.color = '#ff6b6b';
+            }
+
+            // Mini turn indicator
+            const mini = document.getElementById('turn-mini');
+            if (mini) {
+                mini.textContent = state.game_over ? 'END' : `T${state.turn_number || 0}`;
+            }
+        }
+
+        // ==================== KEYBOARD HANDLING ====================
+        document.addEventListener('keydown', function(e) {
+            if (!tuiLaunched) return;
+
+            // Don't intercept when typing in inputs
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+            switch (e.key) {
+                case ' ':
+                    e.preventDefault();
+                    tui_run_turn();
+                    setTimeout(updateUI, 50);
+                    break;
+                case 'a':
+                case 'A':
+                    e.preventDefault();
+                    autoRunning = !autoRunning;
+                    tui_toggle_auto();
+                    document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
+                    if (autoRunning) startAutoRun();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    tui_prev_choice();
+                    setTimeout(updateUI, 20);
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    tui_next_choice();
+                    setTimeout(updateUI, 20);
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    tui_select_choice();
+                    setTimeout(() => {
+                        tui_run_turn();
+                        setTimeout(updateUI, 50);
+                    }, 10);
+                    break;
+                case 'q':
+                case 'Q':
+                case 'Escape':
+                    exitGame();
+                    break;
+                case 'c':
+                case 'C':
+                    toggleControls();
+                    break;
+                case '?':
+                    alert(getHelpText());
+                    break;
+                default:
+                    // 1-9 quick select
+                    if (e.key >= '1' && e.key <= '9') {
+                        e.preventDefault();
+                        const idx = parseInt(e.key) - 1;
+                        selectAction(idx);
+                    }
+                    break;
+            }
+        });
+
+        function startAutoRun() {
+            if (!autoRunning || !tuiLaunched) return;
+            tui_run_turn();
+            setTimeout(() => {
+                updateUI();
+                if (autoRunning && tuiLaunched) {
+                    // Check if game is over
+                    try {
+                        const s = JSON.parse(tui_get_full_state_json());
+                        if (s.game_over) {
+                            autoRunning = false;
+                            document.getElementById('btn-auto').textContent = 'Auto Run';
+                            return;
+                        }
+                    } catch (e) { /* continue */ }
+                    setTimeout(startAutoRun, 100);
+                }
+            }, 50);
+        }
+
+        function getHelpText() {
+            return `Keyboard Shortcuts
+==================
+
+Navigation:
+  Arrow Keys  - Navigate choices
+  Enter       - Select/Confirm
+  1-9         - Quick select action
+
+Game Actions:
+  Space       - Advance turn
+  A           - Toggle auto-run
+  Q / Esc     - Exit game
+
+Other:
+  C           - Toggle controls panel
+  ?           - Show this help`;
+        }
+
+        // ==================== GAME CONTROLS ====================
+        function toggleControls() {
+            const panel = document.getElementById('controls-panel');
+            const icon = document.getElementById('toggle-icon');
+            const isOpen = panel.classList.contains('show');
+            panel.classList.toggle('show');
+            icon.innerHTML = isOpen ? '&#9776;' : '&#10005;';
+        }
+
+        document.getElementById('btn-toggle-controls').addEventListener('click', toggleControls);
+        document.getElementById('btn-run-turn').addEventListener('click', () => {
+            tui_run_turn();
+            setTimeout(updateUI, 50);
+        });
+        document.getElementById('btn-auto').addEventListener('click', () => {
+            autoRunning = !autoRunning;
+            tui_toggle_auto();
+            document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
+            if (autoRunning) startAutoRun();
+        });
+        document.getElementById('btn-exit').addEventListener('click', exitGame);
+
+        function exitGame() {
+            if (!tuiLaunched) return;
+            cleanup_tui_state();
+            tuiLaunched = false;
+            autoRunning = false;
+            selectedCardName = null;
+
+            document.getElementById('game-area').classList.remove('show');
+            document.getElementById('game-controls').style.display = 'none';
+            document.getElementById('launcher').classList.add('show');
+
+            const launchBtn = document.getElementById('btn-launch');
+            launchBtn.disabled = false;
+            launchBtn.textContent = 'Launch Game';
+
+            console.log('Game exited cleanly.');
+        }
+
+        // ==================== POST-RENDER HOOK ====================
+        // The WASM TUI calls this after each render frame
+        window.onRenderComplete = function(positions, selectedCard) {
+            if (tuiLaunched) {
+                // Use a small delay to batch rapid updates
+                clearTimeout(window._renderUpdateTimer);
+                window._renderUpdateTimer = setTimeout(updateUI, 30);
+            }
+        };
+
+        window.updateTurnInfo = function(turnNumber, gameOver) {
+            // Handled via updateUI/renderStatusBar
+        };
+
+        // The TUI exit/help callbacks (called by WASM key handler)
+        window.exitFancyTui = function() { exitGame(); };
+        window.showExitConfirmation = function() { exitGame(); };
+        window.showHelpDialog = function() { alert(getHelpText()); };
+        window.toggleCardImages = function() {
+            showImages = !showImages;
+            updateUI();
+        };
+
+        // ==================== UTILITIES ====================
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        function escapeAttr(text) {
+            if (!text) return '';
+            return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // ==================== START ====================
+        main();
+    </script>
+</body>
+</html>

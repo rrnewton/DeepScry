@@ -8,6 +8,8 @@ pub mod controller;
 pub mod display;
 #[cfg(feature = "native-tui")]
 pub mod fancy_fixed_controller;
+#[cfg(feature = "ratatui-image")]
+pub mod card_image;
 #[cfg(feature = "native-tui")]
 pub mod fancy_tui_controller;
 #[cfg(feature = "ratatui")]

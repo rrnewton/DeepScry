@@ -166,12 +166,13 @@ pub fn tui_scroll_wheel(x: u32, y: u32, delta_y: f64, delta_x: f64) {
             let WasmFancyTuiState {
                 ref game,
                 ref mut renderer,
+                ref current_choices,
                 ..
             } = *s;
 
             let view = GameStateView::new(game, renderer.player_id);
-            let num_choices = s.current_choices.len();
-            let result = handle_ui_event(&mut s.renderer.state, event, &view, num_choices);
+            let num_choices = current_choices.len();
+            let result = handle_ui_event(&mut renderer.state, event, &view, num_choices);
 
             if result == EventResult::Handled {
                 s.needs_redraw = true;
@@ -373,26 +374,20 @@ pub fn tui_get_full_state_json() -> String {
                     })
                 }).collect();
 
+                let lib_size = game.get_player_zones(pid)
+                    .map(|z| z.library.len()).unwrap_or(0);
+
                 players_json.push(serde_json::json!({
                     "index": idx,
                     "name": player.name.to_string(),
                     "life": player.life,
-                    "library_size": pview.player_hand_size(pid) + game.get_player_zones(pid)
-                        .map(|z| z.library.len()).unwrap_or(0) - pview.player_hand_size(pid),
+                    "library_size": lib_size,
                     "hand_size": pview.player_hand_size(pid),
                     "mana_pool": serde_json::json!({"W": w, "U": u, "B": b, "R": r, "G": g, "C": c}),
                     "hand": hand,
                     "battlefield": battlefield,
                     "graveyard": graveyard,
                 }));
-            }
-
-            // Fix library_size - just use zones directly
-            for (idx, player) in game.players.iter().enumerate() {
-                let pid = player.id;
-                let lib_size = game.get_player_zones(pid)
-                    .map(|z| z.library.len()).unwrap_or(0);
-                players_json[idx]["library_size"] = serde_json::json!(lib_size);
             }
 
             // Stack
