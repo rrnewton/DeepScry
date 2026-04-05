@@ -23,6 +23,8 @@ pub mod hand_setup;
 pub mod heuristic_controller;
 #[cfg(feature = "native-tui")]
 pub mod interactive_controller;
+#[cfg(feature = "ratatui")]
+pub mod layout;
 pub mod logger;
 pub mod mana_colors;
 pub mod mana_engine;

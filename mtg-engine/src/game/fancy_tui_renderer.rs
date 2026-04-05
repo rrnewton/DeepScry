@@ -18,10 +18,11 @@
 
 use crate::core::{CardId, PlayerId};
 use crate::game::controller::GameStateView;
+use crate::game::layout::{compute_pane_layout, PaneId, PaneLayoutConfig};
 use crate::game::Step;
 use crate::game::VerbosityLevel;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
@@ -1018,29 +1019,6 @@ impl FancyTuiRenderer {
         }
     }
 
-    /// Calculate required height for player info bar based on available width.
-    /// Returns 3 if content fits on one line, 4 if it needs two lines.
-    /// Height includes 2 for borders (top + bottom) plus content lines.
-    fn calculate_info_bar_height(available_width: u16) -> u16 {
-        // Account for borders and padding in the Paragraph widget
-        let inner_width = available_width.saturating_sub(4);
-
-        // Estimate max lengths for both parts of the status line:
-        // Left: "Opp: 20 life | Hand: 7 | GY: 99 | Lib: 99" (~42 chars)
-        // Right: "Turn: 99 (99) | UP UK DR M1 BC DA DB CD EC M2 ET" (~48 chars)
-        // Format: Turn: <global_turn> (<player_turn>)
-        const STATS_MAX_LEN: u16 = 42;
-        const PHASE_MAX_LEN: u16 = 48;
-        const MIN_SPACING: u16 = 3;
-
-        let needs_two_lines = STATS_MAX_LEN + PHASE_MAX_LEN + MIN_SPACING > inner_width;
-
-        if needs_two_lines {
-            4 // 2 borders + 2 content lines
-        } else {
-            3 // 2 borders + 1 content line
-        }
-    }
 
     /// Get all cards for a battlefield in display order
     /// Order: Planeswalkers → Creatures → Enchantments → Artifacts → Lands
@@ -1516,117 +1494,52 @@ impl FancyTuiRenderer {
         self.state.hand_pane_area = None;
         self.state.log_pane_area = None;
 
-        // Calculate optimal column widths
-        // Try to boost left column width by 20% if all panes remain above their minimums
-        let total_width = f.area().width;
-
-        // Calculate what the widths would be with boosted left column
-        let boosted_left_width = (total_width * Self::BOOSTED_LEFT_COLUMN_PCT) / 100;
-        let boosted_middle_width = (total_width * (Self::DEFAULT_MIDDLE_COLUMN_PCT - 5)) / 100; // Reduce middle by 5%
-        let boosted_right_width = total_width.saturating_sub(boosted_left_width + boosted_middle_width);
-
-        // Check if all panes would meet their minimum widths with boosted layout
-        let can_boost = boosted_left_width >= Self::MIN_WIDTH_LOG_PANE
-            && boosted_left_width >= Self::MIN_WIDTH_ACTIONS_PANE
-            && boosted_middle_width >= Self::MIN_WIDTH_BATTLEFIELD
-            && boosted_right_width >= Self::MIN_WIDTH_CARD_DETAILS
-            && boosted_right_width >= Self::MIN_WIDTH_HAND;
-
-        // Use boosted layout if possible, otherwise use default
-        let (left_pct, middle_pct, right_pct) = if can_boost {
-            (
-                Self::BOOSTED_LEFT_COLUMN_PCT,
-                Self::DEFAULT_MIDDLE_COLUMN_PCT - 5,
-                Self::DEFAULT_RIGHT_COLUMN_PCT,
-            )
-        } else {
-            (
-                Self::DEFAULT_LEFT_COLUMN_PCT,
-                Self::DEFAULT_MIDDLE_COLUMN_PCT,
-                Self::DEFAULT_RIGHT_COLUMN_PCT,
-            )
+        // Compute pane layout using shared layout engine
+        let config = PaneLayoutConfig {
+            left_column_pct: Self::DEFAULT_LEFT_COLUMN_PCT,
+            middle_column_pct: Self::DEFAULT_MIDDLE_COLUMN_PCT,
+            right_column_pct: Self::DEFAULT_RIGHT_COLUMN_PCT,
+            boosted_left_column_pct: Self::BOOSTED_LEFT_COLUMN_PCT,
+            min_width_log: Self::MIN_WIDTH_LOG_PANE,
+            min_width_actions: Self::MIN_WIDTH_ACTIONS_PANE,
+            min_width_battlefield: Self::MIN_WIDTH_BATTLEFIELD,
+            min_width_card_details: Self::MIN_WIDTH_CARD_DETAILS,
+            min_width_hand: Self::MIN_WIDTH_HAND,
         };
+        let pane_layout = compute_pane_layout(f.area(), &config);
 
-        // Main layout: three columns
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(left_pct),
-                Constraint::Percentage(middle_pct),
-                Constraint::Percentage(right_pct),
-            ])
-            .split(f.area());
-
-        // Left column: Log on top, Actions/Prompt on bottom
-        let left_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_chunks[0]);
-
-        // Middle column: Player info bars + battlefields
-        // Layout: Top half (opp info + opp battlefield), Bottom half (your battlefield + your info)
-        // Split 50/50 to align with left/right column midpoint
-        let middle_halves = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_chunks[1]);
-
-        // Calculate info bar height based on whether status fits on one line
-        let info_bar_height = Self::calculate_info_bar_height(main_chunks[1].width);
-
-        // Top half: Opponent info bar at top, battlefield fills rest
-        let top_half = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(info_bar_height), // Opponent info header (at top)
-                Constraint::Min(0),                  // Opponent battlefield (fills remaining)
-            ])
-            .split(middle_halves[0]);
-
-        // Bottom half: Battlefield fills most, your info bar at bottom
-        let bottom_half = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),                  // Your battlefield (fills remaining)
-                Constraint::Length(info_bar_height), // Your info footer (at bottom)
-            ])
-            .split(middle_halves[1]);
-
-        // Combine into middle_chunks for compatibility with existing code
-        let middle_chunks = [top_half[0], top_half[1], bottom_half[0], bottom_half[1]];
-
-        // Right column: Card Details (top 50%), Hand+Stack (bottom 50%)
-        // Matches left column layout: Log (top 50%), Actions (bottom 50%)
-        // Card Details starts at row 0, aligned with Log pane
-        let right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_chunks[2]);
+        // Extract pane rects (unwrap safe — compute_pane_layout always populates all panes)
+        let log_area = pane_layout.get(PaneId::Log).unwrap();
+        let actions_area = pane_layout.get(PaneId::Actions).unwrap();
+        let opp_info_area = pane_layout.get(PaneId::OpponentInfo).unwrap();
+        let opp_bf_area = pane_layout.get(PaneId::OpponentBattlefield).unwrap();
+        let your_bf_area = pane_layout.get(PaneId::YourBattlefield).unwrap();
+        let your_info_area = pane_layout.get(PaneId::YourInfo).unwrap();
+        let card_details_area = pane_layout.get(PaneId::CardDetails).unwrap();
+        let hand_area = pane_layout.get(PaneId::Hand).unwrap();
 
         // Draw all panels
-        self.draw_log_pane(f, left_chunks[0], view);
-        self.state.log_pane_area = Some(left_chunks[0]);
-        self.draw_prompt(f, left_chunks[1], view, current_prompt, choices);
-        self.state.actions_pane_area = Some(left_chunks[1]);
+        self.draw_log_pane(f, log_area, view);
+        self.state.log_pane_area = Some(log_area);
+        self.draw_prompt(f, actions_area, view, current_prompt, choices);
+        self.state.actions_pane_area = Some(actions_area);
 
         // Get opponent ID
         let opponent_id = view.opponents().next();
 
         // Draw battlefields with player info bars
         if let Some(opp_id) = opponent_id {
-            self.draw_player_info(f, middle_chunks[0], view, opp_id);
-            self.draw_battlefield(f, middle_chunks[1], view, opp_id, "Opponent");
+            self.draw_player_info(f, opp_info_area, view, opp_id);
+            self.draw_battlefield(f, opp_bf_area, view, opp_id, "Opponent");
         }
-        self.draw_battlefield(f, middle_chunks[2], view, view.player_id(), "You");
-        self.draw_player_info(f, middle_chunks[3], view, view.player_id());
+        self.draw_battlefield(f, your_bf_area, view, view.player_id(), "You");
+        self.draw_player_info(f, your_info_area, view, view.player_id());
 
         // Draw right column
-        // right_chunks[0] is Card Details (starts at row 0, aligned with Log pane)
-        // right_chunks[1] is Hand+Stack (aligned with Actions pane)
-        self.draw_card_details(f, right_chunks[0], view);
-        self.draw_hand(f, right_chunks[1], view);
-        self.state.hand_pane_area = Some(right_chunks[1]);
-        self.state.card_details_pane_area = Some(right_chunks[0]);
+        self.draw_card_details(f, card_details_area, view);
+        self.draw_hand(f, hand_area, view);
+        self.state.hand_pane_area = Some(hand_area);
+        self.state.card_details_pane_area = Some(card_details_area);
     }
 
     /// Draw the Log pane (left column top)
