@@ -220,6 +220,89 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
     serde_json::json!(urls).to_string()
 }
 
+/// Get card layout positions for the current game state.
+///
+/// Computes battlefield card positions using the shared layout engine,
+/// returning JSON that game.html can use to position card DOM elements.
+///
+/// Returns JSON: `{ "your_battlefield": [...], "opp_battlefield": [...] }`
+/// where each entry has `{ id, name, x_pct, y_pct, w_pct, h_pct, is_tapped, is_creature, is_land }`.
+/// Percentages are relative to the pane's inner area.
+#[wasm_bindgen]
+pub fn tui_get_card_layout_json() -> String {
+    use crate::game::layout::{
+        compute_battlefield_card_size, layout_cards_wordwrap, CardItem, CardCategory, CardSizeConfig,
+    };
+
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let s = state.borrow();
+            let game = &s.game;
+            let our_pid = s.renderer.player_id;
+
+            let config = CardSizeConfig::default();
+
+            let mut result = serde_json::Map::new();
+
+            for (label, pid) in [("your_battlefield", our_pid)].iter().chain(
+                game.players.iter()
+                    .filter(|p| p.id != our_pid)
+                    .map(|p| &("opp_battlefield", p.id))
+            ) {
+                let bf_cards: Vec<CardItem> = game.battlefield.cards.iter().filter_map(|&cid| {
+                    let card = game.cards.try_get(cid)?;
+                    if card.controller != *pid { return None; }
+
+                    let category = if card.is_planeswalker() {
+                        CardCategory::Planeswalker
+                    } else if card.is_creature() {
+                        CardCategory::Creature
+                    } else if card.is_enchantment() {
+                        CardCategory::Enchantment
+                    } else if card.is_artifact() {
+                        CardCategory::Artifact
+                    } else {
+                        CardCategory::Land
+                    };
+
+                    Some(CardItem {
+                        id: cid.as_u32(),
+                        name: card.name.to_string(),
+                        is_tapped: card.tapped,
+                        category,
+                        stack_size: 1,
+                    })
+                }).collect();
+
+                // Use a representative area (100x50 cells) to compute positions as percentages
+                let area = ratatui::layout::Rect::new(0, 0, 100, 50);
+                let (card_w, card_h) = compute_battlefield_card_size(area, bf_cards.len(), &config);
+                let placements = layout_cards_wordwrap(area, &bf_cards, card_w, card_h, &config);
+
+                let cards_json: Vec<serde_json::Value> = placements.iter().zip(bf_cards.iter()).map(|(p, card)| {
+                    serde_json::json!({
+                        "id": p.id,
+                        "name": card.name,
+                        "x_pct": f64::from(p.x),
+                        "y_pct": f64::from(p.y),
+                        "w_pct": f64::from(p.width),
+                        "h_pct": f64::from(p.height),
+                        "is_tapped": card.is_tapped,
+                        "is_creature": card.category == CardCategory::Creature,
+                        "is_land": card.category == CardCategory::Land,
+                    })
+                }).collect();
+
+                result.insert(label.to_string(), serde_json::json!(cards_json));
+            }
+
+            serde_json::json!(result).to_string()
+        } else {
+            "{}".to_string()
+        }
+    })
+}
+
 /// Compute the shared pane layout for a given viewport size.
 ///
 /// Returns JSON with pane positions as percentages of the viewport,

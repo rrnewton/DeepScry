@@ -267,6 +267,223 @@ fn calculate_info_bar_height(available_width: u16) -> u16 {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Card sizing and placement
+// ═══════════════════════════════════════════════════════════════
+
+/// Configuration for card sizing calculations.
+pub struct CardSizeConfig {
+    /// Default card width in cells (untapped)
+    pub default_width: u16,
+    /// Default card height in cells (untapped)
+    pub default_height: u16,
+    /// Minimum card width in cells
+    pub min_width: u16,
+    /// Minimum card height in cells
+    pub min_height: u16,
+    /// Maximum card height in cells
+    pub max_height: u16,
+    /// Spacing between cards in cells
+    pub spacing: u16,
+}
+
+impl Default for CardSizeConfig {
+    fn default() -> Self {
+        Self {
+            default_width: 10,
+            default_height: 7,
+            min_width: 5,
+            min_height: 4,
+            max_height: 15,
+            spacing: 1,
+        }
+    }
+}
+
+/// Compute card width from height maintaining the default aspect ratio.
+///
+/// Uses the ratio `default_width / default_height` (typically 10/7 ≈ 1.43)
+/// which accounts for terminal character aspect (~2:1 height:width).
+pub fn compute_card_width(height: u16, config: &CardSizeConfig) -> u16 {
+    ((f32::from(height) * f32::from(config.default_width)) / f32::from(config.default_height)).round() as u16
+}
+
+/// Compute dimensions for a tapped card (rotated ~90 degrees).
+///
+/// Tapped cards become wider and shorter to simulate horizontal rotation.
+pub fn tapped_dimensions(base_width: u16, base_height: u16) -> (u16, u16) {
+    let tapped_width = (base_width * 3 / 2).max(base_width);
+    let tapped_height = (base_height * 3 / 5).max(4);
+    (tapped_width, tapped_height)
+}
+
+/// A card item for layout computation.
+///
+/// Backend-neutral description of a card to be positioned.
+/// The layout engine doesn't need to know game-specific types.
+#[derive(Debug, Clone)]
+pub struct CardItem {
+    /// Unique identifier for this card/entity
+    pub id: u32,
+    /// Display name
+    pub name: String,
+    /// Whether the card is tapped (affects dimensions)
+    pub is_tapped: bool,
+    /// Card category for section grouping
+    pub category: CardCategory,
+    /// Number of cards in a stack (for visual stacks)
+    pub stack_size: u16,
+}
+
+/// Card category for battlefield section grouping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CardCategory {
+    Planeswalker,
+    Creature,
+    Enchantment,
+    Artifact,
+    Land,
+}
+
+/// Result of laying out a card — its computed position.
+#[derive(Debug, Clone)]
+pub struct CardPlacement {
+    /// The card item that was placed
+    pub id: u32,
+    /// Position and size in cell coordinates
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// A section of cards on the battlefield (e.g., "Creatures", "Lands").
+#[derive(Debug)]
+pub struct CardSection {
+    pub label: String,
+    pub category: CardCategory,
+    pub cards: Vec<CardItem>,
+}
+
+/// Compute optimal card size for a battlefield area.
+///
+/// Tries different row counts (1-4) and finds the maximum card height
+/// that fits all cards. Returns (width, height).
+pub fn compute_battlefield_card_size(
+    area: Rect,
+    total_cards: usize,
+    config: &CardSizeConfig,
+) -> (u16, u16) {
+    if total_cards == 0 || area.width == 0 || area.height == 0 {
+        return (config.min_width, config.min_height);
+    }
+
+    let mut best_height = config.min_height;
+
+    for target_rows in 1..=4u16 {
+        // Try increasing heights for this row count
+        for h in config.min_height..=config.max_height {
+            let w = compute_card_width(h, config).max(config.min_width);
+            let cards_per_row = area
+                .width
+                .checked_div(w + config.spacing)
+                .unwrap_or(1)
+                .max(1);
+            let rows_needed = (total_cards as u16 + cards_per_row - 1) / cards_per_row;
+            let height_needed = rows_needed * (h + config.spacing);
+
+            if rows_needed <= target_rows && height_needed <= area.height {
+                best_height = h;
+            } else if rows_needed > target_rows {
+                break;
+            }
+        }
+    }
+
+    let best_width = compute_card_width(best_height, config).max(config.min_width);
+    (best_width, best_height)
+}
+
+/// Lay out cards in a word-wrap flow within the given area.
+///
+/// Places cards left-to-right, wrapping to the next row when the
+/// current row is full. Returns positioned `CardPlacement` values.
+///
+/// This is the core shared algorithm used by both TUI and web backends.
+pub fn layout_cards_wordwrap(
+    area: Rect,
+    cards: &[CardItem],
+    card_width: u16,
+    card_height: u16,
+    config: &CardSizeConfig,
+) -> Vec<CardPlacement> {
+    if cards.is_empty() || area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+
+    let mut placements = Vec::with_capacity(cards.len());
+    let mut x = area.x;
+    let mut y = area.y;
+    let mut row_max_height = 0u16;
+
+    for card in cards {
+        let (w, h) = if card.is_tapped {
+            tapped_dimensions(card_width, card_height)
+        } else {
+            (card_width, card_height)
+        };
+
+        // Wrap to next row if this card doesn't fit
+        if x > area.x && x + w > area.x + area.width {
+            y += row_max_height + config.spacing;
+            x = area.x;
+            row_max_height = 0;
+        }
+
+        // Stop if we've exceeded the vertical space
+        if y + h > area.y + area.height {
+            break;
+        }
+
+        placements.push(CardPlacement {
+            id: card.id,
+            x,
+            y,
+            width: w,
+            height: h,
+        });
+
+        x += w + config.spacing;
+        row_max_height = row_max_height.max(h);
+    }
+
+    placements
+}
+
+/// Lay out hand cards as a vertical list (one per row).
+///
+/// Each card occupies one row at full pane width.
+pub fn layout_hand_cards(area: Rect, card_count: usize) -> Vec<CardPlacement> {
+    let mut placements = Vec::with_capacity(card_count);
+
+    for i in 0..card_count {
+        let y = area.y + i as u16;
+        if y >= area.y + area.height {
+            break;
+        }
+
+        placements.push(CardPlacement {
+            id: i as u32,
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        });
+    }
+
+    placements
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +554,87 @@ mod tests {
         assert_eq!(calculate_info_bar_height(200), 3);
         // Too narrow, needs two lines
         assert_eq!(calculate_info_bar_height(80), 4);
+    }
+
+    #[test]
+    fn test_compute_card_width() {
+        let config = CardSizeConfig::default();
+        // Default: height 7 → width 10 (10/7 ratio)
+        assert_eq!(compute_card_width(7, &config), 10);
+        // Height 4 → width 6 (rounded)
+        assert_eq!(compute_card_width(4, &config), 6);
+    }
+
+    #[test]
+    fn test_tapped_dimensions() {
+        let (w, h) = tapped_dimensions(10, 7);
+        assert!(w > 10, "Tapped width should be larger");
+        assert!(h < 7, "Tapped height should be smaller");
+        assert!(h >= 4, "Tapped height should be at least 4");
+    }
+
+    #[test]
+    fn test_battlefield_card_size() {
+        let area = Rect::new(0, 0, 60, 20);
+        let config = CardSizeConfig::default();
+
+        // Few cards should get large sizes
+        let (w, h) = compute_battlefield_card_size(area, 3, &config);
+        assert!(w >= config.min_width);
+        assert!(h >= config.min_height);
+
+        // Many cards should get smaller sizes
+        let (w2, h2) = compute_battlefield_card_size(area, 20, &config);
+        assert!(h2 <= h, "More cards should produce smaller or equal height");
+        assert!(w2 >= config.min_width);
+    }
+
+    #[test]
+    fn test_layout_cards_wordwrap() {
+        let area = Rect::new(5, 5, 30, 20);
+        let config = CardSizeConfig::default();
+        let cards: Vec<CardItem> = (0..6)
+            .map(|i| CardItem {
+                id: i,
+                name: format!("Card {}", i),
+                is_tapped: false,
+                category: CardCategory::Creature,
+                stack_size: 1,
+            })
+            .collect();
+
+        let placements = layout_cards_wordwrap(area, &cards, 8, 5, &config);
+        assert_eq!(placements.len(), 6);
+
+        // First card starts at area origin
+        assert_eq!(placements[0].x, 5);
+        assert_eq!(placements[0].y, 5);
+
+        // Cards should wrap to next row (30 width, 8+1 per card = 3 per row)
+        // Row 1: cards 0,1,2 at y=5
+        // Row 2: cards 3,4,5 at y=5+5+1=11
+        assert_eq!(placements[3].y, 11);
+    }
+
+    #[test]
+    fn test_layout_hand_cards() {
+        let area = Rect::new(0, 0, 30, 10);
+        let placements = layout_hand_cards(area, 7);
+        assert_eq!(placements.len(), 7);
+
+        // Each card is 1 row tall at full width
+        for (i, p) in placements.iter().enumerate() {
+            assert_eq!(p.y, i as u16);
+            assert_eq!(p.width, 30);
+            assert_eq!(p.height, 1);
+        }
+    }
+
+    #[test]
+    fn test_layout_hand_truncates_at_area_height() {
+        let area = Rect::new(0, 0, 30, 5);
+        let placements = layout_hand_cards(area, 10);
+        // Only 5 fit in 5 rows
+        assert_eq!(placements.len(), 5);
     }
 }
