@@ -136,7 +136,8 @@
         }
         .game-area.show {
             display: grid;
-            grid-template-columns: 280px 1fr 260px;
+            /* Column widths set dynamically by applySharedLayout() from Rust */
+            grid-template-columns: 25% 50% 25%;
             grid-template-rows: 1fr auto;
             gap: 4px;
             padding: 4px;
@@ -731,6 +732,7 @@
             tui_next_choice,
             tui_set_choice_idx,
             tui_get_full_state_json,
+            tui_get_layout_json,
             tui_get_logs_json,
             tui_get_help_text,
             cleanup_tui_state,
@@ -958,6 +960,9 @@
                 document.getElementById('game-area').classList.add('show');
                 document.getElementById('game-controls').style.display = 'block';
 
+                // Apply shared layout from Rust
+                applySharedLayout();
+
                 // Launch the TUI internally (hidden — we read state via JSON)
                 launch_fancy_tui(
                     cardDb, p1Deck, p2Deck, 20, seed,
@@ -977,6 +982,51 @@
                 console.error('Launch failed:', error);
             }
         }
+
+        // ==================== SHARED LAYOUT ====================
+        // Apply pane layout computed by the shared Rust layout engine.
+        // This replaces the hardcoded CSS grid-template-columns with
+        // percentages from compute_pane_layout(), ensuring game.html
+        // uses the exact same proportions as the TUI renderer.
+        function applySharedLayout() {
+            if (typeof tui_get_layout_json !== 'function') return;
+
+            // Use a normalized viewport (100 units wide) to get percentages
+            const layoutJson = tui_get_layout_json(100, 100);
+            const layout = JSON.parse(layoutJson);
+            const panes = layout.panes;
+
+            if (!panes || !panes.log || !panes.opponent_battlefield || !panes.card_details) return;
+
+            // Extract column widths from pane positions
+            const leftPct = panes.log.w_pct;
+            const middlePct = panes.opponent_battlefield.w_pct;
+            const rightPct = panes.card_details.w_pct;
+
+            // Apply to CSS grid
+            const gameArea = document.getElementById('game-area');
+            if (gameArea) {
+                gameArea.style.gridTemplateColumns = `${leftPct}% ${middlePct}% ${rightPct}%`;
+            }
+
+            // Apply vertical splits within columns using pane height percentages
+            const logPct = panes.log.h_pct;
+            const actionsPct = panes.actions.h_pct;
+            const logPane = document.getElementById('pane-log');
+            const actionsPane = document.getElementById('pane-actions');
+            if (logPane) logPane.style.flex = `${logPct} 0 0`;
+            if (actionsPane) actionsPane.style.flex = `${actionsPct} 0 0`;
+
+            const detailsPct = panes.card_details.h_pct;
+            const handPct = panes.hand.h_pct;
+            const detailsPane = document.getElementById('pane-card-details');
+            if (detailsPane) detailsPane.style.flex = `${detailsPct} 0 0`;
+        }
+
+        // Re-apply layout on window resize
+        window.addEventListener('resize', () => {
+            if (tuiLaunched) applySharedLayout();
+        });
 
         // ==================== UI RENDERING ====================
         function updateUI() {

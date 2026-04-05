@@ -191,6 +191,75 @@ pub fn tui_get_help_text() -> String {
     crate::game::fancy_tui_events::get_help_text(true)
 }
 
+/// Compute the shared pane layout for a given viewport size.
+///
+/// Returns JSON with pane positions as percentages of the viewport,
+/// matching the same layout the TUI renderer uses. This allows
+/// game.html to position HTML elements using the shared layout engine
+/// instead of hardcoding its own CSS grid proportions.
+///
+/// Returns JSON: `{ "columns": [left_pct, middle_pct, right_pct], "info_bar_rows": N }`
+/// where percentages match the shared `compute_pane_layout()` ratios.
+#[wasm_bindgen]
+pub fn tui_get_layout_json(viewport_width: u16, viewport_height: u16) -> String {
+    use crate::game::layout::{compute_pane_layout, PaneId, PaneLayoutConfig};
+    use crate::game::fancy_tui_renderer::FancyTuiRenderer;
+
+    let config = PaneLayoutConfig {
+        left_column_pct: FancyTuiRenderer::DEFAULT_LEFT_COLUMN_PCT,
+        middle_column_pct: FancyTuiRenderer::DEFAULT_MIDDLE_COLUMN_PCT,
+        right_column_pct: FancyTuiRenderer::DEFAULT_RIGHT_COLUMN_PCT,
+        boosted_left_column_pct: FancyTuiRenderer::BOOSTED_LEFT_COLUMN_PCT,
+        min_width_log: FancyTuiRenderer::MIN_WIDTH_LOG_PANE,
+        min_width_actions: FancyTuiRenderer::MIN_WIDTH_ACTIONS_PANE,
+        min_width_battlefield: FancyTuiRenderer::MIN_WIDTH_BATTLEFIELD,
+        min_width_card_details: FancyTuiRenderer::MIN_WIDTH_CARD_DETAILS,
+        min_width_hand: FancyTuiRenderer::MIN_WIDTH_HAND,
+    };
+
+    let viewport = ratatui::layout::Rect::new(0, 0, viewport_width, viewport_height);
+    let layout = compute_pane_layout(viewport, &config);
+
+    // Convert pane rects to JSON
+    let pane_ids = [
+        ("log", PaneId::Log),
+        ("actions", PaneId::Actions),
+        ("opponent_info", PaneId::OpponentInfo),
+        ("opponent_battlefield", PaneId::OpponentBattlefield),
+        ("your_battlefield", PaneId::YourBattlefield),
+        ("your_info", PaneId::YourInfo),
+        ("card_details", PaneId::CardDetails),
+        ("hand", PaneId::Hand),
+    ];
+
+    let mut panes = serde_json::Map::new();
+    for (name, id) in &pane_ids {
+        if let Some(rect) = layout.get(*id) {
+            panes.insert(
+                (*name).to_string(),
+                serde_json::json!({
+                    "x": rect.x,
+                    "y": rect.y,
+                    "width": rect.width,
+                    "height": rect.height,
+                    // Percentages for CSS positioning
+                    "x_pct": if viewport_width > 0 { f64::from(rect.x) / f64::from(viewport_width) * 100.0 } else { 0.0 },
+                    "y_pct": if viewport_height > 0 { f64::from(rect.y) / f64::from(viewport_height) * 100.0 } else { 0.0 },
+                    "w_pct": if viewport_width > 0 { f64::from(rect.width) / f64::from(viewport_width) * 100.0 } else { 0.0 },
+                    "h_pct": if viewport_height > 0 { f64::from(rect.height) / f64::from(viewport_height) * 100.0 } else { 0.0 },
+                }),
+            );
+        }
+    }
+
+    serde_json::json!({
+        "viewport_width": viewport_width,
+        "viewport_height": viewport_height,
+        "panes": panes,
+    })
+    .to_string()
+}
+
 /// Run one turn or continue game - called from JavaScript button
 #[wasm_bindgen]
 pub fn tui_run_turn() {
