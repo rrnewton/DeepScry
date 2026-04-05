@@ -1637,7 +1637,7 @@ impl FancyTuiRenderer {
         // Draw the block with title
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(if is_focused { " Log (L) [FOCUSED] " } else { " Log (L) " })
+            .title(if is_focused { " Log (I) [FOCUSED] " } else { " Log (I) " })
             .border_style(Style::default().fg(border_color));
         f.render_widget(block, area);
 
@@ -1681,7 +1681,7 @@ impl FancyTuiRenderer {
 
         // Render status on the title bar line (y = area.y, right-aligned before border)
         let status_width = full_status.len() as u16;
-        let title_len = if is_focused { 18 } else { 10 }; // " Log (L) [FOCUSED] " or " Log (L) "
+        let title_len = if is_focused { 18 } else { 10 }; // " Log (I) [FOCUSED] " or " Log (I) "
         let available_width = area.width.saturating_sub(title_len + 2); // -2 for border corners
         if status_width <= available_width {
             let status_area = Rect {

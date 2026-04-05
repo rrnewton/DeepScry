@@ -428,6 +428,32 @@ pub enum WasmControllerType {
     Remote,
 }
 
+/// Create an AI controller for the given controller type and player.
+///
+/// Handles the three standard AI controller types (Zero, Random, Heuristic).
+/// For Human, Fixed, Network, and Remote types, falls back to Zero — callers
+/// that need these should handle them before calling this function.
+///
+/// # Arguments
+/// * `controller_type` - The type of controller to create
+/// * `player_id` - The player ID this controller manages
+/// * `seed` - Random seed for RandomController
+pub fn create_ai_controller(
+    controller_type: WasmControllerType,
+    player_id: crate::core::PlayerId,
+    seed: u64,
+) -> Box<dyn PlayerController> {
+    match controller_type {
+        WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
+        WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, seed)),
+        WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
+        WasmControllerType::Human
+        | WasmControllerType::Fixed
+        | WasmControllerType::Network
+        | WasmControllerType::Remote => Box::new(ZeroController::new(player_id)),
+    }
+}
+
 /// WASM-compatible game wrapper
 ///
 /// This struct wraps the Rust GameState and provides a JavaScript-friendly API.
@@ -646,29 +672,8 @@ impl WasmGame {
         let p1_id = self.game.players[0].id;
         let p2_id = self.game.players[1].id;
 
-        let mut controller1: Box<dyn PlayerController> = match self.p1_controller_type {
-            WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
-            WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
-            WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human
-            | WasmControllerType::Fixed
-            | WasmControllerType::Network
-            | WasmControllerType::Remote => {
-                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
-            }
-        };
-
-        let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
-            WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
-            WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
-            WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human
-            | WasmControllerType::Fixed
-            | WasmControllerType::Network
-            | WasmControllerType::Remote => {
-                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_ai_game")
-            }
-        };
+        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, self.game_seed);
+        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, self.game_seed.wrapping_add(1));
 
         // Scope game_loop tightly so self.game can be accessed in match arms
         let result = {
@@ -700,29 +705,8 @@ impl WasmGame {
         let p1_id = self.game.players[0].id;
         let p2_id = self.game.players[1].id;
 
-        let mut controller1: Box<dyn PlayerController> = match self.p1_controller_type {
-            WasmControllerType::Zero => Box::new(ZeroController::new(p1_id)),
-            WasmControllerType::Random => Box::new(RandomController::with_seed(p1_id, self.game_seed)),
-            WasmControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
-            WasmControllerType::Human
-            | WasmControllerType::Fixed
-            | WasmControllerType::Network
-            | WasmControllerType::Remote => {
-                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
-            }
-        };
-
-        let mut controller2: Box<dyn PlayerController> = match self.p2_controller_type {
-            WasmControllerType::Zero => Box::new(ZeroController::new(p2_id)),
-            WasmControllerType::Random => Box::new(RandomController::with_seed(p2_id, self.game_seed.wrapping_add(1))),
-            WasmControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
-            WasmControllerType::Human
-            | WasmControllerType::Fixed
-            | WasmControllerType::Network
-            | WasmControllerType::Remote => {
-                unimplemented!("Human/Fixed/Network/Remote controllers use fancy_tui, not run_one_turn")
-            }
-        };
+        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, self.game_seed);
+        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, self.game_seed.wrapping_add(1));
 
         let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
 

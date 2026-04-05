@@ -19,10 +19,14 @@
 //! - WASM entry point: `wasm/deck_builder.rs` with RatZilla event handling
 
 // Shared modules (available for both native and WASM)
+pub mod events;
 pub mod state;
 pub mod ui;
 
 // Re-export shared types
+pub use events::{
+    handle_deck_builder_click, handle_deck_builder_key, handle_exit_dialog_key, DeckBuilderAction, DeckBuilderKey,
+};
 pub use state::{
     card_sort_key, match_score, mtg_color_to_term, truncate_name, CardCategory, CardEntryGroup, DeckBuilderState,
     FocusedPane, CARD_COLUMN_WIDTH, CARD_NAME_WIDTH,

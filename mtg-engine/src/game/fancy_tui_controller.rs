@@ -5,6 +5,10 @@
 //!
 //! The UI rendering is delegated to [`FancyTuiRenderer`] which is shared with the
 //! WASM browser implementation for exact visual parity.
+//!
+//! Event handling is delegated to shared handlers in [`fancy_tui_events`], which are
+//! also used by the WASM implementation. This controller converts crossterm events
+//! to backend-neutral [`UiEvent`] and dispatches them through the shared handlers.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{
@@ -12,7 +16,8 @@ use crate::game::controller::{
     prompt_mana_source, prompt_spell_ability, prompt_target, sort_spell_abilities, ChoiceResult, GameStateView,
     PlayerController, PROMPT_ATTACKERS,
 };
-use crate::game::fancy_tui_renderer::{BattlefieldEntity, ChoiceContext, FancyTuiRenderer, FocusedPane};
+use crate::game::fancy_tui_events::{handle_ui_event, EventResult, KeyInput, ScrollDirection, UiEvent};
+use crate::game::fancy_tui_renderer::{ChoiceContext, FancyTuiRenderer};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
@@ -95,12 +100,9 @@ impl FancyTuiController {
         use crossterm::event::DisableMouseCapture;
         use std::io::Write;
 
-        // Restore terminal state in reverse order of setup
         disable_raw_mode()?;
         execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
         terminal.show_cursor()?;
-
-        // Flush all pending operations to ensure terminal is fully restored
         terminal.backend_mut().flush()?;
 
         Ok(())
@@ -108,13 +110,10 @@ impl FancyTuiController {
 
     /// Configure game logger for memory-only mode (suppress stdout)
     pub fn configure_logger_for_tui(&mut self, _view: &GameStateView) {
-        // The logger is in the GameState which we can't mutate through GameStateView
-        // We'll need to do this differently - see implementation note
         self.logger_memory_mode_enabled = true;
     }
 
     /// Save buffered logs to a temp file and print the location
-    /// Call this after the game ends and terminal is restored
     ///
     /// # Errors
     ///
@@ -136,7 +135,6 @@ impl FancyTuiController {
             return Ok(());
         }
 
-        // Create temp file for logs
         let temp_dir = std::env::temp_dir();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -144,7 +142,6 @@ impl FancyTuiController {
             .as_secs();
         let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
 
-        // Write logs to file
         use std::io::Write;
         let mut file = std::fs::File::create(&log_path)?;
         for entry in logs.iter() {
@@ -159,673 +156,83 @@ impl FancyTuiController {
 
     /// Wait for user input and update highlighted choice
     ///
-    /// Note: Wildcards are intentional - crossterm KeyCode/Event/MouseEventKind have 25+ variants
-    /// each, and FocusedPane is internal. We handle the subset of keys/events we use.
+    /// Reads crossterm events, converts them to backend-neutral `UiEvent`,
+    /// dispatches through shared handlers, and maps `EventResult` to `InputAction`.
     #[allow(clippy::wildcard_enum_match_arm)]
     fn wait_for_choice_input(&mut self, num_choices: usize, view: &GameStateView) -> io::Result<InputAction> {
-        // Set up signal handlers for suspend/resume
         let sigtstp_flag = Arc::new(AtomicBool::new(false));
         let sigcont_flag = Arc::new(AtomicBool::new(false));
-
-        // Register SIGTSTP (Ctrl-Z) handler
         let _sigtstp_handle = signal_flag::register(SIGTSTP, Arc::clone(&sigtstp_flag)).map_err(io::Error::other)?;
-
-        // Register SIGCONT (resume) handler
         let _sigcont_handle = signal_flag::register(SIGCONT, Arc::clone(&sigcont_flag)).map_err(io::Error::other)?;
 
         loop {
-            // Check for suspend signal (Ctrl-Z)
             if sigtstp_flag.swap(false, Ordering::Relaxed) {
-                // Disable raw mode and leave alternate screen
                 disable_raw_mode()?;
                 execute!(io::stdout(), LeaveAlternateScreen)?;
-
-                // Send SIGSTOP to ourselves to actually suspend
                 #[cfg(unix)]
                 unsafe {
                     libc::raise(libc::SIGSTOP);
                 }
-
-                // When we resume (SIGCONT received), we'll continue here
             }
 
-            // Check for resume signal
             if sigcont_flag.swap(false, Ordering::Relaxed) {
-                // Re-enable raw mode and re-enter alternate screen
                 enable_raw_mode()?;
                 execute!(io::stdout(), EnterAlternateScreen)?;
-
-                // Return Continue to force a redraw
                 return Ok(InputAction::Continue);
             }
 
             if event::poll(std::time::Duration::from_millis(100))? {
-                let event = event::read()?;
-                match event {
-                    Event::Mouse(mouse_event) => {
-                        let (x, y) = (mouse_event.column, mouse_event.row);
+                let raw_event = event::read()?;
 
-                        // Handle scroll wheel for Log pane
-                        match mouse_event.kind {
-                            MouseEventKind::ScrollUp => {
-                                if let Some(info_area) = self.renderer.state.log_pane_area {
-                                    if x >= info_area.x
-                                        && x < info_area.x + info_area.width
-                                        && y >= info_area.y
-                                        && y < info_area.y + info_area.height
-                                    {
-                                        self.renderer.state.log_scroll_up(usize::MAX, 10);
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            MouseEventKind::ScrollDown => {
-                                if let Some(info_area) = self.renderer.state.log_pane_area {
-                                    if x >= info_area.x
-                                        && x < info_area.x + info_area.width
-                                        && y >= info_area.y
-                                        && y < info_area.y + info_area.height
-                                    {
-                                        self.renderer.state.log_scroll_down();
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            MouseEventKind::ScrollLeft => {
-                                // Horizontal scroll left in Log pane (when not wrapping)
-                                if let Some(info_area) = self.renderer.state.log_pane_area {
-                                    if x >= info_area.x
-                                        && x < info_area.x + info_area.width
-                                        && y >= info_area.y
-                                        && y < info_area.y + info_area.height
-                                        && !self.renderer.state.log_wrap_lines
-                                    {
-                                        self.renderer.state.log_scroll_left();
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            MouseEventKind::ScrollRight => {
-                                // Horizontal scroll right in Log pane (when not wrapping)
-                                if let Some(info_area) = self.renderer.state.log_pane_area {
-                                    if x >= info_area.x
-                                        && x < info_area.x + info_area.width
-                                        && y >= info_area.y
-                                        && y < info_area.y + info_area.height
-                                        && !self.renderer.state.log_wrap_lines
-                                    {
-                                        self.renderer.state.log_scroll_right();
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            MouseEventKind::Down(MouseButton::Left) => {
-                                // Handle left click - continue below
-                            }
-                            _ => {}
-                        }
-
-                        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                            // Check if Actions pane was clicked
-                            if let Some(actions_area) = self.renderer.state.actions_pane_area {
-                                if x >= actions_area.x
-                                    && x < actions_area.x + actions_area.width
-                                    && y >= actions_area.y
-                                    && y < actions_area.y + actions_area.height
-                                {
-                                    self.renderer.state.focused_pane = FocusedPane::Actions;
-                                    return Ok(InputAction::Continue); // Redraw with new focus
-                                }
-                            }
-
-                            // Check if Log pane was clicked
-                            if let Some(info_area) = self.renderer.state.log_pane_area {
-                                if x >= info_area.x
-                                    && x < info_area.x + info_area.width
-                                    && y >= info_area.y
-                                    && y < info_area.y + info_area.height
-                                {
-                                    self.renderer.state.focused_pane = FocusedPane::Log;
-                                    return Ok(InputAction::Continue); // Redraw with new focus
-                                }
-                            }
-
-                            // Check if Hand pane was clicked
-                            if let Some(hand_area) = self.renderer.state.hand_pane_area {
-                                if x >= hand_area.x
-                                    && x < hand_area.x + hand_area.width
-                                    && y >= hand_area.y
-                                    && y < hand_area.y + hand_area.height
-                                {
-                                    self.renderer.state.focused_pane = FocusedPane::Hand;
-                                    // Initialize selection to first card if hand not empty
-                                    let hand = view.hand();
-                                    if !hand.is_empty() && self.renderer.state.selected_card_in_hand.is_none() {
-                                        self.renderer.state.selected_card_in_hand = Some(0);
-                                        self.renderer.state.selected_card_id = Some(hand[0]);
-                                    }
-                                    return Ok(InputAction::Continue); // Redraw with new focus
-                                }
-                            }
-
-                            // Check if any entity was clicked
-                            for entity_pos in &self.renderer.state.entity_positions {
-                                if x >= entity_pos.area.x
-                                    && x < entity_pos.area.x + entity_pos.area.width
-                                    && y >= entity_pos.area.y
-                                    && y < entity_pos.area.y + entity_pos.area.height
-                                {
-                                    // Entity clicked! Select its representative card and show details
-                                    let representative = entity_pos.entity.representative_card();
-                                    self.renderer.state.selected_card_id = Some(representative);
-
-                                    // Update battlefield selection if it's in a battlefield
-                                    if let Some(card) = view.get_card(representative) {
-                                        if card.controller == view.player_id() {
-                                            self.renderer.state.selected_card_in_your_bf = Some(representative);
-                                            self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
-                                        } else {
-                                            self.renderer.state.selected_card_in_opp_bf = Some(representative);
-                                            self.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
-                                        }
-                                    }
-
-                                    return Ok(InputAction::Continue); // Redraw with new selection
-                                }
-                            }
-                        }
-                    }
+                let ui_event = match raw_event {
                     Event::Key(key) => {
-                        match key.code {
-                            // Pane focus switching (H, I, Y, O, A)
-                            KeyCode::Char('h' | 'H') => {
-                                self.renderer.state.focused_pane = FocusedPane::Hand;
-                                // Initialize selection to first card if hand not empty
-                                let hand = view.hand();
-                                if !hand.is_empty() && self.renderer.state.selected_card_in_hand.is_none() {
-                                    self.renderer.state.selected_card_in_hand = Some(0);
-                                    self.renderer.state.selected_card_id = Some(hand[0]);
-                                }
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('l' | 'L') => {
-                                self.renderer.state.focused_pane = FocusedPane::Log;
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('y' | 'Y') => {
-                                self.renderer.state.focused_pane = FocusedPane::YourBattlefield;
-                                // Initialize selection to first card if battlefield not empty
-                                let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-                                if !bf_cards.is_empty() && self.renderer.state.selected_card_in_your_bf.is_none() {
-                                    self.renderer.state.selected_card_in_your_bf = Some(bf_cards[0]);
-                                    self.renderer.state.selected_card_id = Some(bf_cards[0]);
-                                }
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('o' | 'O') => {
-                                self.renderer.state.focused_pane = FocusedPane::OpponentBattlefield;
-                                // Initialize selection to first card if battlefield not empty
-                                if let Some(opp_id) = view.opponents().next() {
-                                    let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                                    if !bf_cards.is_empty() && self.renderer.state.selected_card_in_opp_bf.is_none() {
-                                        self.renderer.state.selected_card_in_opp_bf = Some(bf_cards[0]);
-                                        self.renderer.state.selected_card_id = Some(bf_cards[0]);
-                                    }
-                                }
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('a' | 'A') => {
-                                self.renderer.state.focused_pane = FocusedPane::Actions;
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('s' | 'S') => {
-                                // Stack is now part of Actions pane
-                                self.renderer.state.focused_pane = FocusedPane::Actions;
-                                return Ok(InputAction::Continue); // Redraw needed
-                            }
-                            KeyCode::Char('b' | 'B') => {
-                                // Log battlefield state
-                                let bf_text = crate::game::display::format_battlefield_for_log(view);
-                                log::info!("{}", bf_text);
-                                return Ok(InputAction::Continue);
-                            }
-                            // Arrow key navigation - route based on focused pane
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                match self.renderer.state.focused_pane {
-                                    FocusedPane::Actions => {
-                                        // Navigate choices in Actions pane
-                                        if self.renderer.state.highlighted_choice > 0 {
-                                            self.renderer.state.highlighted_choice -= 1;
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Hand => {
-                                        // Navigate cards in Hand pane
-                                        let hand = view.hand();
-                                        if !hand.is_empty() {
-                                            let current = self.renderer.state.selected_card_in_hand.unwrap_or(0);
-                                            if current > 0 {
-                                                self.renderer.state.selected_card_in_hand = Some(current - 1);
-                                                self.renderer.state.selected_card_id = Some(hand[current - 1]);
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::YourBattlefield => {
-                                        // Navigate cards in Your Battlefield (2D: move up one row)
-                                        let bf_cards =
-                                            FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-                                        if !bf_cards.is_empty() {
-                                            let current_card = self.renderer.state.selected_card_in_your_bf;
-                                            if let Some(current_idx) =
-                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                            {
-                                                const CARDS_PER_ROW: usize = 4; // Estimate based on typical terminal width
-                                                if current_idx >= CARDS_PER_ROW {
-                                                    let new_idx = current_idx - CARDS_PER_ROW;
-                                                    let new_card = bf_cards[new_idx];
-                                                    self.renderer.state.selected_card_in_your_bf = Some(new_card);
-                                                    self.renderer.state.selected_card_id = Some(new_card);
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::OpponentBattlefield => {
-                                        // Navigate cards in Opponent Battlefield (2D: move up one row)
-                                        if let Some(opp_id) = view.opponents().next() {
-                                            let bf_cards =
-                                                FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                                            if !bf_cards.is_empty() {
-                                                let current_card = self.renderer.state.selected_card_in_opp_bf;
-                                                if let Some(current_idx) =
-                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                                {
-                                                    const CARDS_PER_ROW: usize = 4;
-                                                    if current_idx >= CARDS_PER_ROW {
-                                                        let new_idx = current_idx - CARDS_PER_ROW;
-                                                        let new_card = bf_cards[new_idx];
-                                                        self.renderer.state.selected_card_in_opp_bf = Some(new_card);
-                                                        self.renderer.state.selected_card_id = Some(new_card);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Log => {
-                                        // Scroll log up (toward older messages)
-                                        self.renderer.state.log_scroll_up(usize::MAX, 10);
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                match self.renderer.state.focused_pane {
-                                    FocusedPane::Actions => {
-                                        // Navigate choices in Actions pane
-                                        if self.renderer.state.highlighted_choice + 1 < num_choices {
-                                            self.renderer.state.highlighted_choice += 1;
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Hand => {
-                                        // Navigate cards in Hand pane
-                                        let hand = view.hand();
-                                        if !hand.is_empty() {
-                                            let current = self.renderer.state.selected_card_in_hand.unwrap_or(0);
-                                            if current + 1 < hand.len() {
-                                                self.renderer.state.selected_card_in_hand = Some(current + 1);
-                                                self.renderer.state.selected_card_id = Some(hand[current + 1]);
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::YourBattlefield => {
-                                        // Navigate cards in Your Battlefield (2D: move down one row)
-                                        let bf_cards =
-                                            FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-                                        if !bf_cards.is_empty() {
-                                            let current_card = self.renderer.state.selected_card_in_your_bf;
-                                            if let Some(current_idx) =
-                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                            {
-                                                const CARDS_PER_ROW: usize = 4;
-                                                let new_idx = current_idx + CARDS_PER_ROW;
-                                                if new_idx < bf_cards.len() {
-                                                    let new_card = bf_cards[new_idx];
-                                                    self.renderer.state.selected_card_in_your_bf = Some(new_card);
-                                                    self.renderer.state.selected_card_id = Some(new_card);
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::OpponentBattlefield => {
-                                        // Navigate cards in Opponent Battlefield (2D: move down one row)
-                                        if let Some(opp_id) = view.opponents().next() {
-                                            let bf_cards =
-                                                FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                                            if !bf_cards.is_empty() {
-                                                let current_card = self.renderer.state.selected_card_in_opp_bf;
-                                                if let Some(current_idx) =
-                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                                {
-                                                    const CARDS_PER_ROW: usize = 4;
-                                                    let new_idx = current_idx + CARDS_PER_ROW;
-                                                    if new_idx < bf_cards.len() {
-                                                        let new_card = bf_cards[new_idx];
-                                                        self.renderer.state.selected_card_in_opp_bf = Some(new_card);
-                                                        self.renderer.state.selected_card_id = Some(new_card);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Log => {
-                                        // Scroll log down (toward newer messages)
-                                        self.renderer.state.log_scroll_down();
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            KeyCode::Left => {
-                                match self.renderer.state.focused_pane {
-                                    FocusedPane::YourBattlefield => {
-                                        // Navigate left in Your Battlefield (2D: move left with wrapping)
-                                        let bf_cards =
-                                            FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-                                        if !bf_cards.is_empty() {
-                                            let current_card = self.renderer.state.selected_card_in_your_bf;
-                                            if let Some(current_idx) =
-                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                            {
-                                                const CARDS_PER_ROW: usize = 4;
-                                                let row = current_idx / CARDS_PER_ROW;
-                                                let col = current_idx % CARDS_PER_ROW;
-
-                                                let new_idx = if col > 0 {
-                                                    // Move left within the row
-                                                    current_idx - 1
-                                                } else {
-                                                    // Wrap to end of current row
-                                                    let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-                                                    row_end - 1
-                                                };
-
-                                                let new_card = bf_cards[new_idx];
-                                                self.renderer.state.selected_card_in_your_bf = Some(new_card);
-                                                self.renderer.state.selected_card_id = Some(new_card);
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::OpponentBattlefield => {
-                                        // Navigate left in Opponent Battlefield (2D: move left with wrapping)
-                                        if let Some(opp_id) = view.opponents().next() {
-                                            let bf_cards =
-                                                FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                                            if !bf_cards.is_empty() {
-                                                let current_card = self.renderer.state.selected_card_in_opp_bf;
-                                                if let Some(current_idx) =
-                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                                {
-                                                    const CARDS_PER_ROW: usize = 4;
-                                                    let row = current_idx / CARDS_PER_ROW;
-                                                    let col = current_idx % CARDS_PER_ROW;
-
-                                                    let new_idx = if col > 0 {
-                                                        current_idx - 1
-                                                    } else {
-                                                        let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-                                                        row_end - 1
-                                                    };
-
-                                                    let new_card = bf_cards[new_idx];
-                                                    self.renderer.state.selected_card_in_opp_bf = Some(new_card);
-                                                    self.renderer.state.selected_card_id = Some(new_card);
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Log => {
-                                        // Scroll to previous turn header
-                                        let logs = view.logger().logs();
-                                        let visible_lines = self.renderer.state.log_visible_lines;
-                                        self.renderer.state.log_scroll_prev_turn(&logs, visible_lines);
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    _ => {
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            KeyCode::Right => {
-                                match self.renderer.state.focused_pane {
-                                    FocusedPane::YourBattlefield => {
-                                        // Navigate right in Your Battlefield (2D: move right with wrapping)
-                                        let bf_cards =
-                                            FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-                                        if !bf_cards.is_empty() {
-                                            let current_card = self.renderer.state.selected_card_in_your_bf;
-                                            if let Some(current_idx) =
-                                                current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                            {
-                                                const CARDS_PER_ROW: usize = 4;
-                                                let row = current_idx / CARDS_PER_ROW;
-                                                let row_start = row * CARDS_PER_ROW;
-                                                let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-
-                                                let new_idx = if current_idx + 1 < row_end {
-                                                    // Move right within the row
-                                                    current_idx + 1
-                                                } else {
-                                                    // Wrap to start of current row
-                                                    row_start
-                                                };
-
-                                                let new_card = bf_cards[new_idx];
-                                                self.renderer.state.selected_card_in_your_bf = Some(new_card);
-                                                self.renderer.state.selected_card_id = Some(new_card);
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::OpponentBattlefield => {
-                                        // Navigate right in Opponent Battlefield (2D: move right with wrapping)
-                                        if let Some(opp_id) = view.opponents().next() {
-                                            let bf_cards =
-                                                FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                                            if !bf_cards.is_empty() {
-                                                let current_card = self.renderer.state.selected_card_in_opp_bf;
-                                                if let Some(current_idx) =
-                                                    current_card.and_then(|id| bf_cards.iter().position(|&c| c == id))
-                                                {
-                                                    const CARDS_PER_ROW: usize = 4;
-                                                    let row = current_idx / CARDS_PER_ROW;
-                                                    let row_start = row * CARDS_PER_ROW;
-                                                    let row_end = ((row + 1) * CARDS_PER_ROW).min(bf_cards.len());
-
-                                                    let new_idx = if current_idx + 1 < row_end {
-                                                        current_idx + 1
-                                                    } else {
-                                                        row_start
-                                                    };
-
-                                                    let new_card = bf_cards[new_idx];
-                                                    self.renderer.state.selected_card_in_opp_bf = Some(new_card);
-                                                    self.renderer.state.selected_card_id = Some(new_card);
-                                                }
-                                            }
-                                        }
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    FocusedPane::Log => {
-                                        // Scroll to next turn header
-                                        let logs = view.logger().logs();
-                                        let visible_lines = self.renderer.state.log_visible_lines;
-                                        self.renderer.state.log_scroll_next_turn(&logs, visible_lines);
-                                        return Ok(InputAction::Continue);
-                                    }
-                                    _ => {
-                                        return Ok(InputAction::Continue);
-                                    }
-                                }
-                            }
-                            KeyCode::Enter => {
-                                // If digit buffer is non-empty, parse and select that index
-                                if !self.renderer.state.digit_buffer.is_empty() {
-                                    if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
-                                        self.renderer.state.digit_buffer.clear();
-                                        if idx < num_choices {
-                                            return Ok(InputAction::Select(idx));
-                                        }
-                                    } else {
-                                        self.renderer.state.digit_buffer.clear();
-                                    }
-                                    return Ok(InputAction::Continue);
-                                }
-                                // In Actions pane, select the highlighted choice
-                                if self.renderer.state.focused_pane == FocusedPane::Actions {
-                                    return Ok(InputAction::Select(self.renderer.state.highlighted_choice));
-                                }
-
-                                // In other panes, Enter selects a card to view in Card Details
-                                match self.renderer.state.focused_pane {
-                                    FocusedPane::Hand => {
-                                        if let Some(idx) = self.renderer.state.selected_card_in_hand {
-                                            let hand = view.hand();
-                                            if idx < hand.len() {
-                                                self.renderer.state.selected_card_id = Some(hand[idx]);
-                                            }
-                                        }
-                                    }
-                                    FocusedPane::YourBattlefield => {
-                                        if let Some(card_id) = self.renderer.state.selected_card_in_your_bf {
-                                            self.renderer.state.selected_card_id = Some(card_id);
-                                        }
-                                    }
-                                    FocusedPane::OpponentBattlefield => {
-                                        if let Some(card_id) = self.renderer.state.selected_card_in_opp_bf {
-                                            self.renderer.state.selected_card_id = Some(card_id);
-                                        }
-                                    }
-                                    FocusedPane::Log | FocusedPane::Actions => {
-                                        // Log pane doesn't have cards to select
-                                        // Actions pane (with Stack) already handled above
-                                    }
-                                }
-
-                                return Ok(InputAction::Continue);
-                            }
-                            KeyCode::Char('p') | KeyCode::Esc => {
-                                // If digit buffer is non-empty, clear it instead of passing
-                                if !self.renderer.state.digit_buffer.is_empty() {
-                                    self.renderer.state.digit_buffer.clear();
-                                    return Ok(InputAction::Continue);
-                                }
-                                return Ok(InputAction::Pass);
-                            }
-                            KeyCode::Char('q') => {
-                                return Ok(InputAction::Pass);
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                return Ok(InputAction::Exit);
-                            }
-                            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                // Ctrl-Z is now handled by SIGTSTP signal handler above
-                                // No action needed here - the signal handler will suspend the process
-                                return Ok(InputAction::Continue);
-                            }
-                            KeyCode::Char('Z') => {
-                                // Shift+Z: Undo the most recent action
-                                return Ok(InputAction::Undo);
-                            }
-                            KeyCode::Char('r' | 'R') => {
-                                // R: Make a random choice
-                                return Ok(InputAction::RandomChoice);
-                            }
-                            KeyCode::Char(c) if c.is_ascii_digit() => {
-                                // Digit selection only works when Actions pane is focused
-                                if self.renderer.state.focused_pane == FocusedPane::Actions {
-                                    if num_choices > 10 {
-                                        // Multi-digit mode: accumulate in buffer, auto-highlight
-                                        self.renderer.state.digit_buffer.push(c);
-                                        if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
-                                            if idx < num_choices {
-                                                self.renderer.state.highlighted_choice = idx;
-                                            }
-                                        }
-                                    } else {
-                                        // Single-digit mode: instant select (existing behavior)
-                                        let digit = c.to_digit(10).unwrap() as usize;
-                                        if digit < num_choices {
-                                            return Ok(InputAction::Select(digit));
-                                        }
-                                    }
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                if !self.renderer.state.digit_buffer.is_empty() {
-                                    self.renderer.state.digit_buffer.pop();
-                                    // Update highlight based on remaining buffer
-                                    if let Ok(idx) = self.renderer.state.digit_buffer.parse::<usize>() {
-                                        if idx < num_choices {
-                                            self.renderer.state.highlighted_choice = idx;
-                                        }
-                                    }
-                                }
-                            }
-                            KeyCode::Char('w' | 'W') => {
-                                // W: Toggle line wrapping in log (only when Log pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Log {
-                                    let logs = view.logger().logs();
-                                    self.renderer.state.log_toggle_wrap(logs.len());
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                            KeyCode::PageUp => {
-                                // Page up in log (only when Log pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Log {
-                                    self.renderer.state.log_page_up(usize::MAX, 10);
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                            KeyCode::PageDown => {
-                                // Page down in log (only when Log pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Log {
-                                    self.renderer.state.log_page_down(10);
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                            KeyCode::Home => {
-                                // Scroll to beginning (only when Log pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Log {
-                                    self.renderer.state.log_scroll_home(usize::MAX, 10);
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                            KeyCode::End => {
-                                // Scroll to end (only when Log pane is focused)
-                                if self.renderer.state.focused_pane == FocusedPane::Log {
-                                    self.renderer.state.log_scroll_end();
-                                    return Ok(InputAction::Continue);
-                                }
-                            }
-                            KeyCode::Char('?' | '/') => {
-                                // Show help/keyboard shortcuts
-                                return Ok(InputAction::ShowHelp);
-                            }
-                            _ => {}
+                        if key.code == KeyCode::Char('z') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                            continue;
+                        }
+                        match crossterm_key_to_input(key.code, key.modifiers) {
+                            Some(key_input) => UiEvent::Key(key_input),
+                            None => continue,
                         }
                     }
-                    Event::Resize(_, _) => {
-                        // Terminal was resized - trigger a redraw
+                    Event::Mouse(mouse) => {
+                        let (col, row) = (mouse.column, mouse.row);
+                        match mouse.kind {
+                            MouseEventKind::ScrollUp => UiEvent::MouseWheel {
+                                direction: ScrollDirection::Up, col, row,
+                            },
+                            MouseEventKind::ScrollDown => UiEvent::MouseWheel {
+                                direction: ScrollDirection::Down, col, row,
+                            },
+                            MouseEventKind::ScrollLeft => UiEvent::MouseWheel {
+                                direction: ScrollDirection::Left, col, row,
+                            },
+                            MouseEventKind::ScrollRight => UiEvent::MouseWheel {
+                                direction: ScrollDirection::Right, col, row,
+                            },
+                            MouseEventKind::Down(MouseButton::Left) => UiEvent::MouseClick { col, row },
+                            _ => continue,
+                        }
+                    }
+                    Event::Resize(w, h) => UiEvent::Resize { width: w, height: h },
+                    _ => continue,
+                };
+
+                let result = handle_ui_event(&mut self.renderer.state, ui_event, view, num_choices);
+
+                match result {
+                    EventResult::Handled => return Ok(InputAction::Continue),
+                    EventResult::NotHandled => continue,
+                    EventResult::Pass => return Ok(InputAction::Pass),
+                    EventResult::Exit => return Ok(InputAction::Exit),
+                    EventResult::Undo => return Ok(InputAction::Undo),
+                    EventResult::RandomChoice => return Ok(InputAction::RandomChoice),
+                    EventResult::SelectChoice(idx) => return Ok(InputAction::Select(idx)),
+                    EventResult::ShowBattlefield => {
+                        let bf_text = crate::game::display::format_battlefield_for_log(view);
+                        log::info!("{}", bf_text);
                         return Ok(InputAction::Continue);
                     }
-                    _ => {}
+                    EventResult::ShowHelp => return Ok(InputAction::ShowHelp),
                 }
             }
         }
@@ -844,7 +251,6 @@ impl FancyTuiController {
         let mut terminal = Self::setup_terminal()?;
 
         loop {
-            // Prepare choices with highlighting and numbers using shared function
             let choice_tuples =
                 crate::game::display::format_choices_with_numbers(choices, self.renderer.state.highlighted_choice);
 
@@ -853,10 +259,7 @@ impl FancyTuiController {
             })?;
 
             match self.wait_for_choice_input(choices.len(), view)? {
-                InputAction::Continue => {
-                    // Arrow key pressed, continue loop to redraw
-                    continue;
-                }
+                InputAction::Continue => continue,
                 InputAction::Select(choice) => {
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(PromptResult::Choice(Some(choice)));
@@ -866,35 +269,63 @@ impl FancyTuiController {
                     return Ok(PromptResult::Choice(None));
                 }
                 InputAction::Exit => {
-                    // Ctrl-C pressed - restore terminal and exit gracefully
                     Self::restore_terminal(&mut terminal)?;
                     eprintln!("Exiting game (Ctrl-C pressed)");
                     std::process::exit(0);
                 }
                 InputAction::Undo => {
-                    // Return undo signal to be handled at controller trait method level
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(PromptResult::Undo);
                 }
                 InputAction::RandomChoice => {
-                    // R key pressed - make a random choice
                     let choice = if choices.is_empty() {
                         None
                     } else {
                         let mut rng = rand::thread_rng();
-                        let idx = rng.gen_range(0..choices.len());
-                        Some(idx)
+                        Some(rng.gen_range(0..choices.len()))
                     };
                     Self::restore_terminal(&mut terminal)?;
                     return Ok(PromptResult::Choice(choice));
                 }
-                InputAction::ShowHelp => {
-                    // Show help - for now, log the help info
-                    // TODO: Could show a modal help overlay in the future
-                    continue;
-                }
+                InputAction::ShowHelp => continue,
             }
         }
+    }
+}
+
+/// Convert crossterm key event to backend-neutral `KeyInput`.
+#[allow(clippy::wildcard_enum_match_arm)]
+fn crossterm_key_to_input(code: KeyCode, modifiers: KeyModifiers) -> Option<KeyInput> {
+    match code {
+        KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Some(KeyInput::CtrlC),
+        KeyCode::Char('h' | 'H') => Some(KeyInput::FocusHand),
+        KeyCode::Char('i' | 'I') => Some(KeyInput::FocusInfo),
+        KeyCode::Char('l' | 'L') => Some(KeyInput::FocusInfo), // legacy binding
+        KeyCode::Char('y' | 'Y') => Some(KeyInput::FocusYourBf),
+        KeyCode::Char('o' | 'O') => Some(KeyInput::FocusOpponentBf),
+        KeyCode::Char('a' | 'A') => Some(KeyInput::FocusActions),
+        KeyCode::Char('s' | 'S') => Some(KeyInput::FocusStack),
+        KeyCode::Char('p') | KeyCode::Char('q' | 'Q') => Some(KeyInput::Pass),
+        KeyCode::Char('Z') => Some(KeyInput::Undo),
+        KeyCode::Char('r' | 'R') => Some(KeyInput::Random),
+        KeyCode::Char('b' | 'B') => Some(KeyInput::ShowBattlefield),
+        KeyCode::Char('w' | 'W') => Some(KeyInput::ToggleWrap),
+        KeyCode::Char('?' | '/') => Some(KeyInput::Help),
+        KeyCode::Up | KeyCode::Char('k') => Some(KeyInput::Up),
+        KeyCode::Down | KeyCode::Char('j') => Some(KeyInput::Down),
+        KeyCode::Left => Some(KeyInput::Left),
+        KeyCode::Right => Some(KeyInput::Right),
+        KeyCode::Tab => Some(KeyInput::Tab),
+        KeyCode::Enter => Some(KeyInput::Enter),
+        KeyCode::Esc => Some(KeyInput::Escape),
+        KeyCode::Char(' ') => Some(KeyInput::Space),
+        KeyCode::PageUp => Some(KeyInput::PageUp),
+        KeyCode::PageDown => Some(KeyInput::PageDown),
+        KeyCode::Home => Some(KeyInput::Home),
+        KeyCode::End => Some(KeyInput::End),
+        KeyCode::Backspace => Some(KeyInput::Backspace),
+        KeyCode::Char(c) if c.is_ascii_digit() => Some(KeyInput::Digit(c.to_digit(10).unwrap() as u8)),
+        _ => None,
     }
 }
 
@@ -912,34 +343,27 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(None);
         }
 
-        // Sort abilities in canonical order: PlayLand, CastSpell, ActivateAbility
         let sorted = sort_spell_abilities(available);
-
-        // Set choice context and valid choices for highlighting
         self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
         self.renderer.state.valid_choices = sorted.iter().map(SpellAbility::card_id).collect();
 
         let player_name = view.player_name();
         let prompt = prompt_spell_ability(&player_name);
-
-        // Use shared formatting function for consistency with WASM
         let choices = format_spell_ability_choices(view, &sorted);
 
         match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(PromptResult::Undo) => {
-                // Clear choice context
                 self.renderer.state.choice_context = ChoiceContext::None;
                 self.renderer.state.valid_choices.clear();
                 ChoiceResult::UndoRequest(usize::MAX)
             }
             Ok(PromptResult::Choice(choice_opt)) => {
                 let result = match choice_opt {
-                    Some(0) | None => None, // Pass
+                    Some(0) | None => None,
                     Some(idx) if idx > 0 && idx <= sorted.len() => Some(sorted[idx - 1].clone()),
                     _ => None,
                 };
 
-                // Log the choice
                 if let Some(ability) = &result {
                     let choice_description = format_spell_ability_choice(view, ability);
                     view.logger()
@@ -949,14 +373,11 @@ impl PlayerController for FancyTuiController {
                         .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                 }
 
-                // Clear choice context after making choice
                 self.renderer.state.choice_context = ChoiceContext::None;
                 self.renderer.state.valid_choices.clear();
-
                 ChoiceResult::Ok(result)
             }
             Err(e) => {
-                // Clear choice context on error
                 self.renderer.state.choice_context = ChoiceContext::None;
                 self.renderer.state.valid_choices.clear();
                 ChoiceResult::Error(format!("Failed to prompt for choice: {}", e))
@@ -974,14 +395,11 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        // Set choice context and valid choices for highlighting
         self.renderer.state.choice_context = ChoiceContext::TargetSelection;
         self.renderer.state.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_default();
         let prompt = prompt_target(&spell_name);
-
-        // Use shared formatting function for consistency with WASM
         let choices = format_target_choices(view, valid_targets, self.player_id);
 
         let mut targets = SmallVec::new();
@@ -1002,7 +420,6 @@ impl PlayerController for FancyTuiController {
             }
         }
 
-        // Log the choice
         if targets.is_empty() {
             view.logger().controller_choice("TUI", "Chose no target");
         } else {
@@ -1014,10 +431,8 @@ impl PlayerController for FancyTuiController {
                 .controller_choice("TUI", &format!("chose target {}", target_names.join(", ")));
         }
 
-        // Clear choice context after making choice
         self.renderer.state.choice_context = ChoiceContext::None;
         self.renderer.state.valid_choices.clear();
-
         ChoiceResult::Ok(targets)
     }
 
@@ -1036,20 +451,15 @@ impl PlayerController for FancyTuiController {
 
         for i in 0..needed {
             let prompt = prompt_mana_source(i + 1, needed);
-            // Use shared formatting for consistency with WASM
             let choices = format_card_choices(view, available_sources, self.player_id);
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(PromptResult::Undo) => {
-                    return ChoiceResult::UndoRequest(usize::MAX);
-                }
+                Ok(PromptResult::Undo) => return ChoiceResult::UndoRequest(usize::MAX),
                 Ok(PromptResult::Choice(Some(idx))) if idx < available_sources.len() => {
                     sources.push(available_sources[idx]);
                 }
                 Ok(PromptResult::Choice(_)) => break,
-                Err(e) => {
-                    return ChoiceResult::Error(format!("Failed to prompt for mana source: {}", e));
-                }
+                Err(e) => return ChoiceResult::Error(format!("Failed to prompt for mana source: {}", e)),
             }
         }
 
@@ -1065,15 +475,12 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        // Set choice context and valid choices for highlighting
         self.renderer.state.choice_context = ChoiceContext::DeclareAttackers;
         self.renderer.state.valid_choices = available_creatures.to_vec();
-
         let mut attackers = SmallVec::new();
 
         loop {
             let prompt = PROMPT_ATTACKERS;
-            // Use shared formatting and add selection markers
             let base_choices = format_card_choices(view, available_creatures, self.player_id);
             let choices: Vec<String> = std::iter::once("Done".to_string())
                 .chain(base_choices.iter().enumerate().map(|(i, choice)| {
@@ -1105,30 +512,14 @@ impl PlayerController for FancyTuiController {
             }
         }
 
-        // Log the choice
         if attackers.is_empty() {
-            view.logger().controller_choice(
-                "TUI",
-                &format!(
-                    "chose not to attack with {} available creatures",
-                    available_creatures.len()
-                ),
-            );
+            view.logger().controller_choice("TUI", &format!("chose not to attack with {} available creatures", available_creatures.len()));
         } else {
-            view.logger().controller_choice(
-                "TUI",
-                &format!(
-                    "chose {} attackers from {} available creatures",
-                    attackers.len(),
-                    available_creatures.len()
-                ),
-            );
+            view.logger().controller_choice("TUI", &format!("chose {} attackers from {} available creatures", attackers.len(), available_creatures.len()));
         }
 
-        // Clear choice context after making choice
         self.renderer.state.choice_context = ChoiceContext::None;
         self.renderer.state.valid_choices.clear();
-
         ChoiceResult::Ok(attackers)
     }
 
@@ -1142,21 +533,14 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        // Set choice context: both blockers and attackers are valid choices
         self.renderer.state.choice_context = ChoiceContext::DeclareBlockers;
         self.renderer.state.valid_choices = available_blockers.iter().chain(attackers.iter()).copied().collect();
-
         let mut blocks = SmallVec::new();
-
-        // Pre-format attackers using shared formatting
         let formatted_attackers = format_card_choices(view, attackers, self.player_id);
 
-        // For each blocker, ask which attacker to block
         for &blocker_id in available_blockers {
             let blocker_name = view.card_name(blocker_id).unwrap_or_default();
             let prompt = format!("{}: Block which attacker?", blocker_name);
-
-            // Use shared formatting for attacker choices
             let choices: Vec<String> = std::iter::once("Skip".to_string())
                 .chain(formatted_attackers.clone())
                 .collect();
@@ -1180,27 +564,14 @@ impl PlayerController for FancyTuiController {
             }
         }
 
-        // Log the choice
         if blocks.is_empty() {
-            view.logger().controller_choice(
-                "TUI",
-                &format!(
-                    "chose not to block (no favorable blocks among {} blockers vs {} attackers)",
-                    available_blockers.len(),
-                    attackers.len()
-                ),
-            );
+            view.logger().controller_choice("TUI", &format!("chose not to block (no favorable blocks among {} blockers vs {} attackers)", available_blockers.len(), attackers.len()));
         } else {
-            view.logger().controller_choice(
-                "TUI",
-                &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()),
-            );
+            view.logger().controller_choice("TUI", &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()));
         }
 
-        // Clear choice context after making choice
         self.renderer.state.choice_context = ChoiceContext::None;
         self.renderer.state.valid_choices.clear();
-
         ChoiceResult::Ok(blocks)
     }
 
@@ -1210,8 +581,6 @@ impl PlayerController for FancyTuiController {
         _attacker: CardId,
         blockers: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // For simplicity, just return blockers in order
-        // TODO: implement UI for reordering
         ChoiceResult::Ok(blockers.iter().copied().collect())
     }
 
@@ -1231,28 +600,16 @@ impl PlayerController for FancyTuiController {
                 .map(|&card_id| view.card_name(card_id).unwrap_or_default())
                 .collect();
 
-            if choices.is_empty() {
-                break;
-            }
+            if choices.is_empty() { break; }
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(PromptResult::Undo) => {
-                    return ChoiceResult::UndoRequest(usize::MAX);
-                }
+                Ok(PromptResult::Undo) => return ChoiceResult::UndoRequest(usize::MAX),
                 Ok(PromptResult::Choice(Some(idx))) if idx < hand.len() => {
-                    let card_id = hand
-                        .iter()
-                        .filter(|&card_id| !discards.contains(card_id))
-                        .nth(idx)
-                        .copied();
-                    if let Some(card_id) = card_id {
-                        discards.push(card_id);
-                    }
+                    let card_id = hand.iter().filter(|&card_id| !discards.contains(card_id)).nth(idx).copied();
+                    if let Some(card_id) = card_id { discards.push(card_id); }
                 }
                 Ok(PromptResult::Choice(_)) => break,
-                Err(e) => {
-                    return ChoiceResult::Error(format!("Failed to prompt for discard: {}", e));
-                }
+                Err(e) => return ChoiceResult::Error(format!("Failed to prompt for discard: {}", e)),
             }
         }
 
@@ -1264,9 +621,7 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
-        if valid_cards.is_empty() {
-            return ChoiceResult::Ok(None);
-        }
+        if valid_cards.is_empty() { return ChoiceResult::Ok(None); }
 
         let prompt = "Search library: Choose a card";
         let choices: Vec<String> = std::iter::once("Fail to find".to_string())
@@ -1281,8 +636,7 @@ impl PlayerController for FancyTuiController {
             }
             Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_cards.len() => {
                 let def = valid_cards[idx - 1];
-                view.logger()
-                    .controller_choice("TUI", &format!("Chose {} from library", def.name));
+                view.logger().controller_choice("TUI", &format!("Chose {} from library", def.name));
                 ChoiceResult::Ok(Some(idx - 1))
             }
             Ok(PromptResult::Choice(_)) => ChoiceResult::Ok(None),
@@ -1305,49 +659,24 @@ impl PlayerController for FancyTuiController {
 
         while sacrifices.len() < count {
             let remaining = count - sacrifices.len();
-            let prompt = format!(
-                "Sacrifice {} {}: Choose {} more",
-                card_type_description, remaining, remaining
-            );
+            let prompt = format!("Sacrifice {} {}: Choose {} more", card_type_description, remaining, remaining);
+            let available: Vec<_> = valid_permanents.iter().filter(|&card_id| !sacrifices.contains(card_id)).collect();
+            if available.is_empty() { break; }
 
-            // Build choices from remaining (not yet selected) permanents
-            let available: Vec<_> = valid_permanents
-                .iter()
-                .filter(|&card_id| !sacrifices.contains(card_id))
-                .collect();
-
-            if available.is_empty() {
-                break;
-            }
-
-            let choices: Vec<String> = available
-                .iter()
+            let choices: Vec<String> = available.iter()
                 .map(|&&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
-                Ok(PromptResult::Undo) => {
-                    return ChoiceResult::UndoRequest(usize::MAX);
-                }
-                Ok(PromptResult::Choice(Some(idx))) if idx < available.len() => {
-                    sacrifices.push(*available[idx]);
-                }
-                Ok(PromptResult::Choice(_)) => {
-                    // Invalid choice, try again
-                    continue;
-                }
-                Err(e) => {
-                    return ChoiceResult::Error(format!("Failed to prompt for sacrifice: {}", e));
-                }
+                Ok(PromptResult::Undo) => return ChoiceResult::UndoRequest(usize::MAX),
+                Ok(PromptResult::Choice(Some(idx))) if idx < available.len() => { sacrifices.push(*available[idx]); }
+                Ok(PromptResult::Choice(_)) => continue,
+                Err(e) => return ChoiceResult::Error(format!("Failed to prompt for sacrifice: {}", e)),
             }
         }
 
         let names: Vec<String> = sacrifices.iter().filter_map(|&id| view.card_name(id)).collect();
-        view.logger().controller_choice(
-            "TUI",
-            &format!("Chose to sacrifice {}: [{}]", card_type_description, names.join(", ")),
-        );
-
+        view.logger().controller_choice("TUI", &format!("Chose to sacrifice {}: [{}]", card_type_description, names.join(", ")));
         ChoiceResult::Ok(sacrifices)
     }
 
@@ -1356,14 +685,8 @@ impl PlayerController for FancyTuiController {
         _view: &GameStateView,
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
-        // For interactive TUI, could prompt user to select which permanents to keep tapped
-        // For now, default to untapping everything (return empty list)
-        // TODO: Implement interactive selection UI for this choice
         if !may_not_untap_permanents.is_empty() {
-            eprintln!(
-                "[TUI] Auto-untapping {} permanents with MayNotUntap (interactive selection not yet implemented)",
-                may_not_untap_permanents.len()
-            );
+            eprintln!("[TUI] Auto-untapping {} permanents with MayNotUntap (interactive selection not yet implemented)", may_not_untap_permanents.len());
         }
         ChoiceResult::Ok(SmallVec::new())
     }
@@ -1377,42 +700,18 @@ impl PlayerController for FancyTuiController {
         min_modes: usize,
         _can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        // Interactive mode selection for fancy TUI
-        let spell_name = view
-            .get_card_name(spell_id)
-            .unwrap_or_else(|| "Unknown Spell".to_string());
-
-        eprintln!(
-            "\n=== Choose {} Mode{} for {} ===",
-            mode_count,
-            if mode_count > 1 { "s" } else { "" },
-            spell_name
-        );
+        let spell_name = view.get_card_name(spell_id).unwrap_or_else(|| "Unknown Spell".to_string());
+        eprintln!("\n=== Choose {} Mode{} for {} ===", mode_count, if mode_count > 1 { "s" } else { "" }, spell_name);
         eprintln!("Minimum modes required: {}", min_modes);
-
-        for (idx, desc) in mode_descriptions.iter().enumerate() {
-            eprintln!("  [{}] {}", idx, desc);
-        }
-
-        // For now, default to first N modes since fancy TUI uses key-based input
-        // TODO: Add proper interactive mode selection UI
-        eprintln!(
-            "[TUI] Auto-selecting first {} mode(s) (interactive selection not yet implemented)",
-            mode_count
-        );
+        for (idx, desc) in mode_descriptions.iter().enumerate() { eprintln!("  [{}] {}", idx, desc); }
+        eprintln!("[TUI] Auto-selecting first {} mode(s) (interactive selection not yet implemented)", mode_count);
         ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
     }
 
-    fn on_priority_passed(&mut self, _view: &GameStateView) {
-        // Logging is handled by the game logger, no local state tracking needed
-    }
-
-    fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {
-        // Logging is handled by the game logger, no local state tracking needed
-    }
+    fn on_priority_passed(&mut self, _view: &GameStateView) {}
+    fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
 
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
-        // Fancy TUI is treated as a variant of the TUI controller
         crate::game::snapshot::ControllerType::Tui
     }
 }

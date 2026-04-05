@@ -75,6 +75,37 @@ pub enum KeyInput {
     ToggleWrap,      // W - toggle line wrapping in log
 }
 
+/// Scroll direction for mouse wheel events
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Backend-neutral UI event enum
+///
+/// Both native (crossterm) and web (RatZilla) backends convert their
+/// raw events into this enum before dispatching to shared handlers.
+/// Backend-specific events (auto-run toggle, image toggle, controls panel)
+/// are handled before conversion and never reach shared code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiEvent {
+    /// Keyboard input (already abstracted via KeyInput)
+    Key(KeyInput),
+    /// Mouse click at terminal cell coordinates
+    MouseClick { col: u16, row: u16 },
+    /// Mouse scroll wheel at terminal cell coordinates
+    MouseWheel {
+        direction: ScrollDirection,
+        col: u16,
+        row: u16,
+    },
+    /// Terminal/viewport was resized
+    Resize { width: u16, height: u16 },
+}
+
 /// Constants for 2D battlefield navigation
 const CARDS_PER_ROW: usize = 4;
 
@@ -769,6 +800,83 @@ pub fn get_help_text(include_wasm_only: bool) -> String {
     help.push_str("  ?           - Show this help\n");
 
     help
+}
+
+/// Handle any UI event, dispatching to the appropriate shared handler.
+///
+/// This is the single entry point for all backend-neutral event processing.
+/// Both native and web backends should convert their raw events to `UiEvent`
+/// and call this function.
+pub fn handle_ui_event(
+    state: &mut FancyTuiState,
+    event: UiEvent,
+    view: &GameStateView,
+    num_choices: usize,
+) -> EventResult {
+    match event {
+        UiEvent::Key(key) => handle_key_event(state, key, view, num_choices),
+        UiEvent::MouseClick { col, row } => {
+            if handle_mouse_click(state, col, row, view) {
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+        UiEvent::MouseWheel {
+            direction,
+            col,
+            row,
+        } => handle_scroll_wheel(state, direction, col, row),
+        UiEvent::Resize { .. } => EventResult::Handled,
+    }
+}
+
+/// Handle a mouse scroll wheel event.
+///
+/// Scrolls the log pane if the pointer is over it.
+fn handle_scroll_wheel(
+    state: &mut FancyTuiState,
+    direction: ScrollDirection,
+    col: u16,
+    row: u16,
+) -> EventResult {
+    let in_log = state.log_pane_area.is_some_and(|area| {
+        col >= area.x
+            && col < area.x + area.width
+            && row >= area.y
+            && row < area.y + area.height
+    });
+
+    if !in_log {
+        return EventResult::NotHandled;
+    }
+
+    match direction {
+        ScrollDirection::Up => {
+            state.log_scroll_up(usize::MAX, 10);
+            EventResult::Handled
+        }
+        ScrollDirection::Down => {
+            state.log_scroll_down();
+            EventResult::Handled
+        }
+        ScrollDirection::Left => {
+            if !state.log_wrap_lines {
+                state.log_scroll_left();
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+        ScrollDirection::Right => {
+            if !state.log_wrap_lines {
+                state.log_scroll_right();
+                EventResult::Handled
+            } else {
+                EventResult::NotHandled
+            }
+        }
+    }
 }
 
 #[cfg(test)]

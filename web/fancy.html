@@ -2767,6 +2767,18 @@ Name=My Deck
                         );
 
                         tuiLaunched = true;
+
+                        // Add scroll wheel listener for log pane scrolling
+                        const netTerminal = document.getElementById('ratzilla-terminal');
+                        if (netTerminal) {
+                            netTerminal.addEventListener('wheel', function(e) {
+                                if (typeof tui_scroll_wheel === 'function') {
+                                    e.preventDefault();
+                                    tui_scroll_wheel(e.clientX, e.clientY, e.deltaY, e.deltaX);
+                                }
+                            }, { passive: false });
+                        }
+
                         document.getElementById('game-controls').style.display = 'block';
 
                         if (cardImagesEnabled) {
@@ -2813,6 +2825,17 @@ Name=My Deck
                     );
 
                     tuiLaunched = true;
+
+                    // Add scroll wheel listener for log pane scrolling
+                    const tuiTerminal = document.getElementById('ratzilla-terminal');
+                    if (tuiTerminal) {
+                        tuiTerminal.addEventListener('wheel', function(e) {
+                            if (typeof tui_scroll_wheel === 'function') {
+                                e.preventDefault();
+                                tui_scroll_wheel(e.clientX, e.clientY, e.deltaY, e.deltaX);
+                            }
+                        }, { passive: false });
+                    }
 
                     // Show game controls widget (collapsed by default)
                     document.getElementById('game-controls').style.display = 'block';
@@ -3234,8 +3257,10 @@ Name=My Deck
             const overlay = document.getElementById('help-dialog-overlay');
             const content = document.getElementById('help-dialog-content');
 
-            // Set help text content (will be populated from WASM via get_help_text)
-            content.textContent = getHelpText(true); // true = include WASM-only shortcuts
+            // Set help text content from shared Rust source
+            content.textContent = (typeof tui_get_help_text === 'function')
+                ? tui_get_help_text()
+                : 'Help text not available (WASM not loaded)';
 
             dialog.classList.add('show');
             overlay.classList.add('show');
@@ -3263,45 +3288,6 @@ Name=My Deck
                 document.removeEventListener('keydown', dialog._helpKeyHandler, true);
                 dialog._helpKeyHandler = null;
             }
-        }
-
-        // Get help text (mirrors the Rust function from fancy_tui_events.rs)
-        function getHelpText(includeWasmOnly) {
-            let help = "Keyboard Shortcuts\n";
-            help += "==================\n\n";
-
-            help += "Navigation:\n";
-            help += "  Arrow Keys  - Navigate within panes\n";
-            help += "  Tab         - Cycle through panes\n";
-            help += "  Enter       - Select/Confirm\n";
-            help += "  1-9         - Quick select (Actions pane)\n\n";
-
-            help += "Pane Focus:\n";
-            help += "  H           - Focus Hand\n";
-            help += "  I           - Focus Info/Card Details\n";
-            help += "  Y           - Focus Your Battlefield\n";
-            help += "  O           - Focus Opponent's Battlefield\n";
-            help += "  A           - Focus Actions\n";
-            help += "  S           - Focus Stack\n\n";
-
-            help += "Game Actions:\n";
-            help += "  Space       - Advance turn/Continue\n";
-            help += "  P or Q      - Pass priority\n";
-            help += "  Z           - Undo last action\n";
-            help += "  R           - Random choice\n";
-            help += "  B           - Show battlefield in log\n";
-            help += "  Esc         - Exit game\n\n";
-
-            if (includeWasmOnly) {
-                help += "Browser Only:\n";
-                help += "  i (lowercase) - Toggle card images\n";
-                help += "  C           - Toggle controls panel\n\n";
-            }
-
-            help += "Other:\n";
-            help += "  ?           - Show this help\n";
-
-            return help;
         }
 
         // Toggle card images function (called by 'i' key)

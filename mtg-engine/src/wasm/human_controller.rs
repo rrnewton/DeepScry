@@ -21,6 +21,7 @@ use crate::game::controller::{
     format_card_choices, format_spell_ability_choices, sort_spell_abilities, ChoiceContext, ChoiceResult,
     GameStateView, PlayerController,
 };
+use crate::game::replay_controller::ReplayChoice;
 use crate::game::snapshot::ControllerType;
 use smallvec::SmallVec;
 
@@ -47,6 +48,125 @@ pub enum PendingChoice {
     Sacrifice(Vec<usize>),
     /// Mode selection (indices into available modes)
     Modes(Vec<usize>),
+}
+
+impl PendingChoice {
+    /// Convert a PendingChoice to a ReplayChoice using a ChoiceContext for index resolution.
+    ///
+    /// PendingChoice stores indices (from the UI), while ReplayChoice stores resolved
+    /// CardIds/SpellAbilities. The ChoiceContext provides the mapping from indices to
+    /// the actual game objects that were presented to the user.
+    ///
+    /// This is the single conversion point used by both local and network rewind/replay.
+    pub fn to_replay_choice(&self, context: Option<&ChoiceContext>) -> ReplayChoice {
+        match self {
+            PendingChoice::SpellAbility(opt_idx) => {
+                if let Some(ChoiceContext::SpellAbility { available, .. }) = context {
+                    match opt_idx {
+                        None | Some(0) => ReplayChoice::SpellAbility(None),
+                        Some(idx) => {
+                            let ability_idx = idx - 1;
+                            if ability_idx < available.len() {
+                                ReplayChoice::SpellAbility(Some(available[ability_idx].clone()))
+                            } else {
+                                ReplayChoice::SpellAbility(None)
+                            }
+                        }
+                    }
+                } else {
+                    ReplayChoice::SpellAbility(None)
+                }
+            }
+            PendingChoice::Targets(indices) => {
+                if let Some(ChoiceContext::Targets { valid_targets, .. }) = context {
+                    let targets: SmallVec<[CardId; 4]> =
+                        indices.iter().filter_map(|i| valid_targets.get(*i).copied()).collect();
+                    ReplayChoice::Targets(targets)
+                } else {
+                    ReplayChoice::Targets(SmallVec::new())
+                }
+            }
+            PendingChoice::ManaSources(indices) => {
+                if let Some(ChoiceContext::ManaSources { available_sources, .. }) = context {
+                    let sources: SmallVec<[CardId; 8]> = indices
+                        .iter()
+                        .filter_map(|i| available_sources.get(*i).copied())
+                        .collect();
+                    ReplayChoice::ManaSources(sources)
+                } else {
+                    ReplayChoice::ManaSources(SmallVec::new())
+                }
+            }
+            PendingChoice::Attackers(indices) => {
+                if let Some(ChoiceContext::Attackers { available_creatures, .. }) = context {
+                    let attackers: SmallVec<[CardId; 8]> = indices
+                        .iter()
+                        .filter_map(|i| available_creatures.get(*i).copied())
+                        .collect();
+                    ReplayChoice::Attackers(attackers)
+                } else {
+                    ReplayChoice::Attackers(SmallVec::new())
+                }
+            }
+            PendingChoice::Blockers(pairs) => {
+                if let Some(ChoiceContext::Blockers {
+                    available_blockers,
+                    attackers,
+                    ..
+                }) = context
+                {
+                    let blockers: SmallVec<[(CardId, CardId); 8]> = pairs
+                        .iter()
+                        .filter_map(|(bi, ai)| {
+                            let blocker = available_blockers.get(*bi).copied()?;
+                            let attacker = attackers.get(*ai).copied()?;
+                            Some((blocker, attacker))
+                        })
+                        .collect();
+                    ReplayChoice::Blockers(blockers)
+                } else {
+                    ReplayChoice::Blockers(SmallVec::new())
+                }
+            }
+            PendingChoice::DamageOrder(indices) => {
+                if let Some(ChoiceContext::DamageOrder { blockers, .. }) = context {
+                    let order: SmallVec<[CardId; 4]> =
+                        indices.iter().filter_map(|i| blockers.get(*i).copied()).collect();
+                    ReplayChoice::DamageOrder(order)
+                } else {
+                    ReplayChoice::DamageOrder(SmallVec::new())
+                }
+            }
+            PendingChoice::Discard(indices) => {
+                if let Some(ChoiceContext::Discard { hand, .. }) = context {
+                    let cards: SmallVec<[CardId; 7]> =
+                        indices.iter().filter_map(|i| hand.get(*i).copied()).collect();
+                    ReplayChoice::Discard(cards)
+                } else {
+                    ReplayChoice::Discard(SmallVec::new())
+                }
+            }
+            PendingChoice::LibrarySearch(opt_idx) => match opt_idx {
+                None => ReplayChoice::LibrarySearch(None),
+                Some(idx) => ReplayChoice::LibrarySearch(Some(*idx)),
+            },
+            PendingChoice::Sacrifice(indices) => {
+                if let Some(ChoiceContext::SacrificePermanents { valid_permanents, .. }) = context {
+                    let permanents: SmallVec<[CardId; 8]> = indices
+                        .iter()
+                        .filter_map(|i| valid_permanents.get(*i).copied())
+                        .collect();
+                    ReplayChoice::Sacrifice(permanents)
+                } else {
+                    ReplayChoice::Sacrifice(SmallVec::new())
+                }
+            }
+            PendingChoice::Modes(indices) => {
+                let modes: SmallVec<[usize; 4]> = indices.iter().copied().collect();
+                ReplayChoice::Modes(modes)
+            }
+        }
+    }
 }
 
 /// Human controller for WASM/browser gameplay
@@ -193,6 +313,22 @@ impl PlayerController for WasmHumanController {
                     indices_len,
                     original_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
                 );
+            }
+
+            // Defensive validation: verify resolved targets are still valid
+            // With deterministic replay (B1 fix), this should always pass.
+            // If it doesn't, it indicates a replay divergence bug.
+            for &target_id in &targets {
+                if !valid_targets.contains(&target_id) {
+                    log::warn!(
+                        target: "human_controller",
+                        "choose_targets: Resolved target {:?} from pending_context is NOT in current valid_targets! \
+                         This may indicate a replay divergence. original_targets={:?}, current_targets={:?}",
+                        target_id.as_u32(),
+                        original_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>(),
+                        valid_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
+                    );
+                }
             }
 
             // Clear the context after use

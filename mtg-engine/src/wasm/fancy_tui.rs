@@ -15,7 +15,9 @@ use crate::game::controller::{
     prompt_discard, prompt_spell_ability, prompt_target, ChoiceContext, GameStateView, PROMPT_ATTACKERS,
     PROMPT_BLOCKERS, PROMPT_DAMAGE_ORDER, PROMPT_LIBRARY_SEARCH,
 };
-use crate::game::fancy_tui_events::{handle_key_event, handle_mouse_click, EventResult, KeyInput};
+use crate::game::fancy_tui_events::{
+    handle_key_event, handle_mouse_click, handle_ui_event, EventResult, KeyInput, ScrollDirection, UiEvent,
+};
 use crate::game::logger::OutputMode;
 use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, VerbosityLevel};
 use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
@@ -24,9 +26,6 @@ use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
 use ratzilla::ratatui::{Frame, Terminal};
 use ratzilla::{DomBackend, WebRenderer};
 
-/// RatZilla uses these magic numbers for pixel-to-cell conversion
-const CELL_WIDTH_PX: u32 = 10;
-const CELL_HEIGHT_PX: u32 = 20;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -125,6 +124,70 @@ pub fn tui_set_cell_dimensions(width_px: f32, height_px: f32) {
     });
 
     log::debug!(target: "wasm_tui", "Cell dimensions set: {}x{} px", width_px, height_px);
+}
+
+/// Handle a scroll wheel event from the browser.
+///
+/// Called from JavaScript's `wheel` event listener. Converts pixel coordinates
+/// to cell coordinates using measured dimensions and dispatches through the
+/// shared scroll handler.
+///
+/// # Arguments
+/// * `x` - Pixel X coordinate of the mouse
+/// * `y` - Pixel Y coordinate of the mouse
+/// * `delta_y` - Vertical scroll delta (positive = scroll down, negative = scroll up)
+/// * `delta_x` - Horizontal scroll delta (positive = scroll right, negative = scroll left)
+#[wasm_bindgen]
+pub fn tui_scroll_wheel(x: u32, y: u32, delta_y: f64, delta_x: f64) {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            let (col, row) = pixels_to_cells(x, y);
+
+            // Determine primary scroll direction
+            let direction = if delta_y.abs() >= delta_x.abs() {
+                if delta_y < 0.0 {
+                    ScrollDirection::Up
+                } else {
+                    ScrollDirection::Down
+                }
+            } else if delta_x < 0.0 {
+                ScrollDirection::Left
+            } else {
+                ScrollDirection::Right
+            };
+
+            let event = UiEvent::MouseWheel {
+                direction,
+                col,
+                row,
+            };
+
+            let WasmFancyTuiState {
+                ref game,
+                ref mut renderer,
+                ..
+            } = *s;
+
+            let view = GameStateView::new(game, renderer.player_id);
+            let num_choices = s.current_choices.len();
+            let result = handle_ui_event(&mut s.renderer.state, event, &view, num_choices);
+
+            if result == EventResult::Handled {
+                s.needs_redraw = true;
+            }
+        }
+    });
+}
+
+/// Get the help text from the shared Rust source.
+///
+/// Returns the canonical help text with browser-specific shortcuts included.
+/// This replaces the JavaScript `getHelpText()` function that previously
+/// maintained a separate copy of the help text.
+#[wasm_bindgen]
+pub fn tui_get_help_text() -> String {
+    crate::game::fancy_tui_events::get_help_text(true)
 }
 
 /// Run one turn or continue game - called from JavaScript button
@@ -238,7 +301,156 @@ pub fn tui_clear_logs() {
     });
 }
 
-/// Helper function to export card positions from renderer state
+/// Get comprehensive game state as JSON for native web GUI
+///
+/// Returns a rich snapshot of the entire game state including:
+/// - Turn number, current step, active player
+/// - Per-player: life, mana pool, hand cards, battlefield cards (with P/T, tapped), graveyard, library size
+/// - Stack contents
+/// - Current prompt and available choices
+/// - Recent log entries
+///
+/// This is the primary data source for the native web GUI (game.html).
+/// The TUI version (fancy.html) uses the terminal renderer instead.
+#[wasm_bindgen]
+pub fn tui_get_full_state_json() -> String {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let s = state.borrow();
+            let game = &s.game;
+
+            // Build per-player data
+            let mut players_json = Vec::new();
+            for (idx, player) in game.players.iter().enumerate() {
+                let pid = player.id;
+                let pview = GameStateView::new(game, pid);
+                let (w, u, b, r, g, c) = pview.available_mana();
+
+                // Hand cards (only show our hand, opponent hand is hidden)
+                let hand: Vec<serde_json::Value> = if pid == s.renderer.player_id {
+                    pview.hand().iter().filter_map(|&cid| {
+                        game.cards.try_get(cid).map(|card| {
+                            serde_json::json!({
+                                "card_id": format!("{:?}", cid),
+                                "name": card.name.to_string(),
+                                "mana_cost": card.mana_cost.to_string(),
+                                "types": format!("{:?}", card.types.as_slice()),
+                                "is_creature": card.is_creature(),
+                                "is_land": card.is_land(),
+                            })
+                        })
+                    }).collect()
+                } else {
+                    Vec::new()
+                };
+
+                // Battlefield cards owned/controlled by this player
+                let battlefield: Vec<serde_json::Value> = game.battlefield.cards.iter().filter_map(|&cid| {
+                    let card = game.cards.try_get(cid)?;
+                    if card.controller != pid { return None; }
+                    let power = game.get_effective_power(cid).ok();
+                    let toughness = game.get_effective_toughness(cid).ok();
+                    Some(serde_json::json!({
+                        "card_id": format!("{:?}", cid),
+                        "name": card.name.to_string(),
+                        "is_tapped": card.tapped,
+                        "is_creature": card.is_creature(),
+                        "is_land": card.is_land(),
+                        "power": power,
+                        "toughness": toughness,
+                        "damage": card.damage,
+                        "types": format!("{:?}", card.types.as_slice()),
+                    }))
+                }).collect();
+
+                // Graveyard
+                let graveyard: Vec<serde_json::Value> = pview.graveyard().iter().filter_map(|&cid| {
+                    game.cards.try_get(cid).map(|card| {
+                        serde_json::json!({
+                            "card_id": format!("{:?}", cid),
+                            "name": card.name.to_string(),
+                        })
+                    })
+                }).collect();
+
+                players_json.push(serde_json::json!({
+                    "index": idx,
+                    "name": player.name.to_string(),
+                    "life": player.life,
+                    "library_size": pview.player_hand_size(pid) + game.get_player_zones(pid)
+                        .map(|z| z.library.len()).unwrap_or(0) - pview.player_hand_size(pid),
+                    "hand_size": pview.player_hand_size(pid),
+                    "mana_pool": serde_json::json!({"W": w, "U": u, "B": b, "R": r, "G": g, "C": c}),
+                    "hand": hand,
+                    "battlefield": battlefield,
+                    "graveyard": graveyard,
+                }));
+            }
+
+            // Fix library_size - just use zones directly
+            for (idx, player) in game.players.iter().enumerate() {
+                let pid = player.id;
+                let lib_size = game.get_player_zones(pid)
+                    .map(|z| z.library.len()).unwrap_or(0);
+                players_json[idx]["library_size"] = serde_json::json!(lib_size);
+            }
+
+            // Stack
+            let stack: Vec<serde_json::Value> = game.stack.cards.iter().filter_map(|&cid| {
+                let card = game.cards.try_get(cid)?;
+                let controller_idx = game.players.iter().position(|p| p.id == card.controller).unwrap_or(0);
+                Some(serde_json::json!({
+                    "card_id": format!("{:?}", cid),
+                    "name": card.name.to_string(),
+                    "controller_idx": controller_idx,
+                }))
+            }).collect();
+
+            // Choices
+            let choices: Vec<serde_json::Value> = s.current_choices.iter().enumerate().map(|(i, (text, highlighted))| {
+                serde_json::json!({
+                    "index": i,
+                    "text": text,
+                    "highlighted": *highlighted,
+                })
+            }).collect();
+
+            // Recent logs (last 100)
+            let logs: Vec<String> = game.logger.logs().iter()
+                .rev().take(100).rev()
+                .map(|entry| entry.message.clone())
+                .collect();
+
+            // Active player index
+            let active_idx = game.players.iter()
+                .position(|p| p.id == game.turn.active_player)
+                .unwrap_or(0);
+
+            // Our player index (which player the GUI renders from perspective of)
+            let our_idx = game.players.iter()
+                .position(|p| p.id == s.renderer.player_id)
+                .unwrap_or(0);
+
+            let result = serde_json::json!({
+                "turn_number": game.turn.turn_number,
+                "current_step": format!("{:?}", game.turn.current_step),
+                "active_player_idx": active_idx,
+                "our_player_idx": our_idx,
+                "game_over": s.game_over,
+                "players": players_json,
+                "stack": stack,
+                "current_prompt": s.current_prompt,
+                "choices": choices,
+                "selected_choice_idx": s.selected_choice_idx,
+                "logs": logs,
+            });
+
+            serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            "{}".to_string()
+        }
+    })
+}
 /// This is called from within the render loop, so it doesn't need to borrow GLOBAL_TUI_STATE
 ///
 /// EntityPosition now stores:
@@ -659,154 +871,8 @@ impl WasmFancyTuiState {
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
-    #[allow(clippy::collapsible_match)]
     fn pending_choice_to_replay_choice(&self, pending: &PendingChoice) -> ReplayChoice {
-        match pending {
-            PendingChoice::SpellAbility(opt_idx) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::SpellAbility { available, .. } = context {
-                        match opt_idx {
-                            None | Some(0) => ReplayChoice::SpellAbility(None),
-                            Some(idx) => {
-                                let ability_idx = idx - 1;
-                                if ability_idx < available.len() {
-                                    ReplayChoice::SpellAbility(Some(available[ability_idx].clone()))
-                                } else {
-                                    ReplayChoice::SpellAbility(None)
-                                }
-                            }
-                        }
-                    } else {
-                        ReplayChoice::SpellAbility(None)
-                    }
-                } else {
-                    ReplayChoice::SpellAbility(None)
-                }
-            }
-            PendingChoice::Targets(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::Targets { valid_targets, .. } = context {
-                        let targets: smallvec::SmallVec<[crate::core::CardId; 4]> =
-                            indices.iter().filter_map(|i| valid_targets.get(*i).copied()).collect();
-                        ReplayChoice::Targets(targets)
-                    } else {
-                        ReplayChoice::Targets(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::Targets(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::ManaSources(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::ManaSources { available_sources, .. } = context {
-                        let sources: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
-                            .iter()
-                            .filter_map(|i| available_sources.get(*i).copied())
-                            .collect();
-                        ReplayChoice::ManaSources(sources)
-                    } else {
-                        ReplayChoice::ManaSources(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::ManaSources(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::Attackers(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::Attackers {
-                        available_creatures, ..
-                    } = context
-                    {
-                        let attackers: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
-                            .iter()
-                            .filter_map(|i| available_creatures.get(*i).copied())
-                            .collect();
-                        ReplayChoice::Attackers(attackers)
-                    } else {
-                        ReplayChoice::Attackers(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::Attackers(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::Blockers(pairs) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::Blockers {
-                        available_blockers,
-                        attackers,
-                        ..
-                    } = context
-                    {
-                        let blockers: smallvec::SmallVec<[(crate::core::CardId, crate::core::CardId); 8]> = pairs
-                            .iter()
-                            .filter_map(|(bi, ai)| {
-                                let blocker = available_blockers.get(*bi).copied()?;
-                                let attacker = attackers.get(*ai).copied()?;
-                                Some((blocker, attacker))
-                            })
-                            .collect();
-                        ReplayChoice::Blockers(blockers)
-                    } else {
-                        ReplayChoice::Blockers(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::Blockers(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::DamageOrder(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::DamageOrder { blockers, .. } = context {
-                        let order: smallvec::SmallVec<[crate::core::CardId; 4]> =
-                            indices.iter().filter_map(|i| blockers.get(*i).copied()).collect();
-                        ReplayChoice::DamageOrder(order)
-                    } else {
-                        ReplayChoice::DamageOrder(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::DamageOrder(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::Discard(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::Discard { hand, .. } = context {
-                        let cards: smallvec::SmallVec<[crate::core::CardId; 7]> =
-                            indices.iter().filter_map(|i| hand.get(*i).copied()).collect();
-                        ReplayChoice::Discard(cards)
-                    } else {
-                        ReplayChoice::Discard(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::Discard(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::LibrarySearch(opt_idx) => {
-                // Return the index directly - the game loop converts to CardId
-                match opt_idx {
-                    None => ReplayChoice::LibrarySearch(None),
-                    Some(idx) => ReplayChoice::LibrarySearch(Some(*idx)),
-                }
-            }
-            PendingChoice::Sacrifice(indices) => {
-                if let Some(ref context) = self.pending_context {
-                    if let ChoiceContext::SacrificePermanents { valid_permanents, .. } = context {
-                        let permanents: smallvec::SmallVec<[crate::core::CardId; 8]> = indices
-                            .iter()
-                            .filter_map(|i| valid_permanents.get(*i).copied())
-                            .collect();
-                        ReplayChoice::Sacrifice(permanents)
-                    } else {
-                        ReplayChoice::Sacrifice(smallvec::SmallVec::new())
-                    }
-                } else {
-                    ReplayChoice::Sacrifice(smallvec::SmallVec::new())
-                }
-            }
-            PendingChoice::Modes(indices) => {
-                // Convert mode indices to ReplayChoice
-                let modes: smallvec::SmallVec<[usize; 4]> = indices.iter().copied().collect();
-                ReplayChoice::Modes(modes)
-            }
-        }
+        pending.to_replay_choice(self.pending_context.as_ref())
     }
 
     /// Run the game until input is needed or game ends
@@ -875,21 +941,33 @@ impl WasmFancyTuiState {
                     None
                 };
 
-                // Rewind game state and get previous choices from this turn
-                // In local mode, only our choices are used; AI re-computes its own
-                let (mut replay_choices, _opponent_choices) = self.rewind_to_turn_start(p1_id);
+                // Rewind game state and get previous choices from this turn.
+                // BOTH players' choices are saved and replayed to ensure deterministic
+                // replay. Previously only human (P1) choices were replayed and AI (P2)
+                // recomputed fresh, which could cause non-deterministic divergence
+                // (e.g., HeuristicController making different decisions on replay).
+                let (mut replay_choices, opponent_choices) = self.rewind_to_turn_start(p1_id);
                 let turn_after_rewind = self.game.turn.turn_number;
                 log::debug!(
                     target: "wasm_tui",
-                    "REPLAY: After rewind - turn {}, {} existing choices to replay",
-                    turn_after_rewind, replay_choices.len()
+                    "REPLAY: After rewind - turn {}, {} P1 choices + {} P2 choices to replay",
+                    turn_after_rewind, replay_choices.len(), opponent_choices.len()
                 );
+
+                // Clear spell_targets and other transient game loop state after rewind.
+                // These fields are not tracked in the undo log, so they'd be stale
+                // from the previous run and could cause incorrect behavior on replay.
+                self.game.spell_targets.clear();
+                self.game.pending_cast = None;
+                self.game.pending_activation = None;
+                self.game.pending_activation_effect_idx = None;
+                self.game.pending_cycling_search = None;
 
                 // Add the new choice if we have one
                 if let Some(choice) = new_choice {
                     replay_choices.push(choice);
                 }
-                log::debug!(target: "wasm_tui", "REPLAY: Total choices to replay: {}", replay_choices.len());
+                log::debug!(target: "wasm_tui", "REPLAY: Total P1 choices to replay: {}", replay_choices.len());
 
                 // Create a fresh human controller for the replay.
                 // The WasmHumanController doesn't need persistent state - all choices
@@ -901,12 +979,18 @@ impl WasmFancyTuiState {
                 // Create ReplayController that will replay choices then delegate to human
                 let mut replay_controller = ReplayController::new(p1_id, Box::new(human_controller), replay_choices);
 
-                // Run the game with replay controller
+                // Wrap P2 controller in ReplayController to replay its saved choices.
+                // After replay choices are exhausted, it delegates to the inner AI controller
+                // for any NEW choices beyond the replay point. This ensures deterministic
+                // replay: both players make exactly the same decisions as before.
+                let mut p2_replay_controller = ReplayController::new(p2_id, p2_controller, opponent_choices);
+
+                // Run the game with replay controllers for BOTH players
                 // Scope game_loop tightly so self can be accessed afterwards
                 let result = {
                     let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
-                    log::debug!(target: "wasm_tui", "REPLAY: Running game loop with replay controller...");
-                    game_loop.run_until_input(&mut replay_controller, p2_controller.as_mut())
+                    log::debug!(target: "wasm_tui", "REPLAY: Running game loop with replay controllers for both players...");
+                    game_loop.run_until_input(&mut replay_controller, &mut p2_replay_controller)
                 };
 
                 let turn_after_run = self.game.turn.turn_number;
@@ -930,10 +1014,10 @@ impl WasmFancyTuiState {
                 // Replay complete - clear the rewind flag
                 self.in_rewind_replay = false;
 
-                // Reset high water marks to establish new baseline after replay
-                // During replay, P2 (AI) makes fresh decisions that may result in different
-                // action counts than the original path. This is expected behavior, not a bug.
-                // We reset the baseline here rather than checking for violations.
+                // Reset high water marks to establish new baseline after replay.
+                // With deterministic replay (both players' choices replayed), the
+                // action count should match the original. We still reset to handle
+                // the case where the new choice leads to a different branch point.
                 self.high_water_action_count = self.game.undo_log.len();
                 self.high_water_log_count = self.game.logger.log_count();
                 log::debug!(
@@ -1215,6 +1299,16 @@ impl WasmFancyTuiState {
             // Unlike local mode where the AI can re-compute its choices, the remote
             // opponent's choices must be replayed from the saved log.
             let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
+
+            // Clear spell_targets and other transient game loop state after rewind.
+            // These fields are not tracked in the undo log, so they'd be stale
+            // from the previous run and could cause incorrect behavior on replay.
+            self.game.spell_targets.clear();
+            self.game.pending_cast = None;
+            self.game.pending_activation = None;
+            self.game.pending_activation_effect_idx = None;
+            self.game.pending_cycling_search = None;
+
             log::debug!(
                 target: "wasm_tui",
                 "NETWORK REPLAY: After rewind - turn {}, undo_log={}, {} our choices + {} opponent choices to replay",
@@ -1796,27 +1890,13 @@ impl WasmFancyTuiState {
         player_id: PlayerId,
     ) -> Box<dyn PlayerController> {
         match controller_type {
-            WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
-            // For local games, seed doesn't need to match native - use arbitrary seed
-            WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, 42)),
-            WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
-            WasmControllerType::Human | WasmControllerType::Fixed | WasmControllerType::Network => {
-                // Human, Fixed, and Network controllers for P1 are handled separately in run_until_choice
-                // For P2 as human/fixed/network, fall back to Zero
-                Box::new(ZeroController::new(player_id))
-            }
             #[cfg(feature = "wasm-network")]
             WasmControllerType::Remote => {
                 // Remote controller for network opponent - polls network client for choices
                 let client = ensure_client();
                 Box::new(WasmRemoteController::new(player_id, client))
             }
-            #[cfg(not(feature = "wasm-network"))]
-            WasmControllerType::Remote => {
-                // Remote controller requires wasm-network feature
-                log::warn!("Remote controller type requires wasm-network feature, falling back to Zero");
-                Box::new(ZeroController::new(player_id))
-            }
+            _ => super::create_ai_controller(controller_type, player_id, 42),
         }
     }
 }
@@ -2015,13 +2095,24 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
     }
 }
 
+/// Convert pixel coordinates to terminal cell coordinates using measured dimensions.
+///
+/// Uses the `CELL_DIMENSIONS` thread-local which is set by `tui_set_cell_dimensions()`
+/// from JavaScript after measuring real font metrics. Falls back to RatZilla defaults
+/// (10x20) if not yet measured.
+fn pixels_to_cells(x: u32, y: u32) -> (u16, u16) {
+    CELL_DIMENSIONS.with(|dims| {
+        let (w, h) = *dims.borrow();
+        ((x as f32 / w) as u16, (y as f32 / h) as u16)
+    })
+}
+
 /// Process a mouse click event on the TUI state.
 ///
-/// Converts pixel coordinates to terminal cell coordinates and dispatches
-/// to the shared handle_mouse_click() function.
+/// Converts pixel coordinates to terminal cell coordinates using measured
+/// dimensions and dispatches to the shared handle_mouse_click() function.
 fn process_mouse_event(state: &mut WasmFancyTuiState, x: u32, y: u32) {
-    let cell_x = (x / CELL_WIDTH_PX) as u16;
-    let cell_y = (y / CELL_HEIGHT_PX) as u16;
+    let (cell_x, cell_y) = pixels_to_cells(x, y);
 
     let WasmFancyTuiState {
         ref game,
