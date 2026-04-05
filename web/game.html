@@ -179,7 +179,7 @@
             grid-row: 1 / 3;
         }
         #pane-log { flex: 1; }
-        #pane-actions { flex: 0 0 auto; max-height: 40%; }
+        #pane-actions { flex: 1; }
 
         /* Center column */
         .center-col {
@@ -189,11 +189,22 @@
             grid-row: 1 / 3;
             min-height: 0;
         }
-        #pane-opp-info { flex: 0 0 auto; }
+        .info-bar {
+            flex: 0 0 auto;
+            background: #16213e;
+            border: 1px solid #1e2d50;
+            border-radius: 4px;
+        }
+        .info-bar-content {
+            padding: 4px 10px;
+            font-size: 12px;
+            color: #ccc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
         #pane-opp-field { flex: 1; }
-        #pane-stack { flex: 0 0 auto; min-height: 50px; }
         #pane-player-field { flex: 1; }
-        #pane-hand { flex: 0 0 auto; min-height: 90px; }
 
         /* Right column */
         .right-col {
@@ -203,7 +214,7 @@
             grid-row: 1 / 3;
         }
         #pane-card-details { flex: 1; }
-        #pane-player-info { flex: 0 0 auto; }
+        #pane-hand { flex: 1; }
 
         /* Status bar */
         .status-bar {
@@ -342,18 +353,16 @@
             padding: 4px;
         }
 
-        /* Hand cards - horizontal strip */
-        .hand-cards {
-            display: flex;
-            flex-wrap: nowrap;
-            overflow-x: auto;
-            gap: 4px;
-            padding: 4px 8px;
-            max-width: 100%;
+        /* Hand entries - text list matching TUI */
+        .hand-entry {
+            padding: 2px 6px;
+            font-size: 12px;
+            color: #e0e0e0;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
         }
-        .hand-cards .card {
-            flex-shrink: 1;
-            min-width: 60px;
+        .hand-entry:hover {
+            background: rgba(255,255,255,0.05);
         }
 
         /* Graveyard in card details */
@@ -613,15 +622,18 @@
             </div>
             <div id="pane-actions" class="pane">
                 <div class="pane-header">Actions</div>
+                <div id="stack-section" style="display:none;">
+                    <div style="padding:4px 6px; color:#4cc9f0; font-size:11px; border-bottom:1px solid #1e2d50;">Stack</div>
+                    <div id="stack-body" style="padding:4px 6px; font-size:11px;"></div>
+                </div>
                 <div id="actions-prompt" class="prompt-text" style="display:none;"></div>
                 <div class="pane-body" id="actions-body"></div>
             </div>
         </div>
 
         <div class="center-col">
-            <div id="pane-opp-info" class="pane">
-                <div class="pane-header" id="opp-info-header">Opponent</div>
-                <div class="pane-body" id="opp-info-body"></div>
+            <div id="pane-opp-info" class="pane info-bar">
+                <div class="info-bar-content" id="opp-info-body"></div>
             </div>
             <div id="pane-opp-field" class="pane">
                 <div class="pane-header">Opponent Battlefield</div>
@@ -629,21 +641,14 @@
                     <div class="card-grid" id="opp-field-cards"></div>
                 </div>
             </div>
-            <div id="pane-stack" class="pane">
-                <div class="pane-header">Stack</div>
-                <div class="pane-body" id="stack-body"></div>
-            </div>
             <div id="pane-player-field" class="pane">
                 <div class="pane-header">Your Battlefield</div>
                 <div class="pane-body">
                     <div class="card-grid" id="player-field-cards"></div>
                 </div>
             </div>
-            <div id="pane-hand" class="pane">
-                <div class="pane-header" id="hand-header">Hand</div>
-                <div class="pane-body">
-                    <div class="hand-cards" id="hand-cards"></div>
-                </div>
+            <div id="pane-player-info" class="pane info-bar">
+                <div class="info-bar-content" id="player-info-body"></div>
             </div>
         </div>
 
@@ -654,9 +659,9 @@
                     <div style="color: #666; padding: 20px; text-align: center; font-size: 12px;">Click a card to see details</div>
                 </div>
             </div>
-            <div id="pane-player-info" class="pane">
-                <div class="pane-header" id="player-info-header">You</div>
-                <div class="pane-body" id="player-info-body"></div>
+            <div id="pane-hand" class="pane">
+                <div class="pane-header" id="hand-header">Hand</div>
+                <div class="pane-body" id="hand-body"></div>
             </div>
         </div>
 
@@ -989,10 +994,11 @@
             if (logPane) logPane.style.flex = `${logPct} 0 0`;
             if (actionsPane) actionsPane.style.flex = `${actionsPct} 0 0`;
 
-            const detailsPct = panes.card_details.h_pct;
-            const handPct = panes.hand.h_pct;
+            // Right column: card details + hand (50/50)
             const detailsPane = document.getElementById('pane-card-details');
-            if (detailsPane) detailsPane.style.flex = `${detailsPct} 0 0`;
+            const handPane = document.getElementById('pane-hand');
+            if (detailsPane && panes.card_details) detailsPane.style.flex = `${panes.card_details.h_pct} 0 0`;
+            if (handPane && panes.hand) handPane.style.flex = `${panes.hand.h_pct} 0 0`;
         }
 
         // Re-apply layout on window resize
@@ -1024,8 +1030,8 @@
             const ourPlayer = state.our_player;
             const oppPlayer = state.opponent;
 
-            renderPlayerInfo(ourPlayer, 'player-info-body', 'player-info-header');
-            renderPlayerInfo(oppPlayer, 'opp-info-body', 'opp-info-header');
+            renderPlayerInfo(ourPlayer, 'player-info-body');
+            renderPlayerInfo(oppPlayer, 'opp-info-body');
             renderBattlefield(ourPlayer?.battlefield || [], 'player-field-cards');
             renderBattlefield(oppPlayer?.battlefield || [], 'opp-field-cards');
             renderHand(ourPlayer?.hand || []);
@@ -1041,25 +1047,11 @@
         function renderPlayerInfo(player, bodyId, headerId) {
             if (!player) return;
             const body = document.getElementById(bodyId);
-            const header = document.getElementById(headerId);
-            if (header) header.textContent = player.name;
-
-            const mana = player.mana_pool || {};
-            const manaHtml = ['W','U','B','R','G','C'].map(c => {
-                const val = mana[c] || 0;
-                return `<span class="mana-pip ${c} ${val === 0 ? 'empty' : ''}">${val}</span>`;
-            }).join('');
+            if (!body) return;
 
             const graveyardCount = player.graveyard ? player.graveyard.length : 0;
-            body.innerHTML = `
-                <div class="player-info-block">
-                    <div class="life-total ${player.life <= 5 ? 'low' : ''}">${player.life}</div>
-                    <div class="mana-pool">${manaHtml}</div>
-                    <div class="info-row"><span class="info-label">Library</span><span>${player.library_size}</span></div>
-                    <div class="info-row"><span class="info-label">Hand</span><span>${player.hand_size}</span></div>
-                    <div class="info-row"><span class="info-label">Graveyard</span><span>${graveyardCount}</span></div>
-                </div>
-            `;
+            // Compact info bar format matching TUI: "Name: 20 life | Library: 53 | Hand: 7 | GY: 0"
+            body.textContent = `${player.name}: ${player.life} life | Library: ${player.library_size} | Hand: ${player.hand_size} | GY: ${graveyardCount}`;
         }
 
         function renderBattlefield(cards, containerId) {
@@ -1072,12 +1064,29 @@
         }
 
         function renderHand(cards) {
-            const container = document.getElementById('hand-cards');
-            container.innerHTML = '';
-            for (const card of cards) {
-                const el = createCardElement(card, true);
-                container.appendChild(el);
+            const container = document.getElementById('hand-body');
+            if (!container) return;
+            // Render as text list matching TUI format
+            if (cards.length === 0) {
+                container.innerHTML = '<div style="color:#444; font-size:12px;">(empty)</div>';
+                return;
             }
+            container.innerHTML = cards.map((card, i) => {
+                const selected = card.name === selectedCardName ? ' style="color:#ffd700; font-weight:bold;"' : '';
+                const mana = card.mana_cost ? ` <span style="color:#4cc9f0;">${escapeHtml(card.mana_cost)}</span>` : '';
+                return `<div class="hand-entry"${selected} data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
+            }).join('');
+            // Click handlers
+            container.querySelectorAll('.hand-entry').forEach(el => {
+                el.addEventListener('click', () => {
+                    const idx = parseInt(el.dataset.idx);
+                    if (cards[idx]) {
+                        selectedCardName = cards[idx].name;
+                        showCardDetails(cards[idx]);
+                        updateUI();
+                    }
+                });
+            });
         }
 
         function createCardElement(card, showMana) {
@@ -1140,17 +1149,17 @@
         }
 
         function renderStack(stack) {
+            const section = document.getElementById('stack-section');
             const body = document.getElementById('stack-body');
+            if (!section || !body) return;
             if (stack.length === 0) {
-                body.innerHTML = '<div style="color:#444; padding:4px; font-size:11px; text-align:center;">Empty</div>';
+                section.style.display = 'none';
                 return;
             }
-            body.innerHTML = stack.map(item => `
-                <div class="stack-item">
-                    <span>${escapeHtml(item.name)}</span>
-                    <span class="stack-controller">(P${item.controller_idx + 1})</span>
-                </div>
-            `).join('');
+            section.style.display = 'block';
+            body.innerHTML = stack.map(item =>
+                `<div style="color:#ff9f43; padding:1px 0;">${escapeHtml(item.name)}</div>`
+            ).join('');
         }
 
         function renderActions(prompt, choices, selectedIdx) {

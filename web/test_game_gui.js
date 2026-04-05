@@ -222,7 +222,7 @@ async function runTest() {
         // Check all panes exist
         const paneIds = [
             'pane-log', 'pane-actions', 'pane-opp-info', 'pane-opp-field',
-            'pane-stack', 'pane-player-field', 'pane-hand', 'pane-card-details',
+            'pane-player-field', 'pane-hand', 'pane-card-details',
             'pane-player-info'
         ];
         for (const id of paneIds) {
@@ -261,23 +261,21 @@ async function runTest() {
             const playerBody = document.getElementById('player-info-body');
             const oppBody = document.getElementById('opp-info-body');
             return {
-                playerHtml: playerBody?.innerHTML || '',
-                oppHtml: oppBody?.innerHTML || '',
-                playerHeader: document.getElementById('player-info-header')?.textContent || '',
-                oppHeader: document.getElementById('opp-info-header')?.textContent || ''
+                playerText: playerBody?.textContent || '',
+                oppText: oppBody?.textContent || '',
             };
         });
 
-        if (playerInfo.playerHtml.includes('life-total')) {
+        if (playerInfo.playerText.includes('life')) {
             finding('OK', 'Player info shows life total');
         } else {
             finding('WARN', 'Player info missing life total');
         }
 
-        if (playerInfo.playerHtml.includes('mana-pool')) {
-            finding('OK', 'Player info shows mana pool');
+        if (playerInfo.playerText.includes('Library')) {
+            finding('OK', 'Player info shows library count');
         } else {
-            finding('WARN', 'Player info missing mana pool');
+            finding('WARN', 'Player info missing library count');
         }
 
         // ========== STEP 6: Step through turns ==========
