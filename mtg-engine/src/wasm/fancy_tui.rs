@@ -244,11 +244,15 @@ pub fn tui_get_card_layout_json() -> String {
 
             let mut result = serde_json::Map::new();
 
-            for (label, pid) in [("your_battlefield", our_pid)].iter().chain(
-                game.players.iter()
-                    .filter(|p| p.id != our_pid)
-                    .map(|p| &("opp_battlefield", p.id))
-            ) {
+            // Build list of (label, player_id) pairs for each battlefield
+            let mut bf_pairs: Vec<(&str, crate::core::PlayerId)> = vec![("your_battlefield", our_pid)];
+            for player in &game.players {
+                if player.id != our_pid {
+                    bf_pairs.push(("opp_battlefield", player.id));
+                }
+            }
+
+            for (label, pid) in &bf_pairs {
                 let bf_cards: Vec<CardItem> = game.battlefield.cards.iter().filter_map(|&cid| {
                     let card = game.cards.try_get(cid)?;
                     if card.controller != *pid { return None; }
@@ -530,6 +534,9 @@ pub fn tui_get_full_state_json() -> String {
                 let hand: Vec<serde_json::Value> = if pid == s.renderer.player_id {
                     pview.hand().iter().filter_map(|&cid| {
                         game.cards.try_get(cid).map(|card| {
+                            let mut css = vec!["card"];
+                            if card.is_land() { css.push("land"); }
+                            if card.is_creature() { css.push("creature"); }
                             serde_json::json!({
                                 "card_id": format!("{:?}", cid),
                                 "name": card.name.to_string(),
@@ -537,6 +544,7 @@ pub fn tui_get_full_state_json() -> String {
                                 "types": format!("{:?}", card.types.as_slice()),
                                 "is_creature": card.is_creature(),
                                 "is_land": card.is_land(),
+                                "css_classes": css,
                             })
                         })
                     }).collect()
@@ -550,6 +558,20 @@ pub fn tui_get_full_state_json() -> String {
                     if card.controller != pid { return None; }
                     let power = game.get_effective_power(cid).ok();
                     let toughness = game.get_effective_toughness(cid).ok();
+
+                    // Pre-compute CSS classes
+                    let mut css = vec!["card"];
+                    if card.tapped { css.push("tapped"); }
+                    if card.is_land() { css.push("land"); }
+                    if card.is_creature() { css.push("creature"); }
+
+                    // Pre-compute formatted P/T
+                    let formatted_pt = if card.is_creature() {
+                        power.zip(toughness).map(|(p, t)| format!("{}/{}", p, t))
+                    } else {
+                        None
+                    };
+
                     Some(serde_json::json!({
                         "card_id": format!("{:?}", cid),
                         "name": card.name.to_string(),
@@ -560,6 +582,8 @@ pub fn tui_get_full_state_json() -> String {
                         "toughness": toughness,
                         "damage": card.damage,
                         "types": format!("{:?}", card.types.as_slice()),
+                        "css_classes": css,
+                        "formatted_pt": formatted_pt,
                     }))
                 }).collect();
 
@@ -624,6 +648,16 @@ pub fn tui_get_full_state_json() -> String {
             let our_idx = game.players.iter()
                 .position(|p| p.id == s.renderer.player_id)
                 .unwrap_or(0);
+            let opp_idx = if our_idx == 0 { 1 } else { 0 };
+
+            // Pre-compute status bar text
+            let status_text = if s.game_over {
+                format!("Turn {} | Phase: {:?} | Active: P{} | GAME OVER",
+                    game.turn.turn_number, game.turn.current_step, active_idx + 1)
+            } else {
+                format!("Turn {} | Phase: {:?} | Active: P{}",
+                    game.turn.turn_number, game.turn.current_step, active_idx + 1)
+            };
 
             let result = serde_json::json!({
                 "turn_number": game.turn.turn_number,
@@ -632,11 +666,16 @@ pub fn tui_get_full_state_json() -> String {
                 "our_player_idx": our_idx,
                 "game_over": s.game_over,
                 "players": players_json,
+                // Pre-organized player references (avoid array indexing in JS)
+                "our_player": players_json.get(our_idx),
+                "opponent": players_json.get(opp_idx),
                 "stack": stack,
                 "current_prompt": s.current_prompt,
                 "choices": choices,
                 "selected_choice_idx": s.selected_choice_idx,
                 "logs": logs,
+                // Pre-computed status bar text
+                "status_text": status_text,
             });
 
             serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())

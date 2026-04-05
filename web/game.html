@@ -1020,10 +1020,9 @@
                 return;
             }
 
-            const ourIdx = state.our_player_idx || 0;
-            const oppIdx = ourIdx === 0 ? 1 : 0;
-            const ourPlayer = state.players[ourIdx];
-            const oppPlayer = state.players[oppIdx];
+            // Use pre-organized player data from Rust
+            const ourPlayer = state.our_player;
+            const oppPlayer = state.opponent;
 
             renderPlayerInfo(ourPlayer, 'player-info-body', 'player-info-header');
             renderPlayerInfo(oppPlayer, 'opp-info-body', 'opp-info-header');
@@ -1083,10 +1082,8 @@
 
         function createCardElement(card, showMana) {
             const div = document.createElement('div');
-            div.className = 'card';
-            if (card.is_tapped) div.classList.add('tapped');
-            if (card.is_land) div.classList.add('land');
-            if (card.is_creature) div.classList.add('creature');
+            // Use pre-computed CSS classes from Rust, plus selected state
+            div.className = (card.css_classes || ['card']).join(' ');
             if (card.name === selectedCardName) div.classList.add('selected-card');
 
             let imgHtml = '';
@@ -1098,10 +1095,10 @@
                 }
             }
 
-            let ptHtml = '';
-            if (card.is_creature && card.power !== undefined && card.power !== null) {
-                ptHtml = `<div class="card-pt">${card.power}/${card.toughness}</div>`;
-            }
+            // Use pre-computed formatted P/T from Rust
+            const ptHtml = card.formatted_pt
+                ? `<div class="card-pt">${card.formatted_pt}</div>`
+                : '';
 
             let manaHtml = '';
             if (showMana && card.mana_cost) {
@@ -1214,14 +1211,19 @@
             const phase = bar.querySelector('.phase');
             const turn = bar.querySelector('.turn');
 
-            phase.textContent = `Phase: ${state.current_step || '?'}`;
-            turn.textContent = `Turn ${state.turn_number || 0} | Active: P${(state.active_player_idx || 0) + 1}`;
-            if (state.game_over) {
-                turn.textContent += ' | GAME OVER';
-                turn.style.color = '#ff6b6b';
+            // Use pre-computed status text from Rust
+            if (state.status_text) {
+                const parts = state.status_text.split(' | ');
+                turn.textContent = parts[0] || '';
+                phase.textContent = parts[1] || '';
+                if (state.game_over) {
+                    turn.style.color = '#ff6b6b';
+                }
+            } else {
+                phase.textContent = `Phase: ${state.current_step || '?'}`;
+                turn.textContent = `Turn ${state.turn_number || 0}`;
             }
 
-            // Mini turn indicator
             const mini = document.getElementById('turn-mini');
             if (mini) {
                 mini.textContent = state.game_over ? 'END' : `T${state.turn_number || 0}`;
