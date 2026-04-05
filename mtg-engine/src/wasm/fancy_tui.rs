@@ -633,10 +633,19 @@ pub fn tui_get_full_state_json() -> String {
                 })
             }).collect();
 
-            // Recent logs (last 100)
-            let logs: Vec<String> = game.logger.logs().iter()
+            // Recent logs (last 100) with CSS color hints
+            let logs: Vec<serde_json::Value> = game.logger.logs().iter()
                 .rev().take(100).rev()
-                .map(|entry| entry.message.clone())
+                .map(|entry| {
+                    let color = css_color_for_log(&entry.message);
+                    let bold = entry.message.contains(">>> Turn") || entry.message.contains("<<<< ")
+                        || (entry.message.contains("damage") && entry.message.contains("life:"));
+                    serde_json::json!({
+                        "text": entry.message,
+                        "color": color,
+                        "bold": bold,
+                    })
+                })
                 .collect();
 
             // Active player index
@@ -2138,6 +2147,57 @@ impl WasmFancyTuiState {
 // SHARED TUI SETUP HELPERS
 // Used by both launch_fancy_tui() and launch_network_game() to avoid duplication
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Map log message content to CSS color string.
+///
+/// Mirrors the TUI's `style_for_log_content()` from fancy_tui_renderer.rs.
+fn css_color_for_log(message: &str) -> &'static str {
+    // Turn headers: yellow
+    if message.contains(">>> Turn") || message.contains("<<<< ") {
+        return "#ffd700";
+    }
+    // Step headers: cyan
+    if message.starts_with("--- ") && message.ends_with(" ---") {
+        return "#4cc9f0";
+    }
+    // Combat: magenta
+    if message.contains("attacks") || message.contains("blocks") {
+        return "#ff79c6";
+    }
+    // Damage/life loss: red
+    if (message.contains("damage") && message.contains("life:"))
+        || (message.contains("takes") && message.contains("damage"))
+    {
+        return "#ff5555";
+    }
+    // Life gain / resolves: green
+    if (message.contains("gains") && message.contains("life")) || message.contains("resolves") {
+        return "#50fa7b";
+    }
+    // Mana tapping: dark gray
+    if (message.contains("Tap ") && message.contains("for {"))
+        || (message.contains("taps") && message.contains("for {"))
+    {
+        return "#666";
+    }
+    // Target selection: dark gray
+    if message.starts_with("  → targeting") {
+        return "#666";
+    }
+    // Choice markers: cyan dim
+    if message.starts_with("<Choice>") {
+        return "#4cc9f0";
+    }
+    // Player-based coloring
+    if message.starts_with("Player1") || message.contains(" Player1 ") {
+        return "#6272a4";
+    }
+    if message.starts_with("Player2") || message.contains(" Player2 ") {
+        return "#ff6e6e";
+    }
+    // Default: light gray
+    "#ccc"
+}
 
 /// Check if auto-run should advance the game this frame.
 ///

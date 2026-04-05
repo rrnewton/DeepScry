@@ -1,0 +1,10 @@
+[metadata]
+Name=Skullclamp Bug Test
+Description=Minimal deck to reproduce Skullclamp equipment bugs
+
+[Main]
+20 Mountain
+20 Goblin Bushwhacker
+20 Skullclamp
+
+[Sideboard]

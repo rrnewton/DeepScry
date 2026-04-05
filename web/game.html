@@ -179,6 +179,13 @@
             grid-row: 1 / 3;
         }
         #pane-log { flex: 1; }
+        #pane-log .pane-body {
+            background: #000;
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.3;
+        }
+        .log-entry { padding: 0 4px; }
         #pane-actions { flex: 1; }
 
         /* Center column */
@@ -1204,14 +1211,19 @@
 
         function renderLog(logs) {
             const body = document.getElementById('log-body');
-            // Filter out verbose choice/priority entries (TUI doesn't show these)
-            const filtered = logs.filter(msg => !msg.startsWith('<Choice>'));
-            // Only re-render if log count changed
+            // Logs are now objects: { text, color, bold }
+            // Filter out verbose choice/priority entries
+            const filtered = logs.filter(e => typeof e === 'object' ? !e.text.startsWith('<Choice>') : !e.startsWith('<Choice>'));
             const currentCount = body.children.length;
             if (currentCount === filtered.length) return;
 
-            body.innerHTML = filtered.map(msg => `<div class="log-entry">${escapeHtml(msg)}</div>`).join('');
-            // Auto-scroll to bottom
+            body.innerHTML = filtered.map(e => {
+                if (typeof e === 'object') {
+                    const style = `color:${e.color || '#ccc'};${e.bold ? 'font-weight:bold;' : ''}`;
+                    return `<div class="log-entry" style="${style}">${escapeHtml(e.text)}</div>`;
+                }
+                return `<div class="log-entry">${escapeHtml(e)}</div>`;
+            }).join('');
             body.scrollTop = body.scrollHeight;
         }
 
