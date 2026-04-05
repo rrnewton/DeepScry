@@ -2689,7 +2689,7 @@ impl AbilityCache {
             targets_untapped: desc_lower.contains("untapped"),
             targets_creature: desc_lower.contains("creature"),
             targets_land: desc_lower.contains("land"),
-            requires_target: desc_lower.contains("target"),
+            requires_target: desc_lower.contains("target") || desc_lower.starts_with("equip"),
         }
     }
 }

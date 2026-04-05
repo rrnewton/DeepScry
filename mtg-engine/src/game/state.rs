@@ -1682,34 +1682,51 @@ impl GameState {
     ///
     /// Returns an error if zone operations fail.
     pub fn check_lethal_damage(&mut self) -> Result<()> {
-        // Collect creatures that need to die (to avoid borrow checker issues)
-        // OPTIMIZATION: SmallVec avoids heap allocation when no creatures have lethal damage (common case)
-        let creatures_to_destroy: smallvec::SmallVec<[(CardId, PlayerId); 4]> = self
+        // Collect creature IDs from battlefield first (to avoid borrow checker issues
+        // with self.get_effective_toughness() needing &self while iterating battlefield)
+        let creature_ids: smallvec::SmallVec<[CardId; 16]> = self
             .battlefield
             .cards
             .iter()
+            .copied()
+            .filter(|&card_id| {
+                self.cards
+                    .try_get(card_id)
+                    .is_some_and(|card| card.is_creature())
+            })
+            .collect();
+
+        // Now check each creature for lethal damage / zero toughness using effective P/T
+        let creatures_to_destroy: smallvec::SmallVec<[(CardId, PlayerId); 4]> = creature_ids
+            .iter()
             .filter_map(|&card_id| {
                 let card = self.cards.try_get(card_id)?;
-                if !card.is_creature() {
-                    return None;
-                }
 
+                // MTG CR 704.5f: Creature with toughness 0 or less dies (independent of damage)
                 // MTG CR 704.5g: Creature has lethal damage if damage >= toughness
-                let toughness = card.current_toughness();
-                let has_lethal = card.damage >= i32::from(toughness);
+                // Use effective toughness (includes equipment, anthems, counters via layer system)
+                let effective_toughness = self
+                    .get_effective_toughness(card_id)
+                    .unwrap_or(i32::from(card.current_toughness()));
+                let has_zero_toughness = effective_toughness <= 0;
+                let has_lethal_damage = card.damage >= effective_toughness;
 
                 // Debug: Log SBA check for creatures with damage or low toughness
-                // OPTIMIZATION: Guard debug logging with log_enabled check to avoid
-                // evaluating string contains and format args when debug is disabled
                 if log::log_enabled!(target: "sba", log::Level::Debug)
-                    && (card.damage > 0 || toughness <= 0)
+                    && (card.damage > 0 || effective_toughness <= 0)
                 {
-                    log::debug!(target: "sba", "SBA check: {} (id={}) damage={} toughness={} has_lethal={} indestructible={}",
-                        card.name, card_id.as_u32(), card.damage, toughness, has_lethal, card.has_indestructible());
+                    log::debug!(target: "sba", "SBA check: {} (id={}) damage={} effective_toughness={} zero_toughness={} lethal_damage={} indestructible={}",
+                        card.name, card_id.as_u32(), card.damage, effective_toughness, has_zero_toughness, has_lethal_damage, card.has_indestructible());
+                }
+
+                // MTG CR 704.5f: Zero or less toughness → dies (even if indestructible!)
+                // Note: Indestructible does NOT prevent death from 0 toughness (CR 702.12b only prevents destruction)
+                if has_zero_toughness {
+                    return Some((card_id, card.owner));
                 }
 
                 // MTG CR 702.12b: Indestructible permanents aren't destroyed by lethal damage
-                if has_lethal && !card.has_indestructible() {
+                if has_lethal_damage && !card.has_indestructible() {
                     Some((card_id, card.owner))
                 } else {
                     None

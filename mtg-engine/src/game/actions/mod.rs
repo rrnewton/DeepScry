@@ -3363,9 +3363,9 @@ impl GameState {
                 target_creature,
             } => {
                 // Attach Equipment to target creature
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target_creature.is_placeholder() {
-                    // Ability fizzles - no valid targets
+                // Skip if target is not on battlefield (fizzle)
+                if !self.battlefield.contains(*target_creature) {
+                    // Ability fizzles - target not on battlefield
                     return Ok(());
                 }
 

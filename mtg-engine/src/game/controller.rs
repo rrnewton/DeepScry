@@ -58,9 +58,11 @@ pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> S
                 let name = view.card_name(*card_id).unwrap_or_default();
                 output.push_str(&format!("  [{}] cast {}\n", display_idx, name));
             }
-            SpellAbility::ActivateAbility { card_id, .. } => {
+            SpellAbility::ActivateAbility { card_id, ability_index } => {
                 let name = view.card_name(*card_id).unwrap_or_default();
-                output.push_str(&format!("  [{}] activate {}\n", display_idx, name));
+                // Use "equip" verb for equipment attach abilities (description starts with "Equip")
+                let verb = view.ability_verb(*card_id, *ability_index);
+                output.push_str(&format!("  [{}] {} {}\n", display_idx, verb, name));
             }
             SpellAbility::CastFromExile {
                 card_id,
@@ -315,9 +317,10 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
             let name = view.card_name(*card_id).unwrap_or_default();
             format!("cast {}", name)
         }
-        SpellAbility::ActivateAbility { card_id, .. } => {
+        SpellAbility::ActivateAbility { card_id, ability_index } => {
             let name = view.card_name(*card_id).unwrap_or_default();
-            format!("activate {}", name)
+            let verb = view.ability_verb(*card_id, *ability_index);
+            format!("{} {}", verb, name)
         }
         SpellAbility::CastFromExile {
             card_id,
@@ -638,6 +641,22 @@ impl<'a> GameStateView<'a> {
     /// Get a card's name
     pub fn card_name(&self, card_id: CardId) -> Option<String> {
         self.game.cards.try_get(card_id).map(|c| c.name.to_string())
+    }
+
+    /// Get the display verb for an activated ability ("equip" for equipment, "activate" otherwise)
+    pub fn ability_verb(&self, card_id: CardId, ability_index: usize) -> &'static str {
+        self.game
+            .cards
+            .try_get(card_id)
+            .and_then(|card| card.activated_abilities.get(ability_index))
+            .map(|ability| {
+                if ability.description.starts_with("Equip") {
+                    "equip"
+                } else {
+                    "activate"
+                }
+            })
+            .unwrap_or("activate")
     }
 
     /// Check if a card is a land
