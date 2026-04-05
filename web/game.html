@@ -350,6 +350,21 @@
         }
         .card.land { border-color: #2a5a2a; }
         .card.creature { border-color: #5a2a2a; }
+        .card.equipment { border-color: #5a5a2a; }
+        .card.equipped { border-color: #8a6a2a; box-shadow: 0 0 6px rgba(200, 150, 50, 0.3); }
+        .card-equip-badge {
+            font-size: 9px;
+            color: #ffd700;
+            background: rgba(100, 80, 20, 0.6);
+            border-radius: 2px;
+            padding: 1px 4px;
+            margin-top: 2px;
+            text-align: center;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
 
         /* Card grid in battlefield */
         .card-grid {
@@ -1080,7 +1095,22 @@
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             for (const card of cards) {
+                // Skip equipment that is attached to a creature (rendered with the creature)
+                if (card.is_equipment && card.attached_to) continue;
+
                 const el = createCardElement(card, false);
+
+                // If creature has equipment attached, show equipment badge
+                if (card.attachments && card.attachments.length > 0) {
+                    const equipNames = card.attachments.map(a => a.name).join(', ');
+                    const badge = document.createElement('div');
+                    badge.className = 'card-equip-badge';
+                    badge.textContent = equipNames;
+                    badge.title = equipNames;
+                    el.appendChild(badge);
+                    el.classList.add('equipped');
+                }
+
                 container.appendChild(el);
             }
         }
@@ -1167,12 +1197,18 @@
                 : (card.is_creature && card.power != null)
                     ? `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`
                     : '';
+            // Equipment attachments info
+            let equipHtml = '';
+            if (card.attachments && card.attachments.length > 0) {
+                equipHtml = `<div style="padding: 4px 10px; font-size: 12px; color: #ffd700;">Equipped: ${card.attachments.map(a => escapeHtml(a.name)).join(', ')}</div>`;
+            }
             body.innerHTML = `
                 <div class="card-detail-name">${escapeHtml(card.name)}</div>
                 <div class="card-detail-type">${escapeHtml(card.types || '')}</div>
                 ${card.mana_cost ? `<div style="padding: 0 10px; color: #888; font-size: 12px;">${escapeHtml(card.mana_cost)}</div>` : ''}
                 ${imgHtml}
                 ${ptHtml}
+                ${equipHtml}
             `;
         }
 

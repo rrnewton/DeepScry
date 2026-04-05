@@ -564,6 +564,7 @@ pub fn tui_get_full_state_json() -> String {
                     if card.tapped { css.push("tapped"); }
                     if card.is_land() { css.push("land"); }
                     if card.is_creature() { css.push("creature"); }
+                    if card.is_equipment() { css.push("equipment"); }
 
                     // Pre-compute formatted P/T
                     let formatted_pt = if card.is_creature() {
@@ -572,12 +573,36 @@ pub fn tui_get_full_state_json() -> String {
                         None
                     };
 
+                    // Equipment attachment info
+                    let attached_to_id = card.attached_to.map(|id| format!("{:?}", id));
+                    let is_equipment = card.is_equipment();
+
+                    // Find equipment attached TO this creature (for rendering stacks)
+                    let attachments: Vec<serde_json::Value> = if card.is_creature() {
+                        game.battlefield.cards.iter().filter_map(|&eid| {
+                            let eq = game.cards.try_get(eid)?;
+                            if eq.is_equipment() && eq.attached_to == Some(cid) {
+                                Some(serde_json::json!({
+                                    "card_id": format!("{:?}", eid),
+                                    "name": eq.name.to_string(),
+                                }))
+                            } else {
+                                None
+                            }
+                        }).collect()
+                    } else {
+                        Vec::new()
+                    };
+
                     Some(serde_json::json!({
                         "card_id": format!("{:?}", cid),
                         "name": card.name.to_string(),
                         "is_tapped": card.tapped,
                         "is_creature": card.is_creature(),
                         "is_land": card.is_land(),
+                        "is_equipment": is_equipment,
+                        "attached_to": attached_to_id,
+                        "attachments": attachments,
                         "power": power,
                         "toughness": toughness,
                         "damage": card.damage,
