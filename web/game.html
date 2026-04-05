@@ -10,7 +10,8 @@
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             background: #0a0a14;
             color: #e0e0e0;
-            min-height: 100vh;
+            height: 100vh;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
         }
@@ -728,8 +729,10 @@
             tui_select_choice,
             tui_prev_choice,
             tui_next_choice,
+            tui_set_choice_idx,
             tui_get_full_state_json,
             tui_get_logs_json,
+            tui_get_help_text,
             cleanup_tui_state,
             set_log_level
         } from './pkg/mtg_forge_rs.js';
@@ -1162,28 +1165,11 @@
         }
 
         function selectAction(idx) {
-            // Navigate to the desired choice and select it
-            // First, get current state to know where we are
-            const stateJson = tui_get_full_state_json();
-            if (!stateJson || stateJson === '{}') return;
-            const state = JSON.parse(stateJson);
-            const currentIdx = state.selected_choice_idx || 0;
-
-            // Navigate to the target index
-            if (idx > currentIdx) {
-                for (let i = 0; i < idx - currentIdx; i++) tui_next_choice();
-            } else if (idx < currentIdx) {
-                for (let i = 0; i < currentIdx - idx; i++) tui_prev_choice();
-            }
-
-            // Select the choice
+            // Set choice index directly, select, and advance
+            tui_set_choice_idx(idx);
             tui_select_choice();
-
-            // After selecting, advance the game
-            setTimeout(() => {
-                tui_run_turn();
-                setTimeout(updateUI, 50);
-            }, 10);
+            tui_run_turn();
+            setTimeout(updateUI, 50);
         }
 
         function renderLog(logs) {
@@ -1250,10 +1236,8 @@
                 case 'Enter':
                     e.preventDefault();
                     tui_select_choice();
-                    setTimeout(() => {
-                        tui_run_turn();
-                        setTimeout(updateUI, 50);
-                    }, 10);
+                    tui_run_turn();
+                    setTimeout(updateUI, 50);
                     break;
                 case 'q':
                 case 'Q':
@@ -1265,7 +1249,7 @@
                     toggleControls();
                     break;
                 case '?':
-                    alert(getHelpText());
+                    alert((typeof tui_get_help_text === 'function') ? tui_get_help_text() : 'Help not available');
                     break;
                 default:
                     // 1-9 quick select
@@ -1298,24 +1282,6 @@
             }, 50);
         }
 
-        function getHelpText() {
-            return `Keyboard Shortcuts
-==================
-
-Navigation:
-  Arrow Keys  - Navigate choices
-  Enter       - Select/Confirm
-  1-9         - Quick select action
-
-Game Actions:
-  Space       - Advance turn
-  A           - Toggle auto-run
-  Q / Esc     - Exit game
-
-Other:
-  C           - Toggle controls panel
-  ?           - Show this help`;
-        }
 
         // ==================== GAME CONTROLS ====================
         function toggleControls() {
@@ -1374,7 +1340,9 @@ Other:
         // The TUI exit/help callbacks (called by WASM key handler)
         window.exitFancyTui = function() { exitGame(); };
         window.showExitConfirmation = function() { exitGame(); };
-        window.showHelpDialog = function() { alert(getHelpText()); };
+        window.showHelpDialog = function() {
+            alert((typeof tui_get_help_text === 'function') ? tui_get_help_text() : 'Help not available');
+        };
         window.toggleCardImages = function() {
             showImages = !showImages;
             updateUI();

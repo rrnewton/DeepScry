@@ -239,6 +239,24 @@ pub fn tui_next_choice() {
     });
 }
 
+/// Set choice index directly (for number key quick-select)
+///
+/// Sets the highlighted choice to the given index without navigating
+/// through intermediate choices. Used by native GUI for 1-9 quick select.
+#[wasm_bindgen]
+pub fn tui_set_choice_idx(idx: usize) {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            if idx < s.current_choices.len() {
+                s.selected_choice_idx = idx;
+                s.update_choice_highlights();
+                s.needs_redraw = true;
+            }
+        }
+    });
+}
+
 /// Toggle auto-run mode - called from JavaScript button
 #[wasm_bindgen]
 pub fn tui_toggle_auto() {

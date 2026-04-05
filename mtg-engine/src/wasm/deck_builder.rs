@@ -5,7 +5,7 @@
 
 use crate::deck_builder::{
     draw_ui, handle_deck_builder_click, handle_deck_builder_key, handle_exit_dialog_key, DeckBuilderAction,
-    DeckBuilderKey, DeckBuilderState, FocusedPane,
+    DeckBuilderKey, DeckBuilderState,
 };
 use crate::loader::CardDefinition;
 use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
