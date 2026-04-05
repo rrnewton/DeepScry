@@ -371,6 +371,10 @@
         .hand-entry:hover {
             background: rgba(255,255,255,0.05);
         }
+        .hand-entry.selected-hand {
+            color: #ffd700;
+            font-weight: bold;
+        }
 
         /* Graveyard in card details */
         .graveyard-list {
@@ -1047,6 +1051,17 @@
             renderLog(state.logs || []);
             renderStatusBar(state);
 
+            // Persist card details pane for selected card
+            if (selectedCardName) {
+                const allCards = [
+                    ...(ourPlayer?.battlefield || []),
+                    ...(oppPlayer?.battlefield || []),
+                    ...(ourPlayer?.hand || []),
+                ];
+                const selected = allCards.find(c => c.name === selectedCardName);
+                if (selected) showCardDetails(selected);
+            }
+
             // Update hand header with count
             document.getElementById('hand-header').textContent = `Hand (${ourPlayer?.hand_size || 0})`;
         }
@@ -1079,9 +1094,9 @@
                 return;
             }
             container.innerHTML = cards.map((card, i) => {
-                const selected = card.name === selectedCardName ? ' style="color:#ffd700; font-weight:bold;"' : '';
-                const mana = card.mana_cost ? ` <span style="color:#4cc9f0;">${escapeHtml(card.mana_cost)}</span>` : '';
-                return `<div class="hand-entry"${selected} data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
+                const cls = card.name === selectedCardName ? ' selected-hand' : '';
+                const mana = card.mana_cost ? ` <span style="color:#4cc9f0">${escapeHtml(card.mana_cost)}</span>` : '';
+                return `<div class="hand-entry${cls}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
             // Click handlers
             container.querySelectorAll('.hand-entry').forEach(el => {
@@ -1090,7 +1105,8 @@
                     if (cards[idx]) {
                         selectedCardName = cards[idx].name;
                         showCardDetails(cards[idx]);
-                        updateUI();
+                        container.querySelectorAll('.hand-entry').forEach(e => e.classList.remove('selected-hand'));
+                        el.classList.add('selected-hand');
                     }
                 });
             });
@@ -1126,7 +1142,9 @@
             div.addEventListener('click', () => {
                 selectedCardName = card.name;
                 showCardDetails(card);
-                updateUI(); // re-render to highlight selected
+                // Update selected highlight without full re-render (avoids visual jump)
+                document.querySelectorAll('.card.selected-card').forEach(el => el.classList.remove('selected-card'));
+                div.classList.add('selected-card');
             });
 
             return div;
@@ -1134,6 +1152,7 @@
 
         function showCardDetails(card) {
             const body = document.getElementById('card-details-body');
+            if (!body || !card) return;
             let imgHtml = '';
             if (showImages) {
                 const urls = getCardImageFallbackUrls(card.name, 310);
@@ -1142,10 +1161,12 @@
                     imgHtml = `<div class="card-detail-image"><img src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'"></div>`;
                 }
             }
-            let ptHtml = '';
-            if (card.is_creature && card.power !== undefined && card.power !== null) {
-                ptHtml = `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`;
-            }
+            // Use pre-computed formatted_pt if available, fall back to raw power/toughness
+            const ptHtml = card.formatted_pt
+                ? `<div class="card-detail-pt">${card.formatted_pt}</div>`
+                : (card.is_creature && card.power != null)
+                    ? `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`
+                    : '';
             body.innerHTML = `
                 <div class="card-detail-name">${escapeHtml(card.name)}</div>
                 <div class="card-detail-type">${escapeHtml(card.types || '')}</div>
