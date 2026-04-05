@@ -1187,7 +1187,8 @@ impl<'a> GameLoop<'a> {
                                         && !self.replaying
                                     {
                                         let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
-                                        let message = format!("{} activates ability: {}", name, ability.description);
+                                        let desc = ability.description.replace("CARDNAME", name);
+                                        let message = format!("{name} activates ability: {desc}");
                                         // Use gamelog for official game action
                                         self.game.logger.gamelog(&message);
                                     }

@@ -191,6 +191,35 @@ pub fn tui_get_help_text() -> String {
     crate::game::fancy_tui_events::get_help_text(true)
 }
 
+/// Get image URLs for a card, in priority order (local, scryfall, gatherer).
+///
+/// Returns a JSON array of URL strings. JS should try them in order,
+/// using `<img onerror>` to fall through to the next source.
+///
+/// # Arguments
+/// * `card_name` - The card name
+/// * `height_px` - Desired height in pixels (selects small vs normal size)
+#[wasm_bindgen]
+pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
+    use crate::wasm::image_overlay::{
+        gatherer_url, local_image_url, scryfall_url_by_name, ImageVersion,
+    };
+
+    let version = if height_px <= 204 {
+        ImageVersion::Small
+    } else {
+        ImageVersion::Normal
+    };
+
+    let urls = vec![
+        local_image_url(card_name, version, "/images"),
+        scryfall_url_by_name(card_name, version),
+        gatherer_url(card_name),
+    ];
+
+    serde_json::json!(urls).to_string()
+}
+
 /// Compute the shared pane layout for a given viewport size.
 ///
 /// Returns JSON with pane positions as percentages of the viewport,

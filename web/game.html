@@ -733,6 +733,7 @@
             tui_set_choice_idx,
             tui_get_full_state_json,
             tui_get_layout_json,
+            tui_get_image_urls,
             tui_get_logs_json,
             tui_get_help_text,
             cleanup_tui_state,
@@ -740,55 +741,23 @@
         } from './pkg/mtg_forge_rs.js';
 
         // ==================== IMAGE SOURCE ====================
-        const ImageSource = {
-            LOCAL_SIZE_THRESHOLD_PX: 204,
-            FAILURE_THRESHOLD: 2,
-            failureCounts: { local: 0, scryfall: 0, gatherer: 0 },
-            disabledSources: new Set(),
-            recordFailure(id) {
-                if (!this.failureCounts.hasOwnProperty(id) || this.disabledSources.has(id)) return;
-                this.failureCounts[id]++;
-                if (this.failureCounts[id] >= this.FAILURE_THRESHOLD) {
-                    this.disabledSources.add(id);
-                    console.warn(`[ImageSource] ${id} disabled after failures`);
-                }
-            },
-            resetFailureCount(id) { if (this.failureCounts.hasOwnProperty(id)) this.failureCounts[id] = 0; },
-            sources: {
-                local: {
-                    getUrl(name, h) {
-                        const size = h <= ImageSource.LOCAL_SIZE_THRESHOLD_PX ? 'small' : 'normal';
-                        return `/images/${size}/${name.charAt(0).toLowerCase()}/${encodeURIComponent(name)}.jpg`;
-                    }
-                },
-                scryfall: {
-                    getUrl(name, h) {
-                        const v = h <= 204 ? 'small' : (h <= 680 ? 'normal' : 'large');
-                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}&format=image&version=${v}`;
-                    }
-                },
-                gatherer: {
-                    getUrl(name) {
-                        return `https://gatherer.wizards.com/Handlers/Image.ashx?name=${encodeURIComponent(name)}&type=card`;
-                    }
-                }
-            },
-            getEnabledSources() {
-                const enabled = [];
-                if (document.getElementById('img-src-local')?.checked && !this.disabledSources.has('local')) enabled.push('local');
-                if (document.getElementById('img-src-scryfall')?.checked && !this.disabledSources.has('scryfall')) enabled.push('scryfall');
-                if (document.getElementById('img-src-gatherer')?.checked && !this.disabledSources.has('gatherer')) enabled.push('gatherer');
-                return enabled;
-            },
-            getImageUrl(name, h = 204) {
-                const enabled = this.getEnabledSources();
-                for (const id of enabled) {
-                    const src = this.sources[id];
-                    if (src) return src.getUrl(name, h);
-                }
-                return null;
-            }
-        };
+        // Image URLs come from shared Rust code (wasm/image_overlay.rs).
+        // tui_get_image_urls() returns [local, scryfall, gatherer] URLs.
+        // JS uses <img onerror> cascading to try each source in order.
+        function getCardImageUrl(cardName, heightPx) {
+            if (typeof tui_get_image_urls !== 'function') return null;
+            try {
+                const urls = JSON.parse(tui_get_image_urls(cardName, heightPx));
+                return urls.length > 0 ? urls[0] : null;
+            } catch (e) { return null; }
+        }
+
+        function getCardImageFallbackUrls(cardName, heightPx) {
+            if (typeof tui_get_image_urls !== 'function') return [];
+            try {
+                return JSON.parse(tui_get_image_urls(cardName, heightPx));
+            } catch (e) { return []; }
+        }
 
         // ==================== DECK COLLECTIONS ====================
         const DECK_COLLECTIONS = {
@@ -1119,9 +1088,10 @@
 
             let imgHtml = '';
             if (showImages) {
-                const url = ImageSource.getImageUrl(card.name, 106);
-                if (url) {
-                    imgHtml = `<img class="card-image" src="${escapeAttr(url)}" alt="${escapeAttr(card.name)}" loading="lazy" onerror="this.style.display='none'">`;
+                const urls = getCardImageFallbackUrls(card.name, 106);
+                if (urls.length > 0) {
+                    const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
+                    imgHtml = `<img class="card-image" src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" loading="lazy" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'">`;
                 }
             }
 
@@ -1150,9 +1120,10 @@
             const body = document.getElementById('card-details-body');
             let imgHtml = '';
             if (showImages) {
-                const url = ImageSource.getImageUrl(card.name, 310);
-                if (url) {
-                    imgHtml = `<div class="card-detail-image"><img src="${escapeAttr(url)}" alt="${escapeAttr(card.name)}" onerror="this.style.display='none'"></div>`;
+                const urls = getCardImageFallbackUrls(card.name, 310);
+                if (urls.length > 0) {
+                    const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
+                    imgHtml = `<div class="card-detail-image"><img src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'"></div>`;
                 }
             }
             let ptHtml = '';
