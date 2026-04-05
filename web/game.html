@@ -1076,7 +1076,7 @@
             }
 
             let ptHtml = '';
-            if (card.power !== undefined && card.power !== null) {
+            if (card.is_creature && card.power !== undefined && card.power !== null) {
                 ptHtml = `<div class="card-pt">${card.power}/${card.toughness}</div>`;
             }
 
@@ -1106,7 +1106,7 @@
                 }
             }
             let ptHtml = '';
-            if (card.power !== undefined && card.power !== null) {
+            if (card.is_creature && card.power !== undefined && card.power !== null) {
                 ptHtml = `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`;
             }
             body.innerHTML = `
@@ -1174,11 +1174,13 @@
 
         function renderLog(logs) {
             const body = document.getElementById('log-body');
+            // Filter out verbose choice/priority entries (TUI doesn't show these)
+            const filtered = logs.filter(msg => !msg.startsWith('<Choice>'));
             // Only re-render if log count changed
             const currentCount = body.children.length;
-            if (currentCount === logs.length) return;
+            if (currentCount === filtered.length) return;
 
-            body.innerHTML = logs.map(msg => `<div class="log-entry">${escapeHtml(msg)}</div>`).join('');
+            body.innerHTML = filtered.map(msg => `<div class="log-entry">${escapeHtml(msg)}</div>`).join('');
             // Auto-scroll to bottom
             body.scrollTop = body.scrollHeight;
         }
@@ -1223,22 +1225,10 @@
                     document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
                     if (autoRunning) startAutoRun();
                     break;
-                case 'ArrowUp':
-                    e.preventDefault();
-                    tui_prev_choice();
-                    setTimeout(updateUI, 20);
-                    break;
-                case 'ArrowDown':
-                    e.preventDefault();
-                    tui_next_choice();
-                    setTimeout(updateUI, 20);
-                    break;
-                case 'Enter':
-                    e.preventDefault();
-                    tui_select_choice();
-                    tui_run_turn();
-                    setTimeout(updateUI, 50);
-                    break;
+                // ArrowUp, ArrowDown, Enter are handled by the hidden
+                // RatZilla terminal via WASM process_key_event — do NOT
+                // duplicate here or choices will move by 2 instead of 1.
+                // This matches fancy.html which has no JS arrow/enter handlers.
                 case 'q':
                 case 'Q':
                 case 'Escape':
