@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """CLI entry point for agent-driven MTG replay games."""
 
 from __future__ import annotations
