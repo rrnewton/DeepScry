@@ -8,6 +8,7 @@ from datetime import datetime
 import random
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -164,6 +165,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(choice_display, file=sys.stderr, flush=True)
 
+        if controller_kind == "agent":
+            print(
+                f"========== Agent invoked for choice #{choice_count + 1} ==========",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        t0 = time.time()
         try:
             choice_number, raw_response = _choose_for_player(
                 mode=args.mode,
@@ -176,11 +185,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
+        elapsed = time.time() - t0
         choice_text = "pass" if choice_number == 0 else choices[choice_number - 1]
 
         # Show decision
         if controller_kind == "agent":
             print(f"  => Agent chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
+            print(
+                f"========== Agent responded in {elapsed:.1f}s ==========",
+                file=sys.stderr,
+                flush=True,
+            )
             if args.verbose:
                 print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
         else:
