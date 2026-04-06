@@ -85,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
             "`-- decks/a.dck decks/b.dck`. Defaults to a simple bolt mirror match."
         ),
     )
+    parser.add_argument(
+        "--claude-args",
+        nargs="*",
+        default=[],
+        help="Extra arguments to pass to claude CLI (e.g. --claude-args --model sonnet).",
+    )
     return parser
 
 
@@ -187,6 +193,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 choice_count=len(choices),
                 rng=rng,
                 verbose=args.verbose,
+                claude_args=args.claude_args,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -253,7 +260,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
 
-def _query_agent(prompt_text: str, choice_count: int, verbose: bool) -> tuple[int, str]:
+def _query_agent(prompt_text: str, choice_count: int, verbose: bool, claude_args: list[str] | None = None) -> tuple[int, str]:
+    extra_args = claude_args or []
     last_error = "no agent attempts made"
     for attempt in range(1, 4):
         retry_prompt = prompt_text
@@ -266,7 +274,7 @@ def _query_agent(prompt_text: str, choice_count: int, verbose: bool) -> tuple[in
                 f"on the final line. Nothing else on that line."
             )
         completed = subprocess.run(
-            ["claude", "-p", retry_prompt],
+            ["claude"] + extra_args + ["-p", retry_prompt],
             capture_output=True,
             text=True,
             check=False,
@@ -299,10 +307,11 @@ def _choose_for_player(
     choice_count: int,
     rng: random.Random,
     verbose: bool,
+    claude_args: list[str] | None = None,
 ) -> tuple[int, str]:
     controller_kind = _controller_for_player(mode, player)
     if controller_kind == "agent":
-        return _query_agent(prompt_text, choice_count, verbose)
+        return _query_agent(prompt_text, choice_count, verbose, claude_args or [])
     # Random/heuristic: pick locally, no subprocess call
     # Clamp to valid range: 0=pass, 1..choice_count=actions
     choice_number = rng.randint(0, choice_count)
