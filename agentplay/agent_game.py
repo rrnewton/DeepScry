@@ -65,9 +65,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Safety limit on game turn number before aborting.",
     )
     parser.add_argument(
+        "--stop-on-bug",
+        action="store_true",
+        help="Stop the game when an agent emits a BUG_REPORT section (default: continue playing).",
+    )
+    # Legacy alias
+    parser.add_argument(
         "--continue-past-bug-reports",
         action="store_true",
-        help="Keep playing after an agent emits a BUG_REPORT section instead of exiting immediately.",
+        default=True,
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "mtg_args",
@@ -174,7 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if args.verbose:
                 print(f"[bug-report] logged to {bug_report_path}")
-            if not args.continue_past_bug_reports:
+            if args.stop_on_bug:
                 print(
                     f"Stopped: BUG_REPORT detected in {player} response. Logged to {bug_report_path}",
                     file=sys.stderr,

@@ -1371,6 +1371,12 @@ impl<'a> GameLoop<'a> {
         // Reset step header tracking for each new step
         self.step_header_printed = false;
 
+        // Always log step transitions to gamelog (so log_tail shows phase info for agents)
+        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+            let step_name = self.step_name(step);
+            self.game.logger.gamelog(&format!("--- {} ---", step_name));
+        }
+
         // Update logger's gamelog context (turn and step)
         self.game.logger.set_gamelog_turn(turn);
         self.game.logger.set_gamelog_step(step.abbreviation());

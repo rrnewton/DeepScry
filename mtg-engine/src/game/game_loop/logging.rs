@@ -59,6 +59,7 @@ impl<'a> GameLoop<'a> {
             && self.should_print_to_stdout()
         {
             let step = self.game.turn.current_step;
+            // Only print to stdout here — gamelog entry is added in step_harness()
             println!("--- {} ---", self.step_name(step));
             self.step_header_printed = true;
         }
