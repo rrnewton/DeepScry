@@ -116,6 +116,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Game log file for clean output (no agent commentary)
     game_log_path = engine.game_dir / "game.log"
     prev_output_line_count = 0
+    # Interleaved log: game events + agent reasoning for prompt context
+    interleaved_log_parts: list[str] = []
 
     while True:
         if engine.is_game_over(snapshot):
@@ -142,12 +144,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if new_lines:
             print(new_lines, file=sys.stderr, flush=True)
             _append_to_file(game_log_path, new_lines)
+            interleaved_log_parts.append(new_lines)
         prev_output_line_count = _output_line_count(snapshot)
 
+        # Build prompt with interleaved log (game events + prior agent reasoning)
+        interleaved_log_text = "\n".join(interleaved_log_parts[-20:])  # Last 20 chunks
         prompt_text = build_choice_prompt(
             snapshot.get("game_state", {}),
             choices,
-            snapshot.get("log_tail", ""),
+            interleaved_log_text,
             goal=args.goal,
         )
         before_snapshot = snapshot
@@ -199,8 +204,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if args.verbose:
                 print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
+            # Add agent reasoning to interleaved log for future prompts
+            reasoning_summary = raw_response.strip().split("\n")[0][:200]  # First line, truncated
+            interleaved_log_parts.append(f"[Agent chose: {choice_text}. Reasoning: {reasoning_summary}]")
         else:
             print(f"  => Random chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
+            interleaved_log_parts.append(f"[Random chose: {choice_text}]")
 
         bug_report_text = _extract_bug_report(raw_response)
         if bug_report_text is not None:
