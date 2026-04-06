@@ -112,10 +112,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     choice_count = 0
 
+    # Game log file for clean output (no agent commentary)
+    game_log_path = engine.game_dir / "game.log"
+    prev_log_tail = ""
+
     while True:
         if engine.is_game_over(snapshot):
+            # Write final game log
+            _append_game_log(game_log_path, snapshot.get("log_tail", ""), prev_log_tail)
             if args.verbose:
                 print(snapshot.get("log_tail", ""))
+            print("Game over.", file=sys.stderr)
             return 0
 
         turn_number = _turn_number(snapshot)
@@ -128,6 +135,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Stopped: no available choices found in engine output", file=sys.stderr)
             return 1
 
+        # Show new game log lines since last choice
+        current_log = snapshot.get("log_tail", "")
+        new_lines = _new_log_lines(current_log, prev_log_tail)
+        if new_lines:
+            print(new_lines, file=sys.stderr, flush=True)
+        prev_log_tail = current_log
+
         prompt_text = build_choice_prompt(
             snapshot.get("game_state", {}),
             choices,
@@ -139,12 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         player = _player_name(snapshot.get("active_player"))
         controller_kind = _controller_for_player(args.mode, player)
 
-        # Always show basic progress (even without --verbose)
+        # Show choice point
+        choice_display = "\n".join(
+            f"  [{i}] {c}" for i, c in enumerate(["pass"] + list(choices))
+        )
         print(
-            f"Turn {turn_number or '?'} | {player} ({controller_kind}) | {len(choices)} choices",
+            f"--- {player} ({controller_kind}) | Turn {turn_number or '?'} | {len(choices)} choices ---",
             file=sys.stderr,
             flush=True,
         )
+        print(choice_display, file=sys.stderr, flush=True)
 
         try:
             choice_number, raw_response = _choose_for_player(
@@ -160,15 +178,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         choice_text = "pass" if choice_number == 0 else choices[choice_number - 1]
 
-        # Always show what was chosen
-        print(
-            f"  -> [{choice_number}] {choice_text}",
-            file=sys.stderr,
-            flush=True,
-        )
-
-        if args.verbose:
-            print(f"[claude] {raw_response.strip()}")
+        # Show decision
+        if controller_kind == "agent":
+            print(f"  => Agent chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
+            if args.verbose:
+                print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
+        else:
+            print(f"  => Random chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
 
         bug_report_text = _extract_bug_report(raw_response)
         if bug_report_text is not None:
@@ -179,8 +195,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 bug_report_text=bug_report_text,
                 raw_response=raw_response,
             )
-            if args.verbose:
-                print(f"[bug-report] logged to {bug_report_path}")
+            print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
             if args.stop_on_bug:
                 print(
                     f"Stopped: BUG_REPORT detected in {player} response. Logged to {bug_report_path}",
@@ -188,12 +203,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 0
 
+        # Use text command (not numeric index) with wildcard prefix for replay resilience.
+        # Text commands like "play Mountain" or "cast Lightning Bolt" match the right
+        # choice point during replay even when priority auto-passes shift the sequence.
         engine.append_choice(player, choice_text)
         try:
             snapshot = engine.continue_game()
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
+
+        # Write to game log file
+        _append_game_log(game_log_path, snapshot.get("log_tail", ""), prev_log_tail)
+
         engine.append_enriched_log(
             before_snapshot=before_snapshot,
             game_state_summary=game_state_summary,
@@ -250,6 +272,8 @@ def _choose_for_player(
     controller_kind = _controller_for_player(mode, player)
     if controller_kind == "agent":
         return _query_agent(prompt_text, choice_count, verbose)
+    # Random/heuristic: pick locally, no subprocess call
+    # Clamp to valid range: 0=pass, 1..choice_count=actions
     choice_number = rng.randint(0, choice_count)
     return choice_number, f"{controller_kind} choice\n{choice_number}"
 
@@ -324,6 +348,36 @@ def _append_bug_report(
         handle.write(raw_response.strip())
         handle.write("\n\n")
     return bug_report_path
+
+
+def _new_log_lines(current_log: str, prev_log: str) -> str:
+    """Extract lines from current_log that weren't in prev_log."""
+    if not current_log:
+        return ""
+    if not prev_log:
+        return current_log.strip()
+    # Find the common suffix — prev_log's last lines should appear in current_log
+    prev_lines = prev_log.strip().splitlines()
+    curr_lines = current_log.strip().splitlines()
+    if not prev_lines:
+        return current_log.strip()
+    # Find where prev_log ends in current_log
+    last_prev = prev_lines[-1].strip()
+    for i, line in enumerate(curr_lines):
+        if line.strip() == last_prev:
+            new = curr_lines[i + 1:]
+            return "\n".join(new) if new else ""
+    # If we can't find the match, show everything
+    return current_log.strip()
+
+
+def _append_game_log(log_path: Path, current_log: str, prev_log: str) -> None:
+    """Append new log lines to the game log file."""
+    new = _new_log_lines(current_log, prev_log)
+    if new:
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(new)
+            f.write("\n")
 
 
 if __name__ == "__main__":

@@ -147,8 +147,14 @@ class GameEngine:
                 "Build it with: cargo build --release"
             )
 
-        p1_script = ";".join(self._read_lines(self.p1_choices_path))
-        p2_script = ";".join(self._read_lines(self.p2_choices_path))
+        # Each choice is preceded by a wildcard (*) so the controller waits
+        # until the choice point where the command matches, rather than consuming
+        # commands strictly in sequence (which breaks when priority auto-passes
+        # create extra choice points on replay).
+        p1_choices = self._read_lines(self.p1_choices_path)
+        p2_choices = self._read_lines(self.p2_choices_path)
+        p1_script = ";".join(f"*;{c}" for c in p1_choices) if p1_choices else ""
+        p2_script = ";".join(f"*;{c}" for c in p2_choices) if p2_choices else ""
         if self.snapshot_path.exists():
             self.snapshot_path.unlink()
 
