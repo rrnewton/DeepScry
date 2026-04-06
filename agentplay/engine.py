@@ -165,6 +165,7 @@ class GameEngine:
             "--json",
             "--log-tail=100",
             f"--seed={self.seed}",
+            "--verbosity=verbose",  # Show all step headers so agent sees phase transitions
         ]
         if self.verbose:
             print(f"$ {' '.join(cmd)}")
