@@ -91,6 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Extra arguments to pass to claude CLI (e.g. --claude-args --model sonnet).",
     )
+    parser.add_argument(
+        "--p1-draw",
+        default=None,
+        help="Override P1 initial hand (semicolon-separated card names, passed to mtg tui --p1-draw).",
+    )
+    parser.add_argument(
+        "--p2-draw",
+        default=None,
+        help="Override P2 initial hand (semicolon-separated card names, passed to mtg tui --p2-draw).",
+    )
     return parser
 
 
@@ -105,6 +115,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         mtg_args = list(DEFAULT_MTG_ARGS)
     if args.puzzle:
         mtg_args = [args.puzzle]
+
+    # Pass through draw overrides to mtg tui
+    if args.p1_draw:
+        mtg_args.extend(["--p1-draw", args.p1_draw])
+    if args.p2_draw:
+        mtg_args.extend(["--p2-draw", args.p2_draw])
 
     engine = GameEngine(seed=args.seed, game_dir=args.game_dir, verbose=args.verbose)
     engine.set_initial_args(mtg_args)
@@ -121,14 +137,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Game log file for clean output (no agent commentary)
     game_log_path = engine.game_dir / "game.log"
-    prev_output_line_count = 0
+    prev_log_lines: list[str] = []
     # Interleaved log: game events + agent reasoning for prompt context
     interleaved_log_parts: list[str] = []
 
     while True:
         if engine.is_game_over(snapshot):
-            # Print final new log lines and write to file
-            new_lines = _extract_new_output(snapshot, prev_output_line_count)
+            new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), prev_log_lines)
             if new_lines:
                 print(new_lines, file=sys.stderr, flush=True)
                 _append_to_file(game_log_path, new_lines)
@@ -145,13 +160,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Stopped: no available choices found in engine output", file=sys.stderr)
             return 1
 
-        # Show new game log lines since last choice (deduped by line count)
-        new_lines = _extract_new_output(snapshot, prev_output_line_count)
+        # Show new game log lines since last choice (deduped via log_tail comparison)
+        new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), prev_log_lines)
         if new_lines:
             print(new_lines, file=sys.stderr, flush=True)
             _append_to_file(game_log_path, new_lines)
             interleaved_log_parts.append(new_lines)
-        prev_output_line_count = _output_line_count(snapshot)
+        prev_log_lines = snapshot.get("log_tail", "").splitlines()
 
         # Build prompt with interleaved log (game events + prior agent reasoning)
         interleaved_log_text = "\n".join(interleaved_log_parts[-20:])  # Last 20 chunks
@@ -209,8 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
                 flush=True,
             )
-            if args.verbose:
-                print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
+            # Always show agent reasoning
+            print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
             # Add agent reasoning to interleaved log for future prompts
             reasoning_summary = raw_response.strip().split("\n")[0][:200]  # First line, truncated
             interleaved_log_parts.append(f"[Agent chose: {choice_text}. Reasoning: {reasoning_summary}]")
@@ -390,21 +405,25 @@ def _append_bug_report(
     return bug_report_path
 
 
-def _extract_new_output(snapshot: dict, prev_line_count: int) -> str:
-    """Extract new output lines from engine stdout since last check."""
-    raw = snapshot.get("raw_output", "")
-    if not raw:
-        return ""
-    all_lines = raw.splitlines()
-    if prev_line_count >= len(all_lines):
-        return ""
-    return "\n".join(all_lines[prev_line_count:])
+def _new_log_tail_lines(current_tail: str, prev_lines: list[str]) -> str:
+    """Extract lines from current log_tail that weren't in prev_lines.
 
-
-def _output_line_count(snapshot: dict) -> int:
-    """Count total lines in engine raw output."""
-    raw = snapshot.get("raw_output", "")
-    return len(raw.splitlines()) if raw else 0
+    The engine replays from scratch each run, so log_tail grows monotonically.
+    We find where the previous tail ends in the current tail and return only
+    the new suffix.
+    """
+    if not current_tail:
+        return ""
+    curr = current_tail.splitlines()
+    if not prev_lines:
+        return current_tail
+    # The previous lines should be a prefix of current lines (log_tail grows)
+    # Find the overlap point
+    if len(curr) <= len(prev_lines):
+        return ""
+    # Skip lines we've already shown
+    new = curr[len(prev_lines):]
+    return "\n".join(new) if new else ""
 
 
 def _append_to_file(path: Path, text: str) -> None:

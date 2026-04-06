@@ -178,6 +178,8 @@ class GameEngine:
 
         env = dict(os.environ)
         env["CARDSFOLDER"] = str(cardsfolder)
+        # Suppress INFO-level Rust log lines; keep WARN and ERROR visible
+        env.setdefault("RUST_LOG", "warn")
         completed = subprocess.run(
             cmd,
             cwd=self.repo_root,

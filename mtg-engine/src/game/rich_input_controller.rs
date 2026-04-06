@@ -554,8 +554,10 @@ impl PlayerController for RichInputController {
     }
 
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {
-        // Serialize the controller state
-        serde_json::to_value(self).ok()
+        // RichInputController state is not needed for snapshot restoration
+        // (choices are replayed from the choices files, not from controller state).
+        // Return None to avoid deserialization errors with ControllerState enum.
+        None
     }
 
     fn has_more_choices(&self) -> bool {
