@@ -129,10 +129,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         before_snapshot = snapshot
         game_state_summary = _extract_game_state_summary(prompt_text)
+        player = _player_name(snapshot.get("active_player"))
+        controller_kind = _controller_for_player(args.mode, player)
+
+        # Always show basic progress (even without --verbose)
+        print(
+            f"Turn {turn_number or '?'} | {player} ({controller_kind}) | {len(choices)} choices",
+            file=sys.stderr,
+            flush=True,
+        )
+
         try:
             choice_number, raw_response = _choose_for_player(
                 mode=args.mode,
-                player=_player_name(snapshot.get("active_player")),
+                player=player,
                 prompt_text=prompt_text,
                 choice_count=len(choices),
                 rng=rng,
@@ -141,11 +151,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        player = _player_name(snapshot.get("active_player"))
         choice_text = "pass" if choice_number == 0 else choices[choice_number - 1]
 
+        # Always show what was chosen
+        print(
+            f"  -> [{choice_number}] {choice_text}",
+            file=sys.stderr,
+            flush=True,
+        )
+
         if args.verbose:
-            print(f"[turn {turn_number if turn_number is not None else '?'}] {player} -> {choice_number}: {choice_text}")
             print(f"[claude] {raw_response.strip()}")
 
         bug_report_text = _extract_bug_report(raw_response)
