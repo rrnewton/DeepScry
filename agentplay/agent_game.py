@@ -22,9 +22,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from agentplay.engine import GameEngine
     from agentplay.prompts import build_choice_prompt, parse_agent_response
+    from agentplay.card_defs import CardDatabase, find_mentioned_cards
 else:
     from .engine import GameEngine
     from .prompts import build_choice_prompt, parse_agent_response
+    from .card_defs import CardDatabase, find_mentioned_cards
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -128,6 +130,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine.set_command("puzzle")
     rng = random.Random(args.seed)
 
+    # Load card definitions from deck files
+    repo_root = Path(__file__).resolve().parent.parent
+    cardsfolder = repo_root / "forge-java" / "forge-gui" / "res" / "cardsfolder"
+    card_db = CardDatabase(cardsfolder)
+    for arg in mtg_args:
+        deck_path = repo_root / arg
+        if deck_path.suffix == ".dck" and deck_path.exists():
+            card_db.load_deck(deck_path)
+    all_card_names = card_db.all_names()
+    seen_card_names: set[str] = set()
+
+    # Rules references
+    rules_dir = repo_root / "rules"
+    rules_paths: list[str] = []
+    if rules_dir.exists():
+        for rf in sorted(rules_dir.iterdir()):
+            if rf.is_file() and rf.suffix in (".txt", ".md"):
+                rules_paths.append(str(rf))
+
     try:
         snapshot = engine.start_game()
     except RuntimeError as exc:
@@ -168,13 +189,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             interleaved_log_parts.append(new_lines)
         prev_log_lines = snapshot.get("log_tail", "").splitlines()
 
+        # Track which cards have been mentioned in the game
+        log_text = snapshot.get("log_tail", "")
+        newly_seen = find_mentioned_cards(log_text, all_card_names) - seen_card_names
+        seen_card_names.update(newly_seen)
+
         # Build prompt with interleaved log (game events + prior agent reasoning)
         interleaved_log_text = "\n".join(interleaved_log_parts[-20:])  # Last 20 chunks
+        card_defs_text = card_db.format_definitions(seen_card_names) if seen_card_names else None
         prompt_text = build_choice_prompt(
             snapshot.get("game_state", {}),
             choices,
             interleaved_log_text,
             goal=args.goal,
+            card_definitions=card_defs_text,
+            rules_paths=rules_paths if rules_paths else None,
         )
         before_snapshot = snapshot
         game_state_summary = _extract_game_state_summary(prompt_text)

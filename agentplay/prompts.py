@@ -33,10 +33,12 @@ _MANA_LABELS = {
 
 
 def build_choice_prompt(
-    game_state: dict,
+    game_state: dict[str, Any],
     choices: list[str],
     log_tail: str,
-    goal: str = None,
+    goal: str | None = None,
+    card_definitions: str | None = None,
+    rules_paths: list[str] | None = None,
 ) -> str:
     """Build the prompt sent to a headless agent for one MTG choice."""
 
@@ -61,6 +63,16 @@ def build_choice_prompt(
 
     if goal:
         sections.append(f"Goal directive: {goal.strip()}")
+
+    # Card definitions (placed early so agent has context before choices)
+    if card_definitions:
+        sections.extend(["", "Card definitions (cards seen in this game):", card_definitions])
+
+    # Rules references
+    if rules_paths:
+        sections.extend(["", "MTG rules references (read for detailed rules):"])
+        for rp in rules_paths:
+            sections.append(f"  {rp}")
 
     sections.extend(
         [
