@@ -391,8 +391,9 @@ impl PlayerController for InteractiveController {
 
         // Get player name from view
         let player_name = view.player_name();
+        let context = view.build_choice_context();
         println!(
-            "\n  ==> Priority {}: life {}, {:?}",
+            "\n  ==> {context} Priority {}: life {}, {:?}",
             player_name,
             view.life(),
             view.current_step()
@@ -1306,5 +1307,9 @@ impl PlayerController for InteractiveController {
 
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Tui
+    }
+
+    fn wants_context(&self) -> bool {
+        true
     }
 }

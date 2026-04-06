@@ -37,8 +37,9 @@ use std::collections::HashMap;
 pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> String {
     let mut output = String::new();
     let player_name = view.player_name();
+    let context = view.build_choice_context();
 
-    output.push_str(&format!("\n{} available actions:\n", player_name));
+    output.push_str(&format!("\n{context} {} available actions:\n", player_name));
 
     // Pass is ALWAYS option 0
     output.push_str("  [0] pass\n");
@@ -909,6 +910,52 @@ impl<'a> GameStateView<'a> {
     pub fn has_keyword_with_effects(&self, card_id: CardId, keyword: crate::core::Keyword) -> bool {
         self.game.has_keyword_with_effects(card_id, keyword)
     }
+
+    /// Build a context string describing the current game situation for human players.
+    ///
+    /// Produces strings like:
+    /// - `[Your_Main1]` — your main phase, empty stack
+    /// - `[Their_EndStep]` — opponent's end step
+    /// - `[Your_Main1 | Lightning Bolt on stack]` — something on the stack
+    /// - `[Your_Combat_DeclareAttackers]` — declare attackers step
+    ///
+    /// The format is `[{Whose}_{Step}]` or `[{Whose}_{Step} | {stack info}]`.
+    pub fn build_choice_context(&self) -> String {
+        let is_your_turn = self.player_id == self.game.turn.active_player;
+        let whose = if is_your_turn { "Your" } else { "Their" };
+        let step = self.game.turn.current_step;
+
+        let step_name = match step {
+            Step::Untap => "Untap",
+            Step::Upkeep => "Upkeep",
+            Step::Draw => "Draw",
+            Step::Main1 => "Main1",
+            Step::BeginCombat => "Combat_Begin",
+            Step::DeclareAttackers => "Combat_DeclareAttackers",
+            Step::DeclareBlockers => "Combat_DeclareBlockers",
+            Step::CombatDamage => "Combat_Damage",
+            Step::EndCombat => "Combat_End",
+            Step::Main2 => "Main2",
+            Step::End => "EndStep",
+            Step::Cleanup => "Cleanup",
+        };
+
+        if self.game.stack.is_empty() {
+            format!("[{whose}_{step_name}]")
+        } else {
+            // Show the top spell/ability on the stack
+            let top_card_id = self.game.stack.cards.last().copied();
+            let stack_desc = top_card_id
+                .and_then(|id| self.card_name(id))
+                .unwrap_or_else(|| "spell".to_string());
+            let stack_size = self.game.stack.cards.len();
+            if stack_size == 1 {
+                format!("[{whose}_{step_name} | {stack_desc} on stack]")
+            } else {
+                format!("[{whose}_{step_name} | {stack_desc} +{} on stack]", stack_size - 1)
+            }
+        }
+    }
 }
 
 /// Result of a controller choice operation
@@ -1688,6 +1735,19 @@ pub trait PlayerController {
     /// NetworkLocalController and RemoteController override this to block on MVar.
     fn prepare_for_priority_choice(&mut self) -> bool {
         true
+    }
+
+    /// Whether this controller wants contextual flavor text with choices.
+    ///
+    /// When true, the engine will build context strings like `[Your_Main1]` or
+    /// `[Their_EndStep]` that describe the current game situation. These appear
+    /// in all UIs (text, TUI, web) above the choice list.
+    ///
+    /// Default is false — AI, random, and fixed controllers skip context building
+    /// entirely for zero overhead. Human-facing controllers (interactive, fancy TUI,
+    /// WASM human, agent) override this to return true.
+    fn wants_context(&self) -> bool {
+        false
     }
 }
 

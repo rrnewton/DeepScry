@@ -1937,6 +1937,13 @@ impl FancyTuiRenderer {
         );
         lines.push(Line::from(Span::styled(turn_info, Style::default().fg(Color::Cyan))));
 
+        // Show choice context (e.g., "[Your_Main1]" or "[Their_EndStep | Bolt on stack]")
+        let context = view.build_choice_context();
+        lines.push(Line::from(Span::styled(
+            context,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )));
+
         // Show player info line
         let player_name = view.player_name();
         let player_life = view.player_life(view.player_id());

@@ -453,4 +453,8 @@ impl PlayerController for FancyFixedController {
     fn get_controller_type(&self) -> ControllerType {
         ControllerType::FancyFixed
     }
+
+    fn wants_context(&self) -> bool {
+        true
+    }
 }

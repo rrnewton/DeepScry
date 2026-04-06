@@ -435,6 +435,10 @@ impl PlayerController for WasmRichInputController {
         ControllerType::Tui
     }
 
+    fn wants_context(&self) -> bool {
+        true
+    }
+
     fn has_more_choices(&self) -> bool {
         self.current_index < self.commands.len() || self.pending_choice.is_some()
     }

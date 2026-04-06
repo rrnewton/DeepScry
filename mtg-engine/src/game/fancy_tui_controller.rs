@@ -801,4 +801,8 @@ impl PlayerController for FancyTuiController {
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Tui
     }
+
+    fn wants_context(&self) -> bool {
+        true
+    }
 }

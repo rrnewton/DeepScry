@@ -377,6 +377,10 @@ impl PlayerController for ReplayController {
         self.inner.get_controller_type()
     }
 
+    fn wants_context(&self) -> bool {
+        self.inner.wants_context()
+    }
+
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {
         // Delegate to inner controller for state serialization
         // This allows the wrapped controller (RandomController, FixedScriptController, etc.)
