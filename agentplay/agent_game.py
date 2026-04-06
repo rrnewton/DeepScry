@@ -191,7 +191,7 @@ def _query_agent(prompt_text: str, choice_count: int, verbose: bool) -> tuple[in
     last_error = "no agent attempts made"
     for attempt in range(1, 4):
         completed = subprocess.run(
-            ["with-proxy", "claude", "-p", prompt_text],
+            ["claude", "-p", prompt_text],
             capture_output=True,
             text=True,
             check=False,
