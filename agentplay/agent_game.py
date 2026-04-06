@@ -256,8 +256,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _query_agent(prompt_text: str, choice_count: int, verbose: bool) -> tuple[int, str]:
     last_error = "no agent attempts made"
     for attempt in range(1, 4):
+        retry_prompt = prompt_text
+        if attempt > 1:
+            retry_prompt = (
+                prompt_text
+                + f"\n\nWARNING: Your previous response was invalid ({last_error}). "
+                f"Valid choices are 0 to {choice_count}. "
+                f"You MUST respond with ONLY a single number between 0 and {choice_count} "
+                f"on the final line. Nothing else on that line."
+            )
         completed = subprocess.run(
-            ["claude", "-p", prompt_text],
+            ["claude", "-p", retry_prompt],
             capture_output=True,
             text=True,
             check=False,
