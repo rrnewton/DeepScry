@@ -1462,6 +1462,11 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ AttackersDeclared | AttackingPlayer$ You | ValidAttackers$ Creature.withFlying
     /// Example: "Whenever one or more creatures you control with flying attack, draw a card."
     AttackersDeclared,
+
+    /// When a creature equipped by this Equipment dies
+    /// Corresponds to: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.EquippedBy
+    /// Example: Skullclamp - "Whenever equipped creature dies, draw two cards."
+    EquippedCreatureDies,
 }
 
 /// A triggered ability that executes when an event occurs

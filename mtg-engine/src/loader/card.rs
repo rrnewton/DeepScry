@@ -1895,6 +1895,30 @@ impl CardDefinition {
                 triggers.push(Trigger::new(TriggerEvent::LeavesBattlefield, effects, description));
             }
 
+            // Parse "equipped creature dies" triggers
+            // T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.EquippedBy | Execute$ TrigDraw
+            // Example: Skullclamp - "Whenever equipped creature dies, draw two cards."
+            if mode == Some("ChangesZone")
+                && params.get("Origin").map(|s| s.as_str()) == Some("Battlefield")
+                && params.get("Destination").map(|s| s.as_str()) == Some("Graveyard")
+                && params.get("ValidCard").map(|s| s.as_str()) == Some("Card.EquippedBy")
+            {
+                let mut effects = Vec::new();
+
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "When equipped creature dies".to_string());
+
+                triggers.push(Trigger::new(TriggerEvent::EquippedCreatureDies, effects, description));
+            }
+
             // Parse phase triggers (Mode$ Phase)
             if mode == Some("Phase") {
                 // Determine which phase/step this triggers on using tokenized params

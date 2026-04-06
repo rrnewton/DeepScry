@@ -5891,43 +5891,84 @@ impl GameState {
             (effects, card.controller)
         };
 
-        if effects_to_execute.is_empty() {
-            return Ok(());
-        }
-
-        // Log the trigger (official game action)
-        if let Some(card) = self.cards.try_get(dying_card_id) {
-            for trigger in &card.triggers {
-                if trigger.event == TriggerEvent::LeavesBattlefield {
-                    self.logger
-                        .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
-                }
-            }
-        }
-
-        // Build trigger context for placeholder resolution
-        let ctx = TriggerContext::new(dying_card_id, controller);
-
-        // Execute each effect with placeholder resolution
-        for effect in effects_to_execute {
-            // Apply shared placeholder resolution
-            let effect = resolve_effect_placeholder(&effect, &ctx);
-
-            // Log AddMana effects specially (Su-Chi death trigger)
-            if let Effect::AddMana { .. } = &effect {
-                if let Some(card) = self.cards.try_get(dying_card_id) {
-                    let player_name = self
-                        .get_player(controller)
-                        .map(|p| p.name.as_str().to_string())
-                        .unwrap_or_else(|_| "player".to_string());
-                    self.logger.gamelog(&format!(
-                        "{} dies, {} adds mana to {}'s pool",
-                        card.name, card.name, player_name
-                    ));
+        if !effects_to_execute.is_empty() {
+            // Log the trigger (official game action)
+            if let Some(card) = self.cards.try_get(dying_card_id) {
+                for trigger in &card.triggers {
+                    if trigger.event == TriggerEvent::LeavesBattlefield {
+                        self.logger
+                            .gamelog(&format!("Trigger: {} - {}", card.name, trigger.description));
+                    }
                 }
             }
 
-            self.execute_effect(&effect)?;
+            // Build trigger context for placeholder resolution
+            let ctx = TriggerContext::new(dying_card_id, controller);
+
+            // Execute each effect with placeholder resolution
+            for effect in effects_to_execute {
+                let effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // Log AddMana effects specially (Su-Chi death trigger)
+                if let Effect::AddMana { .. } = &effect {
+                    if let Some(card) = self.cards.try_get(dying_card_id) {
+                        let player_name = self
+                            .get_player(controller)
+                            .map(|p| p.name.as_str().to_string())
+                            .unwrap_or_else(|_| "player".to_string());
+                        self.logger.gamelog(&format!(
+                            "{} dies, {} adds mana to {}'s pool",
+                            card.name, card.name, player_name
+                        ));
+                    }
+                }
+
+                self.execute_effect(&effect)?;
+            }
+        }
+
+        // Check equipment on the battlefield that was attached to the dying creature
+        // for EquippedCreatureDies triggers (e.g., Skullclamp "draw two cards")
+        let equipment_triggers: Vec<(CardId, PlayerId, Vec<Effect>, String)> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&equip_id| {
+                let equip = self.cards.try_get(equip_id)?;
+                if !equip.is_equipment() || equip.attached_to != Some(dying_card_id) {
+                    return None;
+                }
+                let effects: Vec<Effect> = equip
+                    .triggers
+                    .iter()
+                    .filter(|t| t.event == TriggerEvent::EquippedCreatureDies)
+                    .flat_map(|t| t.effects.clone())
+                    .collect();
+                if effects.is_empty() {
+                    return None;
+                }
+                let desc = equip
+                    .triggers
+                    .iter()
+                    .find(|t| t.event == TriggerEvent::EquippedCreatureDies)
+                    .map(|t| t.description.clone())
+                    .unwrap_or_default();
+                Some((equip_id, equip.controller, effects, desc))
+            })
+            .collect();
+
+        for (equip_id, equip_controller, effects, desc) in equipment_triggers {
+            // Log the trigger
+            if let Some(equip) = self.cards.try_get(equip_id) {
+                self.logger
+                    .gamelog(&format!("Trigger: {} - {}", equip.name, desc));
+            }
+
+            let ctx = TriggerContext::new(equip_id, equip_controller);
+            for effect in effects {
+                let effect = resolve_effect_placeholder(&effect, &ctx);
+                self.execute_effect(&effect)?;
+            }
         }
 
         Ok(())
