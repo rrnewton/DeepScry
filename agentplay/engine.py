@@ -29,6 +29,7 @@ class GameEngine:
         self.initial_args: list[str] = self._read_lines(self.initial_args_path) if self.initial_args_path.exists() else []
         self.command_name = "tui"
         self._last_choices: list[str] = []
+        self._last_choosing_player: str | None = None
         self._last_log_tail = ""
         self._last_output = ""
         self._last_returncode = 0
@@ -59,7 +60,7 @@ class GameEngine:
         parsed = {
             "game_state": raw_snapshot,
             "choices": list(self._last_choices),
-            "active_player": self._extract_active_player(raw_snapshot),
+            "active_player": self._last_choosing_player or self._extract_active_player(raw_snapshot),
             "log_tail": self._last_log_tail,
             "raw_output": self._last_output,
             "game_over": self._last_game_over,
@@ -191,6 +192,7 @@ class GameEngine:
         output = self._combine_output(completed.stdout, completed.stderr)
         self._last_output = output
         self._last_choices = self._extract_choices(output)
+        self._last_choosing_player = self._extract_choosing_player(output)
         self._last_log_tail = self._extract_log_tail(output)
         self._last_returncode = completed.returncode
         self._last_game_over = self._detect_game_over(output)
@@ -331,11 +333,46 @@ class GameEngine:
 
         return [text for index, text in sorted(choices_by_index.items()) if index > 0]
 
+    @staticmethod
+    def _extract_choosing_player(output: str) -> str | None:
+        """Parse the choosing player from the last 'FixedN available actions:' header.
+
+        Controller names end with 1 (player 0 / p1) or 2 (player 1 / p2).
+        This is more reliable than turn.active_player from the snapshot,
+        which reflects whose *turn* it is rather than who has *priority*.
+        """
+        last_header = None
+        for line in output.splitlines():
+            if "available actions:" in line:
+                last_header = line
+        if last_header is None:
+            return None
+        name_part = last_header.strip().split("available")[0].strip()
+        if name_part.endswith("1"):
+            return "0"
+        if name_part.endswith("2"):
+            return "1"
+        return None
+
     def _extract_log_tail(self, output: str) -> str:
         lines = output.splitlines()
         header_index = next((index for index in range(len(lines) - 1, -1, -1) if "available actions:" in lines[index]), -1)
         relevant = lines[:header_index] if header_index >= 0 else lines
-        filtered = [line for line in relevant if not self._is_meta_line(line)]
+        # Filter out replayed "available actions:" blocks and meta lines
+        filtered: list[str] = []
+        skip_action_items = False
+        for line in relevant:
+            if self._is_meta_line(line):
+                continue
+            if "available actions:" in line:
+                skip_action_items = True
+                continue
+            if skip_action_items:
+                stripped = line.strip()
+                if stripped.startswith("[") and "]" in stripped:
+                    continue
+                skip_action_items = False
+            filtered.append(line)
         return "\n".join(line.rstrip() for line in filtered).strip()
 
     @staticmethod

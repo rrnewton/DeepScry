@@ -729,21 +729,23 @@ impl<'a> GameLoop<'a> {
                             );
                         }
 
-                        // PREAMBLE: Check stop conditions BEFORE printing menu
-                        // This ensures snapshots are taken BEFORE presenting the choice to the controller,
-                        // and prevents duplicate menu printing when resuming from snapshot.
-                        if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
-                            return Ok(Some(result));
-                        }
-
-                        // Print prompt AFTER checking stop conditions to avoid duplicate output
+                        // Print choice menu BEFORE checking stop conditions so
+                        // the available actions for the current choice point always
+                        // appear in the text output.  External agents (agentplay)
+                        // parse the LAST "available actions:" block to learn what
+                        // options the choosing player has.
                         {
                             let view = GameStateView::new(self.game, current_priority);
-                            // Print spell ability menu (controlled by show_choice_menu flag)
                             if view.logger().should_show_choice_menu() && !available.is_empty() {
                                 print!("{}", format_choice_menu(&view, &available));
                             }
                         } // Drop view before mutable borrow
+
+                        // Check stop conditions AFTER printing the menu.
+                        // Snapshots are still taken before the controller acts.
+                        if let Some(result) = self.check_stop_conditions(controller, current_priority)? {
+                            return Ok(Some(result));
+                        }
 
                         // Ask controller to choose one (or None to pass)
                         // Capture log size BEFORE asking controller (before controller logs its choice)
