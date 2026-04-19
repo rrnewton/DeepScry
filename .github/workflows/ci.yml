@@ -44,6 +44,20 @@ jobs:
       - name: Run examples
         run: ./scripts/run_examples.sh
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run agentplay tests
+        run: |
+          python3 -m pytest agentplay/ -v
+          cargo build --release --bin mtg
+          python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck || [ $? -eq 2 ]
+
   wasm:
     name: WASM Build and E2E Tests
     runs-on: ubuntu-latest
