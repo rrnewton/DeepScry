@@ -35,7 +35,20 @@ pub fn handle_exit_dialog_key(state: &mut DeckBuilderState, key: DeckBuilderKey)
             state.show_exit_dialog = false;
             Some(DeckBuilderAction::Handled)
         }
-        _ => Some(DeckBuilderAction::NotHandled),
+        DeckBuilderKey::Up
+        | DeckBuilderKey::Down
+        | DeckBuilderKey::Left
+        | DeckBuilderKey::Right
+        | DeckBuilderKey::Tab
+        | DeckBuilderKey::Enter
+        | DeckBuilderKey::PageUp
+        | DeckBuilderKey::PageDown
+        | DeckBuilderKey::Home
+        | DeckBuilderKey::End
+        | DeckBuilderKey::Delete
+        | DeckBuilderKey::Backspace
+        | DeckBuilderKey::CtrlC
+        | DeckBuilderKey::Char(_) => Some(DeckBuilderAction::NotHandled),
     }
 }
 
@@ -154,8 +167,7 @@ pub fn handle_deck_builder_key(state: &mut DeckBuilderState, key: DeckBuilderKey
                     let max_idx = state.import_problems.len().saturating_sub(1);
                     state.problems_selected_index = (state.problems_selected_index + page_size).min(max_idx);
                     if state.problems_selected_index >= state.problems_scroll_offset + page_size {
-                        state.problems_scroll_offset =
-                            state.problems_selected_index.saturating_sub(page_size - 1);
+                        state.problems_scroll_offset = state.problems_selected_index.saturating_sub(page_size - 1);
                     }
                 }
             }

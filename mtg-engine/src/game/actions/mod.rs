@@ -445,14 +445,13 @@ impl GameState {
         }
     }
 
+    #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_self_target(effect: Effect, source_card_id: CardId) -> Effect {
         match effect {
-            Effect::DestroyPermanent { target, restriction } if target.is_self_target() => {
-                Effect::DestroyPermanent {
-                    target: source_card_id,
-                    restriction,
-                }
-            }
+            Effect::DestroyPermanent { target, restriction } if target.is_self_target() => Effect::DestroyPermanent {
+                target: source_card_id,
+                restriction,
+            },
             other => other,
         }
     }

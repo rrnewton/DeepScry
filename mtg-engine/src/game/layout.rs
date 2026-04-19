@@ -213,19 +213,13 @@ pub fn compute_pane_layout(viewport: Rect, config: &PaneLayoutConfig) -> PaneLay
     // Top half: opponent info bar at top, battlefield fills rest
     let top_half = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(info_bar_height),
-            Constraint::Min(0),
-        ])
+        .constraints([Constraint::Length(info_bar_height), Constraint::Min(0)])
         .split(middle_halves[0]);
 
     // Bottom half: battlefield fills most, your info bar at bottom
     let bottom_half = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(0),
-            Constraint::Length(info_bar_height),
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(info_bar_height)])
         .split(middle_halves[1]);
 
     // Right column: 50/50 vertical split
@@ -369,11 +363,7 @@ pub struct CardSection {
 ///
 /// Tries different row counts (1-4) and finds the maximum card height
 /// that fits all cards. Returns (width, height).
-pub fn compute_battlefield_card_size(
-    area: Rect,
-    total_cards: usize,
-    config: &CardSizeConfig,
-) -> (u16, u16) {
+pub fn compute_battlefield_card_size(area: Rect, total_cards: usize, config: &CardSizeConfig) -> (u16, u16) {
     if total_cards == 0 || area.width == 0 || area.height == 0 {
         return (config.min_width, config.min_height);
     }
@@ -384,11 +374,7 @@ pub fn compute_battlefield_card_size(
         // Try increasing heights for this row count
         for h in config.min_height..=config.max_height {
             let w = compute_card_width(h, config).max(config.min_width);
-            let cards_per_row = area
-                .width
-                .checked_div(w + config.spacing)
-                .unwrap_or(1)
-                .max(1);
+            let cards_per_row = area.width.checked_div(w + config.spacing).unwrap_or(1).max(1);
             let rows_needed = (total_cards as u16 + cards_per_row - 1) / cards_per_row;
             let height_needed = rows_needed * (h + config.spacing);
 

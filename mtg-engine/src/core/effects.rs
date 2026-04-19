@@ -1254,7 +1254,6 @@ pub enum Effect {
         unless_cost: UnlessCost,
     },
 
-
     /// Add an extra combat phase after the current one
     /// Example: "After this main phase, there is an additional combat phase" (Raphael Tag Team Tough)
     /// Corresponds to: DB$ AddPhase | PhaseType$ Combat
@@ -1262,7 +1261,6 @@ pub enum Effect {
         /// Number of extra combat phases to add
         count: u8,
     },
-
 
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution

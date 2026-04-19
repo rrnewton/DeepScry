@@ -98,7 +98,10 @@ impl PendingChoice {
                 }
             }
             PendingChoice::Attackers(indices) => {
-                if let Some(ChoiceContext::Attackers { available_creatures, .. }) = context {
+                if let Some(ChoiceContext::Attackers {
+                    available_creatures, ..
+                }) = context
+                {
                     let attackers: SmallVec<[CardId; 8]> = indices
                         .iter()
                         .filter_map(|i| available_creatures.get(*i).copied())
@@ -139,8 +142,7 @@ impl PendingChoice {
             }
             PendingChoice::Discard(indices) => {
                 if let Some(ChoiceContext::Discard { hand, .. }) = context {
-                    let cards: SmallVec<[CardId; 7]> =
-                        indices.iter().filter_map(|i| hand.get(*i).copied()).collect();
+                    let cards: SmallVec<[CardId; 7]> = indices.iter().filter_map(|i| hand.get(*i).copied()).collect();
                     ReplayChoice::Discard(cards)
                 } else {
                     ReplayChoice::Discard(SmallVec::new())

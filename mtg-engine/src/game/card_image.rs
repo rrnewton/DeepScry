@@ -114,12 +114,7 @@ impl CardImageState {
     /// `images/small/{first_letter}/{Card Name}.jpg`
     /// `images/normal/{first_letter}/{Card Name}.jpg`
     fn load_card_image(&self, card_name: &str) -> Option<DynamicImage> {
-        let first_letter = card_name
-            .chars()
-            .next()?
-            .to_uppercase()
-            .next()?
-            .to_string();
+        let first_letter = card_name.chars().next()?.to_uppercase().next()?.to_string();
 
         // Try small first (faster to render), then normal
         for version in &["small", "normal"] {

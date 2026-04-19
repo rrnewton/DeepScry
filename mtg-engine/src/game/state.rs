@@ -983,13 +983,16 @@ impl GameState {
             if self.is_shadow_game {
                 // In shadow game mode, be tolerant of missing cards in source zones.
                 // This happens for opponent's hidden zones (library) where we don't
-                // have complete tracking. Log a warning but continue - server is authoritative.
+                // have complete tracking. Return early like the server path — adding
+                // the card to the destination without removing it from the source
+                // would cause zone count divergence (e.g., extra graveyard entries).
                 log::debug!(
                     target: "zone",
-                    "Shadow game: Card {} not found in source zone {:?}, proceeding anyway (server authoritative)",
+                    "Shadow game: Card {} not found in source zone {:?}, skipping move (server authoritative)",
                     card_id,
                     from
                 );
+                return Ok(());
             } else {
                 // Card not in source zone - this can happen when:
                 // 1. A trigger moved the card before SBA could process it
@@ -1689,11 +1692,7 @@ impl GameState {
             .cards
             .iter()
             .copied()
-            .filter(|&card_id| {
-                self.cards
-                    .try_get(card_id)
-                    .is_some_and(|card| card.is_creature())
-            })
+            .filter(|&card_id| self.cards.try_get(card_id).is_some_and(|card| card.is_creature()))
             .collect();
 
         // Now check each creature for lethal damage / zero toughness using effective P/T

@@ -1920,9 +1920,7 @@ mod tests {
         .unwrap();
         let effect = params_to_effect(&params).expect("PutCounterAll should produce an effect");
         let Effect::PutCounterAll {
-            counter_type,
-            amount,
-            ..
+            counter_type, amount, ..
         } = effect
         else {
             panic!("Expected PutCounterAll");

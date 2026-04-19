@@ -239,13 +239,11 @@ pub enum ApiType {
     Balance,
 
     // === Extra Turns & Phases ===
-
     /// Add an extra combat phase after the current one
     /// Example: "Untap all creatures you control. After this main phase, there is an additional combat phase"
     /// Parameters:
     ///   NumPhases$ 1 - number of extra combat phases
     AddPhase,
-
 
     // === Avatar Set Mechanics ===
     /// Airbend: Exile target, owner may cast it for {2} from exile.

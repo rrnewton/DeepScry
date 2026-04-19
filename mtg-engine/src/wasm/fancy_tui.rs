@@ -157,11 +157,7 @@ pub fn tui_scroll_wheel(x: u32, y: u32, delta_y: f64, delta_x: f64) {
                 ScrollDirection::Right
             };
 
-            let event = UiEvent::MouseWheel {
-                direction,
-                col,
-                row,
-            };
+            let event = UiEvent::MouseWheel { direction, col, row };
 
             let WasmFancyTuiState {
                 ref game,
@@ -201,9 +197,7 @@ pub fn tui_get_help_text() -> String {
 /// * `height_px` - Desired height in pixels (selects small vs normal size)
 #[wasm_bindgen]
 pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
-    use crate::wasm::image_overlay::{
-        gatherer_url, local_image_url, scryfall_url_by_name, ImageVersion,
-    };
+    use crate::wasm::image_overlay::{gatherer_url, local_image_url, scryfall_url_by_name, ImageVersion};
 
     let version = if height_px <= 204 {
         ImageVersion::Small
@@ -231,7 +225,7 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
 #[wasm_bindgen]
 pub fn tui_get_card_layout_json() -> String {
     use crate::game::layout::{
-        compute_battlefield_card_size, layout_cards_wordwrap, CardItem, CardCategory, CardSizeConfig,
+        compute_battlefield_card_size, layout_cards_wordwrap, CardCategory, CardItem, CardSizeConfig,
     };
 
     GLOBAL_TUI_STATE.with(|state| {
@@ -253,49 +247,60 @@ pub fn tui_get_card_layout_json() -> String {
             }
 
             for (label, pid) in &bf_pairs {
-                let bf_cards: Vec<CardItem> = game.battlefield.cards.iter().filter_map(|&cid| {
-                    let card = game.cards.try_get(cid)?;
-                    if card.controller != *pid { return None; }
+                let bf_cards: Vec<CardItem> = game
+                    .battlefield
+                    .cards
+                    .iter()
+                    .filter_map(|&cid| {
+                        let card = game.cards.try_get(cid)?;
+                        if card.controller != *pid {
+                            return None;
+                        }
 
-                    let category = if card.is_planeswalker() {
-                        CardCategory::Planeswalker
-                    } else if card.is_creature() {
-                        CardCategory::Creature
-                    } else if card.is_enchantment() {
-                        CardCategory::Enchantment
-                    } else if card.is_artifact() {
-                        CardCategory::Artifact
-                    } else {
-                        CardCategory::Land
-                    };
+                        let category = if card.is_planeswalker() {
+                            CardCategory::Planeswalker
+                        } else if card.is_creature() {
+                            CardCategory::Creature
+                        } else if card.is_enchantment() {
+                            CardCategory::Enchantment
+                        } else if card.is_artifact() {
+                            CardCategory::Artifact
+                        } else {
+                            CardCategory::Land
+                        };
 
-                    Some(CardItem {
-                        id: cid.as_u32(),
-                        name: card.name.to_string(),
-                        is_tapped: card.tapped,
-                        category,
-                        stack_size: 1,
+                        Some(CardItem {
+                            id: cid.as_u32(),
+                            name: card.name.to_string(),
+                            is_tapped: card.tapped,
+                            category,
+                            stack_size: 1,
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 // Use a representative area (100x50 cells) to compute positions as percentages
                 let area = ratatui::layout::Rect::new(0, 0, 100, 50);
                 let (card_w, card_h) = compute_battlefield_card_size(area, bf_cards.len(), &config);
                 let placements = layout_cards_wordwrap(area, &bf_cards, card_w, card_h, &config);
 
-                let cards_json: Vec<serde_json::Value> = placements.iter().zip(bf_cards.iter()).map(|(p, card)| {
-                    serde_json::json!({
-                        "id": p.id,
-                        "name": card.name,
-                        "x_pct": f64::from(p.x),
-                        "y_pct": f64::from(p.y),
-                        "w_pct": f64::from(p.width),
-                        "h_pct": f64::from(p.height),
-                        "is_tapped": card.is_tapped,
-                        "is_creature": card.category == CardCategory::Creature,
-                        "is_land": card.category == CardCategory::Land,
+                let cards_json: Vec<serde_json::Value> = placements
+                    .iter()
+                    .zip(bf_cards.iter())
+                    .map(|(p, card)| {
+                        serde_json::json!({
+                            "id": p.id,
+                            "name": card.name,
+                            "x_pct": f64::from(p.x),
+                            "y_pct": f64::from(p.y),
+                            "w_pct": f64::from(p.width),
+                            "h_pct": f64::from(p.height),
+                            "is_tapped": card.is_tapped,
+                            "is_creature": card.category == CardCategory::Creature,
+                            "is_land": card.category == CardCategory::Land,
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 result.insert(label.to_string(), serde_json::json!(cards_json));
             }
@@ -318,8 +323,8 @@ pub fn tui_get_card_layout_json() -> String {
 /// where percentages match the shared `compute_pane_layout()` ratios.
 #[wasm_bindgen]
 pub fn tui_get_layout_json(viewport_width: u16, viewport_height: u16) -> String {
-    use crate::game::layout::{compute_pane_layout, PaneId, PaneLayoutConfig};
     use crate::game::fancy_tui_renderer::FancyTuiRenderer;
+    use crate::game::layout::{compute_pane_layout, PaneId, PaneLayoutConfig};
 
     let config = PaneLayoutConfig {
         left_column_pct: FancyTuiRenderer::DEFAULT_LEFT_COLUMN_PCT,
@@ -532,99 +537,131 @@ pub fn tui_get_full_state_json() -> String {
 
                 // Hand cards (only show our hand, opponent hand is hidden)
                 let hand: Vec<serde_json::Value> = if pid == s.renderer.player_id {
-                    pview.hand().iter().filter_map(|&cid| {
-                        game.cards.try_get(cid).map(|card| {
-                            let mut css = vec!["card"];
-                            if card.is_land() { css.push("land"); }
-                            if card.is_creature() { css.push("creature"); }
-                            serde_json::json!({
-                                "card_id": format!("{:?}", cid),
-                                "name": card.name.to_string(),
-                                "mana_cost": card.mana_cost.to_string(),
-                                "types": format!("{:?}", card.types.as_slice()),
-                                "is_creature": card.is_creature(),
-                                "is_land": card.is_land(),
-                                "css_classes": css,
+                    pview
+                        .hand()
+                        .iter()
+                        .filter_map(|&cid| {
+                            game.cards.try_get(cid).map(|card| {
+                                let mut css = vec!["card"];
+                                if card.is_land() {
+                                    css.push("land");
+                                }
+                                if card.is_creature() {
+                                    css.push("creature");
+                                }
+                                serde_json::json!({
+                                    "card_id": format!("{:?}", cid),
+                                    "name": card.name.to_string(),
+                                    "mana_cost": card.mana_cost.to_string(),
+                                    "oracle_text": card.text.clone(),
+                                    "types": format!("{:?}", card.types.as_slice()),
+                                    "is_creature": card.is_creature(),
+                                    "is_land": card.is_land(),
+                                    "css_classes": css,
+                                })
                             })
                         })
-                    }).collect()
+                        .collect()
                 } else {
                     Vec::new()
                 };
 
                 // Battlefield cards owned/controlled by this player
-                let battlefield: Vec<serde_json::Value> = game.battlefield.cards.iter().filter_map(|&cid| {
-                    let card = game.cards.try_get(cid)?;
-                    if card.controller != pid { return None; }
-                    let power = game.get_effective_power(cid).ok();
-                    let toughness = game.get_effective_toughness(cid).ok();
+                let battlefield: Vec<serde_json::Value> = game
+                    .battlefield
+                    .cards
+                    .iter()
+                    .filter_map(|&cid| {
+                        let card = game.cards.try_get(cid)?;
+                        if card.controller != pid {
+                            return None;
+                        }
+                        let power = game.get_effective_power(cid).ok();
+                        let toughness = game.get_effective_toughness(cid).ok();
 
-                    // Pre-compute CSS classes
-                    let mut css = vec!["card"];
-                    if card.tapped { css.push("tapped"); }
-                    if card.is_land() { css.push("land"); }
-                    if card.is_creature() { css.push("creature"); }
-                    if card.is_equipment() { css.push("equipment"); }
+                        // Pre-compute CSS classes
+                        let mut css = vec!["card"];
+                        if card.tapped {
+                            css.push("tapped");
+                        }
+                        if card.is_land() {
+                            css.push("land");
+                        }
+                        if card.is_creature() {
+                            css.push("creature");
+                        }
+                        if card.is_equipment() {
+                            css.push("equipment");
+                        }
 
-                    // Pre-compute formatted P/T
-                    let formatted_pt = if card.is_creature() {
-                        power.zip(toughness).map(|(p, t)| format!("{}/{}", p, t))
-                    } else {
-                        None
-                    };
+                        // Pre-compute formatted P/T
+                        let formatted_pt = if card.is_creature() {
+                            power.zip(toughness).map(|(p, t)| format!("{}/{}", p, t))
+                        } else {
+                            None
+                        };
 
-                    // Equipment attachment info
-                    let attached_to_id = card.attached_to.map(|id| format!("{:?}", id));
-                    let is_equipment = card.is_equipment();
+                        // Equipment attachment info
+                        let attached_to_id = card.attached_to.map(|id| format!("{:?}", id));
+                        let is_equipment = card.is_equipment();
 
-                    // Find equipment attached TO this creature (for rendering stacks)
-                    let attachments: Vec<serde_json::Value> = if card.is_creature() {
-                        game.battlefield.cards.iter().filter_map(|&eid| {
-                            let eq = game.cards.try_get(eid)?;
-                            if eq.is_equipment() && eq.attached_to == Some(cid) {
-                                Some(serde_json::json!({
-                                    "card_id": format!("{:?}", eid),
-                                    "name": eq.name.to_string(),
-                                }))
-                            } else {
-                                None
-                            }
-                        }).collect()
-                    } else {
-                        Vec::new()
-                    };
+                        // Find equipment attached TO this creature (for rendering stacks)
+                        let attachments: Vec<serde_json::Value> = if card.is_creature() {
+                            game.battlefield
+                                .cards
+                                .iter()
+                                .filter_map(|&eid| {
+                                    let eq = game.cards.try_get(eid)?;
+                                    if eq.is_equipment() && eq.attached_to == Some(cid) {
+                                        Some(serde_json::json!({
+                                            "card_id": format!("{:?}", eid),
+                                            "name": eq.name.to_string(),
+                                        }))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
 
-                    Some(serde_json::json!({
-                        "card_id": format!("{:?}", cid),
-                        "name": card.name.to_string(),
-                        "mana_cost": card.mana_cost.to_string(),
-                        "is_tapped": card.tapped,
-                        "is_creature": card.is_creature(),
-                        "is_land": card.is_land(),
-                        "is_equipment": is_equipment,
-                        "attached_to": attached_to_id,
-                        "attachments": attachments,
-                        "power": power,
-                        "toughness": toughness,
-                        "damage": card.damage,
-                        "types": format!("{:?}", card.types.as_slice()),
-                        "css_classes": css,
-                        "formatted_pt": formatted_pt,
-                    }))
-                }).collect();
-
-                // Graveyard
-                let graveyard: Vec<serde_json::Value> = pview.graveyard().iter().filter_map(|&cid| {
-                    game.cards.try_get(cid).map(|card| {
-                        serde_json::json!({
+                        Some(serde_json::json!({
                             "card_id": format!("{:?}", cid),
                             "name": card.name.to_string(),
+                            "mana_cost": card.mana_cost.to_string(),
+                            "oracle_text": card.text.clone(),
+                            "is_tapped": card.tapped,
+                            "is_creature": card.is_creature(),
+                            "is_land": card.is_land(),
+                            "is_equipment": is_equipment,
+                            "attached_to": attached_to_id,
+                            "attachments": attachments,
+                            "power": power,
+                            "toughness": toughness,
+                            "damage": card.damage,
+                            "types": format!("{:?}", card.types.as_slice()),
+                            "css_classes": css,
+                            "formatted_pt": formatted_pt,
+                        }))
+                    })
+                    .collect();
+
+                // Graveyard
+                let graveyard: Vec<serde_json::Value> = pview
+                    .graveyard()
+                    .iter()
+                    .filter_map(|&cid| {
+                        game.cards.try_get(cid).map(|card| {
+                            serde_json::json!({
+                                "card_id": format!("{:?}", cid),
+                                "name": card.name.to_string(),
+                            })
                         })
                     })
-                }).collect();
+                    .collect();
 
-                let lib_size = game.get_player_zones(pid)
-                    .map(|z| z.library.len()).unwrap_or(0);
+                let lib_size = game.get_player_zones(pid).map(|z| z.library.len()).unwrap_or(0);
 
                 players_json.push(serde_json::json!({
                     "index": idx,
@@ -640,31 +677,47 @@ pub fn tui_get_full_state_json() -> String {
             }
 
             // Stack
-            let stack: Vec<serde_json::Value> = game.stack.cards.iter().filter_map(|&cid| {
-                let card = game.cards.try_get(cid)?;
-                let controller_idx = game.players.iter().position(|p| p.id == card.controller).unwrap_or(0);
-                Some(serde_json::json!({
-                    "card_id": format!("{:?}", cid),
-                    "name": card.name.to_string(),
-                    "controller_idx": controller_idx,
-                }))
-            }).collect();
+            let stack: Vec<serde_json::Value> = game
+                .stack
+                .cards
+                .iter()
+                .filter_map(|&cid| {
+                    let card = game.cards.try_get(cid)?;
+                    let controller_idx = game.players.iter().position(|p| p.id == card.controller).unwrap_or(0);
+                    Some(serde_json::json!({
+                        "card_id": format!("{:?}", cid),
+                        "name": card.name.to_string(),
+                        "controller_idx": controller_idx,
+                    }))
+                })
+                .collect();
 
             // Choices
-            let choices: Vec<serde_json::Value> = s.current_choices.iter().enumerate().map(|(i, (text, highlighted))| {
-                serde_json::json!({
-                    "index": i,
-                    "text": text,
-                    "highlighted": *highlighted,
+            let choices: Vec<serde_json::Value> = s
+                .current_choices
+                .iter()
+                .enumerate()
+                .map(|(i, (text, highlighted))| {
+                    serde_json::json!({
+                        "index": i,
+                        "text": text,
+                        "highlighted": *highlighted,
+                    })
                 })
-            }).collect();
+                .collect();
 
             // Recent logs (last 100) with CSS color hints
-            let logs: Vec<serde_json::Value> = game.logger.logs().iter()
-                .rev().take(100).rev()
+            let logs: Vec<serde_json::Value> = game
+                .logger
+                .logs()
+                .iter()
+                .rev()
+                .take(100)
+                .rev()
                 .map(|entry| {
                     let color = css_color_for_log(&entry.message);
-                    let bold = entry.message.contains(">>> Turn") || entry.message.contains("<<<< ")
+                    let bold = entry.message.contains(">>> Turn")
+                        || entry.message.contains("<<<< ")
                         || (entry.message.contains("damage") && entry.message.contains("life:"));
                     serde_json::json!({
                         "text": entry.message,
@@ -675,23 +728,35 @@ pub fn tui_get_full_state_json() -> String {
                 .collect();
 
             // Active player index
-            let active_idx = game.players.iter()
+            let active_idx = game
+                .players
+                .iter()
                 .position(|p| p.id == game.turn.active_player)
                 .unwrap_or(0);
 
             // Our player index (which player the GUI renders from perspective of)
-            let our_idx = game.players.iter()
+            let our_idx = game
+                .players
+                .iter()
                 .position(|p| p.id == s.renderer.player_id)
                 .unwrap_or(0);
             let opp_idx = if our_idx == 0 { 1 } else { 0 };
 
             // Pre-compute status bar text
             let status_text = if s.game_over {
-                format!("Turn {} | Phase: {:?} | Active: P{} | GAME OVER",
-                    game.turn.turn_number, game.turn.current_step, active_idx + 1)
+                format!(
+                    "Turn {} | Phase: {:?} | Active: P{} | GAME OVER",
+                    game.turn.turn_number,
+                    game.turn.current_step,
+                    active_idx + 1
+                )
             } else {
-                format!("Turn {} | Phase: {:?} | Active: P{}",
-                    game.turn.turn_number, game.turn.current_step, active_idx + 1)
+                format!(
+                    "Turn {} | Phase: {:?} | Active: P{}",
+                    game.turn.turn_number,
+                    game.turn.current_step,
+                    active_idx + 1
+                )
             };
 
             let result = serde_json::json!({

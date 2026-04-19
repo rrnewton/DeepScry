@@ -151,10 +151,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 CardId::placeholder()
             };
 
-            Some(Effect::DestroyPermanent {
-                target,
-                restriction,
-            })
+            Some(Effect::DestroyPermanent { target, restriction })
         }
 
         ApiType::GainLife => {

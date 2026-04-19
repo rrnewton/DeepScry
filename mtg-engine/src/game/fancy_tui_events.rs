@@ -822,11 +822,7 @@ pub fn handle_ui_event(
                 EventResult::NotHandled
             }
         }
-        UiEvent::MouseWheel {
-            direction,
-            col,
-            row,
-        } => handle_scroll_wheel(state, direction, col, row),
+        UiEvent::MouseWheel { direction, col, row } => handle_scroll_wheel(state, direction, col, row),
         UiEvent::Resize { .. } => EventResult::Handled,
     }
 }
@@ -834,18 +830,10 @@ pub fn handle_ui_event(
 /// Handle a mouse scroll wheel event.
 ///
 /// Scrolls the log pane if the pointer is over it.
-fn handle_scroll_wheel(
-    state: &mut FancyTuiState,
-    direction: ScrollDirection,
-    col: u16,
-    row: u16,
-) -> EventResult {
-    let in_log = state.log_pane_area.is_some_and(|area| {
-        col >= area.x
-            && col < area.x + area.width
-            && row >= area.y
-            && row < area.y + area.height
-    });
+fn handle_scroll_wheel(state: &mut FancyTuiState, direction: ScrollDirection, col: u16, row: u16) -> EventResult {
+    let in_log = state
+        .log_pane_area
+        .is_some_and(|area| col >= area.x && col < area.x + area.width && row >= area.y && row < area.y + area.height);
 
     if !in_log {
         return EventResult::NotHandled;

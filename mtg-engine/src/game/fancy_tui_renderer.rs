@@ -1019,7 +1019,6 @@ impl FancyTuiRenderer {
         }
     }
 
-
     /// Get all cards for a battlefield in display order
     /// Order: Planeswalkers → Creatures → Enchantments → Artifacts → Lands
     pub fn get_battlefield_cards_in_order(view: &GameStateView, owner_id: PlayerId) -> Vec<CardId> {

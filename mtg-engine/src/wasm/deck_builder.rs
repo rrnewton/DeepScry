@@ -74,7 +74,10 @@ impl WasmDeckBuilderState {
     pub fn export_deck_json(&self) -> String {
         let deck_list = self.state.to_deck_list();
         let main_deck: Vec<(String, u8)> = deck_list
-            .main_deck.iter().map(|e| (e.card_name.clone(), e.count)).collect();
+            .main_deck
+            .iter()
+            .map(|e| (e.card_name.clone(), e.count))
+            .collect();
         serde_json::json!({ "main_deck": main_deck, "sideboard": [] }).to_string()
     }
 
@@ -96,34 +99,46 @@ impl WasmDeckBuilderState {
 
 #[wasm_bindgen]
 pub fn cleanup_deck_builder_state() {
-    GLOBAL_DECK_BUILDER_STATE.with(|s| { *s.borrow_mut() = None; });
+    GLOBAL_DECK_BUILDER_STATE.with(|s| {
+        *s.borrow_mut() = None;
+    });
 }
 
 #[wasm_bindgen]
 pub fn deck_builder_set_save_callback(callback: js_sys::Function) {
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
-        if let Some(ref state) = *s.borrow() { state.borrow_mut().on_save_callback = Some(callback); }
+        if let Some(ref state) = *s.borrow() {
+            state.borrow_mut().on_save_callback = Some(callback);
+        }
     });
 }
 
 #[wasm_bindgen]
 pub fn deck_builder_set_exit_callback(callback: js_sys::Function) {
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
-        if let Some(ref state) = *s.borrow() { state.borrow_mut().on_exit_callback = Some(callback); }
+        if let Some(ref state) = *s.borrow() {
+            state.borrow_mut().on_exit_callback = Some(callback);
+        }
     });
 }
 
 #[wasm_bindgen]
 pub fn deck_builder_load_deck(deck_json: &str) {
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
-        if let Some(ref state) = *s.borrow() { state.borrow_mut().load_deck(deck_json); }
+        if let Some(ref state) = *s.borrow() {
+            state.borrow_mut().load_deck(deck_json);
+        }
     });
 }
 
 #[wasm_bindgen]
 pub fn deck_builder_export_deck() -> String {
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
-        if let Some(ref state) = *s.borrow() { state.borrow().export_deck_json() } else { "{}".to_string() }
+        if let Some(ref state) = *s.borrow() {
+            state.borrow().export_deck_json()
+        } else {
+            "{}".to_string()
+        }
     })
 }
 
@@ -132,7 +147,8 @@ pub fn deck_builder_get_stats() -> String {
     GLOBAL_DECK_BUILDER_STATE.with(|s| {
         if let Some(ref state) = *s.borrow() {
             let s = state.borrow();
-            serde_json::json!({ "total_cards": s.state.total_cards(), "unique_cards": s.state.unique_cards() }).to_string()
+            serde_json::json!({ "total_cards": s.state.total_cards(), "unique_cards": s.state.unique_cards() })
+                .to_string()
         } else {
             r#"{"total_cards": 0, "unique_cards": 0}"#.to_string()
         }
@@ -141,7 +157,9 @@ pub fn deck_builder_get_stats() -> String {
 
 #[wasm_bindgen]
 pub fn deck_builder_set_cell_dimensions(width_px: f32, height_px: f32) {
-    DECK_BUILDER_CELL_DIMS.with(|dims| { *dims.borrow_mut() = (width_px, height_px); });
+    DECK_BUILDER_CELL_DIMS.with(|dims| {
+        *dims.borrow_mut() = (width_px, height_px);
+    });
 }
 
 fn pixels_to_cells(x: u32, y: u32) -> (u16, u16) {
@@ -183,8 +201,12 @@ pub fn launch_deck_builder(
     log::info!("Launching WASM deck builder TUI");
 
     let mut wasm_state = WasmDeckBuilderState::new(card_db);
-    if deck_name.is_some() { wasm_state.state.deck_name = deck_name; }
-    if let Some(deck_json) = initial_deck_json { wasm_state.load_deck(&deck_json); }
+    if deck_name.is_some() {
+        wasm_state.state.deck_name = deck_name;
+    }
+    if let Some(deck_json) = initial_deck_json {
+        wasm_state.load_deck(&deck_json);
+    }
 
     let state = Rc::new(RefCell::new(wasm_state));
 
@@ -204,9 +226,17 @@ pub fn launch_deck_builder(
 
             if let Some(action) = handle_exit_dialog_key(&mut s.state, db_key) {
                 match action {
-                    DeckBuilderAction::SaveAndExit => { s.handle_save(); return; }
-                    DeckBuilderAction::ExitWithoutSaving => { s.handle_exit(); return; }
-                    DeckBuilderAction::Handled => { s.state.needs_redraw = true; }
+                    DeckBuilderAction::SaveAndExit => {
+                        s.handle_save();
+                        return;
+                    }
+                    DeckBuilderAction::ExitWithoutSaving => {
+                        s.handle_exit();
+                        return;
+                    }
+                    DeckBuilderAction::Handled => {
+                        s.state.needs_redraw = true;
+                    }
                     DeckBuilderAction::NotHandled => {}
                 }
                 return;
@@ -238,7 +268,9 @@ pub fn launch_deck_builder(
         }
     });
 
-    GLOBAL_DECK_BUILDER_STATE.with(|s| { *s.borrow_mut() = Some(Rc::clone(&state)); });
+    GLOBAL_DECK_BUILDER_STATE.with(|s| {
+        *s.borrow_mut() = Some(Rc::clone(&state));
+    });
 
     terminal.draw_web({
         let state = state;

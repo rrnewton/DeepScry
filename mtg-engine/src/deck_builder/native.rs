@@ -83,7 +83,9 @@ pub async fn run_deck_builder(
                     } else {
                         println!(
                             "Loaded deck: {} ({} cards, {} problems to fix)",
-                            input_file, total, problems.len()
+                            input_file,
+                            total,
+                            problems.len()
                         );
                     }
 
@@ -157,7 +159,9 @@ fn run_main_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &
         if event::poll(std::time::Duration::from_millis(100)).map_err(crate::MtgError::IoError)? {
             match event::read().map_err(crate::MtgError::IoError)? {
                 Event::Key(key) => {
-                    if key.kind != KeyEventKind::Press { continue; }
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
 
                     let db_key = match crossterm_to_deck_builder_key(key.code, key.modifiers) {
                         Some(k) => k,

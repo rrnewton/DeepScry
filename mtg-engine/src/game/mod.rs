@@ -1,6 +1,8 @@
 //! Core game state and turn structure
 
 pub mod actions;
+#[cfg(feature = "ratatui-image")]
+pub mod card_image;
 pub mod combat;
 pub mod command_parsing;
 pub mod continuous_effects;
@@ -8,8 +10,6 @@ pub mod controller;
 pub mod display;
 #[cfg(feature = "native-tui")]
 pub mod fancy_fixed_controller;
-#[cfg(feature = "ratatui-image")]
-pub mod card_image;
 #[cfg(feature = "native-tui")]
 pub mod fancy_tui_controller;
 #[cfg(feature = "ratatui")]

@@ -116,9 +116,7 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target, restriction }
-                        if target.is_self_target() =>
-                    {
+                    Effect::DestroyPermanent { target, restriction } if target.is_self_target() => {
                         Effect::DestroyPermanent {
                             target: spell_id,
                             restriction: restriction.clone(),

@@ -203,16 +203,24 @@ impl FancyTuiController {
                         let (col, row) = (mouse.column, mouse.row);
                         match mouse.kind {
                             MouseEventKind::ScrollUp => UiEvent::MouseWheel {
-                                direction: ScrollDirection::Up, col, row,
+                                direction: ScrollDirection::Up,
+                                col,
+                                row,
                             },
                             MouseEventKind::ScrollDown => UiEvent::MouseWheel {
-                                direction: ScrollDirection::Down, col, row,
+                                direction: ScrollDirection::Down,
+                                col,
+                                row,
                             },
                             MouseEventKind::ScrollLeft => UiEvent::MouseWheel {
-                                direction: ScrollDirection::Left, col, row,
+                                direction: ScrollDirection::Left,
+                                col,
+                                row,
                             },
                             MouseEventKind::ScrollRight => UiEvent::MouseWheel {
-                                direction: ScrollDirection::Right, col, row,
+                                direction: ScrollDirection::Right,
+                                col,
+                                row,
                             },
                             MouseEventKind::Down(MouseButton::Left) => UiEvent::MouseClick { col, row },
                             _ => continue,
@@ -264,11 +272,7 @@ impl FancyTuiController {
                 // Render card image in the card details pane if available
                 #[cfg(feature = "ratatui-image")]
                 if let Some(area) = self.renderer.state.card_details_pane_area {
-                    let card_name = self
-                        .renderer
-                        .state
-                        .selected_card_id
-                        .and_then(|id| view.card_name(id));
+                    let card_name = self.renderer.state.selected_card_id.and_then(|id| view.card_name(id));
                     if self
                         .card_image
                         .update_for_card(self.renderer.state.selected_card_id, card_name.as_deref())
@@ -533,9 +537,22 @@ impl PlayerController for FancyTuiController {
         }
 
         if attackers.is_empty() {
-            view.logger().controller_choice("TUI", &format!("chose not to attack with {} available creatures", available_creatures.len()));
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to attack with {} available creatures",
+                    available_creatures.len()
+                ),
+            );
         } else {
-            view.logger().controller_choice("TUI", &format!("chose {} attackers from {} available creatures", attackers.len(), available_creatures.len()));
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose {} attackers from {} available creatures",
+                    attackers.len(),
+                    available_creatures.len()
+                ),
+            );
         }
 
         self.renderer.state.choice_context = ChoiceContext::None;
@@ -585,9 +602,19 @@ impl PlayerController for FancyTuiController {
         }
 
         if blocks.is_empty() {
-            view.logger().controller_choice("TUI", &format!("chose not to block (no favorable blocks among {} blockers vs {} attackers)", available_blockers.len(), attackers.len()));
+            view.logger().controller_choice(
+                "TUI",
+                &format!(
+                    "chose not to block (no favorable blocks among {} blockers vs {} attackers)",
+                    available_blockers.len(),
+                    attackers.len()
+                ),
+            );
         } else {
-            view.logger().controller_choice("TUI", &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()));
+            view.logger().controller_choice(
+                "TUI",
+                &format!("chose {} blockers for {} attackers", blocks.len(), attackers.len()),
+            );
         }
 
         self.renderer.state.choice_context = ChoiceContext::None;
@@ -620,13 +647,21 @@ impl PlayerController for FancyTuiController {
                 .map(|&card_id| view.card_name(card_id).unwrap_or_default())
                 .collect();
 
-            if choices.is_empty() { break; }
+            if choices.is_empty() {
+                break;
+            }
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => return ChoiceResult::UndoRequest(usize::MAX),
                 Ok(PromptResult::Choice(Some(idx))) if idx < hand.len() => {
-                    let card_id = hand.iter().filter(|&card_id| !discards.contains(card_id)).nth(idx).copied();
-                    if let Some(card_id) = card_id { discards.push(card_id); }
+                    let card_id = hand
+                        .iter()
+                        .filter(|&card_id| !discards.contains(card_id))
+                        .nth(idx)
+                        .copied();
+                    if let Some(card_id) = card_id {
+                        discards.push(card_id);
+                    }
                 }
                 Ok(PromptResult::Choice(_)) => break,
                 Err(e) => return ChoiceResult::Error(format!("Failed to prompt for discard: {}", e)),
@@ -641,7 +676,9 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
-        if valid_cards.is_empty() { return ChoiceResult::Ok(None); }
+        if valid_cards.is_empty() {
+            return ChoiceResult::Ok(None);
+        }
 
         let prompt = "Search library: Choose a card";
         let choices: Vec<String> = std::iter::once("Fail to find".to_string())
@@ -656,7 +693,8 @@ impl PlayerController for FancyTuiController {
             }
             Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_cards.len() => {
                 let def = valid_cards[idx - 1];
-                view.logger().controller_choice("TUI", &format!("Chose {} from library", def.name));
+                view.logger()
+                    .controller_choice("TUI", &format!("Chose {} from library", def.name));
                 ChoiceResult::Ok(Some(idx - 1))
             }
             Ok(PromptResult::Choice(_)) => ChoiceResult::Ok(None),
@@ -679,24 +717,38 @@ impl PlayerController for FancyTuiController {
 
         while sacrifices.len() < count {
             let remaining = count - sacrifices.len();
-            let prompt = format!("Sacrifice {} {}: Choose {} more", card_type_description, remaining, remaining);
-            let available: Vec<_> = valid_permanents.iter().filter(|&card_id| !sacrifices.contains(card_id)).collect();
-            if available.is_empty() { break; }
+            let prompt = format!(
+                "Sacrifice {} {}: Choose {} more",
+                card_type_description, remaining, remaining
+            );
+            let available: Vec<_> = valid_permanents
+                .iter()
+                .filter(|&card_id| !sacrifices.contains(card_id))
+                .collect();
+            if available.is_empty() {
+                break;
+            }
 
-            let choices: Vec<String> = available.iter()
+            let choices: Vec<String> = available
+                .iter()
                 .map(|&&card_id| view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id)))
                 .collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => return ChoiceResult::UndoRequest(usize::MAX),
-                Ok(PromptResult::Choice(Some(idx))) if idx < available.len() => { sacrifices.push(*available[idx]); }
+                Ok(PromptResult::Choice(Some(idx))) if idx < available.len() => {
+                    sacrifices.push(*available[idx]);
+                }
                 Ok(PromptResult::Choice(_)) => continue,
                 Err(e) => return ChoiceResult::Error(format!("Failed to prompt for sacrifice: {}", e)),
             }
         }
 
         let names: Vec<String> = sacrifices.iter().filter_map(|&id| view.card_name(id)).collect();
-        view.logger().controller_choice("TUI", &format!("Chose to sacrifice {}: [{}]", card_type_description, names.join(", ")));
+        view.logger().controller_choice(
+            "TUI",
+            &format!("Chose to sacrifice {}: [{}]", card_type_description, names.join(", ")),
+        );
         ChoiceResult::Ok(sacrifices)
     }
 
@@ -706,7 +758,10 @@ impl PlayerController for FancyTuiController {
         may_not_untap_permanents: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         if !may_not_untap_permanents.is_empty() {
-            eprintln!("[TUI] Auto-untapping {} permanents with MayNotUntap (interactive selection not yet implemented)", may_not_untap_permanents.len());
+            eprintln!(
+                "[TUI] Auto-untapping {} permanents with MayNotUntap (interactive selection not yet implemented)",
+                may_not_untap_permanents.len()
+            );
         }
         ChoiceResult::Ok(SmallVec::new())
     }
@@ -720,11 +775,23 @@ impl PlayerController for FancyTuiController {
         min_modes: usize,
         _can_repeat: bool,
     ) -> ChoiceResult<SmallVec<[usize; 4]>> {
-        let spell_name = view.get_card_name(spell_id).unwrap_or_else(|| "Unknown Spell".to_string());
-        eprintln!("\n=== Choose {} Mode{} for {} ===", mode_count, if mode_count > 1 { "s" } else { "" }, spell_name);
+        let spell_name = view
+            .get_card_name(spell_id)
+            .unwrap_or_else(|| "Unknown Spell".to_string());
+        eprintln!(
+            "\n=== Choose {} Mode{} for {} ===",
+            mode_count,
+            if mode_count > 1 { "s" } else { "" },
+            spell_name
+        );
         eprintln!("Minimum modes required: {}", min_modes);
-        for (idx, desc) in mode_descriptions.iter().enumerate() { eprintln!("  [{}] {}", idx, desc); }
-        eprintln!("[TUI] Auto-selecting first {} mode(s) (interactive selection not yet implemented)", mode_count);
+        for (idx, desc) in mode_descriptions.iter().enumerate() {
+            eprintln!("  [{}] {}", idx, desc);
+        }
+        eprintln!(
+            "[TUI] Auto-selecting first {} mode(s) (interactive selection not yet implemented)",
+            mode_count
+        );
         ChoiceResult::Ok((0..mode_count.min(mode_descriptions.len())).collect())
     }
 
