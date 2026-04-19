@@ -858,7 +858,10 @@
                 status.textContent = `WASM v${version()} | ${deckCount} decks ready`;
 
                 document.getElementById('launcher').classList.add('show');
+                restoreSettings();
                 initDeckDropdowns();
+                restoreDeckSelections();
+                attachSettingsListeners();
                 document.getElementById('btn-launch').addEventListener('click', launchGame);
 
                 console.log(`MTG Forge Native GUI initialized: ${deckCount} decks`);
@@ -891,6 +894,81 @@
                 opt.value = name;
                 opt.textContent = name;
                 deckSelect.appendChild(opt);
+            }
+        }
+
+        // ==================== SETTINGS PERSISTENCE ====================
+        const SETTINGS_KEY = 'mtg-forge-game-settings';
+
+        function saveSettings() {
+            const settings = {
+                p1Collection: document.getElementById('p1-collection').value,
+                p2Collection: document.getElementById('p2-collection').value,
+                p1Deck: document.getElementById('p1-deck').value,
+                p2Deck: document.getElementById('p2-deck').value,
+                p1Controller: document.getElementById('p1-controller').value,
+                p2Controller: document.getElementById('p2-controller').value,
+                gameSeed: document.getElementById('game-seed').value,
+                showCardImages: document.getElementById('show-card-images').checked,
+                imgSrcLocal: document.getElementById('img-src-local').checked,
+                imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
+                imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
+            };
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        }
+
+        function restoreSettings() {
+            try {
+                const saved = localStorage.getItem(SETTINGS_KEY);
+                if (!saved) return;
+                const settings = JSON.parse(saved);
+
+                if (settings.p1Controller) document.getElementById('p1-controller').value = settings.p1Controller;
+                if (settings.p2Controller) document.getElementById('p2-controller').value = settings.p2Controller;
+                if (settings.gameSeed) document.getElementById('game-seed').value = settings.gameSeed;
+                if (settings.showCardImages !== undefined) document.getElementById('show-card-images').checked = settings.showCardImages;
+                if (settings.imgSrcLocal !== undefined) document.getElementById('img-src-local').checked = settings.imgSrcLocal;
+                if (settings.imgSrcScryfall !== undefined) document.getElementById('img-src-scryfall').checked = settings.imgSrcScryfall;
+                if (settings.imgSrcGatherer !== undefined) document.getElementById('img-src-gatherer').checked = settings.imgSrcGatherer;
+
+                window._pendingGameSettings = {
+                    p1Collection: settings.p1Collection,
+                    p2Collection: settings.p2Collection,
+                    p1Deck: settings.p1Deck,
+                    p2Deck: settings.p2Deck,
+                };
+                console.log('Restored game settings from localStorage');
+            } catch (e) {
+                console.warn('Failed to restore settings:', e);
+            }
+        }
+
+        function restoreDeckSelections() {
+            if (!window._pendingGameSettings) return;
+            const s = window._pendingGameSettings;
+            const validCollections = Array.from(document.getElementById('p1-collection').options).map(o => o.value);
+
+            for (const [player, coll, deck] of [['p1', s.p1Collection, s.p1Deck], ['p2', s.p2Collection, s.p2Deck]]) {
+                if (coll && validCollections.includes(coll)) {
+                    document.getElementById(`${player}-collection`).value = coll;
+                    updateDeckDropdown(player);
+                    if (deck) {
+                        const deckSelect = document.getElementById(`${player}-deck`);
+                        const validDecks = Array.from(deckSelect.options).map(o => o.value);
+                        if (validDecks.includes(deck)) deckSelect.value = deck;
+                    }
+                }
+            }
+            delete window._pendingGameSettings;
+        }
+
+        function attachSettingsListeners() {
+            const ids = ['p1-collection', 'p2-collection', 'p1-deck', 'p2-deck',
+                         'p1-controller', 'p2-controller', 'game-seed',
+                         'show-card-images', 'img-src-local', 'img-src-scryfall', 'img-src-gatherer'];
+            for (const id of ids) {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('change', saveSettings);
             }
         }
 
