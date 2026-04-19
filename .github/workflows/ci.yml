@@ -44,6 +44,9 @@ jobs:
       - name: Run examples
         run: ./scripts/run_examples.sh
 
+      - name: Run commander E2E test
+        run: bash tests/commander_e2e.sh
+
   wasm:
     name: WASM Build and E2E Tests
     runs-on: ubuntu-latest
