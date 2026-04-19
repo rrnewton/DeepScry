@@ -549,6 +549,21 @@ pub fn tui_get_full_state_json() -> String {
                                 if card.is_creature() {
                                     css.push("creature");
                                 }
+                                let power = if card.is_creature() {
+                                    Some(i32::from(card.base_power().unwrap_or(0)))
+                                } else {
+                                    None
+                                };
+                                let toughness = if card.is_creature() {
+                                    Some(i32::from(card.base_toughness().unwrap_or(0)))
+                                } else {
+                                    None
+                                };
+                                let formatted_pt = if card.is_creature() {
+                                    power.zip(toughness).map(|(p, t)| format!("{}/{}", p, t))
+                                } else {
+                                    None
+                                };
                                 serde_json::json!({
                                     "card_id": format!("{:?}", cid),
                                     "name": card.name.to_string(),
@@ -558,6 +573,9 @@ pub fn tui_get_full_state_json() -> String {
                                     "is_creature": card.is_creature(),
                                     "is_land": card.is_land(),
                                     "css_classes": css,
+                                    "power": power,
+                                    "toughness": toughness,
+                                    "formatted_pt": formatted_pt,
                                 })
                             })
                         })

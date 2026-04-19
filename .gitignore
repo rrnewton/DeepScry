@@ -71,8 +71,7 @@ experiment_results/**/perf_history.csv.backfill*
 .backfill_results/
 screenshots/*.txt
 
-# WASM builds
-web/
+# WASM builds (generated content in web/ handled by web/.gitignore)
 rustc-ice-*.txt
 
 # Vendor directory (external dependencies copied locally)
