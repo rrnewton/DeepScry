@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import random
+import shlex
 import subprocess
 import sys
 import time
@@ -89,9 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--claude-args",
-        nargs="*",
+        action="append",
         default=[],
-        help="Extra arguments to pass to claude CLI (e.g. --claude-args --model sonnet).",
+        help=(
+            "Extra arguments to pass to claude CLI. May be repeated or given as a quoted "
+            "string which will be shlex-split, e.g. --claude-args='--model sonnet'."
+        ),
     )
     parser.add_argument(
         "--p1-draw",
@@ -123,6 +127,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         mtg_args.extend(["--p1-draw", args.p1_draw])
     if args.p2_draw:
         mtg_args.extend(["--p2-draw", args.p2_draw])
+
+    # Flatten --claude-args: each entry may be a quoted string containing multiple tokens
+    # (e.g. --claude-args='--model sonnet'), so shlex-split each one.
+    claude_args: list[str] = []
+    for raw in args.claude_args:
+        claude_args.extend(shlex.split(raw))
+    args.claude_args = claude_args
+    if args.verbose and claude_args:
+        print(f"[verbose] claude extra args: {claude_args}", file=sys.stderr)
 
     engine = GameEngine(seed=args.seed, game_dir=args.game_dir, verbose=args.verbose)
     engine.set_initial_args(mtg_args)
@@ -317,13 +330,30 @@ def _query_agent(prompt_text: str, choice_count: int, verbose: bool, claude_args
                 f"You MUST respond with ONLY a single number between 0 and {choice_count} "
                 f"on the final line. Nothing else on that line."
             )
+        cmd = ["claude"] + extra_args + ["-p", retry_prompt]
+        if verbose:
+            # Print command with the (potentially huge) prompt elided so the actual
+            # argv layout is easy to eyeball without flooding the terminal.
+            display_cmd = ["claude"] + extra_args + ["-p", f"<prompt {len(retry_prompt)} chars>"]
+            print(
+                f"[verbose] attempt {attempt}/3: $ {shlex.join(display_cmd)}",
+                file=sys.stderr,
+                flush=True,
+            )
         completed = subprocess.run(
-            ["claude"] + extra_args + ["-p", retry_prompt],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
         )
         response = completed.stdout.strip() or completed.stderr.strip()
+        if verbose:
+            print(
+                f"[verbose] claude exit={completed.returncode} "
+                f"stdout={len(completed.stdout)}B stderr={len(completed.stderr)}B",
+                file=sys.stderr,
+                flush=True,
+            )
         if completed.returncode != 0:
             last_error = f"claude exited with code {completed.returncode}: {response}"
             if verbose:
