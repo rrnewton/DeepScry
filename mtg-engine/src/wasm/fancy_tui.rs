@@ -597,6 +597,7 @@ pub fn tui_get_full_state_json() -> String {
                     Some(serde_json::json!({
                         "card_id": format!("{:?}", cid),
                         "name": card.name.to_string(),
+                        "mana_cost": card.mana_cost.to_string(),
                         "is_tapped": card.tapped,
                         "is_creature": card.is_creature(),
                         "is_land": card.is_land(),
