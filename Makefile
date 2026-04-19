@@ -153,6 +153,8 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-examples-step
 	@echo ""
+	@$(MAKE) validate-agentplay-step
+	@echo ""
 	@$(MAKE) validate-wasm-step
 	@echo ""
 	@$(MAKE) validate-wasm-e2e-step
@@ -183,6 +185,8 @@ validate-impl-sequential-no-network:
 	@echo ""
 	@$(MAKE) validate-examples-step
 	@echo ""
+	@$(MAKE) validate-agentplay-step
+	@echo ""
 	@$(MAKE) validate-wasm-step
 	@echo ""
 	@$(MAKE) validate-wasm-e2e-step
@@ -192,9 +196,9 @@ validate-impl-sequential-no-network:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step
-validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
-validate-parallel-steps-no-network: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step
+validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
+validate-parallel-steps-no-network: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-wasm-step validate-wasm-e2e-step deck_list
 
 validate-clippy-step:
 	@$(MAKE) clippy
@@ -211,6 +215,13 @@ validate-test-step:
 validate-examples-step:
 	@$(MAKE) examples
 	@echo "✓ examples completed"
+
+validate-agentplay-step:
+	@echo "=== Running agentplay tests ==="
+	@python3 -m pytest agentplay/ -v
+	@python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; \
+		rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi
+	@echo "✓ agentplay tests completed"
 
 validate-wasm-step:
 	@$(MAKE) wasm-dev
