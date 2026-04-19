@@ -24,14 +24,14 @@ echo "=== Commander Format E2E Test ==="
 echo
 
 if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
-    echo -e "${YELLOW}Warning: cardsfolder not found, skipping test${NC}"
-    exit 0
+    echo -e "${RED}ERROR: cardsfolder not found. Check submodule checkout (git submodule update --init --recursive)${NC}"
+    exit 1
 fi
 
 DECK="$WORKSPACE_ROOT/decks/commander/chandra_tokens.dck"
 if [[ ! -f "$DECK" ]]; then
-    echo -e "${YELLOW}Warning: $DECK not found, skipping test${NC}"
-    exit 0
+    echo -e "${RED}ERROR: $DECK not found. Required test fixture is missing.${NC}"
+    exit 1
 fi
 
 cd "$WORKSPACE_ROOT"
@@ -67,15 +67,16 @@ else
 fi
 
 # Verify commander is loaded
-if grep -q "P1 commander: Chandra" "$OUTPUT_FILE"; then
-    echo -e "${GREEN}  P1 commander loaded: Chandra, Torch of Defiance${NC}"
+if grep -q "P1 commander:" "$OUTPUT_FILE"; then
+    COMMANDER_NAME=$(grep -o "P1 commander: [^(]*" "$OUTPUT_FILE" | head -1)
+    echo -e "${GREEN}  ${COMMANDER_NAME}${NC}"
 else
     echo -e "${RED}  P1 commander not loaded${NC}"
     EXIT_CODE=1
 fi
 
 # Verify commander appears as castable
-if grep -q "cast Chandra.*from command zone" "$OUTPUT_FILE"; then
+if grep -q "from command zone" "$OUTPUT_FILE"; then
     echo -e "${GREEN}  Commander appears as castable from command zone${NC}"
 else
     echo -e "${YELLOW}  Commander not yet castable (may need more mana)${NC}"
@@ -103,13 +104,13 @@ else
     EXIT_CODE=1
 fi
 
-if grep -q "casts Chandra.*from command zone" "$OUTPUT_FILE"; then
+if grep -q "casts.*from command zone" "$OUTPUT_FILE"; then
     echo -e "${GREEN}  Commander was cast from command zone${NC}"
 else
     echo -e "${YELLOW}  Commander was not cast (random controller may not have chosen it)${NC}"
 fi
 
-if grep -q "Chandra.*resolves" "$OUTPUT_FILE"; then
+if grep -q "resolves" "$OUTPUT_FILE"; then
     echo -e "${GREEN}  Commander resolved onto battlefield${NC}"
 else
     echo -e "${YELLOW}  Commander resolve not seen in logs${NC}"

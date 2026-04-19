@@ -195,6 +195,8 @@ Also include a `Test Results Summary` section in every commit message that summa
 
 If you validate some changes with a new manual or temporary test, that test should be added to either the unit tests, examples, or e2e tests and it should be called consistently from both `make validate` and Github CI.
 
+NEVER skip tests in CI. If a test cannot run due to missing dependencies (submodules, tools, data files), fix the CI configuration to provide those dependencies. Tests must hard-fail (`exit 1`) on missing prerequisites, never gracefully skip (`exit 0`).
+
 NEVER add binary files or large serialized artifact to version control without explicit permission. Always carefully review what you are adding with `git add`, and update `.gitignore` as needed.
 
 If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmark.sh`
