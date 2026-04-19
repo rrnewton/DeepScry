@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from agentplay.agent_game import _query_agent, build_parser
+from agentplay.agent_game import _query_agent, _choose_for_player, build_parser
 from agentplay.lib.engine import GameEngine
 from agentplay.lib.prompts import build_choice_prompt, parse_agent_response
 
@@ -166,3 +167,44 @@ def test_query_agent_fails_after_three_invalid_attempts() -> None:
     with patch("agentplay.agent_game.subprocess.run", side_effect=responses):
         with pytest.raises(RuntimeError):
             _query_agent("prompt", 3, verbose=False)
+
+
+def test_mock_mode_selects_randomly_without_subprocess() -> None:
+    rng = random.Random(42)
+    choice, response = _choose_for_player(
+        mode="agent-vs-heuristic",
+        player="p1",
+        prompt_text="dummy prompt",
+        choice_count=5,
+        rng=rng,
+        verbose=False,
+        mock=True,
+    )
+    assert 0 <= choice <= 5
+    assert "mock" in response.lower()
+
+
+def test_mock_mode_is_deterministic_with_same_seed() -> None:
+    results = []
+    for _ in range(2):
+        rng = random.Random(42)
+        choices = []
+        for _ in range(10):
+            c, _ = _choose_for_player(
+                mode="agent-vs-agent",
+                player="p1",
+                prompt_text="",
+                choice_count=3,
+                rng=rng,
+                verbose=False,
+                mock=True,
+            )
+            choices.append(c)
+        results.append(choices)
+    assert results[0] == results[1]
+
+
+def test_cli_argument_parsing_supports_mock_flag() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--mock", "--seed", "7"])
+    assert args.mock is True

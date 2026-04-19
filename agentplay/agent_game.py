@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop the game when an agent emits a BUG_REPORT section (default: continue playing).",
     )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Replace agent controllers with random choice selection (no API tokens burned).",
+    )
     # Legacy alias
     parser.add_argument(
         "--continue-past-bug-reports",
@@ -221,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         before_snapshot = snapshot
         game_state_summary = _extract_game_state_summary(prompt_text)
         player = _player_name(snapshot.get("active_player"))
-        controller_kind = _controller_for_player(args.mode, player)
+        controller_kind = _controller_for_player(args.mode, player, mock=args.mock)
 
         # Show choice point
         choice_display = "\n".join(
@@ -251,6 +256,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rng=rng,
                 verbose=args.verbose,
                 claude_args=args.claude_args,
+                mock=args.mock,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -272,8 +278,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             reasoning_summary = raw_response.strip().split("\n")[0][:200]  # First line, truncated
             interleaved_log_parts.append(f"[Agent chose: {choice_text}. Reasoning: {reasoning_summary}]")
         else:
-            print(f"  => Random chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
-            interleaved_log_parts.append(f"[Random chose: {choice_text}]")
+            print(f"  => {controller_kind.title()} chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
+            interleaved_log_parts.append(f"[{controller_kind.title()} chose: {choice_text}]")
 
         bug_report_text = _extract_bug_report(raw_response)
         if bug_report_text is not None:
@@ -382,17 +388,19 @@ def _choose_for_player(
     rng: random.Random,
     verbose: bool,
     claude_args: list[str] | None = None,
+    mock: bool = False,
 ) -> tuple[int, str]:
-    controller_kind = _controller_for_player(mode, player)
+    controller_kind = _controller_for_player(mode, player, mock=mock)
     if controller_kind == "agent":
         return _query_agent(prompt_text, choice_count, verbose, claude_args or [])
-    # Random/heuristic: pick locally, no subprocess call
-    # Clamp to valid range: 0=pass, 1..choice_count=actions
+    # Mock/random: pick locally, no subprocess call
     choice_number = rng.randint(0, choice_count)
     return choice_number, f"{controller_kind} choice\n{choice_number}"
 
 
-def _controller_for_player(mode: str, player: str) -> str:
+def _controller_for_player(mode: str, player: str, mock: bool = False) -> str:
+    if mock:
+        return "mock"
     if mode == MODE_AGENT_VS_AGENT:
         return "agent"
     if mode == MODE_RANDOM_VS_RANDOM:

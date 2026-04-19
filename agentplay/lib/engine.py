@@ -15,8 +15,8 @@ class GameEngine:
     def __init__(self, seed: int, game_dir: str | Path | None, verbose: bool) -> None:
         self.seed = seed
         self.verbose = verbose
-        self.repo_root = Path(__file__).resolve().parent.parent
-        self.agentplay_dir = Path(__file__).resolve().parent
+        self.repo_root = Path(__file__).resolve().parent.parent.parent
+        self.agentplay_dir = Path(__file__).resolve().parent.parent
         self.binary_path = self.repo_root / "target" / "release" / "mtg"
         self.cardsfolder_path = self.repo_root / "cardsfolder"
         self.forge_cardsfolder_path = self.repo_root / "forge-java" / "forge-gui" / "res" / "cardsfolder"
