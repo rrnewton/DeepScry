@@ -1,39 +1,41 @@
 # Agentplay: Step-by-Step Game Testing
 
-This directory contains scripts for playing MTG games step-by-step with scripted choices, useful for testing game engine behavior without writing code.
+Scripts for playing MTG games step-by-step with scripted choices, useful for testing game engine behavior.
+
+## Directory Layout
+
+```
+agentplay/
+  agent_game.py      # Main entry: agent-driven game loop (Claude or --mock)
+  start_game.py      # CLI: start a new game session
+  continue_game.py   # CLI: append one choice and replay
+  test_agent_game.py # Tests
+  lib/               # Library modules (engine, prompts, card_defs)
+```
 
 ## Quick Start
 
 ```bash
-# Start a new game (creates numbered directory like 001.game and symlinks to current.game)
-./agentplay/start_game.sh decks/booster_draft/spiderman/ryan_spiderman_draft.dck decks/booster_draft/spiderman/ryan_spiderman_draft.dck
+# Start a new game (creates numbered directory like 001.game)
+./agentplay/start_game.py decks/simple_bolt.dck decks/simple_bolt.dck
 
-# Continue with choices (auto-detects whose turn)
-./agentplay/continue_game.sh "1"    # Choose action at index 1
-./agentplay/continue_game.sh "0"    # Pass priority
+# Continue with choices (specify player and choice)
+./agentplay/continue_game.py p1 "play Mountain"
+./agentplay/continue_game.py p2 "0"
 
-# Or specify player explicitly
-./agentplay/continue_game.sh --p1 "1"
-./agentplay/continue_game.sh --p2 "0"
+# Use a specific game directory
+./agentplay/start_game.py --game-dir=my_test.game decks/a.dck decks/b.dck
+./agentplay/continue_game.py --game-dir=my_test.game p1 "1"
 ```
 
-## Numbered Games
-
-Games are automatically numbered (001.game, 002.game, etc.) and `current.game` is a symlink to the latest game. This allows you to:
-- Keep a history of all test games
-- Work on multiple games in parallel with `--game-dir`
-- Easily reference the current game without remembering numbers
-
-## Parallel Game Sessions
-
-Use `--game-dir` to work on multiple games simultaneously without conflicts:
+## Agent-Driven Play
 
 ```bash
-# Start a specific game
-./agentplay/start_game.sh --game-dir=my_test.game decks/simple_bolt.dck decks/simple_bolt.dck
+# Run a full agent game (Claude picks each action)
+./agentplay/agent_game.py -- decks/simple_bolt.dck decks/simple_bolt.dck
 
-# Continue it (doesn't affect current.game)
-./agentplay/continue_game.sh --game-dir=my_test.game "1"
+# Mock mode (random choices, no API tokens burned)
+./agentplay/agent_game.py --mock --seed 42 -- decks/simple_bolt.dck decks/simple_bolt.dck
 ```
 
 ## Documentation
@@ -43,9 +45,9 @@ For detailed documentation, see:
 
 ## Game Directory Structure
 
-Each game directory (e.g., `001.game/`, `current.game -> 001.game`) contains:
+Each game directory (e.g., `001.game/`) contains:
 - `p1_choices.txt` - Player 1's choices (one per line)
 - `p2_choices.txt` - Player 2's choices (one per line)
-- `game.snapshot` - Current game state (JSON format)
+- `snapshot.json` - Current game state (JSON format)
 - `initial_args.txt` - Original command arguments
-- `reproduce_game.sh` - Executable script to replay this exact game
+- `enriched_log.md` - Game log with agent reasoning (agent_game.py only)

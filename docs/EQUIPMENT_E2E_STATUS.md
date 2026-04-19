@@ -89,7 +89,7 @@ cargo run --example test_real_equipment
 ### Option 3: Use agentplay with Manual Choices
 ```bash
 # Start game
-./agentplay/start_game.sh decks/equipment_test.dck decks/equipment_test.dck
+./agentplay/start_game.py decks/equipment_test.dck decks/equipment_test.dck
 
 # Play through manually:
 # 1. Play lands

@@ -10,14 +10,14 @@ The easiest way to play games step-by-step and build reproducers is using the `a
 
 ```bash
 # Start with any valid mtg tui arguments
-./agentplay/start_game.sh decks/simple_bolt.dck decks/simple_bolt.dck
+./agentplay/start_game.py decks/simple_bolt.dck decks/simple_bolt.dck
 
 # Or with specific initial hands:
-./agentplay/start_game.sh decks/grizzly_bears.dck decks/royal_assassin.dck \
+./agentplay/start_game.py decks/grizzly_bears.dck decks/royal_assassin.dck \
     --p1-draw="Forest;Grizzly Bears;Forest"
 
 # Or from a puzzle state:
-./agentplay/start_game.sh --start-state="puzzles/bolt_test.pzl"
+./agentplay/start_game.py --start-state="puzzles/bolt_test.pzl"
 ```
 
 This will:
@@ -31,20 +31,20 @@ This will:
 
 ### Adding Choices One at a Time
 
-After start_game.sh shows you the available choices, add them one at a time:
+After start_game.py shows you the available choices, add them one at a time:
 
 ```bash
-# Add a choice (game determines whose turn it is)
-./agentplay/continue_game.sh "0"
+# Add a choice (specify player and choice)
+./agentplay/continue_game.py p1 "0"
 
 # The game will show the next available choices
 # Continue adding choices as needed:
-./agentplay/continue_game.sh "1"
-./agentplay/continue_game.sh "pass"
-./agentplay/continue_game.sh "play swamp"
+./agentplay/continue_game.py p1 "1"
+./agentplay/continue_game.py p2 "pass"
+./agentplay/continue_game.py p1 "play swamp"
 ```
 
-Each `continue_game.sh` call:
+Each `continue_game.py` call:
 - Appends the choice to `agentplay/current.game/choices.txt`
 - Replays the game from scratch with ALL choices accumulated so far
 - Stops after the next choice is needed
@@ -57,13 +57,13 @@ You can use either numeric indices OR descriptive commands:
 
 ```bash
 # Numeric (simple but fragile to menu changes)
-./agentplay/continue_game.sh "0"
+./agentplay/continue_game.py p1 "0"
 
 # Rich text (robust to option ordering)
-./agentplay/continue_game.sh "play mountain"
-./agentplay/continue_game.sh "cast lightning bolt"
-./agentplay/continue_game.sh "target bob"
-./agentplay/continue_game.sh "pass"
+./agentplay/continue_game.py p1 "play mountain"
+./agentplay/continue_game.py p1 "cast lightning bolt"
+./agentplay/continue_game.py p1 "target bob"
+./agentplay/continue_game.py p2 "pass"
 ```
 
 For full syntax documentation including card name matching, wildcards, and special
@@ -73,8 +73,8 @@ cases, see [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md).
 
 The agentplay workflow automatically builds reproducers:
 
-1. Start a game session with `start_game.sh`
-2. Add choices with `continue_game.sh` until you reach the bug
+1. Start a game session with `start_game.py`
+2. Add choices with `continue_game.py` until you reach the bug
 3. The reproducer is automatically saved to `agentplay/current.game/reproduce_game.sh`
 4. Run that script to replay the entire sequence deterministically
 5. Or copy the REPRODUCER command from the script output
@@ -95,7 +95,7 @@ The reproducer script in `current.game/reproduce_game.sh` includes the full `car
 
 ```bash
 # Start a new game (automatically archives the current session)
-./agentplay/start_game.sh decks/new_deck.dck
+./agentplay/start_game.py decks/new_deck.dck
 
 # Access archived sessions
 ls agentplay/*.game/  # Shows current.game, 001.game, 002.game, etc.
@@ -233,6 +233,6 @@ cargo run --bin mtg -- resume --help
 
 For implementation details, read:
 - [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md) - Complete input command syntax reference
-- `agentplay/start_game.sh` - Initialization workflow
-- `agentplay/continue_game.sh` - Incremental choice workflow
+- `agentplay/start_game.py` - Initialization workflow
+- `agentplay/continue_game.py` - Incremental choice workflow
 - `src/main.rs` - Full CLI argument parsing

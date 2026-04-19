@@ -7,8 +7,8 @@ from unittest.mock import patch
 import pytest
 
 from agentplay.agent_game import _query_agent, build_parser
-from agentplay.engine import GameEngine
-from agentplay.prompts import build_choice_prompt, parse_agent_response
+from agentplay.lib.engine import GameEngine
+from agentplay.lib.prompts import build_choice_prompt, parse_agent_response
 
 
 def test_build_choice_prompt_includes_state_choices_log_and_goal() -> None:
@@ -59,7 +59,7 @@ def test_build_choice_prompt_includes_state_choices_log_and_goal() -> None:
     assert "Alice drew a card" in prompt
     assert "Bob: life 15" in prompt
     assert "2 hidden card(s)" in prompt
-    assert "Output ONLY the choice number on the last line." in prompt
+    assert "put the choice number alone on the final line" in prompt
 
 
 @pytest.mark.parametrize(

@@ -21,13 +21,13 @@ MODE_RANDOM_VS_RANDOM = "random-vs-random"
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from agentplay.engine import GameEngine
-    from agentplay.prompts import build_choice_prompt, parse_agent_response
-    from agentplay.card_defs import CardDatabase, find_mentioned_cards
+    from agentplay.lib.engine import GameEngine
+    from agentplay.lib.prompts import build_choice_prompt, parse_agent_response
+    from agentplay.lib.card_defs import CardDatabase, find_mentioned_cards
 else:
-    from .engine import GameEngine
-    from .prompts import build_choice_prompt, parse_agent_response
-    from .card_defs import CardDatabase, find_mentioned_cards
+    from .lib.engine import GameEngine
+    from .lib.prompts import build_choice_prompt, parse_agent_response
+    from .lib.card_defs import CardDatabase, find_mentioned_cards
 
 
 def build_parser() -> argparse.ArgumentParser:
