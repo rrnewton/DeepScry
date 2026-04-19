@@ -1294,6 +1294,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        // Chaos Orb: physical flip can't be simulated digitally.
+        // Convert to "destroy target nontoken permanent" (standard digital MTG behavior).
+        ApiType::Unknown(ref s) if s == "FlipOntoBattlefield" => {
+            let mut restriction = TargetRestriction::any();
+            restriction.requires_nontoken = true;
+            Some(Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction,
+            })
+        }
+
         // Recognized but not yet implemented API types produce an Unimplemented effect
         // so that spell resolution can warn instead of silently no-op'ing
         _ => {

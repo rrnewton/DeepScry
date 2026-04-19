@@ -320,6 +320,12 @@ pub struct TargetRestriction {
     /// Maximum power requirement (e.g., powerLE2 means power <= 2)
     #[serde(default)]
     pub power_le: Option<i32>,
+    /// If true, target must not be a token (e.g., Chaos Orb)
+    #[serde(default)]
+    pub requires_nontoken: bool,
+    /// If true, target must be in the "remembered" set (unimplemented — always fails)
+    #[serde(default)]
+    pub requires_remembered: bool,
 }
 
 impl TargetRestriction {
@@ -331,6 +337,8 @@ impl TargetRestriction {
             controller: ControllerRestriction::Any,
             power_ge: None,
             power_le: None,
+            requires_nontoken: false,
+            requires_remembered: false,
         }
     }
 
@@ -342,6 +350,8 @@ impl TargetRestriction {
             controller: ControllerRestriction::Any,
             power_ge: None,
             power_le: None,
+            requires_nontoken: false,
+            requires_remembered: false,
         }
     }
 
@@ -356,7 +366,17 @@ impl TargetRestriction {
     /// Note: This does NOT check controller restrictions. Use `matches_with_controller`
     /// for full validation including controller checks.
     pub fn matches(&self, card: &crate::core::Card) -> bool {
-        // Check counter restriction first
+        // "Remembered" cards require FlipOntoBattlefield which is unimplemented
+        if self.requires_remembered {
+            return false;
+        }
+
+        // Check token restriction
+        if self.requires_nontoken && card.is_token {
+            return false;
+        }
+
+        // Check counter restriction
         if self.requires_no_counters && card.has_counters() {
             return false;
         }
@@ -424,6 +444,8 @@ impl TargetRestriction {
     pub fn parse(valid_tgts: &str) -> Self {
         let mut types = SmallVec::new();
         let mut requires_no_counters = false;
+        let mut requires_nontoken = false;
+        let mut requires_remembered = false;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -440,6 +462,8 @@ impl TargetRestriction {
                 for modifier in modifier_part.split('+') {
                     match modifier {
                         "!HasCounters" => requires_no_counters = true,
+                        "!token" => requires_nontoken = true,
+                        "IsRemembered" => requires_remembered = true,
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         m if m.starts_with("powerGE") => {
@@ -476,6 +500,8 @@ impl TargetRestriction {
             controller,
             power_ge,
             power_le,
+            requires_nontoken,
+            requires_remembered,
         }
     }
 }
