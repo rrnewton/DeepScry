@@ -139,13 +139,20 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Destroy effects target a permanent
             // Parse ValidTgts to determine what types can be targeted
             // Examples: "Artifact,Enchantment" for Disenchant, "Creature" for Terror
+            // Defined$ Self means "destroy this card" (e.g., Chaos Orb's self-destruct)
             let restriction = params
                 .get("ValidTgts")
                 .map(TargetRestriction::parse)
                 .unwrap_or_else(TargetRestriction::any);
 
+            let target = if params.get("Defined") == Some("Self") {
+                CardId::self_target()
+            } else {
+                CardId::placeholder()
+            };
+
             Some(Effect::DestroyPermanent {
-                target: CardId::new(0), // Placeholder - filled in at cast time
+                target,
                 restriction,
             })
         }
@@ -470,7 +477,6 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Example: "DB$ Proliferate" or "AB$ Proliferate | Cost$ B B Discard<1/Card>"
             Some(Effect::Proliferate)
         }
-
 
         ApiType::RemoveCounter => {
             // RemoveCounter effect: DB$ RemoveCounter | ValidTgts$ Creature | CounterType$ Any | CounterNum$ 3 | UpTo$ True

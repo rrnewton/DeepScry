@@ -391,6 +391,9 @@ impl GameState {
                     // Patch up ChooseColor source placeholder with the spell's card_id
                     let resolved = Self::resolve_choose_color_source(resolved, card_id);
 
+                    // Resolve Defined$ Self sentinels to the source card
+                    let resolved = Self::resolve_self_target(resolved, card_id);
+
                     // Expand "all players" effects (e.g., Wheel of Fortune: each player discards/draws)
                     let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                     let expanded = expand_all_players_effect(&resolved, &player_ids);
@@ -438,6 +441,18 @@ impl GameState {
                 player,
                 source: source_card_id,
             },
+            other => other,
+        }
+    }
+
+    fn resolve_self_target(effect: Effect, source_card_id: CardId) -> Effect {
+        match effect {
+            Effect::DestroyPermanent { target, restriction } if target.is_self_target() => {
+                Effect::DestroyPermanent {
+                    target: source_card_id,
+                    restriction,
+                }
+            }
             other => other,
         }
     }
@@ -563,6 +578,7 @@ impl GameState {
                     &mut last_resolved_target,
                 );
                 let resolved = Self::resolve_choose_color_source(resolved, card_id);
+                let resolved = Self::resolve_self_target(resolved, card_id);
                 let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                 let expanded = expand_all_players_effect(&resolved, &player_ids);
                 result.extend(expanded.into_iter());
@@ -2540,8 +2556,8 @@ impl GameState {
                 );
             }
             Effect::DestroyPermanent { target, .. } => {
-                // Skip if target is still placeholder (0) - no valid targets found
-                if target.is_placeholder() {
+                // Skip if target is still placeholder (0) or unresolved sentinel
+                if target.is_placeholder() || target.is_self_target() {
                     // Spell fizzles - no valid targets
                     return Ok(());
                 }
@@ -3103,11 +3119,9 @@ impl GameState {
                     .iter()
                     .copied()
                     .filter(|&card_id| {
-                        self.cards
-                            .try_get(card_id)
-                            .is_some_and(|card| {
-                                restriction.matches_with_controller(card, spell_controller, card.controller)
-                            })
+                        self.cards.try_get(card_id).is_some_and(|card| {
+                            restriction.matches_with_controller(card, spell_controller, card.controller)
+                        })
                     })
                     .collect();
 
@@ -3765,7 +3779,12 @@ impl GameState {
                             .get(card_id)
                             .map(|c| c.name.to_string())
                             .unwrap_or_else(|_| "Unknown".to_string());
-                        self.move_card(card_id, Zone::Battlefield, self.death_destination_for_card(card_id), owner)?;
+                        self.move_card(
+                            card_id,
+                            Zone::Battlefield,
+                            self.death_destination_for_card(card_id),
+                            owner,
+                        )?;
                         self.logger
                             .gamelog(&format!("{} ({}) is destroyed", card_name, card_id));
                     }
@@ -3797,7 +3816,12 @@ impl GameState {
                         .try_get(card_id)
                         .map(|c| c.name.to_string())
                         .unwrap_or_else(|| "Unknown".to_string());
-                    self.move_card(card_id, Zone::Battlefield, self.death_destination_for_card(card_id), owner)?;
+                    self.move_card(
+                        card_id,
+                        Zone::Battlefield,
+                        self.death_destination_for_card(card_id),
+                        owner,
+                    )?;
                     self.logger
                         .gamelog(&format!("{} ({}) is sacrificed", card_name, card_id));
                 }
@@ -3955,11 +3979,7 @@ impl GameState {
                             .get(card_id)
                             .map(|card| {
                                 card.tapped
-                                    && restriction.matches_with_controller(
-                                        card,
-                                        spell_controller,
-                                        card.controller,
-                                    )
+                                    && restriction.matches_with_controller(card, spell_controller, card.controller)
                             })
                             .unwrap_or(false)
                     })
@@ -4709,7 +4729,6 @@ impl GameState {
                 }
             }
 
-
             Effect::AddPhase { count } => {
                 // Add extra combat phase(s) after the current step
                 for _ in 0..*count {
@@ -5405,7 +5424,8 @@ impl GameState {
                             .iter()
                             .filter(|&card_id| {
                                 if let Some(card) = self.cards.try_get(*card_id) {
-                                    card.is_creature() && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    card.is_creature()
+                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
                                 }
@@ -5960,8 +5980,7 @@ impl GameState {
         for (equip_id, equip_controller, effects, desc) in equipment_triggers {
             // Log the trigger
             if let Some(equip) = self.cards.try_get(equip_id) {
-                self.logger
-                    .gamelog(&format!("Trigger: {} - {}", equip.name, desc));
+                self.logger.gamelog(&format!("Trigger: {} - {}", equip.name, desc));
             }
 
             let ctx = TriggerContext::new(equip_id, equip_controller);

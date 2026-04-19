@@ -66,6 +66,9 @@ pub const ALL_PLAYERS_ID: u32 = u32::MAX - 1;
 /// Used when parsing `Defined$ Remembered` to mean "draw for each player that was remembered".
 pub const REMEMBERED_PLAYERS_ID: u32 = u32::MAX - 2;
 
+/// Sentinel value indicating "the source card itself" for Defined$ Self effects.
+pub const SELF_TARGET_ID: u32 = u32::MAX - 3;
+
 /// Sentinel value indicating "placeholder to be resolved".
 /// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
 pub const PLACEHOLDER_ID: u32 = 0;
@@ -120,6 +123,18 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn remembered_players() -> Self {
         EntityId::new(REMEMBERED_PLAYERS_ID)
+    }
+
+    /// Check if this ID means "the source card itself" (Defined$ Self).
+    #[inline]
+    pub fn is_self_target(&self) -> bool {
+        self.id == SELF_TARGET_ID
+    }
+
+    /// Create a sentinel ID meaning "the source card itself".
+    #[inline]
+    pub fn self_target() -> Self {
+        EntityId::new(SELF_TARGET_ID)
     }
 
     /// Check if this ID is the "reuse previous target" sentinel.
@@ -321,7 +336,7 @@ where
         // Guard against sentinel values (REUSE_PREVIOUS_TARGET=u32::MAX, ALL_PLAYERS=u32::MAX-1)
         // These are control-flow markers, not real entity IDs.
         // Note: is_placeholder() (id==0) is NOT guarded here because 0 IS a valid entity index.
-        if id.is_reuse_previous() || id.as_u32() == ALL_PLAYERS_ID {
+        if id.is_reuse_previous() || id.as_u32() == ALL_PLAYERS_ID || id.is_self_target() {
             return Err(MtgError::EntityNotFound(id.as_u32()));
         }
         self.entities

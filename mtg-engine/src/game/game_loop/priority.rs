@@ -116,6 +116,14 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
+                    Effect::DestroyPermanent { target, restriction }
+                        if target.is_self_target() =>
+                    {
+                        Effect::DestroyPermanent {
+                            target: spell_id,
+                            restriction: restriction.clone(),
+                        }
+                    }
                     Effect::TapPermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::TapPermanent {
                             target: targets[target_index],
@@ -1477,6 +1485,15 @@ impl<'a> GameLoop<'a> {
                                             {
                                                 crate::core::Effect::DestroyPermanent {
                                                     target: chosen_targets_vec[0],
+                                                    restriction: restriction.clone(),
+                                                }
+                                            }
+                                            // Defined$ Self: destroy the source card itself
+                                            crate::core::Effect::DestroyPermanent { target, restriction }
+                                                if target.is_self_target() =>
+                                            {
+                                                crate::core::Effect::DestroyPermanent {
+                                                    target: card_id,
                                                     restriction: restriction.clone(),
                                                 }
                                             }
