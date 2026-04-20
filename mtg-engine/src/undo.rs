@@ -984,6 +984,20 @@ impl UndoLog {
         // GameState::undo_to_previous_choice_point which does this when undo_log is empty.)
         game.turn.reset_transient_guards();
 
+        // Invalidate mana engine cache. Undo actions restore the battlefield
+        // but the ManaEngine memoization (keyed on mana_state_version) may
+        // retain stale capacity from a later game state. Bumping the version
+        // forces re-scan on the next can_pay() query.
+        game.mana_state_version = game.mana_state_version.wrapping_add(1);
+
+        // Clear mana source caches. These live on GameState (not the undo log)
+        // and accumulate sources during replay that are no longer on the
+        // battlefield after rewind. Without clearing, ManaEngine::update_mut
+        // reads stale caches and reports inflated mana capacity.
+        for (_, cache) in &mut game.mana_caches {
+            cache.clear();
+        }
+
         // Reset priority state that persists across NeedInput returns.
         // These fields are NOT #[serde(skip)] (they must survive serialization) and NOT
         // tracked by the undo log (they're updated directly by priority_round).
