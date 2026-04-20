@@ -1210,6 +1210,7 @@
             container.querySelectorAll('.hand-entry').forEach(el => {
                 el.addEventListener('click', () => {
                     const idx = parseInt(el.dataset.idx);
+                    console.log('[CardClick] Hand entry clicked, idx:', idx, 'card:', cards[idx]?.name);
                     if (cards[idx]) {
                         selectedCardName = cards[idx].name;
                         showCardDetails(cards[idx]);
@@ -1248,6 +1249,7 @@
             div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
 
             div.addEventListener('click', () => {
+                console.log('[CardClick] Battlefield card clicked:', card.name, card);
                 selectedCardName = card.name;
                 showCardDetails(card);
                 // Update selected highlight without full re-render (avoids visual jump)
@@ -1259,8 +1261,9 @@
         }
 
         function showCardDetails(card) {
+            console.log('[CardDetails] showCardDetails called:', card?.name, card);
             const body = document.getElementById('card-details-body');
-            if (!body || !card) return;
+            if (!body || !card) { console.warn('[CardDetails] BAIL: body=', !!body, 'card=', !!card); return; }
             let imgHtml = '';
             if (showImages) {
                 const urls = getCardImageFallbackUrls(card.name, 310);
