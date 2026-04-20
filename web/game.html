@@ -827,6 +827,15 @@
         let _handCards = [];
         let _playerBfCards = [];
         let _oppBfCards = [];
+        let _lastStateSummary = null;
+
+        function isDebugMode() {
+            const el = document.getElementById('debug-mode');
+            return el && el.checked;
+        }
+        function debugLog(...args) {
+            if (isDebugMode()) console.log('[Debug]', ...args);
+        }
 
         // ==================== CONTROLLER TYPE MAP ====================
         function getControllerType(val) {
@@ -1149,6 +1158,27 @@
                 return;
             }
 
+            // Debug: summarize what changed since last update
+            if (isDebugMode()) {
+                const summary = {
+                    turn: state.turn_number,
+                    phase: state.current_step,
+                    gameOver: state.game_over,
+                    ourLife: state.our_player?.life,
+                    oppLife: state.opponent?.life,
+                    ourBf: state.our_player?.battlefield?.length || 0,
+                    oppBf: state.opponent?.battlefield?.length || 0,
+                    hand: state.our_player?.hand?.length || 0,
+                    choices: state.choices?.length || 0,
+                    stack: state.stack?.length || 0,
+                };
+                const summaryStr = JSON.stringify(summary);
+                if (summaryStr !== _lastStateSummary) {
+                    debugLog('updateUI state changed:', summary);
+                    _lastStateSummary = summaryStr;
+                }
+            }
+
             // Use pre-organized player data from Rust
             const ourPlayer = state.our_player;
             const oppPlayer = state.opponent;
@@ -1264,6 +1294,7 @@
         function showCardDetails(card) {
             const body = document.getElementById('card-details-body');
             if (!body || !card) return;
+            debugLog('showCardDetails:', card.name, {types: card.types, pt: card.formatted_pt, mana: card.mana_cost, oracle: card.oracle_text?.substring(0, 80)});
 
             const ptHtml = card.formatted_pt
                 ? `<div class="card-detail-pt">${card.formatted_pt}</div>`
@@ -1327,6 +1358,10 @@
             const promptEl = document.getElementById('actions-prompt');
             const body = document.getElementById('actions-body');
 
+            if (choices.length > 0) {
+                debugLog('renderActions:', prompt, `${choices.length} choices, selected=${selectedIdx}`, choices.map((c, i) => `${i}: ${c.text}`));
+            }
+
             if (prompt) {
                 promptEl.style.display = 'block';
                 promptEl.textContent = prompt;
@@ -1348,7 +1383,7 @@
         }
 
         function selectAction(idx) {
-            // Set choice index directly, select, and advance
+            debugLog('selectAction:', idx);
             tui_set_choice_idx(idx);
             tui_select_choice();
             tui_run_turn();
@@ -1407,6 +1442,7 @@
             switch (e.key) {
                 case ' ':
                     e.preventDefault();
+                    debugLog('key: Space (run turn)');
                     tui_run_turn();
                     setTimeout(updateUI, 50);
                     break;
@@ -1414,6 +1450,7 @@
                 case 'A':
                     e.preventDefault();
                     autoRunning = !autoRunning;
+                    debugLog('key: A (auto toggle)', autoRunning ? 'ON' : 'OFF');
                     tui_toggle_auto();
                     document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
                     if (autoRunning) startAutoRun();
@@ -1439,6 +1476,7 @@
                     if (e.key >= '1' && e.key <= '9') {
                         e.preventDefault();
                         const idx = parseInt(e.key) - 1;
+                        debugLog('key: number select action', idx);
                         selectAction(idx);
                     }
                     break;
@@ -1510,6 +1548,7 @@
         // The WASM TUI calls this after each render frame
         window.onRenderComplete = function(positions, selectedCard) {
             if (tuiLaunched) {
+                debugLog('onRenderComplete callback, selectedCard:', selectedCard);
                 // Use a small delay to batch rapid updates
                 clearTimeout(window._renderUpdateTimer);
                 window._renderUpdateTimer = setTimeout(updateUI, 30);
@@ -1554,6 +1593,7 @@
                 const idx = parseInt(entry.dataset.idx);
                 const card = _handCards[idx];
                 if (!card) return;
+                debugLog('click hand card:', card.name, `idx=${idx}`);
                 selectedCardName = card.name;
                 showCardDetails(card);
                 entry.closest('#hand-body').querySelectorAll('.hand-entry').forEach(e => e.classList.remove('selected-hand'));
@@ -1570,6 +1610,7 @@
                     const cards = containerId === 'player-field-cards' ? _playerBfCards : _oppBfCards;
                     const card = cards.find(c => c.name === cardName);
                     if (!card) return;
+                    debugLog('click battlefield card:', cardName, `zone=${containerId}`, {x: e.clientX, y: e.clientY});
                     selectedCardName = card.name;
                     showCardDetails(card);
                     document.querySelectorAll('.card.selected-card').forEach(el => el.classList.remove('selected-card'));
@@ -1582,6 +1623,7 @@
                 const item = e.target.closest('.action-item');
                 if (!item) return;
                 const idx = parseInt(item.dataset.idx);
+                debugLog('click action:', idx, item.textContent.trim());
                 if (!isNaN(idx)) selectAction(idx);
             });
         }

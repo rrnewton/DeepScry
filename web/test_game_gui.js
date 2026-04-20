@@ -208,6 +208,9 @@ async function runTest() {
         // Set a fixed seed for reproducibility
         await page.fill('#game-seed', '42');
 
+        // Enable debug mode to verify debug logging works
+        await page.check('#debug-mode');
+
         // Screenshot: configured
         await page.screenshot({ path: path.join(screenshotDir, 'game_02_configured.png'), fullPage: true });
         log('Screenshot: game_02_configured.png');
@@ -387,6 +390,15 @@ async function runTest() {
             log('Screenshot: game_06_card_details.png');
         } else {
             finding('WARN', 'No cards found to click');
+        }
+
+        // ========== STEP 8b: Verify debug logging ==========
+        const debugLogs = testResults.browserLogs.filter(l => l.text && l.text.includes('[Debug]'));
+        if (debugLogs.length > 0) {
+            finding('OK', `Debug mode produced ${debugLogs.length} [Debug] log entries`);
+            log(`Sample debug logs: ${debugLogs.slice(0, 3).map(l => l.text).join(' | ')}`);
+        } else {
+            finding('FAIL', 'Debug mode ON but no [Debug] log entries found in console');
         }
 
         // ========== STEP 9: Test auto-run ==========
