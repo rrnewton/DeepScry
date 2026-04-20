@@ -411,6 +411,19 @@ impl GameState {
                         }
                     }
                 }
+                Effect::Earthbend { target, .. } if target.is_placeholder() => {
+                    // Earthbend targets lands you control
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if card.is_land()
+                                && card.controller == spell_owner
+                                && is_legal_target(card, spell_owner, &spell_colors)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::ModalChoice { modes, .. } => {
                     // Modal spells: Mode selection should happen BEFORE targeting.
                     // When this code runs, modes should already be selected and the
@@ -558,7 +571,6 @@ impl GameState {
                 | Effect::SearchLibrary { .. }
                 | Effect::Firebend { .. }
                 | Effect::SetBasePowerToughness { .. }
-                | Effect::Earthbend { .. }
                 | Effect::AddTurn { .. }
                 | Effect::AddPhase { .. }
                 | Effect::AttachEquipment { .. }
@@ -614,6 +626,7 @@ impl GameState {
                 | Effect::ImmediateTrigger { .. }
                 | Effect::ClearRemembered
                 | Effect::EachDamage { .. }
+                | Effect::Earthbend { .. }
                 | Effect::Fight { .. } => {
                     // Target already specified (guard failed: target.as_u32() != 0)
                     // This means the effect has a concrete target already assigned
@@ -1246,6 +1259,16 @@ impl GameState {
                 // Counter requires a spell on the stack
                 !self.stack.is_empty()
             }
+            Effect::Earthbend { target, .. } if target.is_placeholder() => {
+                // Earthbend targets lands you control
+                self.battlefield.cards.iter().any(|&card_id| {
+                    if let Ok(card) = self.cards.get(card_id) {
+                        card.is_land() && card.controller == spell_owner
+                    } else {
+                        false
+                    }
+                })
+            }
             // Effects that don't require targeting always "have targets"
             Effect::DrawCards { .. }
             | Effect::DrawCardsXPaid { .. }
@@ -1263,7 +1286,6 @@ impl GameState {
             | Effect::SearchLibrary { .. }
             | Effect::Firebend { .. }
             | Effect::SetBasePowerToughness { .. }
-            | Effect::Earthbend { .. }
             | Effect::AttachEquipment { .. }
             | Effect::ModalChoice { .. }
             | Effect::PumpAllCreatures { .. }
@@ -1312,6 +1334,7 @@ impl GameState {
             | Effect::RemoveCounter { .. }
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }
+            | Effect::Earthbend { .. }
             | Effect::CopyPermanent { .. } => {
                 // Target already specified (guard failed: target.as_u32() != 0)
                 // If a target was pre-assigned, we assume it's valid

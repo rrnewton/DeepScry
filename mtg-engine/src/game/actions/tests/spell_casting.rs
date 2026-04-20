@@ -1368,4 +1368,86 @@ mod tests {
             "Creature spell should NOT get cost increase from Thalia"
         );
     }
+
+    /// Test that Sandbenders' Storm Earthbend mode properly targets a land.
+    /// Regression test: Earthbend was listed in "no targeting requirements" catch-all
+    /// in get_valid_targets_for_spell, causing the spell to resolve with placeholder target
+    /// and silently fizzle.
+    #[test]
+    fn test_modal_spell_earthbend_mode_targets_land() {
+        use crate::core::{Effect, ManaCost, ModalMode, TargetRestriction};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+
+        // Create a land for P1 to earthbend
+        let land_id = game.next_card_id();
+        let mut land = Card::new(land_id, "Forest".to_string(), p1_id);
+        land.add_type(CardType::Land);
+        land.controller = p1_id;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        // Create Sandbenders' Storm with modal effect
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Sandbenders' Storm".to_string(), p1_id);
+        spell.add_type(CardType::Instant);
+        spell.mana_cost = ManaCost::from_string("3W");
+
+        // Mode 1: Destroy creature with power 4+
+        let mode1 = ModalMode {
+            effect: Box::new(Effect::DestroyPermanent {
+                target: CardId::new(0),
+                restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+            }),
+            description: "Destroy target creature with power 4 or greater.".to_string(),
+            svar_name: "DBDestroy".to_string(),
+        };
+
+        // Mode 2: Earthbend 3
+        let mode2 = ModalMode {
+            effect: Box::new(Effect::Earthbend {
+                target: CardId::new(0),
+                num_counters: 3,
+            }),
+            description: "Earthbend 3.".to_string(),
+            svar_name: "DBEarthbend".to_string(),
+        };
+
+        spell.effects.push(Effect::ModalChoice {
+            modes: smallvec::smallvec![mode1, mode2],
+            num_to_choose: 1,
+            min_to_choose: 1,
+            can_repeat_modes: false,
+        });
+        game.cards.insert(spell_id, spell);
+
+        // Step 1: Verify earthbend mode has valid targets (lands you control)
+        let valid_modes = game.get_valid_modes_for_spell(spell_id, p1_id).unwrap();
+        let earthbend_mode = valid_modes.iter().find(|(idx, _)| *idx == 1);
+        assert!(
+            earthbend_mode.is_some(),
+            "Earthbend mode should be present in valid modes"
+        );
+        assert!(
+            earthbend_mode.unwrap().1,
+            "Earthbend mode should have valid targets (P1 controls a land)"
+        );
+
+        // Step 2: Apply earthbend mode selection
+        let applied = game.apply_selected_modes(spell_id, &[1]).unwrap();
+        assert!(applied, "Should successfully apply earthbend mode");
+
+        // Step 3: Get valid targets for the spell (after mode selection)
+        let valid_targets = game.get_valid_targets_for_spell(spell_id).unwrap();
+        assert!(
+            !valid_targets.is_empty(),
+            "Earthbend spell should have valid land targets after mode selection"
+        );
+        assert!(
+            valid_targets.contains(&land_id),
+            "P1's Forest should be a valid earthbend target"
+        );
+    }
 }

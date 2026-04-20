@@ -96,6 +96,7 @@ Error casting spell: Invalid game action: Card not in hand
 - [x] Pillar Launch (x1) - **FIXED** - SubAbility$ DBUntap with Defined$ Targeted
 - [ ] Rocky Rebuke (x1) - GAP: DamageSource$ ParentTarget not implemented
 - [x] Sandbenders' Storm (x2) - SP$ Charm modal spells (VERIFIED 2026-01-17: Both modes work, powerGE4 restriction implemented)
+  - **BUG FOUND 2026-04-20**: Earthbend 3 mode resolved without targeting a land (mtg-a385df, FIXED in targeting.rs)
 - [ ] Seismic Sense (x1) - GAP: SP$ Dig library manipulation not implemented
 - [x] White Lotus Reinforcements (x1) - 2/3 Vigilance creature with Ally anthem (VERIFIED 2026-01-15)
 
