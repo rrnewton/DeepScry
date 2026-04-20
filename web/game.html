@@ -577,6 +577,10 @@
                         <label><input type="checkbox" id="img-src-gatherer" checked> Gatherer</label>
                     </div>
                 </div>
+                <div class="checkbox-row" style="margin-top: 8px;">
+                    <input type="checkbox" id="debug-mode">
+                    <label for="debug-mode">Debug Mode (TRACE logs)</label>
+                </div>
             </div>
         </div>
 
@@ -819,6 +823,10 @@
         let selectedCardName = null;
         let fullCardsLoaded = false;
         let allDeckNames = [];
+        // Card data arrays for event delegation (populated by render functions)
+        let _handCards = [];
+        let _playerBfCards = [];
+        let _oppBfCards = [];
 
         // ==================== CONTROLLER TYPE MAP ====================
         function getControllerType(val) {
@@ -913,6 +921,7 @@
                 imgSrcLocal: document.getElementById('img-src-local').checked,
                 imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
                 imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
+                debugMode: document.getElementById('debug-mode').checked,
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         }
@@ -930,6 +939,7 @@
                 if (settings.imgSrcLocal !== undefined) document.getElementById('img-src-local').checked = settings.imgSrcLocal;
                 if (settings.imgSrcScryfall !== undefined) document.getElementById('img-src-scryfall').checked = settings.imgSrcScryfall;
                 if (settings.imgSrcGatherer !== undefined) document.getElementById('img-src-gatherer').checked = settings.imgSrcGatherer;
+                if (settings.debugMode !== undefined) document.getElementById('debug-mode').checked = settings.debugMode;
 
                 window._pendingGameSettings = {
                     p1Collection: settings.p1Collection,
@@ -965,7 +975,8 @@
         function attachSettingsListeners() {
             const ids = ['p1-collection', 'p2-collection', 'p1-deck', 'p2-deck',
                          'p1-controller', 'p2-controller', 'game-seed',
-                         'show-card-images', 'img-src-local', 'img-src-scryfall', 'img-src-gatherer'];
+                         'show-card-images', 'img-src-local', 'img-src-scryfall', 'img-src-gatherer',
+                         'debug-mode'];
             for (const id of ids) {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('change', saveSettings);
@@ -1020,6 +1031,14 @@
             const p1Controller = getControllerType(document.getElementById('p1-controller').value);
             const p2Controller = getControllerType(document.getElementById('p2-controller').value);
             showImages = document.getElementById('show-card-images').checked;
+
+            const debugMode = document.getElementById('debug-mode').checked;
+            if (debugMode) {
+                set_log_level('trace');
+                console.log('[DEBUG] TRACE logging enabled');
+            } else {
+                set_log_level('info');
+            }
 
             if (!p1Deck || !p2Deck) {
                 alert('Please select decks for both players');
@@ -1136,9 +1155,12 @@
 
             renderPlayerInfo(ourPlayer, 'player-info-body');
             renderPlayerInfo(oppPlayer, 'opp-info-body');
-            renderBattlefield(ourPlayer?.battlefield || [], 'player-field-cards');
-            renderBattlefield(oppPlayer?.battlefield || [], 'opp-field-cards');
-            renderHand(ourPlayer?.hand || []);
+            _playerBfCards = ourPlayer?.battlefield || [];
+            _oppBfCards = oppPlayer?.battlefield || [];
+            _handCards = ourPlayer?.hand || [];
+            renderBattlefield(_playerBfCards, 'player-field-cards');
+            renderBattlefield(_oppBfCards, 'opp-field-cards');
+            renderHand(_handCards);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0);
             renderLog(state.logs || []);
@@ -1206,19 +1228,6 @@
                 const mana = card.mana_cost ? ` <span style="color:#4cc9f0">${escapeHtml(card.mana_cost)}</span>` : '';
                 return `<div class="hand-entry${cls}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
-            // Click handlers
-            container.querySelectorAll('.hand-entry').forEach(el => {
-                el.addEventListener('click', () => {
-                    const idx = parseInt(el.dataset.idx);
-                    console.log('[CardClick] Hand entry clicked, idx:', idx, 'card:', cards[idx]?.name);
-                    if (cards[idx]) {
-                        selectedCardName = cards[idx].name;
-                        showCardDetails(cards[idx]);
-                        container.querySelectorAll('.hand-entry').forEach(e => e.classList.remove('selected-hand'));
-                        el.classList.add('selected-hand');
-                    }
-                });
-            });
         }
 
         function createCardElement(card, showMana) {
@@ -1246,52 +1255,58 @@
                 manaHtml = `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`;
             }
 
+            div.setAttribute('data-card-name', card.name);
             div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
-
-            div.addEventListener('click', () => {
-                console.log('[CardClick] Battlefield card clicked:', card.name, card);
-                selectedCardName = card.name;
-                showCardDetails(card);
-                // Update selected highlight without full re-render (avoids visual jump)
-                document.querySelectorAll('.card.selected-card').forEach(el => el.classList.remove('selected-card'));
-                div.classList.add('selected-card');
-            });
 
             return div;
         }
 
         function showCardDetails(card) {
-            console.log('[CardDetails] showCardDetails called:', card?.name, card);
             const body = document.getElementById('card-details-body');
-            if (!body || !card) { console.warn('[CardDetails] BAIL: body=', !!body, 'card=', !!card); return; }
-            let imgHtml = '';
-            if (showImages) {
-                const urls = getCardImageFallbackUrls(card.name, 310);
-                if (urls.length > 0) {
-                    const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
-                    imgHtml = `<div class="card-detail-image"><img src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'"></div>`;
-                }
-            }
-            // Use pre-computed formatted_pt if available, fall back to raw power/toughness
+            if (!body || !card) return;
+
             const ptHtml = card.formatted_pt
                 ? `<div class="card-detail-pt">${card.formatted_pt}</div>`
                 : (card.is_creature && card.power != null)
                     ? `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`
                     : '';
-            // Equipment attachments info
             let equipHtml = '';
             if (card.attachments && card.attachments.length > 0) {
                 equipHtml = `<div style="padding: 4px 10px; font-size: 12px; color: #ffd700;">Equipped: ${card.attachments.map(a => escapeHtml(a.name)).join(', ')}</div>`;
             }
+
+            // Text appears instantly; image placeholder is at the bottom
             body.innerHTML = `
                 <div class="card-detail-name">${escapeHtml(card.name)}</div>
                 <div class="card-detail-type">${escapeHtml(card.types || '')}</div>
                 ${card.mana_cost ? `<div style="padding: 0 10px; color: #888; font-size: 12px;">${escapeHtml(card.mana_cost)}</div>` : ''}
-                ${imgHtml}
                 ${ptHtml}
                 ${card.oracle_text ? `<div style="padding: 4px 10px; color: #ccc; font-size: 12px; white-space: pre-wrap; line-height: 1.4;">${escapeHtml(card.oracle_text)}</div>` : ''}
                 ${equipHtml}
+                <div class="card-detail-image" id="card-detail-img-slot"></div>
             `;
+
+            // Load image async so text display is never blocked
+            if (showImages) {
+                const urls = getCardImageFallbackUrls(card.name, 310);
+                if (urls.length > 0) {
+                    const slot = document.getElementById('card-detail-img-slot');
+                    if (slot) {
+                        const img = new Image();
+                        const fallbacks = urls.slice(1);
+                        img.alt = card.name;
+                        img.onerror = function() {
+                            if (fallbacks.length > 0) {
+                                img.src = fallbacks.shift();
+                            } else {
+                                img.style.display = 'none';
+                            }
+                        };
+                        img.src = urls[0];
+                        slot.appendChild(img);
+                    }
+                }
+            }
         }
 
         function renderStack(stack) {
@@ -1330,14 +1345,6 @@
                     <span class="action-idx">${i + 1}.</span>${escapeHtml(choice.text)}
                 </div>`;
             }).join('');
-
-            // Click handlers for actions
-            body.querySelectorAll('.action-item').forEach(el => {
-                el.addEventListener('click', () => {
-                    const idx = parseInt(el.dataset.idx);
-                    selectAction(idx);
-                });
-            });
         }
 
         function selectAction(idx) {
@@ -1535,6 +1542,50 @@
             if (!text) return '';
             return text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
+
+        // ==================== EVENT DELEGATION ====================
+        // Attach click handlers to containers (not individual cards) so they
+        // survive DOM rebuilds from the 30ms render loop.
+        function setupEventDelegation() {
+            // Hand clicks
+            document.getElementById('hand-body').addEventListener('click', (e) => {
+                const entry = e.target.closest('.hand-entry');
+                if (!entry) return;
+                const idx = parseInt(entry.dataset.idx);
+                const card = _handCards[idx];
+                if (!card) return;
+                selectedCardName = card.name;
+                showCardDetails(card);
+                entry.closest('#hand-body').querySelectorAll('.hand-entry').forEach(e => e.classList.remove('selected-hand'));
+                entry.classList.add('selected-hand');
+            });
+
+            // Battlefield clicks (both player and opponent)
+            for (const containerId of ['player-field-cards', 'opp-field-cards']) {
+                document.getElementById(containerId).addEventListener('click', (e) => {
+                    const cardEl = e.target.closest('.card');
+                    if (!cardEl) return;
+                    const cardName = cardEl.dataset.cardName;
+                    if (!cardName) return;
+                    const cards = containerId === 'player-field-cards' ? _playerBfCards : _oppBfCards;
+                    const card = cards.find(c => c.name === cardName);
+                    if (!card) return;
+                    selectedCardName = card.name;
+                    showCardDetails(card);
+                    document.querySelectorAll('.card.selected-card').forEach(el => el.classList.remove('selected-card'));
+                    cardEl.classList.add('selected-card');
+                });
+            }
+
+            // Action clicks
+            document.getElementById('actions-body').addEventListener('click', (e) => {
+                const item = e.target.closest('.action-item');
+                if (!item) return;
+                const idx = parseInt(item.dataset.idx);
+                if (!isNaN(idx)) selectAction(idx);
+            });
+        }
+        setupEventDelegation();
 
         // ==================== START ====================
         main();

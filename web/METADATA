@@ -1,0 +1,132 @@
+{
+  "blob": {
+    "accelerator": 0,
+    "arch": 2,
+    "blobInfo": {
+      "classicBlobInfo": {
+        "key_algorithm_blob_hash_map": {
+          "1": "b2d7a1cdf41bc14e9ec8c3d207a51d29f6b9057a"
+        },
+        "piece_size": 67108864,
+        "pieces": "1c1fbed65cbd10c1e3b10d726e9b12e21ea3046cedb876301fc665eec123cb6c64f5076075cb5840f14993bdb56fa676c77b105e556d3e090a88488de2b9b4d6635c36f6dff5a42eb3cd9fe96b27478e",
+        "regions_for_blob": [],
+        "size": 258265790
+      }
+    },
+    "blob_key": "b2d7a1cdf41bc14e9ec8c3d207a51d29f6b9057a",
+    "key_algorithm": 1
+  },
+  "build": {
+    "architecture": 2,
+    "build_command": "['/packages/fbpkg:stable/fbpkg/194f6e0/legacy_fbpkg', '-v', '--cats-file=/dev/shm/sandcastle_crypto_auth_tokens/cats', 'build', '--ephemeral', '--yes', '--json', '--no-build', '--message', 'Built using fbpkg.builder for fbcode//surfguard/scripts:chrome-headless-shell', '--expire=86400s', '--build-token-uuid=01425fa867f7a1668ad4b8739dc0ed93,744b8969e564fbafa8c1ca3daa790b95', '--configerator-path=/data/sandcastle/temp/skycastle/cfgr.BbF5zQ', 'chrome-headless-shell']",
+    "build_user_identities": [
+      {
+        "id_data": "devvm",
+        "id_type": "MACHINE_TIER"
+      },
+      {
+        "id_data": "devvm16512.vll0.facebook.com",
+        "id_type": "MACHINE"
+      },
+      {
+        "id_data": "rnandan",
+        "id_type": "USER"
+      },
+      {
+        "id_data": "100001326137065",
+        "id_type": "USER"
+      },
+      {
+        "id_data": "100001326137065",
+        "id_type": "FBID"
+      }
+    ],
+    "config": {
+      "INTERNAL_DO_NOT_MODIFY_from_buck_fbpkg": false,
+      "INTERNAL_DO_NOT_MODIFY_metadata": {},
+      "buck_build_metadata": {
+        "config": {
+          "build_info.host": "55e7-8146-0004-0000.twshared18741.02.snb3.tw.fbinfra.net",
+          "build_info.package_name": "chrome-headless-shell",
+          "build_info.package_release": "release",
+          "build_info.package_version": "744b8969e564fbafa8c1ca3daa790b95",
+          "build_info.revision": "7605838b4494667025b24670ddeaf73b4b3902b7",
+          "build_info.revision_epochtime": "1770239519",
+          "build_info.target_path": "fbcode//surfguard/scripts:chrome-headless-shell",
+          "build_info.upstream_revision": "7605838b4494667025b24670ddeaf73b4b3902b7",
+          "build_info.upstream_revision_epochtime": "1770239519",
+          "build_info.user": "twsvcscm",
+          "fbcode.dwp": "true",
+          "fbcode.xar_compression_level": "16"
+        },
+        "mode": "fbcode//mode/opt",
+        "modifiers": [],
+        "target": "fbcode//surfguard/scripts:chrome-headless-shell",
+        "version": "v2"
+      },
+      "build_architectures": [
+        2
+      ],
+      "build_command": "BuildCommand { proc: cd \"/data/sandcastle/boxes/trunk-hg-fbcode-fbsource\" && \"buck2\" \"bxl\" \"@fbcode//mode/opt\" \"-c\" \"build_info.host=55e7-8146-0004-0000.twshared18741.02.snb3.tw.fbinfra.net\" \"-c\" \"build_info.package_name=chrome-headless-shell\" \"-c\" \"build_info.package_release=release\" \"-c\" \"build_info.package_version=744b8969e564fbafa8c1ca3daa790b95\" \"-c\" \"build_info.revision=7605838b4494667025b24670ddeaf73b4b3902b7\" \"-c\" \"build_info.revision_epochtime=1770239519\" \"-c\" \"build_info.target_path=fbcode//surfguard/scripts:chrome-headless-shell\" \"-c\" \"build_info.upstream_revision=7605838b4494667025b24670ddeaf73b4b3902b7\" \"-c\" \"build_info.upstream_revision_epochtime=1770239519\" \"-c\" \"build_info.user=twsvcscm\" \"-c\" \"fbcode.dwp=true\" \"-c\" \"fbcode.xar_compression_level=16\" \"-c\" \"fbcode.arch=x86_64\" \"fbcode//registry/builder/build.bxl:build\" \"--build-report\" \"/data/sandcastle/temp/skycastle/.tmpOeKH1d\" \"--\" \"--target\" \"fbcode//surfguard/scripts:chrome-headless-shell[tree]\" \"--target\" \"fbcode//surfguard/scripts:chrome-headless-shell[scribe_cat]\" \"--target\" \"fbcode//surfguard/scripts:chrome-headless-shell[build_ids]\" \"--variants\" \"{\\\"architecture\\\":\\\"x86_64\\\",\\\"accelerator\\\":null}\", report_output: NamedTempFile(\"/data/sandcastle/temp/skycastle/.tmpOeKH1d\") }",
+      "log_paths": [
+        "fbcode/surfguard/scripts/get-chrome-headless-shell.sh"
+      ],
+      "path_mapping": {},
+      "paths": [
+        "/data/sandcastle/boxes/trunk-hg-fbcode-fbsource/buck-out/v2/gen/fbcode/4763af0c324ed475/surfguard/scripts/__chrome-headless-shell__/standalone/tree/*"
+      ],
+      "pre_compressed": false,
+      "target_architectures": [
+        2
+      ]
+    },
+    "host": "55e7-8146-0004-0000.twshared18741.02.snb3.tw.fbinfra.net",
+    "message": "Built using fbpkg.builder for fbcode//surfguard/scripts:chrome-headless-shell\n\n",
+    "msg_truncated": false,
+    "path": "/data/sandcastle/boxes/trunk-hg-fbcode-fbsource/fbcode",
+    "previous": "c679a6dd7e05f57f59418ce139f614b6b87c385d",
+    "timestamp": 1770239742,
+    "user": "root",
+    "vcs_info": {
+      "kind": 2,
+      "local_changes": false,
+      "repository": "fbsource",
+      "revision": "7605838b4494667025b24670ddeaf73b4b3902b7",
+      "revision_epoch": 1770239519,
+      "upstream": "7605838b4494667025b24670ddeaf73b4b3902b7",
+      "upstream_epoch": 1770239519
+    }
+  },
+  "build_tool": "fbpkg:194f6e0",
+  "bundle_members": [],
+  "bundle_members_identifiers": [],
+  "checksum_hash": "fa94388ced0046384e37cf5fc2193906c672dd8e",
+  "cloned_from_identifier": "",
+  "compression": 5,
+  "deprecated_arch_pkg_hash": {},
+  "execute": false,
+  "file_name": "",
+  "fsverity_signatures": {},
+  "package": "chrome-headless-shell",
+  "piece_size": 67108864,
+  "pieces": "1c1fbed65cbd10c1e3b10d726e9b12e21ea3046cedb876301fc665eec123cb6c64f5076075cb5840f14993bdb56fa676c77b105e556d3e090a88488de2b9b4d6635c36f6dff5a42eb3cd9fe96b27478e",
+  "pkg_hash": "b2d7a1cdf41bc14e9ec8c3d207a51d29f6b9057a",
+  "pre_compressed_size": 640972800,
+  "regions_for_blob": [],
+  "seal": {
+    "crypto_project": "FBPKG_DEFAULT",
+    "expanded_seal": {
+      "metadata": {
+        "signer_principal": "",
+        "unix_timestamp_usec": 0
+      },
+      "signature": ""
+    },
+    "level": 0
+  },
+  "size": 258265790,
+  "soft_deleted_at": 0,
+  "uuid": "744b8969e564fbafa8c1ca3daa790b95",
+  "version": "861",
+  "version_type": 1
+}

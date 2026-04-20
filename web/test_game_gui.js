@@ -157,6 +157,23 @@ async function runTest() {
             finding('OK', `P1 controllers: ${p1Controllers.join(', ')}`);
         }
 
+        // Check debug mode checkbox exists and toggles
+        const debugCheckbox = await page.$('#debug-mode');
+        if (!debugCheckbox) {
+            finding('FAIL', 'Debug mode checkbox (#debug-mode) not found');
+        } else {
+            const initiallyChecked = await page.isChecked('#debug-mode');
+            finding('OK', `Debug mode checkbox present (initially ${initiallyChecked ? 'checked' : 'unchecked'})`);
+            await page.check('#debug-mode');
+            const nowChecked = await page.isChecked('#debug-mode');
+            if (!nowChecked) {
+                finding('FAIL', 'Debug mode checkbox did not toggle on');
+            } else {
+                finding('OK', 'Debug mode checkbox toggles on');
+            }
+            await page.uncheck('#debug-mode');
+        }
+
         // Check navigation links
         const links = await page.evaluate(() => {
             return Array.from(document.querySelectorAll('.header a')).map(a => ({
