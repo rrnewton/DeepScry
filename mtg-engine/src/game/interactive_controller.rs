@@ -443,8 +443,12 @@ impl PlayerController for InteractiveController {
             ChoiceResult::Ok(Some(sorted[choice - 1].clone()))
         } else {
             // Non-numeric mode: Index 0 = Pass, 1+ = actions, OR rich text commands
-            // Use shared format_choice_menu for consistency (it sorts internally)
-            print!("{}", crate::game::controller::format_choice_menu(view, &sorted));
+            // Use shared format_choice_menu for consistency (it sorts internally).
+            // Interactive controller is human-facing → always wants context.
+            print!(
+                "{}",
+                crate::game::controller::format_choice_menu(view, &sorted, self.wants_context())
+            );
 
             // Read user input and try rich command parsing first
             loop {

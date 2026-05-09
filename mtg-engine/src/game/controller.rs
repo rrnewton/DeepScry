@@ -34,12 +34,20 @@ use std::collections::HashMap;
 /// a consistent format across the codebase.
 ///
 /// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
-pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility]) -> String {
+///
+/// `wants_context` controls whether the choice context flavor (e.g. `[Your_Main1]`)
+/// is built and prepended.  Pass `controller.wants_context()` so AI/random/fixed
+/// controllers skip the allocation entirely (zero overhead for non-human play).
+pub fn format_choice_menu(view: &GameStateView, available: &[SpellAbility], wants_context: bool) -> String {
     let mut output = String::new();
     let player_name = view.player_name();
-    let context = view.build_choice_context();
 
-    output.push_str(&format!("\n{context} {} available actions:\n", player_name));
+    if wants_context {
+        let context = view.build_choice_context();
+        output.push_str(&format!("\n{context} {} available actions:\n", player_name));
+    } else {
+        output.push_str(&format!("\n{} available actions:\n", player_name));
+    }
 
     // Pass is ALWAYS option 0
     output.push_str("  [0] pass\n");
