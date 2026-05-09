@@ -63,10 +63,12 @@ async function checkViewport(browser, w, h) {
         await page.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });
         await page.waitForTimeout(800);
         const m = await measure(page);
-        const widthFill = m.gridRect.w / m.innerWidth;
-        const heightFill = m.gridRect.h / m.innerHeight;
+        // NOTE: with the font-scale shim active, window.innerWidth returns (real / scale),
+        // so we compare grid bounds to the REAL viewport (the one we passed to Playwright).
+        const widthFill = m.gridRect.w / w;
+        const heightFill = m.gridRect.h / h;
         const ok = widthFill > 0.95 && heightFill > 0.95;
-        log(`@${w}x${h}: grid=${m.gridRect.w}x${m.gridRect.h} fill=${widthFill.toFixed(3)}x${heightFill.toFixed(3)} cssFont=${m.cssFontSize} cssLH=${m.cssLineHeight} ${ok ? 'PASS' : 'FAIL'}`);
+        log(`@${w}x${h}: grid=${m.gridRect.w}x${m.gridRect.h} fill=${widthFill.toFixed(3)}x${heightFill.toFixed(3)} shimInner=${m.innerWidth}x${m.innerHeight} cssFont=${m.cssFontSize} cssLH=${m.cssLineHeight} ${ok ? 'PASS' : 'FAIL'}`);
         if (!ok) {
             await page.screenshot({ path: path.join(__dirname, 'screenshots', `font_size_FAIL_${w}x${h}.png`), fullPage: true });
         }
