@@ -513,10 +513,7 @@ fn build_player_label(name: &str, seat_badge: &'static str) -> String {
 /// Pre-format the compact info bar text shown above each player's zones.
 /// Matches `FancyTuiRenderer::draw_player_info`.
 fn build_info_bar_text(label: &str, life: i32, hand: usize, gy: usize, lib: usize) -> String {
-    format!(
-        "{} | {} life | Hand: {} | GY: {} | Lib: {}",
-        label, life, hand, gy, lib
-    )
+    format!("{} | {} life | Hand: {} | GY: {} | Lib: {}", label, life, hand, gy, lib)
 }
 
 /// Build battlefield sections for the given owner.
@@ -577,11 +574,12 @@ fn build_battlefield_sections(
             let card_views: Vec<CardView> = cards
                 .into_iter()
                 .filter_map(|cid| {
-                    let pt = game
-                        .cards
-                        .try_get(cid)
-                        .filter(|c| c.is_creature())
-                        .map(|_| (game.get_effective_power(cid).ok(), game.get_effective_toughness(cid).ok()));
+                    let pt = game.cards.try_get(cid).filter(|c| c.is_creature()).map(|_| {
+                        (
+                            game.get_effective_power(cid).ok(),
+                            game.get_effective_toughness(cid).ok(),
+                        )
+                    });
                     build_card_view(game, cid, valid_choices, selected_card_id, pt)
                 })
                 .collect();
@@ -629,11 +627,7 @@ pub const VIEW_MODEL_SCHEMA_VERSION: u32 = 1;
 pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiViewModel {
     let perspective = inputs.perspective_player_id;
 
-    let our_idx = game
-        .players
-        .iter()
-        .position(|p| p.id == perspective)
-        .unwrap_or(0);
+    let our_idx = game.players.iter().position(|p| p.id == perspective).unwrap_or(0);
     let active_idx = game
         .players
         .iter()
@@ -670,9 +664,7 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
                 let sorted = FancyTuiRenderer::get_sorted_hand(&view_for_perspective);
                 sorted
                     .into_iter()
-                    .filter_map(|cid| {
-                        build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None)
-                    })
+                    .filter_map(|cid| build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None))
                     .collect()
             } else {
                 Vec::new()
@@ -684,17 +676,13 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
             let graveyard: Vec<CardView> = pview
                 .graveyard()
                 .iter()
-                .filter_map(|&cid| {
-                    build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None)
-                })
+                .filter_map(|&cid| build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None))
                 .collect();
 
             let command_zone: Vec<CardView> = pview
                 .player_command_zone(pid)
                 .iter()
-                .filter_map(|&cid| {
-                    build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None)
-                })
+                .filter_map(|&cid| build_card_view(game, cid, inputs.valid_choices, inputs.selected_card_id, None))
                 .collect();
 
             PlayerView {
@@ -733,11 +721,7 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
         .iter()
         .filter_map(|&cid| {
             let card = game.cards.try_get(cid)?;
-            let controller_idx = game
-                .players
-                .iter()
-                .position(|p| p.id == card.controller)
-                .unwrap_or(0);
+            let controller_idx = game.players.iter().position(|p| p.id == card.controller).unwrap_or(0);
             Some(StackEntryView {
                 card_id: cid.as_u32(),
                 name: card.name.to_string(),
