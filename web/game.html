@@ -375,6 +375,39 @@
             padding: 4px;
         }
 
+        /* Battlefield section labels match the TUI's inline section markers
+           (PWs / Creatures / Enchants / Artifacts / Lands). The Rust view
+           model picks the section colors so JS just maps category → CSS. */
+        .bf-section { width: 100%; display: block; }
+        .bf-section-label {
+            font-size: 10px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 2px 6px 1px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            margin-top: 2px;
+        }
+        .bf-section.bf-planeswalker .bf-section-label { color: #ffe28a; }
+        .bf-section.bf-creature     .bf-section-label { color: #ff7a7a; }
+        .bf-section.bf-enchantment  .bf-section-label { color: #d586ff; }
+        .bf-section.bf-artifact     .bf-section-label { color: #4cc9f0; }
+        .bf-section.bf-land         .bf-section-label { color: #6dd66d; }
+        .bf-section-cards {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 2px;
+            padding: 2px 0 4px;
+        }
+
+        /* "valid choice" highlight on cards the controller can pick right
+           now. Driven by `card.is_valid_choice` from the view model. */
+        .card.valid-choice {
+            border-color: #50fa7b;
+            box-shadow: 0 0 6px rgba(80, 250, 123, 0.35);
+        }
+
         /* Hand entries - text list matching TUI */
         .hand-entry {
             padding: 2px 6px;
@@ -388,6 +421,10 @@
         }
         .hand-entry.selected-hand {
             color: #ffd700;
+            font-weight: bold;
+        }
+        .hand-entry.valid-choice {
+            color: #50fa7b;
             font-weight: bold;
         }
 
@@ -768,7 +805,14 @@
             tui_prev_choice,
             tui_next_choice,
             tui_set_choice_idx,
-            tui_get_full_state_json,
+            // The new view model is the SINGLE source of truth for everything
+            // game.html renders. tui_get_full_state_json() is the legacy entry
+            // point and is intentionally NOT imported anymore — keeps us from
+            // accidentally regressing to the JS-derives-display-decisions path.
+            tui_get_gui_view_model_json,
+            tui_select_card,
+            tui_clear_card_selection,
+            tui_get_selected_card_details,
             tui_get_layout_json,
             tui_get_card_layout_json,
             tui_get_image_urls,
@@ -820,13 +864,20 @@
         let tuiLaunched = false;
         let autoRunning = false;
         let showImages = true;
-        let selectedCardName = null;
         let fullCardsLoaded = false;
         let allDeckNames = [];
-        // Card data arrays for event delegation (populated by render functions)
-        let _handCards = [];
-        let _playerBfCards = [];
-        let _oppBfCards = [];
+        // The most recently parsed GuiViewModel (from
+        // tui_get_gui_view_model_json). All render functions derive their
+        // output from this snapshot; click handlers look up cards in
+        // `_cardIndex` to recover the typed view for the clicked card_id.
+        let _viewModel = null;
+        // Map from card_id (u32, as a JS number) → the CardView from the
+        // most recent view model. Rebuilt every updateUI() so DOM clicks can
+        // resolve to a typed card without a re-fetch from WASM.
+        let _cardIndex = new Map();
+        // Track the last image URL the details pane requested so we can skip
+        // re-loading the same image during rapid redraws.
+        let _detailsImageCardId = null;
         let _lastStateSummary = null;
 
         function isDebugMode() {
@@ -1139,13 +1190,30 @@
         });
 
         // ==================== UI RENDERING ====================
+        //
+        // game.html is a THIN DOM RENDERER over the Rust GuiViewModel exported
+        // by `tui_get_gui_view_model_json()`. Every display decision (hand
+        // sort order, battlefield section grouping, log color classification,
+        // status text, formatted card details, valid-choice highlighting,
+        // selection state) is made in Rust, and JS just maps the typed view
+        // model to DOM nodes. If a render function below derives anything
+        // beyond simple HTML mapping, it's almost certainly drift from the
+        // TUI and should be moved into `mtg-engine/src/wasm/gui_view_model.rs`.
+        //
+        // Cards are keyed by stable `card_id` (u32). Click handlers call
+        // `tui_select_card(card_id)` which updates the SAME selection state
+        // the ratatui TUI uses, so toggling between modes mid-game keeps the
+        // details pane in sync.
+
+        /// Pull a fresh GuiViewModel from Rust, parse, cache, and re-render
+        /// every pane. Called by the render hook on each frame.
         function updateUI() {
             if (!tuiLaunched) return;
             let stateJson;
             try {
-                stateJson = tui_get_full_state_json();
+                stateJson = tui_get_gui_view_model_json();
             } catch (e) {
-                console.error('Failed to get state:', e);
+                console.error('Failed to get view model:', e);
                 return;
             }
             if (!stateJson || stateJson === '{}') return;
@@ -1154,120 +1222,168 @@
             try {
                 state = JSON.parse(stateJson);
             } catch (e) {
-                console.error('Failed to parse state JSON:', e);
+                console.error('Failed to parse view model JSON:', e);
                 return;
             }
+            _viewModel = state;
 
-            // Debug: summarize what changed since last update
+            // Rebuild the card index from this snapshot. Includes hand,
+            // every battlefield section across both players, graveyards,
+            // command zones, and the stack — every CardView the UI might
+            // need to look up by id from a click handler.
+            _cardIndex = new Map();
+            for (const player of state.players || []) {
+                for (const c of player.hand || []) _cardIndex.set(c.card_id, c);
+                for (const sec of player.battlefield_sections || []) {
+                    for (const c of sec.cards || []) _cardIndex.set(c.card_id, c);
+                }
+                for (const c of player.graveyard || []) _cardIndex.set(c.card_id, c);
+                for (const c of player.command_zone || []) _cardIndex.set(c.card_id, c);
+            }
+            for (const s of state.stack || []) {
+                _cardIndex.set(s.card_id, { card_id: s.card_id, name: s.name, css_classes: ['card'] });
+            }
+
+            const ourIdx = state.our_player_idx ?? 0;
+            const oppIdx = state.players?.length === 2 ? (ourIdx === 0 ? 1 : 0) : null;
+            const ourPlayer = state.players?.[ourIdx] || null;
+            const oppPlayer = oppIdx != null ? state.players?.[oppIdx] : null;
+
+            // Debug summary — print only when something changed.
             if (isDebugMode()) {
                 const summary = {
+                    schema: state.schema_version,
                     turn: state.turn_number,
                     phase: state.current_step,
                     gameOver: state.game_over,
-                    ourLife: state.our_player?.life,
-                    oppLife: state.opponent?.life,
-                    ourBf: state.our_player?.battlefield?.length || 0,
-                    oppBf: state.opponent?.battlefield?.length || 0,
-                    hand: state.our_player?.hand?.length || 0,
+                    ourLife: ourPlayer?.life,
+                    oppLife: oppPlayer?.life,
+                    ourBfSections: ourPlayer?.battlefield_sections?.length || 0,
+                    oppBfSections: oppPlayer?.battlefield_sections?.length || 0,
+                    hand: ourPlayer?.hand?.length || 0,
                     choices: state.choices?.length || 0,
                     stack: state.stack?.length || 0,
+                    selected: state.selected_card?.card_id ?? null,
                 };
                 const summaryStr = JSON.stringify(summary);
                 if (summaryStr !== _lastStateSummary) {
-                    debugLog('updateUI state changed:', summary);
+                    debugLog('updateUI view model changed:', summary);
                     _lastStateSummary = summaryStr;
                 }
             }
 
-            // Use pre-organized player data from Rust
-            const ourPlayer = state.our_player;
-            const oppPlayer = state.opponent;
-
             renderPlayerInfo(ourPlayer, 'player-info-body');
             renderPlayerInfo(oppPlayer, 'opp-info-body');
-            _playerBfCards = ourPlayer?.battlefield || [];
-            _oppBfCards = oppPlayer?.battlefield || [];
-            _handCards = ourPlayer?.hand || [];
-            renderBattlefield(_playerBfCards, 'player-field-cards');
-            renderBattlefield(_oppBfCards, 'opp-field-cards');
-            renderHand(_handCards);
+            renderBattlefield(ourPlayer, 'player-field-cards');
+            renderBattlefield(oppPlayer, 'opp-field-cards');
+            renderHand(ourPlayer);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0);
             renderLog(state.logs || []);
             renderStatusBar(state);
 
-            // Persist card details pane for selected card
-            if (selectedCardName) {
-                const allCards = [
-                    ...(ourPlayer?.battlefield || []),
-                    ...(oppPlayer?.battlefield || []),
-                    ...(ourPlayer?.hand || []),
-                ];
-                const selected = allCards.find(c => c.name === selectedCardName);
-                if (selected) showCardDetails(selected);
-            }
+            // Card details: the view model already contains the
+            // pre-formatted CardDetailView for whatever Rust currently
+            // considers selected — render it directly. No JS-local
+            // selection state to keep in sync.
+            renderCardDetails(state.selected_card);
 
-            // Update hand header with count
-            document.getElementById('hand-header').textContent = `Hand (${ourPlayer?.hand_size || 0})`;
+            const handCount = ourPlayer?.hand_size ?? 0;
+            document.getElementById('hand-header').textContent = `Hand (${handCount})`;
         }
 
-        function renderPlayerInfo(player, bodyId, headerId) {
+        /// Render the compact info bar text above each player's zones.
+        /// Uses the Rust-formatted `info_bar_text` so the GUI never disagrees
+        /// with the TUI's `draw_player_info` on label or counts.
+        function renderPlayerInfo(player, bodyId) {
             if (!player) return;
             const body = document.getElementById(bodyId);
             if (!body) return;
-
-            const graveyardCount = player.graveyard ? player.graveyard.length : 0;
-            // Compact info bar format matching TUI: "Name: 20 life | Library: 53 | Hand: 7 | GY: 0"
-            body.textContent = `${player.name}: ${player.life} life | Library: ${player.library_size} | Hand: ${player.hand_size} | GY: ${graveyardCount}`;
+            body.textContent = player.info_bar_text;
         }
 
-        function renderBattlefield(cards, containerId) {
+        /// Render a player's battlefield as a sequence of section blocks.
+        /// Each section comes pre-ordered and labelled by the view model
+        /// (PWs/Creatures/Enchants/Artifacts/Lands for the local player;
+        /// reversed for the opponent), so JS just maps them to DOM.
+        function renderBattlefield(player, containerId) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
-            for (const card of cards) {
-                // Skip equipment that is attached to a creature (rendered with the creature)
-                if (card.is_equipment && card.attached_to) continue;
+            if (!player || !player.battlefield_sections || player.battlefield_sections.length === 0) {
+                return;
+            }
+            for (const section of player.battlefield_sections) {
+                if (!section.cards || section.cards.length === 0) continue;
 
-                const el = createCardElement(card, false);
+                const secEl = document.createElement('div');
+                secEl.className = `bf-section bf-${section.category}`;
 
-                // If creature has equipment attached, show equipment badge
-                if (card.attachments && card.attachments.length > 0) {
-                    const equipNames = card.attachments.map(a => a.name).join(', ');
-                    const badge = document.createElement('div');
-                    badge.className = 'card-equip-badge';
-                    badge.textContent = equipNames;
-                    badge.title = equipNames;
-                    el.appendChild(badge);
-                    el.classList.add('equipped');
+                const labelEl = document.createElement('div');
+                labelEl.className = 'bf-section-label';
+                labelEl.textContent = `${section.label} (${section.cards.length})`;
+                secEl.appendChild(labelEl);
+
+                const grid = document.createElement('div');
+                grid.className = 'bf-section-cards';
+                for (const card of section.cards) {
+                    // Skip equipment attached to a creature — the creature
+                    // already shows an equipment badge for it, mirroring
+                    // the TUI's stacked rendering.
+                    if (card.attached_to != null) continue;
+                    const el = createCardElement(card, false);
+                    if (card.attachments && card.attachments.length > 0) {
+                        const equipNames = card.attachments.map(a => a.name).join(', ');
+                        const badge = document.createElement('div');
+                        badge.className = 'card-equip-badge';
+                        badge.textContent = equipNames;
+                        badge.title = equipNames;
+                        el.appendChild(badge);
+                        el.classList.add('equipped');
+                    }
+                    grid.appendChild(el);
                 }
-
-                container.appendChild(el);
+                secEl.appendChild(grid);
+                container.appendChild(secEl);
             }
         }
 
-        function renderHand(cards) {
+        /// Render the hand as a text list. Cards are already in display order
+        /// (lands first, then descending CMC) per `get_sorted_hand`, so JS
+        /// just walks the list.
+        function renderHand(player) {
             const container = document.getElementById('hand-body');
             if (!container) return;
-            // Render as text list matching TUI format
+            const cards = player?.hand || [];
             if (cards.length === 0) {
                 container.innerHTML = '<div style="color:#444; font-size:12px;">(empty)</div>';
                 return;
             }
             container.innerHTML = cards.map((card, i) => {
-                const cls = card.name === selectedCardName ? ' selected-hand' : '';
-                const mana = card.mana_cost ? ` <span style="color:#4cc9f0">${escapeHtml(card.mana_cost)}</span>` : '';
-                return `<div class="hand-entry${cls}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
+                const classes = ['hand-entry'];
+                if (card.is_selected) classes.push('selected-hand');
+                if (card.is_valid_choice) classes.push('valid-choice');
+                const mana = card.mana_cost
+                    ? ` <span style="color:#4cc9f0">${escapeHtml(card.mana_cost)}</span>`
+                    : '';
+                return `<div class="${classes.join(' ')}" data-card-id="${card.card_id}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
         }
 
+        /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
+        /// and the is_selected/is_valid_choice flags all come from the view
+        /// model — we never re-derive them from the card name here.
         function createCardElement(card, showMana) {
             const div = document.createElement('div');
-            // Use pre-computed CSS classes from Rust, plus selected state
-            div.className = (card.css_classes || ['card']).join(' ');
-            if (card.name === selectedCardName) div.classList.add('selected-card');
+            const classes = (card.css_classes && card.css_classes.length > 0) ? card.css_classes.slice() : ['card'];
+            if (card.is_selected) classes.push('selected-card');
+            if (card.is_valid_choice) classes.push('valid-choice');
+            div.className = classes.join(' ');
 
             let imgHtml = '';
             if (showImages) {
+                // Image lookup is keyed by card NAME (file naming convention,
+                // shared with the TUI's image overlay). The selection /
+                // identity key remains card_id.
                 const urls = getCardImageFallbackUrls(card.name, 106);
                 if (urls.length > 0) {
                     const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
@@ -1275,57 +1391,67 @@
                 }
             }
 
-            // Use pre-computed formatted P/T from Rust
             const ptHtml = card.formatted_pt
                 ? `<div class="card-pt">${card.formatted_pt}</div>`
                 : '';
+            const manaHtml = (showMana && card.mana_cost)
+                ? `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`
+                : '';
 
-            let manaHtml = '';
-            if (showMana && card.mana_cost) {
-                manaHtml = `<div class="card-mana">${escapeHtml(card.mana_cost)}</div>`;
-            }
-
-            div.setAttribute('data-card-name', card.name);
+            div.setAttribute('data-card-id', String(card.card_id));
+            div.setAttribute('data-card-name', card.name); // diagnostic aid only
             div.innerHTML = `${imgHtml}<div class="card-name">${escapeHtml(card.name)}</div>${ptHtml}${manaHtml}`;
-
             return div;
         }
 
-        function showCardDetails(card) {
+        /// Render the Card Details pane from a CardDetailView. The image is
+        /// placed FIRST (above the text) per the new layout requirement; the
+        /// detail strings (cost / type / P/T / status / oracle lines) are
+        /// pre-formatted by Rust to match `draw_card_details`.
+        function renderCardDetails(detail) {
             const body = document.getElementById('card-details-body');
-            if (!body || !card) return;
-            debugLog('showCardDetails:', card.name, {types: card.types, pt: card.formatted_pt, mana: card.mana_cost, oracle: card.oracle_text?.substring(0, 80)});
-
-            const ptHtml = card.formatted_pt
-                ? `<div class="card-detail-pt">${card.formatted_pt}</div>`
-                : (card.is_creature && card.power != null)
-                    ? `<div class="card-detail-pt">${card.power}/${card.toughness}</div>`
-                    : '';
-            let equipHtml = '';
-            if (card.attachments && card.attachments.length > 0) {
-                equipHtml = `<div style="padding: 4px 10px; font-size: 12px; color: #ffd700;">Equipped: ${card.attachments.map(a => escapeHtml(a.name)).join(', ')}</div>`;
+            if (!body) return;
+            if (!detail) {
+                body.innerHTML = '<div style="color: #666; padding: 20px; text-align: center; font-size: 12px;">Click a card to see details</div>';
+                _detailsImageCardId = null;
+                return;
             }
 
-            // Text appears instantly; image placeholder is at the bottom
-            body.innerHTML = `
-                <div class="card-detail-name">${escapeHtml(card.name)}</div>
-                <div class="card-detail-type">${escapeHtml(card.types || '')}</div>
-                ${card.mana_cost ? `<div style="padding: 0 10px; color: #888; font-size: 12px;">${escapeHtml(card.mana_cost)}</div>` : ''}
-                ${ptHtml}
-                ${card.oracle_text ? `<div style="padding: 4px 10px; color: #ccc; font-size: 12px; white-space: pre-wrap; line-height: 1.4;">${escapeHtml(card.oracle_text)}</div>` : ''}
-                ${equipHtml}
-                <div class="card-detail-image" id="card-detail-img-slot"></div>
-            `;
+            // Build the panel: image first (placeholder slot), then formatted
+            // detail strings exactly as the Rust formatter produced them.
+            const oracleHtml = (detail.oracle_lines && detail.oracle_lines.length > 0)
+                ? `<div style="padding: 6px 10px; color: #ccc; font-size: 12px; white-space: pre-wrap; line-height: 1.4;">${detail.oracle_lines.map(escapeHtml).join('<br>')}</div>`
+                : '';
 
-            // Load image async so text display is never blocked
-            if (showImages) {
-                const urls = getCardImageFallbackUrls(card.name, 310);
+            const segments = [];
+            // Image slot at the top.
+            segments.push('<div class="card-detail-image" id="card-detail-img-slot"></div>');
+            segments.push(`<div class="card-detail-name">${escapeHtml(detail.name_with_id)}</div>`);
+            segments.push(`<div class="card-detail-type">${escapeHtml(detail.type_line || '')}</div>`);
+            if (detail.cost_line) {
+                segments.push(`<div style="padding: 0 10px; color: #888; font-size: 12px;">${escapeHtml(detail.cost_line)}</div>`);
+            }
+            if (detail.pt_line) {
+                segments.push(`<div class="card-detail-pt">${escapeHtml(detail.pt_line)}</div>`);
+            }
+            if (detail.status_line) {
+                segments.push(`<div style="padding: 4px 10px; color: #aaa; font-size: 12px;">${escapeHtml(detail.status_line)}</div>`);
+            }
+            segments.push(oracleHtml);
+            body.innerHTML = segments.join('');
+
+            // Load the image asynchronously into the top slot. Skip if we
+            // already loaded it for this card_id this session — avoids
+            // flicker on every 30ms updateUI tick.
+            if (showImages && detail.card_id !== _detailsImageCardId) {
+                _detailsImageCardId = detail.card_id;
+                const urls = getCardImageFallbackUrls(detail.name, 310);
                 if (urls.length > 0) {
                     const slot = document.getElementById('card-detail-img-slot');
                     if (slot) {
                         const img = new Image();
                         const fallbacks = urls.slice(1);
-                        img.alt = card.name;
+                        img.alt = detail.name;
                         img.onerror = function() {
                             if (fallbacks.length > 0) {
                                 img.src = fallbacks.shift();
@@ -1337,9 +1463,23 @@
                         slot.appendChild(img);
                     }
                 }
+            } else if (showImages && detail.card_id === _detailsImageCardId) {
+                // Same card, but we just rebuilt the slot — re-attach the
+                // already-cached image so it still shows.
+                const urls = getCardImageFallbackUrls(detail.name, 310);
+                if (urls.length > 0) {
+                    const slot = document.getElementById('card-detail-img-slot');
+                    if (slot) {
+                        const img = new Image();
+                        img.alt = detail.name;
+                        img.src = urls[0];
+                        slot.appendChild(img);
+                    }
+                }
             }
         }
 
+        /// Render the stack panel from the view model's `stack` array.
         function renderStack(stack) {
             const section = document.getElementById('stack-section');
             const body = document.getElementById('stack-body');
@@ -1350,16 +1490,19 @@
             }
             section.style.display = 'block';
             body.innerHTML = stack.map(item =>
-                `<div style="color:#ff9f43; padding:1px 0;">${escapeHtml(item.name)}</div>`
+                `<div data-card-id="${item.card_id}" style="color:#ff9f43; padding:1px 0; cursor:pointer;">${escapeHtml(item.name)}</div>`
             ).join('');
         }
 
+        /// Render the available-actions list. Choice text and 1-based display
+        /// numbers come pre-formatted from the view model (`ChoiceView`).
         function renderActions(prompt, choices, selectedIdx) {
             const promptEl = document.getElementById('actions-prompt');
             const body = document.getElementById('actions-body');
 
             if (choices.length > 0) {
-                debugLog('renderActions:', prompt, `${choices.length} choices, selected=${selectedIdx}`, choices.map((c, i) => `${i}: ${c.text}`));
+                debugLog('renderActions:', prompt, `${choices.length} choices, selected=${selectedIdx}`,
+                    choices.map((c) => `${c.display_number}: ${c.text}`));
             }
 
             if (prompt) {
@@ -1374,10 +1517,13 @@
                 return;
             }
 
-            body.innerHTML = choices.map((choice, i) => {
-                const isSelected = i === selectedIdx;
-                return `<div class="action-item ${isSelected ? 'selected' : ''}" data-idx="${i}">
-                    <span class="action-idx">${i + 1}.</span>${escapeHtml(choice.text)}
+            body.innerHTML = choices.map((choice) => {
+                const i = choice.index;
+                const classes = ['action-item'];
+                if (i === selectedIdx) classes.push('selected');
+                if (choice.highlighted) classes.push('highlighted');
+                return `<div class="${classes.join(' ')}" data-idx="${i}">
+                    <span class="action-idx">${choice.display_number}.</span>${escapeHtml(choice.text)}
                 </div>`;
             }).join('');
         }
@@ -1390,41 +1536,35 @@
             setTimeout(updateUI, 50);
         }
 
+        /// Render the log pane from `LogEntryView` records. Color and bold
+        /// come straight from Rust's shared `classify_log_message`, so the
+        /// GUI and TUI never disagree on what color a message gets.
         function renderLog(logs) {
             const body = document.getElementById('log-body');
-            // Logs are now objects: { text, color, bold }
-            // Filter out verbose choice/priority entries
-            const filtered = logs.filter(e => typeof e === 'object' ? !e.text.startsWith('<Choice>') : !e.startsWith('<Choice>'));
-            const currentCount = body.children.length;
-            if (currentCount === filtered.length) return;
+            // Drop verbose <Choice> tracker entries (not interesting to humans).
+            const filtered = logs.filter(e => !e.is_choice);
+            if (body.children.length === filtered.length) return;
 
             body.innerHTML = filtered.map(e => {
-                if (typeof e === 'object') {
-                    const style = `color:${e.color || '#ccc'};${e.bold ? 'font-weight:bold;' : ''}`;
-                    return `<div class="log-entry" style="${style}">${escapeHtml(e.text)}</div>`;
-                }
-                return `<div class="log-entry">${escapeHtml(e)}</div>`;
+                const style = `color:${e.color || '#ccc'};${e.bold ? 'font-weight:bold;' : ''}`;
+                const cls = `log-entry ${e.semantic_class || ''}`.trim();
+                return `<div class="${cls}" style="${style}">${escapeHtml(e.text)}</div>`;
             }).join('');
             body.scrollTop = body.scrollHeight;
         }
 
+        /// Render the bottom status bar. The view model produces the canonical
+        /// "Turn N | Phase: … | Active: P?" status string already.
         function renderStatusBar(state) {
             const bar = document.getElementById('status-bar');
             const phase = bar.querySelector('.phase');
             const turn = bar.querySelector('.turn');
 
-            // Use pre-computed status text from Rust
-            if (state.status_text) {
-                const parts = state.status_text.split(' | ');
-                turn.textContent = parts[0] || '';
-                phase.textContent = parts[1] || '';
-                if (state.game_over) {
-                    turn.style.color = '#ff6b6b';
-                }
-            } else {
-                phase.textContent = `Phase: ${state.current_step || '?'}`;
-                turn.textContent = `Turn ${state.turn_number || 0}`;
-            }
+            const status = state.status_text || `Turn ${state.turn_number || 0}`;
+            const parts = status.split(' | ');
+            turn.textContent = parts[0] || '';
+            phase.textContent = parts.slice(1).join(' | ');
+            turn.style.color = state.game_over ? '#ff6b6b' : '';
 
             const mini = document.getElementById('turn-mini');
             if (mini) {
@@ -1489,15 +1629,13 @@
             setTimeout(() => {
                 updateUI();
                 if (autoRunning && tuiLaunched) {
-                    // Check if game is over
-                    try {
-                        const s = JSON.parse(tui_get_full_state_json());
-                        if (s.game_over) {
-                            autoRunning = false;
-                            document.getElementById('btn-auto').textContent = 'Auto Run';
-                            return;
-                        }
-                    } catch (e) { /* continue */ }
+                    // Read game_over from the cached view model rather than
+                    // making another WASM call — `updateUI` just refreshed it.
+                    if (_viewModel && _viewModel.game_over) {
+                        autoRunning = false;
+                        document.getElementById('btn-auto').textContent = 'Auto Run';
+                        return;
+                    }
                     setTimeout(startAutoRun, 100);
                 }
             }, 50);
@@ -1531,7 +1669,12 @@
             cleanup_tui_state();
             tuiLaunched = false;
             autoRunning = false;
-            selectedCardName = null;
+            // Selection state lives in Rust now, but tear down our caches so
+            // the next launch starts from a clean slate.
+            _viewModel = null;
+            _cardIndex = new Map();
+            _detailsImageCardId = null;
+            _lastStateSummary = null;
 
             document.getElementById('game-area').classList.remove('show');
             document.getElementById('game-controls').style.display = 'none';
@@ -1583,46 +1726,72 @@
         }
 
         // ==================== EVENT DELEGATION ====================
-        // Attach click handlers to containers (not individual cards) so they
-        // survive DOM rebuilds from the 30ms render loop.
+        //
+        // Click handlers route ALL card selections through the Rust
+        // `tui_select_card(card_id)` export so the TUI and GUI share a
+        // single selection state. The returned CardDetailView JSON is fed
+        // straight back into the details pane for instant feedback; the
+        // next `updateUI` tick refreshes the rest of the GUI to pick up the
+        // new `is_selected` flags. Card identity is the stable u32
+        // `card_id` from the view model — never the card name.
+
+        /// Common click → select handler shared by hand, battlefield, and
+        /// stack panes. Reads the `data-card-id` attribute on the clicked
+        /// element, calls `tui_select_card`, and renders the returned
+        /// details JSON immediately.
+        function selectCardById(cardId, source) {
+            if (cardId == null || isNaN(cardId)) return;
+            debugLog(`click ${source}: card_id=${cardId}`);
+            let detailJson;
+            try {
+                detailJson = tui_select_card(cardId);
+            } catch (e) {
+                console.error('tui_select_card threw:', e);
+                return;
+            }
+            // `null` means the card is hidden to the perspective player or
+            // doesn't exist — leave the existing details pane alone.
+            if (!detailJson || detailJson === 'null') {
+                debugLog(`tui_select_card(${cardId}) returned null — not selectable`);
+                return;
+            }
+            try {
+                const detail = JSON.parse(detailJson);
+                renderCardDetails(detail);
+            } catch (e) {
+                console.error('Failed to parse selected card detail JSON:', e);
+            }
+        }
+
         function setupEventDelegation() {
-            // Hand clicks
+            // Hand clicks.
             document.getElementById('hand-body').addEventListener('click', (e) => {
                 const entry = e.target.closest('.hand-entry');
                 if (!entry) return;
-                const idx = parseInt(entry.dataset.idx);
-                const card = _handCards[idx];
-                if (!card) return;
-                debugLog('click hand card:', card.name, `idx=${idx}`);
-                selectedCardName = card.name;
-                showCardDetails(card);
-                entry.closest('#hand-body').querySelectorAll('.hand-entry').forEach(e => e.classList.remove('selected-hand'));
-                entry.classList.add('selected-hand');
+                selectCardById(parseInt(entry.dataset.cardId, 10), 'hand');
             });
 
-            // Battlefield clicks (both player and opponent)
+            // Battlefield clicks (both player and opponent).
             for (const containerId of ['player-field-cards', 'opp-field-cards']) {
                 document.getElementById(containerId).addEventListener('click', (e) => {
                     const cardEl = e.target.closest('.card');
                     if (!cardEl) return;
-                    const cardName = cardEl.dataset.cardName;
-                    if (!cardName) return;
-                    const cards = containerId === 'player-field-cards' ? _playerBfCards : _oppBfCards;
-                    const card = cards.find(c => c.name === cardName);
-                    if (!card) return;
-                    debugLog('click battlefield card:', cardName, `zone=${containerId}`, {x: e.clientX, y: e.clientY});
-                    selectedCardName = card.name;
-                    showCardDetails(card);
-                    document.querySelectorAll('.card.selected-card').forEach(el => el.classList.remove('selected-card'));
-                    cardEl.classList.add('selected-card');
+                    selectCardById(parseInt(cardEl.dataset.cardId, 10), `bf:${containerId}`);
                 });
             }
 
-            // Action clicks
+            // Stack clicks — stack entries carry the same `data-card-id`.
+            document.getElementById('stack-body').addEventListener('click', (e) => {
+                const item = e.target.closest('[data-card-id]');
+                if (!item) return;
+                selectCardById(parseInt(item.dataset.cardId, 10), 'stack');
+            });
+
+            // Action clicks (controller choices) — unchanged routing.
             document.getElementById('actions-body').addEventListener('click', (e) => {
                 const item = e.target.closest('.action-item');
                 if (!item) return;
-                const idx = parseInt(item.dataset.idx);
+                const idx = parseInt(item.dataset.idx, 10);
                 debugLog('click action:', idx, item.textContent.trim());
                 if (!isNaN(idx)) selectAction(idx);
             });
