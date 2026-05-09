@@ -516,112 +516,64 @@ impl<'a> GameLoop<'a> {
         Ok(())
     }
 
-    /// Validate blocker assignments for blocking restrictions
+    /// Validate blocker assignments for blocking restrictions.
     ///
-    /// Checks for:
-    /// - Flying (MTG Rule 702.9b): Creatures with flying can only be blocked by
-    ///   creatures with flying or reach
-    /// - Menace (MTG Rule 702.111b): Can't be blocked except by two or more creatures
-    /// - CantBeBlocked persistent effects (e.g., from Deserter's Disciple)
+    /// Per-pair restrictions (Flying, Reach, Horsemanship, Shadow, Fear,
+    /// Intimidate, Skulk, Protection, CantBeBlocked, Tapped) are delegated to
+    /// the shared [`combat_rules::can_block`] predicate so the GUI choice menu
+    /// and this validator agree on what is legal.
     ///
-    /// This method removes illegal blocker assignments from the blocks list.
+    /// The aggregate Menace check (CR 702.111b — at least two blockers) is
+    /// applied here because it depends on the full assignment.
     ///
-    /// Returns a filtered list of valid blocker assignments.
+    /// Returns a filtered list of valid blocker assignments. Illegal entries
+    /// are dropped silently in the gamelog (with a Verbose-level note) since
+    /// the UI is responsible for not offering them in the first place.
     fn validate_blocking_restrictions(
         &self,
         blocks: &SmallVec<[(crate::core::CardId, crate::core::CardId); 8]>,
         _attackers: &SmallVec<[crate::core::CardId; 8]>,
     ) -> Result<SmallVec<[(crate::core::CardId, crate::core::CardId); 8]>> {
+        use crate::game::combat_rules;
         use std::collections::HashMap;
 
-        // Count how many blockers each attacker has
+        // Count how many blockers each attacker has (used for Menace).
         let mut blocker_counts: HashMap<crate::core::CardId, usize> = HashMap::new();
         for (_blocker_id, attacker_id) in blocks.iter() {
             *blocker_counts.entry(*attacker_id).or_insert(0) += 1;
         }
 
-        // Filter out invalid blocks
         let mut validated_blocks = SmallVec::new();
         for (blocker_id, attacker_id) in blocks.iter() {
-            // Tapped creatures cannot block (CR 509.1a)
-            // Defense-in-depth: get_available_blocker_creatures already filters these,
-            // but verify in case controller bypasses the pre-filter
-            if let Ok(blocker_card) = self.game.cards.get(*blocker_id) {
-                if blocker_card.tapped {
-                    if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
-                        self.game
-                            .logger
-                            .verbose(&format!("{} is tapped and can't block", blocker_card.name));
-                    }
-                    continue;
-                }
-            }
-
-            // Check if attacker has "can't be blocked" persistent effect
-            let cant_be_blocked = self.game.persistent_effects.is_creature_unblockable(*attacker_id);
-
-            if cant_be_blocked {
-                // Attacker can't be blocked - skip this block assignment
+            // Per-pair legality (Flying, Reach, Shadow, Fear, etc).
+            if !combat_rules::can_block(self.game, *attacker_id, *blocker_id) {
                 if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
-                    if let Ok(attacker) = self.game.cards.get(*attacker_id) {
-                        if let Ok(blocker) = self.game.cards.get(*blocker_id) {
-                            self.game.logger.verbose(&format!(
-                                "{} can't be blocked - {} can't block it",
-                                attacker.name, blocker.name
-                            ));
-                        }
+                    if let (Ok(attacker), Ok(blocker)) =
+                        (self.game.cards.get(*attacker_id), self.game.cards.get(*blocker_id))
+                    {
+                        self.game.logger.verbose(&format!(
+                            "Illegal block dropped: {} can't block {} (evasion or restriction)",
+                            blocker.name, attacker.name,
+                        ));
                     }
                 }
                 continue;
             }
 
-            // Check Flying (MTG Rule 702.9b): Creatures with flying can only be blocked
-            // by creatures with flying or reach
-            let attacker_has_flying = self
-                .game
-                .has_keyword_with_effects(*attacker_id, crate::core::Keyword::Flying);
-
-            if attacker_has_flying {
-                let blocker_has_flying_or_reach = self
-                    .game
-                    .has_keyword_with_effects(*blocker_id, crate::core::Keyword::Flying)
-                    || self
-                        .game
-                        .has_keyword_with_effects(*blocker_id, crate::core::Keyword::Reach);
-
-                if !blocker_has_flying_or_reach {
-                    // Flying creature blocked by ground creature - invalid
-                    if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
-                        if let Ok(attacker) = self.game.cards.get(*attacker_id) {
-                            if let Ok(blocker) = self.game.cards.get(*blocker_id) {
-                                self.game.logger.verbose(&format!(
-                                    "{} has flying - {} can't block it (needs flying or reach)",
-                                    attacker.name, blocker.name
-                                ));
-                            }
-                        }
-                    }
-                    continue;
-                }
-            }
-
-            let count = blocker_counts.get(attacker_id).copied().unwrap_or(0);
-
-            // Check if attacker has Menace
+            // Aggregate Menace (CR 702.111b): exactly-one blocker is illegal.
             let has_menace = self
                 .game
                 .has_keyword_with_effects(*attacker_id, crate::core::Keyword::Menace);
-
+            let count = blocker_counts.get(attacker_id).copied().unwrap_or(0);
             if has_menace && count == 1 {
-                // Menace creature with exactly 1 blocker - invalid, skip this block
                 if self.verbosity >= VerbosityLevel::Verbose && !self.replaying {
-                    if let Ok(attacker) = self.game.cards.get(*attacker_id) {
-                        if let Ok(blocker) = self.game.cards.get(*blocker_id) {
-                            self.game.logger.verbose(&format!(
-                                "Menace prevents {} from blocking {} alone (requires 2+ blockers)",
-                                blocker.name, attacker.name
-                            ));
-                        }
+                    if let (Ok(attacker), Ok(blocker)) =
+                        (self.game.cards.get(*attacker_id), self.game.cards.get(*blocker_id))
+                    {
+                        self.game.logger.verbose(&format!(
+                            "Menace prevents {} from blocking {} alone (requires 2+ blockers)",
+                            blocker.name, attacker.name
+                        ));
                     }
                 }
                 continue;
