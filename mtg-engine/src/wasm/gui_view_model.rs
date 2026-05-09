@@ -417,6 +417,24 @@ fn build_card_view(
     })
 }
 
+/// Build the selected card detail panel from a perspective + card id.
+///
+/// Public wrapper around `build_selected_card_detail` for callers (such as
+/// the `tui_select_card` WASM export) that already know the perspective and
+/// just need the formatted detail panel JSON. Returns `None` if the card is
+/// not present in the game state.
+pub fn selected_card_detail(game: &GameState, perspective: PlayerId, card_id: CardId) -> Option<CardDetailView> {
+    let view = GameStateView::new(game, perspective);
+    build_selected_card_detail(&view, card_id)
+}
+
+/// Serialize a single `CardDetailView` (or `null` if `None`) to JSON. This is
+/// the response shape used by `tui_select_card` so the GUI can render the
+/// details panel without re-fetching the full view model.
+pub fn selected_card_detail_json(detail: Option<CardDetailView>) -> String {
+    serde_json::to_string(&detail).unwrap_or_else(|_| "null".to_string())
+}
+
 /// Build the selected card detail panel. Mirrors `draw_card_details`.
 fn build_selected_card_detail(view: &GameStateView, selected: CardId) -> Option<CardDetailView> {
     let card = view.get_card(selected)?;

@@ -14,6 +14,7 @@
 use crate::core::{CardId, PlayerId};
 use crate::game::controller::GameStateView;
 use crate::game::fancy_tui_renderer::{FancyTuiRenderer, FancyTuiState, FocusedPane};
+use smallvec::SmallVec;
 
 /// Result of handling a keyboard event
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -752,6 +753,138 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
     false
 }
 
+/// Outcome of selecting a card by id (e.g. via the HTML GUI). Reported back so
+/// callers can decide whether to redraw, or to surface an error to the user
+/// when the id does not refer to a card the perspective player can select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardSelectionResult {
+    /// Selection updated; the GUI should redraw the details pane.
+    Selected {
+        /// Where the card was located (for the GUI's badge / focus).
+        zone: SelectedCardZone,
+    },
+    /// `card_id` does not refer to any card in the game state.
+    NotFound,
+    /// Card exists but is not currently visible to the perspective player
+    /// (e.g. opponent's hand or library — must not leak hidden information).
+    NotVisible,
+}
+
+/// Where a selected card lives, from the perspective of one player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectedCardZone {
+    /// Our own hand.
+    OurHand,
+    /// Our battlefield.
+    OurBattlefield,
+    /// Opponent's battlefield.
+    OpponentBattlefield,
+    /// A graveyard (could be either player's).
+    Graveyard,
+    /// The shared stack.
+    Stack,
+    /// A command zone (Commander format).
+    Command,
+}
+
+/// Select a card by stable id and update the corresponding focus/index state.
+///
+/// This is the SHARED selection routine used by both the ratatui mouse-click
+/// handler (which derives a `CardId` from a clicked entity area) and the WASM
+/// `tui_select_card` export (which receives the `CardId` directly from the
+/// HTML GUI). Both code paths end up updating the same `FancyTuiState` fields
+/// — `selected_card_id` plus the appropriate per-pane index/highlight — so
+/// the TUI and the GUI never disagree on what's selected.
+///
+/// Hidden-information rule: opponent's hand and any player's library are NOT
+/// selectable; they return `NotVisible` without mutating state. This protects
+/// the network/WASM boundary from accidental hidden-state leaks.
+///
+/// Returns `Selected` with the zone where the card lives, or `NotFound` /
+/// `NotVisible` when selection could not happen.
+pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &GameStateView) -> CardSelectionResult {
+    let Some(card) = view.get_card(card_id) else {
+        return CardSelectionResult::NotFound;
+    };
+
+    let perspective = view.player_id();
+
+    // Walk the zones in the same order as the TUI's mouse handler.
+    // 1. Our hand.
+    let our_hand = view.player_hand(perspective);
+    if our_hand.contains(&card_id) {
+        // Use the SAME sorted order as `draw_hand` so the index matches what
+        // the user sees in the TUI (and what `get_sorted_hand` exposes to
+        // the GUI view model).
+        let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
+        if let Some(idx) = sorted_hand.iter().position(|&cid| cid == card_id) {
+            state.selected_card_in_hand = Some(idx);
+        }
+        state.selected_card_id = Some(card_id);
+        state.focused_pane = FocusedPane::Hand;
+        return CardSelectionResult::Selected {
+            zone: SelectedCardZone::OurHand,
+        };
+    }
+
+    // 2. Battlefield (split by controller — same as the mouse handler).
+    if view.battlefield().contains(&card_id) {
+        state.selected_card_id = Some(card_id);
+        if card.controller == perspective {
+            state.selected_card_in_your_bf = Some(card_id);
+            state.focused_pane = FocusedPane::YourBattlefield;
+            return CardSelectionResult::Selected {
+                zone: SelectedCardZone::OurBattlefield,
+            };
+        }
+        state.selected_card_in_opp_bf = Some(card_id);
+        state.focused_pane = FocusedPane::OpponentBattlefield;
+        return CardSelectionResult::Selected {
+            zone: SelectedCardZone::OpponentBattlefield,
+        };
+    }
+
+    // 3. Stack — public, but no associated pane. The mouse handler treats
+    //    a stack click as a battlefield-like selection (just sets the
+    //    detail pane), and we mirror that here.
+    if view.stack().contains(&card_id) {
+        state.selected_card_id = Some(card_id);
+        return CardSelectionResult::Selected {
+            zone: SelectedCardZone::Stack,
+        };
+    }
+
+    // 4. Any player's graveyard or command zone (both are public).
+    let all_players: SmallVec<[PlayerId; 4]> = std::iter::once(perspective).chain(view.opponents()).collect();
+    for pid in all_players {
+        if view.player_graveyard(pid).contains(&card_id) {
+            state.selected_card_id = Some(card_id);
+            return CardSelectionResult::Selected {
+                zone: SelectedCardZone::Graveyard,
+            };
+        }
+        if view.player_command_zone(pid).contains(&card_id) {
+            state.selected_card_id = Some(card_id);
+            return CardSelectionResult::Selected {
+                zone: SelectedCardZone::Command,
+            };
+        }
+    }
+
+    // Hidden zones (library, opponent's hand). Do NOT select — would leak
+    // hidden information through the WASM boundary.
+    CardSelectionResult::NotVisible
+}
+
+/// Clear any current card selection and reset per-pane selection indices that
+/// reference a specific card. Mirrors `select_card_by_id` for the negative case.
+pub fn clear_card_selection(state: &mut FancyTuiState) {
+    state.selected_card_id = None;
+    state.selected_card_in_hand = None;
+    state.selected_card_in_your_bf = None;
+    state.selected_card_in_opp_bf = None;
+}
+
 /// Get help text describing all keyboard shortcuts
 ///
 /// This function returns a formatted string with all available keyboard shortcuts.
@@ -966,5 +1099,109 @@ mod tests {
             && click_y < entity_pos.area.y + entity_pos.area.height;
 
         assert!(!is_inside, "Click at y=6 should be outside entity at y=5 with height=1");
+    }
+
+    // ---- select_card_by_id (shared GUI/TUI selection routine) -------------
+
+    /// `select_card_by_id` returns `NotFound` for an unknown id and does NOT
+    /// mutate the state. The id namespace is `u32`, so any id can be tried;
+    /// invalid ones must not crash or partially update state.
+    #[test]
+    fn select_card_by_id_unknown_card_returns_not_found() {
+        use crate::game::GameState;
+
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+        let view = GameStateView::new(&game, perspective);
+        let mut state = FancyTuiState::new();
+
+        // CardId(9999) is guaranteed not to exist in a fresh 2-player game.
+        let result = select_card_by_id(&mut state, CardId::new(9999), &view);
+        assert_eq!(result, CardSelectionResult::NotFound);
+        assert!(state.selected_card_id.is_none(), "state must not change on NotFound");
+    }
+
+    /// Selecting our own battlefield card focuses YourBattlefield and updates
+    /// both the per-pane selection and the shared `selected_card_id`.
+    #[test]
+    fn select_card_by_id_our_battlefield_focuses_correctly() {
+        use crate::core::Card;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+
+        // Manually drop a card onto the battlefield owned by the perspective
+        // player. We only need a CardId that resolves to a real Card with a
+        // controller — no need for a full ETB cycle.
+        let card_id = game.next_entity_id();
+        let mut card = Card::new(card_id, "ScratchLand".to_string(), perspective);
+        card.controller = perspective;
+        game.cards.insert(card_id, card);
+        game.battlefield.cards.push(card_id);
+
+        let view = GameStateView::new(&game, perspective);
+        let mut state = FancyTuiState::new();
+        let result = select_card_by_id(&mut state, card_id, &view);
+
+        assert_eq!(
+            result,
+            CardSelectionResult::Selected {
+                zone: SelectedCardZone::OurBattlefield,
+            }
+        );
+        assert_eq!(state.selected_card_id, Some(card_id));
+        assert_eq!(state.selected_card_in_your_bf, Some(card_id));
+        assert_eq!(state.focused_pane, FocusedPane::YourBattlefield);
+        assert!(state.selected_card_in_opp_bf.is_none());
+    }
+
+    /// Selecting an opponent's battlefield card focuses OpponentBattlefield.
+    #[test]
+    fn select_card_by_id_opponent_battlefield_focuses_correctly() {
+        use crate::core::Card;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+        let opponent = game.players[1].id;
+
+        let card_id = game.next_entity_id();
+        let mut card = Card::new(card_id, "OppCreature".to_string(), opponent);
+        card.controller = opponent;
+        game.cards.insert(card_id, card);
+        game.battlefield.cards.push(card_id);
+
+        let view = GameStateView::new(&game, perspective);
+        let mut state = FancyTuiState::new();
+        let result = select_card_by_id(&mut state, card_id, &view);
+
+        assert_eq!(
+            result,
+            CardSelectionResult::Selected {
+                zone: SelectedCardZone::OpponentBattlefield,
+            }
+        );
+        assert_eq!(state.selected_card_id, Some(card_id));
+        assert_eq!(state.selected_card_in_opp_bf, Some(card_id));
+        assert_eq!(state.focused_pane, FocusedPane::OpponentBattlefield);
+        assert!(state.selected_card_in_your_bf.is_none());
+    }
+
+    /// `clear_card_selection` zeros out every card-pointing field.
+    #[test]
+    fn clear_card_selection_zeros_card_pointers() {
+        let mut state = FancyTuiState::new();
+        state.selected_card_id = Some(CardId::new(7));
+        state.selected_card_in_hand = Some(2);
+        state.selected_card_in_your_bf = Some(CardId::new(7));
+        state.selected_card_in_opp_bf = Some(CardId::new(8));
+
+        clear_card_selection(&mut state);
+
+        assert!(state.selected_card_id.is_none());
+        assert!(state.selected_card_in_hand.is_none());
+        assert!(state.selected_card_in_your_bf.is_none());
+        assert!(state.selected_card_in_opp_bf.is_none());
     }
 }

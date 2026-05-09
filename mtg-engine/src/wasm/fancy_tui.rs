@@ -459,6 +459,106 @@ pub fn tui_toggle_auto() {
     });
 }
 
+/// Select a card by stable id (called from the HTML GUI).
+///
+/// This routes the GUI's click into the same shared selection state that the
+/// ratatui TUI uses for keyboard/mouse selection — `FancyTuiState`'s
+/// `selected_card_id` plus the per-pane index/highlight fields. As a result,
+/// the TUI's "Card Details" pane and the GUI's details pane always agree on
+/// what is selected, and switching between modes mid-game is consistent.
+///
+/// Returns the freshly-formatted `CardDetailView` JSON for the selected card,
+/// or:
+/// - the literal string `"null"` when `card_id` is not visible to the
+///   perspective player (e.g. opponent's hand, library — protects against
+///   hidden-information leaks across the WASM boundary), or
+/// - `"null"` when the global TUI state has not been initialized.
+///
+/// Use `tui_clear_card_selection()` to deselect.
+///
+/// See `mtg-engine/src/game/fancy_tui_events.rs::select_card_by_id` for the
+/// shared selection routine and zone-resolution rules.
+#[wasm_bindgen]
+pub fn tui_select_card(card_id: u32) -> String {
+    use super::gui_view_model::{selected_card_detail, selected_card_detail_json};
+    use crate::core::CardId;
+    use crate::game::controller::GameStateView;
+    use crate::game::fancy_tui_events::{select_card_by_id, CardSelectionResult};
+
+    GLOBAL_TUI_STATE.with(|state| {
+        let Some(ref state) = *state.borrow() else {
+            return "null".to_string();
+        };
+        let mut s_ref = state.borrow_mut();
+        // Deref once to get a real `&mut WasmFancyTuiState`, which lets the
+        // borrow checker split-borrow `&s.game` (immutable) and
+        // `&mut s.renderer.state` (mutable) since they are disjoint fields.
+        let s: &mut WasmFancyTuiState = &mut s_ref;
+
+        let cid = CardId::new(card_id);
+        let perspective = s.renderer.player_id;
+
+        let result = {
+            let view = GameStateView::new(&s.game, perspective);
+            select_card_by_id(&mut s.renderer.state, cid, &view)
+        };
+
+        match result {
+            CardSelectionResult::Selected { .. } => {
+                s.needs_redraw = true;
+                let detail = selected_card_detail(&s.game, perspective, cid);
+                selected_card_detail_json(detail)
+            }
+            CardSelectionResult::NotFound | CardSelectionResult::NotVisible => {
+                // Don't mutate state, don't surface an error to JS — return
+                // null so the caller can decide what to do. The TUI logger
+                // already records illegal selections via the controller path.
+                "null".to_string()
+            }
+        }
+    })
+}
+
+/// Clear any current card selection (deselect the details pane).
+///
+/// Updates the same shared state that the TUI uses, so both modes show an
+/// empty details pane after this call.
+#[wasm_bindgen]
+pub fn tui_clear_card_selection() {
+    use crate::game::fancy_tui_events::clear_card_selection;
+
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            clear_card_selection(&mut s.renderer.state);
+            s.needs_redraw = true;
+        }
+    });
+}
+
+/// Get the current selected-card details JSON without changing the selection.
+///
+/// Returns the formatted `CardDetailView` JSON, or `"null"` if no card is
+/// currently selected. Useful for the GUI to refresh the details pane after
+/// a state-changing event (e.g. a creature getting +N/+N from a buff) without
+/// having to roll the whole view model.
+#[wasm_bindgen]
+pub fn tui_get_selected_card_details() -> String {
+    use super::gui_view_model::{selected_card_detail, selected_card_detail_json};
+
+    GLOBAL_TUI_STATE.with(|state| {
+        let Some(ref state) = *state.borrow() else {
+            return "null".to_string();
+        };
+        let s = state.borrow();
+        let Some(card_id) = s.renderer.state.selected_card_id else {
+            return "null".to_string();
+        };
+        let detail = selected_card_detail(&s.game, s.renderer.player_id, card_id);
+        selected_card_detail_json(detail)
+    })
+}
+
 /// Get current battlefield cards as JSON for image overlay
 /// Returns a JSON array of {name: string, instance_id: number}[]
 #[wasm_bindgen]
