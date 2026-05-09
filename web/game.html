@@ -906,6 +906,21 @@
                 await init();
                 status.textContent = `WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`;
 
+                // Expose key view-model functions on `window` so headless
+                // E2E tests (which run code via `page.evaluate`) can probe
+                // the GUI's view of the game. These are read-only — the
+                // GUI itself uses the module-scope imports.
+                window.__mtg = {
+                    tui_get_gui_view_model_json,
+                    tui_select_card,
+                    tui_clear_card_selection,
+                    tui_get_selected_card_details,
+                    getViewModel: () => {
+                        try { return JSON.parse(tui_get_gui_view_model_json()); }
+                        catch (e) { return { error: e.message }; }
+                    },
+                };
+
                 cardDb = new WasmCardDatabase();
 
                 // Load decks metadata

@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -705,6 +705,19 @@ wasm-test-human: wasm-dev
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/"
 	@echo "Test results: web/screenshots/human_test_results.json"
+
+# Test the rebuilt thin-DOM game.html in the browser (Playwright e2e).
+# Validates the GuiViewModel migration: view-model shape, status bar text,
+# player info bars, turn header logging, hand-sort consistency, sequential
+# distinct card selection (the original same-name-collision bug),
+# image-first card details, battlefield section labels, auto-run, and exit.
+wasm-test-game-gui-rebuild: wasm-dev
+	@echo "=== Testing rebuilt game.html (Playwright e2e) ==="
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_game_gui_rebuild.js
+	@echo ""
+	@echo "Screenshots saved in web/screenshots/rebuild_*.png"
+	@echo "Test results: web/screenshots/game_gui_rebuild_results.json"
 
 # Run all WASM e2e tests (production build)
 wasm-e2e: wasm
