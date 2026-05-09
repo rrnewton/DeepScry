@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
+.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -718,6 +718,18 @@ wasm-test-game-gui-rebuild: wasm-dev
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/rebuild_*.png"
 	@echo "Test results: web/screenshots/game_gui_rebuild_results.json"
+
+# Agent-driven playtest: full games (≥10 turns each) across multiple seeds
+# with periodic card click sampling. Reports per-game bug findings into
+# web/screenshots/game_gui_playtest_results.json. Companion long-form
+# verification for `wasm-test-game-gui-rebuild`.
+wasm-test-game-gui-playtest: wasm-dev
+	@echo "=== Playtesting rebuilt game.html (multi-game Playwright) ==="
+	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NODE) test_game_gui_playtest.js
+	@echo ""
+	@echo "Screenshots saved in web/screenshots/playtest_*.png"
+	@echo "Test results: web/screenshots/game_gui_playtest_results.json"
 
 # Run all WASM e2e tests (production build)
 wasm-e2e: wasm

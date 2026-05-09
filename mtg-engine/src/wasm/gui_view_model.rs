@@ -333,8 +333,16 @@ fn build_css_classes(card: &crate::core::Card) -> Vec<&'static str> {
 
 /// Construct the type line (e.g. "Legendary Creature - Human Warrior").
 fn format_type_line(card: &crate::core::Card) -> String {
+    // CardType is a unit-variant enum with no Display impl; its Debug output
+    // is just the variant name ("Land", "Creature"), which is what we want.
     let type_names: Vec<String> = card.types.iter().map(|t| format!("{:?}", t)).collect();
-    let subtype_names: Vec<String> = card.subtypes.iter().map(|s| format!("{:?}", s)).collect();
+    // Subtype is a String newtype with a Display impl that prints the inner
+    // string. Using `{}` here (not `{:?}`) avoids the ugly
+    // `Subtype("Basic")` debug rendering that the previous version produced
+    // (caught by the playtest agent — see the seed-123 game where the
+    // "Plains" detail showed `Subtype("Basic") Subtype("Plains")` instead
+    // of `Basic Plains`).
+    let subtype_names: Vec<String> = card.subtypes.iter().map(|s| format!("{}", s)).collect();
     if subtype_names.is_empty() {
         type_names.join(" ")
     } else {
