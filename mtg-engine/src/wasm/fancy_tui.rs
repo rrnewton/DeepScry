@@ -510,6 +510,60 @@ pub fn tui_clear_logs() {
     });
 }
 
+/// Get the structured GUI view model as JSON.
+///
+/// This is the new entry point for `web/game.html`'s thin DOM renderer:
+/// instead of dumping raw card lists and re-deriving display decisions in
+/// JavaScript, we build a fully-formatted view model in Rust using the same
+/// shared helpers as the ratatui TUI (`FancyTuiRenderer::get_sorted_hand`,
+/// `categorize_card`, `classify_log_message`, etc.).
+///
+/// Schema is defined in `crate::wasm::gui_view_model::GuiViewModel`. Bump
+/// `VIEW_MODEL_SCHEMA_VERSION` when changing the JSON shape so the JS side
+/// can detect a stale renderer.
+///
+/// See `tui_get_full_state_json` for the legacy entry point that this is
+/// gradually replacing.
+#[wasm_bindgen]
+pub fn tui_get_gui_view_model_json() -> String {
+    use super::gui_view_model::{build_view_model_json, ViewModelInputs};
+
+    GLOBAL_TUI_STATE.with(|state| {
+        let Some(ref state) = *state.borrow() else {
+            return "{}".to_string();
+        };
+        let s = state.borrow();
+
+        // The renderer's `valid_choices` (cards selectable by the human) is
+        // the right thing to highlight on the GUI as well — same source of
+        // truth as the TUI hand/battlefield highlighting.
+        let valid_choices: Vec<crate::core::CardId> = s.renderer.state.valid_choices.clone();
+
+        // Map the rendering-side choice context to a stable, JS-friendly name.
+        let choice_context = super::gui_view_model::choice_context_name(s.renderer.state.choice_context);
+
+        // The pending controller-side ChoiceContext (e.g. Discard, Targets)
+        // gives us a richer semantic label that the GUI can use to e.g. show
+        // a "discard mode" hint. We expose the pending context name in the
+        // current_prompt fallback below.
+        let current_prompt = s.current_prompt.as_deref();
+
+        let inputs = ViewModelInputs {
+            perspective_player_id: s.renderer.player_id,
+            selected_card_id: s.renderer.state.selected_card_id,
+            valid_choices: &valid_choices,
+            current_prompt,
+            choices: &s.current_choices,
+            selected_choice_idx: s.selected_choice_idx,
+            choice_context,
+            game_over: s.game_over,
+            log_tail_size: 200,
+        };
+
+        build_view_model_json(&s.game, inputs)
+    })
+}
+
 /// Get comprehensive game state as JSON for native web GUI
 ///
 /// Returns a rich snapshot of the entire game state including:
@@ -521,6 +575,12 @@ pub fn tui_clear_logs() {
 ///
 /// This is the primary data source for the native web GUI (game.html).
 /// The TUI version (fancy.html) uses the terminal renderer instead.
+///
+/// **DEPRECATED**: Prefer `tui_get_gui_view_model_json` which provides a
+/// schema-versioned, semantically structured view model that uses the SAME
+/// display decisions as the ratatui TUI (sorted hand order, battlefield
+/// section grouping, log color classification, etc.). This function is
+/// retained for backward compatibility while game.html migrates.
 #[wasm_bindgen]
 pub fn tui_get_full_state_json() -> String {
     GLOBAL_TUI_STATE.with(|state| {

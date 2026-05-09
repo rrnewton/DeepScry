@@ -31,76 +31,167 @@ use ratatui::{
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
+/// Semantic classification of a log message for display purposes.
+///
+/// This is the SHARED log classification used by both the native ratatui TUI
+/// and the WASM HTML GUI view model, so they keep identical color/emphasis
+/// rules. Add new variants here rather than inlining `contains()` checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogClass {
+    /// Turn header (e.g. ">>> Turn 3")
+    TurnHeader,
+    /// Step header (e.g. "--- Main1 ---")
+    StepHeader,
+    /// Combat event (attacks/blocks)
+    Combat,
+    /// Damage dealt / life loss
+    Damage,
+    /// Life gain
+    LifeGain,
+    /// Spell/ability resolution
+    Resolves,
+    /// Mana tapped for a color
+    ManaTap,
+    /// Targeting/auxiliary message
+    Targeting,
+    /// Choice tracker entry
+    Choice,
+    /// Message about Player1
+    Player1,
+    /// Message about Player2
+    Player2,
+    /// Default (verbosity-driven)
+    Default,
+}
+
+impl LogClass {
+    /// Whether this class should be displayed bold.
+    pub fn is_bold(self) -> bool {
+        matches!(self, LogClass::TurnHeader | LogClass::Damage)
+    }
+}
+
+/// Classify a log message by content patterns.
+///
+/// This is the single source of truth for the structured semantic class of a
+/// log message. Both the ratatui TUI styler and the HTML GUI view model use
+/// this — never re-implement the heuristics elsewhere.
+pub fn classify_log_message(message: &str) -> LogClass {
+    if message.contains(">>> Turn") || message.contains("<<<< ") {
+        return LogClass::TurnHeader;
+    }
+    if message.starts_with("--- ") && message.ends_with(" ---") {
+        return LogClass::StepHeader;
+    }
+    if message.contains("attacks") || message.contains("blocks") {
+        return LogClass::Combat;
+    }
+    if (message.contains("damage") && message.contains("life:"))
+        || (message.contains("takes") && message.contains("damage"))
+    {
+        return LogClass::Damage;
+    }
+    if message.contains("gains") && message.contains("life") {
+        return LogClass::LifeGain;
+    }
+    if message.contains("resolves") {
+        return LogClass::Resolves;
+    }
+    if (message.contains("Tap ") && message.contains("for {"))
+        || (message.contains("taps") && message.contains("for {"))
+    {
+        return LogClass::ManaTap;
+    }
+    if message.starts_with("  → targeting") {
+        return LogClass::Targeting;
+    }
+    if message.starts_with("<Choice>") {
+        return LogClass::Choice;
+    }
+    if message.starts_with("Player1") || message.contains(" Player1 ") {
+        return LogClass::Player1;
+    }
+    if message.starts_with("Player2") || message.contains(" Player2 ") {
+        return LogClass::Player2;
+    }
+    LogClass::Default
+}
+
 /// Get style for log message based on content patterns
 ///
 /// This provides content-aware coloring for the log pane, making it easier
 /// to scan for important events like combat, damage, and turn transitions.
+/// Implemented in terms of `classify_log_message` for consistency with the
+/// HTML GUI view model.
 fn style_for_log_content(message: &str, level: VerbosityLevel) -> Style {
-    // Turn headers: yellow, bold, underlined
-    if message.contains(">>> Turn") || message.contains("<<<< ") {
-        return Style::default()
+    match classify_log_message(message) {
+        LogClass::TurnHeader => Style::default()
             .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        LogClass::StepHeader => Style::default().fg(Color::Cyan),
+        LogClass::Combat => Style::default().fg(Color::Magenta),
+        LogClass::Damage => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        LogClass::LifeGain | LogClass::Resolves => Style::default().fg(Color::Green),
+        LogClass::ManaTap | LogClass::Targeting => Style::default().fg(Color::DarkGray),
+        LogClass::Choice => Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM),
+        LogClass::Player1 => Style::default().fg(Color::Blue),
+        LogClass::Player2 => Style::default().fg(Color::Red),
+        LogClass::Default => match level {
+            VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
+            VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
+            VerbosityLevel::Normal => Style::default().fg(Color::White),
+            VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
+        },
     }
+}
 
-    // Step headers: cyan
-    if message.starts_with("--- ") && message.ends_with(" ---") {
-        return Style::default().fg(Color::Cyan);
-    }
+/// Card type category used for grouping cards into battlefield sections.
+///
+/// Mirrors the priority ordering used in `draw_battlefield`: a card is bucketed
+/// by the first matching predicate. Shared between the ratatui battlefield
+/// renderer and the HTML GUI view model so both produce identical sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CardCategory {
+    Planeswalker,
+    Creature,
+    Enchantment,
+    Artifact,
+    Land,
+    /// Anything that doesn't fit the above (instants/sorceries on the BF, etc.)
+    Other,
+}
 
-    // Combat events: magenta
-    if message.contains("attacks") || message.contains("blocks") {
-        return Style::default().fg(Color::Magenta);
+impl CardCategory {
+    /// Display label used for the section header (matches TUI labels).
+    pub fn label(self) -> &'static str {
+        match self {
+            CardCategory::Planeswalker => "PWs",
+            CardCategory::Creature => "Creatures",
+            CardCategory::Enchantment => "Enchants",
+            CardCategory::Artifact => "Artifacts",
+            CardCategory::Land => "Lands",
+            CardCategory::Other => "Other",
+        }
     }
+}
 
-    // Damage/life loss: red bold
-    if (message.contains("damage") && message.contains("life:"))
-        || (message.contains("takes") && message.contains("damage"))
-    {
-        return Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
-    }
-
-    // Life gain: green
-    if message.contains("gains") && message.contains("life") {
-        return Style::default().fg(Color::Green);
-    }
-
-    // Resolution: green
-    if message.contains("resolves") {
-        return Style::default().fg(Color::Green);
-    }
-
-    // Mana tapping: dark gray
-    if (message.contains("Tap ") && message.contains("for {"))
-        || (message.contains("taps") && message.contains("for {"))
-    {
-        return Style::default().fg(Color::DarkGray);
-    }
-
-    // Target selection: dark gray (auxiliary info)
-    if message.starts_with("  → targeting") {
-        return Style::default().fg(Color::DarkGray);
-    }
-
-    // Choice markers: cyan dim
-    if message.starts_with("<Choice>") {
-        return Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);
-    }
-
-    // Player-based coloring
-    if message.starts_with("Player1") || message.contains(" Player1 ") {
-        return Style::default().fg(Color::Blue);
-    }
-    if message.starts_with("Player2") || message.contains(" Player2 ") {
-        return Style::default().fg(Color::Red);
-    }
-
-    // Default: use verbosity-based coloring
-    match level {
-        VerbosityLevel::Silent => Style::default().fg(Color::DarkGray),
-        VerbosityLevel::Minimal => Style::default().fg(Color::Gray),
-        VerbosityLevel::Normal => Style::default().fg(Color::White),
-        VerbosityLevel::Verbose => Style::default().fg(Color::Yellow),
+/// Categorize a card for battlefield grouping.
+///
+/// Single source of truth shared between the TUI `draw_battlefield` and the
+/// GUI view model so sections appear identically in both modes.
+pub fn categorize_card(card: &crate::core::Card) -> CardCategory {
+    if card.is_planeswalker() {
+        CardCategory::Planeswalker
+    } else if card.is_creature() {
+        CardCategory::Creature
+    } else if card.is_enchantment() {
+        CardCategory::Enchantment
+    } else if card.is_artifact() {
+        CardCategory::Artifact
+    } else if card.is_land() {
+        CardCategory::Land
+    } else {
+        CardCategory::Other
     }
 }
 
