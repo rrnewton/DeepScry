@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Pre-commit hook: check Rust formatting before allowing a commit.
+#
+# CI's `fmt` job (.github/workflows/ci.yml) runs `cargo fmt --all -- --check`
+# against the nightly toolchain and a single mis-formatted line will fail the
+# build. This hook is a lightweight local guard so we catch formatting drift
+# before pushing.
+#
+# Install with: make install-hooks
+#
+# To bypass for an emergency commit (e.g. mid-rebase WIP), use --no-verify.
+
+set -euo pipefail
+
+# Only run when there are staged Rust files; this keeps the hook out of the
+# way for purely-docs commits or merge commits.
+if ! git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not on PATH; skipping fmt check" >&2
+    exit 0
+fi
+
+# Prefer nightly to match CI exactly, fall back to default toolchain.
+if rustup toolchain list 2>/dev/null | grep -q '^nightly'; then
+    fmt_cmd=(cargo +nightly fmt --all -- --check)
+else
+    fmt_cmd=(cargo fmt --all -- --check)
+fi
+
+if ! "${fmt_cmd[@]}"; then
+    cat >&2 <<'EOF'
+
+✗ pre-commit: Rust formatting check failed.
+
+  Fix with:   make fmt        (or: cargo fmt --all)
+  Re-stage:   git add -u
+  Commit again.
+
+  CI's `fmt` job will reject this commit otherwise. To bypass for an
+  emergency commit, re-run with --no-verify.
+EOF
+    exit 1
+fi

@@ -189,7 +189,25 @@ there's a CI failure, then fixing THAT becomes our task. Finally, check that `ma
 Pre-Commit: checks before committing to git
 --------------------------------------------
 
-Run `make validate` and ensure that it passes or fix any problems before committing.
+**MANDATORY first step before EVERY commit:** run `cargo fmt --all` (or
+`make fmt`) so the working tree is formatted, then `cargo fmt --all -- --check`
+to confirm the diff is clean. CI runs `cargo fmt --all -- --check` against the
+**nightly** toolchain (see `.github/workflows/ci.yml`'s `fmt` job) and a single
+mis-formatted line will turn the build red. This has been a repeated source of
+CI failures — do **NOT** skip it. The same check is wired into `make validate`
+as `validate-fmt-step`, but you should also run it explicitly so you catch
+formatting drift before launching the rest of validation.
+
+If your toolchain has nightly available (`rustup toolchain list`), prefer
+`cargo +nightly fmt --all -- --check` to exactly match what CI runs.
+
+A tracked git pre-commit hook lives at `scripts/git-hooks/pre-commit` and runs
+the same fmt check on staged `.rs` files. Install it once per clone with
+`make install-hooks` (also part of `make setup`); this gives a final automatic
+guard so an `git commit` invocation cannot land unformatted code.
+
+Then run `make validate` and ensure that it passes or fix any problems before
+committing.
 
 Also include a `Test Results Summary` section in every commit message that summarizes how many tests passed of what kind.
 

@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
+.PHONY: help build test validate clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step validate-fmt-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -145,6 +145,8 @@ validate-impl:
 validate-impl-sequential:
 	@echo "=== Starting sequential validation ==="
 	@echo ""
+	@$(MAKE) validate-fmt-step
+	@echo ""
 	@$(MAKE) validate-clippy-step
 	@echo ""
 	@$(MAKE) validate-clippy-wasm-step
@@ -179,6 +181,8 @@ validate-impl-no-network:
 validate-impl-sequential-no-network:
 	@echo "=== Starting sequential validation (no network) ==="
 	@echo ""
+	@$(MAKE) validate-fmt-step
+	@echo ""
 	@$(MAKE) validate-clippy-step
 	@echo ""
 	@$(MAKE) validate-clippy-wasm-step
@@ -200,9 +204,17 @@ validate-impl-sequential-no-network:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step
-validate-parallel-steps: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
-validate-parallel-steps-no-network: validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step
+validate-parallel-steps: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
+validate-parallel-steps-no-network: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step deck_list
+
+# Formatting check - matches the CI `fmt` job in .github/workflows/ci.yml.
+# This must be wired into validate so that formatting drift is caught locally
+# instead of turning CI red. CI uses nightly rustfmt; we invoke the default
+# toolchain here, which has historically agreed with nightly for this repo.
+validate-fmt-step:
+	@$(MAKE) fmt-check
+	@echo "✓ fmt-check completed"
 
 validate-clippy-step:
 	@$(MAKE) clippy
@@ -284,7 +296,7 @@ run-release:
 	cargo run --release
 
 # Install development dependencies
-setup:
+setup: install-hooks
 	@echo "=== Installing development tools ==="
 	rustup component add rustfmt clippy
 	rustup target add wasm32-unknown-unknown
@@ -292,6 +304,22 @@ setup:
 		echo "Installing wasm-pack..."; \
 		cargo install wasm-pack; \
 	fi
+
+# Install tracked git hooks into .git/hooks/. Run once after cloning the repo.
+# The pre-commit hook runs `cargo fmt --all -- --check` so we never push
+# unformatted code that fails CI's `fmt` job.
+.PHONY: install-hooks
+install-hooks:
+	@echo "=== Installing git hooks ==="
+	@if [ ! -d .git ]; then \
+		echo "Skipping: not a git working tree (no .git directory)"; \
+		exit 0; \
+	fi
+	@for hook in scripts/git-hooks/*; do \
+		name=$$(basename $$hook); \
+		install -m 0755 "$$hook" ".git/hooks/$$name"; \
+		echo "  installed: .git/hooks/$$name"; \
+	done
 
 # Show project info
 info:
