@@ -75,6 +75,10 @@ pub enum DeckBuilderKey {
 /// Handle a key event in normal mode (not exit dialog).
 ///
 /// Mutates `DeckBuilderState` and returns the appropriate action.
+///
+/// # Panics
+/// Panics on a digit char that is not a valid base-10 digit (unreachable: the only
+/// caller path here matches `c.is_ascii_digit()` first).
 pub fn handle_deck_builder_key(state: &mut DeckBuilderState, key: DeckBuilderKey) -> DeckBuilderAction {
     // Clear status message on any key
     state.status_message = None;

@@ -1706,7 +1706,7 @@ impl GameState {
                 // Use effective toughness (includes equipment, anthems, counters via layer system)
                 let effective_toughness = self
                     .get_effective_toughness(card_id)
-                    .unwrap_or(i32::from(card.current_toughness()));
+                    .unwrap_or_else(|_| i32::from(card.current_toughness()));
                 let has_zero_toughness = effective_toughness <= 0;
                 let has_lethal_damage = card.damage >= effective_toughness;
 

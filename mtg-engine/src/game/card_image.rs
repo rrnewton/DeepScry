@@ -34,6 +34,12 @@ pub struct CardImageState {
     available: bool,
 }
 
+impl Default for CardImageState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CardImageState {
     /// Create a new `CardImageState` by querying the terminal for protocol support.
     ///

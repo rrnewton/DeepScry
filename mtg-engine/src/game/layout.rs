@@ -375,7 +375,7 @@ pub fn compute_battlefield_card_size(area: Rect, total_cards: usize, config: &Ca
         for h in config.min_height..=config.max_height {
             let w = compute_card_width(h, config).max(config.min_width);
             let cards_per_row = area.width.checked_div(w + config.spacing).unwrap_or(1).max(1);
-            let rows_needed = (total_cards as u16 + cards_per_row - 1) / cards_per_row;
+            let rows_needed = (total_cards as u16).div_ceil(cards_per_row);
             let height_needed = rows_needed * (h + config.spacing);
 
             if rows_needed <= target_rows && height_needed <= area.height {

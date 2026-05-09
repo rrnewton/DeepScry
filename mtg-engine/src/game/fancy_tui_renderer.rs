@@ -1480,6 +1480,10 @@ impl FancyTuiRenderer {
     ///
     /// This is the main rendering entry point. It draws all panels and updates
     /// hit-testing state for mouse interactions.
+    ///
+    /// # Panics
+    /// Panics if the layout engine fails to allocate the Log pane (should be unreachable
+    /// — `PaneId::Log` is always present in a valid pane layout).
     pub fn draw_ui(
         &mut self,
         f: &mut Frame,

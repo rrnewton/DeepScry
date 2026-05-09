@@ -329,7 +329,7 @@ fn crossterm_key_to_input(code: KeyCode, modifiers: KeyModifiers) -> Option<KeyI
         KeyCode::Char('o' | 'O') => Some(KeyInput::FocusOpponentBf),
         KeyCode::Char('a' | 'A') => Some(KeyInput::FocusActions),
         KeyCode::Char('s' | 'S') => Some(KeyInput::FocusStack),
-        KeyCode::Char('p') | KeyCode::Char('q' | 'Q') => Some(KeyInput::Pass),
+        KeyCode::Char('p' | 'q' | 'Q') => Some(KeyInput::Pass),
         KeyCode::Char('Z') => Some(KeyInput::Undo),
         KeyCode::Char('r' | 'R') => Some(KeyInput::Random),
         KeyCode::Char('b' | 'B') => Some(KeyInput::ShowBattlefield),
