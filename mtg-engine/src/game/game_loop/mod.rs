@@ -256,6 +256,12 @@ pub struct GameLoop<'a> {
     /// Flag indicating we just resumed from snapshot and should skip turn header on first turn
     /// Gets cleared after the first turn executes.
     resumed_from_snapshot: bool,
+    /// Tracks whether the ">>> Turn 1 - ..." gamelog header has been emitted.
+    /// Subsequent turn headers are emitted by GameState::next_turn(), but Turn 1
+    /// has no preceding next_turn() call, so it must be emitted from run_turn()
+    /// (or setup_game()) on the first turn. The flag prevents double emission
+    /// when both paths fire.
+    turn_one_header_emitted: bool,
     /// The turn number we resumed into (used to suppress header for that specific turn only)
     resumed_turn_number: Option<u32>,
     /// Optional hand setup for Player 1 (controlled initial hand)
@@ -334,6 +340,7 @@ impl<'a> GameLoop<'a> {
             replay_choices_remaining: 0,
             resumed_from_snapshot: false,
             resumed_turn_number: None,
+            turn_one_header_emitted: false,
             p1_hand_setup: None,
             p2_hand_setup: None,
             deck_seed: None,
@@ -1106,35 +1113,50 @@ impl<'a> GameLoop<'a> {
             }
 
             // Log the start of Turn 1 (for fresh games only)
-            // This matches the format used in state.rs when transitioning between turns
-            let active_player = self.game.turn.active_player;
-            let active_player_name = self
-                .game
-                .get_player(active_player)
-                .map(|p| p.name.as_str())
-                .unwrap_or("Unknown");
-            let active_player_life = self.game.get_player(active_player).map(|p| p.life).unwrap_or(0);
-            let other_player_name = self
-                .game
-                .get_other_player_id(active_player)
-                .and_then(|id| self.game.get_player(id).ok())
-                .map(|p| p.name.as_str())
-                .unwrap_or("Unknown");
-            let other_player_life = self
-                .game
-                .get_other_player_id(active_player)
-                .and_then(|id| self.game.get_player(id).ok())
-                .map(|p| p.life)
-                .unwrap_or(0);
-
-            let turn_msg = format!(
-                "  >>> Turn 1 - {} {} ({} {}) <<<<",
-                active_player_name, active_player_life, other_player_name, other_player_life
-            );
-            self.game.logger.turn_separator(&turn_msg);
+            self.emit_turn_one_header();
         }
 
         Ok((player1_id, player2_id))
+    }
+
+    /// Emit the ">>> Turn 1 - ..." gamelog header (idempotent).
+    ///
+    /// Subsequent turn headers (Turn 2+) are emitted by `GameState::next_turn()`
+    /// when transitioning between turns. Turn 1 has no preceding `next_turn()`
+    /// call, so this helper handles the special case. Idempotent via the
+    /// `turn_one_header_emitted` flag so it can safely be invoked from both
+    /// `setup_game()` (run_game path) and `run_turn()` (run_turns / run_one_turn
+    /// paths used by WASM step-through and direct test harnesses).
+    fn emit_turn_one_header(&mut self) {
+        if self.turn_one_header_emitted {
+            return;
+        }
+        let active_player = self.game.turn.active_player;
+        let active_player_name = self
+            .game
+            .get_player(active_player)
+            .map(|p| p.name.as_str())
+            .unwrap_or("Unknown");
+        let active_player_life = self.game.get_player(active_player).map(|p| p.life).unwrap_or(0);
+        let other_player_name = self
+            .game
+            .get_other_player_id(active_player)
+            .and_then(|id| self.game.get_player(id).ok())
+            .map(|p| p.name.as_str())
+            .unwrap_or("Unknown");
+        let other_player_life = self
+            .game
+            .get_other_player_id(active_player)
+            .and_then(|id| self.game.get_player(id).ok())
+            .map(|p| p.life)
+            .unwrap_or(0);
+
+        let turn_msg = format!(
+            "  >>> Turn 1 - {} {} ({} {}) <<<<",
+            active_player_name, active_player_life, other_player_name, other_player_life
+        );
+        self.game.logger.turn_separator(&turn_msg);
+        self.turn_one_header_emitted = true;
     }
 
     /// Notify both controllers that the game has ended
@@ -1241,6 +1263,13 @@ impl<'a> GameLoop<'a> {
                 println!("{}", turn_msg);
                 println!("========================================");
                 // NOTE: Battlefield state is printed after draw step - see draw_step()
+            }
+
+            // Emit the ">>> Turn 1 <<<<" gamelog header for entry paths that
+            // bypass setup_game (run_turns / WASM run_one_turn). Idempotent:
+            // does nothing if setup_game already emitted it.
+            if self.game.turn.turn_number == 1 {
+                self.emit_turn_one_header();
             }
         }
 
@@ -1582,5 +1611,99 @@ mod tests {
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.end_reason, GameEndReason::PlayerDeath(bob));
+    }
+
+    /// Regression test: Turn 1 header must appear in the gamelog regardless of
+    /// which entry path runs the first turn. WASM step-through (`run_turns`)
+    /// and direct `run_one_turn` calls both bypass `setup_game`, so the
+    /// `>>> Turn 1 - ... <<<<` header must be emitted from `run_turn` as a
+    /// fallback. Without this, the game log shows Turn 2+ headers but no
+    /// Turn 1 header (bug in fancy.html, game.html, native TUI logs).
+    #[test]
+    fn test_turn_one_header_emitted_via_run_turns() {
+        use crate::game::ZeroController;
+
+        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let (alice, bob) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+
+        // Give each player a tiny library so draw step succeeds.
+        for &pid in &[alice, bob] {
+            for _ in 0..10 {
+                let card_id = game.next_card_id();
+                let card = crate::core::Card::new(card_id, "Forest".to_string(), pid);
+                game.cards.insert(card_id, card);
+                if let Some(zones) = game.get_player_zones_mut(pid) {
+                    zones.library.add(card_id);
+                }
+            }
+        }
+
+        // Use the WASM-style entry path (run_turns) which bypasses setup_game.
+        {
+            let mut game_loop = GameLoop::new(&mut game).with_max_turns(2);
+            let mut c1 = ZeroController::new(alice);
+            let mut c2 = ZeroController::new(bob);
+            let _ = game_loop.run_turns(&mut c1, &mut c2, 1);
+        }
+
+        let logs: Vec<String> = game.logger.logs().iter().map(|l| l.message.clone()).collect();
+        let turn_one_headers: Vec<&String> = logs.iter().filter(|m| m.contains(">>> Turn 1")).collect();
+        assert_eq!(
+            turn_one_headers.len(),
+            1,
+            "Expected exactly one Turn 1 header in gamelog, found {}. Log entries: {:?}",
+            turn_one_headers.len(),
+            logs
+        );
+    }
+
+    /// Companion test: the run_game path (used by native TUI and WasmGame::run_ai_game)
+    /// must also emit exactly ONE Turn 1 header (not zero, not two). This guards against
+    /// the helper firing twice when both setup_game and run_turn invoke it.
+    #[test]
+    fn test_turn_one_header_emitted_exactly_once_via_run_game() {
+        use crate::game::ZeroController;
+
+        let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
+        let (alice, bob) = {
+            let mut players_iter = game.players.iter().map(|p| p.id);
+            (
+                players_iter.next().expect("Should have player 1"),
+                players_iter.next().expect("Should have player 2"),
+            )
+        };
+
+        for &pid in &[alice, bob] {
+            for _ in 0..10 {
+                let card_id = game.next_card_id();
+                let card = crate::core::Card::new(card_id, "Forest".to_string(), pid);
+                game.cards.insert(card_id, card);
+                if let Some(zones) = game.get_player_zones_mut(pid) {
+                    zones.library.add(card_id);
+                }
+            }
+        }
+
+        {
+            let mut game_loop = GameLoop::new(&mut game).with_max_turns(2).skip_opening_hands();
+            let mut c1 = ZeroController::new(alice);
+            let mut c2 = ZeroController::new(bob);
+            let _ = game_loop.run_game(&mut c1, &mut c2);
+        }
+
+        let logs: Vec<String> = game.logger.logs().iter().map(|l| l.message.clone()).collect();
+        let turn_one_headers: Vec<&String> = logs.iter().filter(|m| m.contains(">>> Turn 1")).collect();
+        assert_eq!(
+            turn_one_headers.len(),
+            1,
+            "Expected exactly one Turn 1 header in gamelog (no duplicates), found {}",
+            turn_one_headers.len()
+        );
     }
 }

@@ -932,16 +932,14 @@ fn test_equip_excludes_already_attached_creature() {
     equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
     equipment.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
     equipment.controller = p1_id;
-    equipment
-        .activated_abilities
-        .push(ActivatedAbility::new_sorcery_speed(
-            Cost::Mana(ManaCost::from_string("1")),
-            vec![Effect::AttachEquipment {
-                source_equipment: equip_id,
-                target_creature: CardId::new(0), // Placeholder - filled in during activation
-            }],
-            "Equip 1".to_string(),
-        ));
+    equipment.activated_abilities.push(ActivatedAbility::new_sorcery_speed(
+        Cost::Mana(ManaCost::from_string("1")),
+        vec![Effect::AttachEquipment {
+            source_equipment: equip_id,
+            target_creature: CardId::new(0), // Placeholder - filled in during activation
+        }],
+        "Equip 1".to_string(),
+    ));
     game.cards.insert(equip_id, equipment);
 
     // Two creatures controlled by p1

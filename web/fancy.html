@@ -100,11 +100,24 @@
            IMPORTANT: RatZilla DomBackend does NOT hardcode cell dimensions!
            It uses the browser's actual font rendering, which varies by system.
 
-           Cell dimensions are dynamically measured in TUICoordinateSystem.measureCellDimensions()
-           using getBoundingClientRect() on actual rendered characters.
-           Line-height is read from computed style so it adapts to font size changes.
+           On Linux with standard monospace fonts (DejaVu Sans Mono, Liberation Mono):
+             - Character width: ~9.64px (NOT 10px!)
+             - Character height: 19px (RatZilla CanvasBackend hardcodes CELL_HEIGHT = 19.0)
 
-           TIP: Use browser zoom (Ctrl+/-) or the Font Size dropdown to adjust! */
+           The CSS line-height of 20px is a LIE - actual rendered height is 19px.
+           The fractional width (9.64px) is unavoidable - no standard monospace font
+           renders exactly 10px wide at 16px font size on Linux.
+
+           This is WHY we dynamically measure cell dimensions in CardImageOverlay.measureCellDimensions()
+           instead of assuming 10×20. The measurement uses getBoundingClientRect() on actual
+           rendered characters to get precise positioning.
+
+           IMPORTANT: font-size 16px + line-height 20px MUST stay in sync with ratzilla 0.2.0's
+           hardcoded cell-grid math (window inner_width / 10, inner_height / 20). Changing these
+           values without patching ratzilla causes the rendered grid to under-fill the viewport
+           and breaks card overlay positioning. See bug-font-size-broke-fancy-layout (mtg).
+
+           TIP: Use browser zoom (Ctrl+/-) to get more/fewer rows and columns! */
         #ratzilla-terminal {
             position: absolute;
             top: 0;
@@ -112,8 +125,8 @@
             width: 100vw;
             height: 100vh;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 1.25;
+            font-size: 16px;
+            line-height: 20px;  /* Note: actual rendered height is 19px, not 20px! */
             background: #000;
             overflow: hidden;
         }
@@ -768,20 +781,6 @@
                 <div class="checkbox-row" style="margin-bottom: 0;">
                     <input type="checkbox" id="debug-mode">
                     <label for="debug-mode">Debug Mode (TRACE logs)</label>
-                </div>
-
-                <div class="pane-row" style="margin-top: 8px; margin-bottom: 0;">
-                    <label>Font Size</label>
-                    <select id="terminal-font-size" style="width: 80px;">
-                        <option value="8">8px</option>
-                        <option value="10">10px</option>
-                        <option value="12">12px</option>
-                        <option value="14" selected>14px</option>
-                        <option value="16">16px</option>
-                        <option value="18">18px</option>
-                        <option value="20">20px</option>
-                    </select>
-                    <span class="hint">Terminal text size</span>
                 </div>
             </div>
         </div>
@@ -1461,18 +1460,6 @@ Name=My Deck
         // Settings persistence using localStorage
         const SETTINGS_KEY = 'mtg-forge-fancy-settings';
 
-        function applyTerminalFontSize(size) {
-            const px = parseInt(size, 10);
-            const terminal = document.getElementById('ratzilla-terminal');
-            if (terminal) {
-                terminal.style.fontSize = px + 'px';
-                terminal.style.lineHeight = 1.25;
-            }
-            if (typeof TUICoordinateSystem !== 'undefined' && TUICoordinateSystem.measureCellDimensions) {
-                TUICoordinateSystem.measureCellDimensions();
-            }
-        }
-
         function saveSettings() {
             const settings = {
                 // Game mode (local vs network)
@@ -1492,7 +1479,6 @@ Name=My Deck
                 imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
                 imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
                 debugMode: document.getElementById('debug-mode').checked,
-                terminalFontSize: document.getElementById('terminal-font-size').value,
                 // Network settings
                 serverUrl: document.getElementById('server-url').value,
                 serverPassword: document.getElementById('server-password').value,
@@ -1547,10 +1533,6 @@ Name=My Deck
                 }
                 if (settings.debugMode) {
                     document.getElementById('debug-mode').checked = settings.debugMode;
-                }
-                if (settings.terminalFontSize) {
-                    document.getElementById('terminal-font-size').value = settings.terminalFontSize;
-                    applyTerminalFontSize(settings.terminalFontSize);
                 }
 
                 // Restore network settings
@@ -1634,7 +1616,6 @@ Name=My Deck
                 'p1-controller', 'p2-controller',
                 'fixed-script', 'game-seed', 'show-card-images',
                 'img-src-local', 'img-src-scryfall', 'img-src-gatherer', 'debug-mode',
-                'terminal-font-size',
                 // Network settings
                 'server-url', 'server-password', 'player-name'
             ];
@@ -1652,11 +1633,6 @@ Name=My Deck
 
         // Initialize settings persistence after DOM is ready
         setupSettingsPersistence();
-
-        // Apply font size changes immediately
-        document.getElementById('terminal-font-size').addEventListener('change', function() {
-            applyTerminalFontSize(this.value);
-        });
 
         // Game mode change handler
         function updateGameModeUI() {
@@ -1770,11 +1746,10 @@ Name=My Deck
                 // Width: use measured value
                 this.cellWidthPx = measuredWidth;
 
-                // Height: use computed line-height for vertical positioning, NOT measured glyph height!
-                // The browser uses line-height for vertical spacing, even though actual glyph height differs.
-                const terminal = document.getElementById('ratzilla-terminal');
-                const computedLineHeight = terminal ? parseFloat(getComputedStyle(terminal).lineHeight) : 20;
-                this.cellHeightPx = computedLineHeight;
+                // Height: ALWAYS use line-height (20px) for vertical positioning, NOT measured height!
+                // The browser uses line-height for vertical spacing, even though actual glyph height is 19px.
+                // Using 19px would cause cumulative vertical drift.
+                this.cellHeightPx = 20;
 
                 console.log(`Measured RatZilla cell size: ${this.cellWidthPx.toFixed(2)}px × ${measuredHeight.toFixed(2)}px (using ${this.cellHeightPx}px line-height for positioning)`);
 
