@@ -896,6 +896,11 @@ impl GameState {
                 }
                 Effect::AttachEquipment { target_creature, .. } if target_creature.is_placeholder() => {
                     // Equip targets "creature you control" (CR 702.6a)
+                    // Exclude the creature this Equipment is already attached to: re-equipping
+                    // the same creature is a strictly wasteful no-op (detach + reattach burns
+                    // mana for no game effect). This makes all controllers (random, heuristic,
+                    // etc.) avoid that pitfall.
+                    let already_attached_to = source_card.attached_to;
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
                             // Must be a creature
@@ -903,6 +908,11 @@ impl GameState {
 
                             // Must be controlled by the ability's controller
                             if card.controller != ability_controller {
+                                is_valid = false;
+                            }
+
+                            // Skip the creature already wearing this Equipment
+                            if already_attached_to == Some(card_id) {
                                 is_valid = false;
                             }
 

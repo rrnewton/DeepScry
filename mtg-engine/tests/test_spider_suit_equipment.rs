@@ -914,3 +914,89 @@ fn test_equipped_creatures_you_control_selector() {
         "Wolf power with equipment should be 3 (2 base + 1 from lord)"
     );
 }
+
+/// Regression test: an Equipment's Equip ability must not offer the creature it is
+/// already attached to as a valid target. Re-equipping the same creature is a strictly
+/// wasteful no-op (detach + reattach burns mana for no game effect). Filtering it out
+/// keeps random/AI controllers from blowing mana on it. See bug-equipment-detach-reattach.
+#[test]
+fn test_equip_excludes_already_attached_creature() {
+    use mtg_forge_rs::core::{ActivatedAbility, Cost, Effect, ManaCost};
+
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    // Create Equipment with an Equip {1} activated ability ("Trusty Boomerang"-like)
+    let equip_id = game.cards.next_id();
+    let mut equipment = Card::new(equip_id, CardName::from("Trusty Boomerang"), p1_id);
+    equipment.set_types(SmallVec::from_vec(vec![CardType::Artifact]));
+    equipment.set_subtypes(SmallVec::from_vec(vec![Subtype::from("Equipment")]));
+    equipment.controller = p1_id;
+    equipment
+        .activated_abilities
+        .push(ActivatedAbility::new_sorcery_speed(
+            Cost::Mana(ManaCost::from_string("1")),
+            vec![Effect::AttachEquipment {
+                source_equipment: equip_id,
+                target_creature: CardId::new(0), // Placeholder - filled in during activation
+            }],
+            "Equip 1".to_string(),
+        ));
+    game.cards.insert(equip_id, equipment);
+
+    // Two creatures controlled by p1
+    let creature_a_id = game.cards.next_id();
+    let mut creature_a = Card::new(creature_a_id, CardName::from("Knowledge Seeker"), p1_id);
+    creature_a.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature_a.set_base_power(Some(2));
+    creature_a.set_base_toughness(Some(1));
+    creature_a.controller = p1_id;
+    game.cards.insert(creature_a_id, creature_a);
+
+    let creature_b_id = game.cards.next_id();
+    let mut creature_b = Card::new(creature_b_id, CardName::from("Forecasting Fortune Teller"), p1_id);
+    creature_b.set_types(SmallVec::from_vec(vec![CardType::Creature]));
+    creature_b.set_base_power(Some(1));
+    creature_b.set_base_toughness(Some(3));
+    creature_b.controller = p1_id;
+    game.cards.insert(creature_b_id, creature_b);
+
+    game.battlefield.add(equip_id);
+    game.battlefield.add(creature_a_id);
+    game.battlefield.add(creature_b_id);
+
+    // Before any attachment: both creatures are valid equip targets
+    let targets_before = game
+        .get_valid_targets_for_ability(equip_id, 0)
+        .expect("get_valid_targets_for_ability should succeed");
+    assert!(
+        targets_before.contains(&creature_a_id),
+        "Knowledge Seeker should be a valid equip target before attachment"
+    );
+    assert!(
+        targets_before.contains(&creature_b_id),
+        "Forecasting Fortune Teller should be a valid equip target before attachment"
+    );
+
+    // Attach to creature_a
+    game.attach_equipment(equip_id, creature_a_id)
+        .expect("Should attach Equipment to Knowledge Seeker");
+
+    // After attachment: creature_a (already attached) must be EXCLUDED, creature_b stays valid
+    let targets_after = game
+        .get_valid_targets_for_ability(equip_id, 0)
+        .expect("get_valid_targets_for_ability should succeed");
+    assert!(
+        !targets_after.contains(&creature_a_id),
+        "Knowledge Seeker (already equipped) must NOT be a valid equip target — \
+         re-equipping the same creature is a wasteful no-op (detach+reattach for no effect). \
+         Got targets: {:?}",
+        targets_after
+    );
+    assert!(
+        targets_after.contains(&creature_b_id),
+        "Forecasting Fortune Teller (different creature) must still be a valid equip target — \
+         moving the equipment to a different creature is a meaningful action. Got targets: {:?}",
+        targets_after
+    );
+}
