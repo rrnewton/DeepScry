@@ -1173,6 +1173,17 @@ struct WasmFancyTuiState {
     /// Whether we're currently in a rewind/replay cycle
     /// Used to suppress monotonicity checks during replay
     in_rewind_replay: bool,
+    /// Multi-blocker selection state. Each element is the
+    /// `(blocker_idx, attacker_idx)` pair the user has *already* staged in the
+    /// current Blockers prompt. The user can keep picking pairs; nothing is
+    /// committed to the engine until they select "Done" (idx 0).
+    staged_blocker_pairs: Vec<(usize, usize)>,
+    /// Mapping from displayed choice index `N+1` (idx 0 is "Done") to the
+    /// underlying `(blocker_idx, attacker_idx)` pair in
+    /// `ChoiceContext::Blockers::{available_blockers, attackers}`.
+    /// Recomputed in `update_choices_from_context` so we only need to
+    /// store (and round-trip) legal, not-yet-staged options.
+    blocker_choice_pairs: Vec<(usize, usize)>,
 }
 
 impl WasmFancyTuiState {
@@ -1269,6 +1280,8 @@ impl WasmFancyTuiState {
             high_water_action_count: 0,
             high_water_log_count: 0,
             in_rewind_replay: false,
+            staged_blocker_pairs: Vec::new(),
+            blocker_choice_pairs: Vec::new(),
         }
     }
 
@@ -2164,6 +2177,13 @@ impl WasmFancyTuiState {
     /// with native TUI.
     fn update_choices_from_context(&mut self, context: &ChoiceContext) {
         self.current_choices.clear();
+        // Drop any in-flight multi-blocker selection state when we leave the
+        // Blockers prompt, otherwise stale staged pairs would carry over and
+        // be applied to a future Blockers prompt on a later turn.
+        if !matches!(context, ChoiceContext::Blockers { .. }) {
+            self.staged_blocker_pairs.clear();
+            self.blocker_choice_pairs.clear();
+        }
         let choices: Vec<String> = match context {
             ChoiceContext::SpellAbility { formatted_choices, .. } => formatted_choices.clone(),
             ChoiceContext::Targets { formatted_targets, .. } => {
@@ -2182,15 +2202,32 @@ impl WasmFancyTuiState {
                 choices
             }
             ChoiceContext::Blockers {
+                available_blockers,
+                attackers,
                 formatted_blockers,
                 formatted_attackers,
-                ..
             } => {
-                // Use "Done" to match TUI and simpler block format without indices
+                // Reset and rebuild the index map so it stays in sync with the
+                // choices we display below. choice idx 0 is reserved for "Done".
+                self.blocker_choice_pairs.clear();
                 let mut choices = vec!["Done".to_string()];
-                for blocker in formatted_blockers.iter() {
-                    for attacker in formatted_attackers.iter() {
+                for (b_idx, &blocker_id) in available_blockers.iter().enumerate() {
+                    // Skip blockers the user has already staged this prompt -
+                    // each creature can only block one attacker.
+                    if self.staged_blocker_pairs.iter().any(|(staged_b, _)| *staged_b == b_idx) {
+                        continue;
+                    }
+                    for (a_idx, &attacker_id) in attackers.iter().enumerate() {
+                        // Per-pair MTG legality (Flying, Reach, Shadow, Fear, etc).
+                        // Mirrors `validate_blocking_restrictions` so the engine
+                        // never silently drops a choice we offered.
+                        if !crate::game::combat_rules::can_block(&self.game, attacker_id, blocker_id) {
+                            continue;
+                        }
+                        let blocker = formatted_blockers.get(b_idx).cloned().unwrap_or_default();
+                        let attacker = formatted_attackers.get(a_idx).cloned().unwrap_or_default();
                         choices.push(format!("{} blocks {}", blocker, attacker));
+                        self.blocker_choice_pairs.push((b_idx, a_idx));
                     }
                 }
                 choices
@@ -2241,7 +2278,32 @@ impl WasmFancyTuiState {
             }
             ChoiceContext::ManaSources { .. } => "Choose mana source:".to_string(),
             ChoiceContext::Attackers { .. } => PROMPT_ATTACKERS.to_string(),
-            ChoiceContext::Blockers { .. } => PROMPT_BLOCKERS.to_string(),
+            ChoiceContext::Blockers {
+                formatted_blockers,
+                formatted_attackers,
+                ..
+            } => {
+                if self.staged_blocker_pairs.is_empty() {
+                    PROMPT_BLOCKERS.to_string()
+                } else {
+                    // Show running tally so the user can see what they've already
+                    // staged before pressing "Done".
+                    let staged: Vec<String> = self
+                        .staged_blocker_pairs
+                        .iter()
+                        .map(|(b, a)| {
+                            let bn = formatted_blockers.get(*b).cloned().unwrap_or_default();
+                            let an = formatted_attackers.get(*a).cloned().unwrap_or_default();
+                            format!("{} blocks {}", bn, an)
+                        })
+                        .collect();
+                    format!(
+                        "{} (staged: {}; pick more or 'Done')",
+                        PROMPT_BLOCKERS,
+                        staged.join(", ")
+                    )
+                }
+            }
             ChoiceContext::DamageOrder { .. } => PROMPT_DAMAGE_ORDER.to_string(),
             ChoiceContext::Discard { count, .. } => prompt_discard(*count),
             ChoiceContext::LibrarySearch { .. } => PROMPT_LIBRARY_SEARCH.to_string(),
@@ -2317,16 +2379,28 @@ impl WasmFancyTuiState {
                         PendingChoice::Attackers(vec![idx - 1])
                     }
                 }
-                ChoiceContext::Blockers { attackers, .. } => {
+                ChoiceContext::Blockers { .. } => {
                     if idx == 0 {
-                        PendingChoice::Blockers(vec![]) // Done
+                        // "Done": commit everything the user staged this prompt
+                        // (which may be empty, meaning "no blocks").
+                        let pairs = std::mem::take(&mut self.staged_blocker_pairs);
+                        PendingChoice::Blockers(pairs)
                     } else {
-                        // Decode blocker-attacker pair from index
-                        let num_attackers = attackers.len();
+                        // Stage the picked pair and re-render: keep the user
+                        // here in the Blockers prompt so they can add more
+                        // blockers or finalize. We do NOT commit to the engine
+                        // yet — that happens when the user picks "Done".
                         let pair_idx = idx - 1;
-                        let blocker_idx = pair_idx / num_attackers;
-                        let attacker_idx = pair_idx % num_attackers;
-                        PendingChoice::Blockers(vec![(blocker_idx, attacker_idx)])
+                        if let Some(&pair) = self.blocker_choice_pairs.get(pair_idx) {
+                            self.staged_blocker_pairs.push(pair);
+                        }
+                        // Recompute choices for the same context; selected idx
+                        // back to 0 ("Done") so a quick second Enter submits.
+                        let context = self.pending_context.clone().unwrap();
+                        self.selected_choice_idx = 0;
+                        self.update_choices_from_context(&context);
+                        self.needs_redraw = true;
+                        return;
                     }
                 }
                 ChoiceContext::DamageOrder { .. } => PendingChoice::DamageOrder(vec![idx]),

@@ -1,0 +1,135 @@
+//! Shared combat-rules helpers.
+//!
+//! This module centralises the "can blocker B legally block attacker A?" check so
+//! that the game-loop validation, AI heuristics, and the GUI/TUI choice menus
+//! all agree on which blocker assignments are legal.
+//!
+//! Without this, the GUI would show illegal blocker options (e.g. a non-flying
+//! creature blocking a flying attacker), the player would pick one, and
+//! `validate_blocking_restrictions` would silently drop the assignment — making
+//! it look like the engine ignored the player's input.
+//!
+//! # Rules implemented
+//!
+//! Per CR 509 (Declare Blockers Step) and CR 702 evasion abilities:
+//!
+//! - 509.1a: Blocker must be untapped
+//! - 702.9b: Flying — only flying or reach can block
+//! - 702.31: Horsemanship — only horsemanship can block
+//! - 702.28: Shadow — shadow only blocks shadow; non-shadow only blocks non-shadow
+//! - 702.36: Fear — only artifact creatures or black creatures can block
+//! - 702.13: Intimidate — only artifact creatures or creatures sharing a color can block
+//! - 702.119: Skulk — blocker must have greater power
+//! - 702.16: Protection — blockers of a protected-from color cannot block
+//! - CantBeBlocked persistent effects (e.g. from Deserter's Disciple)
+//!
+//! # NOT enforced here (handled at aggregate level)
+//!
+//! - **Menace (702.111b)** — requires 2+ blockers in total. Whether a *single*
+//!   blocker may legally block a menace attacker depends on the rest of the
+//!   block declaration, so it can only be enforced on the full assignment.
+//! - **Landwalk (702.14)** — requires looking up the defending player's lands.
+//!   Use [`can_block_with_view`] when a `GameStateView` is available.
+
+use crate::core::{CardId, Color, Keyword, KeywordArgs};
+use crate::game::controller::GameStateView;
+use crate::game::state::GameState;
+
+/// Returns `true` if `blocker_id` may legally be assigned to block `attacker_id`
+/// in the current game state, ignoring multi-blocker rules (Menace) and
+/// landwalk.
+///
+/// Use this from the UI to filter the blocker choice menu and from the engine
+/// to validate user input. Both call sites MUST use the same predicate so the
+/// engine never silently drops a legal-looking choice.
+pub fn can_block(game: &GameState, attacker_id: CardId, blocker_id: CardId) -> bool {
+    can_block_impl(game, attacker_id, blocker_id, None)
+}
+
+/// Like [`can_block`], but also enforces Landwalk by looking at the defending
+/// player's battlefield via the supplied `view`.
+pub fn can_block_with_view(game: &GameState, view: &GameStateView, attacker_id: CardId, blocker_id: CardId) -> bool {
+    can_block_impl(game, attacker_id, blocker_id, Some(view))
+}
+
+fn can_block_impl(game: &GameState, attacker_id: CardId, blocker_id: CardId, view: Option<&GameStateView>) -> bool {
+    // Resolve cards. If either lookup fails, conservatively reject the block.
+    let (Ok(attacker), Ok(blocker)) = (game.cards.get(attacker_id), game.cards.get(blocker_id)) else {
+        return false;
+    };
+
+    // 509.1a: Tapped creatures can't block.
+    if blocker.tapped {
+        return false;
+    }
+
+    // CantBeBlocked persistent effects (e.g. Deserter's Disciple).
+    if game.persistent_effects.is_creature_unblockable(attacker_id) {
+        return false;
+    }
+
+    // 702.9b Flying: only flying or reach may block.
+    if game.has_keyword_with_effects(attacker_id, Keyword::Flying)
+        && !(game.has_keyword_with_effects(blocker_id, Keyword::Flying)
+            || game.has_keyword_with_effects(blocker_id, Keyword::Reach))
+    {
+        return false;
+    }
+
+    // 702.31 Horsemanship: only horsemanship may block.
+    if attacker.has_horsemanship() && !blocker.has_horsemanship() {
+        return false;
+    }
+
+    // 702.28 Shadow: shadow only blocks shadow; non-shadow only blocks non-shadow.
+    if attacker.has_shadow() != blocker.has_shadow() {
+        return false;
+    }
+
+    // 702.36 Fear: only artifact creatures or black creatures may block.
+    if attacker.has_fear() && !(blocker.is_artifact() || blocker.is_color(Color::Black)) {
+        return false;
+    }
+
+    // 702.13 Intimidate: only artifact creatures or creatures sharing a color may block.
+    if attacker.has_intimidate() {
+        let shares_color = attacker.colors.iter().any(|c| blocker.is_color(*c));
+        if !blocker.is_artifact() && !shares_color {
+            return false;
+        }
+    }
+
+    // 702.119 Skulk: blocker must have greater power.
+    if attacker.has_skulk() && blocker.current_power() <= attacker.current_power() {
+        return false;
+    }
+
+    // 702.16 Protection from color: blockers of a protected-from color can't block.
+    for color in &blocker.colors {
+        if attacker.has_protection_from(*color) {
+            return false;
+        }
+    }
+
+    // 702.14 Landwalk: needs view to check defending player's lands.
+    if attacker.has_keyword(Keyword::Landwalk) {
+        if let Some(view) = view {
+            for keyword_args in attacker.keywords.iter_args() {
+                if let KeywordArgs::Landwalk { land_type } = keyword_args {
+                    let defender_has_land = view.battlefield().iter().filter_map(|&id| view.get_card(id)).any(|c| {
+                        c.controller == blocker.controller
+                            && c.is_land()
+                            && c.subtypes
+                                .iter()
+                                .any(|st| st.as_str().eq_ignore_ascii_case(land_type.as_str()))
+                    });
+                    if defender_has_land {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    true
+}

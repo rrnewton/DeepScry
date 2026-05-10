@@ -4,6 +4,7 @@ pub mod actions;
 #[cfg(feature = "ratatui-image")]
 pub mod card_image;
 pub mod combat;
+pub mod combat_rules;
 pub mod command_parsing;
 pub mod continuous_effects;
 pub mod controller;
