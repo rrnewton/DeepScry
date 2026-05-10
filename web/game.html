@@ -1293,7 +1293,7 @@
             renderBattlefield(oppPlayer, 'opp-field-cards');
             renderHand(ourPlayer);
             renderStack(state.stack || []);
-            renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0);
+            renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
             renderLog(state.logs || []);
             renderStatusBar(state);
 
@@ -1511,7 +1511,7 @@
 
         /// Render the available-actions list. Choice text and 1-based display
         /// numbers come pre-formatted from the view model (`ChoiceView`).
-        function renderActions(prompt, choices, selectedIdx) {
+        function renderActions(prompt, choices, selectedIdx, choiceContext) {
             const promptEl = document.getElementById('actions-prompt');
             const body = document.getElementById('actions-body');
 
@@ -1520,9 +1520,13 @@
                     choices.map((c) => `${c.display_number}: ${c.text}`));
             }
 
-            if (prompt) {
+            if (choiceContext || prompt) {
                 promptEl.style.display = 'block';
-                promptEl.textContent = prompt;
+                const contextHtml = choiceContext
+                    ? `<div style="color:#e2e8f0; font-weight:bold; margin-bottom:2px;">${escapeHtml(choiceContext)}</div>`
+                    : '';
+                const promptHtml = prompt ? escapeHtml(prompt) : '';
+                promptEl.innerHTML = contextHtml + promptHtml;
             } else {
                 promptEl.style.display = 'none';
             }

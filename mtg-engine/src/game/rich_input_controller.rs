@@ -553,6 +553,10 @@ impl PlayerController for RichInputController {
         crate::game::snapshot::ControllerType::Tui
     }
 
+    fn wants_context(&self) -> bool {
+        true
+    }
+
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {
         // RichInputController state is not needed for snapshot restoration
         // (choices are replayed from the choices files, not from controller state).

@@ -743,7 +743,8 @@ impl<'a> GameLoop<'a> {
                         {
                             let view = GameStateView::new(self.game, current_priority);
                             if view.logger().should_show_choice_menu() && !available.is_empty() {
-                                print!("{}", format_choice_menu(&view, &available));
+                                let wants_ctx = controller.wants_context();
+                                print!("{}", format_choice_menu(&view, &available, wants_ctx));
                             }
                         } // Drop view before mutable borrow
 

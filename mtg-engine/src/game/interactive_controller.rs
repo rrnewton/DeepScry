@@ -391,8 +391,9 @@ impl PlayerController for InteractiveController {
 
         // Get player name from view
         let player_name = view.player_name();
+        let context = view.build_choice_context();
         println!(
-            "\n  ==> Priority {}: life {}, {:?}",
+            "\n  ==> {context} Priority {}: life {}, {:?}",
             player_name,
             view.life(),
             view.current_step()
@@ -442,8 +443,12 @@ impl PlayerController for InteractiveController {
             ChoiceResult::Ok(Some(sorted[choice - 1].clone()))
         } else {
             // Non-numeric mode: Index 0 = Pass, 1+ = actions, OR rich text commands
-            // Use shared format_choice_menu for consistency (it sorts internally)
-            print!("{}", crate::game::controller::format_choice_menu(view, &sorted));
+            // Use shared format_choice_menu for consistency (it sorts internally).
+            // Interactive controller is human-facing → always wants context.
+            print!(
+                "{}",
+                crate::game::controller::format_choice_menu(view, &sorted, self.wants_context())
+            );
 
             // Read user input and try rich command parsing first
             loop {
@@ -1306,5 +1311,9 @@ impl PlayerController for InteractiveController {
 
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Tui
+    }
+
+    fn wants_context(&self) -> bool {
+        true
     }
 }

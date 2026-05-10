@@ -85,3 +85,50 @@ fn test_player_life() {
     // Test that life() returns current player's life
     assert_eq!(view.life(), 10);
 }
+
+#[test]
+fn test_build_choice_context_your_turn() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    game.turn.active_player = PlayerId::new(0);
+    game.turn.current_step = crate::game::Step::Main1;
+
+    let view = GameStateView::new(&game, PlayerId::new(0));
+    assert_eq!(view.build_choice_context(), "[Your_Main1]");
+}
+
+#[test]
+fn test_build_choice_context_their_turn() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    game.turn.active_player = PlayerId::new(1);
+    game.turn.current_step = crate::game::Step::End;
+
+    let view = GameStateView::new(&game, PlayerId::new(0));
+    assert_eq!(view.build_choice_context(), "[Their_EndStep]");
+}
+
+#[test]
+fn test_build_choice_context_combat_step() {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    game.turn.active_player = PlayerId::new(0);
+    game.turn.current_step = crate::game::Step::DeclareAttackers;
+
+    let view = GameStateView::new(&game, PlayerId::new(0));
+    assert_eq!(view.build_choice_context(), "[Your_Combat_DeclareAttackers]");
+}
+
+#[test]
+fn test_build_choice_context_with_stack() {
+    use crate::core::Card;
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    game.turn.active_player = PlayerId::new(0);
+    game.turn.current_step = crate::game::Step::Main1;
+
+    // Add a card to the stack
+    let card_id = game.next_card_id();
+    let card = Card::new(card_id, "Lightning Bolt", PlayerId::new(0));
+    game.cards.insert(card_id, card);
+    game.stack.add(card_id);
+
+    let view = GameStateView::new(&game, PlayerId::new(0));
+    assert_eq!(view.build_choice_context(), "[Your_Main1 | Lightning Bolt on stack]");
+}

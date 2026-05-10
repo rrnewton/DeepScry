@@ -574,6 +574,10 @@ impl PlayerController for WasmHumanController {
         // Use Tui as the closest match for human player
         ControllerType::Tui
     }
+
+    fn wants_context(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

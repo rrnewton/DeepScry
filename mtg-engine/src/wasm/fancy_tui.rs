@@ -937,6 +937,10 @@ pub fn tui_get_full_state_json() -> String {
                 )
             };
 
+            // Build choice context for human player
+            let our_view = GameStateView::new(game, s.renderer.player_id);
+            let choice_context = our_view.build_choice_context();
+
             let result = serde_json::json!({
                 "turn_number": game.turn.turn_number,
                 "current_step": format!("{:?}", game.turn.current_step),
@@ -954,6 +958,8 @@ pub fn tui_get_full_state_json() -> String {
                 "logs": logs,
                 // Pre-computed status bar text
                 "status_text": status_text,
+                // Choice context for human/agent display
+                "choice_context": choice_context,
             });
 
             serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
