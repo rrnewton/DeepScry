@@ -957,10 +957,18 @@ impl<'a> GameLoop<'a> {
                     if can_activate {
                         if let Some(waterbend_amount) = ability.cost.get_waterbend_amount() {
                             // Get mana sources (lands and creatures/artifacts with mana abilities)
+                            // CRITICAL (bug-vinebender-triple-activation): we must only count
+                            // sources that can ACTUALLY produce mana right now — i.e. untapped
+                            // and (for creatures) not summoning-sick. Otherwise the AI re-offers
+                            // the ability after every land has already been tapped to pay it,
+                            // leading to multiple "free" activations in a row.
                             let mana_sources = self.mana_engine.all_sources();
                             let mana_source_ids: smallvec::SmallVec<[CardId; 16]> =
                                 mana_sources.iter().map(|s| s.card_id).collect();
-                            let mana_available = mana_sources.iter().filter(|s| s.card_id != card_id).count() as u8;
+                            let mana_available = mana_sources
+                                .iter()
+                                .filter(|s| s.card_id != card_id && !s.is_tapped && !s.has_summoning_sickness)
+                                .count() as u8;
 
                             // Count untapped creatures/artifacts that are NOT mana sources
                             // (mana sources are already counted above - avoid double-counting)
