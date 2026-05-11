@@ -1,6 +1,7 @@
 //! Core game state and turn structure
 
 pub mod actions;
+pub mod battlefield_layout;
 #[cfg(feature = "ratatui-image")]
 pub mod card_image;
 pub mod combat;
