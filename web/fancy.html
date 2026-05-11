@@ -1259,6 +1259,7 @@ Name=My Deck
 
         // Track whether full card database has been loaded
         let fullCardsLoaded = false;
+        let fullTokensLoaded = false;
 
         /**
          * Update the card status display in the header bar
@@ -1336,6 +1337,36 @@ Name=My Deck
          *
          * Custom decks always trigger the fallback since they don't have pre-built .bin packs.
          */
+        async function loadFullCardDatabaseWithTokens(status) {
+            if (fullCardsLoaded) {
+                console.log(`Full database already loaded (${cardDb.card_count()} cards), skipping reload`);
+            } else {
+                const cardsResp = await fetch('./data/cards.bin');
+                if (!cardsResp.ok) {
+                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                }
+                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
+                cardDb.load_cards(cardsData);
+                fullCardsLoaded = true;
+                console.log('Loaded full card database');
+            }
+
+            if (fullTokensLoaded) {
+                return;
+            }
+
+            status.textContent = 'Loading token definitions...';
+            const tokensResp = await fetch('./data/tokens.bin');
+            if (!tokensResp.ok) {
+                console.warn(`tokens.bin not available (${tokensResp.status}); token creation may fail`);
+                return;
+            }
+            const tokensData = new Uint8Array(await tokensResp.arrayBuffer());
+            const tokenCount = cardDb.load_tokens(tokensData);
+            fullTokensLoaded = true;
+            console.log(`Loaded ${tokenCount} token definitions`);
+        }
+
         async function loadCardsForDecks(p1Deck, p2Deck) {
             const status = document.getElementById('status');
             const uniqueDecks = [...new Set([p1Deck, p2Deck])];  // Dedupe if same deck
@@ -1392,20 +1423,7 @@ Name=My Deck
             if (needFallback) {
                 status.textContent = 'Loading full card database...';
                 console.log('Loading full cards.bin...');
-
-                // Check if cards are already loaded (from deck builder session)
-                if (fullCardsLoaded) {
-                    console.log(`Full database already loaded (${cardDb.card_count()} cards), skipping reload`);
-                } else {
-                    const cardsResp = await fetch('./data/cards.bin');
-                    if (!cardsResp.ok) {
-                        throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-                    }
-                    const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                    cardDb.load_cards(cardsData);
-                    fullCardsLoaded = true;
-                    console.log('Loaded full card database');
-                }
+                await loadFullCardDatabaseWithTokens(status);
             }
 
             // Verify all needed cards are loaded

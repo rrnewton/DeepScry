@@ -865,6 +865,7 @@
         let autoRunning = false;
         let showImages = true;
         let fullCardsLoaded = false;
+        let fullTokensLoaded = false;
         let allDeckNames = [];
         // The most recently parsed GuiViewModel (from
         // tui_get_gui_view_model_json). All render functions derive their
@@ -1059,6 +1060,29 @@
         }
 
         // ==================== CARD LOADING ====================
+        async function loadFullCardDatabaseWithTokens(status) {
+            if (!fullCardsLoaded) {
+                status.textContent = 'Loading full card database...';
+                const cardsResp = await fetch('./data/cards.bin');
+                if (!cardsResp.ok) throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
+                cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
+                fullCardsLoaded = true;
+            }
+
+            if (fullTokensLoaded) {
+                return;
+            }
+
+            status.textContent = 'Loading token definitions...';
+            const tokensResp = await fetch('./data/tokens.bin');
+            if (!tokensResp.ok) {
+                console.warn(`tokens.bin not available (${tokensResp.status}); token creation may fail`);
+                return;
+            }
+            cardDb.load_tokens(new Uint8Array(await tokensResp.arrayBuffer()));
+            fullTokensLoaded = true;
+        }
+
         async function loadCardsForDecks(p1Deck, p2Deck) {
             const status = document.getElementById('status');
             const uniqueDecks = [...new Set([p1Deck, p2Deck])];
@@ -1072,22 +1096,10 @@
                         cardDb.load_deck_pack(packData);
                     } else {
                         // Fall back to full cards.bin
-                        if (!fullCardsLoaded) {
-                            status.textContent = 'Loading full card database...';
-                            const cardsResp = await fetch('./data/cards.bin');
-                            if (!cardsResp.ok) throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-                            cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
-                            fullCardsLoaded = true;
-                        }
+                        await loadFullCardDatabaseWithTokens(status);
                     }
                 } catch (e) {
-                    if (!fullCardsLoaded) {
-                        status.textContent = 'Loading full card database...';
-                        const cardsResp = await fetch('./data/cards.bin');
-                        if (!cardsResp.ok) throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-                        cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
-                        fullCardsLoaded = true;
-                    }
+                    await loadFullCardDatabaseWithTokens(status);
                 }
             }
 
