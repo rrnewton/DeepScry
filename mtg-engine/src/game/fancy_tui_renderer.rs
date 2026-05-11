@@ -2137,22 +2137,119 @@ impl FancyTuiRenderer {
         // Extract sections from items for section-aware layout
         let sections = Self::extract_sections(items);
 
-        // Try different row counts and find the best card size for each
-        let mut best_height = Self::MIN_CARD_HEIGHT;
+        // ── Card sizing: delegate to the shared backend-neutral layout
+        // engine so the TUI and the future GUI agree on "what is the
+        // largest card height that fits all entities here?".
+        let (best_width, best_height) = Self::pick_card_size_via_layout_engine(area, view, items, &sections);
 
-        for target_rows in 1..=4 {
-            let max_height = self.find_max_card_height_for_rows(area, view, items, &sections, target_rows);
-            if max_height > best_height {
-                best_height = max_height;
-            }
-        }
-
-        let best_width = Self::compute_width_from_height(best_height);
-
-        // Now find section breaks that work with this card size
+        // ── Section break detection stays in the renderer for now: it
+        // depends on inter-section spacing semantics (force_newline_before,
+        // 1.5× section gap multiplier) that the backend-neutral engine
+        // does not yet model. A follow-up will fold this into the engine
+        // alongside the centring and graveyard-collision post-processing.
         let section_breaks = self.compute_section_breaks(area, view, items, &sections, best_width, best_height);
 
         (best_width, best_height, section_breaks)
+    }
+
+    /// Convert this renderer's `BattlefieldItem` list into the layout
+    /// engine's `CardLayoutInput` list and ask the engine for the
+    /// largest card size that fits inside `area`.
+    ///
+    /// All measurements move through `CellSize::TERMINAL` (10 × 20 px)
+    /// so the engine's pixel rectangles are exact integer multiples of
+    /// terminal cells when we convert back.
+    fn pick_card_size_via_layout_engine(
+        area: Rect,
+        view: &GameStateView,
+        items: &[BattlefieldItem],
+        sections: &[(usize, usize)],
+    ) -> (u16, u16) {
+        use crate::game::battlefield_layout as bl;
+
+        // Map TUI section labels back to the engine's CardCategory enum.
+        // Production code uses the standard labels ("PWs", "Creatures"
+        // …) defined in `draw_battlefield`; tests sometimes pass other
+        // strings, in which case the entities fall into `Other` and are
+        // grouped together. Either way the size picker only cares about
+        // the *aggregate* row layout, so this fallback is safe.
+        fn label_to_cat(label: &str) -> bl::CardCategory {
+            match label {
+                "PWs" => bl::CardCategory::Planeswalker,
+                "Creatures" => bl::CardCategory::Creature,
+                "Enchants" => bl::CardCategory::Enchantment,
+                "Artifacts" => bl::CardCategory::Artifact,
+                "Lands" => bl::CardCategory::Land,
+                _ => bl::CardCategory::Other,
+            }
+        }
+
+        // Walk items in order, tracking which label introduced each
+        // entity so we can stamp the right category onto each input.
+        let mut layout_inputs: Vec<bl::CardLayoutInput> = Vec::new();
+        let mut current_cat = bl::CardCategory::Other;
+        let mut next_id: u32 = 0;
+        for item in items {
+            match item {
+                BattlefieldItem::Label { text, .. } => {
+                    current_cat = label_to_cat(text);
+                }
+                BattlefieldItem::Card { entity } => {
+                    layout_inputs.push(bl::CardLayoutInput {
+                        card_id: next_id,
+                        category: current_cat,
+                        name: String::new(), // not needed for sizing
+                        is_tapped: entity.is_tapped(view),
+                        stack_size: entity.count() as u16,
+                    });
+                    next_id += 1;
+                }
+            }
+        }
+
+        if layout_inputs.is_empty() {
+            // All items were labels with no cards.
+            let _ = sections; // explicitly unused
+            return (Self::MIN_CARD_WIDTH, Self::MIN_CARD_HEIGHT);
+        }
+
+        let cell = bl::CellSize::TERMINAL;
+        let cfg = bl::LayoutConfig {
+            default_card: bl::CardSize::new(
+                f32::from(Self::DEFAULT_CARD_WIDTH) * cell.w,
+                f32::from(Self::DEFAULT_CARD_HEIGHT) * cell.h,
+            ),
+            min_card: bl::CardSize::new(
+                f32::from(Self::MIN_CARD_WIDTH) * cell.w,
+                f32::from(Self::MIN_CARD_HEIGHT) * cell.h,
+            ),
+            max_card_height_px: f32::from(Self::MAX_CARD_HEIGHT) * cell.h,
+            spacing_px: f32::from(Self::CARD_SPACING) * cell.w,
+            header_height_px: cell.h, // 1 cell header line
+            graveyard_text_height_px: cell.h,
+            graveyard_char_width_px: cell.w,
+            graveyard_card_count: 0, // graveyard reservation is handled separately by compute_graveyard_bounds
+            graveyard_max_name_len: 0,
+            reverse_section_order: false, // sizing is order-agnostic; the input list already reflects the renderer's ordering
+            flow_sections_on_same_row: true,
+            reserve_header_per_row: true,
+        };
+
+        // Promote the renderer's cell-area to pixel coordinates.
+        let rect = bl::LayoutRect::from_xywh(
+            f32::from(area.x) * cell.w,
+            f32::from(area.y) * cell.h,
+            f32::from(area.width) * cell.w,
+            f32::from(area.height) * cell.h,
+        );
+        let used = bl::pick_card_size_for_battlefield(rect, cell, &layout_inputs, &cfg);
+
+        // Convert the engine's pixel size back to terminal cells.
+        // Snapping in the engine guarantees the values are integer
+        // multiples of cell.{w,h} so `round` + `as` is exact.
+        let card_w = (used.width_px / cell.w).round() as u16;
+        let card_h = (used.height_px / cell.h).round() as u16;
+        (card_w.max(Self::MIN_CARD_WIDTH), card_h.max(Self::MIN_CARD_HEIGHT))
     }
 
     /// Compute which section indices should start on new rows.
@@ -2229,6 +2326,15 @@ impl FancyTuiRenderer {
     }
 
     /// Find the maximum card height that fits in the given number of rows.
+    ///
+    /// Superseded by `pick_card_size_via_layout_engine`, which delegates to
+    /// the shared `battlefield_layout` engine. Retained alongside its
+    /// helpers (`count_rows_for_layout`, `simulate_layout_rows`,
+    /// `simulate_section_break_layout`) so the existing
+    /// `test_simulate_layout_rows_tracks_entity_heights` regression test
+    /// continues to compile. Will be removed once that test migrates to
+    /// the engine's own coverage.
+    #[allow(dead_code)]
     fn find_max_card_height_for_rows(
         &self,
         area: Rect,
@@ -2257,6 +2363,7 @@ impl FancyTuiRenderer {
     /// Count how many rows the layout uses with given card size.
     /// If target_rows > 1, tries to break at section boundaries when beneficial.
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     fn count_rows_for_layout(
         &self,
         area: Rect,
@@ -2292,6 +2399,7 @@ impl FancyTuiRenderer {
 
     /// Simulate layout and count rows used (natural word-wrap, no forced breaks).
     /// Also tracks max entity height per row for accurate vertical space calculation.
+    #[allow(dead_code)]
     fn simulate_layout_rows(
         &self,
         area: Rect,
@@ -2345,6 +2453,7 @@ impl FancyTuiRenderer {
     /// Simulate layout with section-aware line breaking.
     /// Tries to keep sections together, breaking only between sections.
     /// Tracks actual entity heights for accurate vertical space calculation.
+    #[allow(dead_code)]
     fn simulate_section_break_layout(
         &self,
         area: Rect,
@@ -3062,38 +3171,45 @@ impl FancyTuiRenderer {
 
     /// Compute the bounding box for graveyard overlay (without rendering)
     /// Returns None if graveyard is empty or doesn't fit
+    ///
+    /// Delegates to the shared backend-neutral layout engine
+    /// (`battlefield_layout::compute_graveyard_layout_rect`) so the TUI
+    /// and the future GUI agree on where the graveyard sits and how big
+    /// it is. The engine works in pixels — we promote `area` to pixels
+    /// using `CellSize::TERMINAL` and demote the result back to cells.
     fn compute_graveyard_bounds(area: Rect, view: &GameStateView, owner_id: PlayerId) -> Option<Rect> {
+        use crate::game::battlefield_layout as bl;
+
         let graveyard = view.player_graveyard(owner_id);
         if graveyard.is_empty() {
             return None;
         }
-
-        // Calculate required width (longest name or header)
-        let header = "Graveyard:";
         let max_name_len = graveyard
             .iter()
             .filter_map(|&card_id| view.card_name(card_id))
             .map(|n| n.len())
             .max()
             .unwrap_or(0);
-        let content_width = max_name_len.max(header.len()) as u16;
 
-        // Calculate required height: header + cards
-        let box_height = (1 + graveyard.len()) as u16;
-
-        // Check if it fits
-        if area.width < content_width || area.height < box_height {
-            return None;
-        }
-
-        let x_start = area.x + area.width - content_width;
-        let y_start = area.y + area.height - box_height;
-
+        let cell = bl::CellSize::TERMINAL;
+        let mut cfg = bl::LayoutConfig::tui_compat();
+        cfg.graveyard_card_count = graveyard.len();
+        cfg.graveyard_max_name_len = max_name_len;
+        // The engine uses cell.h as a per-line height for graveyard rows
+        // and cell.w as per-character width — this matches the original
+        // TUI which computes the rect in 1×1 cell units.
+        let rect = bl::LayoutRect::from_xywh(
+            f32::from(area.x) * cell.w,
+            f32::from(area.y) * cell.h,
+            f32::from(area.width) * cell.w,
+            f32::from(area.height) * cell.h,
+        );
+        let gv = bl::compute_graveyard_layout_rect(rect, cell, &cfg)?;
         Some(Rect {
-            x: x_start,
-            y: y_start,
-            width: content_width,
-            height: box_height,
+            x: (gv.x1 / cell.w).round() as u16,
+            y: (gv.y1 / cell.h).round() as u16,
+            width: (gv.width() / cell.w).round() as u16,
+            height: (gv.height() / cell.h).round() as u16,
         })
     }
 

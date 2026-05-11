@@ -391,6 +391,48 @@ pub fn layout_battlefield(
     }
 }
 
+/// Pick the largest card size that fits all `cards` inside `rect`,
+/// without producing the full per-card placement.
+///
+/// This is the size-only fast-path used by callers that want to drive
+/// their own placement (e.g. the TUI renderer, which then applies its
+/// own per-row centring and graveyard-collision sliding) but still
+/// want the layout engine to be the single source of truth for card
+/// sizing decisions.
+pub fn pick_card_size_for_battlefield(
+    rect: LayoutRect,
+    cell: CellSize,
+    cards: &[CardLayoutInput],
+    config: &LayoutConfig,
+) -> CardSize {
+    if cards.is_empty() || rect.is_empty() {
+        return config.min_card;
+    }
+    // Mirror the same available-area shrink that `layout_battlefield`
+    // does so the chosen size respects the graveyard reservation.
+    let graveyard_rect = compute_graveyard_rect(rect, cell, config);
+    let available = if let Some(gv) = graveyard_rect {
+        LayoutRect::new(rect.x1, rect.y1, gv.x1.max(rect.x1), rect.y2)
+    } else {
+        rect
+    };
+    let sections_in = group_and_order(cards, config.reverse_section_order);
+    if sections_in.is_empty() {
+        return config.min_card;
+    }
+    pick_card_size(available, cell, &sections_in, config)
+}
+
+/// Public wrapper around the internal graveyard rect computation —
+/// returns the bounding box reserved in the lower-right corner for
+/// the graveyard text element, snapped to the cell grid.
+///
+/// Returns `None` when `LayoutConfig::graveyard_card_count == 0` or
+/// the requested rect won't fit inside `rect`.
+pub fn compute_graveyard_layout_rect(rect: LayoutRect, cell: CellSize, config: &LayoutConfig) -> Option<LayoutRect> {
+    compute_graveyard_rect(rect, cell, config)
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Internals
 // ───────────────────────────────────────────────────────────────────────
@@ -967,8 +1009,10 @@ mod tests {
             card(1, CardCategory::Planeswalker),
             card(2, CardCategory::Creature),
         ];
-        let mut cfg = LayoutConfig::default();
-        cfg.reverse_section_order = true;
+        let cfg = LayoutConfig {
+            reverse_section_order: true,
+            ..LayoutConfig::default()
+        };
         let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
         let cats: Vec<_> = res.sections.iter().map(|s| s.category).collect();
         assert_eq!(
@@ -980,9 +1024,11 @@ mod tests {
     #[test]
     fn graveyard_reserved_in_lower_right_when_configured() {
         let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
-        let mut cfg = LayoutConfig::default();
-        cfg.graveyard_card_count = 3;
-        cfg.graveyard_max_name_len = 20; // wider than "Graveyard:" (10)
+        let cfg = LayoutConfig {
+            graveyard_card_count: 3,
+            graveyard_max_name_len: 20, // wider than "Graveyard:" (10)
+            ..LayoutConfig::default()
+        };
         let cards = vec![card(0, CardCategory::Creature)];
         let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
         let gv = res.graveyard_rect.expect("graveyard rect should be present");
@@ -998,9 +1044,11 @@ mod tests {
     #[test]
     fn graveyard_uses_header_width_when_names_are_short() {
         let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
-        let mut cfg = LayoutConfig::default();
-        cfg.graveyard_card_count = 1;
-        cfg.graveyard_max_name_len = 3; // shorter than "Graveyard:" (10)
+        let cfg = LayoutConfig {
+            graveyard_card_count: 1,
+            graveyard_max_name_len: 3, // shorter than "Graveyard:" (10)
+            ..LayoutConfig::default()
+        };
         let res = layout_battlefield(r, CellSize::TERMINAL, &[card(0, CardCategory::Creature)], &cfg);
         let gv = res.graveyard_rect.unwrap();
         // Width is at least 10 chars * 10 px = 100.
@@ -1096,13 +1144,15 @@ mod tests {
         // are not multiples of 20.
         let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
         let cards = vec![card(0, CardCategory::Creature)];
-        let mut cfg = LayoutConfig::default();
         // Force a non-cell-aligned card height so the test is meaningful.
-        cfg.default_card = CardSize::new(33.0, 47.0);
-        cfg.min_card = CardSize::new(10.0, 10.0);
-        cfg.max_card_height_px = 47.0;
-        cfg.spacing_px = 1.0;
-        cfg.header_height_px = 1.0;
+        let cfg = LayoutConfig {
+            default_card: CardSize::new(33.0, 47.0),
+            min_card: CardSize::new(10.0, 10.0),
+            max_card_height_px: 47.0,
+            spacing_px: 1.0,
+            header_height_px: 1.0,
+            ..LayoutConfig::default()
+        };
         let res = layout_battlefield(r, CellSize::PIXEL, &cards, &cfg);
         // We can at least place the one card at exactly its requested
         // height (no quantisation error from a coarse grid).
