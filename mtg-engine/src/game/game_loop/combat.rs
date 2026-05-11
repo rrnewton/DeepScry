@@ -221,9 +221,28 @@ impl<'a> GameLoop<'a> {
         let current_turn = self.game.turn.turn_number;
         let already_declared = self.game.turn.blockers_declared_turn == Some(current_turn);
 
-        // Get available blockers and attackers
-        let available_blockers = self.get_available_blocker_creatures(defending_player);
+        // Get available blockers and attackers.
+        //
+        // We then prune `available_blockers` down to those creatures that can
+        // legally block at least one of the current `attackers` (per
+        // `combat_rules::can_block`: Flying/Reach, Shadow, Fear/Intimidate,
+        // Skulk, Protection, CantBeBlocked, etc).  This is the single
+        // generation-time filter that all UIs/controllers consume — so the
+        // native TUI, the WASM fancy TUI, and the heuristic AI all agree
+        // with `validate_blocking_restrictions` about what's even an option.
+        // Without this, the engine would silently drop a "legal-looking"
+        // pick the UI offered (e.g. Knowledge Seeker blocking Glider Kids).
+        //
+        // Per-pair filtering (which attackers a particular blocker may block)
+        // is layered on top by each interactive controller via
+        // `combat_rules::legal_attackers_for_blocker`.
+        let raw_available_blockers = self.get_available_blocker_creatures(defending_player);
         let attackers = self.get_current_attackers();
+        let available_blockers: SmallVec<[crate::core::CardId; 8]> = raw_available_blockers
+            .iter()
+            .copied()
+            .filter(|&blocker_id| crate::game::combat_rules::is_useful_blocker(self.game, blocker_id, &attackers))
+            .collect();
 
         if !available_blockers.is_empty() && !attackers.is_empty() && !already_declared {
             // Clear replay mode if all choices have been replayed

@@ -573,14 +573,22 @@ impl PlayerController for FancyTuiController {
         self.renderer.state.choice_context = ChoiceContext::DeclareBlockers;
         self.renderer.state.valid_choices = available_blockers.iter().chain(attackers.iter()).copied().collect();
         let mut blocks = SmallVec::new();
-        let formatted_attackers = format_card_choices(view, attackers, self.player_id);
 
         for &blocker_id in available_blockers {
+            // Per-pair MTG legality: only show attackers this blocker can
+            // legally block. Mirrors the engine's
+            // `validate_blocking_restrictions` so the engine never silently
+            // drops a pick we offered (mtg-bug-blockers-native-tui).
+            let legal_attackers =
+                crate::game::combat_rules::legal_attackers_for_blocker(view.game(), blocker_id, attackers);
+            if legal_attackers.is_empty() {
+                continue;
+            }
+            let formatted_legal = format_card_choices(view, &legal_attackers, self.player_id);
+
             let blocker_name = view.card_name(blocker_id).unwrap_or_default();
             let prompt = format!("{}: Block which attacker?", blocker_name);
-            let choices: Vec<String> = std::iter::once("Skip".to_string())
-                .chain(formatted_attackers.clone())
-                .collect();
+            let choices: Vec<String> = std::iter::once("Skip".to_string()).chain(formatted_legal).collect();
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => {
@@ -589,8 +597,8 @@ impl PlayerController for FancyTuiController {
                     return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(0) | None)) => continue,
-                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= attackers.len() => {
-                    blocks.push((blocker_id, attackers[idx - 1]));
+                Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= legal_attackers.len() => {
+                    blocks.push((blocker_id, legal_attackers[idx - 1]));
                 }
                 Ok(PromptResult::Choice(_)) => break,
                 Err(e) => {
