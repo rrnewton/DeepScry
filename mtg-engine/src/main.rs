@@ -18,6 +18,68 @@ use mtg_forge_rs::{
 };
 use std::path::PathBuf;
 
+/// Format a UNIX timestamp (seconds since epoch) as `YYYYMMDD_HHMMSS` in UTC.
+///
+/// We avoid pulling in `chrono`/`time` as a direct dependency by inlining
+/// Howard Hinnant's civil-date algorithm. UTC is fine for filenames since
+/// uniqueness, not human readability across timezones, is the primary goal.
+fn format_yyyymmdd_hhmmss_utc(secs: u64) -> String {
+    const SECS_PER_DAY: u64 = 86_400;
+    let days_since_epoch = (secs / SECS_PER_DAY) as i64;
+    let time_of_day = secs % SECS_PER_DAY;
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+
+    // Howard Hinnant's algorithm: convert serial date to civil date
+    // (See http://howardhinnant.github.io/date_algorithms.html)
+    let z = days_since_epoch + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+
+    format!("{:04}{:02}{:02}_{:02}{:02}{:02}", year, m, d, hour, minute, second)
+}
+
+/// Persist the in-memory game log buffer to `/tmp/mtg_game_YYYYMMDD_HHMMSS.log`.
+///
+/// Returns `Ok(Some(path))` if a log file was written, `Ok(None)` if the buffer
+/// was empty (nothing to save), or an `io::Error` on failure.
+///
+/// Caller is responsible for surfacing the returned path to the user (e.g. via
+/// `println!`); we deliberately don't print here so the message can be emitted
+/// AFTER any TUI screen has been torn down.
+fn save_game_log_to_tmp(logger: &mtg_forge_rs::game::logger::GameLogger) -> std::io::Result<Option<PathBuf>> {
+    use std::io::Write;
+
+    let logs = logger.logs();
+    if logs.is_empty() {
+        return Ok(None);
+    }
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let timestamp = format_yyyymmdd_hhmmss_utc(secs);
+    let log_path = PathBuf::from(format!("/tmp/mtg_game_{}.log", timestamp));
+
+    let file = std::fs::File::create(&log_path)?;
+    let mut writer = std::io::BufWriter::new(file);
+    for entry in logs.iter() {
+        writeln!(writer, "{}", entry.message)?;
+    }
+    writer.flush()?;
+
+    Ok(Some(log_path))
+}
+
 /// Find cardsfolder directory using centralized search algorithm
 ///
 /// Searches: CARDSFOLDER env var → ./cardsfolder → binary dir → parent dirs up to root
@@ -1784,6 +1846,13 @@ async fn run_tui(
     if is_fancy_tui {
         game.logger
             .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
+    } else {
+        // For non-fancy CLI tui mode, also capture logs to memory in addition to
+        // printing them to stdout, so we can persist a complete game log to disk
+        // at exit (see `save_game_log_to_tmp` below). `Both` keeps the existing
+        // user-visible stdout output intact.
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
     }
 
     // Note: When using init_game_with_positional_ids (which shuffles BEFORE assigning CardIDs),
@@ -2008,29 +2077,20 @@ async fn run_tui(
         }
     }
 
-    // Save buffered logs to file if fancy TUI was used (run_tui function)
-    if is_fancy_tui {
-        use std::io::Write;
-        let logs = game.logger.logs();
-        let log_count = logs.len();
-
-        if log_count > 0 {
-            // Create temp file for logs
-            let temp_dir = std::env::temp_dir();
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
-
-            // Write logs to file
-            let mut file = std::fs::File::create(&log_path)?;
-            for entry in logs.iter() {
-                writeln!(file, "{}", entry.message)?;
-            }
-
-            log::info!("\n>>> Game log saved: {} lines written to:", log_count);
-            log::info!("    {}", log_path.display());
+    // Persist the full in-memory game log to /tmp for post-game review.
+    // This works for both fancy TUI (logs were captured via OutputMode::Memory)
+    // and non-fancy CLI tui mode (captured via OutputMode::Both above). We use
+    // println! so the message is visible on the terminal even when the TUI has
+    // redirected env_logger output to a file.
+    match save_game_log_to_tmp(&game.logger) {
+        Ok(Some(log_path)) => {
+            println!("Log saved to {}", log_path.display());
+        }
+        Ok(None) => {
+            // No log entries to save (game produced no output) — silent skip.
+        }
+        Err(e) => {
+            eprintln!("Warning: failed to save game log to /tmp: {}", e);
         }
     }
 
@@ -2556,6 +2616,11 @@ async fn run_resume(
     if is_fancy_tui_resume {
         game.logger
             .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
+    } else {
+        // Same rationale as run_tui: capture to memory so we can persist a
+        // complete game log to /tmp at exit, while keeping stdout output.
+        game.logger
+            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
     }
 
     // Run the game loop
@@ -2749,29 +2814,17 @@ async fn run_resume(
         }
     }
 
-    // Save buffered logs to file if fancy TUI was used (run_resume function)
-    if is_fancy_tui_resume {
-        use std::io::Write;
-        let logs = game.logger.logs();
-        let log_count = logs.len();
-
-        if log_count > 0 {
-            // Create temp file for logs
-            let temp_dir = std::env::temp_dir();
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let log_path = temp_dir.join(format!("mtg_forge_game_{}.log", timestamp));
-
-            // Write logs to file
-            let mut file = std::fs::File::create(&log_path)?;
-            for entry in logs.iter() {
-                writeln!(file, "{}", entry.message)?;
-            }
-
-            log::info!("\n>>> Game log saved: {} lines written to:", log_count);
-            log::info!("    {}", log_path.display());
+    // Persist the full in-memory game log to /tmp for post-game review.
+    // Mirrors the logic at the end of `run_tui`.
+    match save_game_log_to_tmp(&game.logger) {
+        Ok(Some(log_path)) => {
+            println!("Log saved to {}", log_path.display());
+        }
+        Ok(None) => {
+            // No log entries to save (game produced no output) — silent skip.
+        }
+        Err(e) => {
+            eprintln!("Warning: failed to save game log to /tmp: {}", e);
         }
     }
 
@@ -3649,6 +3702,18 @@ async fn run_download(
 mod tests {
     #[cfg(feature = "network")]
     use super::*;
+
+    #[test]
+    fn test_format_yyyymmdd_hhmmss_utc_known_values() {
+        // Unix epoch
+        assert_eq!(format_yyyymmdd_hhmmss_utc(0), "19700101_000000");
+        // 2000-01-01 00:00:00 UTC = 946_684_800
+        assert_eq!(format_yyyymmdd_hhmmss_utc(946_684_800), "20000101_000000");
+        // 2024-02-29 12:34:56 UTC (leap day) = 1_709_210_096
+        assert_eq!(format_yyyymmdd_hhmmss_utc(1_709_210_096), "20240229_123456");
+        // 2025-12-31 23:59:59 UTC = 1_767_225_599
+        assert_eq!(format_yyyymmdd_hhmmss_utc(1_767_225_599), "20251231_235959");
+    }
 
     #[cfg(feature = "network")]
     #[test]
