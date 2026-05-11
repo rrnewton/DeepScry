@@ -3289,6 +3289,71 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         cards_data.len()
     );
 
+    // Export full token definitions for fallback paths that load cards.bin instead
+    // of per-deck packs.
+    let cardsfolder_canonical = std::fs::canonicalize(&cardsfolder).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to resolve cardsfolder path: {}",
+            e
+        )))
+    })?;
+    let tokenscripts_dir = cardsfolder_canonical
+        .parent()
+        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
+        .join("tokenscripts");
+
+    println!(
+        "\nToken scripts directory: {}",
+        if tokenscripts_dir.exists() {
+            tokenscripts_dir.display().to_string()
+        } else {
+            format!("{} (not found)", tokenscripts_dir.display())
+        }
+    );
+
+    let mut token_definitions: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+    if tokenscripts_dir.exists() {
+        let token_pattern = format!("{}/*.txt", tokenscripts_dir.display());
+        for entry in glob::glob(&token_pattern)
+            .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Invalid token glob pattern: {}", e)))?
+        {
+            match entry {
+                Ok(path) => {
+                    if path.is_file() {
+                        let Some(token_script) = path.file_stem().and_then(|s| s.to_str()).map(str::to_string) else {
+                            eprintln!("  Warning: Token path has no script name: {}", path.display());
+                            continue;
+                        };
+
+                        match CardLoader::load_from_file(&path) {
+                            Ok(mut token_def) => {
+                                token_def.script_name = Some(token_script.clone());
+                                token_definitions.insert(token_script, token_def);
+                            }
+                            Err(e) => {
+                                eprintln!("  Warning: Failed to load token {}: {}", path.display(), e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("  Warning: Token glob error: {}", e);
+                }
+            }
+        }
+    }
+
+    let tokens_path = output.join("tokens.bin");
+    let tokens_data = bincode::serialize(&token_definitions)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize tokens: {}", e)))?;
+    fs::write(&tokens_path, &tokens_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+    println!(
+        "Exported {} token definitions to {} ({} bytes)",
+        token_definitions.len(),
+        tokens_path.display(),
+        tokens_data.len()
+    );
+
     // Find and load deck files matching the glob patterns
     println!("\nSearching for decks matching patterns:");
     for pattern in &deck_globs {
@@ -3364,27 +3429,6 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         )))
     })?;
 
-    // Find tokenscripts directory (sibling to cardsfolder)
-    let cardsfolder_canonical = std::fs::canonicalize(&cardsfolder).map_err(|e| {
-        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
-            "Failed to resolve cardsfolder path: {}",
-            e
-        )))
-    })?;
-    let tokenscripts_dir = cardsfolder_canonical
-        .parent()
-        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
-        .join("tokenscripts");
-
-    println!(
-        "\nToken scripts directory: {}",
-        if tokenscripts_dir.exists() {
-            tokenscripts_dir.display().to_string()
-        } else {
-            format!("{} (not found)", tokenscripts_dir.display())
-        }
-    );
-
     println!("\nGenerating per-deck card packs (with tokens)...");
     let mut deck_pack_sizes: HashMap<String, usize> = HashMap::new();
     let mut deck_token_counts: HashMap<String, usize> = HashMap::new();
@@ -3409,20 +3453,10 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
 
         // Load token definitions for this deck
         for token_script in &token_scripts_needed {
-            let token_path = tokenscripts_dir.join(format!("{}.txt", token_script));
-            if token_path.exists() {
-                match CardLoader::load_from_file(&token_path) {
-                    Ok(token_def) => {
-                        deck_pack.tokens.insert(token_script.clone(), token_def);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "  Warning: Failed to load token '{}' for deck '{}': {}",
-                            token_script, deck_name, e
-                        );
-                    }
-                }
+            if let Some(token_def) = token_definitions.get(token_script) {
+                deck_pack.tokens.insert(token_script.clone(), token_def.clone());
             } else {
+                let token_path = tokenscripts_dir.join(format!("{}.txt", token_script));
                 eprintln!(
                     "  Warning: Token script '{}' not found at {} for deck '{}'",
                     token_script,
@@ -3490,6 +3524,11 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         "  cards.bin        - {} card definitions ({} bytes) [fallback]",
         card_definitions.len(),
         cards_data.len()
+    );
+    println!(
+        "  tokens.bin       - {} token definitions ({} bytes) [fallback]",
+        token_definitions.len(),
+        tokens_data.len()
     );
     println!(
         "  decks.bin        - {} decks ({} bytes)",
@@ -3608,6 +3647,7 @@ async fn run_download(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "network")]
     use super::*;
 
     #[cfg(feature = "network")]

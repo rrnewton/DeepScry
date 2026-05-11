@@ -487,6 +487,47 @@ mod tests {
     }
 
     #[test]
+    fn test_air_nomad_legacy_creates_clue_token() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        let air_nomad_legacy_id = load_test_card(&mut game, "Air Nomad Legacy", p1_id)
+            .expect("Air Nomad Legacy should load from cardsfolder");
+
+        let db = CardDatabase::new(PathBuf::from("../cardsfolder"));
+        let mut clue_definition = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token("c_a_clue_draw").await })
+            .expect("Clue token script should parse")
+            .expect("Clue token script should exist");
+        clue_definition.script_name = Some("c_a_clue_draw".to_string());
+        game.token_definitions
+            .insert("c_a_clue_draw".to_string(), std::sync::Arc::new(clue_definition));
+
+        game.stack.add(air_nomad_legacy_id);
+        game.resolve_spell(air_nomad_legacy_id, &[])
+            .expect("Air Nomad Legacy should resolve");
+
+        assert!(game.battlefield.contains(air_nomad_legacy_id));
+
+        let clue_tokens: Vec<_> = game
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|card_id| game.cards.get(*card_id).ok())
+            .filter(|card| card.name.as_str() == "Clue Token")
+            .collect();
+
+        assert_eq!(clue_tokens.len(), 1, "Air Nomad Legacy should create one Clue token");
+        assert!(clue_tokens[0].is_token, "Created Clue should be marked as a token");
+        assert_eq!(
+            clue_tokens[0].controller, p1_id,
+            "Clue should enter under caster control"
+        );
+        assert_eq!(clue_tokens[0].owner, p1_id, "Clue should be owned by the caster");
+    }
+
+    #[test]
     fn test_etb_trigger_damage() {
         use crate::core::{Effect, TargetRef, Trigger, TriggerEvent};
 
