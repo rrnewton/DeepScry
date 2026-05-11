@@ -256,6 +256,18 @@ pub struct LayoutConfig {
     /// for the opponent battlefield so lands appear closest to the
     /// shared centre of the table.
     pub reverse_section_order: bool,
+    /// When true, consecutive sections may share the same row provided
+    /// the next section's first card still fits horizontally; otherwise
+    /// every section starts on a fresh row. The TUI sets this to `true`
+    /// to match its historical "flow with break only when needed"
+    /// wrapping behaviour.
+    pub flow_sections_on_same_row: bool,
+    /// When true, every wrapped continuation row inside a section also
+    /// reserves `header_height_px` of vertical space above its cards
+    /// (matching the TUI's `1 + max_h + spacing` per-row vertical
+    /// stride). When false, only the section's *first* row carries a
+    /// header reservation — appropriate for tighter pixel-mode flows.
+    pub reserve_header_per_row: bool,
 }
 
 impl Default for LayoutConfig {
@@ -274,6 +286,21 @@ impl Default for LayoutConfig {
             graveyard_card_count: 0,
             graveyard_max_name_len: 0,
             reverse_section_order: false,
+            flow_sections_on_same_row: false,
+            reserve_header_per_row: true,
+        }
+    }
+}
+
+impl LayoutConfig {
+    /// Preset matching the historical TUI behaviour exactly: sections
+    /// flow on shared rows, and every wrapped row reserves a 1-line
+    /// header above its cards.
+    pub fn tui_compat() -> Self {
+        Self {
+            flow_sections_on_same_row: true,
+            reserve_header_per_row: true,
+            ..Self::default()
         }
     }
 }
@@ -456,9 +483,200 @@ fn entity_size(card: &CardLayoutInput, base: CardSize, cell: CellSize) -> CardSi
     }
 }
 
-/// Simulate a layout and return the total height used (or `None` if it
-/// overflows horizontally, which only happens if a single card is wider
-/// than the available rect).
+// ───────────────────────────────────────────────────────────────────────
+// Trace-based row computation
+//
+// The placement algorithm is split into two passes:
+//   1. `trace_layout` walks `sections` left-to-right, allocating row
+//      slots and computing per-card x positions. It honours the two
+//      modal flags (`flow_sections_on_same_row`, `reserve_header_per_row`).
+//   2. `row_y_positions` then sums the row stride to assign every row
+//      its absolute y coordinate.
+//
+// `simulate_height` calls both to compute total height for the size
+// picker, and `place_sections` calls both to build the public
+// `SectionLayout` output. This avoids the historical bug where the two
+// codepaths drifted apart and produced different wrap decisions.
+// ───────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy)]
+struct LayoutRow {
+    /// Tallest card height on this row.
+    max_h: f32,
+    /// Whether this row reserves `header_height_px` above its cards.
+    has_header: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CardTrace {
+    row_idx: usize,
+    /// Column within the row (resets at each row wrap, including
+    /// section-induced new rows).
+    col_idx: usize,
+    /// Absolute x position (already snapped to the cell grid).
+    x: f32,
+    width: f32,
+    height: f32,
+    /// Index into the *parent section's* `cards` Vec — needed so the
+    /// caller can recover `card_id` after row reordering.
+    card_input_idx: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SectionTrace {
+    header_row: usize,
+    /// Absolute x of the section label rect (matches the x of the
+    /// section's first card).
+    header_x: f32,
+}
+
+struct LayoutTrace {
+    rows: Vec<LayoutRow>,
+    sections: Vec<SectionTrace>,
+    /// One inner Vec per section, in input order.
+    cards: Vec<Vec<CardTrace>>,
+    /// True if any card was wider than the available rect.
+    overflowed: bool,
+}
+
+fn trace_layout(
+    available: LayoutRect,
+    cell: CellSize,
+    sections: &[SectionInput<'_>],
+    base: CardSize,
+    config: &LayoutConfig,
+) -> LayoutTrace {
+    let usable_w = available.width();
+    let spacing_x = cell.snap_ceil(config.spacing_px, Axis::X);
+
+    let mut rows: Vec<LayoutRow> = Vec::new();
+    let mut section_traces: Vec<SectionTrace> = Vec::with_capacity(sections.len());
+    let mut card_traces: Vec<Vec<CardTrace>> = Vec::with_capacity(sections.len());
+    let mut overflowed = false;
+
+    // Cursor state — `cur_row_idx == None` means "we have not opened a
+    // row yet". `cur_x` is the x position of the *next* card on the
+    // current row (i.e., past the last card already placed).
+    let mut cur_row_idx: Option<usize> = None;
+    let mut cur_x = available.x1;
+    let mut col_idx = 0usize;
+
+    for section in sections {
+        // Width of the first card decides whether this section can flow
+        // onto the current row.
+        let first_card_w = section
+            .cards
+            .first()
+            .map(|c| entity_size(c, base, cell).width_px)
+            .unwrap_or(0.0);
+
+        let needs_new_row = match cur_row_idx {
+            None => true,
+            Some(_) if !config.flow_sections_on_same_row => true,
+            Some(_) => {
+                // Try to share with the current row. The next card needs
+                // either `first_card_w` (if cur_x == available.x1) or
+                // `spacing + first_card_w` more horizontal room.
+                let needed = if col_idx == 0 {
+                    first_card_w
+                } else {
+                    spacing_x + first_card_w
+                };
+                cur_x + needed > available.x1 + usable_w
+            }
+        };
+        if needs_new_row {
+            rows.push(LayoutRow {
+                max_h: 0.0,
+                has_header: true, // section-start rows always reserve a header line
+            });
+            cur_row_idx = Some(rows.len() - 1);
+            cur_x = available.x1;
+            col_idx = 0;
+        }
+
+        let header_row = cur_row_idx.unwrap();
+        // Header is anchored to the same x as the section's first card.
+        // When flowing onto the current row, that x lies past the
+        // inter-card spacing, not at the bare cursor position.
+        let header_anchor_x = if col_idx == 0 { cur_x } else { cur_x + spacing_x };
+        let header_x = cell.snap_floor(header_anchor_x, Axis::X);
+        section_traces.push(SectionTrace { header_row, header_x });
+
+        let mut this_section: Vec<CardTrace> = Vec::with_capacity(section.cards.len());
+        for (input_idx, card) in section.cards.iter().enumerate() {
+            let sz = entity_size(card, base, cell);
+            if sz.width_px > usable_w {
+                overflowed = true;
+                continue;
+            }
+            // Horizontal fit check for *this* card.
+            let needed = if col_idx == 0 {
+                sz.width_px
+            } else {
+                spacing_x + sz.width_px
+            };
+            if col_idx > 0 && cur_x + needed > available.x1 + usable_w {
+                // Wrap to a new row inside the section.
+                rows.push(LayoutRow {
+                    max_h: 0.0,
+                    has_header: config.reserve_header_per_row,
+                });
+                cur_row_idx = Some(rows.len() - 1);
+                cur_x = available.x1;
+                col_idx = 0;
+            }
+            let card_x = if col_idx == 0 {
+                cell.snap_floor(cur_x, Axis::X)
+            } else {
+                cell.snap_floor(cur_x + spacing_x, Axis::X)
+            };
+            let row_idx = cur_row_idx.unwrap();
+            this_section.push(CardTrace {
+                row_idx,
+                col_idx,
+                x: card_x,
+                width: sz.width_px,
+                height: sz.height_px,
+                card_input_idx: input_idx,
+            });
+            cur_x = card_x + sz.width_px;
+            rows[row_idx].max_h = rows[row_idx].max_h.max(sz.height_px);
+            col_idx += 1;
+        }
+        card_traces.push(this_section);
+    }
+
+    LayoutTrace {
+        rows,
+        sections: section_traces,
+        cards: card_traces,
+        overflowed,
+    }
+}
+
+/// Compute the absolute y position of every row in the trace.
+/// Row stride is `(maybe header_h) + max_h + spacing_y` between rows.
+fn row_y_positions(trace: &LayoutTrace, available: LayoutRect, cell: CellSize, config: &LayoutConfig) -> Vec<f32> {
+    let header_h = cell.snap_ceil(config.header_height_px, Axis::Y);
+    let spacing_y = cell.snap_ceil(config.spacing_px, Axis::Y);
+    let mut out = Vec::with_capacity(trace.rows.len());
+    let mut y = available.y1;
+    for (i, row) in trace.rows.iter().enumerate() {
+        if i > 0 {
+            y += spacing_y;
+        }
+        if row.has_header {
+            y += header_h;
+        }
+        out.push(cell.snap_floor(y, Axis::Y));
+        y += row.max_h;
+    }
+    out
+}
+
+/// Total vertical extent of the laid-out content, or `None` if any card
+/// failed to fit horizontally (caller should reject the candidate size).
 fn simulate_height(
     available: LayoutRect,
     cell: CellSize,
@@ -470,46 +688,17 @@ fn simulate_height(
     if usable_w <= 0.0 {
         return None;
     }
-    let header_h = cell.snap_ceil(config.header_height_px, Axis::Y);
-    let spacing = cell.snap_ceil(config.spacing_px, Axis::X);
-
-    let mut total_h = 0.0_f32;
-    for section in sections {
-        // Section header always starts on a fresh row.
-        total_h += header_h;
-        let mut row_w = 0.0_f32;
-        let mut row_max_h = 0.0_f32;
-        for card in &section.cards {
-            let sz = entity_size(card, base, cell);
-            if sz.width_px > usable_w {
-                // Cannot place even on its own row.
-                return None;
-            }
-            // Check if it fits on the current row.
-            let prospective = if row_w == 0.0 {
-                sz.width_px
-            } else {
-                row_w + spacing + sz.width_px
-            };
-            if prospective > usable_w {
-                // Wrap.
-                total_h += row_max_h + spacing;
-                row_w = sz.width_px;
-                row_max_h = sz.height_px;
-            } else {
-                row_w = prospective;
-                row_max_h = row_max_h.max(sz.height_px);
-            }
-        }
-        // Close the section's final row.
-        total_h += row_max_h;
-        // Inter-section gap (also snapped).
-        total_h += spacing;
+    let trace = trace_layout(available, cell, sections, base, config);
+    if trace.overflowed {
+        return None;
     }
-    // The trailing inter-section spacing is harmless slack; subtract one
-    // unit so a perfectly-fitting layout reports its true height.
-    total_h -= cell.snap_ceil(config.spacing_px, Axis::X);
-    Some(total_h.max(0.0))
+    if trace.rows.is_empty() {
+        return Some(0.0);
+    }
+    let ys = row_y_positions(&trace, available, cell, config);
+    let last = trace.rows.len() - 1;
+    let bottom = ys[last] + trace.rows[last].max_h;
+    Some((bottom - available.y1).max(0.0))
 }
 
 fn pick_card_size(
@@ -548,75 +737,35 @@ fn place_sections(
     base: CardSize,
     config: &LayoutConfig,
 ) -> Vec<SectionLayout> {
-    let usable_w = available.width();
     let header_h = cell.snap_ceil(config.header_height_px, Axis::Y);
-    let spacing_x = cell.snap_ceil(config.spacing_px, Axis::X);
-    let spacing_y = cell.snap_ceil(config.spacing_px, Axis::Y);
+    let trace = trace_layout(available, cell, sections, base, config);
+    let row_ys = row_y_positions(&trace, available, cell, config);
 
     let mut out = Vec::with_capacity(sections.len());
-    let mut cursor_y = available.y1;
+    for (sec_idx, section) in sections.iter().enumerate() {
+        let st = trace.sections[sec_idx];
+        // The header sits in the row's reserved 1-line space, directly
+        // above the row's cards.
+        let header_y = cell.snap_floor(row_ys[st.header_row] - header_h, Axis::Y);
+        let label_w = section_label_width(section, cell);
+        let header_rect = LayoutRect::new(st.header_x, header_y, st.header_x + label_w, header_y + header_h);
 
-    for section in sections {
-        let header_rect = LayoutRect::new(
-            available.x1,
-            cell.snap_floor(cursor_y, Axis::Y),
-            available.x1 + usable_w,
-            cell.snap_floor(cursor_y, Axis::Y) + header_h,
-        );
+        // Section-local row index: each section's first card is row 0.
+        let card_traces = &trace.cards[sec_idx];
+        let base_row = card_traces.first().map(|c| c.row_idx).unwrap_or(0);
 
-        let mut placements = Vec::with_capacity(section.cards.len());
-        let mut row_idx = 0usize;
-        let mut col_idx = 0usize;
-        let mut row_x = available.x1;
-        let mut row_y = header_rect.y2;
-        let mut row_max_h = 0.0_f32;
-
-        for card in &section.cards {
-            let sz = entity_size(card, base, cell);
-
-            // Horizontal wrap check.
-            let next_right = if col_idx == 0 {
-                row_x + sz.width_px
-            } else {
-                row_x + spacing_x + sz.width_px
-            };
-            if col_idx > 0 && next_right > available.x1 + usable_w {
-                // Wrap to a new row.
-                row_y += row_max_h + spacing_y;
-                row_x = available.x1;
-                row_max_h = 0.0;
-                row_idx += 1;
-                col_idx = 0;
-            }
-
-            // Apply the spacing between cards (after the wrap decision).
-            let card_x = if col_idx == 0 {
-                cell.snap_floor(row_x, Axis::X)
-            } else {
-                cell.snap_floor(row_x + spacing_x, Axis::X)
-            };
-            let card_y = cell.snap_floor(row_y, Axis::Y);
-            let bbox = LayoutRect::new(card_x, card_y, card_x + sz.width_px, card_y + sz.height_px);
-
-            placements.push(CardPlacement {
-                card_id: card.card_id,
-                bounding_box: bbox,
-                row: row_idx,
-                col: col_idx,
-            });
-
-            row_x = bbox.x2;
-            row_max_h = row_max_h.max(sz.height_px);
-            col_idx += 1;
-        }
-
-        // Advance cursor past the section.
-        let section_bottom = if placements.is_empty() {
-            header_rect.y2
-        } else {
-            row_y + row_max_h
-        };
-        cursor_y = section_bottom + spacing_y;
+        let placements: Vec<CardPlacement> = card_traces
+            .iter()
+            .map(|c| {
+                let y = row_ys[c.row_idx];
+                CardPlacement {
+                    card_id: section.cards[c.card_input_idx].card_id,
+                    bounding_box: LayoutRect::new(c.x, y, c.x + c.width, y + c.height),
+                    row: c.row_idx - base_row,
+                    col: c.col_idx,
+                }
+            })
+            .collect();
 
         out.push(SectionLayout {
             category: section.category,
@@ -627,6 +776,14 @@ fn place_sections(
     }
 
     out
+}
+
+/// Width of a section's label rect in pixels: enough for `"{label}:"`
+/// snapped up to the cell grid. Renderers that paint the label text
+/// will use this so the rect approximately matches the painted text.
+fn section_label_width(section: &SectionInput<'_>, cell: CellSize) -> f32 {
+    let chars = section.category.label().len() + 1; // trailing ':'
+    cell.snap_ceil((chars as f32) * cell.w, Axis::X)
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -983,6 +1140,151 @@ mod tests {
             let first = &s.cards[0];
             assert!(s.header.y2 <= first.bounding_box.y1);
             assert_eq!(s.header.x1, r.x1);
+        }
+    }
+
+    // ─── Flow mode + per-row header behaviour (TUI compat) ───────────
+
+    #[test]
+    fn tui_compat_default_enables_flow_and_per_row_headers() {
+        let cfg = LayoutConfig::tui_compat();
+        assert!(cfg.flow_sections_on_same_row);
+        assert!(cfg.reserve_header_per_row);
+    }
+
+    #[test]
+    fn flow_mode_lets_two_small_sections_share_a_row() {
+        // Wide rect: 800 px; default cards 100 px wide.
+        // Section A: 1 creature; Section B: 1 land. Combined: 100 + 10
+        // (spacing) + 100 = 210, fits easily on a 800-px row.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature), card(1, CardCategory::Land)];
+        let cfg = LayoutConfig::tui_compat();
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        assert_eq!(res.sections.len(), 2);
+        let row_a = res.sections[0].cards[0].bounding_box.y1;
+        let row_b = res.sections[1].cards[0].bounding_box.y1;
+        assert_eq!(
+            row_a, row_b,
+            "in flow mode the two single-card sections should share a row (y={} vs {})",
+            row_a, row_b
+        );
+        // The second section's header sits above its card, not at x=0.
+        assert!(res.sections[1].header.x1 > res.sections[0].header.x1);
+        assert_eq!(res.sections[1].header.y1, res.sections[0].header.y1);
+    }
+
+    #[test]
+    fn flow_mode_breaks_when_section_does_not_fit() {
+        // Narrow rect: 250 px. Default card = 100 px wide.
+        // Section A (1 creature) at x=0..100. Section B (1 land) needs
+        // 100 + 10 = 110 more → would land at x=210, fits.
+        // Force a break by adding a third section that pushes us over.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 250.0, 400.0);
+        let cards = vec![
+            card(0, CardCategory::Creature), // x = 0
+            card(1, CardCategory::Land),     // x = 110 (flows)
+            card(2, CardCategory::Artifact), // would be x = 220+ → wraps
+        ];
+        let cfg = LayoutConfig::tui_compat();
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        // Order is PWs/Creatures/Enchants/Artifacts/Lands → so:
+        //   section[0] = Creature, section[1] = Artifact, section[2] = Land
+        let creature_y = res.sections[0].cards[0].bounding_box.y1;
+        let artifact_y = res.sections[1].cards[0].bounding_box.y1;
+        let land_y = res.sections[2].cards[0].bounding_box.y1;
+        assert_eq!(creature_y, res.sections[0].header.y2.max(creature_y));
+        // Creature (1 card, 100 px) + Artifact (1 card, +110 = 210 px) fits.
+        // Land (+110 = 320 px) does NOT fit on row 0 → wraps.
+        assert_eq!(creature_y, artifact_y, "Creature and Artifact should share row 0");
+        assert!(
+            land_y > creature_y,
+            "Land should be on a later row (y={} > {})",
+            land_y,
+            creature_y
+        );
+    }
+
+    #[test]
+    fn per_row_header_reservation_changes_chosen_card_size() {
+        // Set up a height-constrained rect where the per-row header
+        // reservation tips the size picker into a smaller card.
+        // 30 cells wide × 14 cells tall. 5 default cards (10×7) wrap to
+        // 2 rows.
+        //   reserve_header_per_row=false → row stride = 7 + 1 = 8 cells;
+        //                                  total = 1 (hdr) + 7 + 1 + 7 = 16 > 14 → shrink.
+        //   reserve_header_per_row=true  → row stride = 1 + 7 + 1 = 9 cells;
+        //                                  total = 1 + 7 + 1 + 1 + 7 = 17 > 14 → shrink more.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 300.0, 280.0); // 30 × 14 cells
+        let cards: Vec<_> = (0..5).map(|i| card(i, CardCategory::Creature)).collect();
+        let mut cfg_no = LayoutConfig::tui_compat();
+        cfg_no.reserve_header_per_row = false;
+        let cfg_yes = LayoutConfig::tui_compat();
+        let res_no = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg_no);
+        let res_yes = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg_yes);
+        assert!(
+            res_yes.used_card_size.height_px <= res_no.used_card_size.height_px,
+            "per-row header reservation should produce ≤ card height ({} vs {})",
+            res_yes.used_card_size.height_px,
+            res_no.used_card_size.height_px,
+        );
+    }
+
+    #[test]
+    fn flow_mode_is_independent_of_priority_order() {
+        // In flow mode with reverse_section_order, sections still flow
+        // — but in their reversed order.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Land), card(1, CardCategory::Creature)];
+        let mut cfg = LayoutConfig::tui_compat();
+        cfg.reverse_section_order = true;
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        assert_eq!(res.sections[0].category, CardCategory::Land);
+        assert_eq!(res.sections[1].category, CardCategory::Creature);
+        // Both share row 0.
+        assert_eq!(
+            res.sections[0].cards[0].bounding_box.y1,
+            res.sections[1].cards[0].bounding_box.y1
+        );
+    }
+
+    #[test]
+    fn header_x_matches_first_cards_x_in_flow_mode() {
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature), card(1, CardCategory::Land)];
+        let cfg = LayoutConfig::tui_compat();
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        for s in &res.sections {
+            let first_x = s.cards[0].bounding_box.x1;
+            assert_eq!(
+                s.header.x1, first_x,
+                "section {} header.x={} should match first card x={}",
+                s.label, s.header.x1, first_x
+            );
+        }
+    }
+
+    #[test]
+    fn section_local_row_indices_are_zero_based_per_section() {
+        // Section A wraps internally → its rows should be 0, 1, ...
+        // Section B that follows on a later row → its rows should *also*
+        // start at 0 (locally), not continue counting.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 250.0, 800.0); // narrow, tall
+        let cards: Vec<_> = (0..6)
+            .map(|i| {
+                let cat = if i < 3 {
+                    CardCategory::Creature
+                } else {
+                    CardCategory::Land
+                };
+                card(i, cat)
+            })
+            .collect();
+        let cfg = LayoutConfig::tui_compat();
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        for s in &res.sections {
+            let first_row = s.cards[0].row;
+            assert_eq!(first_row, 0, "section {} first card should be on local row 0", s.label);
         }
     }
 }
