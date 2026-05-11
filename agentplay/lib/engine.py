@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
+DEFAULT_LOG_TAIL_LINES = 1000
+
+
 class GameEngine:
     """Wrap `mtg tui` for deterministic replay-based choice stepping."""
 
@@ -170,7 +173,7 @@ class GameEngine:
             f"--stop-on-choice={stop_on_choice}",
             f"--snapshot-output={self.snapshot_path}",
             "--json",
-            "--log-tail=100",
+            f"--log-tail={DEFAULT_LOG_TAIL_LINES}",
             f"--seed={self.seed}",
             "--verbosity=verbose",  # Show all step headers so agent sees phase transitions
         ]

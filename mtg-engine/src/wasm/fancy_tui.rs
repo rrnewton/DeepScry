@@ -19,8 +19,10 @@ use crate::game::fancy_tui_events::{
     handle_key_event, handle_mouse_click, handle_ui_event, EventResult, KeyInput, ScrollDirection, UiEvent,
 };
 use crate::game::logger::OutputMode;
+use crate::game::PlayerController;
 use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, VerbosityLevel};
-use crate::game::{HeuristicController, PlayerController, RandomController, ZeroController};
+#[cfg(feature = "wasm-network")]
+use crate::game::{HeuristicController, RandomController, ZeroController};
 use crate::loader::CardDefinition;
 use ratzilla::event::{KeyCode, MouseButton, MouseEventKind};
 use ratzilla::ratatui::{Frame, Terminal};

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime
 import random
 import shlex
@@ -22,12 +23,35 @@ MODE_RANDOM_VS_RANDOM = "random-vs-random"
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from agentplay.lib.engine import GameEngine
-    from agentplay.lib.prompts import build_choice_prompt, parse_agent_response
+    from agentplay.lib.prompts import (
+        AgentDecision,
+        build_choice_prompt,
+        extract_bug_report,
+        parse_agent_decision,
+    )
     from agentplay.lib.card_defs import CardDatabase, find_mentioned_cards
 else:
     from .lib.engine import GameEngine
-    from .lib.prompts import build_choice_prompt, parse_agent_response
+    from .lib.prompts import (
+        AgentDecision,
+        build_choice_prompt,
+        extract_bug_report,
+        parse_agent_decision,
+    )
     from .lib.card_defs import CardDatabase, find_mentioned_cards
+
+
+@dataclass(frozen=True)
+class HistoryEntry:
+    """One decision plus the game log that led into it."""
+
+    decision_number: int
+    player: str
+    controller_kind: str
+    turn_number: int | None
+    log_since_last_decision: str
+    chosen_action: str
+    reasoning: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,6 +85,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional goal text passed into the choice prompt for directed play.",
     )
+    parser.add_argument(
+        "--scenario",
+        default=None,
+        help="English description of the gameplay scenario the agent should try to reproduce.",
+    )
+    parser.add_argument(
+        "--bug-detection",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prompt agents to stop and report gameplay bugs at each decision point (default: enabled).",
+    )
+    parser.add_argument(
+        "--pure-play",
+        dest="bug_detection",
+        action="store_false",
+        help="Disable bug-detection prompting and only ask agents to make gameplay choices.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Print replay and agent details.")
     parser.add_argument(
         "--max-turns",
@@ -71,7 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stop-on-bug",
         action="store_true",
-        help="Stop the game when an agent emits a BUG_REPORT section (default: continue playing).",
+        help="Legacy alias: stop when an agent emits a BUG_REPORT section. Bug-detection mode already stops by default.",
     )
     parser.add_argument(
         "--mock",
@@ -177,8 +218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Game log file for clean output (no agent commentary)
     game_log_path = engine.game_dir / "game.log"
     prev_log_lines: list[str] = []
-    # Interleaved log: game events + agent reasoning for prompt context
-    interleaved_log_parts: list[str] = []
+    history_entries: list[HistoryEntry] = []
 
     while True:
         if engine.is_game_over(snapshot):
@@ -204,7 +244,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if new_lines:
             print(new_lines, file=sys.stderr, flush=True)
             _append_to_file(game_log_path, new_lines)
-            interleaved_log_parts.append(new_lines)
         prev_log_lines = snapshot.get("log_tail", "").splitlines()
 
         # Track which cards have been mentioned in the game
@@ -212,16 +251,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         newly_seen = find_mentioned_cards(log_text, all_card_names) - seen_card_names
         seen_card_names.update(newly_seen)
 
-        # Build prompt with interleaved log (game events + prior agent reasoning)
-        interleaved_log_text = "\n".join(interleaved_log_parts[-20:])  # Last 20 chunks
+        # Build prompt with the full game log interleaved with prior choices and rationale.
+        interleaved_history = _format_history(history_entries)
+        previous_decision = _format_previous_decision(history_entries)
         card_defs_text = card_db.format_definitions(seen_card_names) if seen_card_names else None
         prompt_text = build_choice_prompt(
             snapshot.get("game_state", {}),
             choices,
-            interleaved_log_text,
+            new_lines,
             goal=args.goal,
+            scenario=args.scenario,
+            interleaved_history=interleaved_history,
+            previous_decision=previous_decision,
             card_definitions=card_defs_text,
             rules_paths=rules_paths if rules_paths else None,
+            bug_detection=args.bug_detection,
         )
         before_snapshot = snapshot
         game_state_summary = _extract_game_state_summary(prompt_text)
@@ -248,7 +292,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         t0 = time.time()
         try:
-            choice_number, raw_response = _choose_for_player(
+            decision = _choose_for_player(
                 mode=args.mode,
                 player=player,
                 prompt_text=prompt_text,
@@ -257,11 +301,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 verbose=args.verbose,
                 claude_args=args.claude_args,
                 mock=args.mock,
+                bug_detection=args.bug_detection,
             )
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
         elapsed = time.time() - t0
+        raw_response = decision.raw_response
+
+        if decision.stopped_for_bug:
+            bug_report_path = _append_bug_report(
+                engine.game_dir,
+                player=player,
+                turn_number=turn_number,
+                bug_report_text=decision.bug_report
+                or "(agent stopped for a suspected gameplay bug, but no details were provided)",
+                raw_response=raw_response,
+            )
+            print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
+            print(f"Stopped: {player} reported a suspected gameplay bug.", file=sys.stderr)
+            return 0
+
+        if decision.choice_number is None:
+            print("Stopped: agent decision did not include a choice number", file=sys.stderr)
+            return 1
+        choice_number = decision.choice_number
         choice_text = "pass" if choice_number == 0 else choices[choice_number - 1]
 
         # Show decision
@@ -274,14 +338,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             # Always show agent reasoning
             print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
-            # Add agent reasoning to interleaved log for future prompts
-            reasoning_summary = raw_response.strip().split("\n")[0][:200]  # First line, truncated
-            interleaved_log_parts.append(f"[Agent chose: {choice_text}. Reasoning: {reasoning_summary}]")
         else:
             print(f"  => {controller_kind.title()} chose [{choice_number}] {choice_text}", file=sys.stderr, flush=True)
-            interleaved_log_parts.append(f"[{controller_kind.title()} chose: {choice_text}]")
 
-        bug_report_text = _extract_bug_report(raw_response)
+        history_entries.append(
+            HistoryEntry(
+                decision_number=choice_count + 1,
+                player=player,
+                controller_kind=controller_kind,
+                turn_number=turn_number,
+                log_since_last_decision=new_lines,
+                chosen_action=choice_text,
+                reasoning=raw_response,
+            )
+        )
+
+        bug_report_text = extract_bug_report(raw_response)
         if bug_report_text is not None:
             bug_report_path = _append_bug_report(
                 engine.game_dir,
@@ -323,18 +395,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
 
-def _query_agent(prompt_text: str, choice_count: int, verbose: bool, claude_args: list[str] | None = None) -> tuple[int, str]:
+def _query_agent(
+    prompt_text: str,
+    choice_count: int,
+    verbose: bool,
+    claude_args: list[str] | None = None,
+    *,
+    bug_detection: bool = True,
+) -> AgentDecision:
     extra_args = claude_args or []
     last_error = "no agent attempts made"
     for attempt in range(1, 4):
         retry_prompt = prompt_text
         if attempt > 1:
+            valid_response = (
+                f"Valid responses are either STOP with a BUG_REPORT, or a choice number from 0 to {choice_count}."
+                if bug_detection
+                else f"Valid choices are 0 to {choice_count}."
+            )
+            final_line = (
+                "If choosing, the final line MUST be only a single number. If stopping, write STOP and BUG_REPORT instead."
+                if bug_detection
+                else f"You MUST respond with ONLY a single number between 0 and {choice_count} on the final line."
+            )
             retry_prompt = (
                 prompt_text
                 + f"\n\nWARNING: Your previous response was invalid ({last_error}). "
-                f"Valid choices are 0 to {choice_count}. "
-                f"You MUST respond with ONLY a single number between 0 and {choice_count} "
-                f"on the final line. Nothing else on that line."
+                + valid_response
+                + " "
+                + final_line
             )
         cmd = ["claude"] + extra_args + ["-p", retry_prompt]
         if verbose:
@@ -366,15 +455,17 @@ def _query_agent(prompt_text: str, choice_count: int, verbose: bool, claude_args
                 print(f"[retry {attempt}/3] {last_error}", file=sys.stderr)
             continue
         try:
-            choice_number = parse_agent_response(response)
+            decision = parse_agent_decision(response, bug_detection=bug_detection)
         except ValueError as exc:
             last_error = str(exc)
             if verbose:
                 print(f"[retry {attempt}/3] {last_error}", file=sys.stderr)
             continue
-        if 0 <= choice_number <= choice_count:
-            return choice_number, response
-        last_error = f"parsed choice {choice_number} is outside valid range 0..{choice_count}"
+        if decision.stopped_for_bug:
+            return decision
+        if decision.choice_number is not None and 0 <= decision.choice_number <= choice_count:
+            return decision
+        last_error = f"parsed choice {decision.choice_number} is outside valid range 0..{choice_count}"
         if verbose:
             print(f"[retry {attempt}/3] {last_error}", file=sys.stderr)
     raise RuntimeError(f"failed to get a valid Claude choice after 3 attempts: {last_error}")
@@ -389,13 +480,20 @@ def _choose_for_player(
     verbose: bool,
     claude_args: list[str] | None = None,
     mock: bool = False,
-) -> tuple[int, str]:
+    bug_detection: bool = True,
+) -> AgentDecision:
     controller_kind = _controller_for_player(mode, player, mock=mock)
     if controller_kind == "agent":
-        return _query_agent(prompt_text, choice_count, verbose, claude_args or [])
+        return _query_agent(
+            prompt_text,
+            choice_count,
+            verbose,
+            claude_args or [],
+            bug_detection=bug_detection,
+        )
     # Mock/random: pick locally, no subprocess call
     choice_number = rng.randint(0, choice_count)
-    return choice_number, f"{controller_kind} choice\n{choice_number}"
+    return AgentDecision(choice_number=choice_number, raw_response=f"{controller_kind} choice\n{choice_number}")
 
 
 def _controller_for_player(mode: str, player: str, mock: bool = False) -> str:
@@ -437,7 +535,7 @@ def _turn_number(snapshot: dict[str, object]) -> int | None:
 
 def _extract_game_state_summary(prompt_text: str) -> str:
     start_marker = "Current game state:\n"
-    end_marker = "\n\nAvailable choices:\n"
+    end_marker = "\n\nInterleaved history so far:\n"
     if start_marker not in prompt_text or end_marker not in prompt_text:
         return prompt_text.strip()
     start = prompt_text.index(start_marker) + len(start_marker)
@@ -445,12 +543,44 @@ def _extract_game_state_summary(prompt_text: str) -> str:
     return prompt_text[start:end].strip()
 
 
-def _extract_bug_report(response: str) -> str | None:
-    marker = "BUG_REPORT"
-    if marker not in response:
-        return None
-    _, bug_report = response.split(marker, 1)
-    return bug_report.lstrip(" :\n\t").strip() or "(BUG_REPORT marker present, but no details were provided)"
+def _format_history(history_entries: Sequence[HistoryEntry]) -> str:
+    if not history_entries:
+        return ""
+    return "\n\n".join(_format_history_entry(entry) for entry in history_entries)
+
+
+def _format_previous_decision(history_entries: Sequence[HistoryEntry]) -> str:
+    if not history_entries:
+        return ""
+    entry = history_entries[-1]
+    return "\n".join(
+        [
+            f"Decision #{entry.decision_number}: {entry.player} ({entry.controller_kind}) on turn {_format_turn(entry.turn_number)}",
+            f"Chose: {entry.chosen_action}",
+            "Reasoning:",
+            _indent_text(entry.reasoning.strip() or "(no reasoning provided)"),
+        ]
+    )
+
+
+def _format_history_entry(entry: HistoryEntry) -> str:
+    return "\n".join(
+        [
+            f"## Decision #{entry.decision_number}: {entry.player} ({entry.controller_kind}) on turn {_format_turn(entry.turn_number)}",
+            "Game log since previous decision:",
+            _indent_text(entry.log_since_last_decision.strip() or "(no new game log lines)"),
+            "Choice and rationale:",
+            _indent_text(f"Chose: {entry.chosen_action}\n{entry.reasoning.strip() or '(no reasoning provided)'}"),
+        ]
+    )
+
+
+def _format_turn(turn_number: int | None) -> str:
+    return str(turn_number) if turn_number is not None else "?"
+
+
+def _indent_text(text: str) -> str:
+    return "\n".join(f"  {line}" if line else "" for line in text.splitlines())
 
 
 def _append_bug_report(
@@ -475,21 +605,26 @@ def _append_bug_report(
 def _new_log_tail_lines(current_tail: str, prev_lines: list[str]) -> str:
     """Extract lines from current log_tail that weren't in prev_lines.
 
-    The engine replays from scratch each run, so log_tail grows monotonically.
-    We find where the previous tail ends in the current tail and return only
-    the new suffix.
+    The engine replays from scratch and the mtg binary returns a bounded log
+    tail, so older lines may roll off. Match the largest overlap between the
+    previous tail suffix and current tail prefix, then return the new suffix.
     """
     if not current_tail:
         return ""
     curr = current_tail.splitlines()
     if not prev_lines:
         return current_tail
-    # The previous lines should be a prefix of current lines (log_tail grows)
-    # Find the overlap point
-    if len(curr) <= len(prev_lines):
+
+    if len(curr) <= len(prev_lines) and prev_lines[-len(curr) :] == curr:
         return ""
-    # Skip lines we've already shown
-    new = curr[len(prev_lines):]
+
+    max_overlap = min(len(prev_lines), len(curr))
+    overlap = 0
+    for size in range(max_overlap, 0, -1):
+        if prev_lines[-size:] == curr[:size]:
+            overlap = size
+            break
+    new = curr[overlap:]
     return "\n".join(new) if new else ""
 
 

@@ -191,7 +191,12 @@ fn ratzilla_to_deck_builder_key(code: KeyCode) -> Option<DeckBuilderKey> {
     }
 }
 
-/// Launch the deck builder TUI
+/// Launch the deck builder TUI.
+///
+/// # Errors
+///
+/// Returns a JavaScript error if the RatZilla DOM backend or terminal cannot
+/// be created.
 #[wasm_bindgen]
 pub fn launch_deck_builder(
     card_db: &WasmCardDatabase,

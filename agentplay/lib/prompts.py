@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -32,13 +33,30 @@ _MANA_LABELS = {
 }
 
 
+@dataclass(frozen=True)
+class AgentDecision:
+    """Parsed action request from an agent response."""
+
+    choice_number: int | None
+    raw_response: str
+    bug_report: str | None = None
+
+    @property
+    def stopped_for_bug(self) -> bool:
+        return self.choice_number is None
+
+
 def build_choice_prompt(
     game_state: dict[str, Any],
     choices: list[str],
-    log_tail: str,
+    log_since_last_decision: str,
     goal: str | None = None,
+    scenario: str | None = None,
+    interleaved_history: str | None = None,
+    previous_decision: str | None = None,
     card_definitions: str | None = None,
     rules_paths: list[str] | None = None,
+    bug_detection: bool = True,
 ) -> str:
     """Build the prompt sent to a headless agent for one MTG choice."""
 
@@ -57,9 +75,21 @@ def build_choice_prompt(
     choice_lines.extend(f"[{index}] {choice}" for index, choice in enumerate(available_choices, start=1))
 
     sections = [
-        "You are choosing the next action in a deterministic MTG game.",
-        "Pick the single strongest legal choice from the menu based on the current state, tempo, combat, mana, and likely follow-up turns.",
+        "You are choosing the next action in a deterministic MTG game used for engine bug finding.",
     ]
+
+    if bug_detection:
+        sections.append(
+            "At each decision point, either choose the strongest legal action or STOP when the log, state, or menu appears to violate MTG rules."
+        )
+    else:
+        sections.append(
+            "Pure play mode is enabled: choose the strongest legal action from the menu based on state, tempo, combat, mana, and likely follow-up turns."
+        )
+
+    if scenario:
+        sections.append(f"Scenario to reproduce: {scenario.strip()}")
+        sections.append("Keep this scenario in mind and prefer legal choices that move the game toward reproducing it.")
 
     if goal:
         sections.append(f"Goal directive: {goal.strip()}")
@@ -80,11 +110,17 @@ def build_choice_prompt(
             "Current game state:",
             _format_state_summary(root, players, zone_map, turn, active_player, priority_player, battlefield, stack, card_map),
             "",
+            "Interleaved history so far:",
+            interleaved_history.strip() if interleaved_history and interleaved_history.strip() else "(no prior decisions)",
+            "",
+            "Previous decision:",
+            previous_decision.strip() if previous_decision and previous_decision.strip() else "(no previous decision)",
+            "",
+            "Game log since last decision:",
+            log_since_last_decision.strip() if log_since_last_decision.strip() else "(no new log lines since the last decision)",
+            "",
             "Available choices:",
             "\n".join(choice_lines),
-            "",
-            "Recent game log:",
-            log_tail.strip() if log_tail.strip() else "(no recent log lines)",
             "",
             "MTG rules context:",
             "- Turns move through beginning, main, combat, post-combat main, and ending.",
@@ -93,16 +129,52 @@ def build_choice_prompt(
             "- Priority passes back and forth. Two consecutive passes on an empty stack advance the step/phase; two passes on a non-empty stack resolve the top object.",
             "- In combat, attackers are declared before blockers, then damage happens. Evaluate lethal attacks, favorable trades, and crack-backs.",
             "",
-            "Response format:",
-            "Include the chosen choice number clearly in your response so automation can parse it.",
-            "If you are not reporting a bug, put the choice number alone on the final line.",
-            "If you notice the game engine behaving incorrectly according to the official MTG rules, add a section labeled BUG_REPORT at the end of your response describing: what happened, what should have happened per the rules, and which rule was violated.",
-            "If you include a BUG_REPORT section, mention the choice number before that section.",
-            "Do not output the choice text.",
         ]
     )
 
+    sections.extend(_response_format_lines(bug_detection))
+
     return "\n".join(sections).strip() + "\n"
+
+
+def _response_format_lines(bug_detection: bool) -> list[str]:
+    lines = [
+        "",
+        "Response format:",
+    ]
+    if bug_detection:
+        lines.extend(
+            [
+                "To continue playing, explain the reason briefly and put the choice number alone on the final line.",
+                "To report a gameplay bug, write STOP on its own line, then add a BUG_REPORT section.",
+                "A BUG_REPORT must explain: observed behavior, expected behavior under MTG rules, relevant rule basis if known, and the log/state/menu evidence.",
+                "Stop for illegal choices being offered, missing legal choices, state inconsistencies, wrong damage, impossible timing, or other engine-rule mismatches.",
+                "Do not output a choice number when stopping for a bug.",
+                "Do not output the choice text as the final line.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Include the chosen choice number clearly in your response so automation can parse it.",
+                "Put the choice number alone on the final line.",
+                "Do not output the choice text as the final line.",
+            ]
+        )
+    return lines
+
+
+def parse_agent_decision(response: str, *, bug_detection: bool) -> AgentDecision:
+    """Parse an agent response as either a choice number or a bug-stop."""
+
+    bug_report = extract_bug_report(response)
+    if bug_detection and _is_stop_response(response, bug_report):
+        return AgentDecision(
+            choice_number=None,
+            raw_response=response.strip(),
+            bug_report=bug_report or "(agent stopped for a suspected gameplay bug, but no BUG_REPORT details were provided)",
+        )
+    return AgentDecision(choice_number=parse_agent_response(response), raw_response=response.strip(), bug_report=bug_report)
 
 
 def parse_agent_response(response: str) -> int:
@@ -126,6 +198,23 @@ def parse_agent_response(response: str) -> int:
         return int(match.group(1))
 
     raise ValueError(f"could not parse choice number from response: {response!r}")
+
+
+def extract_bug_report(response: str) -> str | None:
+    marker = "BUG_REPORT"
+    if response is None or marker not in response:
+        return None
+    _, bug_report = response.split(marker, 1)
+    return bug_report.lstrip(" :\n\t").strip() or "(BUG_REPORT marker present, but no details were provided)"
+
+
+def _is_stop_response(response: str, bug_report: str | None) -> bool:
+    if bug_report is not None:
+        return True
+    if response is None:
+        return False
+    lines = [line.strip().upper() for line in response.splitlines() if line.strip()]
+    return any(line == "STOP" or line.startswith("STOP:") for line in lines)
 
 
 def _snapshot_root(game_state: dict[str, Any]) -> dict[str, Any]:

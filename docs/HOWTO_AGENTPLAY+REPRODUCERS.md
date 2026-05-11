@@ -6,6 +6,29 @@ It's important that you have the experience of playing the MTG game we're develo
 
 The easiest way to play games step-by-step and build reproducers is using the `agentplay/` wrapper scripts:
 
+### Agent-Driven Bug Finding
+
+```bash
+# Bug-detection mode is on by default. Claude may choose a number or STOP with BUG_REPORT.
+./agentplay/agent_game.py -- decks/simple_bolt.dck decks/simple_bolt.dck
+
+# Keep a target scenario in context at every decision:
+./agentplay/agent_game.py --seed 42 \
+    --scenario "Play until P2 attacks with a flying creature, try to double-block with both creatures and cast an instant as a combat trick" \
+    -- decks/booster_draft/avatar/eric_avatar_draft.dck decks/booster_draft/avatar/gabriel_avatar_draft.dck
+
+# Disable STOP/BUG_REPORT prompting for pure gameplay:
+./agentplay/agent_game.py --pure-play -- decks/simple_bolt.dck decks/simple_bolt.dck
+
+# Mock mode uses local random choices and burns no agent tokens:
+./agentplay/agent_game.py --mock --seed 42 -- decks/simple_bolt.dck decks/simple_bolt.dck
+```
+
+Each agent prompt includes the current state, the game log since the last
+decision, the previous decision and rationale, the full interleaved history of
+earlier log chunks plus choices, and the current choices. Use `--scenario` to
+keep an English reproduction target in the prompt while the agent plays.
+
 ### Starting a New Game Session
 
 ```bash
