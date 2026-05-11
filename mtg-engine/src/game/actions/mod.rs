@@ -4972,6 +4972,9 @@ impl GameState {
     /// Returns true if the player has enough valid permanents to sacrifice.
     ///
     /// Sacrifice patterns are strings like:
+    /// - "CARDNAME" - the source card itself (self-sacrifice; e.g. Clue token's
+    ///   `{2}, Sac<1/CARDNAME>: Draw a card`, Strip Mine's
+    ///   `T, Sac<1/CARDNAME>: Destroy target land`)
     /// - "Artifact.Other" - an artifact other than the source
     /// - "Creature.Other" - a creature other than the source
     /// - "Artifact.Other;Creature.Other" - an artifact or creature other than the source
@@ -4985,6 +4988,27 @@ impl GameState {
         // Parse the pattern - it can be multiple options separated by semicolons
         // e.g., "Artifact.Other;Creature.Other" means artifact OR creature
         let patterns: Vec<&str> = pattern.split(';').collect();
+
+        // Special case: "CARDNAME" means sacrifice the source itself.
+        // We pay this iff the source is on the battlefield under the activating
+        // player's control. Mirrors the resolution path which simply pushes
+        // `source_card_id` into `to_sacrifice` (see Cost::SacrificePattern handler
+        // ~line 6916). Without this, abilities with cost `Sac<N/CARDNAME>` (Clue
+        // tokens, sacrificed-itself mana lands, etc.) are silently filtered out
+        // of the available-actions list. See bug-clue-token-activation.
+        if patterns.iter().any(|p| p.eq_ignore_ascii_case("CARDNAME")) {
+            // CARDNAME contributes exactly one sacrifice target (the source).
+            // Combined with other pattern alternatives below, treat "source on
+            // battlefield + we control it" as covering one needed sacrifice.
+            if let Some(src) = self.cards.try_get(source_card_id) {
+                if src.controller == player_id && self.battlefield.contains(source_card_id) && count <= 1 {
+                    return true;
+                }
+            }
+            // Note: count > 1 with CARDNAME doesn't really exist in practice; if
+            // it ever does, fall through to the per-card scan below (which won't
+            // count the source under any of the existing type patterns).
+        }
 
         // Count valid sacrifice targets
         let valid_targets: usize = self

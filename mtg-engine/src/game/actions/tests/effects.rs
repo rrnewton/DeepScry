@@ -527,6 +527,102 @@ mod tests {
         assert_eq!(clue_tokens[0].owner, p1_id, "Clue should be owned by the caster");
     }
 
+    /// Regression test for `bug-clue-token-activation`: a Clue token's
+    /// `{2}, Sacrifice this token: Draw a card` ability was being filtered out
+    /// of the available-actions list because `can_pay_sacrifice_pattern` did
+    /// not recognise the `CARDNAME` (sacrifice-self) pattern, so it returned
+    /// `false` even when the token was on the battlefield with mana available.
+    ///
+    /// This test:
+    ///  1. Resolves Air Nomad Legacy from the real cardsfolder script (the
+    ///     same path exercised by `test_air_nomad_legacy_creates_clue_token`)
+    ///     to put a Clue token on the battlefield under P1's control.
+    ///  2. Gives P1 enough lands to pay {2}.
+    ///  3. Calls `push_activatable_abilities` and asserts the Clue token's
+    ///     activated ability is present in the resulting buffer.
+    #[test]
+    fn test_clue_token_ability_offered_when_payable() {
+        use crate::core::SpellAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::VerbosityLevel;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+        let p2_id = game.players[1].id;
+
+        // 1. Put a Clue token on the battlefield under P1 by resolving
+        //    Air Nomad Legacy. This exercises the real CreateToken path, so
+        //    the token's `A:AB$ Draw | Cost$ 2 Sac<1/CARDNAME/this token> ...`
+        //    line gets parsed into an `ActivatedAbility` on the instantiated
+        //    card.
+        let air_nomad_id = load_test_card(&mut game, "Air Nomad Legacy", p1_id).expect("Air Nomad Legacy should load");
+        let db = CardDatabase::new(PathBuf::from("../cardsfolder"));
+        let mut clue_definition = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { db.get_token("c_a_clue_draw").await })
+            .expect("Clue token script should parse")
+            .expect("Clue token script should exist");
+        clue_definition.script_name = Some("c_a_clue_draw".to_string());
+        game.token_definitions
+            .insert("c_a_clue_draw".to_string(), std::sync::Arc::new(clue_definition));
+        game.stack.add(air_nomad_id);
+        game.resolve_spell(air_nomad_id, &[])
+            .expect("Air Nomad Legacy should resolve");
+
+        // Find the Clue token we just created.
+        let clue_id = game
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|cid| {
+                game.cards
+                    .get(*cid)
+                    .map(|c| c.name.as_str() == "Clue Token")
+                    .unwrap_or(false)
+            })
+            .expect("Clue token should be on the battlefield");
+        let clue_card = game.cards.get(clue_id).expect("Clue card should exist");
+        assert!(
+            !clue_card.activated_abilities.is_empty(),
+            "Clue token should have at least one activated ability after token script parsing"
+        );
+
+        // 2. Give P1 two untapped Plains so {2} is payable. Tag them as having
+        //    entered earlier so summoning-sickness etc. doesn't matter (they
+        //    aren't creatures, but be safe).
+        let plains1 = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+        let plains2 = load_test_card(&mut game, "Plains", p1_id).expect("Plains should load");
+        game.battlefield.add(plains1);
+        game.battlefield.add(plains2);
+        if let Ok(c) = game.cards.get_mut(plains1) {
+            c.controller = p1_id;
+            c.tapped = false;
+        }
+        if let Ok(c) = game.cards.get_mut(plains2) {
+            c.controller = p1_id;
+            c.tapped = false;
+        }
+
+        // 3. Build the abilities buffer for P1 and assert the Clue ability is
+        //    present. We can't easily get the exact `ability_index` without
+        //    enumerating, so just look for `ActivateAbility { card_id == clue_id }`.
+        let _ = p2_id; // p2 controller not actually needed for this enumeration
+        let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        gl.push_activatable_abilities(p1_id);
+        let buffer = gl.get_abilities_buffer().to_vec();
+        let offered: Vec<_> = buffer
+            .iter()
+            .filter(|sa| matches!(sa, SpellAbility::ActivateAbility { card_id, .. } if *card_id == clue_id))
+            .collect();
+        assert!(
+            !offered.is_empty(),
+            "Clue token's draw-a-card ability should be offered when {{2}} can be paid \
+             and the token is on the battlefield. Buffer was: {:?}",
+            buffer
+        );
+    }
+
     #[test]
     fn test_etb_trigger_damage() {
         use crate::core::{Effect, TargetRef, Trigger, TriggerEvent};
