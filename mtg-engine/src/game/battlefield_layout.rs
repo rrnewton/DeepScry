@@ -268,6 +268,34 @@ pub struct LayoutConfig {
     /// stride). When false, only the section's *first* row carries a
     /// header reservation — appropriate for tighter pixel-mode flows.
     pub reserve_header_per_row: bool,
+    /// Weight multiplier applied to gaps between cards in *different*
+    /// sections during per-row horizontal redistribution (the TUI's
+    /// `SECTION_GAP_MULTIPLIER`). 1.0 disables the multiplier so all
+    /// gaps share evenly. Has no effect when
+    /// `redistribute_extra_horizontal` is false.
+    pub section_gap_multiplier: f32,
+    /// Minimum horizontal padding reserved on the left and right edges
+    /// of a row during redistribution.
+    pub min_edge_padding_px: f32,
+    /// When true, after placement the engine redistributes any extra
+    /// horizontal space across each row's edges and inter-card gaps.
+    /// Off by default — opt-in for backends that want filled rows
+    /// (e.g. the TUI's flow mode).
+    pub redistribute_extra_horizontal: bool,
+    /// When true, after placement the engine centres the resulting
+    /// grid horizontally inside `rect`.
+    pub center_horizontal: bool,
+    /// When `Some(rect)`, after centring, any cards overlapping `rect`
+    /// trigger a shared leftward slide of the entire grid until no
+    /// card collides. Use this to keep the grid out from under the
+    /// graveyard overlay (which the TUI draws on top of the
+    /// battlefield in the lower right corner).
+    ///
+    /// The collision rectangle should be expressed in the same pixel
+    /// coordinate space as `rect` (i.e. it is **not** automatically
+    /// derived from `graveyard_card_count` — pass it explicitly so
+    /// callers can opt out of collision handling per-frame).
+    pub graveyard_collision_rect: Option<LayoutRect>,
 }
 
 impl Default for LayoutConfig {
@@ -288,18 +316,30 @@ impl Default for LayoutConfig {
             reverse_section_order: false,
             flow_sections_on_same_row: false,
             reserve_header_per_row: true,
+            section_gap_multiplier: 1.5,
+            min_edge_padding_px: cell.w,
+            redistribute_extra_horizontal: false,
+            center_horizontal: false,
+            graveyard_collision_rect: None,
         }
     }
 }
 
 impl LayoutConfig {
     /// Preset matching the historical TUI behaviour exactly: sections
-    /// flow on shared rows, and every wrapped row reserves a 1-line
-    /// header above its cards.
+    /// flow on shared rows, every wrapped row reserves a 1-line header
+    /// above its cards, rows redistribute extra horizontal space using
+    /// the section-gap multiplier, and the resulting grid is centred
+    /// horizontally inside the available rect.
+    ///
+    /// Callers should additionally set `graveyard_collision_rect` if a
+    /// graveyard overlay needs to be dodged for the current frame.
     pub fn tui_compat() -> Self {
         Self {
             flow_sections_on_same_row: true,
             reserve_header_per_row: true,
+            redistribute_extra_horizontal: true,
+            center_horizontal: true,
             ..Self::default()
         }
     }
@@ -382,7 +422,34 @@ pub fn layout_battlefield(
     let used_card_size = pick_card_size(available, cell, &sections_in, config);
 
     // 5. Emit placements with the chosen size.
-    let sections = place_sections(available, cell, &sections_in, used_card_size, config);
+    let mut sections = place_sections(available, cell, &sections_in, used_card_size, config);
+
+    // 6. Per-row horizontal redistribution (widens inter-card gaps,
+    //    weighting inter-section gaps by section_gap_multiplier).
+    if config.redistribute_extra_horizontal {
+        redistribute_rows_horizontal(&mut sections, available, cell, config);
+    }
+
+    // 7. Single x-offset to centre the (possibly redistributed) grid
+    //    inside `available`.
+    if config.center_horizontal {
+        let centre_offset = compute_centring_offset(&sections, available, cell);
+        if centre_offset != 0.0 {
+            shift_sections_x(&mut sections, centre_offset);
+        }
+    }
+
+    // 8. If a collision rect is configured, slide the grid further left
+    //    so no card overlaps it. This runs *after* centring because the
+    //    TUI has historically only collided after applying the
+    //    centre offset.
+    if let Some(collision) = config.graveyard_collision_rect {
+        let slide = compute_collision_slide(&sections, &collision);
+        if slide > 0.0 {
+            let snapped = cell.snap_ceil(slide, Axis::X);
+            shift_sections_x(&mut sections, -snapped);
+        }
+    }
 
     BattlefieldLayoutResult {
         sections,
@@ -826,6 +893,220 @@ fn place_sections(
 fn section_label_width(section: &SectionInput<'_>, cell: CellSize) -> f32 {
     let chars = section.category.label().len() + 1; // trailing ':'
     cell.snap_ceil((chars as f32) * cell.w, Axis::X)
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Post-processing: redistribution, centring, collision avoidance
+//
+// These helpers run *after* `place_sections` produces the raw grid.
+// They move card rectangles (and their headers) horizontally only —
+// vertical positions are fixed by the row stride computed during
+// placement.
+//
+// The TUI used to perform these passes inside its renderer; the
+// migration into the layout engine ensures both backends (TUI and
+// HTML/native GUI) get bit-identical positions when they opt in via
+// `LayoutConfig::tui_compat()`.
+// ───────────────────────────────────────────────────────────────────────
+
+/// Lightweight reference to one card placement, plus its owning
+/// section index (so we can detect inter-section gaps in row layout).
+#[derive(Clone, Copy)]
+struct CardRef {
+    sec_idx: usize,
+    /// Card index within its owning section.
+    card_idx_within_section: usize,
+    x: f32,
+    width: f32,
+}
+
+/// Group every card placement by its row's `y1` coordinate (which is
+/// shared by all cards on the same physical row). Sections may
+/// contribute cards to *several* rows; we walk in section/card order to
+/// preserve left-to-right ordering within a row.
+fn rows_from_sections(sections: &[SectionLayout]) -> Vec<Vec<CardRef>> {
+    use std::collections::BTreeMap;
+    // BTreeMap<i64, Vec<CardRef>> keyed by quantised y so equal rows
+    // always merge regardless of f32 representation noise.
+    let mut by_y: BTreeMap<i64, Vec<CardRef>> = BTreeMap::new();
+    for (sec_idx, section) in sections.iter().enumerate() {
+        for (card_idx, p) in section.cards.iter().enumerate() {
+            let key = p.bounding_box.y1.round() as i64;
+            by_y.entry(key).or_default().push(CardRef {
+                sec_idx,
+                card_idx_within_section: card_idx,
+                x: p.bounding_box.x1,
+                width: p.bounding_box.width(),
+            });
+        }
+    }
+    // Sort each row by x so per-row distribution sees cards in
+    // visual order, not insertion order.
+    let mut rows: Vec<Vec<CardRef>> = by_y.into_values().collect();
+    for row in &mut rows {
+        row.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal));
+    }
+    rows
+}
+
+/// Apply a horizontal redistribution pass. For each row, compute the
+/// extra room past `min_edge_padding_px * 2 + row_width` and spread it
+/// across (left edge, inter-card gaps, right edge), weighting
+/// inter-section gaps by `section_gap_multiplier`.
+fn redistribute_rows_horizontal(
+    sections: &mut [SectionLayout],
+    available: LayoutRect,
+    cell: CellSize,
+    config: &LayoutConfig,
+) {
+    if sections.is_empty() || available.width() <= 0.0 {
+        return;
+    }
+    let rows = rows_from_sections(sections);
+    let edge_pad = config.min_edge_padding_px.max(0.0);
+    for row in &rows {
+        if row.is_empty() {
+            continue;
+        }
+        let first_x = row.first().unwrap().x;
+        let last = row.last().unwrap();
+        let row_width = (last.x + last.width) - first_x;
+        let row_extra = (available.width() - row_width - edge_pad * 2.0).max(0.0);
+        if row_extra <= 0.0 {
+            continue;
+        }
+        // Total weight: 1.0 (left edge) + 1.0 (right edge) + per-gap weight.
+        let mut total_weight: f32 = 2.0;
+        for w in row.windows(2) {
+            total_weight += if w[0].sec_idx == w[1].sec_idx {
+                1.0
+            } else {
+                config.section_gap_multiplier.max(1.0)
+            };
+        }
+        if total_weight <= 0.0 {
+            continue;
+        }
+        let extra_per_unit = row_extra / total_weight;
+        if extra_per_unit < 0.5 {
+            continue;
+        }
+        // Snap each per-unit advance independently so we never advance
+        // by a sub-cell amount on the TUI grid (matches the TUI's
+        // `.round() as u16` behaviour).
+        let snap_x = |v: f32| cell.snap_floor(v.max(0.0), Axis::X);
+        let left_edge_extra = snap_x(extra_per_unit);
+        let mut cumulative = left_edge_extra;
+        let first = row[0];
+        shift_card_x_in_section(sections, first.sec_idx, first.card_idx_within_section, cumulative);
+        retarget_header_to_first_row_card(sections, first.sec_idx, first.card_idx_within_section);
+        for w in row.windows(2) {
+            let gap_weight = if w[0].sec_idx == w[1].sec_idx {
+                1.0
+            } else {
+                config.section_gap_multiplier.max(1.0)
+            };
+            cumulative += snap_x(extra_per_unit * gap_weight);
+            shift_card_x_in_section(sections, w[1].sec_idx, w[1].card_idx_within_section, cumulative);
+            // If we just crossed into a new section AND this is that
+            // section's first card, retarget the section's header so
+            // it stays anchored above the redistributed first card.
+            if w[0].sec_idx != w[1].sec_idx {
+                retarget_header_to_first_row_card(sections, w[1].sec_idx, w[1].card_idx_within_section);
+            }
+        }
+    }
+}
+
+/// If `(sec_idx, card_idx)` is the first card in its section, move
+/// that section's header rect so its `x1` matches the card's `x1`.
+/// (When sections flow on the same row, the header rides above the
+/// section's first card — keeping them aligned during redistribution
+/// preserves the TUI's "label sits above its cards" invariant.)
+fn retarget_header_to_first_row_card(sections: &mut [SectionLayout], sec_idx: usize, card_idx: usize) {
+    if card_idx != 0 {
+        return;
+    }
+    let new_x = sections[sec_idx].cards[card_idx].bounding_box.x1;
+    let header = &mut sections[sec_idx].header;
+    let w = header.width();
+    header.x1 = new_x;
+    header.x2 = new_x + w;
+}
+
+/// Shift one card's bounding box by `dx` (positive moves right).
+fn shift_card_x_in_section(sections: &mut [SectionLayout], sec_idx: usize, card_idx: usize, dx: f32) {
+    if dx == 0.0 {
+        return;
+    }
+    let p = &mut sections[sec_idx].cards[card_idx];
+    p.bounding_box.x1 += dx;
+    p.bounding_box.x2 += dx;
+}
+
+/// Compute how much to shift the *whole* grid horizontally so it sits
+/// centred inside `available`. Headers are included in the bounds
+/// calculation so an extra-wide label doesn't get clipped off-screen
+/// after centring.
+fn compute_centring_offset(sections: &[SectionLayout], available: LayoutRect, cell: CellSize) -> f32 {
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    for s in sections {
+        if s.header.width() > 0.0 {
+            min_x = min_x.min(s.header.x1);
+            max_x = max_x.max(s.header.x2);
+        }
+        for p in &s.cards {
+            min_x = min_x.min(p.bounding_box.x1);
+            max_x = max_x.max(p.bounding_box.x2);
+        }
+    }
+    if !min_x.is_finite() || !max_x.is_finite() {
+        return 0.0;
+    }
+    let grid_width = max_x - min_x;
+    if grid_width >= available.width() {
+        return 0.0;
+    }
+    let ideal_x1 = available.x1 + (available.width() - grid_width) / 2.0;
+    let dx = ideal_x1 - min_x;
+    cell.snap_floor(dx.max(0.0), Axis::X)
+}
+
+/// Translate every section header + card by `dx` (positive ⇒ right).
+fn shift_sections_x(sections: &mut [SectionLayout], dx: f32) {
+    if dx == 0.0 {
+        return;
+    }
+    for s in sections {
+        s.header.x1 += dx;
+        s.header.x2 += dx;
+        for p in &mut s.cards {
+            p.bounding_box.x1 += dx;
+            p.bounding_box.x2 += dx;
+        }
+    }
+}
+
+/// Largest leftward slide (positive number) needed to keep every card
+/// out of the supplied collision rectangle. Headers are intentionally
+/// *not* checked — they sit above the cards so they don't conflict
+/// with the bottom-right graveyard overlay in practice.
+///
+/// Returns `0.0` when no collision exists.
+fn compute_collision_slide(sections: &[SectionLayout], collision: &LayoutRect) -> f32 {
+    let mut max_slide = 0.0_f32;
+    for s in sections {
+        for p in &s.cards {
+            if p.bounding_box.intersects(collision) {
+                let slide = p.bounding_box.x2 - collision.x1;
+                if slide > max_slide {
+                    max_slide = slide;
+                }
+            }
+        }
+    }
+    max_slide
 }
 
 // ───────────────────────────────────────────────────────────────────────
@@ -1335,6 +1616,210 @@ mod tests {
         for s in &res.sections {
             let first_row = s.cards[0].row;
             assert_eq!(first_row, 0, "section {} first card should be on local row 0", s.label);
+        }
+    }
+
+    // ─── Post-processing: redistribution / centring / collision ─────
+
+    #[test]
+    fn centring_offset_is_zero_when_disabled() {
+        // Default config has center_horizontal = false. With one card
+        // way left of the rect's centre, no shift should occur.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature)];
+        let mut cfg = LayoutConfig::default();
+        cfg.center_horizontal = false;
+        cfg.redistribute_extra_horizontal = false;
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        // With centring disabled the single card sits flush against x = 0.
+        assert_eq!(res.sections[0].cards[0].bounding_box.x1, 0.0);
+    }
+
+    #[test]
+    fn centring_shifts_grid_to_middle_of_rect() {
+        // One small card in a wide rect: with centring on, it should
+        // sit roughly in the middle of the rect.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature)];
+        let mut cfg = LayoutConfig::tui_compat();
+        // Disable redistribution so we measure pure centring.
+        cfg.redistribute_extra_horizontal = false;
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        let bb = res.sections[0].cards[0].bounding_box;
+        let card_centre = (bb.x1 + bb.x2) / 2.0;
+        // Allow ±1 cell tolerance (snap_floor in the offset).
+        assert!(
+            (card_centre - 400.0).abs() <= CellSize::TERMINAL.w,
+            "card centre {} should be ≈ 400 (rect centre)",
+            card_centre
+        );
+    }
+
+    #[test]
+    fn redistribution_widens_gaps_to_fill_row() {
+        // 3 cards on a 800-px row. Default sizing → 100 px each →
+        // 300 px of cards, leaving ~480 px of slack distributed
+        // across edges + gaps.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards: Vec<_> = (0..3).map(|i| card(i, CardCategory::Creature)).collect();
+
+        let mut cfg_no = LayoutConfig::tui_compat();
+        cfg_no.redistribute_extra_horizontal = false;
+        cfg_no.center_horizontal = false;
+        let mut cfg_yes = cfg_no.clone();
+        cfg_yes.redistribute_extra_horizontal = true;
+
+        let res_no = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg_no);
+        let res_yes = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg_yes);
+
+        let gap_no = res_no.sections[0].cards[1].bounding_box.x1 - res_no.sections[0].cards[0].bounding_box.x2;
+        let gap_yes = res_yes.sections[0].cards[1].bounding_box.x1 - res_yes.sections[0].cards[0].bounding_box.x2;
+
+        assert!(
+            gap_yes > gap_no,
+            "redistribution should widen inter-card gap ({} → {})",
+            gap_no,
+            gap_yes,
+        );
+    }
+
+    #[test]
+    fn redistribution_weights_inter_section_gap_more() {
+        // Two sections sharing one row. Inter-section gap should be
+        // wider than the intra-section gap by the multiplier.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![
+            card(0, CardCategory::Creature),
+            card(1, CardCategory::Creature),
+            // New section starts here:
+            card(2, CardCategory::Land),
+            card(3, CardCategory::Land),
+        ];
+        let mut cfg = LayoutConfig::tui_compat();
+        cfg.section_gap_multiplier = 3.0; // Exaggerate so the assert is robust.
+        cfg.center_horizontal = false; // Isolate from centring.
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        // section 0 (Creature): 2 cards, section 1 (Land): 2 cards.
+        let intra = res.sections[0].cards[1].bounding_box.x1 - res.sections[0].cards[0].bounding_box.x2;
+        let inter = res.sections[1].cards[0].bounding_box.x1 - res.sections[0].cards[1].bounding_box.x2;
+        assert!(
+            inter > intra,
+            "inter-section gap {} should exceed intra-section gap {}",
+            inter,
+            intra,
+        );
+    }
+
+    #[test]
+    fn collision_rect_slides_grid_left() {
+        // Wide rect, one card, with centring enabled. Then add a
+        // collision rect that overlaps where the centred card would
+        // sit. The result must shift further left so no card touches
+        // the collision rect.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature)];
+
+        let mut cfg = LayoutConfig::tui_compat();
+        cfg.redistribute_extra_horizontal = false; // simpler reasoning
+                                                   // Without collision, the card centres around x ≈ 350..450.
+        let res_no_collision = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        let centred_x2 = res_no_collision.sections[0].cards[0].bounding_box.x2;
+
+        // Now add a collision rect that begins *before* the centred
+        // card's right edge.
+        cfg.graveyard_collision_rect = Some(LayoutRect::from_xywh(centred_x2 - 50.0, 0.0, 200.0, 400.0));
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        let collided_x2 = res.sections[0].cards[0].bounding_box.x2;
+
+        assert!(
+            collided_x2 <= centred_x2 - 50.0,
+            "collision should slide grid left so x2 ({}) ≤ collision.x1 ({})",
+            collided_x2,
+            centred_x2 - 50.0,
+        );
+        // And nothing should overlap the collision rect.
+        let collision = cfg.graveyard_collision_rect.unwrap();
+        for s in &res.sections {
+            for p in &s.cards {
+                assert!(
+                    !p.bounding_box.intersects(&collision),
+                    "card {} bb {:?} still intersects collision {:?}",
+                    p.card_id,
+                    p.bounding_box,
+                    collision,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn collision_rect_no_op_when_no_overlap() {
+        // Collision rect placed far below the cards — no slide should
+        // happen.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature)];
+        let mut cfg = LayoutConfig::tui_compat();
+        cfg.graveyard_collision_rect = Some(LayoutRect::from_xywh(700.0, 380.0, 100.0, 20.0));
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        // Should still be roughly centred (within ±1 cell).
+        let bb = res.sections[0].cards[0].bounding_box;
+        let centre = (bb.x1 + bb.x2) / 2.0;
+        assert!(
+            (centre - 400.0).abs() <= CellSize::TERMINAL.w,
+            "no collision → still centred (centre={})",
+            centre
+        );
+    }
+
+    #[test]
+    fn redistribution_keeps_header_above_first_card() {
+        // After redistribution the first card of each section moves
+        // right; the section's header must move with it so the label
+        // continues to sit directly above its cards.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = vec![card(0, CardCategory::Creature), card(1, CardCategory::Land)];
+        let cfg = LayoutConfig::tui_compat(); // redistribute + centre
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        for s in &res.sections {
+            assert_eq!(
+                s.header.x1, s.cards[0].bounding_box.x1,
+                "section {} header.x={} should track first card x={}",
+                s.label, s.header.x1, s.cards[0].bounding_box.x1
+            );
+        }
+    }
+
+    #[test]
+    fn placements_remain_inside_rect_after_post_processing() {
+        // With centring + redistribution + a collision rect, no card
+        // should escape the original input rectangle.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards: Vec<_> = (0..6)
+            .map(|i| {
+                card(
+                    i,
+                    if i % 2 == 0 {
+                        CardCategory::Creature
+                    } else {
+                        CardCategory::Land
+                    },
+                )
+            })
+            .collect();
+        let mut cfg = LayoutConfig::tui_compat();
+        cfg.graveyard_collision_rect = Some(LayoutRect::from_xywh(700.0, 200.0, 100.0, 200.0));
+        let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
+        for s in &res.sections {
+            for p in &s.cards {
+                let bb = p.bounding_box;
+                assert!(
+                    bb.x1 >= r.x1 - 0.001 && bb.x2 <= r.x2 + 0.001,
+                    "card {} bb {:?} escaped rect {:?}",
+                    p.card_id,
+                    bb,
+                    r,
+                );
+            }
         }
     }
 }

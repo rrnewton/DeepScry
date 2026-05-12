@@ -2231,8 +2231,11 @@ impl FancyTuiRenderer {
             graveyard_card_count: 0, // graveyard reservation is handled separately by compute_graveyard_bounds
             graveyard_max_name_len: 0,
             reverse_section_order: false, // sizing is order-agnostic; the input list already reflects the renderer's ordering
-            flow_sections_on_same_row: true,
-            reserve_header_per_row: true,
+            // Inherit flow / per-row header / centring / redistribution
+            // / collision defaults from the TUI preset so any new
+            // post-processing knobs added to the engine continue to
+            // match the renderer without further plumbing.
+            ..bl::LayoutConfig::tui_compat()
         };
 
         // Promote the renderer's cell-area to pixel coordinates.
