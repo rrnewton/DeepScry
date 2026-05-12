@@ -1,12 +1,13 @@
 ---
 title: 'Royal Assassin: Tapped creature illegally declares as blocker'
-status: open
+status: closed
 priority: 2
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:28:16.777790169+00:00
-updated_at: 2026-04-03T21:28:16.777790169+00:00
+updated_at: 2026-05-12T13:57:42.269313173+00:00
+closed_at: 2026-05-12T13:57:42.269313073+00:00
 ---
 
 # Description

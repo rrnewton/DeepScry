@@ -1,10 +1,11 @@
 ---
 title: Add friendly error when mtg binary is not built
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T01:50:09.414290573+00:00
-updated_at: 2026-04-04T01:50:09.414290573+00:00
+updated_at: 2026-05-12T13:59:24.900406518+00:00
+closed_at: 2026-05-12T13:59:24.900406437+00:00
 ---
 
 # Description

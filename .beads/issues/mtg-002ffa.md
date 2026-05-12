@@ -1,12 +1,13 @@
 ---
 title: 'Bazaar of Baghdad: SubAbility$ discard chain not resolved for activated abilities'
-status: open
+status: closed
 priority: 2
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:24:19.064382860+00:00
-updated_at: 2026-04-03T21:24:19.064382860+00:00
+updated_at: 2026-05-12T13:57:36.799403100+00:00
+closed_at: 2026-05-12T13:57:36.799403+00:00
 ---
 
 # Description

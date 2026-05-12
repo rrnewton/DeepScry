@@ -1,12 +1,13 @@
 ---
 title: 'Time Walk: infinite extra turns loop'
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T20:52:51.924800161+00:00
-updated_at: 2026-04-03T21:33:22.981518845+00:00
+updated_at: 2026-05-12T13:57:36.799558695+00:00
+closed_at: 2026-05-12T13:57:36.799558615+00:00
 ---
 
 # Description

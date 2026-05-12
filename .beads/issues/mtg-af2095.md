@@ -1,10 +1,11 @@
 ---
 title: 'Get WASM E2E tests running: Chromium + WASM toolchain'
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T02:16:36.515457382+00:00
-updated_at: 2026-04-04T02:16:36.515457382+00:00
+updated_at: 2026-05-12T13:58:08.100104374+00:00
+closed_at: 2026-05-12T13:58:08.100104304+00:00
 ---
 
 # Description

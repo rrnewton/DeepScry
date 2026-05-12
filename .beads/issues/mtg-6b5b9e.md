@@ -1,10 +1,11 @@
 ---
 title: Build WASM and run full E2E Playwright tests
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T01:50:09.417362482+00:00
-updated_at: 2026-04-04T01:50:09.417362482+00:00
+updated_at: 2026-05-12T13:59:04.625617419+00:00
+closed_at: 2026-05-12T13:59:04.625617339+00:00
 ---
 
 # Description

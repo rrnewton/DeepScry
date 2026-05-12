@@ -1,10 +1,11 @@
 ---
 title: Design and implement the agent choice prompt
-status: open
+status: closed
 priority: 0
 issue_type: task
 created_at: 2026-04-04T02:16:36.530928551+00:00
-updated_at: 2026-04-04T02:16:36.530928551+00:00
+updated_at: 2026-05-12T13:57:57.519433227+00:00
+closed_at: 2026-05-12T13:57:57.519433146+00:00
 ---
 
 # Description

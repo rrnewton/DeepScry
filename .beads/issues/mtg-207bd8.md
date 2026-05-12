@@ -1,10 +1,11 @@
 ---
 title: E2E Playwright tests for bug report feature
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T02:16:36.512488137+00:00
-updated_at: 2026-04-04T02:16:36.512488137+00:00
+updated_at: 2026-05-12T13:58:08.111868591+00:00
+closed_at: 2026-05-12T13:58:08.111868511+00:00
 ---
 
 # Description

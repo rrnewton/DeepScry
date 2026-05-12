@@ -1,10 +1,11 @@
 ---
 title: 'Client: Submit bug report to server and display result'
-status: open
+status: closed
 priority: 0
 issue_type: task
 created_at: 2026-04-04T02:16:36.511556309+00:00
-updated_at: 2026-04-04T02:16:36.511556309+00:00
+updated_at: 2026-05-12T13:57:57.515118038+00:00
+closed_at: 2026-05-12T13:57:57.515117938+00:00
 ---
 
 # Description

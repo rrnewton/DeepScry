@@ -1,10 +1,11 @@
 ---
 title: Merge agentplay launcher branch into current feature branch
-status: open
+status: closed
 priority: 0
 issue_type: task
 created_at: 2026-04-04T02:16:36.512845356+00:00
-updated_at: 2026-04-04T02:16:36.512845356+00:00
+updated_at: 2026-05-12T13:58:19.021544175+00:00
+closed_at: 2026-05-12T13:58:19.021544095+00:00
 ---
 
 # Description

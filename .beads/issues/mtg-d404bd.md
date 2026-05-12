@@ -1,12 +1,13 @@
 ---
 title: 'Bazaar of Baghdad: draw/discard activation broken'
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T20:52:39.930087763+00:00
-updated_at: 2026-04-03T21:33:03.391638382+00:00
+updated_at: 2026-05-12T13:57:36.799189016+00:00
+closed_at: 2026-05-12T13:57:36.799188946+00:00
 ---
 
 # Description
@@ -28,16 +29,3 @@ updated_at: 2026-04-03T21:33:03.391638382+00:00
 2. **No log lines for draw/discard.** When the activated ability resolves (priority.rs:1285), effects are executed via `game.execute_effect()` which does produce log output for draws. But since the discard effect is missing entirely, there's nothing to log for it.
 
 ### Reproduction
-
-    # Create puzzle: puzzles/test_bazaar_focused.pzl (Bazaar on battlefield, 5 Lightning Bolts in hand)
-    target/release/mtg tui --start-state puzzles/test_bazaar_focused.pzl \
-      --p1 fixed --p1-fixed-inputs "1;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0;0" \
-      --p2 zero --seed 42 -v verbose --stop-when-fixed-exhausted
-
-**Expected:** Hand 5 -> draw 2 (7) -> discard 3 (4), graveyard = 3
-**Actual:** Hand 5 -> draw 2 (7) -> no discard, graveyard = 0
-
-### Code Locations
-- `mtg-engine/src/loader/card.rs:2360` — `parse_activated_abilities()` doesn't follow SubAbility chain
-- `mtg-engine/src/loader/card.rs:1483` — `follow_sub_ability_chain()` exists but is only called from `parse_effects()`
-- `mtg-engine/src/game/game_loop/priority.rs:1285` — activated ability effect resolution loop

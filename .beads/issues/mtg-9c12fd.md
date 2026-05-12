@@ -1,10 +1,11 @@
 ---
 title: Build WASM package for web GUI testing
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T01:50:09.413437584+00:00
-updated_at: 2026-04-04T01:50:09.413437584+00:00
+updated_at: 2026-05-12T13:58:54.189436185+00:00
+closed_at: 2026-05-12T13:58:54.189436095+00:00
 ---
 
 # Description

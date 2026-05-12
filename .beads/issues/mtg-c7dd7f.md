@@ -1,10 +1,11 @@
 ---
 title: Agent vs heuristic/random and agent-vs-agent modes
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T02:16:36.521372897+00:00
-updated_at: 2026-04-04T02:16:36.521372897+00:00
+updated_at: 2026-05-12T13:58:08.093040676+00:00
+closed_at: 2026-05-12T13:58:08.093040596+00:00
 ---
 
 # Description
