@@ -321,6 +321,31 @@ def main():
     p1_deck = args.player1_deck
     p2_deck = args.player2_deck or args.player1_deck  # Default to mirror match
 
+    # Derive per-controller seeds from --seed using the SAME formula as
+    # `mtg tui` (see mtg-engine/src/main.rs around line 1556):
+    #   p1_seed = master_seed.wrapping_add(0x1234_5678_9ABC_DEF0)
+    #   p2_seed = master_seed.wrapping_add(0xFEDC_BA98_7654_3210)
+    # Without this, controllers seed from entropy and the network run is not
+    # a drop-in replacement for `mtg tui --seed N` — it produces a different
+    # (non-deterministic) game log.
+    # Explicit --seed-p1 / --seed-p2 flags still take precedence.
+    P1_SEED_SALT = 0x1234_5678_9ABC_DEF0
+    P2_SEED_SALT = 0xFEDC_BA98_7654_3210
+    U64_MASK = 0xFFFF_FFFF_FFFF_FFFF
+    if args.seed and args.seed != 'from_entropy':
+        try:
+            master_seed_u64 = int(args.seed) & U64_MASK
+            if args.seed_p1 is None:
+                args.seed_p1 = str((master_seed_u64 + P1_SEED_SALT) & U64_MASK)
+                print(f"[mtg_tui_networked] Derived P1 controller seed from --seed: {args.seed_p1}")
+            if args.seed_p2 is None:
+                args.seed_p2 = str((master_seed_u64 + P2_SEED_SALT) & U64_MASK)
+                print(f"[mtg_tui_networked] Derived P2 controller seed from --seed: {args.seed_p2}")
+        except ValueError:
+            print(f"[mtg_tui_networked] WARNING: --seed={args.seed!r} is not a u64; "
+                  "cannot derive per-controller seeds. Controllers may use entropy.",
+                  file=sys.stderr)
+
     # Find a free port
     port = find_free_port()
     password = f"test_{random.randint(1000, 9999)}"
