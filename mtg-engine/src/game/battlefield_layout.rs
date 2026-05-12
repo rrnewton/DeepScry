@@ -1546,6 +1546,34 @@ mod tests {
         );
     }
 
+    /// Pixel-mode regression: the WASM bridge used by `game.html`
+    /// (`tui_get_card_layout_json`) calls `pick_card_size_for_battlefield`
+    /// with `CellSize::PIXEL`, which exercises a different snapping path
+    /// from the terminal cell-size used by the TUI tests above. This
+    /// ensures the size-only fast path also shrinks cards as the count
+    /// grows when no snapping is in play — i.e. that the GUI sees real
+    /// variable sizing (the bug `bug-gamehtml-fixed-card-size` tracked).
+    #[test]
+    fn pick_card_size_for_battlefield_shrinks_in_pixel_mode() {
+        let pane = LayoutRect::from_xywh(0.0, 0.0, 600.0, 380.0);
+        let few: Vec<_> = (0..3).map(|i| card(i, CardCategory::Creature)).collect();
+        let many: Vec<_> = (0..30).map(|i| card(i, CardCategory::Creature)).collect();
+        let cfg = LayoutConfig::default();
+        let size_few = pick_card_size_for_battlefield(pane, CellSize::PIXEL, &few, &cfg);
+        let size_many = pick_card_size_for_battlefield(pane, CellSize::PIXEL, &many, &cfg);
+        assert!(
+            size_many.height_px <= size_few.height_px,
+            "pixel-mode many ({:?}) should shrink vs few ({:?})",
+            size_many,
+            size_few,
+        );
+        // Empty input falls back to the configured min — the WASM bridge
+        // uses this to leave the CSS variables unset on empty boards.
+        let none: Vec<CardLayoutInput> = Vec::new();
+        let size_none = pick_card_size_for_battlefield(pane, CellSize::PIXEL, &none, &cfg);
+        assert_eq!(size_none, cfg.min_card);
+    }
+
     #[test]
     fn each_section_has_a_header_above_its_first_card() {
         let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 600.0);

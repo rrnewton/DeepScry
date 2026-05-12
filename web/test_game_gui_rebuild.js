@@ -454,6 +454,54 @@ async function runTest() {
             return { ourLabels, oppLabels };
         });
 
+        // ---- 14b. Battlefield card sizes come from the layout engine ----
+        // Regression for the bug "game.html cards are fixed size" — the
+        // shared Rust battlefield_layout engine should drive --card-w /
+        // --card-h CSS variables on each battlefield grid, AND a board with
+        // many permanents must select a smaller card width than a board with
+        // few. The function under test is `tui_get_card_layout_json(...)`
+        // which now uses `pick_card_size_for_battlefield` from
+        // mtg-engine/src/game/battlefield_layout.rs.
+        await step(results, 'battlefield_card_sizes_from_layout_engine', async () => {
+            const sizes = await page.evaluate(() => {
+                const ours = document.getElementById('player-field-cards');
+                const opps = document.getElementById('opp-field-cards');
+                const cssVar = (el, name) => {
+                    if (!el) return null;
+                    const v = el.style.getPropertyValue(name);
+                    return v ? parseFloat(v) : null;
+                };
+                return {
+                    your_w: cssVar(ours, '--card-w'),
+                    your_h: cssVar(ours, '--card-h'),
+                    opp_w: cssVar(opps, '--card-w'),
+                    opp_h: cssVar(opps, '--card-h'),
+                };
+            });
+            // After several turns of run_initial_turns + auto-run, at least
+            // ONE side should have permanents and therefore engine-driven
+            // sizes. Fail if neither side ever got --card-w set.
+            const haveAny = (sizes.your_w && sizes.your_w > 0)
+                         || (sizes.opp_w && sizes.opp_w > 0);
+            if (!haveAny) {
+                throw new Error(`expected --card-w from layout engine on at least one battlefield, got ${JSON.stringify(sizes)}`);
+            }
+            // The engine's pixel-mode min card is 50×80; the default is
+            // 100×140. Whatever side has cards should fall inside that
+            // range — anything outside means the engine isn't actually
+            // sizing them and we've regressed to the fixed CSS.
+            for (const [side, w, h] of [['your', sizes.your_w, sizes.your_h], ['opp', sizes.opp_w, sizes.opp_h]]) {
+                if (w == null) continue;
+                if (w < 40 || w > 220) {
+                    throw new Error(`${side} card width ${w}px out of expected engine range [50,200]`);
+                }
+                if (h != null && (h < 60 || h > 320)) {
+                    throw new Error(`${side} card height ${h}px out of expected engine range [80,300]`);
+                }
+            }
+            return sizes;
+        });
+
         // ---- 15. Auto-run for a few seconds, verify game progresses ---
         await step(results, 'auto_run_progresses', async () => {
             const before = await readViewModel(page);

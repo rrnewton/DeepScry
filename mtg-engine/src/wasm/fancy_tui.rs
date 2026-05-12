@@ -260,101 +260,146 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
     serde_json::json!(urls).to_string()
 }
 
-/// Get card layout positions for the current game state.
+/// Compute per-battlefield card sizes for the native HTML GUI (`game.html`).
 ///
-/// Computes battlefield card positions using the shared layout engine,
-/// returning JSON that game.html can use to position card DOM elements.
+/// Uses the shared backend-neutral [`battlefield_layout`] engine in pixel
+/// mode so the same sizing decisions drive both the ratatui TUI and the
+/// DOM-based GUI. Given the *current* pixel dimensions of each
+/// battlefield pane (as measured by JS via `clientWidth` / `clientHeight`),
+/// returns the largest card size for which all that player's permanents
+/// fit inside the pane.
 ///
-/// Returns JSON: `{ "your_battlefield": [...], "opp_battlefield": [...] }`
-/// where each entry has `{ id, name, x_pct, y_pct, w_pct, h_pct, is_tapped, is_creature, is_land }`.
-/// Percentages are relative to the pane's inner area.
+/// `your_pane_w_px` / `your_pane_h_px` describe the local player's
+/// battlefield container; `opp_pane_w_px` / `opp_pane_h_px` describe
+/// the opponent's container. Pass zero (or negative) for either pane to
+/// fall back to the engine's `min_card` size — the JS layer treats that
+/// as "pane not measured yet, use defaults".
+///
+/// Returns JSON of the shape:
+/// ```json
+/// {
+///   "your_battlefield": {
+///     "card_count": 7,
+///     "pane_w_px": 600.0,
+///     "pane_h_px": 380.0,
+///     "card_width_px": 95.0,
+///     "card_height_px": 130.0
+///   },
+///   "opp_battlefield": { ... same shape ... }
+/// }
+/// ```
+///
+/// game.html measures each pane after layout, calls this function, and
+/// applies the resulting size as a CSS variable on the pane container so
+/// every card scales uniformly within the available space (matching the
+/// fancy.html / native TUI behaviour where cards visibly shrink when
+/// many permanents are in play).
+///
+/// [`battlefield_layout`]: crate::game::battlefield_layout
 #[wasm_bindgen]
-pub fn tui_get_card_layout_json() -> String {
-    use crate::game::layout::{
-        compute_battlefield_card_size, layout_cards_wordwrap, CardCategory, CardItem, CardSizeConfig,
+pub fn tui_get_card_layout_json(
+    your_pane_w_px: f32,
+    your_pane_h_px: f32,
+    opp_pane_w_px: f32,
+    opp_pane_h_px: f32,
+) -> String {
+    use crate::game::battlefield_layout::{
+        pick_card_size_for_battlefield, CardCategory, CardLayoutInput, CellSize, LayoutConfig, LayoutRect,
     };
 
     GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let s = state.borrow();
-            let game = &s.game;
-            let our_pid = s.renderer.player_id;
+        let Some(state) = state.borrow().as_ref().cloned() else {
+            return "{}".to_string();
+        };
+        let s = state.borrow();
+        let game = &s.game;
+        let our_pid = s.renderer.player_id;
 
-            let config = CardSizeConfig::default();
+        // Pixel-mode config: the engine's defaults (default 100×140,
+        // min 50×80, max 300 tall) are sensible for the HTML GUI as
+        // well, so we re-use them and just swap the cell grid to PIXEL
+        // (no snapping). Reverse the section order for the opponent so
+        // the engine sees the same input the TUI uses; the *output*
+        // here is just the chosen card size, which doesn't depend on
+        // section ordering.
+        let cell = CellSize::PIXEL;
 
-            let mut result = serde_json::Map::new();
-
-            // Build list of (label, player_id) pairs for each battlefield
-            let mut bf_pairs: Vec<(&str, crate::core::PlayerId)> = vec![("your_battlefield", our_pid)];
-            for player in &game.players {
-                if player.id != our_pid {
-                    bf_pairs.push(("opp_battlefield", player.id));
-                }
+        // Build (label, player_id, pane_w_px, pane_h_px, reversed) tuples.
+        // The local player is always emitted as `your_battlefield`; every
+        // other player is currently aggregated under `opp_battlefield`
+        // (mirroring the existing JSON shape). Two-player games are the
+        // only configuration the GUI supports today.
+        let mut bf_pairs: Vec<(&str, crate::core::PlayerId, f32, f32, bool)> =
+            vec![("your_battlefield", our_pid, your_pane_w_px, your_pane_h_px, false)];
+        for player in &game.players {
+            if player.id != our_pid {
+                bf_pairs.push(("opp_battlefield", player.id, opp_pane_w_px, opp_pane_h_px, true));
+                break;
             }
-
-            for (label, pid) in &bf_pairs {
-                let bf_cards: Vec<CardItem> = game
-                    .battlefield
-                    .cards
-                    .iter()
-                    .filter_map(|&cid| {
-                        let card = game.cards.try_get(cid)?;
-                        if card.controller != *pid {
-                            return None;
-                        }
-
-                        let category = if card.is_planeswalker() {
-                            CardCategory::Planeswalker
-                        } else if card.is_creature() {
-                            CardCategory::Creature
-                        } else if card.is_enchantment() {
-                            CardCategory::Enchantment
-                        } else if card.is_artifact() {
-                            CardCategory::Artifact
-                        } else {
-                            CardCategory::Land
-                        };
-
-                        Some(CardItem {
-                            id: cid.as_u32(),
-                            name: card.name.to_string(),
-                            is_tapped: card.tapped,
-                            category,
-                            stack_size: 1,
-                        })
-                    })
-                    .collect();
-
-                // Use a representative area (100x50 cells) to compute positions as percentages
-                let area = ratatui::layout::Rect::new(0, 0, 100, 50);
-                let (card_w, card_h) = compute_battlefield_card_size(area, bf_cards.len(), &config);
-                let placements = layout_cards_wordwrap(area, &bf_cards, card_w, card_h, &config);
-
-                let cards_json: Vec<serde_json::Value> = placements
-                    .iter()
-                    .zip(bf_cards.iter())
-                    .map(|(p, card)| {
-                        serde_json::json!({
-                            "id": p.id,
-                            "name": card.name,
-                            "x_pct": f64::from(p.x),
-                            "y_pct": f64::from(p.y),
-                            "w_pct": f64::from(p.width),
-                            "h_pct": f64::from(p.height),
-                            "is_tapped": card.is_tapped,
-                            "is_creature": card.category == CardCategory::Creature,
-                            "is_land": card.category == CardCategory::Land,
-                        })
-                    })
-                    .collect();
-
-                result.insert(label.to_string(), serde_json::json!(cards_json));
-            }
-
-            serde_json::json!(result).to_string()
-        } else {
-            "{}".to_string()
         }
+
+        let mut result = serde_json::Map::new();
+        for (label, pid, pane_w, pane_h, reverse) in &bf_pairs {
+            // Collect this player's permanents.
+            let bf_cards: Vec<CardLayoutInput> = game
+                .battlefield
+                .cards
+                .iter()
+                .filter_map(|&cid| {
+                    let card = game.cards.try_get(cid)?;
+                    if card.controller != *pid {
+                        return None;
+                    }
+                    let category = if card.is_planeswalker() {
+                        CardCategory::Planeswalker
+                    } else if card.is_creature() {
+                        CardCategory::Creature
+                    } else if card.is_enchantment() {
+                        CardCategory::Enchantment
+                    } else if card.is_artifact() {
+                        CardCategory::Artifact
+                    } else if card.is_land() {
+                        CardCategory::Land
+                    } else {
+                        CardCategory::Other
+                    };
+                    Some(CardLayoutInput {
+                        card_id: cid.as_u32(),
+                        category,
+                        name: card.name.to_string(),
+                        is_tapped: card.tapped,
+                        stack_size: 1,
+                    })
+                })
+                .collect();
+
+            let config = LayoutConfig {
+                reverse_section_order: *reverse,
+                ..LayoutConfig::default()
+            };
+
+            // If the JS hasn't measured the pane yet (zero), fall back to
+            // the min card size — game.html will retry on the next frame
+            // once the DOM has settled.
+            let card_size = if *pane_w > 0.0 && *pane_h > 0.0 && !bf_cards.is_empty() {
+                let rect = LayoutRect::from_xywh(0.0, 0.0, *pane_w, *pane_h);
+                pick_card_size_for_battlefield(rect, cell, &bf_cards, &config)
+            } else {
+                config.min_card
+            };
+
+            result.insert(
+                label.to_string(),
+                serde_json::json!({
+                    "card_count": bf_cards.len(),
+                    "pane_w_px": f64::from(*pane_w),
+                    "pane_h_px": f64::from(*pane_h),
+                    "card_width_px": f64::from(card_size.width_px),
+                    "card_height_px": f64::from(card_size.height_px),
+                }),
+            );
+        }
+        serde_json::json!(result).to_string()
     })
 }
 

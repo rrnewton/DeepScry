@@ -298,11 +298,34 @@
             margin: 3px;
             background: #161e30;
             cursor: pointer;
+            /* Default fixed range — used in the hand list and as a
+               fallback before the battlefield layout engine has measured
+               its pane. The battlefield grids override these via
+               --card-w (set per-pane by applyBattlefieldCardSizes). */
             min-width: 80px;
             max-width: 110px;
             transition: border-color 0.15s, transform 0.15s;
             position: relative;
             font-size: 11px;
+        }
+        /* Battlefield cards: width is driven by the shared Rust layout
+           engine (battlefield_layout::pick_card_size_for_battlefield) via
+           --card-w / --card-h on the pane container, so cards visibly
+           shrink as more permanents enter play. Falls back to the .card
+           defaults until the JS has had a chance to measure the pane. */
+        .card-grid .card {
+            width: var(--card-w, 110px);
+            min-width: var(--card-w, 80px);
+            max-width: var(--card-w, 110px);
+        }
+        .card-grid .card .card-image {
+            /* Image area scales with the rest of the tile. The 8px
+               accounts for the 4px padding on each side; the height is
+               proportional but capped by the engine-chosen card height
+               minus a fixed margin for the name/PT/mana lines. */
+            width: calc(var(--card-w, 84px) - 8px);
+            height: calc(var(--card-h, 130px) - 36px);
+            min-height: 40px;
         }
         .card:hover {
             border-color: #4cc9f0;
@@ -1213,8 +1236,71 @@
 
         // Re-apply layout on window resize
         window.addEventListener('resize', () => {
-            if (tuiLaunched) applySharedLayout();
+            if (tuiLaunched) {
+                applySharedLayout();
+                // Card sizes also depend on pane pixel dimensions, so
+                // recompute them whenever the viewport changes.
+                applyBattlefieldCardSizes();
+            }
         });
+
+        // ==================== BATTLEFIELD CARD SIZING ====================
+        // Drives per-pane CSS variables (--card-w / --card-h) from the
+        // shared Rust battlefield layout engine
+        // (battlefield_layout::pick_card_size_for_battlefield via the WASM
+        // export `tui_get_card_layout_json`). This is what makes cards
+        // visibly shrink when many permanents are on the battlefield —
+        // the engine returns the largest card size for which all that
+        // player's cards fit inside the measured pane area.
+        function applyBattlefieldCardSizes() {
+            if (typeof tui_get_card_layout_json !== 'function') return;
+
+            // Measure the *card grid* inside each battlefield pane (not
+            // the pane itself), so the engine sizes against the actual
+            // area the cards flow into and accounts for the pane header.
+            const yourGrid = document.getElementById('player-field-cards');
+            const oppGrid = document.getElementById('opp-field-cards');
+            if (!yourGrid || !oppGrid) return;
+
+            const yourW = yourGrid.clientWidth;
+            const yourH = yourGrid.clientHeight;
+            const oppW = oppGrid.clientWidth;
+            const oppH = oppGrid.clientHeight;
+
+            let layoutJson;
+            try {
+                layoutJson = tui_get_card_layout_json(yourW, yourH, oppW, oppH);
+            } catch (e) {
+                console.error('tui_get_card_layout_json failed:', e);
+                return;
+            }
+            if (!layoutJson || layoutJson === '{}') return;
+
+            let layout;
+            try { layout = JSON.parse(layoutJson); }
+            catch (e) { console.error('parse card layout JSON:', e); return; }
+
+            applyPaneCardSize(yourGrid, layout.your_battlefield);
+            applyPaneCardSize(oppGrid, layout.opp_battlefield);
+        }
+
+        /// Set --card-w / --card-h CSS vars on the pane container so
+        /// every `.card` inside scales uniformly. Skip when the engine
+        /// returned no usable size (e.g. empty battlefield, or pane not
+        /// yet measured).
+        function applyPaneCardSize(gridEl, paneLayout) {
+            if (!gridEl) return;
+            if (!paneLayout) {
+                gridEl.style.removeProperty('--card-w');
+                gridEl.style.removeProperty('--card-h');
+                return;
+            }
+            const w = paneLayout.card_width_px;
+            const h = paneLayout.card_height_px;
+            if (typeof w !== 'number' || typeof h !== 'number' || w <= 0 || h <= 0) return;
+            gridEl.style.setProperty('--card-w', `${w}px`);
+            gridEl.style.setProperty('--card-h', `${h}px`);
+        }
 
         // ==================== UI RENDERING ====================
         //
@@ -1303,6 +1389,13 @@
             renderPlayerInfo(oppPlayer, 'opp-info-body');
             renderBattlefield(ourPlayer, 'player-field-cards');
             renderBattlefield(oppPlayer, 'opp-field-cards');
+            // Apply per-pane card sizing from the shared layout engine
+            // (battlefield_layout::pick_card_size_for_battlefield). Cards
+            // shrink as more permanents enter play, matching the TUI/fancy.html
+            // behaviour. Run *after* renderBattlefield so the pane bodies have
+            // their final laid-out width/height (the function reads
+            // clientWidth/clientHeight).
+            applyBattlefieldCardSizes();
             renderHand(ourPlayer);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
