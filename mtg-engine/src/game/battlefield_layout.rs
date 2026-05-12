@@ -500,6 +500,96 @@ pub fn compute_graveyard_layout_rect(rect: LayoutRect, cell: CellSize, config: &
     compute_graveyard_rect(rect, cell, config)
 }
 
+/// One card's bounding box plus its owning section index, expressed
+/// in the same pixel space as the surrounding `available` rect.
+///
+/// Used by [`compute_centering_and_collision_offset`] so renderers
+/// that already track per-card positions in their own coordinate
+/// system can still delegate the centring + collision math to the
+/// engine.
+#[derive(Debug, Clone, Copy)]
+pub struct CardBoundsInput {
+    pub bounding_box: LayoutRect,
+    /// 0-based section index. Currently unused by the offset
+    /// computation, but kept on the public input so future passes
+    /// (per-section weighting, smarter slide heuristics) can use it
+    /// without breaking the caller signature.
+    pub section_idx: usize,
+}
+
+/// Compute a single horizontal x-offset (in pixels) that, when added
+/// to every card's `bounding_box.x1`, will:
+///
+///  1. Centre the resulting grid horizontally inside `available`
+///     (when the grid is narrower than `available`), and
+///  2. If `collision` is `Some`, slide the grid further left so no
+///     card overlaps the collision rectangle.
+///
+/// The returned value is snapped to the cell grid (so terminal
+/// callers can divide by `cell.w` to recover an integer cell offset).
+/// May be negative if collision avoidance pushed the grid past the
+/// natural centre — callers should clamp against `available.x1` if
+/// they require strictly non-negative offsets.
+///
+/// This is the same computation [`layout_battlefield`] applies
+/// internally when `LayoutConfig::center_horizontal == true`; exposing
+/// it as a free function lets the TUI's existing
+/// `render_wordwrap_battlefield` (which still drives its own per-card
+/// placement) share the code path.
+pub fn compute_centering_and_collision_offset(
+    cards: &[CardBoundsInput],
+    available: LayoutRect,
+    collision: Option<LayoutRect>,
+    cell: CellSize,
+) -> f32 {
+    if cards.is_empty() || available.width() <= 0.0 {
+        return 0.0;
+    }
+
+    // 1. Centre the grid.
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    for c in cards {
+        min_x = min_x.min(c.bounding_box.x1);
+        max_x = max_x.max(c.bounding_box.x2);
+    }
+    if !min_x.is_finite() || !max_x.is_finite() {
+        return 0.0;
+    }
+    let grid_width = max_x - min_x;
+    let centre_offset = if grid_width >= available.width() {
+        0.0
+    } else {
+        let ideal_x1 = available.x1 + (available.width() - grid_width) / 2.0;
+        cell.snap_floor((ideal_x1 - min_x).max(0.0), Axis::X)
+    };
+
+    // 2. Apply the centre offset virtually, then check for collision.
+    let Some(coll) = collision else {
+        return centre_offset;
+    };
+    let mut max_slide = 0.0_f32;
+    for c in cards {
+        let shifted = LayoutRect::new(
+            c.bounding_box.x1 + centre_offset,
+            c.bounding_box.y1,
+            c.bounding_box.x2 + centre_offset,
+            c.bounding_box.y2,
+        );
+        if shifted.intersects(&coll) {
+            let slide = shifted.x2 - coll.x1;
+            if slide > max_slide {
+                max_slide = slide;
+            }
+        }
+    }
+    if max_slide > 0.0 {
+        centre_offset - cell.snap_ceil(max_slide, Axis::X)
+    } else {
+        centre_offset
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────
 // Internals
 // ───────────────────────────────────────────────────────────────────────
@@ -1821,5 +1911,83 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ─── Public centring + collision helper ──────────────────────────
+
+    #[test]
+    fn centering_helper_returns_zero_for_empty_input() {
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let off = compute_centering_and_collision_offset(&[], r, None, CellSize::TERMINAL);
+        assert_eq!(off, 0.0);
+    }
+
+    #[test]
+    fn centering_helper_centres_a_narrow_grid() {
+        // Single 100-px card placed at x=0 inside a 800-px rect
+        // should shift right by ~350 px to centre.
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = [CardBoundsInput {
+            bounding_box: LayoutRect::from_xywh(0.0, 0.0, 100.0, 140.0),
+            section_idx: 0,
+        }];
+        let off = compute_centering_and_collision_offset(&cards, r, None, CellSize::TERMINAL);
+        // Snapped to a 10-px cell, the closest non-overshooting offset
+        // is 350.
+        assert_eq!(off, 350.0);
+    }
+
+    #[test]
+    fn centering_helper_no_offset_when_grid_fills_available() {
+        let r = LayoutRect::from_xywh(0.0, 0.0, 100.0, 200.0);
+        let cards = [CardBoundsInput {
+            bounding_box: LayoutRect::from_xywh(0.0, 0.0, 100.0, 200.0),
+            section_idx: 0,
+        }];
+        let off = compute_centering_and_collision_offset(&cards, r, None, CellSize::TERMINAL);
+        assert_eq!(off, 0.0);
+    }
+
+    #[test]
+    fn centering_helper_slides_for_collision() {
+        // Centred grid would put the card x=350..450; the collision
+        // rect at x=400..600 partially overlaps after centring.
+        // Slide should be exactly enough to clear it (50 px).
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards = [CardBoundsInput {
+            bounding_box: LayoutRect::from_xywh(0.0, 0.0, 100.0, 140.0),
+            section_idx: 0,
+        }];
+        let collision = LayoutRect::from_xywh(400.0, 0.0, 200.0, 400.0);
+        let off = compute_centering_and_collision_offset(&cards, r, Some(collision), CellSize::TERMINAL);
+        // After centring (350) we'd be at 350..450 — overlapping by 50.
+        // Slide must clear: 350 - 50 = 300.
+        assert_eq!(off, 300.0);
+    }
+
+    #[test]
+    fn centering_helper_idempotent_under_repeated_application() {
+        // Computing the offset, applying it, and asking again should
+        // produce 0 (we're already centred & non-colliding).
+        let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
+        let cards_in = [CardBoundsInput {
+            bounding_box: LayoutRect::from_xywh(0.0, 0.0, 100.0, 140.0),
+            section_idx: 0,
+        }];
+        let off1 = compute_centering_and_collision_offset(&cards_in, r, None, CellSize::TERMINAL);
+        let cards_after: Vec<_> = cards_in
+            .iter()
+            .map(|c| CardBoundsInput {
+                bounding_box: LayoutRect::new(
+                    c.bounding_box.x1 + off1,
+                    c.bounding_box.y1,
+                    c.bounding_box.x2 + off1,
+                    c.bounding_box.y2,
+                ),
+                section_idx: c.section_idx,
+            })
+            .collect();
+        let off2 = compute_centering_and_collision_offset(&cards_after, r, None, CellSize::TERMINAL);
+        assert_eq!(off2, 0.0);
     }
 }

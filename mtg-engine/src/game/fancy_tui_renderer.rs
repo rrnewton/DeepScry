@@ -2794,38 +2794,57 @@ impl FancyTuiRenderer {
             }
         }
 
-        // Compute centering offset, adjusting for graveyard collision
-        let x_offset = if grid_width < area.width {
-            let ideal_center = (area.width - grid_width) / 2;
-
-            // Check for graveyard collision with last cards in each row
-            if let Some(gy_bounds) = graveyard_bounds {
-                // Find right-most cards that might collide with graveyard
-                // Last card in last row and last card in second-to-last row
-                let gy_left = gy_bounds.x.saturating_sub(area.x);
-                let gy_top = gy_bounds.y.saturating_sub(area.y);
-
-                // Find cards that would collide with graveyard after centering
-                let mut max_safe_offset = ideal_center;
-
-                for &(x, y, w, h) in &card_positions {
-                    let card_right = x + w + ideal_center;
-                    let card_bottom = y + h;
-
-                    // Check if this card would overlap graveyard
-                    if card_right > gy_left && card_bottom > gy_top {
-                        // This card collides - compute how much we need to slide left
-                        let needed_slide = card_right.saturating_sub(gy_left);
-                        max_safe_offset = max_safe_offset.saturating_sub(needed_slide);
-                    }
-                }
-
-                max_safe_offset
-            } else {
-                ideal_center
-            }
-        } else {
-            0
+        // Compute centering offset, adjusting for graveyard collision.
+        //
+        // Both passes (centre + collision-slide) are delegated to the
+        // backend-neutral layout engine so the TUI and the HTML/native
+        // GUI agree byte-for-byte on where the grid sits. We promote
+        // every card position from terminal cells to abstract pixels
+        // (CellSize::TERMINAL is 10×20), call the engine helper, and
+        // demote the resulting pixel offset back to cells.
+        let x_offset = {
+            use crate::game::battlefield_layout as bl;
+            let cell = bl::CellSize::TERMINAL;
+            // Available rect is the on-screen cell area, in pixels,
+            // expressed in the same local coordinate frame as
+            // `card_positions` (which is offsetted by `area.x/y`
+            // when actually drawn — see the render loop below).
+            let available_px = bl::LayoutRect::from_xywh(
+                0.0,
+                0.0,
+                f32::from(area.width) * cell.w,
+                f32::from(area.height) * cell.h,
+            );
+            // Convert each card's (x, y, w, h) cell rect into a pixel
+            // rect in the same local coordinate space.
+            let bounds: Vec<bl::CardBoundsInput> = card_positions
+                .iter()
+                .map(|&(x, y, w, h)| bl::CardBoundsInput {
+                    bounding_box: bl::LayoutRect::from_xywh(
+                        f32::from(x) * cell.w,
+                        f32::from(y) * cell.h,
+                        f32::from(w) * cell.w,
+                        f32::from(h) * cell.h,
+                    ),
+                    section_idx: 0, // unused by the centring + collision helper
+                })
+                .collect();
+            // Translate the (absolute-cell) graveyard bounds into the
+            // same local pixel space used above. The renderer's
+            // historical helper computed `gy.x.saturating_sub(area.x)`
+            // — we mirror that subtraction here so the collision rect
+            // sits in the same coordinate frame as `bounds`.
+            let collision_px = graveyard_bounds.map(|gy| {
+                let lx = f32::from(gy.x.saturating_sub(area.x)) * cell.w;
+                let ly = f32::from(gy.y.saturating_sub(area.y)) * cell.h;
+                bl::LayoutRect::from_xywh(lx, ly, f32::from(gy.width) * cell.w, f32::from(gy.height) * cell.h)
+            });
+            let off_px = bl::compute_centering_and_collision_offset(&bounds, available_px, collision_px, cell);
+            // Snapping inside the helper guarantees the offset is an
+            // integer multiple of cell.w; clamp to ≥ 0 (the renderer
+            // historically refused negative offsets) and demote to
+            // cells.
+            (off_px.max(0.0) / cell.w).round() as u16
         };
 
         // Render labels with offset
