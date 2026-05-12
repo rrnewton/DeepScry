@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 from dataclasses import dataclass
 from datetime import datetime
 import random
@@ -38,7 +37,7 @@ MODEL_ALIASES = {
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from agentplay.lib.engine import GameEngine
+    from agentplay.lib.engine import GameEngine, new_log_tail_lines
     from agentplay.lib.prompts import (
         AgentDecision,
         build_choice_prompt,
@@ -49,7 +48,7 @@ if __package__ in (None, ""):
     )
     from agentplay.lib.card_defs import CardDatabase, find_mentioned_cards
 else:
-    from .lib.engine import GameEngine
+    from .lib.engine import GameEngine, new_log_tail_lines
     from .lib.prompts import (
         AgentDecision,
         build_choice_prompt,
@@ -59,6 +58,12 @@ else:
         parse_agent_decision,
     )
     from .lib.card_defs import CardDatabase, find_mentioned_cards
+
+
+# Re-exported here so existing callers (and tests) can keep importing
+# `_new_log_tail_lines` from this module while the implementation lives
+# alongside the engine helpers.
+_new_log_tail_lines = new_log_tail_lines
 
 
 @dataclass(frozen=True)
@@ -668,48 +673,6 @@ def _append_bug_report(
         handle.write(raw_response.strip())
         handle.write("\n\n")
     return bug_report_path
-
-
-def _new_log_tail_lines(current_tail: str, printed_lines: list[str]) -> str:
-    """Return lines from `current_tail` that we haven't shown the user yet.
-
-    The engine replays the entire game from scratch on every step, so
-    consecutive `log_tail` snapshots overlap heavily. Three patterns occur:
-
-    1. Simple growth: the new tail is an extension of the previous tail
-       with a few lines appended (the just-resolved action plus phase
-       transitions leading to the next choice point).
-    2. Bounded-tail roll-off: the engine's `--log-tail=N` flag drops old
-       lines off the front, so the previous tail's suffix aligns with the
-       new tail's prefix.
-    3. Replay divergence: the newly-appended choice re-runs an action at
-       an EARLIER choice point (the wildcard-driven `--p?-fixed-inputs`
-       script can match it sooner), so the same end-of-log state is
-       reached but with extra lines INSERTED mid-log. A subsequent
-       snapshot may also re-emit an earlier-turn block (e.g. a discard
-       event) that has *already* been shown, which a "diff against just
-       the previous tail" approach cannot detect.
-
-    We use `difflib.SequenceMatcher` against the **cumulative** record of
-    every line we have printed so far (`printed_lines`). The matcher
-    aligns each new tail with that history; only the `insert`/`replace`
-    spans -- content in `current_tail` that has no counterpart in the
-    cumulative log -- are returned, in `current_tail` order. Lines that
-    rolled off, or that the replay reorders without producing genuinely
-    new content, are correctly suppressed.
-    """
-    if not current_tail:
-        return ""
-    curr = current_tail.splitlines()
-    if not printed_lines:
-        return current_tail
-
-    matcher = difflib.SequenceMatcher(a=printed_lines, b=curr, autojunk=False)
-    new_segments: list[str] = []
-    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
-        if tag in ("insert", "replace"):
-            new_segments.extend(curr[j1:j2])
-    return "\n".join(new_segments) if new_segments else ""
 
 
 def _append_to_file(path: Path, text: str) -> None:

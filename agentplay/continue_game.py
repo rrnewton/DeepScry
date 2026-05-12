@@ -8,19 +8,31 @@ Usage:
     ./agentplay/continue_game.py p1 "play Mountain"
     ./agentplay/continue_game.py p2 "0"
     ./agentplay/continue_game.py --game-dir=042.game p1 "cast Lightning Bolt"
+
+Output:
+    Prints only the NEW game log lines emitted since the previous
+    choice point (everything we've already shown the agent is recorded
+    in `<game-dir>/game.log` and is suppressed from this output), then
+    the upcoming choice menu with turn / step / choice-context context.
+    The full game-state JSON is NOT printed -- it is saved to
+    `<game-dir>/snapshot.json` if you need it.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agentplay.lib.engine import GameEngine
+from agentplay.lib.engine import GameEngine, new_log_tail_lines
+from agentplay.lib.session_io import (
+    print_choice_block,
+    print_log_segment,
+    record_log_segment,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,28 +58,31 @@ def main(argv: list[str] | None = None) -> int:
     engine = GameEngine(seed=args.seed, game_dir=game_dir, verbose=args.verbose)
     engine.append_choice(args.player, args.choice)
 
-    print(f"Continuing game in {engine.game_dir.name}: {args.player} chose '{args.choice}'", file=sys.stderr)
+    print(f"Continuing game in {engine.game_dir.name}: {args.player} chose '{args.choice}'")
     try:
         snapshot = engine.continue_game()
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    if engine.is_game_over(snapshot):
-        print("Game over.", file=sys.stderr)
-    else:
-        choices = snapshot.get("choices", [])
-        active = snapshot.get("active_player")
-        player = "p1" if str(active) == "0" else "p2"
-        print(f"{player}'s turn. {len(choices)} choice(s) available.", file=sys.stderr)
-        if choices:
-            print("[0] pass", file=sys.stderr)
-            for i, c in enumerate(choices, 1):
-                print(f"[{i}] {c}", file=sys.stderr)
-        print(f"\nContinue with: ./agentplay/continue_game.py {player} <choice>", file=sys.stderr)
+    log_path = engine.game_dir / "game.log"
+    already_printed: list[str] = []
+    if log_path.exists():
+        already_printed = log_path.read_text(encoding="utf-8").splitlines()
 
-    json.dump(snapshot, sys.stdout, indent=2)
-    print()
+    new_lines = new_log_tail_lines(snapshot.get("log_tail", ""), already_printed)
+    print_log_segment(new_lines)
+    record_log_segment(log_path, new_lines)
+
+    if engine.is_game_over(snapshot):
+        print("Game over.")
+        return 0
+
+    print_choice_block(
+        snapshot,
+        choice_number=engine.total_choices_made() + 1,
+        game_dir_name=engine.game_dir.name,
+    )
     return 0
 
 
