@@ -40,7 +40,7 @@ async function waitForServer(port, maxAttempts = 30) {
     const WebSocket = require('ws');
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve, reject) => {
                 ws.on('open', () => { ws.close(); resolve(); });
                 ws.on('error', reject);

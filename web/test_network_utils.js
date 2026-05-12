@@ -4,6 +4,28 @@
 
 const WebSocket = require('ws');
 const net = require('net');
+const dns = require('dns');
+
+// Node 17+ default DNS resolution order is "verbatim" AND
+// `net.createConnection` uses Happy-Eyeballs (autoSelectFamily=true) which
+// races IPv4 and IPv6 in parallel. The MTG server (and the python
+// `http.server` we spawn for static assets) binds to 0.0.0.0 (IPv4 only),
+// so on dual-stack hosts a "localhost" connection often picks the IPv6
+// path first and returns ECONNREFUSED on ::1, surfacing as a flaky
+// "Server failed to start" test failure.
+//
+// Two-pronged fix:
+//   1. dns.setDefaultResultOrder('ipv4first') restores Node 16 behaviour
+//      for any code that does its own dns.lookup.
+//   2. Tests in this directory should connect to '127.0.0.1' (see
+//      LOCALHOST below) instead of 'localhost' to bypass the dns step
+//      entirely. Happy-Eyeballs only kicks in when a name resolves to
+//      multiple addresses; raw IPv4 literals always go to IPv4.
+dns.setDefaultResultOrder('ipv4first');
+
+// Use this everywhere a network test connects to its own server. Avoids
+// the IPv6/IPv4 dual-stack ambiguity described above.
+const LOCALHOST = '127.0.0.1';
 
 // Timestamped logging
 function log(message) {
@@ -29,12 +51,18 @@ function isPortAvailable(port) {
 }
 
 // Allocate a pair of random available ports (one for the game server WebSocket,
-// one for the HTTP static file server). Picks from range 10000-60000 to avoid
-// collisions with well-known ports and other test processes.
+// one for the HTTP static file server).
+//
+// Picks from range 10000-30000 — deliberately BELOW the Linux default
+// ephemeral port range (32768-60999, see /proc/sys/net/ipv4/ip_local_port_range).
+// Outgoing connections from the same machine constantly grab ephemeral
+// ports and leave them in TIME_WAIT for ~60s; reusing such a port for a
+// `--port N` server bind racy-fails with EADDRINUSE even after
+// `isPortAvailable` returned true. Sticking to <32768 sidesteps that.
 // Returns { serverPort, httpPort }.
 async function getRandomPorts() {
     const MIN_PORT = 10000;
-    const MAX_PORT = 60000;
+    const MAX_PORT = 30000;
     const range = MAX_PORT - MIN_PORT;
     const MAX_ATTEMPTS = 20;
 
@@ -60,11 +88,13 @@ async function getRandomPorts() {
     throw new Error('Failed to find two distinct available ports');
 }
 
-// Wait for server to be ready by attempting WebSocket connection
+// Wait for server to be ready by attempting WebSocket connection.
+// We connect via 127.0.0.1 (not "localhost") to avoid IPv6/IPv4 dual-stack
+// resolution issues with Node 17+ — the MTG server only binds to IPv4.
 async function waitForServer(port, maxAttempts = 30) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve, reject) => {
                 ws.on('open', () => { ws.close(); resolve(); });
                 ws.on('error', reject);
@@ -302,6 +332,7 @@ async function waitForChoicePrompt(page, timeout = 20000, previousText = null) {
 
 module.exports = {
     log,
+    LOCALHOST,
     isPortAvailable,
     getRandomPorts,
     waitForServer,

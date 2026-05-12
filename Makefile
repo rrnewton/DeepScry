@@ -7,6 +7,11 @@
 # NODE: Node.js binary (Playwright requires Node 18+)
 # Auto-detect: prefer node18 wrapper, fall back to claude_code's bundled node, then system node
 NODE := $(shell which node18 2>/dev/null || (test -x /usr/local/bin/claude_code/node && echo /usr/local/bin/claude_code/node) || which node 2>/dev/null)
+# NPM: prefer the OS-managed /usr/bin/npm. Some Meta devservers ship a wrapper
+# at /usr/local/bin/npm that prints a "direct installs not allowed" notice and
+# exits 1, which breaks make-validate's `npm install --silent` calls. The
+# real npm shipped with the OS nodejs package is at /usr/bin/npm.
+NPM := $(shell test -x /usr/bin/npm && echo /usr/bin/npm || which npm 2>/dev/null)
 # PORT: web server port (use: make PORT=7999 play-web-local-dev)
 PORT ?= 8080
 # SERVER_PORT: MTG game server port (use: make play-web SERVER_PORT=9999)
@@ -252,7 +257,7 @@ validate-wasm-step:
 # This step depends on validate-wasm-step finishing first
 validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js
 	@echo "✓ wasm-e2e tests completed"
 
@@ -264,7 +269,7 @@ validate-network-e2e-step:
 	@$(MAKE) build-network
 	@$(MAKE) wasm-network
 	@echo "=== Running Network E2E tests ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
@@ -706,13 +711,13 @@ play-web-local: wasm-network
 # Test WASM module in headless browser (basic API test)
 wasm-test: wasm
 	@echo "=== Testing WASM in headless browser ==="
-	@cd web && npm install --silent 2>/dev/null && $(NODE) test_wasm.js
+	@cd web && $(NPM) install --silent 2>/dev/null && $(NODE) test_wasm.js
 
 # Test fancy TUI in browser with Playwright (e2e screenshot test)
 # Launches game, steps through turns, takes screenshots, logs performance
 wasm-test-fancy: wasm
 	@echo "=== Testing Fancy TUI in browser (Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/"
@@ -721,14 +726,14 @@ wasm-test-fancy: wasm
 # Quick fancy TUI test using dev build (faster iteration)
 wasm-test-fancy-dev: wasm-dev
 	@echo "=== Testing Fancy TUI (dev build, Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js
 
 # Test human input in browser with Playwright (e2e test)
 # Tests human controller by pressing keys and verifying battlefield state
 wasm-test-human: wasm-dev
 	@echo "=== Testing Human Input (Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_human_input.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/"
@@ -741,7 +746,7 @@ wasm-test-human: wasm-dev
 # image-first card details, battlefield section labels, auto-run, and exit.
 wasm-test-game-gui-rebuild: wasm-dev
 	@echo "=== Testing rebuilt game.html (Playwright e2e) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_game_gui_rebuild.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/rebuild_*.png"
@@ -753,7 +758,7 @@ wasm-test-game-gui-rebuild: wasm-dev
 # verification for `wasm-test-game-gui-rebuild`.
 wasm-test-game-gui-playtest: wasm-dev
 	@echo "=== Playtesting rebuilt game.html (multi-game Playwright) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_game_gui_playtest.js
 	@echo ""
 	@echo "Screenshots saved in web/screenshots/playtest_*.png"
@@ -762,7 +767,7 @@ wasm-test-game-gui-playtest: wasm-dev
 # Run all WASM e2e tests (production build)
 wasm-e2e: wasm
 	@echo "=== Running all WASM e2e tests (production) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
@@ -770,7 +775,7 @@ wasm-e2e: wasm
 # Run all WASM e2e tests (dev build for faster iteration)
 wasm-e2e-dev: wasm-dev
 	@echo "=== Running all WASM e2e tests (dev build) ==="
-	@cd web && npm install --silent 2>/dev/null
+	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js
 	@echo ""
 	@echo "All WASM e2e tests passed!"
@@ -779,11 +784,11 @@ wasm-e2e-dev: wasm-dev
 # NOT part of 'make validate' - requires full network build
 wasm-e2e-network: build-network wasm-network
 	@echo "=== Running WASM Network GUI E2E test ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js
 
 # Run WASM Network GUI E2E test (human controller with Playwright key presses)
 wasm-e2e-network-human: build-network wasm-network
 	@echo "=== Running WASM Network Human E2E test ==="
-	@cd web && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js --human
