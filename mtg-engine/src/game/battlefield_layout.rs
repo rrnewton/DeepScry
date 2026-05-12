@@ -1717,9 +1717,11 @@ mod tests {
         // way left of the rect's centre, no shift should occur.
         let r = LayoutRect::from_xywh(0.0, 0.0, 800.0, 400.0);
         let cards = vec![card(0, CardCategory::Creature)];
-        let mut cfg = LayoutConfig::default();
-        cfg.center_horizontal = false;
-        cfg.redistribute_extra_horizontal = false;
+        let cfg = LayoutConfig {
+            center_horizontal: false,
+            redistribute_extra_horizontal: false,
+            ..LayoutConfig::default()
+        };
         let res = layout_battlefield(r, CellSize::TERMINAL, &cards, &cfg);
         // With centring disabled the single card sits flush against x = 0.
         assert_eq!(res.sections[0].cards[0].bounding_box.x1, 0.0);
