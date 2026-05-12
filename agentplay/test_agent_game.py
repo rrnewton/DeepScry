@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from agentplay.agent_game import _choose_for_player, _query_agent, build_parser
+from agentplay.agent_game import (
+    _choose_for_player,
+    _new_log_tail_lines,
+    _query_agent,
+    build_parser,
+)
 from agentplay.lib.engine import GameEngine
 from agentplay.lib.prompts import (
     build_choice_prompt,
@@ -288,6 +293,21 @@ def test_cli_argument_parsing_decklists_default_and_opt_out() -> None:
     assert opt_out_args.decklists is False
 
 
+def test_cli_argument_parsing_model_default_and_override() -> None:
+    parser = build_parser()
+    default_args = parser.parse_args([])
+    # Default should be a cost-efficient model.
+    assert default_args.model == "haiku"
+
+    sonnet_args = parser.parse_args(["--model", "sonnet"])
+    assert sonnet_args.model == "sonnet"
+
+    # Pass-through of unknown values (e.g. full Anthropic model IDs)
+    # must be accepted without complaint.
+    full_id = parser.parse_args(["--model", "claude-3-5-sonnet-20241022"])
+    assert full_id.model == "claude-3-5-sonnet-20241022"
+
+
 def test_format_deck_preamble_skips_metadata_and_labels_players(tmp_path: Path) -> None:
     p1_path = tmp_path / "alice.dck"
     p1_path.write_text(
@@ -348,6 +368,62 @@ def test_build_intro_section_pure_play_drops_bug_detection_language() -> None:
     assert "Pure play mode is enabled" in intro
     assert "BUG DETECTION" not in intro
     assert "STOP when the log" not in intro
+
+
+def test_new_log_tail_lines_returns_full_log_when_nothing_printed_yet() -> None:
+    text = "alpha\nbeta\ngamma"
+    assert _new_log_tail_lines(text, []) == text
+
+
+def test_new_log_tail_lines_appends_only_new_growth() -> None:
+    printed = ["alpha", "beta", "gamma"]
+    new_tail = "alpha\nbeta\ngamma\ndelta\nepsilon"
+    assert _new_log_tail_lines(new_tail, printed) == "delta\nepsilon"
+
+
+def test_new_log_tail_lines_handles_bounded_tail_rolloff() -> None:
+    # Older lines have rolled off the front of the new tail; only the
+    # never-seen tail content should be returned.
+    printed = ["a", "b", "c", "d", "e"]
+    new_tail = "c\nd\ne\nf\ng"
+    assert _new_log_tail_lines(new_tail, printed) == "f\ng"
+
+
+def test_new_log_tail_lines_handles_midlog_insertion() -> None:
+    # Replay-divergence case: the new snapshot inserts lines mid-log
+    # (e.g., a Boomerang cast was matched at an earlier choice point).
+    # We should print only the inserted lines, not re-print the unchanged
+    # tail that follows.
+    printed = [
+        "Turn 5",
+        "Main Phase 1",
+        "Beginning of Combat",
+        "End of Combat",
+        "Main Phase 2",
+    ]
+    new_tail = "\n".join([
+        "Turn 5",
+        "Main Phase 1",
+        "Fixed1 casts Boomerang",
+        "Boomerang resolves",
+        "Beginning of Combat",
+        "End of Combat",
+        "Main Phase 2",
+    ])
+    result = _new_log_tail_lines(new_tail, printed)
+    assert "Fixed1 casts Boomerang" in result
+    assert "Boomerang resolves" in result
+    # The combat lines must NOT be reprinted.
+    assert "Beginning of Combat" not in result
+    assert "Main Phase 2" not in result
+
+
+def test_new_log_tail_lines_suppresses_full_duplicate() -> None:
+    # If the new tail re-emits content we've already shown (and adds
+    # nothing genuinely new), we should print nothing.
+    printed = ["Turn 1", "Untap", "Upkeep", "Draw", "Main Phase 1"]
+    new_tail = "Turn 1\nUntap\nUpkeep\nDraw\nMain Phase 1"
+    assert _new_log_tail_lines(new_tail, printed) == ""
 
 
 def test_build_choice_prompt_threads_deck_preamble_through() -> None:

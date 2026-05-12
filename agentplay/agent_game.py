@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 from dataclasses import dataclass
 from datetime import datetime
 import random
@@ -19,6 +20,21 @@ MODE_AGENT_VS_HEURISTIC = "agent-vs-heuristic"
 MODE_AGENT_VS_RANDOM = "agent-vs-random"
 MODE_AGENT_VS_AGENT = "agent-vs-agent"
 MODE_RANDOM_VS_RANDOM = "random-vs-random"
+
+# Default LLM. Haiku is the cheapest Claude model and typically suffices
+# for the structured "pick a number from a menu" decisions agentplay
+# makes; users can opt into sonnet/opus for harder bug-detection runs
+# via `--model`.
+DEFAULT_MODEL = "haiku"
+# Convenience aliases that map to Anthropic model identifiers. Anything
+# not listed here is passed through to `claude --model <value>` verbatim
+# so future Claude releases (or full model IDs like
+# `claude-3-5-sonnet-20241022`) work without code changes.
+MODEL_ALIASES = {
+    "haiku": "haiku",
+    "sonnet": "sonnet",
+    "opus": "opus",
+}
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -163,6 +179,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Include both players' full deck lists as a preamble in the agent prompt (default: enabled).",
     )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=(
+            "LLM to use for agent decisions. Recognised aliases: "
+            f"{', '.join(sorted(MODEL_ALIASES))}. Any other value is passed "
+            f"through to `claude --model <value>` unchanged. Default: {DEFAULT_MODEL}."
+        ),
+    )
     return parser
 
 
@@ -189,8 +214,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     claude_args: list[str] = []
     for raw in args.claude_args:
         claude_args.extend(shlex.split(raw))
+
+    # Prepend the resolved --model selection unless the user already set
+    # one explicitly via --claude-args='--model X' (in which case we
+    # respect that, since it's the more specific override).
+    model_value = MODEL_ALIASES.get(args.model, args.model)
+    if "--model" not in claude_args:
+        claude_args = ["--model", model_value] + claude_args
     args.claude_args = claude_args
-    if args.verbose and claude_args:
+    if args.verbose:
         print(f"[verbose] claude extra args: {claude_args}", file=sys.stderr)
 
     engine = GameEngine(seed=args.seed, game_dir=args.game_dir, verbose=args.verbose)
@@ -254,15 +286,24 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Game log file for clean output (no agent commentary)
     game_log_path = engine.game_dir / "game.log"
-    prev_log_lines: list[str] = []
+    # `printed_log_lines` is the cumulative record of every log line we've
+    # already shown to the user. We dedup the engine's freshly-replayed
+    # log_tail against THIS rather than the previous iteration's log_tail
+    # alone, because diff'ing against the cumulative record is the only
+    # way to suppress repeats when the engine re-emits an earlier-turn
+    # block in a later snapshot (e.g. a discard event being re-logged
+    # after a downstream replay diverges).
+    game_log_path.touch()
+    printed_log_lines: list[str] = []
     history_entries: list[HistoryEntry] = []
 
     while True:
         if engine.is_game_over(snapshot):
-            new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), prev_log_lines)
+            new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), printed_log_lines)
             if new_lines:
                 print(new_lines, file=sys.stderr, flush=True)
                 _append_to_file(game_log_path, new_lines)
+                printed_log_lines.extend(new_lines.splitlines())
             print("Game over.", file=sys.stderr)
             return 0
 
@@ -276,12 +317,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("Stopped: no available choices found in engine output", file=sys.stderr)
             return 1
 
-        # Show new game log lines since last choice (deduped via log_tail comparison)
-        new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), prev_log_lines)
+        # Show new game log lines since last choice. Dedup against the full
+        # cumulative printed log so that nothing we've already shown the
+        # user gets re-emitted.
+        new_lines = _new_log_tail_lines(snapshot.get("log_tail", ""), printed_log_lines)
         if new_lines:
             print(new_lines, file=sys.stderr, flush=True)
             _append_to_file(game_log_path, new_lines)
-        prev_log_lines = snapshot.get("log_tail", "").splitlines()
+            printed_log_lines.extend(new_lines.splitlines())
 
         # Track which cards have been mentioned in the game
         log_text = snapshot.get("log_tail", "")
@@ -640,30 +683,46 @@ def _append_bug_report(
     return bug_report_path
 
 
-def _new_log_tail_lines(current_tail: str, prev_lines: list[str]) -> str:
-    """Extract lines from current log_tail that weren't in prev_lines.
+def _new_log_tail_lines(current_tail: str, printed_lines: list[str]) -> str:
+    """Return lines from `current_tail` that we haven't shown the user yet.
 
-    The engine replays from scratch and the mtg binary returns a bounded log
-    tail, so older lines may roll off. Match the largest overlap between the
-    previous tail suffix and current tail prefix, then return the new suffix.
+    The engine replays the entire game from scratch on every step, so
+    consecutive `log_tail` snapshots overlap heavily. Three patterns occur:
+
+    1. Simple growth: the new tail is an extension of the previous tail
+       with a few lines appended (the just-resolved action plus phase
+       transitions leading to the next choice point).
+    2. Bounded-tail roll-off: the engine's `--log-tail=N` flag drops old
+       lines off the front, so the previous tail's suffix aligns with the
+       new tail's prefix.
+    3. Replay divergence: the newly-appended choice re-runs an action at
+       an EARLIER choice point (the wildcard-driven `--p?-fixed-inputs`
+       script can match it sooner), so the same end-of-log state is
+       reached but with extra lines INSERTED mid-log. A subsequent
+       snapshot may also re-emit an earlier-turn block (e.g. a discard
+       event) that has *already* been shown, which a "diff against just
+       the previous tail" approach cannot detect.
+
+    We use `difflib.SequenceMatcher` against the **cumulative** record of
+    every line we have printed so far (`printed_lines`). The matcher
+    aligns each new tail with that history; only the `insert`/`replace`
+    spans -- content in `current_tail` that has no counterpart in the
+    cumulative log -- are returned, in `current_tail` order. Lines that
+    rolled off, or that the replay reorders without producing genuinely
+    new content, are correctly suppressed.
     """
     if not current_tail:
         return ""
     curr = current_tail.splitlines()
-    if not prev_lines:
+    if not printed_lines:
         return current_tail
 
-    if len(curr) <= len(prev_lines) and prev_lines[-len(curr) :] == curr:
-        return ""
-
-    max_overlap = min(len(prev_lines), len(curr))
-    overlap = 0
-    for size in range(max_overlap, 0, -1):
-        if prev_lines[-size:] == curr[:size]:
-            overlap = size
-            break
-    new = curr[overlap:]
-    return "\n".join(new) if new else ""
+    matcher = difflib.SequenceMatcher(a=printed_lines, b=curr, autojunk=False)
+    new_segments: list[str] = []
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            new_segments.extend(curr[j1:j2])
+    return "\n".join(new_segments) if new_segments else ""
 
 
 def _append_to_file(path: Path, text: str) -> None:
