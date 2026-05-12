@@ -3702,7 +3702,6 @@ async fn run_download(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "network")]
     use super::*;
 
     #[test]
