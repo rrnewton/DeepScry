@@ -98,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--puzzle",
         default=None,
-        help="Run `mtg puzzle <file>` instead of `mtg tui`.",
+        help="Run `mtg tui --start-state PUZZLE.pzl` to load a puzzle file as the starting state.",
     )
     parser.add_argument(
         "--goal",
@@ -128,11 +128,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="Safety limit on game turn number before aborting.",
-    )
-    parser.add_argument(
-        "--stop-on-bug",
-        action="store_true",
-        help="Legacy alias: stop when an agent emits a BUG_REPORT section. Bug-detection mode already stops by default.",
     )
     parser.add_argument(
         "--mock",
@@ -201,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not mtg_args:
         mtg_args = list(DEFAULT_MTG_ARGS)
     if args.puzzle:
-        mtg_args = [args.puzzle]
+        mtg_args = mtg_args + ["--start-state", args.puzzle]
 
     # Pass through draw overrides to mtg tui
     if args.p1_draw:
@@ -227,8 +222,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     engine = GameEngine(seed=args.seed, game_dir=args.game_dir, verbose=args.verbose)
     engine.set_initial_args(mtg_args)
-    if args.puzzle:
-        engine.set_command("puzzle")
     rng = random.Random(args.seed)
 
     # Load card definitions from deck files. Track each .dck path in the order
@@ -444,12 +437,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raw_response=raw_response,
             )
             print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
-            if args.stop_on_bug:
-                print(
-                    f"Stopped: BUG_REPORT detected in {player} response. Logged to {bug_report_path}",
-                    file=sys.stderr,
-                )
-                return 0
 
         # Use text command (not numeric index) with wildcard prefix for replay resilience.
         # Text commands like "play Mountain" or "cast Lightning Bolt" match the right
