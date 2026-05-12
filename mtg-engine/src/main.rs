@@ -243,11 +243,15 @@ enum Commands {
         #[arg(long)]
         p2_name: Option<String>,
 
-        /// Fixed script input for player 1 (space or comma separated indices, e.g., "1 1 2" or "1,1,2")
+        /// Fixed script input for player 1. Semicolon-separated commands; supports
+        /// numeric indices (e.g. "0;1;2"), rich text (e.g. "play mountain;cast bolt"),
+        /// and wildcards ("*"). Full grammar: docs/FIXED_INPUT_SYNTAX.md
         #[arg(long, value_name = "CHOICES")]
         p1_fixed_inputs: Option<String>,
 
-        /// Fixed script input for player 2 (space or comma separated indices, e.g., "1 1 2" or "1,1,2")
+        /// Fixed script input for player 2. Semicolon-separated commands; supports
+        /// numeric indices (e.g. "0;1;2"), rich text (e.g. "play mountain;cast bolt"),
+        /// and wildcards ("*"). Full grammar: docs/FIXED_INPUT_SYNTAX.md
         #[arg(long, value_name = "CHOICES")]
         p2_fixed_inputs: Option<String>,
 
@@ -420,11 +424,15 @@ enum Commands {
         #[arg(long, value_enum)]
         override_p2: Option<ControllerType>,
 
-        /// Fixed script input for player 1 (required if --override-p1=fixed)
+        /// Fixed script input for player 1 (required if --override-p1=fixed).
+        /// Grammar (semicolon-separated commands, rich text, wildcards):
+        /// docs/FIXED_INPUT_SYNTAX.md
         #[arg(long, value_name = "CHOICES")]
         p1_fixed_inputs: Option<String>,
 
-        /// Fixed script input for player 2 (required if --override-p2=fixed)
+        /// Fixed script input for player 2 (required if --override-p2=fixed).
+        /// Grammar (semicolon-separated commands, rich text, wildcards):
+        /// docs/FIXED_INPUT_SYNTAX.md
         #[arg(long, value_name = "CHOICES")]
         p2_fixed_inputs: Option<String>,
 
@@ -671,8 +679,10 @@ enum Commands {
         #[arg(long, value_enum, default_value = "tui")]
         controller: ControllerType,
 
-        /// Fixed script input (space or comma separated indices, e.g., "1 1 2" or "1,1,2")
-        /// Required when --controller=fixed
+        /// Fixed script input (required when --controller=fixed).
+        /// Semicolon-separated commands; supports numeric indices (e.g. "0;1;2"),
+        /// rich text (e.g. "play mountain;cast bolt"), and wildcards ("*").
+        /// Full grammar: docs/FIXED_INPUT_SYNTAX.md
         #[arg(long, value_name = "CHOICES")]
         fixed_inputs: Option<String>,
 
