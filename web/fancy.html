@@ -1080,10 +1080,12 @@ Name=My Deck
             tui_toggle_auto,
             tui_get_battlefield_cards,
             tui_get_logs_json,
+            tui_get_help_text,
             set_p1_fixed_script,
             clear_p1_fixed_script,
             cleanup_tui_state,
-            set_log_level
+            set_log_level,
+            tui_set_verify_rewind_replay
         } from './pkg/mtg_forge_rs.js';
 
         // Deck builder imports - optional (only available when built with wasm-tui feature)
@@ -1158,6 +1160,16 @@ Name=My Deck
         // Expose set_log_level globally for console use
         // Usage: setLogLevel("debug") or setLogLevel("trace")
         window.setLogLevel = set_log_level;
+
+        // Expose the rewind/replay verifier toggle on window so Playwright
+        // E2E tests (and ad-hoc devtools sessions) can flip it without
+        // having to pretend to be inside this module's scope. Tests check
+        // for `typeof tui_set_verify_rewind_replay === 'function'` on the
+        // page's global object — without this assignment the module-scoped
+        // import is invisible to page.evaluate(). See
+        // web/test_network_utils.js::enableReplayVerifier and
+        // mtg-engine/src/wasm/replay_verifier.rs for the wiring.
+        window.tui_set_verify_rewind_replay = tui_set_verify_rewind_replay;
 
         let cardDb = null;
         let deckIndex = null;  // Deck metadata from deck_index.json
@@ -2849,6 +2861,17 @@ Name=My Deck
                     );
 
                     tuiLaunched = true;
+
+                    // If "Debug Mode" is on, also enable proactive verification
+                    // of the WASM rewind/replay loop. This captures the
+                    // pre-rewind state hash + log tail and compares them against
+                    // the post-replay state, surfacing a fatal error on any
+                    // divergence. Off by default to keep production play
+                    // zero-overhead.
+                    if (debugMode && typeof tui_set_verify_rewind_replay === 'function') {
+                        tui_set_verify_rewind_replay(true);
+                        console.log('[DEBUG] Rewind/replay verification enabled');
+                    }
 
                     // Add scroll wheel listener for log pane scrolling
                     const tuiTerminal = document.getElementById('ratzilla-terminal');

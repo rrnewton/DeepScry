@@ -1483,8 +1483,10 @@ impl<'a> GameLoop<'a> {
     }
 }
 
-// Test helpers - only available in test builds
-#[cfg(test)]
+// Test helpers - intentionally exposed (not behind cfg(test)) so external
+// integration tests in `mtg-engine/tests/` can drive the engine without
+// reaching into private state. The `_for_test` suffix marks these as
+// helpers and they do not appear in production controller code paths.
 impl<'a> GameLoop<'a> {
     /// Expose push_activatable_abilities for testing summoning sickness checks
     pub fn push_activatable_abilities_for_test(&mut self, player_id: PlayerId) {

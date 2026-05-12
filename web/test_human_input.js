@@ -10,6 +10,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { enableReplayVerifier } = require('./test_network_utils');
 
 function log(message) {
     const timestamp = new Date().toISOString();
@@ -258,6 +259,15 @@ async function runTest() {
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         log('WASM loaded');
 
+        // Enable rewind/replay verifier. THIS test exercises the human
+        // controller path which IS what triggers rewind/replay in the WASM
+        // TUI — so the verifier will actually fire here on every choice.
+        // Any divergence shows up as "REWIND/REPLAY FATAL" in the browser
+        // console (caught by the panic check below via the existing error
+        // collector).
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
+
         // Select Human for P1 and Zero for P2
         await page.selectOption('#p1-controller', 'human');
         await page.selectOption('#p2-controller', 'zero');
@@ -382,6 +392,18 @@ async function runTest() {
         );
         if (hasPanic) {
             throw new Error('WASM panic detected');
+        }
+
+        // Check for rewind/replay verifier failures. The verifier emits
+        // "REWIND/REPLAY FATAL: ..." at log::error level (which surfaces as
+        // console.error in the browser, captured above into testResults.errors).
+        // Treat any hit as a hard test failure — same severity as a panic,
+        // because the rewind is no longer a faithful round-trip.
+        const replayFatal = testResults.errors.find(e =>
+            e.toUpperCase().includes('REWIND/REPLAY FATAL')
+        );
+        if (replayFatal) {
+            throw new Error(`Replay verifier divergence detected: ${replayFatal}`);
         }
 
         testResults.endTime = new Date().toISOString();

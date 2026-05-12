@@ -1,0 +1,19 @@
+---
+title: Wire network_vs_local equivalence test into make validate
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-12T22:42:20.797196202+00:00
+updated_at: 2026-05-12T22:42:20.797196202+00:00
+---
+
+# Description
+
+tests/network_vs_local_equivalence_e2e.sh and tests/network_vs_local_equivalence.py exist and pass with default args (seed=3 heuristic heuristic, 126 GAMELOG entries identical) but neither is referenced from Makefile or .github/. After fixing the seed-passthrough bug (commit f327b5eb) the test is now meaningful — it would catch future regressions in network determinism.
+
+Action items:
+1. Add invocation of tests/network_vs_local_equivalence_e2e.sh (or .py) to validate-network-e2e-step in Makefile
+2. Decide which seeds/controllers to run (default seed=3 heuristic heuristic passes; some seeds like 7 and 42 fail due to pre-existing logging bugs, see mtg-vvuco and the Iroh's Demonstration divergence)
+3. Make sure binary is built with --features network before invoking
+
+Files: Makefile (validate-network-e2e-step around line 267), tests/network_vs_local_equivalence_e2e.sh, tests/network_vs_local_equivalence.py

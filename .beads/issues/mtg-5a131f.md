@@ -1,12 +1,13 @@
 ---
 title: 'White Knight: Protection from black not enforced for targeting'
-status: open
+status: closed
 priority: 2
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:29:28.545117154+00:00
-updated_at: 2026-04-03T21:29:28.545117154+00:00
+updated_at: 2026-05-12T13:57:42.269638304+00:00
+closed_at: 2026-05-12T13:57:42.269638224+00:00
 ---
 
 # Description

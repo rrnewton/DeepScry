@@ -14,7 +14,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { getRandomPorts } = require('./test_network_utils');
+const { getRandomPorts, enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
 
 function log(msg) {
     const ts = new Date().toISOString().substring(11, 23);
@@ -62,6 +62,13 @@ function log(msg) {
         });
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
         log('Page loaded, WASM ready');
+
+        // Enable rewind/replay verifier — this test exercises the human
+        // controller path via simulated key presses, so the verifier WILL
+        // run on each replayed choice. Catch any divergence as a hard fail
+        // (REWIND/REPLAY FATAL pattern, see test_network_utils.js).
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Wait for deck dropdowns
         await page.waitForFunction(() => {
@@ -154,6 +161,15 @@ function log(msg) {
 
         // Save screenshot for debugging
         await page.screenshot({ path: path.join(screenshotDir, 'click_test_final.png'), fullPage: true });
+
+        // === TEST 3: No replay-verifier or desync fatals in console ===
+        // checkForFatalErrors expects {text: ...} entries; map flat strings.
+        const fatalLog = checkForFatalErrors(consoleLogs.map(text => ({ text })));
+        if (fatalLog) {
+            errors.push(`Fatal browser-log entry: ${fatalLog}`);
+        } else {
+            log('  PASS: No REWIND/REPLAY FATAL or DESYNC entries in console');
+        }
 
         // === SUMMARY ===
         if (errors.length > 0) {

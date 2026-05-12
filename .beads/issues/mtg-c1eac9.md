@@ -1,12 +1,13 @@
 ---
 title: 'Triskelion: ETB counter keyword not parsed, enters without +1/+1 counters'
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:28:49.265104819+00:00
-updated_at: 2026-04-03T21:28:49.265104819+00:00
+updated_at: 2026-05-12T13:57:36.800003787+00:00
+closed_at: 2026-05-12T13:57:36.800003707+00:00
 ---
 
 # Description

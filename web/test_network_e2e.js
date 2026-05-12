@@ -16,7 +16,7 @@ const { chromium } = require('playwright');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { getRandomPorts } = require('./test_network_utils');
+const { getRandomPorts, enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
 
 // Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test123';
@@ -34,7 +34,7 @@ async function waitForServer(port, maxAttempts = 30) {
     const WebSocket = require('ws');
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve, reject) => {
                 ws.on('open', () => {
                     ws.close();
@@ -208,6 +208,14 @@ async function runTest() {
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
         log('WASM loaded');
 
+        // Enable rewind/replay verifier (see test_network_utils.js for the
+        // full rationale). Network E2E is a prime candidate: any divergence
+        // between the WASM client and the native server during replay would
+        // surface as REWIND/REPLAY FATAL — strictly more informative than
+        // waiting for the eventual desync further downstream.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
+
         // Check if network mode is available (game-mode selector, not p1-controller)
         const networkAvailable = await page.evaluate(() => {
             const option = document.querySelector('#game-mode option[value="network"]');
@@ -296,6 +304,17 @@ async function runTest() {
         if (networkErrors.length > 0) {
             log(`Network-related errors: ${networkErrors.length}`);
             testResults.networkErrors = networkErrors;
+        }
+
+        // Catch any REWIND/REPLAY FATAL or DESYNC entries surfaced via the
+        // browser console; these supersede the PASSED/PARTIAL classification
+        // above because state-divergence is never acceptable.
+        const fatalLog = checkForFatalErrors(testResults.browserLogs);
+        if (fatalLog) {
+            log(`FATAL browser-log entry detected: ${fatalLog}`);
+            testResults.fatalLog = fatalLog;
+            testResults.result = 'FAILED';
+            testResults.message = `Fatal browser-log entry: ${fatalLog}`;
         }
 
         return testResults;

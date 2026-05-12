@@ -1,10 +1,11 @@
 ---
 title: 'Server: File bug reports as GitHub issues via gh CLI'
-status: open
+status: closed
 priority: 0
 issue_type: task
 created_at: 2026-04-04T02:16:36.510135052+00:00
-updated_at: 2026-04-04T02:16:36.510135052+00:00
+updated_at: 2026-05-12T13:58:19.030669632+00:00
+closed_at: 2026-05-12T13:58:19.030669531+00:00
 ---
 
 # Description

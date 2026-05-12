@@ -1,12 +1,13 @@
 ---
 title: Unknown spell effects resolve silently as no-ops (affects Time Walk, many others)
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:21:46.383140110+00:00
-updated_at: 2026-04-03T21:21:46.383140110+00:00
+updated_at: 2026-05-12T13:57:36.799711356+00:00
+closed_at: 2026-05-12T13:57:36.799711265+00:00
 ---
 
 # Description

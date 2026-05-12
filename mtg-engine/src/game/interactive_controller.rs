@@ -806,15 +806,26 @@ impl PlayerController for InteractiveController {
         let mut blocks = SmallVec::new();
 
         if self.numeric_choices {
-            // Numeric mode: 0 = Skip/Done, 1-N = attackers
+            // Numeric mode: 0 = Skip/Done, 1-N = LEGAL attackers for this blocker.
+            //
+            // Filtering through `combat_rules::legal_attackers_for_blocker`
+            // ensures we never offer an illegal pair (e.g. non-flying blocker
+            // vs. Flying attacker). Mirrors `validate_blocking_restrictions`
+            // (mtg-bug-blockers-native-tui).
             println!("\nFor each blocker, choose which attacker it blocks");
             for (blocker_idx, &blocker_id) in available_blockers.iter().enumerate() {
                 let blocker_name = view.card_name(blocker_id).unwrap_or_default();
 
+                let legal_attackers =
+                    crate::game::combat_rules::legal_attackers_for_blocker(view.game(), blocker_id, attackers);
+                if legal_attackers.is_empty() {
+                    continue;
+                }
+
                 println!("\nBlocker: [{}] {}", blocker_idx, blocker_name);
                 println!("Block which attacker?");
                 println!("  [0] Skip this blocker / Done");
-                for (idx, &attacker_id) in attackers.iter().enumerate() {
+                for (idx, &attacker_id) in legal_attackers.iter().enumerate() {
                     let name = view
                         .card_name(attacker_id)
                         .unwrap_or_else(|| format!("Card {attacker_id:?}"));
@@ -822,14 +833,14 @@ impl PlayerController for InteractiveController {
                 }
 
                 if let Some(choice) = self.get_user_choice(
-                    &format!("Enter choice (0-{}):", attackers.len()),
-                    attackers.len() + 1,
+                    &format!("Enter choice (0-{}):", legal_attackers.len()),
+                    legal_attackers.len() + 1,
                     false,
                 ) {
                     if choice == 0 {
                         break; // Done assigning blockers
                     }
-                    blocks.push((blocker_id, attackers[choice - 1]));
+                    blocks.push((blocker_id, legal_attackers[choice - 1]));
                 } else {
                     break;
                 }

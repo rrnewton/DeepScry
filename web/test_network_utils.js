@@ -4,6 +4,28 @@
 
 const WebSocket = require('ws');
 const net = require('net');
+const dns = require('dns');
+
+// Node 17+ default DNS resolution order is "verbatim" AND
+// `net.createConnection` uses Happy-Eyeballs (autoSelectFamily=true) which
+// races IPv4 and IPv6 in parallel. The MTG server (and the python
+// `http.server` we spawn for static assets) binds to 0.0.0.0 (IPv4 only),
+// so on dual-stack hosts a "localhost" connection often picks the IPv6
+// path first and returns ECONNREFUSED on ::1, surfacing as a flaky
+// "Server failed to start" test failure.
+//
+// Two-pronged fix:
+//   1. dns.setDefaultResultOrder('ipv4first') restores Node 16 behaviour
+//      for any code that does its own dns.lookup.
+//   2. Tests in this directory should connect to '127.0.0.1' (see
+//      LOCALHOST below) instead of 'localhost' to bypass the dns step
+//      entirely. Happy-Eyeballs only kicks in when a name resolves to
+//      multiple addresses; raw IPv4 literals always go to IPv4.
+dns.setDefaultResultOrder('ipv4first');
+
+// Use this everywhere a network test connects to its own server. Avoids
+// the IPv6/IPv4 dual-stack ambiguity described above.
+const LOCALHOST = '127.0.0.1';
 
 // Timestamped logging
 function log(message) {
@@ -29,12 +51,18 @@ function isPortAvailable(port) {
 }
 
 // Allocate a pair of random available ports (one for the game server WebSocket,
-// one for the HTTP static file server). Picks from range 10000-60000 to avoid
-// collisions with well-known ports and other test processes.
+// one for the HTTP static file server).
+//
+// Picks from range 10000-30000 — deliberately BELOW the Linux default
+// ephemeral port range (32768-60999, see /proc/sys/net/ipv4/ip_local_port_range).
+// Outgoing connections from the same machine constantly grab ephemeral
+// ports and leave them in TIME_WAIT for ~60s; reusing such a port for a
+// `--port N` server bind racy-fails with EADDRINUSE even after
+// `isPortAvailable` returned true. Sticking to <32768 sidesteps that.
 // Returns { serverPort, httpPort }.
 async function getRandomPorts() {
     const MIN_PORT = 10000;
-    const MAX_PORT = 60000;
+    const MAX_PORT = 30000;
     const range = MAX_PORT - MIN_PORT;
     const MAX_ATTEMPTS = 20;
 
@@ -60,11 +88,13 @@ async function getRandomPorts() {
     throw new Error('Failed to find two distinct available ports');
 }
 
-// Wait for server to be ready by attempting WebSocket connection
+// Wait for server to be ready by attempting WebSocket connection.
+// We connect via 127.0.0.1 (not "localhost") to avoid IPv6/IPv4 dual-stack
+// resolution issues with Node 17+ — the MTG server only binds to IPv4.
 async function waitForServer(port, maxAttempts = 30) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve, reject) => {
                 ws.on('open', () => { ws.close(); resolve(); });
                 ws.on('error', reject);
@@ -94,12 +124,18 @@ async function extractTerminalText(page) {
 }
 
 // Check for fatal errors in browser console logs
-// Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal
+// Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal.
+// REWIND/REPLAY FATAL is surfaced by the rewind/replay verifier in
+// fancy_tui.rs (replay_verifier::ReplayCheckOutcome::fatal_message). When
+// `enableReplayVerifier(page)` has been called for this test, ANY occurrence
+// of that string means the post-replay state diverged from the pre-rewind
+// snapshot — same severity as a network desync and absolutely a test failure.
 function checkForFatalErrors(browserLogs) {
     const fatalPatterns = [
         'MONOTONICITY VIOLATION',
         'FATAL DESYNC',
         'DESYNC',
+        'REWIND/REPLAY FATAL',
         'unreachable',
         'panic',
     ];
@@ -111,6 +147,38 @@ function checkForFatalErrors(browserLogs) {
         }
     }
     return null;
+}
+
+// Enable the WASM rewind/replay verifier on the given Playwright page.
+//
+// The verifier is implemented in mtg-engine/src/wasm/replay_verifier.rs and
+// wired into fancy_tui.rs via the wasm-bindgen export
+// `tui_set_verify_rewind_replay(bool)`. When enabled, every rewind to a turn
+// boundary captures a snapshot (state hash, action count, log tail) and the
+// post-replay state is compared against it. Any divergence is logged at
+// ERROR level with a "REWIND/REPLAY FATAL" prefix — which `checkForFatalErrors`
+// above treats as a hard test failure.
+//
+// Call this AFTER `#launcher.show` is visible (i.e. WASM has finished
+// initialising) but BEFORE the game launch button is clicked. The Rust side
+// gracefully handles being called before the TUI state is initialised — it
+// stashes the flag and applies it at next launch — but calling post-WASM-init
+// avoids the warning log.
+//
+// Returns true if the export was available and called, false if the WASM
+// build does not include it (e.g. very old build). Tests should treat false
+// as a soft warning, NOT a failure: the verifier is a debug aid, not a
+// runtime requirement.
+async function enableReplayVerifier(page) {
+    return await page.evaluate(() => {
+        if (typeof tui_set_verify_rewind_replay === 'function') {
+            tui_set_verify_rewind_replay(true);
+            console.log('[Test] tui_set_verify_rewind_replay(true) called');
+            return true;
+        }
+        console.log('[Test] tui_set_verify_rewind_replay not exported by this WASM build');
+        return false;
+    });
 }
 
 // Classify what kind of choice prompt is on screen
@@ -264,11 +332,13 @@ async function waitForChoicePrompt(page, timeout = 20000, previousText = null) {
 
 module.exports = {
     log,
+    LOCALHOST,
     isPortAvailable,
     getRandomPorts,
     waitForServer,
     extractTerminalText,
     checkForFatalErrors,
+    enableReplayVerifier,
     classifyPrompt,
     decideKey,
     submitChoice,

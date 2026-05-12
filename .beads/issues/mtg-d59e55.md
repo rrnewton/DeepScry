@@ -1,21 +1,24 @@
 ---
 title: Migrate interactive_controller / rich_input_controller blocker menus to combat_rules::can_block
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-09T15:55:06.420240832+00:00
-updated_at: 2026-05-09T15:55:06.420240832+00:00
+updated_at: 2026-05-11T00:43:09.925352016+00:00
 ---
 
 # Description
 
-The native CLI interactive_controller (mtg-engine/src/game/interactive_controller.rs)
-and rich_input_controller still build ad-hoc blocker selection menus that
-do not call combat_rules::can_block. They can present illegal blocker
-options, mirroring the WASM bug fixed under mtg-426cf0.
+Closed by fix-blockers-generation branch.
 
-Action: refactor both controllers' choose_blockers implementations to
-filter (blocker, attacker) pairs through combat_rules::can_block so the
-engine never silently drops a user-picked block.
+The blocker fix (mtg-426cf0) was incomplete: combat_rules::can_block was only wired into the WASM Fancy TUI display path, not the native CLI controllers and not the engine choice generation.
 
-Related: mtg-426cf0 (root-cause fix for WASM GUI).
+Fix in this branch:
+1. Engine-level filter in mtg-engine/src/game/game_loop/combat.rs::declare_blockers_step prunes available_blockers through combat_rules::is_useful_blocker BEFORE handing them to any controller. This is the single generation-time filter that all UIs/AIs consume.
+2. Per-pair filter in fancy_tui_controller and interactive_controller (numeric mode) uses combat_rules::legal_attackers_for_blocker to build per-blocker menus that only list attackers the chosen blocker may legally block.
+3. New helpers added to combat_rules.rs: is_useful_blocker(), legal_attackers_for_blocker().
+4. New regression tests in tests/blocker_legality_test.rs (8 total, was 6).
+
+The rich-input 'X blocks Y' parser in interactive_controller/rich_input_controller is unchanged: it takes free-form text input, so engine validation (validate_blocking_restrictions) continues to enforce legality there.
+
+Related: mtg-426cf0 (initial WASM fix), mtg-bug-blockers-native-tui (tg task).

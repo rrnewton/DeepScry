@@ -1,10 +1,11 @@
 ---
 title: Install Playwright and test infrastructure
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T01:50:09.413714693+00:00
-updated_at: 2026-04-04T01:50:09.413714693+00:00
+updated_at: 2026-05-12T13:59:04.625178857+00:00
+closed_at: 2026-05-12T13:59:04.625178737+00:00
 ---
 
 # Description

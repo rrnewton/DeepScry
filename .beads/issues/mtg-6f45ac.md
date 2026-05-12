@@ -1,43 +1,29 @@
 ---
-title: 'Triskelion: ETB counters not applied, RemoveCounter cost parsed as generic mana'
+title: 'Triskelion: RemoveCounter cost parsed as generic mana (ETB part fixed)'
 status: open
 priority: 2
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:29:04.981905091+00:00
-updated_at: 2026-04-03T21:29:04.981905091+00:00
+updated_at: 2026-05-12T13:59:46.448061197+00:00
 ---
 
 # Description
 
-Context:
-- Date: 2026-04-03
-- Puzzle: /tmp/triskelion_test.pzl
-- Seed: 42
+## Status (2026-05-12)
 
-Two related bugs in Triskelion:
+ETB +1/+1 counters part **FIXED** by commit 4202c634 (verified working in regression test). The remaining open issue is the cost-parser bug below.
 
-1. ETB +1/+1 counters not placed:
-   - Card has K:ETB:Counter<P1P1/3> keyword
-   - Engine warns: "Unknown parameterized keyword 'ETB' in 'ETB:Counter<P1P1/3>'"
-   - Result: Triskelion enters as 1/1 with 0 counters instead of 4/4 with 3 +1/+1 counters
-   - This affects ALL cards with ETB counter keywords (any creature with "enters with N counters")
+## Remaining bug: RemoveCounter cost parsed as generic mana
 
-2. RemoveCounter cost parsed incorrectly:
-   - Card has A:AB$ DealDamage | Cost$ RemoveCounter<1/P1P1> | ...
-   - Cost parsed as: {generic: 111, red: 1, colorless: 1} (!!!)
-   - The "RemoveCounter<1/P1P1>" string is being interpreted as mana cost characters instead of a counter removal cost
-   - Fix: Cost::parse() needs to recognize RemoveCounter<N/Type> format
+- Card: cardsfolder/t/triskelion.txt
+- Ability: A:AB$ DealDamage | Cost$ RemoveCounter<1/P1P1> | NumDmg$ 1 | ValidTgts$ Creature,Player
+- Observed parse: Cost::parse() interprets 'RemoveCounter<1/P1P1>' as mana cost characters and produces something like {generic: 111, red: 1, colorless: 1}
+- Expected: Cost should include a CounterRemovalCost variant referencing P1P1 / amount=1
 
-Evidence from snapshot:
-- Counters: []  (should be 3 P1P1)
-- Ability cost: generic=111  (should be RemoveCounter<1/P1P1>)
-- Base power/toughness: 1/1  (correct, but effective should be 4/4)
+## Fix location
+- mtg-engine/src/cost.rs (or wherever Cost::parse lives) — add a tokenizer branch for 'RemoveCounter<N/Type>' BEFORE falling back to mana-character parsing
 
-Expected: Triskelion enters with 3 +1/+1 counters (4/4), can remove a counter to deal 1 damage
-Actual: Triskelion enters as 1/1 with no counters, ability costs 111 generic mana
-
-Rules Notes:
-- CR 702.19: "Enters the battlefield with N counters" is a replacement effect
-- This card's abilities are core to many Old School strategies
+## Repro
+Triskelion in puzzle, attempt to activate ping ability — currently impossible because cost demands 111 generic mana.

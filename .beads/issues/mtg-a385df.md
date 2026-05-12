@@ -1,13 +1,14 @@
 ---
 title: Sandbenders' Storm Earthbend mode resolves without targeting a land
-status: open
+status: closed
 priority: 3
 issue_type: task
 labels:
 - bug
 - earthbend
 created_at: 2026-04-20T19:59:02.876778856+00:00
-updated_at: 2026-04-20T19:59:02.876778856+00:00
+updated_at: 2026-05-12T13:57:46.439946992+00:00
+closed_at: 2026-05-12T13:57:46.439946912+00:00
 ---
 
 # Description

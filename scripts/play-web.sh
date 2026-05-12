@@ -9,16 +9,22 @@
 #               Ignored in --pvp mode.
 #
 # Options:
-#   --port PORT         Web server port (default: 8080)
-#   --server-port PORT  MTG server port (default: 17771)
-#   --controller TYPE   AI controller: random, heuristic, zero (default: heuristic)
-#   --pvp               Two-player mode: no AI, two browser tabs connect as players
-#   --help              Show this help
+#   --port PORT             Web server port (default: 8080)
+#   --server-port PORT      MTG server port (default: 17771)
+#   --controller TYPE       AI controller: random, heuristic, zero (default: heuristic)
+#   --pvp                   Two-player mode: no AI, two browser tabs connect as players
+#   --seed N                RNG seed passed to the server (deterministic shuffles)
+#   --controller-seed N     RNG seed for the native AI controller
+#   --rebuild               Force `make build-network wasm-network` before launching
+#                           (otherwise missing builds are an error with a hint)
+#   --help                  Show this help
 #
 # Examples:
 #   ./scripts/play-web.sh decks/monored.dck
 #   ./scripts/play-web.sh --controller random decks/white_weenie.dck
 #   ./scripts/play-web.sh --pvp
+#   ./scripts/play-web.sh --seed 42 --controller-seed 43 decks/white_weenie.dck
+#   ./scripts/play-web.sh --rebuild
 #   make play-web DECK=decks/monored.dck
 #   make play-web-pvp
 
@@ -39,16 +45,22 @@ Arguments:
               Ignored in --pvp mode.
 
 Options:
-  --port PORT         Web server port (default: 8080)
-  --server-port PORT  MTG server port (default: 17771)
-  --controller TYPE   AI controller: random, heuristic, zero (default: heuristic)
-  --pvp               Two-player mode: no AI, two browser tabs connect as players
-  --help              Show this help
+  --port PORT             Web server port (default: 8080)
+  --server-port PORT      MTG server port (default: 17771)
+  --controller TYPE       AI controller: random, heuristic, zero (default: heuristic)
+  --pvp                   Two-player mode: no AI, two browser tabs connect as players
+  --seed N                RNG seed passed to the server (deterministic shuffles)
+  --controller-seed N     RNG seed for the native AI controller
+  --rebuild               Force \`make build-network wasm-network\` before launching
+                          (otherwise missing builds are an error with a hint)
+  --help                  Show this help
 
 Examples:
   ./scripts/play-web.sh decks/monored.dck
   ./scripts/play-web.sh --controller random decks/white_weenie.dck
   ./scripts/play-web.sh --pvp
+  ./scripts/play-web.sh --seed 42 --controller-seed 43 decks/white_weenie.dck
+  ./scripts/play-web.sh --rebuild
   make play-web DECK=decks/monored.dck
   make play-web-pvp
 EOF
@@ -60,6 +72,9 @@ WEB_PORT=8080
 SERVER_PORT=17771
 CONTROLLER="heuristic"
 PVP_MODE=false
+SEED=""
+CONTROLLER_SEED=""
+FORCE_REBUILD=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -72,6 +87,12 @@ while [[ $# -gt 0 ]]; do
             CONTROLLER="$2"; shift 2 ;;
         --pvp|--no-ai)
             PVP_MODE=true; shift ;;
+        --seed)
+            SEED="$2"; shift 2 ;;
+        --controller-seed)
+            CONTROLLER_SEED="$2"; shift 2 ;;
+        --rebuild)
+            FORCE_REBUILD=true; shift ;;
         --help|-h)
             usage; exit 0 ;;
         -*)
@@ -88,9 +109,16 @@ fi
 
 MTG_BIN="${REPO_ROOT}/target/release/mtg"
 
+# Optional forced rebuild before preflight (--rebuild)
+if $FORCE_REBUILD; then
+    echo "Rebuilding native binary (network feature) and WASM bundle..."
+    (cd "$REPO_ROOT" && make build-network wasm-network)
+fi
+
 # Pre-flight checks
 if [[ ! -f "$MTG_BIN" ]]; then
     echo "Error: release binary not found. Build with: make build-network" >&2
+    echo "       (or rerun this script with --rebuild)" >&2
     exit 1
 fi
 
@@ -98,6 +126,7 @@ fi
 if ! "$MTG_BIN" --help 2>&1 | grep -q "server"; then
     echo "Error: release binary does not include network support (missing 'server' command)." >&2
     echo "Rebuild with: make build-network" >&2
+    echo "       (or rerun this script with --rebuild)" >&2
     exit 1
 fi
 if ! $PVP_MODE; then
@@ -111,6 +140,7 @@ fi
 if [[ ! -f "${REPO_ROOT}/web/pkg/mtg_forge_rs_bg.wasm" ]]; then
     echo "Error: WASM build not found." >&2
     echo "Build with: make wasm-network" >&2
+    echo "       (or rerun this script with --rebuild)" >&2
     exit 1
 fi
 
@@ -118,6 +148,7 @@ fi
 if ! grep -q "network_init" "${REPO_ROOT}/web/pkg/mtg_forge_rs.js" 2>/dev/null; then
     echo "Error: WASM build does not include network support." >&2
     echo "Rebuild with: make wasm-network" >&2
+    echo "       (or rerun this script with --rebuild)" >&2
     exit 1
 fi
 
@@ -140,9 +171,24 @@ trap cleanup EXIT INT TERM
 
 cd "$REPO_ROOT"
 
+# Optional seed args (only forwarded when the user passed --seed / --controller-seed)
+SERVER_SEED_ARGS=()
+if [[ -n "$SEED" ]]; then
+    SERVER_SEED_ARGS=(--seed "$SEED")
+fi
+CLIENT_SEED_ARGS=()
+if [[ -n "$CONTROLLER_SEED" ]]; then
+    CLIENT_SEED_ARGS=(--seed-player "$CONTROLLER_SEED")
+fi
+
 # 1. Start the MTG game server (loop mode: accepts new games after each one ends)
-echo "Starting MTG server on port $SERVER_PORT (loop mode)..."
-"$MTG_BIN" server --port "$SERVER_PORT" --network-debug --loop > "$SERVER_LOG" 2>&1 &
+if [[ -n "$SEED" ]]; then
+    echo "Starting MTG server on port $SERVER_PORT (loop mode, seed=$SEED)..."
+else
+    echo "Starting MTG server on port $SERVER_PORT (loop mode)..."
+fi
+"$MTG_BIN" server --port "$SERVER_PORT" --network-debug --loop "${SERVER_SEED_ARGS[@]}" \
+    > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 sleep 1.5  # Wait for server to be ready
 
@@ -150,12 +196,17 @@ sleep 1.5  # Wait for server to be ready
 if $PVP_MODE; then
     echo "PvP mode: waiting for two browser clients to connect..."
 else
-    echo "Connecting AI opponent ($CONTROLLER controller, deck: $(basename "$DECK"), reconnect mode)..."
+    if [[ -n "$CONTROLLER_SEED" ]]; then
+        echo "Connecting AI opponent ($CONTROLLER controller, deck: $(basename "$DECK"), seed=$CONTROLLER_SEED, reconnect mode)..."
+    else
+        echo "Connecting AI opponent ($CONTROLLER controller, deck: $(basename "$DECK"), reconnect mode)..."
+    fi
     "$MTG_BIN" connect "$DECK" \
         --server "localhost:$SERVER_PORT" \
         --controller "$CONTROLLER" \
         --name "AI" \
         --reconnect \
+        "${CLIENT_SEED_ARGS[@]}" \
         > "$AI_LOG" 2>&1 &
     CLIENT_PID=$!
 fi

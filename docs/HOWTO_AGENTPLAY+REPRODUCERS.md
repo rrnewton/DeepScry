@@ -2,86 +2,154 @@
 
 It's important that you have the experience of playing the MTG game we're developing so you can see actual issues with gameplay and compare to expected behavior given MTG rules. Testing in code is insufficient.
 
-## Quick Start: Using the agentplay Scripts (Recommended)
+You cannot interact with the interactive TUI via stdin, but the `agentplay/`
+toolchain lets you drive deterministic games one choice at a time, either
+manually or via Claude subagents. Every session is replayable from a single
+reproducer script.
 
-The easiest way to play games step-by-step and build reproducers is using the `agentplay/` wrapper scripts:
+## Tool Overview
 
-### Starting a New Game Session
+Three Python entry points under `agentplay/`:
+
+| Script | Purpose |
+| --- | --- |
+| `agent_game.py` | **Recommended.** End-to-end agent-driven game: a Claude subagent (or `--mock` random selector) makes each choice, with optional scenario / bug-detection prompting. |
+| `start_game.py` | Manually start a session: fork off the first choice prompt, write the initial files, print the menu. |
+| `continue_game.py` | Manually append one player's next choice and replay the whole game so far. |
+
+All three produce the same on-disk session layout (see **Game Directory
+Structure** below) and the same reproducer script, so you can switch between
+agent-driven and manual modes against the same session.
+
+## Quick Start: agent_game.py (Recommended)
 
 ```bash
-# Start with any valid mtg tui arguments
-./agentplay/start_game.py decks/simple_bolt.dck decks/simple_bolt.dck
+# Bug-detection is on by default. The agent picks a choice number on each
+# turn, or writes STOP with a BUG_REPORT section if it sees a rules/engine bug.
+./agentplay/agent_game.py -- decks/old_school/01_rogue_rogerbrand.dck decks/old_school/02_thedeck_peterschnidrig.dck
 
-# Or with specific initial hands:
+# Keep a reproduction target in the prompt at every decision:
+./agentplay/agent_game.py --seed 42 \
+    --scenario "Play until P2 attacks with a flying creature, then try to double-block and cast an instant combat trick" \
+    -- decks/booster_draft/avatar/eric_avatar_draft.dck decks/booster_draft/avatar/gabriel_avatar_draft.dck
+
+# Pure-play mode disables STOP / BUG_REPORT prompting (just play the game):
+./agentplay/agent_game.py --pure-play -- decks/old_school/01_rogue_rogerbrand.dck decks/old_school/05_mono_black_rogerbrand.dck
+
+# Mock mode: local random choice selection, no API tokens burned. Useful for
+# smoke-testing the harness or generating long deterministic logs.
+./agentplay/agent_game.py --mock --seed 42 -- decks/old_school/01_rogue_rogerbrand.dck decks/old_school/02_thedeck_peterschnidrig.dck
+
+# Start from a puzzle/start-state file instead of a normal `mtg tui` run:
+./agentplay/agent_game.py --puzzle puzzles/bolt_test.pzl
+```
+
+### Key `agent_game.py` flags
+
+- `--mode {agent-vs-heuristic, agent-vs-random, agent-vs-agent, random-vs-random}`
+  — controls who drives each seat. `agent-vs-agent` is the default.
+- `--scenario "<english text>"` — keeps a reproduction target in the agent prompt every turn.
+- `--goal "<english text>"` — like `--scenario`, but framed as a directed-play goal.
+- `--puzzle <file>` — run `mtg puzzle <file>` instead of `mtg tui`.
+- `--bug-detection` / `--no-bug-detection` / `--pure-play` — toggle STOP/BUG_REPORT prompting.
+- `--stop-on-bug` — exit the loop as soon as any BUG_REPORT is emitted (default behavior in bug-detection mode).
+- `--max-turns N` — safety limit on game turn number.
+- `--p1-draw "Mountain;Lightning Bolt;Mountain"` / `--p2-draw "..."` — override starting hands.
+- `--decklists` / `--no-decklists` — include or omit full deck lists in the agent's preamble (default: enabled).
+- `--model {haiku, sonnet, opus, <claude --model value>}` — pick the LLM (default: `haiku`).
+- `--claude-args '<extra args>'` — pass-through extras to the underlying `claude` CLI.
+- `--game-dir <name>` — write to an explicit directory under `agentplay/` instead of the next `NNN.game/`.
+- `--seed N` — deterministic seed (default 42).
+- `--verbose` — print replay and agent diagnostic details.
+
+Each agent prompt includes the current game state, the full log interleaved
+with prior choices and rationale, the log since the last decision, a recap of
+the previous decision, the current menu of choices, and (if provided) the
+`--scenario` / `--goal` text.
+
+## Manual Sessions: start_game.py + continue_game.py
+
+For tight scripted reproducers or when you don't want to spend agent tokens,
+drive the game directly:
+
+```bash
+# Start a session. Archives any prior current.game/ if one exists, creates a
+# fresh numbered directory like agentplay/040.game/, runs up to the first
+# choice, and prints the available actions.
+./agentplay/start_game.py decks/old_school/01_rogue_rogerbrand.dck decks/old_school/02_thedeck_peterschnidrig.dck
+
+# With controlled initial hands:
 ./agentplay/start_game.py decks/grizzly_bears.dck decks/royal_assassin.dck \
     --p1-draw="Forest;Grizzly Bears;Forest"
 
-# Or from a puzzle state:
+# From a puzzle / start-state file:
 ./agentplay/start_game.py --start-state="puzzles/bolt_test.pzl"
+
+# Use an explicit game directory instead of the next numbered one:
+./agentplay/start_game.py --game-dir=my_test.game decks/a.dck decks/b.dck
 ```
 
-This will:
-1. Archive any existing `current.game` session to a numbered folder (001.game, 002.game, etc.)
-2. Create a fresh `agentplay/current.game/` directory for this session
-3. Initialize the game with deterministic seed (42)
-4. Stop before the first choice is needed
-5. Show you the available actions
-6. Save session files to `agentplay/current.game/`
-7. Print a REPRODUCER command for easy replay
-
-### Adding Choices One at a Time
-
-After start_game.py shows you the available choices, add them one at a time:
+Add choices one at a time. `continue_game.py` requires the player (`p1` or
+`p2`) and the choice as a number or rich-text command:
 
 ```bash
-# Add a choice (specify player and choice)
 ./agentplay/continue_game.py p1 "0"
-
-# The game will show the next available choices
-# Continue adding choices as needed:
-./agentplay/continue_game.py p1 "1"
-./agentplay/continue_game.py p2 "pass"
-./agentplay/continue_game.py p1 "play swamp"
-```
-
-Each `continue_game.py` call:
-- Appends the choice to `agentplay/current.game/choices.txt`
-- Replays the game from scratch with ALL choices accumulated so far
-- Stops after the next choice is needed
-- Shows the NEXT available choices
-- Updates `agentplay/current.game/reproduce_game.sh` with the full reproducer
-
-### Rich Text Commands
-
-You can use either numeric indices OR descriptive commands:
-
-```bash
-# Numeric (simple but fragile to menu changes)
-./agentplay/continue_game.py p1 "0"
-
-# Rich text (robust to option ordering)
 ./agentplay/continue_game.py p1 "play mountain"
 ./agentplay/continue_game.py p1 "cast lightning bolt"
 ./agentplay/continue_game.py p1 "target bob"
 ./agentplay/continue_game.py p2 "pass"
+
+# Target a specific past session:
+./agentplay/continue_game.py --game-dir=my_test.game p1 "1"
 ```
 
-For full syntax documentation including card name matching, wildcards, and special
-cases, see [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md).
+Each `continue_game.py` call:
 
-### Building a Reproducer
+1. Appends the choice to that player's `pN_choices.txt`.
+2. Replays the full game from scratch with every accumulated choice.
+3. Stops once the next choice is needed, prints the new menu.
+4. Rewrites `reproduce_game.sh` with the up-to-date reproducer.
 
-The agentplay workflow automatically builds reproducers:
+### Rich-text vs numeric input
 
-1. Start a game session with `start_game.py`
-2. Add choices with `continue_game.py` until you reach the bug
-3. The reproducer is automatically saved to `agentplay/current.game/reproduce_game.sh`
-4. Run that script to replay the entire sequence deterministically
-5. Or copy the REPRODUCER command from the script output
+Both forms work, in any mix:
 
-Example reproducer from the output:
+- **Numeric** — simple but fragile to menu reordering: `"0"`, `"3"`.
+- **Rich text** — robust to option ordering: `"play mountain"`, `"cast lightning bolt"`, `"target bob"`, `"pass"`.
+
+Full syntax (card-name matching, wildcards, special cases) lives in
+[FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md).
+
+## Game Directory Structure
+
+Sessions live under `agentplay/`. By default each new session goes to the next
+unused `NNN.game/` directory; the most recent one is also reachable as
+`agentplay/current.game/` (typically a symlink or alias maintained by the
+scripts). Use `--game-dir <name>` to opt out of the numbering scheme.
+
+A session directory contains:
+
+| File | Contents |
+| --- | --- |
+| `p1_choices.txt` | Player 1's choices, one per line, in order. |
+| `p2_choices.txt` | Player 2's choices, one per line, in order. |
+| `initial_args.txt` | The original `mtg tui` (or `mtg puzzle`) argv. |
+| `snapshot.json` | Latest replayed game state (JSON). |
+| `game.snapshot` | Binary snapshot (when produced by the engine). |
+| `game.log` | Engine log from the last replay. |
+| `reproduce_game.sh` | Executable shell script that replays the whole session deterministically. |
+| `enriched_log.md` | (agent_game.py only) Interleaved log + agent reasoning per choice. |
+| `bug_reports.log` | (bug-detection mode) STOP / BUG_REPORT entries, if any. |
+
+Use these for inspection, attaching to bug reports, and re-running.
+
+## Reproducers
+
+`reproduce_game.sh` is regenerated after every choice and embeds a `cargo run`
+invocation of the form:
+
 ```bash
-mtg tui decks/simple_bolt.dck decks/simple_bolt.dck \
+cargo run --release --bin mtg -- tui decks/old_school/01_rogue_rogerbrand.dck decks/old_school/02_thedeck_peterschnidrig.dck \
     --p1=fixed --p2=fixed \
     --p1-fixed-inputs="0;1;pass;play swamp" \
     --p2-fixed-inputs="0;1;pass;play swamp" \
@@ -89,38 +157,32 @@ mtg tui decks/simple_bolt.dck decks/simple_bolt.dck \
     --seed=42 --json --log-tail=100
 ```
 
-The reproducer script in `current.game/reproduce_game.sh` includes the full `cargo run` command and is ready to execute.
+Run it directly (`./agentplay/NNN.game/reproduce_game.sh`) to replay the
+session from scratch. The same script is what you should paste into bug
+reports — it's self-contained, deterministic, and survives session cleanup.
 
-### Session Management
+### Session management
 
 ```bash
-# Start a new game (automatically archives the current session)
-./agentplay/start_game.py decks/new_deck.dck
+# List all sessions, oldest to newest.
+ls -d agentplay/*.game/
 
-# Access archived sessions
-ls agentplay/*.game/  # Shows current.game, 001.game, 002.game, etc.
+# Replay an archived session deterministically.
+./agentplay/017.game/reproduce_game.sh
 
-# Replay an archived session
-./agentplay/001.game/reproduce_game.sh
-
-# Clean up all sessions
-rm -rf agentplay/*.game/
+# Wipe everything (only do this if you really mean it).
+rm -rf agentplay/*.game/ agentplay/current.game/
 ```
 
-Session files are stored in `agentplay/current.game/`:
-- `choices.txt` - All choices made so far (one per line)
-- `game.snapshot` - Latest game state snapshot
-- `reproduce_game.sh` - Executable reproducer script
-- `initial_args.txt` - Original mtg tui arguments
+## Advanced: Driving `mtg tui` Directly
 
-## Advanced: Direct mtg tui Usage
+When the agentplay scripts don't fit (custom controller mixes, snapshotting at
+specific points), use `mtg tui` / `mtg resume` directly.
 
-If you need more control than the agentplay scripts provide, you can use `mtg tui` directly. Read the agentplay script contents and `mtg tui --help` for details.
-
-### Manual Fixed Input Workflow
+### Fixed-input loop (manual reproducer construction)
 
 ```bash
-# Start with empty inputs and stop when exhausted
+# Start with empty inputs; engine stops when the script runs out.
 cargo run --release --bin mtg -- tui decks/grizzly_bears.dck decks/royal_assassin.dck \
     --seed=100 \
     --stop-when-fixed-exhausted \
@@ -128,8 +190,7 @@ cargo run --release --bin mtg -- tui decks/grizzly_bears.dck decks/royal_assassi
     --p2=fixed --p2-fixed-inputs="" \
     --log-tail=100
 
-# You'll see available choices printed
-# Add choices one at a time and re-run:
+# Append the next choice(s) and rerun:
 cargo run --release --bin mtg -- tui decks/grizzly_bears.dck decks/royal_assassin.dck \
     --seed=100 \
     --stop-when-fixed-exhausted \
@@ -138,101 +199,69 @@ cargo run --release --bin mtg -- tui decks/grizzly_bears.dck decks/royal_assassi
     --log-tail=100
 ```
 
-### Snapshot/Resume Workflow
+### Snapshot / resume
 
 ```bash
-# Save snapshot after N choices
+# Capture a snapshot after N choices played by heuristic controllers.
 cargo run --release --bin mtg -- tui DECK1.dck DECK2.dck \
     --seed=100 \
     --stop-on-choice=10 \
     --snapshot-output=game.snapshot \
     --p1=heuristic --p2=heuristic
 
-# Resume with different controllers
+# Resume with different controllers (e.g. drop into fixed-input mode for a hand-crafted finish).
 cargo run --release --bin mtg -- resume game.snapshot \
     --override-p1=fixed --p1-fixed-inputs="0;1;2" \
     --override-p2=fixed --p2-fixed-inputs="0;1;2"
 ```
 
-### Using --stop-on-choice
+### Useful flags
 
-Stop after a specific number of total choices (both players):
-
-```bash
-# Stop after first choice
---stop-on-choice=1
-
-# Stop after 10 choices
---stop-on-choice=10
-
-# Stop after 5 choices by P1 only
---stop-on-choice=5:p1
-
-# Stop after 3 choices by P2 only
---stop-on-choice=3:p2
-```
-
-### Controlled Initial Hands
-
-```bash
-# Set specific starting hands (1-7 cards, semicolon-separated)
---p1-draw="Mountain;Lightning Bolt;Mountain"
---p2-draw="Island;Counterspell;Island;Island"
-```
-
-### Starting from Puzzle States
-
-```bash
-# Load a pre-configured board state
---start-state="puzzles/combat_test.pzl"
-```
+- `--stop-on-choice=N` — stop after N total choices.
+- `--stop-on-choice=N:p1` / `:p2` — stop after N choices by a specific seat.
+- `--p1-draw="Mountain;Lightning Bolt;Mountain"` / `--p2-draw="..."` — pin the
+  starting hand (1–7 cards, semicolon-separated).
+- `--start-state="puzzles/combat_test.pzl"` — load a pre-built board state.
 
 ## Key Concepts for AI Agents
 
-**You cannot interact via stdin/TUI directly**, but you CAN:
-- Use fixed input controllers with predetermined choices
-- Use snapshot/resume to build up game states incrementally
-- Use the agentplay scripts to manage this workflow automatically
-
-**Fixed inputs** are semicolon-separated (`;`), not commas or spaces:
-- Numeric: `--p1-fixed-inputs="0;1;2;0"`
-- Rich text: `--p1-fixed-inputs="play mountain;cast bolt;target bob"`
-
-**Both players share the same choice sequence** in agentplay mode:
-- The game engine alternates between players as needed
-- You don't specify which player - the game state determines it
-
-**Snapshots preserve everything**:
-- Full game state (cards, zones, life totals)
-- RNG state (for deterministic replay)
-- Controller state (for fixed/random controllers)
-- Turn number and choice counters
-
-**REPRODUCER commands** are automatically printed by the agentplay scripts:
-- Saved to `current.game/reproduce_game.sh` as an executable script
-- Also printed in the terminal output for easy copy-paste
-- Include all choices made so far
-- Replay from scratch using `mtg tui` (not snapshots)
-- Deterministic (same seed, same choices = same outcome)
+- **You can't type at stdin.** Use fixed-input controllers, snapshots, or the
+  agentplay scripts — they replay determistically.
+- **Fixed inputs are semicolon-separated** (not commas, not spaces):
+  `--p1-fixed-inputs="0;1;2;0"` or
+  `--p1-fixed-inputs="play mountain;cast bolt;target bob"`.
+- **Per-player choice files**: agentplay separates `p1_choices.txt` and
+  `p2_choices.txt`. `continue_game.py` decides which file to extend from its
+  first positional argument (`p1` or `p2`).
+- **Snapshots preserve everything**: game state, RNG state, controller state,
+  turn / choice counters. Resume produces byte-identical continuations.
+- **Reproducers replay from scratch** via `mtg tui`, not by loading a
+  snapshot — same seed plus same choices implies the same outcome.
 
 ## Tips for Building Good Reproducers
 
-1. **Start minimal**: Use simple decks when possible
-2. **Use controlled hands**: `--p1-draw` and `--p2-draw` to set up specific scenarios
-3. **Document the bug**: Include the REPRODUCER command in issue reports
-4. **Test determinism**: Run the reproducer multiple times to confirm it's consistent
-5. **Keep it short**: Stop as soon as you see the bug - don't continue playing
+1. **Start minimal** — use the smallest decks that reproduce the issue.
+2. **Pin the opening hand** with `--p1-draw` / `--p2-draw` (or pass them
+   through `agent_game.py`) so the bug doesn't depend on top-deck luck.
+3. **Stop as soon as the bug fires.** Trim trailing choices; a shorter
+   reproducer is easier to debug and faster to run in CI.
+4. **Re-run the reproducer** at least once to confirm determinism before
+   filing it.
+5. **Attach `reproduce_game.sh`** (or its inlined command) to the bug
+   report along with the relevant log excerpt.
 
 ## Reference
 
-For all available options and flags:
 ```bash
 cargo run --bin mtg -- tui --help
 cargo run --bin mtg -- resume --help
+./agentplay/agent_game.py --help
+./agentplay/start_game.py --help
+./agentplay/continue_game.py --help
 ```
 
-For implementation details, read:
-- [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md) - Complete input command syntax reference
-- `agentplay/start_game.py` - Initialization workflow
-- `agentplay/continue_game.py` - Incremental choice workflow
-- `src/main.rs` - Full CLI argument parsing
+Related docs:
+
+- [FIXED_INPUT_SYNTAX.md](./FIXED_INPUT_SYNTAX.md) — full input-command syntax.
+- [agentplay/README.md](../agentplay/README.md) — short tour of the harness.
+- `src/main.rs` — authoritative CLI argument definitions.

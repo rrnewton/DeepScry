@@ -1483,4 +1483,97 @@ mod tests {
         assert_eq!(game.cards.get(CardId::new(50)).unwrap().revealed_to_mask, 0);
         assert!(log.is_empty());
     }
+
+    /// Regression test for `bug-desync-seed41` (WASM rewind/replay desync).
+    ///
+    /// The WASM rewind/replay loop relies on a key invariant: rewinding the
+    /// game to the same turn boundary must always reproduce the same Replay
+    /// hash, regardless of how many rewinds (or how much forward play between
+    /// them) have happened. The replay verifier in `wasm/replay_verifier.rs`
+    /// caches the first turn-start hash for each turn and treats any drift
+    /// as a fatal "REWIND/REPLAY FATAL: turn-start state hash for turn N
+    /// changed across rewinds" error.
+    ///
+    /// Before the fix, `rewind_to_turn_start` unconditionally bumped
+    /// `mana_state_version` (a `ManaEngine` cache invalidation counter that
+    /// was — incorrectly — included in the Replay hash). Two consecutive
+    /// rewinds to the same turn therefore produced different hashes and
+    /// blew up the verifier on the user's *second* WASM input on turn 1
+    /// (e.g. play a Mox, then play a Bayou).
+    ///
+    /// This test directly exercises the property: rewind, then forward-play
+    /// some actions that themselves bump `mana_state_version` (taps, untaps),
+    /// then rewind again — the post-rewind Replay hash must be identical.
+    #[test]
+    fn rewind_to_turn_start_produces_stable_replay_hash() {
+        use crate::game::compute_state_hash;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let p1 = game.players[0].id;
+
+        // Establish a turn boundary (the "turn 1 start") in the undo log.
+        // Subsequent forward play happens after this marker; rewinding to
+        // turn start should reverse everything down to (but not including)
+        // this marker.
+        let prior_log_size = game.logger.log_count();
+        game.undo_log.log(
+            GameAction::ChangeTurn {
+                from_player: p1,
+                to_player: p1,
+                turn_number: 1,
+                rng_state: None,
+            },
+            prior_log_size,
+        );
+
+        // Snapshot the canonical turn-start Replay hash.
+        let h_turn_start = compute_state_hash(&game);
+
+        // Forward-play and rewind, several times, asserting hash stability.
+        for cycle in 0..5 {
+            // Mutate life via a properly-logged GameAction so it can be
+            // undone, mimicking what real forward play does.
+            let prior_log_size = game.logger.log_count();
+            if let Some(player) = game.players.iter_mut().find(|p| p.id == p1) {
+                player.life -= 1;
+            }
+            game.undo_log.log(
+                GameAction::ModifyLife {
+                    player_id: p1,
+                    delta: -1,
+                },
+                prior_log_size,
+            );
+            // Several bumps to make sure the counter has clearly advanced —
+            // mimics taps/untaps/etb-events in real play.
+            for _ in 0..3 {
+                game.increment_mana_version();
+            }
+
+            // Rewind to turn start (same pattern as WasmFancyTuiState).
+            let mut undo_log = std::mem::take(&mut game.undo_log);
+            let result = undo_log.rewind_to_turn_start(&mut game);
+            game.undo_log = undo_log;
+            assert!(
+                result.is_some(),
+                "rewind cycle {cycle}: rewind_to_turn_start must succeed"
+            );
+
+            // Sanity: mana_state_version really did change inside rewind, so
+            // this test would FAIL on Replay hash inclusion of the counter.
+            assert!(
+                game.mana_state_version > 0,
+                "rewind cycle {cycle}: mana_state_version should have been bumped"
+            );
+
+            let h_after = compute_state_hash(&game);
+            assert_eq!(
+                h_after, h_turn_start,
+                "rewind cycle {cycle}: post-rewind Replay hash must equal the original \
+                 turn-start hash. mana_state_version bumps inside rewind_to_turn_start \
+                 must NOT affect the Replay hash (bug-desync-seed41 regression)."
+            );
+        }
+    }
 }

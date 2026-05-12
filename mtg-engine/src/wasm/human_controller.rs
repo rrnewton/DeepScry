@@ -171,6 +171,39 @@ impl PendingChoice {
     }
 }
 
+/// Stage one card in a multi-card discard prompt and return the completed
+/// `PendingChoice::Discard` once enough cards have been picked.
+///
+/// The engine's `choose_cards_to_discard` is a single call that expects ALL
+/// `count` cards in one response (e.g. Bazaar of Baghdad's "discard 3"). The
+/// fancy TUI naturally collects picks one at a time, so the UI accumulates
+/// staged hand indices on the side and only commits when `count` are gathered.
+///
+/// `pick_idx` is the index of the card the user just picked *within the
+/// currently displayed (filtered) choice list*. `displayed_to_hand_idx` maps
+/// each visible row back to its original `ChoiceContext::Discard::hand` index;
+/// the UI rebuilds this map on each render so already-staged cards can be
+/// hidden and not re-picked.
+///
+/// Returns `Some(PendingChoice::Discard(indices))` if the user has now staged
+/// `count` cards (and `staged` is left empty for the next prompt). Returns
+/// `None` if more cards still need to be picked, or if `pick_idx` was out of
+/// range for `displayed_to_hand_idx`.
+pub fn stage_discard_pick(
+    staged: &mut Vec<usize>,
+    displayed_to_hand_idx: &[usize],
+    pick_idx: usize,
+    count: usize,
+) -> Option<PendingChoice> {
+    let &hand_idx = displayed_to_hand_idx.get(pick_idx)?;
+    staged.push(hand_idx);
+    if staged.len() < count {
+        None
+    } else {
+        Some(PendingChoice::Discard(std::mem::take(staged)))
+    }
+}
+
 /// Human controller for WASM/browser gameplay
 ///
 /// This controller implements the event-driven input pattern:
@@ -619,6 +652,62 @@ mod tests {
     }
 
     #[test]
+    fn test_stage_discard_pick_count_one_commits_immediately() {
+        // count=1 (e.g. a single discard cost): the very first pick commits.
+        let mut staged = Vec::new();
+        let displayed_to_hand_idx = vec![0_usize, 1, 2];
+        let result = stage_discard_pick(&mut staged, &displayed_to_hand_idx, 1, 1);
+        match result {
+            Some(PendingChoice::Discard(idxs)) => assert_eq!(idxs, vec![1]),
+            _ => panic!("expected committed PendingChoice::Discard, got {:?}", result),
+        }
+        assert!(staged.is_empty(), "staged should be drained on commit");
+    }
+
+    #[test]
+    fn test_stage_discard_pick_three_cards_stages_then_commits() {
+        // Regression for Bazaar of Baghdad ("draw 2, discard 3"): the engine
+        // asks for ALL 3 cards in one call, so the UI must stage the first 2
+        // picks and only submit `PendingChoice::Discard` on the 3rd.
+        let mut staged: Vec<usize> = Vec::new();
+
+        // Initial display: 5-card hand (indices 0..=4 in `formatted_hand`).
+        let displayed = vec![0_usize, 1, 2, 3, 4];
+
+        // Pick 1: user selects displayed row 2 (hand_idx 2). Should stage, not commit.
+        assert!(stage_discard_pick(&mut staged, &displayed, 2, 3).is_none());
+        assert_eq!(staged, vec![2]);
+
+        // After re-render the UI hides the staged card. The new map skips hand_idx 2.
+        let displayed = vec![0_usize, 1, 3, 4];
+
+        // Pick 2: user selects displayed row 0 (hand_idx 0). Still staging.
+        assert!(stage_discard_pick(&mut staged, &displayed, 0, 3).is_none());
+        assert_eq!(staged, vec![2, 0]);
+
+        let displayed = vec![1_usize, 3, 4];
+
+        // Pick 3: user selects displayed row 2 (hand_idx 4). NOW it commits.
+        let result = stage_discard_pick(&mut staged, &displayed, 2, 3);
+        match result {
+            Some(PendingChoice::Discard(idxs)) => assert_eq!(idxs, vec![2, 0, 4]),
+            _ => panic!("expected committed PendingChoice::Discard, got {:?}", result),
+        }
+        assert!(staged.is_empty(), "staged should be drained on commit");
+    }
+
+    #[test]
+    fn test_stage_discard_pick_out_of_range_is_noop() {
+        let mut staged = vec![0];
+        let displayed = vec![1_usize, 2];
+        // pick_idx 5 is out of range for a 2-row display.
+        let result = stage_discard_pick(&mut staged, &displayed, 5, 3);
+        assert!(result.is_none());
+        // staged is unchanged when the pick is invalid.
+        assert_eq!(staged, vec![0]);
+    }
+
+    #[test]
     fn test_human_controller_returns_pending_choice() {
         let player_id = EntityId::new(1);
         let mut controller = WasmHumanController::new(player_id);
@@ -636,5 +725,86 @@ mod tests {
 
         // Pending choice should be consumed
         assert!(!controller.has_pending_choice());
+    }
+
+    /// Regression test for `bug-chaos-orb-no-destroy` / `bug-strip-mine-no-destroy`:
+    /// `PendingChoice::Targets(indices)` carries RAW indices into the `valid_targets`
+    /// list. Callers that present a UI with "No target" prepended at index 0 (such
+    /// as `wasm/fancy_tui.rs::select_current_choice`) MUST subtract 1 before
+    /// storing the user's pick — otherwise every target selection silently drops
+    /// the chosen card and the destroy/exile/tap/etc. effect fizzles.
+    ///
+    /// This test pins down the contract so a future refactor of
+    /// `select_current_choice` cannot silently regress it.
+    #[test]
+    fn test_choose_targets_uses_raw_valid_target_indices() {
+        use crate::core::SpellAbility;
+        use crate::game::controller::PlayerController;
+
+        let player_id = EntityId::new(1);
+        let mut controller = WasmHumanController::new(player_id);
+
+        let game = crate::game::GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+        let view = crate::game::GameStateView::new(&game, player_id);
+
+        // Two valid targets — exactly the situation where the engine prompts
+        // the user (single-target lists are auto-selected by the priority loop).
+        let target_a = EntityId::new(100);
+        let target_b = EntityId::new(200);
+        let valid_targets = [target_a, target_b];
+
+        // First call: no pending choice → controller asks for input and stores
+        // the context (mirroring what the WASM TUI sees on first prompt).
+        let spell = EntityId::new(50);
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        assert!(controller.pending_context.is_some(), "pending_context must be stored");
+
+        // Caller picks index 0 in the engine's `valid_targets` (i.e. the first
+        // real target). In the WASM UI this corresponds to clicking the second
+        // visible row, since "No target" occupies row 0; `select_current_choice`
+        // is responsible for the -1 conversion.
+        controller.set_pending_choice(PendingChoice::Targets(vec![0]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert_eq!(
+                    targets.as_slice(),
+                    &[target_a],
+                    "raw index 0 must map to first valid target"
+                );
+            }
+            _ => panic!("expected Ok with first target, got {:?}", result),
+        }
+
+        // Re-prime context, then verify raw index 1 → target_b.
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        controller.set_pending_choice(PendingChoice::Targets(vec![1]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert_eq!(
+                    targets.as_slice(),
+                    &[target_b],
+                    "raw index 1 must map to second valid target"
+                );
+            }
+            _ => panic!("expected Ok with second target, got {:?}", result),
+        }
+
+        // And the empty-vec convention means "no target chosen" (fizzle).
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        controller.set_pending_choice(PendingChoice::Targets(vec![]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert!(targets.is_empty(), "empty Targets vec must mean 'no target'");
+            }
+            _ => panic!("expected Ok with empty targets, got {:?}", result),
+        }
+
+        // Suppress unused-import warnings on builds without the wasm-network
+        // feature flag (`SpellAbility` is only used to keep the imports parallel
+        // to the surrounding tests).
+        let _ = SpellAbility::PlayLand { card_id: spell };
     }
 }

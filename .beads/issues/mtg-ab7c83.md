@@ -1,10 +1,11 @@
 ---
 title: 'Server: Launch Claude auto-fix agent for trusted bug reports'
-status: open
+status: closed
 priority: 1
 issue_type: task
 created_at: 2026-04-04T02:16:36.510571622+00:00
-updated_at: 2026-04-04T02:16:36.510571622+00:00
+updated_at: 2026-05-12T13:58:19.033126714+00:00
+closed_at: 2026-05-12T13:58:19.033126644+00:00
 ---
 
 # Description

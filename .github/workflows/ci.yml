@@ -47,6 +47,24 @@ jobs:
       - name: Run commander E2E test
         run: bash tests/commander_e2e.sh
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run agentplay tests
+        run: |
+          python3 -m pytest agentplay/ -v
+          cargo build --release --bin mtg
+          # Use --max-turns 100 so the mock self-play game has time to
+          # reach a winner; agent_game.py returns exit code 2 if the turn
+          # limit is hit before either side wins, which would fail the CI
+          # step.
+          python3 agentplay/agent_game.py --mock --seed 42 --max-turns 100 -- decks/simple_bolt.dck decks/simple_bolt.dck
+
   wasm:
     name: WASM Build and E2E Tests
     runs-on: ubuntu-latest

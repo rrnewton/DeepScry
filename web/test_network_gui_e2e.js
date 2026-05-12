@@ -21,6 +21,7 @@ const {
     waitForServer,
     extractTerminalText,
     checkForFatalErrors,
+    enableReplayVerifier,
     classifyPrompt,
     decideKey,
     submitChoice,
@@ -192,6 +193,14 @@ async function runTest() {
         // Wait for WASM to load
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
         log('WASM loaded');
+
+        // Belt-and-braces: enableReplayVerifier here in addition to ticking
+        // the #debug-mode checkbox below. fancy.html only flips the verifier
+        // on inside its launch handler when debug mode is checked; calling
+        // the export directly works even if the launch path or checkbox
+        // changes. checkForFatalErrors now matches REWIND/REPLAY FATAL too.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Select Network game mode
         await page.selectOption('#game-mode', 'network');

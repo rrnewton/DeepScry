@@ -22,6 +22,13 @@ use std::hash::{Hash, Hasher};
 /// - logger: Presentation layer
 /// - show_choice_menu, output_mode, etc: Display settings
 /// - lands_played_this_turn, cards_drawn_this_turn: Turn-scoped counters (reset on rewind in replay)
+/// - mana_state_version: Cache invalidation counter for `ManaEngine` memoization.
+///   `UndoLog::rewind_to_turn_start` unconditionally bumps this counter so the
+///   `ManaEngine` re-scans the battlefield on the next query. That is purely a
+///   cache concern and must not contribute to the gameplay-equivalence hash —
+///   otherwise rewinding the same turn twice (e.g. WASM rewind/replay loop) would
+///   produce a different turn-start hash on every rewind, falsely tripping the
+///   replay verifier (see `wasm/replay_verifier.rs`).
 const EXCLUDED_FIELDS: &[&str] = &[
     "choice_id",
     "undo_log",
@@ -31,6 +38,7 @@ const EXCLUDED_FIELDS: &[&str] = &[
     "output_format",
     "numeric_choices",
     "step_header_printed",
+    "mana_state_version",
 ];
 
 /// Fields to exclude for UNDO TESTING (stricter - only metadata)
@@ -637,5 +645,72 @@ mod tests {
         assert_ne!(HashMode::Replay, HashMode::UndoTest);
         assert_ne!(HashMode::UndoTest, HashMode::Network);
         assert_ne!(HashMode::Network, HashMode::Replay);
+    }
+
+    /// Regression test for `bug-desync-seed41` (rogue_rogerbrand mirror, fancy.html).
+    ///
+    /// `UndoLog::rewind_to_turn_start` unconditionally bumps `mana_state_version`
+    /// to invalidate the `ManaEngine` memoization cache. Before the fix, the
+    /// Replay-mode hash (used by the WASM rewind/replay verifier) included
+    /// `mana_state_version` in its input. As a result, two rewinds to the same
+    /// turn produced different turn-start hashes (`mana_state_version` had
+    /// strictly increased between them), tripping the verifier with a fatal
+    /// "turn-start state hash for turn N changed across rewinds" error.
+    ///
+    /// The fix excludes `mana_state_version` from the Replay hash because it
+    /// is a pure cache-invalidation counter, not gameplay state. This test
+    /// asserts the property that bumping `mana_state_version` does NOT change
+    /// the Replay hash; without the fix it would fail.
+    #[test]
+    fn mana_state_version_excluded_from_replay_hash() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let h_initial = compute_state_hash(&game);
+
+        // Simulate what `UndoLog::rewind_to_turn_start` does: bump the cache
+        // invalidation counter. This must NOT alter the Replay hash, otherwise
+        // the WASM rewind/replay verifier flags spurious turn-start drift.
+        game.mana_state_version = game.mana_state_version.wrapping_add(1);
+        let h_after_bump = compute_state_hash(&game);
+        assert_eq!(
+            h_initial, h_after_bump,
+            "Replay hash must be invariant under mana_state_version bumps \
+             (cache counter, not gameplay state). See bug-desync-seed41."
+        );
+
+        // Bump several more times to make sure it really is excluded, not just
+        // hash-collision lucky.
+        for _ in 0..10 {
+            game.mana_state_version = game.mana_state_version.wrapping_add(1);
+            assert_eq!(compute_state_hash(&game), h_initial);
+        }
+    }
+
+    /// Cross-mode coverage: the same field must also be excluded by the
+    /// mode-aware `compute_state_hash_with_mode(_, Replay)` path, which is
+    /// what `compute_network_state_hash` and friends route through.
+    #[test]
+    fn mana_state_version_excluded_in_all_replay_paths() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let h_replay = compute_state_hash_with_mode(&game, HashMode::Replay);
+        let h_undo = compute_state_hash_with_mode(&game, HashMode::UndoTest);
+        let h_network = compute_state_hash_with_mode(&game, HashMode::Network);
+
+        game.mana_state_version = game.mana_state_version.wrapping_add(7);
+
+        assert_eq!(
+            compute_state_hash_with_mode(&game, HashMode::Replay),
+            h_replay,
+            "Replay mode must ignore mana_state_version"
+        );
+        assert_eq!(
+            compute_state_hash_with_mode(&game, HashMode::UndoTest),
+            h_undo,
+            "UndoTest mode must ignore mana_state_version"
+        );
+        assert_eq!(
+            compute_state_hash_with_mode(&game, HashMode::Network),
+            h_network,
+            "Network mode must ignore mana_state_version"
+        );
     }
 }

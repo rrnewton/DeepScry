@@ -2,11 +2,75 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Sequence
+
+
+DEFAULT_LOG_TAIL_LINES = 1000
+
+# Matches the optional `[Your_Main1]` / `[Their_EndStep | Lightning Bolt on stack]`
+# context flavour that the rich/fixed controller prepends to its
+# "available actions:" header. See mtg-engine/src/game/controller.rs:
+# `format_choice_menu` (`wants_context=true` branch).
+_CHOICE_CONTEXT_RE = re.compile(r"^\s*\[([^\]]+)\]\s+\S+\s+available actions:\s*$")
+
+
+def new_log_tail_lines(current_tail: str, printed_lines: Sequence[str]) -> str:
+    """Return lines from `current_tail` that have not been shown yet.
+
+    The engine replays the entire game from scratch on every step, so
+    consecutive `log_tail` snapshots overlap heavily. Three patterns occur:
+
+    1. Simple growth: the new tail extends the previous tail with a
+       few appended lines (the just-resolved action plus phase
+       transitions leading to the next choice point).
+    2. Bounded-tail roll-off: the engine's `--log-tail=N` flag drops
+       old lines off the front, so the previous tail's suffix aligns
+       with the new tail's prefix.
+    3. Replay divergence: a newly-appended choice re-runs an action
+       at an EARLIER choice point (the wildcard-driven `--p?-fixed-inputs`
+       script can match it sooner), so the same end-of-log state is
+       reached but with extra lines INSERTED mid-log.
+
+    We use `difflib.SequenceMatcher` against the **cumulative** record
+    of every line we have previously shown. Only the `insert`/`replace`
+    spans -- content in `current_tail` that has no counterpart in the
+    cumulative log -- are returned, in `current_tail` order. Lines that
+    rolled off, or that the replay reorders without producing genuinely
+    new content, are correctly suppressed.
+    """
+    if not current_tail:
+        return ""
+    curr = current_tail.splitlines()
+    if not printed_lines:
+        return current_tail
+
+    # Normalise leading whitespace before diffing: the engine's verbose
+    # logger sometimes re-emits the same action with different indentation
+    # depending on how deep into the casting/resolution sequence the replay
+    # stops (a "Fixed1 plays Mountain" line printed after the Mountain
+    # land-play is flush left, but the same line printed from inside the
+    # spell-playing block on a later replay has a 2-space indent). Comparing
+    # the lstripped form keeps those lines deduped while preserving the
+    # original indentation in whatever we ultimately emit to the user.
+    def _key(line: str) -> str:
+        return line.lstrip()
+
+    matcher = difflib.SequenceMatcher(
+        a=[_key(line) for line in printed_lines],
+        b=[_key(line) for line in curr],
+        autojunk=False,
+    )
+    new_segments: list[str] = []
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            new_segments.extend(curr[j1:j2])
+    return "\n".join(new_segments) if new_segments else ""
 
 
 class GameEngine:
@@ -30,6 +94,7 @@ class GameEngine:
         self.command_name = "tui"
         self._last_choices: list[str] = []
         self._last_choosing_player: str | None = None
+        self._last_choice_context: str | None = None
         self._last_log_tail = ""
         self._last_output = ""
         self._last_returncode = 0
@@ -57,10 +122,14 @@ class GameEngine:
             return self._build_terminal_snapshot({})
         with snapshot_path.open("r", encoding="utf-8") as handle:
             raw_snapshot = json.load(handle)
+        turn_number, current_step = self._extract_turn_info(raw_snapshot)
         parsed = {
             "game_state": raw_snapshot,
             "choices": list(self._last_choices),
             "active_player": self._last_choosing_player or self._extract_active_player(raw_snapshot),
+            "choice_context": self._last_choice_context,
+            "turn_number": turn_number,
+            "current_step": current_step,
             "log_tail": self._last_log_tail,
             "raw_output": self._last_output,
             "game_over": self._last_game_over,
@@ -68,6 +137,10 @@ class GameEngine:
         }
         self._last_snapshot = parsed
         return parsed
+
+    def total_choices_made(self) -> int:
+        """Count of player choices already recorded in the choice files."""
+        return len(self._read_lines(self.p1_choices_path)) + len(self._read_lines(self.p2_choices_path))
 
     def append_choice(self, player: str, choice_text: str) -> None:
         target_path = self._choices_path(player)
@@ -80,8 +153,7 @@ class GameEngine:
             self.initial_args = self._read_lines(self.initial_args_path)
         if not self.initial_args:
             raise ValueError("continue_game requires initial_args.txt or set_initial_args()")
-        total_choices = len(self._read_lines(self.p1_choices_path)) + len(self._read_lines(self.p2_choices_path))
-        return self._run_game(stop_on_choice=total_choices + 1)
+        return self._run_game(stop_on_choice=self.total_choices_made() + 1)
 
     def is_game_over(self, snapshot: dict[str, Any]) -> bool:
         return bool(snapshot.get("game_over"))
@@ -170,7 +242,7 @@ class GameEngine:
             f"--stop-on-choice={stop_on_choice}",
             f"--snapshot-output={self.snapshot_path}",
             "--json",
-            "--log-tail=100",
+            f"--log-tail={DEFAULT_LOG_TAIL_LINES}",
             f"--seed={self.seed}",
             "--verbosity=verbose",  # Show all step headers so agent sees phase transitions
         ]
@@ -193,6 +265,7 @@ class GameEngine:
         self._last_output = output
         self._last_choices = self._extract_choices(output)
         self._last_choosing_player = self._extract_choosing_player(output)
+        self._last_choice_context = self._extract_choice_context(output)
         self._last_log_tail = self._extract_log_tail(output)
         self._last_returncode = completed.returncode
         self._last_game_over = self._detect_game_over(output)
@@ -211,10 +284,14 @@ class GameEngine:
         raise RuntimeError(f"mtg tui exited without snapshot or game-over marker\n{output.strip() or '(no output)'}")
 
     def _build_terminal_snapshot(self, game_state: dict[str, Any]) -> dict[str, Any]:
+        turn_number, current_step = self._extract_turn_info(game_state)
         parsed = {
             "game_state": game_state,
             "choices": [],
             "active_player": self._extract_active_player(game_state),
+            "choice_context": self._last_choice_context,
+            "turn_number": turn_number,
+            "current_step": current_step,
             "log_tail": self._last_log_tail,
             "raw_output": self._last_output,
             "game_over": self._last_game_over,
@@ -332,6 +409,42 @@ class GameEngine:
             choices_by_index[int(index_text)] = remainder.strip()
 
         return [text for index, text in sorted(choices_by_index.items()) if index > 0]
+
+    @staticmethod
+    def _extract_choice_context(output: str) -> str | None:
+        """Pull the bracketed `[Your_Main1 | ...]` context off the last action header.
+
+        The fixed/rich controller prepends this when `wants_context()` is
+        true (see mtg-engine/src/game/controller.rs::format_choice_menu).
+        We return the raw inner string (without surrounding brackets) so
+        the caller can render it however it likes.
+        """
+        last_match: str | None = None
+        for line in output.splitlines():
+            m = _CHOICE_CONTEXT_RE.match(line)
+            if m:
+                last_match = m.group(1).strip()
+        return last_match
+
+    @staticmethod
+    def _extract_turn_info(snapshot: dict[str, Any] | None) -> tuple[int | None, str | None]:
+        """Pull (turn_number, current_step) out of either a wrapped or raw snapshot."""
+        if not isinstance(snapshot, dict):
+            return None, None
+        root = snapshot
+        wrapped = snapshot.get("game_state")
+        if isinstance(wrapped, dict):
+            root = wrapped
+        turn = root.get("turn") if isinstance(root, dict) else None
+        if not isinstance(turn, dict):
+            return None, None
+        turn_number = turn.get("turn_number")
+        if not isinstance(turn_number, int):
+            turn_number = None
+        step = turn.get("current_step")
+        if not isinstance(step, str):
+            step = None
+        return turn_number, step
 
     @staticmethod
     def _extract_choosing_player(output: str) -> str | None:

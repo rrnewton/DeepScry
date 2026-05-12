@@ -55,10 +55,24 @@ fn main() {
         dt_ctx,
         dt_ctx.as_nanos() as f64 / n as f64
     );
+    // NOTE: We use checked_sub + signed-int arithmetic for the delta because
+    // under heavy load (e.g. parallel `make validate`) the second loop
+    // (wants_context=true) sometimes happens to finish faster than the first
+    // baseline loop due to cache warm-up / scheduler noise. A naive
+    // `dt_ctx - dt_no_ctx` would then panic on a Duration underflow and
+    // surface as a flaky example failure. Reporting the signed delta keeps the
+    // microbench resilient to that contention while still giving useful
+    // numbers when the system is idle.
+    let delta_ns = dt_ctx.as_nanos() as i128 - dt_no_ctx.as_nanos() as i128;
+    let delta_dur = if dt_ctx >= dt_no_ctx {
+        format!("{:?}", dt_ctx - dt_no_ctx)
+    } else {
+        format!("-{:?}", dt_no_ctx - dt_ctx)
+    };
     println!(
-        "  delta              : {:?} ({:.1} ns/call)",
-        dt_ctx - dt_no_ctx,
-        (dt_ctx.as_nanos() as i128 - dt_no_ctx.as_nanos() as i128) as f64 / n as f64
+        "  delta              : {} ({:.1} ns/call)",
+        delta_dur,
+        delta_ns as f64 / n as f64
     );
     println!("  sink lens (avoid optimization): {} {}", sink.len(), sink2.len());
 }

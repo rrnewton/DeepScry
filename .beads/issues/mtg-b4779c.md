@@ -1,12 +1,13 @@
 ---
 title: 'Cleanup step: non-active player incorrectly forced to discard'
-status: open
+status: closed
 priority: 2
 issue_type: task
 labels:
 - single-card
 created_at: 2026-04-03T21:22:30.343871700+00:00
-updated_at: 2026-04-03T21:22:30.343871700+00:00
+updated_at: 2026-05-12T13:57:42.269798667+00:00
+closed_at: 2026-05-12T13:57:42.269798586+00:00
 ---
 
 # Description

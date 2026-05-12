@@ -1,0 +1,1 @@
+../../.devcontainer/prompts/generic_forward_progress_task.md

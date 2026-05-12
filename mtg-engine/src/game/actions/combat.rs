@@ -506,6 +506,12 @@ impl GameState {
         // Track creatures dealt deathtouch damage (for state-based destruction)
         let mut deathtouch_damaged_creatures: std::collections::BTreeSet<CardId> = std::collections::BTreeSet::new();
 
+        // Capture initial life totals so that per-attacker player damage logs can show a
+        // running "(life: X)" suffix that decreases as multiple attackers connect.
+        // Damage hasn't been applied to players yet (that happens later in this function),
+        // so we compute life_after = initial_life - cumulative_damage_to_players[player].
+        let initial_player_lives: BTreeMap<PlayerId, i32> = self.players.iter().map(|p| (p.id, p.life)).collect();
+
         // Use iterator again for second pass (zero allocation)
         for attacker_id in self.combat.attackers_iter() {
             // Skip creatures that are no longer on the battlefield
@@ -548,6 +554,10 @@ impl GameState {
                 let has_trample = self.has_keyword_with_effects(attacker_id, Keyword::Trample);
                 let has_deathtouch = self.has_keyword_with_effects(attacker_id, Keyword::Deathtouch);
 
+                // Resolve attacker name for per-direction damage logs (Arc<str> clone is cheap)
+                let attacker_name_owned = self.cards.get(attacker_id).map(|c| c.name.clone()).ok();
+                let attacker_name: &str = attacker_name_owned.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
+
                 // Check if we have SMART damage assignment for this attacker
                 if let Some(assignments) = damage_assignments.get(&attacker_id) {
                     // Use explicit damage assignments from SMART algorithm
@@ -558,6 +568,8 @@ impl GameState {
                             if has_deathtouch {
                                 deathtouch_damaged_creatures.insert(*blocker_id);
                             }
+                            // Log per-direction damage: attacker -> blocker
+                            self.log_combat_damage_to_creature(attacker_name, attacker_id, *blocker_id, *damage);
                             remaining_power -= damage;
                         }
                     }
@@ -567,6 +579,16 @@ impl GameState {
                         if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
                             *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                            // Log per-direction damage: attacker -> player (with running life)
+                            let life_after = initial_player_lives.get(&defending_player).copied().unwrap_or(0)
+                                - damage_to_players.get(&defending_player).copied().unwrap_or(0);
+                            self.log_combat_damage_to_player(
+                                attacker_name,
+                                attacker_id,
+                                defending_player,
+                                remaining_power,
+                                life_after,
+                            );
                             // Track for DealsCombatDamage triggers
                             creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                         }
@@ -601,6 +623,13 @@ impl GameState {
                             if has_deathtouch {
                                 deathtouch_damaged_creatures.insert(*blocker_id);
                             }
+                            // Log per-direction damage: attacker -> blocker
+                            self.log_combat_damage_to_creature(
+                                attacker_name,
+                                attacker_id,
+                                *blocker_id,
+                                damage_to_assign,
+                            );
                             remaining_power -= damage_to_assign;
                         }
                     }
@@ -610,6 +639,16 @@ impl GameState {
                         if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
                             *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                            // Log per-direction damage: attacker -> player (with running life)
+                            let life_after = initial_player_lives.get(&defending_player).copied().unwrap_or(0)
+                                - damage_to_players.get(&defending_player).copied().unwrap_or(0);
+                            self.log_combat_damage_to_player(
+                                attacker_name,
+                                attacker_id,
+                                defending_player,
+                                remaining_power,
+                                life_after,
+                            );
                             // Track for DealsCombatDamage triggers
                             creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                         }
@@ -641,6 +680,7 @@ impl GameState {
                     }
 
                     // Use effective power (includes Equipment buffs)
+                    let blocker_name = blocker.name.clone();
                     let blocker_power = self
                         .get_effective_power(*blocker_id)
                         .unwrap_or_else(|_| i32::from(blocker.current_power()));
@@ -653,6 +693,13 @@ impl GameState {
                         if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
                             deathtouch_damaged_creatures.insert(attacker_id);
                         }
+                        // Log per-direction damage: blocker -> attacker
+                        self.log_combat_damage_to_creature(
+                            blocker_name.as_str(),
+                            *blocker_id,
+                            attacker_id,
+                            blocker_power,
+                        );
                     }
                 }
             } else {
@@ -661,6 +708,18 @@ impl GameState {
                     *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                     // Track damage for lifelink
                     *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
+                    // Log per-direction damage: attacker -> player (with running life)
+                    let attacker_name_owned = self.cards.get(attacker_id).map(|c| c.name.clone()).ok();
+                    let attacker_name: &str = attacker_name_owned.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
+                    let life_after = initial_player_lives.get(&defending_player).copied().unwrap_or(0)
+                        - damage_to_players.get(&defending_player).copied().unwrap_or(0);
+                    self.log_combat_damage_to_player(
+                        attacker_name,
+                        attacker_id,
+                        defending_player,
+                        remaining_power,
+                        life_after,
+                    );
                     // Track for DealsCombatDamage triggers
                     creatures_that_dealt_player_damage.push((attacker_id, defending_player, remaining_power));
                 }
@@ -826,5 +885,48 @@ impl GameState {
         }
 
         Ok(())
+    }
+
+    /// Log a per-direction creature-vs-creature combat damage assignment.
+    ///
+    /// Format: `"<Source name> (<id>) deals <N> damage to <Target name> (<id>)"`.
+    /// This appears BEFORE any "<X> dies from combat damage" line, so the reader
+    /// can see exactly how much damage each creature dealt that led to the death.
+    fn log_combat_damage_to_creature(&self, source_name: &str, source_id: CardId, target_id: CardId, amount: i32) {
+        if amount <= 0 {
+            return;
+        }
+        let target_name = self.cards.get(target_id).map(|c| c.name.clone()).ok();
+        let target_str: &str = target_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
+        self.logger.gamelog(&format!(
+            "{source_name} ({source_id}) deals {amount} damage to {target_str} ({target_id})"
+        ));
+    }
+
+    /// Log a per-direction creature-to-player combat damage event.
+    ///
+    /// Format: `"<Source name> (<id>) deals <N> damage to <Player> (life: <X>)"`.
+    /// `life_after` is the projected post-damage life total accounting for any
+    /// damage already logged this combat step against the same player (so two
+    /// unblocked attackers ticking the same player down show a falling life
+    /// total instead of two identical "(life: ...)" snapshots).
+    fn log_combat_damage_to_player(
+        &self,
+        source_name: &str,
+        source_id: CardId,
+        target_player: PlayerId,
+        amount: i32,
+        life_after: i32,
+    ) {
+        if amount <= 0 {
+            return;
+        }
+        let player_name = self
+            .get_player(target_player)
+            .map(|p| p.name.as_str().to_string())
+            .unwrap_or_else(|_| format!("Player {target_player:?}"));
+        self.logger.gamelog(&format!(
+            "{source_name} ({source_id}) deals {amount} damage to {player_name} (life: {life_after})"
+        ));
     }
 }

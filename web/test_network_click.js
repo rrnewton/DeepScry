@@ -66,12 +66,14 @@ function log(msg) {
         server.stdout.on('data', d => serverLogs.push(d.toString()));
         server.stderr.on('data', d => serverLogs.push(d.toString()));
 
-        // Wait for server to be ready
+        // Wait for server to be ready. Connect via 127.0.0.1 (not localhost)
+        // to avoid Node 17+ Happy-Eyeballs picking IPv6 ::1, which the
+        // server doesn't bind to. See test_network_utils.js for context.
         const WebSocket = require('ws');
         let serverReady = false;
         for (let i = 0; i < 20; i++) {
             try {
-                const ws = new WebSocket(`ws://localhost:${SERVER_PORT}`);
+                const ws = new WebSocket(`ws://127.0.0.1:${SERVER_PORT}`);
                 await new Promise((resolve, reject) => {
                     ws.on('open', () => { ws.close(); resolve(); });
                     ws.on('error', reject);
@@ -81,7 +83,12 @@ function log(msg) {
                 break;
             } catch { await new Promise(r => setTimeout(r, 500)); }
         }
-        if (!serverReady) throw new Error('Server failed to start');
+        if (!serverReady) {
+            // Surface server output so we can debug why it never came up.
+            console.error('=== Server logs ===');
+            console.error(serverLogs.join(''));
+            throw new Error('Server failed to start');
+        }
         log('Game server ready');
 
         // Start native client as P2 (heuristic AI) - pass many times to keep game going

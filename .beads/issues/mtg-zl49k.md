@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-01-13T15:16:26.717056659+00:00
-updated_at: 2026-01-13T15:16:26.717056659+00:00
+updated_at: 2026-05-12T14:01:04.507316546+00:00
 ---
 
 # Description
@@ -72,3 +72,7 @@ This would allow automated Playwright e2e tests to catch these regressions.
 - [ ] Heartless Act targets once and resolves correctly (still investigating)
 - [x] Monotonicity invariants added with clear error reporting
 - [ ] Playwright e2e tests catch invariant violations (manual testing needed)
+
+# Notes
+
+[2026-05-12 audit] Active investigation lives in tg task 'bug-missing-turn-headers' (P0) — see notes there. Latest scaffolding for rewind/replay debug loop landed in commit f0a0f954 ('debug scaffolding for the rewind/replay loop'). Bug 1 (every other turn) was fixed by f0af0604 but a NEW Turn-11-missing variant has reappeared in fancy.html with rewind+human controller path; native CLI verified clean.

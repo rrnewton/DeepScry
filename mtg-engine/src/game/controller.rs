@@ -714,6 +714,17 @@ impl<'a> GameStateView<'a> {
         &self.game.logger
     }
 
+    /// Read-only access to the underlying `GameState`.
+    ///
+    /// Intended for shared rules helpers (e.g. `combat_rules::can_block`)
+    /// that already accept a `&GameState`. Controllers should still prefer
+    /// the dedicated accessors above; this exists so that controller code
+    /// can call into rules helpers without piercing the view abstraction
+    /// at every site.
+    pub fn game(&self) -> &GameState {
+        self.game
+    }
+
     /// Get player's current life total
     pub fn life(&self) -> i32 {
         self.game.get_player(self.player_id).ok().map(|p| p.life).unwrap_or(0)

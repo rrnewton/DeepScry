@@ -8,12 +8,19 @@ Usage:
     ./agentplay/start_game.py decks/simple_bolt.dck decks/simple_bolt.dck
     ./agentplay/start_game.py --game-dir=my_test.game decks/a.dck decks/b.dck
     ./agentplay/start_game.py --seed=7 decks/a.dck decks/b.dck
+
+Output:
+    The script prints the cumulative game log followed by the upcoming
+    choice menu, with turn / step / choice-context context lines so an
+    agent (or human) can immediately tell what is happening. The full
+    game-state JSON is NOT echoed to stdout: it is already saved to
+    `<game-dir>/snapshot.json` and re-reading the file is the supported
+    way to inspect detailed state.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -21,6 +28,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agentplay.lib.engine import GameEngine
+from agentplay.lib.session_io import (
+    print_choice_block,
+    print_log_segment,
+    record_log_segment,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,25 +54,22 @@ def main(argv: list[str] | None = None) -> int:
     engine = GameEngine(seed=args.seed, game_dir=args.game_dir, verbose=args.verbose)
     engine.set_initial_args(mtg_args)
 
-    print(f"Starting new game in {engine.game_dir.name}", file=sys.stderr)
+    print(f"Starting new game in {engine.game_dir.name}")
     try:
         snapshot = engine.start_game()
     except (RuntimeError, FileExistsError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    choices = snapshot.get("choices", [])
-    active = snapshot.get("active_player")
-    player = "p1" if str(active) == "0" else "p2"
-    print(f"Game started. {player}'s turn. {len(choices)} choice(s) available.", file=sys.stderr)
-    if choices:
-        print("[0] pass", file=sys.stderr)
-        for i, c in enumerate(choices, 1):
-            print(f"[{i}] {c}", file=sys.stderr)
-    print(f"\nContinue with: ./agentplay/continue_game.py {player} <choice>", file=sys.stderr)
+    log_tail = snapshot.get("log_tail", "")
+    print_log_segment(log_tail)
+    record_log_segment(engine.game_dir / "game.log", log_tail)
 
-    json.dump(snapshot, sys.stdout, indent=2)
-    print()
+    print_choice_block(
+        snapshot,
+        choice_number=engine.total_choices_made() + 1,
+        game_dir_name=engine.game_dir.name,
+    )
     return 0
 
 

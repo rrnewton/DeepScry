@@ -34,6 +34,7 @@
 use crate::core::{CardId, Color, Keyword, KeywordArgs};
 use crate::game::controller::GameStateView;
 use crate::game::state::GameState;
+use smallvec::SmallVec;
 
 /// Returns `true` if `blocker_id` may legally be assigned to block `attacker_id`
 /// in the current game state, ignoring multi-blocker rules (Menace) and
@@ -132,4 +133,36 @@ fn can_block_impl(game: &GameState, attacker_id: CardId, blocker_id: CardId, vie
     }
 
     true
+}
+
+/// Returns `true` if `blocker_id` can legally block at least one of the
+/// supplied `attackers`. Used by the engine to filter the
+/// "available blockers" list before passing it to a controller, so the
+/// UI never offers a creature that has no legal target at all (e.g. a
+/// non-flying, non-reach blocker when every attacker has Flying).
+///
+/// Note: this is a *necessary* condition for being a useful blocker, not
+/// a sufficient one — Menace (which needs 2+ blockers per attacker) is
+/// still validated downstream by `validate_blocking_restrictions`.
+pub fn is_useful_blocker(game: &GameState, blocker_id: CardId, attackers: &[CardId]) -> bool {
+    attackers
+        .iter()
+        .any(|&attacker_id| can_block(game, attacker_id, blocker_id))
+}
+
+/// Returns the subset of `attackers` that `blocker_id` may legally block.
+/// Used by interactive controllers to build per-blocker menus that show
+/// only the attackers a given creature can actually block, mirroring the
+/// engine's `validate_blocking_restrictions` so the engine never silently
+/// drops a choice the UI offered.
+pub fn legal_attackers_for_blocker(
+    game: &GameState,
+    blocker_id: CardId,
+    attackers: &[CardId],
+) -> SmallVec<[CardId; 8]> {
+    attackers
+        .iter()
+        .copied()
+        .filter(|&attacker_id| can_block(game, attacker_id, blocker_id))
+        .collect()
 }

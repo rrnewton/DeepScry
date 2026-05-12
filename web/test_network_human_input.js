@@ -17,7 +17,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { getRandomPorts } = require('./test_network_utils');
+const { getRandomPorts, enableReplayVerifier } = require('./test_network_utils');
 
 // Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test_human';
@@ -40,7 +40,7 @@ async function waitForServer(port, maxAttempts = 30) {
     const WebSocket = require('ws');
     for (let i = 0; i < maxAttempts; i++) {
         try {
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve, reject) => {
                 ws.on('open', () => { ws.close(); resolve(); });
                 ws.on('error', reject);
@@ -174,10 +174,11 @@ function decideKey(prompt) {
                 return { key: castMatch[1], reason: 'cast spell' };
             }
 
-            // NOTE: Don't activate abilities for now.
-            // Bazaar of Baghdad's "draw 2, discard 3" creates multi-card discard
-            // that the FancyTUI single-selection UI can't handle yet.
-            // TODO: Re-enable once multi-card discard UI is implemented.
+            // NOTE: Don't activate abilities by default in this test.
+            // Multi-card discard (e.g. Bazaar of Baghdad's "draw 2, discard 3")
+            // is now supported via the discard staging UI in fancy_tui.rs, but
+            // this fixed-script driver still picks Pass to keep the test
+            // deterministic; activate-ability handling can be added separately.
 
             // Default: Pass priority (choice [0] = "pass")
             return { key: '0', reason: 'pass priority' };
@@ -432,6 +433,16 @@ async function runTest() {
         // Wait for WASM to load
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
         log('WASM loaded');
+
+        // Enable rewind/replay verifier (the local checkForFatalErrors above
+        // now matches REWIND/REPLAY FATAL). Network + human + this test's
+        // tight choice loop is exactly the scenario the verifier was designed
+        // for: every choice triggers a rewind/replay round-trip with a
+        // network handshake in the middle. Belt-and-braces with the
+        // #debug-mode checkbox below — fancy.html only flips the flag inside
+        // its launch handler when debug mode is on.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Select Network game mode
         await page.selectOption('#game-mode', 'network');

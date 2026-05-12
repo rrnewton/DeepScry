@@ -169,3 +169,60 @@ fn vanilla_creatures_can_block() {
         "vanilla creature must be a legal blocker for a vanilla attacker"
     );
 }
+
+#[test]
+fn is_useful_blocker_filters_unblockable_creatures() {
+    // Repro of mtg-bug-blockers-native-tui: defender has only ground
+    // creatures and the only attacker is a flyer. `is_useful_blocker`
+    // must return false for the ground creatures so the engine never
+    // offers them as blockers (which would lead validation to silently
+    // drop the assignment).
+    let mut game = GameState::new_two_player("Eric".to_string(), "Gabriel".to_string(), 20);
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+
+    let glider_kids = add_creature(&mut game, "Glider Kids", p2, 2, 3, &[Keyword::Flying], &[Color::White]);
+    let knowledge = add_creature(&mut game, "Knowledge Seeker", p1, 2, 1, &[], &[Color::Blue]);
+    let fortune = add_creature(&mut game, "Forecasting Fortune Teller", p1, 1, 2, &[], &[Color::Blue]);
+    let air_bender = add_creature(&mut game, "Air Bender", p1, 1, 1, &[Keyword::Flying], &[Color::Blue]);
+
+    let attackers = [glider_kids];
+    assert!(
+        !combat_rules::is_useful_blocker(&game, knowledge, &attackers),
+        "ground creature must not be reported as a useful blocker against a sole flying attacker"
+    );
+    assert!(
+        !combat_rules::is_useful_blocker(&game, fortune, &attackers),
+        "second ground creature must not be a useful blocker either"
+    );
+    assert!(
+        combat_rules::is_useful_blocker(&game, air_bender, &attackers),
+        "flying defender must remain a useful blocker"
+    );
+}
+
+#[test]
+fn legal_attackers_for_blocker_filters_per_pair() {
+    // Mixed combat: one flying attacker, one ground attacker. A non-evasive
+    // blocker must only see the ground attacker as a legal target; a flier
+    // must see both. Pins the per-pair filter that interactive controllers
+    // (fancy_tui_controller, interactive_controller) use to build their
+    // per-blocker menus.
+    let mut game = GameState::new_two_player("p1".to_string(), "p2".to_string(), 20);
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+
+    let flyer_atk = add_creature(&mut game, "Wind Drake", p2, 2, 2, &[Keyword::Flying], &[Color::Blue]);
+    let ground_atk = add_creature(&mut game, "Bear", p2, 2, 2, &[], &[Color::Green]);
+
+    let ground_blocker = add_creature(&mut game, "Squire", p1, 1, 2, &[], &[Color::White]);
+    let flying_blocker = add_creature(&mut game, "Air Bender", p1, 1, 1, &[Keyword::Flying], &[Color::Blue]);
+
+    let attackers = [flyer_atk, ground_atk];
+
+    let ground_choices = combat_rules::legal_attackers_for_blocker(&game, ground_blocker, &attackers);
+    assert_eq!(ground_choices.as_slice(), &[ground_atk]);
+
+    let flyer_choices = combat_rules::legal_attackers_for_blocker(&game, flying_blocker, &attackers);
+    assert_eq!(flyer_choices.as_slice(), &[flyer_atk, ground_atk]);
+}

@@ -1,0 +1,1 @@
+../../.devcontainer/prompts/integration_work.md
