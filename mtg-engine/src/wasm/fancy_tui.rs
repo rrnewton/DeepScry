@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
-use super::human_controller::{PendingChoice, WasmHumanController};
+use super::human_controller::{stage_discard_pick, PendingChoice, WasmHumanController};
 use super::rich_input_controller::WasmRichInputController;
 use super::{WasmCardDatabase, WasmControllerType};
 use crate::game::replay_controller::ReplayChoice;
@@ -1186,6 +1186,17 @@ struct WasmFancyTuiState {
     /// Recomputed in `update_choices_from_context` so we only need to
     /// store (and round-trip) legal, not-yet-staged options.
     blocker_choice_pairs: Vec<(usize, usize)>,
+    /// Multi-card discard staging state. Each element is an index into the
+    /// `ChoiceContext::Discard::hand` list that the user has staged in the
+    /// current Discard prompt. Auto-commits to the engine once `count` cards
+    /// have been staged. Required because the engine's `choose_cards_to_discard`
+    /// is a single call expecting all `count` cards at once (e.g. Bazaar of
+    /// Baghdad's "discard 3"), but the UI naturally collects picks one at a time.
+    staged_discard_indices: Vec<usize>,
+    /// Mapping from the current Discard prompt's displayed choice index to
+    /// the underlying hand index in `ChoiceContext::Discard::hand`. Recomputed
+    /// in `update_choices_from_context` so we only show not-yet-staged cards.
+    discard_choice_indices: Vec<usize>,
 }
 
 impl WasmFancyTuiState {
@@ -1284,6 +1295,8 @@ impl WasmFancyTuiState {
             in_rewind_replay: false,
             staged_blocker_pairs: Vec::new(),
             blocker_choice_pairs: Vec::new(),
+            staged_discard_indices: Vec::new(),
+            discard_choice_indices: Vec::new(),
         }
     }
 
@@ -2186,6 +2199,13 @@ impl WasmFancyTuiState {
             self.staged_blocker_pairs.clear();
             self.blocker_choice_pairs.clear();
         }
+        // Drop any in-flight multi-card discard staging when we leave the
+        // Discard prompt, otherwise stale staged indices could leak into a
+        // future Discard prompt (different hand contents, different intent).
+        if !matches!(context, ChoiceContext::Discard { .. }) {
+            self.staged_discard_indices.clear();
+            self.discard_choice_indices.clear();
+        }
         let choices: Vec<String> = match context {
             ChoiceContext::SpellAbility { formatted_choices, .. } => formatted_choices.clone(),
             ChoiceContext::Targets { formatted_targets, .. } => {
@@ -2235,7 +2255,20 @@ impl WasmFancyTuiState {
                 choices
             }
             ChoiceContext::DamageOrder { formatted_blockers, .. } => formatted_blockers.clone(),
-            ChoiceContext::Discard { formatted_hand, .. } => formatted_hand.clone(),
+            ChoiceContext::Discard { formatted_hand, .. } => {
+                // Rebuild the index map so it stays in sync with the choices we
+                // display below: skip cards the user has already staged this prompt.
+                self.discard_choice_indices.clear();
+                let mut choices = Vec::new();
+                for (hand_idx, label) in formatted_hand.iter().enumerate() {
+                    if self.staged_discard_indices.contains(&hand_idx) {
+                        continue;
+                    }
+                    choices.push(label.clone());
+                    self.discard_choice_indices.push(hand_idx);
+                }
+                choices
+            }
             ChoiceContext::LibrarySearch { formatted_cards, .. } => {
                 let mut choices = vec!["Fail to find".to_string()];
                 choices.extend(formatted_cards.clone());
@@ -2307,7 +2340,22 @@ impl WasmFancyTuiState {
                 }
             }
             ChoiceContext::DamageOrder { .. } => PROMPT_DAMAGE_ORDER.to_string(),
-            ChoiceContext::Discard { count, .. } => prompt_discard(*count),
+            ChoiceContext::Discard {
+                count, formatted_hand, ..
+            } => {
+                let base = prompt_discard(*count);
+                if self.staged_discard_indices.is_empty() {
+                    base
+                } else {
+                    let staged: Vec<String> = self
+                        .staged_discard_indices
+                        .iter()
+                        .map(|i| formatted_hand.get(*i).cloned().unwrap_or_default())
+                        .collect();
+                    let remaining = count.saturating_sub(self.staged_discard_indices.len());
+                    format!("{} (staged: {}; pick {} more)", base, staged.join(", "), remaining)
+                }
+            }
             ChoiceContext::LibrarySearch { .. } => PROMPT_LIBRARY_SEARCH.to_string(),
             ChoiceContext::SacrificePermanents {
                 count,
@@ -2406,7 +2454,34 @@ impl WasmFancyTuiState {
                     }
                 }
                 ChoiceContext::DamageOrder { .. } => PendingChoice::DamageOrder(vec![idx]),
-                ChoiceContext::Discard { .. } => PendingChoice::Discard(vec![idx]),
+                ChoiceContext::Discard { count, .. } => {
+                    // Multi-card discard: stage the picked card and re-render.
+                    // Once `count` cards are staged, auto-commit the full Discard
+                    // choice. The engine asks for ALL `count` cards in a single
+                    // call (e.g. Bazaar of Baghdad's "discard 3"), so we must
+                    // accumulate selections client-side before submitting.
+                    let count = *count;
+                    match stage_discard_pick(
+                        &mut self.staged_discard_indices,
+                        &self.discard_choice_indices,
+                        idx,
+                        count,
+                    ) {
+                        None => {
+                            let context = self.pending_context.clone().unwrap();
+                            // Reset selection to the first remaining option so a
+                            // quick second Enter picks the next card.
+                            self.selected_choice_idx = 0;
+                            self.update_choices_from_context(&context);
+                            self.needs_redraw = true;
+                            return;
+                        }
+                        Some(pending) => {
+                            self.discard_choice_indices.clear();
+                            pending
+                        }
+                    }
+                }
                 ChoiceContext::LibrarySearch { .. } => {
                     if idx == 0 {
                         PendingChoice::LibrarySearch(None)

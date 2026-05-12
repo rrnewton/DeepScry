@@ -174,10 +174,11 @@ function decideKey(prompt) {
                 return { key: castMatch[1], reason: 'cast spell' };
             }
 
-            // NOTE: Don't activate abilities for now.
-            // Bazaar of Baghdad's "draw 2, discard 3" creates multi-card discard
-            // that the FancyTUI single-selection UI can't handle yet.
-            // TODO: Re-enable once multi-card discard UI is implemented.
+            // NOTE: Don't activate abilities by default in this test.
+            // Multi-card discard (e.g. Bazaar of Baghdad's "draw 2, discard 3")
+            // is now supported via the discard staging UI in fancy_tui.rs, but
+            // this fixed-script driver still picks Pass to keep the test
+            // deterministic; activate-ability handling can be added separately.
 
             // Default: Pass priority (choice [0] = "pass")
             return { key: '0', reason: 'pass priority' };
