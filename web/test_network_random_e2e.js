@@ -11,6 +11,7 @@ const { chromium } = require('playwright');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
 
 // Configuration (should match launch_network_game.sh)
 const SERVER_PORT = 17771;
@@ -174,6 +175,16 @@ async function runTest() {
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
         log('WASM loaded');
+
+        // Enable rewind/replay verifier so any post-replay state divergence
+        // surfaces as a "REWIND/REPLAY FATAL" entry (see fancy_tui.rs and
+        // replay_verifier.rs). This test runs the Random controller in a
+        // network game; even though Random itself doesn't drive rewinds,
+        // the WASM TUI rewinds whenever a human-style choice gets resumed,
+        // and we want any divergence from a network round-trip to fail
+        // the test rather than silently corrupting state.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Enable debug logging to diagnose hang issues
         await page.evaluate(() => {
@@ -399,6 +410,18 @@ async function runTest() {
             testResults.desyncErrors = desyncErrors;
             testResults.result = 'FAILED';
             testResults.message = `SYNC FAILURE: ${desyncErrors.length} sync errors detected`;
+        }
+
+        // Also check for REWIND/REPLAY FATAL entries surfaced by the
+        // verifier we enabled above. checkForFatalErrors already covers
+        // DESYNC patterns, but matching it explicitly here lets us label
+        // the failure mode distinctly in test output.
+        const fatalLog = checkForFatalErrors(testResults.browserLogs);
+        if (fatalLog && fatalLog.toUpperCase().includes('REWIND/REPLAY FATAL')) {
+            log(`FATAL: replay-verifier divergence detected: ${fatalLog}`);
+            testResults.replayVerifierError = fatalLog;
+            testResults.result = 'FAILED';
+            testResults.message = `REPLAY VERIFIER FAILURE: ${fatalLog}`;
         }
 
         return testResults;

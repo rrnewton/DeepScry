@@ -94,12 +94,18 @@ async function extractTerminalText(page) {
 }
 
 // Check for fatal errors in browser console logs
-// Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal
+// Per NETWORK_ARCHITECTURE.md: desync is ALWAYS fatal.
+// REWIND/REPLAY FATAL is surfaced by the rewind/replay verifier in
+// fancy_tui.rs (replay_verifier::ReplayCheckOutcome::fatal_message). When
+// `enableReplayVerifier(page)` has been called for this test, ANY occurrence
+// of that string means the post-replay state diverged from the pre-rewind
+// snapshot — same severity as a network desync and absolutely a test failure.
 function checkForFatalErrors(browserLogs) {
     const fatalPatterns = [
         'MONOTONICITY VIOLATION',
         'FATAL DESYNC',
         'DESYNC',
+        'REWIND/REPLAY FATAL',
         'unreachable',
         'panic',
     ];
@@ -111,6 +117,38 @@ function checkForFatalErrors(browserLogs) {
         }
     }
     return null;
+}
+
+// Enable the WASM rewind/replay verifier on the given Playwright page.
+//
+// The verifier is implemented in mtg-engine/src/wasm/replay_verifier.rs and
+// wired into fancy_tui.rs via the wasm-bindgen export
+// `tui_set_verify_rewind_replay(bool)`. When enabled, every rewind to a turn
+// boundary captures a snapshot (state hash, action count, log tail) and the
+// post-replay state is compared against it. Any divergence is logged at
+// ERROR level with a "REWIND/REPLAY FATAL" prefix — which `checkForFatalErrors`
+// above treats as a hard test failure.
+//
+// Call this AFTER `#launcher.show` is visible (i.e. WASM has finished
+// initialising) but BEFORE the game launch button is clicked. The Rust side
+// gracefully handles being called before the TUI state is initialised — it
+// stashes the flag and applies it at next launch — but calling post-WASM-init
+// avoids the warning log.
+//
+// Returns true if the export was available and called, false if the WASM
+// build does not include it (e.g. very old build). Tests should treat false
+// as a soft warning, NOT a failure: the verifier is a debug aid, not a
+// runtime requirement.
+async function enableReplayVerifier(page) {
+    return await page.evaluate(() => {
+        if (typeof tui_set_verify_rewind_replay === 'function') {
+            tui_set_verify_rewind_replay(true);
+            console.log('[Test] tui_set_verify_rewind_replay(true) called');
+            return true;
+        }
+        console.log('[Test] tui_set_verify_rewind_replay not exported by this WASM build');
+        return false;
+    });
 }
 
 // Classify what kind of choice prompt is on screen
@@ -269,6 +307,7 @@ module.exports = {
     waitForServer,
     extractTerminalText,
     checkForFatalErrors,
+    enableReplayVerifier,
     classifyPrompt,
     decideKey,
     submitChoice,

@@ -12,6 +12,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
 
 // Timestamped logging for correlation with server logs
 function log(message) {
@@ -100,6 +101,16 @@ async function runTest() {
         });
 
         log('=== WASM Module Loaded ===');
+
+        // Enable the rewind/replay verifier so any divergence between the
+        // pre-rewind snapshot and the post-replay state surfaces as a
+        // "REWIND/REPLAY FATAL" log entry that this test treats as failure.
+        // Heuristic-vs-heuristic games don't normally rewind (only the human
+        // controller path triggers rewind/replay), but the toggle is cheap
+        // and harmless when no rewinds occur — and it guards future test
+        // additions that DO drive human input through this script.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Get status
         const status = await page.evaluate(() => {
@@ -377,6 +388,17 @@ async function runTest() {
         if (hasPanicError) {
             log('=== WASM Panic Detected ===');
             throw new Error('WASM panicked during test');
+        }
+
+        // Check for REWIND/REPLAY FATAL or other fatal patterns surfaced via
+        // the browser console. checkForFatalErrors covers desync messages and
+        // — since this commit — replay-verifier divergences. Treat any hit as
+        // a hard failure; the verifier is too noisy to ignore.
+        const fatalLog = checkForFatalErrors(testResults.browserLogs);
+        if (fatalLog) {
+            log('=== Fatal browser-log entry detected ===');
+            log(fatalLog);
+            throw new Error(`Fatal browser-log entry detected: ${fatalLog}`);
         }
 
         // Test exit button

@@ -17,7 +17,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const { getRandomPorts } = require('./test_network_utils');
+const { getRandomPorts, enableReplayVerifier } = require('./test_network_utils');
 
 // Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test_human';
@@ -433,6 +433,16 @@ async function runTest() {
         // Wait for WASM to load
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
         log('WASM loaded');
+
+        // Enable rewind/replay verifier (the local checkForFatalErrors above
+        // now matches REWIND/REPLAY FATAL). Network + human + this test's
+        // tight choice loop is exactly the scenario the verifier was designed
+        // for: every choice triggers a rewind/replay round-trip with a
+        // network handshake in the middle. Belt-and-braces with the
+        // #debug-mode checkbox below — fancy.html only flips the flag inside
+        // its launch handler when debug mode is on.
+        const verifierEnabled = await enableReplayVerifier(page);
+        log(`Replay verifier enabled: ${verifierEnabled}`);
 
         // Select Network game mode
         await page.selectOption('#game-mode', 'network');

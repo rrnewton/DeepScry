@@ -1161,6 +1161,16 @@ Name=My Deck
         // Usage: setLogLevel("debug") or setLogLevel("trace")
         window.setLogLevel = set_log_level;
 
+        // Expose the rewind/replay verifier toggle on window so Playwright
+        // E2E tests (and ad-hoc devtools sessions) can flip it without
+        // having to pretend to be inside this module's scope. Tests check
+        // for `typeof tui_set_verify_rewind_replay === 'function'` on the
+        // page's global object — without this assignment the module-scoped
+        // import is invisible to page.evaluate(). See
+        // web/test_network_utils.js::enableReplayVerifier and
+        // mtg-engine/src/wasm/replay_verifier.rs for the wiring.
+        window.tui_set_verify_rewind_replay = tui_set_verify_rewind_replay;
+
         let cardDb = null;
         let deckIndex = null;  // Deck metadata from deck_index.json
 
