@@ -259,6 +259,7 @@ pub fn verify_replay(
 }
 
 #[cfg(test)]
+#[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use super::*;
     use crate::game::logger::LogEntry;
