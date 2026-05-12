@@ -2080,11 +2080,13 @@ async fn run_tui(
     // Persist the full in-memory game log to /tmp for post-game review.
     // This works for both fancy TUI (logs were captured via OutputMode::Memory)
     // and non-fancy CLI tui mode (captured via OutputMode::Both above). We use
-    // println! so the message is visible on the terminal even when the TUI has
-    // redirected env_logger output to a file.
+    // eprintln! so the message reaches the terminal even when the TUI has
+    // redirected env_logger output to a file, while keeping stdout
+    // deterministic (the timestamped path would otherwise break stdout-based
+    // determinism comparisons in tests/determinism_e2e.rs).
     match save_game_log_to_tmp(&game.logger) {
         Ok(Some(log_path)) => {
-            println!("Log saved to {}", log_path.display());
+            eprintln!("Log saved to {}", log_path.display());
         }
         Ok(None) => {
             // No log entries to save (game produced no output) — silent skip.
@@ -2818,7 +2820,7 @@ async fn run_resume(
     // Mirrors the logic at the end of `run_tui`.
     match save_game_log_to_tmp(&game.logger) {
         Ok(Some(log_path)) => {
-            println!("Log saved to {}", log_path.display());
+            eprintln!("Log saved to {}", log_path.display());
         }
         Ok(None) => {
             // No log entries to save (game produced no output) — silent skip.
