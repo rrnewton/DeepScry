@@ -325,7 +325,7 @@ The full hash check catches **all** state divergences.
 This includes:
 - E2E tests (`web/test_network_*.js`, `tests/network_vs_local_equivalence_e2e.sh`)
 - Bug-finding infrastructure (`bug_finding/network_test_lib.py`)
-- Launch helpers (`scripts/launch_network_game.sh`, `scripts/play-web.sh`)
+- Launch helpers (`scripts/play-web.sh`)
 - Manual testing scripts (`scripts/network_desync_reproducer.sh`)
 
 If you create a new test or script that launches a network server, add `--network-debug`.
