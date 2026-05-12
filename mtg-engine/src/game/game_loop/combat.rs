@@ -368,7 +368,11 @@ impl<'a> GameLoop<'a> {
             if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                 self.game.logger.normal("--- First Strike Combat Damage ---");
             }
-            self.log_combat_damage(true)?;
+            // Per-direction damage lines ("X (id) deals N damage to Y (id)") and
+            // unblocked-attacker player damage lines are emitted from within
+            // `assign_combat_damage` itself, so the reader sees the actual damage
+            // applied (including SMART multi-blocker assignments) right before any
+            // resulting "X dies from combat damage" lines.
             self.game.assign_combat_damage(controller1, controller2, true)?;
             self.game.turn.combat_first_strike_damage_dealt_turn = Some(current_turn);
 
@@ -402,7 +406,7 @@ impl<'a> GameLoop<'a> {
             if self.verbosity >= VerbosityLevel::Normal && first_strike_damage_dealt && !self.replaying {
                 self.game.logger.normal("--- Normal Combat Damage ---");
             }
-            self.log_combat_damage(false)?;
+            // Per-direction damage lines emitted from within assign_combat_damage (see above).
             self.game.assign_combat_damage(controller1, controller2, false)?;
             self.game.turn.combat_damage_dealt_turn = Some(current_turn);
 
@@ -447,92 +451,6 @@ impl<'a> GameLoop<'a> {
         }
 
         false
-    }
-
-    /// Log combat damage for debugging
-    pub(super) fn log_combat_damage(&self, first_strike_step: bool) -> Result<()> {
-        if self.verbosity < VerbosityLevel::Normal || self.replaying {
-            return Ok(());
-        }
-
-        let mut attackers = self.game.combat.get_attackers();
-        // Sort for deterministic logging output
-        attackers.sort_by_key(|id| id.as_u32());
-
-        for attacker_id in &attackers {
-            // Skip creatures that are no longer on the battlefield
-            // MTG Rule 510.1c: Only creatures still on the battlefield deal combat damage
-            if !self.game.battlefield.contains(*attacker_id) {
-                continue;
-            }
-
-            if let Ok(attacker) = self.game.cards.get(*attacker_id) {
-                // Check if this attacker deals damage in this step
-                let deals_damage = if first_strike_step {
-                    attacker.has_first_strike() || attacker.has_double_strike()
-                } else {
-                    attacker.has_normal_strike()
-                };
-
-                if !deals_damage {
-                    continue;
-                }
-
-                // Use effective power for accurate display (includes anthem/equipment effects)
-                let power = self
-                    .game
-                    .get_effective_power(*attacker_id)
-                    .unwrap_or_else(|_| i32::from(attacker.current_power()));
-                let attacker_name = &attacker.name;
-
-                if self.game.combat.is_blocked(*attacker_id) {
-                    let mut blockers = self.game.combat.get_blockers(*attacker_id);
-                    // Sort for deterministic logging output
-                    blockers.sort_by_key(|id| id.as_u32());
-                    for blocker_id in &blockers {
-                        if let Ok(blocker) = self.game.cards.get(*blocker_id) {
-                            // Check if blocker deals damage in this step
-                            let blocker_deals_damage = if first_strike_step {
-                                blocker.has_first_strike() || blocker.has_double_strike()
-                            } else {
-                                blocker.has_normal_strike()
-                            };
-
-                            if !blocker_deals_damage {
-                                continue;
-                            }
-
-                            let blocker_power = self
-                                .game
-                                .get_effective_power(*blocker_id)
-                                .unwrap_or_else(|_| i32::from(blocker.current_power()));
-                            let blocker_name = &blocker.name;
-                            let message = format!(
-                                "Combat: {attacker_name} ({attacker_id}) ({power} damage) ↔ {blocker_name} ({blocker_id}) ({blocker_power} damage)"
-                            );
-                            // Use gamelog for official game action
-                            self.game.logger.gamelog(&message);
-                        }
-                    }
-                } else {
-                    // Unblocked attacker
-                    if let Some(defending_player) = self.game.combat.get_defending_player(*attacker_id) {
-                        let defender_name = self.get_player_name(defending_player);
-                        if power > 0 {
-                            // Get life BEFORE damage for the log (damage applied later in deal_combat_damage)
-                            let current_life = self.game.get_player(defending_player).map(|p| p.life).unwrap_or(0);
-                            let life_after = current_life - power;
-                            let message =
-                                format!("{attacker_name} ({attacker_id}) deals {power} damage to {defender_name} (life: {life_after})");
-                            // Use gamelog for official game action
-                            self.game.logger.gamelog(&message);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Validate blocker assignments for blocking restrictions.
