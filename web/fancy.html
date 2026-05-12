@@ -1084,7 +1084,8 @@ Name=My Deck
             set_p1_fixed_script,
             clear_p1_fixed_script,
             cleanup_tui_state,
-            set_log_level
+            set_log_level,
+            tui_set_verify_rewind_replay
         } from './pkg/mtg_forge_rs.js';
 
         // Deck builder imports - optional (only available when built with wasm-tui feature)
@@ -2850,6 +2851,17 @@ Name=My Deck
                     );
 
                     tuiLaunched = true;
+
+                    // If "Debug Mode" is on, also enable proactive verification
+                    // of the WASM rewind/replay loop. This captures the
+                    // pre-rewind state hash + log tail and compares them against
+                    // the post-replay state, surfacing a fatal error on any
+                    // divergence. Off by default to keep production play
+                    // zero-overhead.
+                    if (debugMode && typeof tui_set_verify_rewind_replay === 'function') {
+                        tui_set_verify_rewind_replay(true);
+                        console.log('[DEBUG] Rewind/replay verification enabled');
+                    }
 
                     // Add scroll wheel listener for log pane scrolling
                     const tuiTerminal = document.getElementById('ratzilla-terminal');

@@ -35,6 +35,9 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use super::human_controller::{stage_discard_pick, PendingChoice, WasmHumanController};
+use super::replay_verifier::{
+    capture_pre_rewind, finish_capture, record_turn_start_hash, verify_replay, PreRewindCapture, RewindVerification,
+};
 use super::rich_input_controller::WasmRichInputController;
 use super::{WasmCardDatabase, WasmControllerType};
 use crate::game::replay_controller::ReplayChoice;
@@ -98,6 +101,33 @@ pub fn cleanup_tui_state() {
         *s.borrow_mut() = None;
     });
     log::debug!(target: "wasm_tui", "Cleaned up global TUI state");
+}
+
+/// Toggle proactive verification of the WASM rewind/replay loop.
+///
+/// When enabled, every rewind to turn-start captures a snapshot (state hash,
+/// action count, log count, and the slice of log entries about to be
+/// truncated). After the subsequent replay, the regenerated log entries are
+/// compared one-for-one against the captured prefix and the post-rewind
+/// turn-start hash is checked against any prior cached value for the same
+/// turn. Any divergence is surfaced as a fatal error.
+///
+/// Off by default — `web/fancy.html` calls this with `true` whenever the
+/// "Debug Mode" checkbox is checked, so production play pays no cost.
+#[wasm_bindgen]
+pub fn tui_set_verify_rewind_replay(enabled: bool) {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            s.set_verify_rewind_replay(enabled);
+        } else {
+            log::debug!(
+                target: "wasm_tui",
+                "tui_set_verify_rewind_replay({}) called before TUI state initialized; will be applied at next launch",
+                enabled,
+            );
+        }
+    });
 }
 
 /// Set cell dimensions measured by JavaScript
@@ -1197,6 +1227,21 @@ struct WasmFancyTuiState {
     /// the underlying hand index in `ChoiceContext::Discard::hand`. Recomputed
     /// in `update_choices_from_context` so we only show not-yet-staged cards.
     discard_choice_indices: Vec<usize>,
+    /// Enable proactive verification of the rewind/replay loop. Off by
+    /// default; toggled on by JS when the "Debug Mode" checkbox in
+    /// `web/fancy.html` is checked. When off, every verification field is
+    /// untouched and the hot path costs nothing beyond a bool read.
+    verify_rewind_replay: bool,
+    /// Verification snapshot captured at the most recent rewind, ready to be
+    /// compared against once the replay completes. `None` between rewinds, or
+    /// any time `verify_rewind_replay` is false. See [`replay_verifier`] for
+    /// what the snapshot contains and how the post-replay check works.
+    pending_verification: Option<RewindVerification>,
+    /// Cache of `(turn_number -> turn-start state hash)` populated on each
+    /// rewind. Used to detect rewind drift: rewinding twice to the same turn
+    /// must produce the same hash, otherwise the undo log is no longer a
+    /// faithful inverse of forward play.
+    turn_start_hashes: HashMap<u32, u64>,
 }
 
 impl WasmFancyTuiState {
@@ -1297,6 +1342,9 @@ impl WasmFancyTuiState {
             blocker_choice_pairs: Vec::new(),
             staged_discard_indices: Vec::new(),
             discard_choice_indices: Vec::new(),
+            verify_rewind_replay: false,
+            pending_verification: None,
+            turn_start_hashes: HashMap::new(),
         }
     }
 
@@ -1354,6 +1402,15 @@ impl WasmFancyTuiState {
         let log_len_before = self.game.undo_log.len();
         log::debug!(target: "wasm_tui", "REWIND: Undo log has {} actions before rewind", log_len_before);
 
+        // Phase 1 of debug capture: snapshot pre-rewind state hash + counts
+        // BEFORE the rewind mutates `self.game`. Stash the cheap snapshot;
+        // the log tail and turn-start hash get filled in further down.
+        let pre_capture: Option<PreRewindCapture> = if self.verify_rewind_replay {
+            Some(capture_pre_rewind(&self.game))
+        } else {
+            None
+        };
+
         let mut undo_log = std::mem::take(&mut self.game.undo_log);
         let result = undo_log.rewind_to_turn_start(&mut self.game);
         self.game.undo_log = undo_log;
@@ -1366,9 +1423,24 @@ impl WasmFancyTuiState {
             Some(r) => r,
             None => {
                 log::warn!(target: "wasm_tui", "REWIND: Undo log disabled!");
+                // Drop any stashed pre-capture: if rewind didn't happen, there's
+                // nothing to verify. Avoid leaving stale state on `self`.
+                self.pending_verification = None;
                 return (Vec::new(), Vec::new());
             }
         };
+
+        // Phase 2 of debug capture: snapshot the log tail that's about to be
+        // truncated, then record the post-rewind turn-start hash. Order matters:
+        // finish_capture must run BEFORE truncate_to (otherwise the tail is
+        // gone), and record_turn_start_hash captures state-at-turn-boundary.
+        if let Some(pre) = pre_capture {
+            let mut verification = finish_capture(pre, &self.game, log_size_at_turn);
+            record_turn_start_hash(&mut verification, &self.game);
+            self.pending_verification = Some(verification);
+        } else {
+            self.pending_verification = None;
+        }
 
         // Truncate game logs to match the rewound state
         // This removes log entries generated after the turn started, preventing duplicates
@@ -1418,6 +1490,48 @@ impl WasmFancyTuiState {
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
     fn pending_choice_to_replay_choice(&self, pending: &PendingChoice) -> ReplayChoice {
         pending.to_replay_choice(self.pending_context.as_ref())
+    }
+
+    /// Toggle proactive verification of the rewind/replay loop.
+    ///
+    /// When enabled, every rewind captures a snapshot (state hash, action
+    /// count, log count, log tail) and every post-replay run is compared
+    /// against it. Off by default; turned on by JS when the "Debug Mode"
+    /// checkbox is checked. Disabling drops any pending verification and
+    /// clears the cached turn-start hashes so a re-enable starts fresh.
+    pub fn set_verify_rewind_replay(&mut self, enabled: bool) {
+        self.verify_rewind_replay = enabled;
+        if !enabled {
+            self.pending_verification = None;
+            self.turn_start_hashes.clear();
+        }
+        log::info!(target: "wasm_tui", "Rewind/replay verification {}", if enabled { "enabled" } else { "disabled" });
+    }
+
+    /// Compare the pending verification snapshot (captured at the most recent
+    /// rewind) against the live post-replay state. Returns `Some(message)` if
+    /// a divergence was detected — caller must surface this as a fatal error
+    /// because the game state can no longer be trusted.
+    ///
+    /// Also updates `turn_start_hashes` so subsequent rewinds to the same
+    /// turn can detect drift; the cache is checked BEFORE writing so the
+    /// first rewind to a given turn just establishes the baseline.
+    fn run_replay_verification(&mut self) -> Option<String> {
+        let verification = self.pending_verification.take()?;
+        let prior_turn_start_hash = self.turn_start_hashes.get(&verification.turn_number).copied();
+        let outcome = verify_replay(&verification, &self.game, prior_turn_start_hash);
+        // Always cache the freshly-recorded turn-start hash so the FIRST
+        // rewind to a turn establishes the baseline and later rewinds can
+        // catch drift. Doing this even on a failed outcome would mask a real
+        // bug on the next rewind, so only cache on success.
+        if outcome.is_ok() {
+            self.turn_start_hashes
+                .insert(verification.turn_number, verification.post_rewind_turn_start_hash);
+        }
+        // `fatal_message()` returns `None` for Ok and Some(...) for the three
+        // failure variants — keeping the dispatch in one place avoids a
+        // wildcard match arm here (which the workspace lints deny).
+        outcome.fatal_message()
     }
 
     /// Run the game until input is needed or game ends
@@ -1570,6 +1684,19 @@ impl WasmFancyTuiState {
                     "REPLAY: Reset high water marks after replay - action_count={}, log_count={}",
                     self.high_water_action_count, self.high_water_log_count
                 );
+
+                // Debug verification: if we captured a snapshot before the
+                // rewind, compare it against the post-replay state. Any
+                // divergence is a fatal error — the game is unsafe to continue
+                // because rewind/replay is no longer behaving as a pure
+                // round-trip.
+                if let Some(violation) = self.run_replay_verification() {
+                    log::error!(target: "wasm_tui", "{}", violation);
+                    self.error_message = Some(violation);
+                    self.game_over = true;
+                    self.needs_redraw = true;
+                    return;
+                }
 
                 // Handle the game result - this may set pending_context for the next choice
                 self.handle_game_result(result);
@@ -1941,6 +2068,18 @@ impl WasmFancyTuiState {
             // This is correct behavior - the hash check validates state correctness.
             self.high_water_action_count = self.game.undo_log.len();
             self.high_water_log_count = self.game.logger.log_count();
+
+            // Network-mode replay verification mirrors the local-mode check:
+            // any divergence between the captured pre-rewind snapshot and the
+            // post-replay state is fatal because shared GameState corruption
+            // will cascade into desync with the server.
+            if let Some(violation) = self.run_replay_verification() {
+                log::error!(target: "wasm_tui", "{}", violation);
+                self.error_message = Some(violation);
+                self.game_over = true;
+                self.needs_redraw = true;
+                return;
+            }
 
             self.handle_game_result(result);
             self.needs_redraw = true;

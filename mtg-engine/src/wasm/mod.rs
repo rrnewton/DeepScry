@@ -54,6 +54,7 @@ pub mod deck_builder;
 pub mod gui_view_model;
 
 pub mod human_controller;
+pub mod replay_verifier;
 pub mod rich_input_controller;
 
 #[cfg(target_arch = "wasm32")]
