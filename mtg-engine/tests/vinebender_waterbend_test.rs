@@ -1,6 +1,7 @@
 //! Regression tests for Foggy Swamp Vinebender's Waterbend activated ability.
 //!
 //! Bug: bug-vinebender-triple-activation
+#![allow(clippy::wildcard_enum_match_arm)]
 //!
 //! Reported behaviour (game.html, eric vs gabriel avatar decks, seed 42):
 //!   - P2 cast Foggy Swamp Vinebender (4/3) and was reported to immediately
