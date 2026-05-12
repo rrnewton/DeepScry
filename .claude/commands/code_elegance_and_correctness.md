@@ -1,0 +1,1 @@
+../../.devcontainer/prompts/code_elegance_and_correctness.md

@@ -1,0 +1,1 @@
+../../.devcontainer/prompts/expand_MTG_compatibility.md
