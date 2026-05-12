@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Sequence
 
 
 _STEP_TO_PHASE = {
@@ -46,6 +47,104 @@ class AgentDecision:
         return self.choice_number is None
 
 
+def format_deck_preamble(deck_entries: Sequence[tuple[str, Path]]) -> str:
+    """Format deck lists as a preamble section.
+
+    Each entry is ``(player_label, deck_path)``. Returns the empty string if no
+    decks could be read. The preamble lists the raw deck file contents (counts
+    plus card names) so the agent knows the full pool of cards each player can
+    draw from.
+    """
+
+    sections: list[str] = []
+    for label, path in deck_entries:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # Track which section ([metadata], [main], [sideboard], ...) we're in.
+        # We only want card lines from [main] and [sideboard]; metadata lines
+        # like "Name=Foo" must be filtered out so they don't leak into the
+        # preamble shown to the agent.
+        cards: list[str] = []
+        sideboard: list[str] = []
+        section = ""
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1].strip().lower()
+                continue
+            if section == "main":
+                cards.append(line)
+            elif section == "sideboard":
+                sideboard.append(line)
+            # Other sections (metadata, etc.) are ignored.
+        if not cards and not sideboard:
+            continue
+        sections.append(f"{label} (deck: {path.name}):")
+        sections.extend(f"  {c}" for c in cards)
+        if sideboard:
+            sections.append("  [Sideboard]")
+            sections.extend(f"  {c}" for c in sideboard)
+        sections.append("")
+    if not sections:
+        return ""
+    return "\n".join(["Player decks:", "", *sections]).rstrip()
+
+
+def build_intro_section(
+    scenario: str | None = None,
+    goal: str | None = None,
+    bug_detection: bool = True,
+    deck_preamble: str | None = None,
+    rules_paths: list[str] | None = None,
+) -> str:
+    """Build the static intro/system-prompt portion of the agent prompt.
+
+    This is the role/agenthood setup that is identical at every decision point:
+    the role description, scenario, goal, deck list preamble, and rules
+    references. It is suitable for echoing once at startup so a human can see
+    exactly what the agent has been told.
+    """
+
+    sections = [
+        "You are choosing the next action in a deterministic MTG game used for engine bug finding.",
+    ]
+
+    if bug_detection:
+        sections.append(
+            "At each decision point, either choose the strongest legal action or STOP when the log, state, or menu appears to violate MTG rules."
+        )
+    else:
+        sections.append(
+            "Pure play mode is enabled: choose the strongest legal action from the menu based on state, tempo, combat, mana, and likely follow-up turns."
+        )
+
+    sections.append(
+        "IMPORTANT: The game engine only presents VALID, LEGAL actions. Every choice in the menu has already been validated by the engine: the mana cost is payable, targeting requirements are met, timing restrictions are satisfied, and any other gating conditions are already true. You do NOT need to re-derive legality. Focus your reasoning on STRATEGY (which valid action is best given the state, tempo, combat, mana, and likely follow-up turns?)"
+        + (" and BUG DETECTION (is the engine wrongly offering an action, missing one it should offer, or describing the state/log in a way that contradicts MTG rules?)." if bug_detection else ".")
+    )
+
+    if scenario:
+        sections.append(f"Scenario to reproduce: {scenario.strip()}")
+        sections.append("Keep this scenario in mind and prefer legal choices that move the game toward reproducing it.")
+
+    if goal:
+        sections.append(f"Goal directive: {goal.strip()}")
+
+    if deck_preamble and deck_preamble.strip():
+        sections.extend(["", deck_preamble.strip()])
+
+    if rules_paths:
+        sections.extend(["", "MTG rules references (read for detailed rules):"])
+        for rp in rules_paths:
+            sections.append(f"  {rp}")
+
+    return "\n".join(sections)
+
+
 def build_choice_prompt(
     game_state: dict[str, Any],
     choices: list[str],
@@ -57,6 +156,7 @@ def build_choice_prompt(
     card_definitions: str | None = None,
     rules_paths: list[str] | None = None,
     bug_detection: bool = True,
+    deck_preamble: str | None = None,
 ) -> str:
     """Build the prompt sent to a headless agent for one MTG choice."""
 
@@ -74,35 +174,19 @@ def build_choice_prompt(
     choice_lines = ["[0] pass"]
     choice_lines.extend(f"[{index}] {choice}" for index, choice in enumerate(available_choices, start=1))
 
-    sections = [
-        "You are choosing the next action in a deterministic MTG game used for engine bug finding.",
-    ]
+    intro = build_intro_section(
+        scenario=scenario,
+        goal=goal,
+        bug_detection=bug_detection,
+        deck_preamble=deck_preamble,
+        rules_paths=rules_paths,
+    )
+    sections = [intro]
 
-    if bug_detection:
-        sections.append(
-            "At each decision point, either choose the strongest legal action or STOP when the log, state, or menu appears to violate MTG rules."
-        )
-    else:
-        sections.append(
-            "Pure play mode is enabled: choose the strongest legal action from the menu based on state, tempo, combat, mana, and likely follow-up turns."
-        )
-
-    if scenario:
-        sections.append(f"Scenario to reproduce: {scenario.strip()}")
-        sections.append("Keep this scenario in mind and prefer legal choices that move the game toward reproducing it.")
-
-    if goal:
-        sections.append(f"Goal directive: {goal.strip()}")
-
-    # Card definitions (placed early so agent has context before choices)
+    # Card definitions (grow over time as new cards are seen, so kept in the
+    # per-decision body rather than the static intro).
     if card_definitions:
         sections.extend(["", "Card definitions (cards seen in this game):", card_definitions])
-
-    # Rules references
-    if rules_paths:
-        sections.extend(["", "MTG rules references (read for detailed rules):"])
-        for rp in rules_paths:
-            sections.append(f"  {rp}")
 
     sections.extend(
         [

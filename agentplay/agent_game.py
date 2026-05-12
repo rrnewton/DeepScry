@@ -26,7 +26,9 @@ if __package__ in (None, ""):
     from agentplay.lib.prompts import (
         AgentDecision,
         build_choice_prompt,
+        build_intro_section,
         extract_bug_report,
+        format_deck_preamble,
         parse_agent_decision,
     )
     from agentplay.lib.card_defs import CardDatabase, find_mentioned_cards
@@ -35,7 +37,9 @@ else:
     from .lib.prompts import (
         AgentDecision,
         build_choice_prompt,
+        build_intro_section,
         extract_bug_report,
+        format_deck_preamble,
         parse_agent_decision,
     )
     from .lib.card_defs import CardDatabase, find_mentioned_cards
@@ -153,6 +157,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override P2 initial hand (semicolon-separated card names, passed to mtg tui --p2-draw).",
     )
+    parser.add_argument(
+        "--decklists",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include both players' full deck lists as a preamble in the agent prompt (default: enabled).",
+    )
     return parser
 
 
@@ -189,16 +199,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         engine.set_command("puzzle")
     rng = random.Random(args.seed)
 
-    # Load card definitions from deck files
+    # Load card definitions from deck files. Track each .dck path in the order
+    # it appeared so we can label them as P1/P2 in the deck list preamble.
     repo_root = Path(__file__).resolve().parent.parent
     cardsfolder = repo_root / "forge-java" / "forge-gui" / "res" / "cardsfolder"
     card_db = CardDatabase(cardsfolder)
+    deck_paths: list[Path] = []
     for arg in mtg_args:
         deck_path = repo_root / arg
         if deck_path.suffix == ".dck" and deck_path.exists():
             card_db.load_deck(deck_path)
+            deck_paths.append(deck_path)
     all_card_names = card_db.all_names()
     seen_card_names: set[str] = set()
+
+    # Build deck-list preamble (default on; opt out with --no-decklists). The
+    # convention is that the first .dck arg is P1 and the second is P2.
+    deck_preamble: str | None = None
+    if args.decklists and deck_paths:
+        labelled: list[tuple[str, Path]] = []
+        for index, path in enumerate(deck_paths[:2]):
+            labelled.append((f"P{index + 1}", path))
+        deck_preamble = format_deck_preamble(labelled) or None
 
     # Rules references
     rules_dir = repo_root / "rules"
@@ -207,6 +229,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         for rf in sorted(rules_dir.iterdir()):
             if rf.is_file() and rf.suffix in (".txt", ".md"):
                 rules_paths.append(str(rf))
+
+    # Echo the static intro/system-prompt portion to stdout once at startup so
+    # the human running the harness can see exactly what the agent has been
+    # told (role, scenario, deck lists, rules references). Per-decision prompts
+    # are NOT echoed because they are repetitive and noisy.
+    intro_text = build_intro_section(
+        scenario=args.scenario,
+        goal=args.goal,
+        bug_detection=args.bug_detection,
+        deck_preamble=deck_preamble,
+        rules_paths=rules_paths if rules_paths else None,
+    )
+    print("===== Agent intro prompt =====", flush=True)
+    print(intro_text, flush=True)
+    print("===== End agent intro prompt =====", flush=True)
 
     try:
         snapshot = engine.start_game()
@@ -266,6 +303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             card_definitions=card_defs_text,
             rules_paths=rules_paths if rules_paths else None,
             bug_detection=args.bug_detection,
+            deck_preamble=deck_preamble,
         )
         before_snapshot = snapshot
         game_state_summary = _extract_game_state_summary(prompt_text)

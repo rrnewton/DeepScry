@@ -9,7 +9,13 @@ import pytest
 
 from agentplay.agent_game import _choose_for_player, _query_agent, build_parser
 from agentplay.lib.engine import GameEngine
-from agentplay.lib.prompts import build_choice_prompt, parse_agent_decision, parse_agent_response
+from agentplay.lib.prompts import (
+    build_choice_prompt,
+    build_intro_section,
+    format_deck_preamble,
+    parse_agent_decision,
+    parse_agent_response,
+)
 
 
 def test_build_choice_prompt_includes_state_choices_log_and_goal() -> None:
@@ -271,3 +277,86 @@ def test_cli_argument_parsing_supports_pure_play_alias() -> None:
     parser = build_parser()
     args = parser.parse_args(["--pure-play"])
     assert args.bug_detection is False
+
+
+def test_cli_argument_parsing_decklists_default_and_opt_out() -> None:
+    parser = build_parser()
+    default_args = parser.parse_args([])
+    assert default_args.decklists is True
+
+    opt_out_args = parser.parse_args(["--no-decklists"])
+    assert opt_out_args.decklists is False
+
+
+def test_format_deck_preamble_skips_metadata_and_labels_players(tmp_path: Path) -> None:
+    p1_path = tmp_path / "alice.dck"
+    p1_path.write_text(
+        "[metadata]\n"
+        "Name=Alice's Deck\n"
+        "\n"
+        "[Main]\n"
+        "20 Mountain\n"
+        "4 Lightning Bolt\n"
+        "\n"
+        "[Sideboard]\n"
+        "2 Smash to Smithereens\n",
+        encoding="utf-8",
+    )
+    p2_path = tmp_path / "bob.dck"
+    p2_path.write_text("[metadata]\nName=Bob\n\n[Main]\n40 Forest\n", encoding="utf-8")
+
+    preamble = format_deck_preamble([("P1", p1_path), ("P2", p2_path)])
+
+    assert "Player decks:" in preamble
+    assert "P1 (deck: alice.dck):" in preamble
+    assert "  20 Mountain" in preamble
+    assert "  4 Lightning Bolt" in preamble
+    assert "  [Sideboard]" in preamble
+    assert "  2 Smash to Smithereens" in preamble
+    assert "P2 (deck: bob.dck):" in preamble
+    assert "  40 Forest" in preamble
+    # Metadata lines must NOT leak into the preamble.
+    assert "Name=" not in preamble
+    assert "[metadata]" not in preamble
+
+
+def test_format_deck_preamble_returns_empty_when_no_decks() -> None:
+    assert format_deck_preamble([]) == ""
+
+
+def test_build_intro_section_includes_role_scenario_and_decks() -> None:
+    intro = build_intro_section(
+        scenario="Reproduce a counter-then-bolt sequence.",
+        goal="Win on turn 4.",
+        bug_detection=True,
+        deck_preamble="Player decks:\n\nP1 (deck: a.dck):\n  4 Lightning Bolt",
+        rules_paths=["/tmp/rules.md"],
+    )
+
+    assert "deterministic MTG game used for engine bug finding" in intro
+    assert "STOP when the log, state, or menu appears to violate MTG rules" in intro
+    assert "engine only presents VALID, LEGAL actions" in intro
+    assert "Scenario to reproduce: Reproduce a counter-then-bolt sequence." in intro
+    assert "Goal directive: Win on turn 4." in intro
+    assert "Player decks:" in intro
+    assert "4 Lightning Bolt" in intro
+    assert "/tmp/rules.md" in intro
+
+
+def test_build_intro_section_pure_play_drops_bug_detection_language() -> None:
+    intro = build_intro_section(bug_detection=False)
+    assert "Pure play mode is enabled" in intro
+    assert "BUG DETECTION" not in intro
+    assert "STOP when the log" not in intro
+
+
+def test_build_choice_prompt_threads_deck_preamble_through() -> None:
+    prompt = build_choice_prompt(
+        {},
+        ["pass priority"],
+        "",
+        deck_preamble="Player decks:\n\nP1 (deck: a.dck):\n  4 Lightning Bolt",
+    )
+    assert "Player decks:" in prompt
+    assert "4 Lightning Bolt" in prompt
+    assert "engine only presents VALID, LEGAL actions" in prompt
