@@ -2559,7 +2559,19 @@ impl WasmFancyTuiState {
                         PendingChoice::SpellAbility(Some(idx))
                     }
                 }
-                ChoiceContext::Targets { .. } => PendingChoice::Targets(vec![idx]),
+                ChoiceContext::Targets { .. } => {
+                    // The displayed choices have "No target" prepended at idx 0
+                    // (see update_choices_from_context), so target indices are
+                    // shifted by one. Without adjusting here, the human controller
+                    // would look up valid_targets[idx] instead of valid_targets[idx-1],
+                    // silently dropping the chosen target (Strip Mine, Chaos Orb,
+                    // Terror, Sinkhole, etc. all rely on this path).
+                    if idx == 0 {
+                        PendingChoice::Targets(vec![]) // No target — fizzle
+                    } else {
+                        PendingChoice::Targets(vec![idx - 1])
+                    }
+                }
                 ChoiceContext::ManaSources { .. } => PendingChoice::ManaSources(vec![idx]),
                 ChoiceContext::Attackers { .. } => {
                     if idx == 0 {

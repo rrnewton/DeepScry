@@ -726,4 +726,85 @@ mod tests {
         // Pending choice should be consumed
         assert!(!controller.has_pending_choice());
     }
+
+    /// Regression test for `bug-chaos-orb-no-destroy` / `bug-strip-mine-no-destroy`:
+    /// `PendingChoice::Targets(indices)` carries RAW indices into the `valid_targets`
+    /// list. Callers that present a UI with "No target" prepended at index 0 (such
+    /// as `wasm/fancy_tui.rs::select_current_choice`) MUST subtract 1 before
+    /// storing the user's pick — otherwise every target selection silently drops
+    /// the chosen card and the destroy/exile/tap/etc. effect fizzles.
+    ///
+    /// This test pins down the contract so a future refactor of
+    /// `select_current_choice` cannot silently regress it.
+    #[test]
+    fn test_choose_targets_uses_raw_valid_target_indices() {
+        use crate::core::SpellAbility;
+        use crate::game::controller::PlayerController;
+
+        let player_id = EntityId::new(1);
+        let mut controller = WasmHumanController::new(player_id);
+
+        let game = crate::game::GameState::new_two_player("Player 1".to_string(), "Player 2".to_string(), 20);
+        let view = crate::game::GameStateView::new(&game, player_id);
+
+        // Two valid targets — exactly the situation where the engine prompts
+        // the user (single-target lists are auto-selected by the priority loop).
+        let target_a = EntityId::new(100);
+        let target_b = EntityId::new(200);
+        let valid_targets = [target_a, target_b];
+
+        // First call: no pending choice → controller asks for input and stores
+        // the context (mirroring what the WASM TUI sees on first prompt).
+        let spell = EntityId::new(50);
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        assert!(controller.pending_context.is_some(), "pending_context must be stored");
+
+        // Caller picks index 0 in the engine's `valid_targets` (i.e. the first
+        // real target). In the WASM UI this corresponds to clicking the second
+        // visible row, since "No target" occupies row 0; `select_current_choice`
+        // is responsible for the -1 conversion.
+        controller.set_pending_choice(PendingChoice::Targets(vec![0]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert_eq!(
+                    targets.as_slice(),
+                    &[target_a],
+                    "raw index 0 must map to first valid target"
+                );
+            }
+            _ => panic!("expected Ok with first target, got {:?}", result),
+        }
+
+        // Re-prime context, then verify raw index 1 → target_b.
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        controller.set_pending_choice(PendingChoice::Targets(vec![1]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert_eq!(
+                    targets.as_slice(),
+                    &[target_b],
+                    "raw index 1 must map to second valid target"
+                );
+            }
+            _ => panic!("expected Ok with second target, got {:?}", result),
+        }
+
+        // And the empty-vec convention means "no target chosen" (fizzle).
+        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        controller.set_pending_choice(PendingChoice::Targets(vec![]));
+        let result = controller.choose_targets(&view, spell, &valid_targets);
+        match result {
+            ChoiceResult::Ok(targets) => {
+                assert!(targets.is_empty(), "empty Targets vec must mean 'no target'");
+            }
+            _ => panic!("expected Ok with empty targets, got {:?}", result),
+        }
+
+        // Suppress unused-import warnings on builds without the wasm-network
+        // feature flag (`SpellAbility` is only used to keep the imports parallel
+        // to the surrounding tests).
+        let _ = SpellAbility::PlayLand { card_id: spell };
+    }
 }
