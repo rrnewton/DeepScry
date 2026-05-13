@@ -509,7 +509,11 @@ impl<'a> GameLoop<'a> {
     ///
     /// Zero allocation - pushes SpellAbility::CastSpell directly to the buffer
     /// instead of building an intermediate Vec.
-    fn push_castable_spells(&mut self, player_id: PlayerId) {
+    ///
+    /// `pub(crate)` so unit tests can directly assert that the right spells
+    /// surface in the action buffer (e.g. that an instant from hand is
+    /// offered when the stack is non-empty — the response-window scenario).
+    pub(crate) fn push_castable_spells(&mut self, player_id: PlayerId) {
         use crate::core::SpellAbility;
 
         // Update the mana engine for this player

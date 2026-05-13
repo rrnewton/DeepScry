@@ -1,0 +1,24 @@
+[metadata]
+Name:Stack Chain Counterspell Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+
+# Player 1 casts Psionic Blast → Player 2 (with {U}{U} available) should be
+# offered the chance to respond with Counterspell BEFORE Psionic Blast
+# resolves. This exercises cross-player priority during the stack window:
+# after the spell goes on the stack, priority should pass to the opponent
+# for a response window before resolution.
+p0life=20
+p0hand=Psionic Blast
+p0battlefield=Island; Island; Island
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+
+p1life=20
+p1hand=Counterspell
+p1battlefield=Island; Island
+p1library=Forest; Forest; Forest; Forest; Forest; Forest

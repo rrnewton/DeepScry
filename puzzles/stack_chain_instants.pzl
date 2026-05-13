@@ -1,0 +1,29 @@
+[metadata]
+Name:Stack Chain Instants Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+
+# Player 1 has plenty of mana + two instants in hand (Disenchant {1}{W} and
+# Psionic Blast {2}{U}). Opponent controls a Forest plus an enchantment
+# target (Spirit Link). Sequence we want to verify:
+#   1. P1 casts Disenchant targeting Spirit Link → goes on stack
+#   2. P1 (still has priority) is offered the option to cast Psionic Blast
+#      as a response BEFORE Disenchant resolves.
+#   3. Both spells stack and resolve in LIFO order (Psionic Blast first,
+#      then Disenchant).
+# Pre-fix bug: after the first instant goes on the stack, the priority loop
+# only offered land-drop / activated-ability / pass options — not a second
+# spell from hand.
+p0life=20
+p0hand=Disenchant; Psionic Blast
+p0battlefield=Plains; Plains; Island; Island; Island
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+
+p1life=20
+p1battlefield=Forest; Spirit Link
+p1library=Forest; Forest; Forest; Forest; Forest; Forest

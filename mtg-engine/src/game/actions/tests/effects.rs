@@ -818,6 +818,73 @@ mod tests {
         assert_eq!(bob.life, 20, "Player2 should still have 20 life");
     }
 
+    /// Regression for bug-stack-chaining-instants: while a spell is on the
+    /// stack, the active player must still be offered the option to cast a
+    /// second instant from hand as a response. Pre-fix, the action list during
+    /// the response window only showed `pass` and activated abilities (e.g.
+    /// Strip Mine), but not instant-speed spells from hand.
+    ///
+    /// We cannot easily fake an arbitrary spell on the stack at this layer
+    /// (the stack add path expects a real cast), so this test instead
+    /// directly puts a Lightning Bolt on the stack via `game.stack.add()` to
+    /// simulate the in-flight spell, then asserts that
+    /// `push_castable_spells` still surfaces the second instant from hand.
+    #[test]
+    fn test_instant_offered_during_response_window_to_stack_spell() {
+        use crate::core::SpellAbility;
+        use crate::game::game_loop::GameLoop;
+        use crate::game::VerbosityLevel;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // P1 has Lightning Bolt in hand (the response we expect to be offered)
+        // and a Mountain to pay {R}.
+        let bolt_id = load_test_card(&mut game, "Lightning Bolt", p1_id).expect("Lightning Bolt should load");
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(bolt_id);
+        }
+
+        let mountain_id = load_test_card(&mut game, "Mountain", p1_id).expect("Mountain should load");
+        game.battlefield.add(mountain_id);
+        if let Ok(c) = game.cards.get_mut(mountain_id) {
+            c.controller = p1_id;
+            c.tapped = false;
+        }
+
+        // Put a placeholder spell on the stack to simulate "an in-flight cast".
+        // The stack contents themselves don't matter for the bug we're guarding
+        // against — what matters is that `stack_is_empty` is false during the
+        // ability enumeration. We use a second Lightning Bolt instance owned
+        // by P1 so it doesn't accidentally turn into a target the response
+        // could counter.
+        let in_flight_id = load_test_card(&mut game, "Lightning Bolt", p1_id).expect("Lightning Bolt should load");
+        game.stack.add(in_flight_id);
+        assert!(!game.stack.is_empty(), "Stack should be non-empty for the test");
+
+        // Force priority window state: pretend it's P1's main phase with stack
+        // non-empty (instants don't require sorcery speed; the bug was about
+        // whether they show up at all when stack is non-empty).
+        // Engine-internal state that controls phase is already set by
+        // new_two_player to something compatible with main-phase priority for
+        // the active player.
+
+        // Enumerate castable spells for P1 with the stack populated.
+        let mut gl = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+        gl.push_castable_spells(p1_id);
+        let buffer = gl.get_abilities_buffer().to_vec();
+
+        let bolt_offered = buffer
+            .iter()
+            .any(|sa| matches!(sa, SpellAbility::CastSpell { card_id, .. } if *card_id == bolt_id));
+        assert!(
+            bolt_offered,
+            "Lightning Bolt in hand must be offered as a response while a spell is on the stack. \
+             Buffer was: {:?}",
+            buffer
+        );
+    }
+
     #[test]
     fn test_etb_trigger_gain_life() {
         use crate::core::{Effect, Trigger, TriggerEvent};
