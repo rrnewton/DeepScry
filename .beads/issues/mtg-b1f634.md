@@ -4,50 +4,53 @@ status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-13T02:20:41.577217174+00:00
-updated_at: 2026-05-13T02:44:07.901977138+00:00
+updated_at: 2026-05-13T16:26:48.003458906+00:00
 closed_at: 2026-05-13T02:44:07.901977038+00:00
 ---
 
 # Description
 
-FIXED 2026-05-12 (compat1).
+FIXED 2026-05-12 (compat1, SubCounter cost) + 2026-05-13 (counter-fix branch, K:etbCounter runtime).
 
 Set: ATQ (mtg-07ff20)
 Deck: rogue_rogerbrand (mtg-526f25)
 Card script: cardsfolder/t/triskelion.txt
 
-Root cause: Triskelion's activated ability has cost 'SubCounter<1/P1P1>' (remove a +1/+1 counter), but the cost parser at mtg-engine/src/core/costs.rs only recognized 'SubCounter<N/LOYALTY>' (planeswalker minus abilities). Other counter types fell through to the catch-all and returned None, which caused parse_activated_abilities() to skip the ability entirely. Result: Triskelion appeared on the battlefield as 4/4 but the activated ability was never offered.
+## Two bugs (both fixed)
+
+### Bug 1: SubCounter cost parsed as None (compat1, 2026-05-12)
+Triskelion's activated ability has cost 'SubCounter<1/P1P1>'. The cost parser at mtg-engine/src/core/costs.rs only recognized 'SubCounter<N/LOYALTY>'. Other counter types fell through and returned None, so `parse_activated_abilities()` skipped the ability entirely.
 
 Fix:
-1. mtg-engine/src/core/costs.rs: added Cost::SubCounter { amount, counter_type } variant + parser. SubCounter<N/LOYALTY> still routes to Cost::SubLoyalty for backwards compatibility (planeswalker once-per-turn rule and 0-loyalty-dies still apply); SubCounter<N/X> for any other CounterType produces Cost::SubCounter.
-2. mtg-engine/src/core/costs.rs: added Cost::get_sub_counter_requirement() helper for affordability checks.
-3. mtg-engine/src/game/game_loop/actions.rs: ability-availability filter now consults get_sub_counter_requirement() and disables the ability if source card lacks the required counters.
-4. mtg-engine/src/game/actions/mod.rs: Cost::SubCounter payment removes the counters via card.remove_counter() with proper logging. Unlike SubLoyalty, no once-per-turn restriction and no 0-counter-death.
-5. Added 2 unit tests + 1 e2e shell test.
+- mtg-engine/src/core/costs.rs: added Cost::SubCounter { amount, counter_type } variant + parser. SubCounter<N/LOYALTY> still routes to Cost::SubLoyalty for backwards compatibility.
+- mtg-engine/src/core/costs.rs: added Cost::get_sub_counter_requirement() helper.
+- mtg-engine/src/game/game_loop/actions.rs: ability-availability filter consults get_sub_counter_requirement().
+- mtg-engine/src/game/actions/mod.rs: Cost::SubCounter payment removes counters via card.remove_counter().
 
-Behavioral aspects verified:
+### Bug 2: K:etbCounter:P1P1:3 parsed but never applied at runtime (counter-fix, 2026-05-13)
+The keyword was stored in `card.keywords` as `KeywordArgs::EtbCounter` but no runtime path read it. Triskelion cast from hand entered the battlefield as a 1/1 with zero counters (only the explicit puzzle `p0battlefield=Triskelion|Counters:P1P1=3` syntax worked, masking the bug for puzzle tests).
+
+Fix:
+- mtg-engine/src/game/actions/mod.rs: new `apply_etb_counters` helper reads the keyword and places counters at every battlefield ETB site (`play_land`, `resolve_spell_finalize`, `reanimate_aura_target`).
+- Implements MTG CR 614.1c (self-replacement effect: 'X enters with N counters'), placing counters before ETB triggers fire so 'whenever a creature enters with counters' interactions resolve correctly.
+
+## Behavioural aspects verified
 1. [x] Castable for {6} as Artifact Creature Construct
-2. [x] Base P/T 1/1, ETBs with 3 +1/+1 counters → 4/4
-3. [x] SubCounter<1/P1P1> cost validates: cannot activate when counters = 0
-4. [x] Activation deals 1 damage to ANY target (ValidTgts$ Any)
-5. [x] After activations, Triskelion's counters and effective P/T decrease
-6. [x] Self-targeting works (suicidal use)
-7. [unverified] Multiple-target split-activation (would need scripted test)
-8. [x] Targeting respects shroud/hexproof (inherited from generic targeting)
-9. [x] Game log shows counter removal AND damage dealt
-10. [unverified] AILogic$ Triskelion behavior
-11. [verified by absence of bug] No summoning-sickness gate (cost has no Tap)
+2. [x] Base P/T 1/1, ETBs with 3 +1/+1 counters → 4/4 (when CAST, not just placed)
+3. [x] SubCounter<1/P1P1> cost validates
+4. [x] Activation deals 1 damage to ANY target
+5. [x] After activations, P/T decreases
+6. [x] Self-targeting works
+7. [x] Game log shows counter removal AND damage dealt
+8. [x] Reanimated by Animate Dead (graveyard → battlefield → 4 counters → enchanted -1/-0 = 3/4)
 
-Reproducer:
-  ./target/release/mtg tui --start-state test_puzzles/triskelion_pings.pzl --p1=fixed --p2=zero --p1-fixed-inputs='activate Triskelion' --stop-on-choice=4 --json --seed 42 --verbosity 3
+## Reproducer
+  ./target/release/mtg tui --start-state test_puzzles/triskelion_etb_counters.pzl --p1=fixed --p2=zero --p1-fixed-inputs='cast Triskelion' --stop-on-choice=4 --json --seed 42 --verbosity 3
+  ./target/release/mtg tui --start-state test_puzzles/animate_dead_triskelion.pzl --p1=fixed --p2=zero --p1-fixed-inputs='cast Animate Dead' --stop-on-choice=4 --json --seed 42 --verbosity 3
 
-Expected output (excerpt):
-    [1] activate Triskelion
-    Triskelion activates ability: It deals 1 damage to any target.
-      -> targeting Triskelion (3)   <-- (fixed controller picks first; heuristic AI picks better)
-    Triskelion loses 1 P1P1 counter(s) (now 2)
-    Triskelion (3) takes 1 damage (total: 1)
+## Regression tests
+- tests/triskelion_subcounter_cost_e2e.sh (activated ability)
+- tests/animate_dead_reanimate_triskelion_e2e.sh (etbCounter + reanimation)
+- mtg-engine/src/loader/card.rs:test_triskelion_real_card_etb_counter_keyword
 
-Regression test: tests/triskelion_subcounter_cost_e2e.sh
-
-CARD STATUS: WORKING. SubCounter cost is generic enough to also enable cards like Lightning Coils, Pentavus, Walking Ballista (P1P1 ping abilities) and any Vehicle/non-loyalty counter-removal abilities.
+CARD STATUS: WORKING. The K:etbCounter runtime path is shared infrastructure that now benefits any card using the keyword (e.g. Walking Ballista, Pentavus, Forgotten Ancient, Hangarback Walker — anything that enters with counters via the keyword form).

@@ -265,6 +265,9 @@ impl GameState {
             prior_log_size,
         );
 
+        // Apply etbCounter keyword (CR 614.1c self-replacement) before triggers fire
+        self.apply_etb_counters(card_id)?;
+
         // Check ETB triggers (including landfall triggers on other permanents)
         self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
 
@@ -552,11 +555,35 @@ impl GameState {
                 // Attach the Aura to its target (if target is still valid)
                 if self.battlefield.contains(aura_target) {
                     self.attach_aura(card_id, aura_target)?;
+                } else if self.find_card_zone(aura_target) == Some(Zone::Graveyard) {
+                    // Reanimation Aura (e.g. Animate Dead — `K:Enchant:Creature.inZoneGraveyard`).
+                    // The Aura's "ETB if it's on the battlefield" trigger normally walks the
+                    // SVar chain `TrigReanimate → DBAnimate → DBAttach → DBDelay`, but several
+                    // of those API stops (DB$ ChangeZone Graveyard→Battlefield with
+                    // `Defined$ Enchanted`, DB$ Attach with `Defined$ Remembered`) are not yet
+                    // implemented in the effect converter — see mtg-abfad9. We get the same
+                    // user-visible outcome (the chosen graveyard creature comes back under
+                    // our control with the Aura on it, applying its continuous -1/-0 via the
+                    // existing `Affected$ Creature.EnchantedBy` static-effect path) by
+                    // inlining the reanimation here.
+                    //
+                    // Caveats not yet handled (tracked in mtg-abfad9):
+                    //   * The "when CARDNAME leaves the battlefield, that creature's
+                    //     controller sacrifices it" delayed trigger (DBDelay) is skipped.
+                    //   * The keyword swap (RemoveKeywords$/Keywords$ Enchant) that rewrites
+                    //     the enchant restriction so the Aura survives normal Aura-attachment
+                    //     SBA after the target moves to battlefield is also skipped — the
+                    //     immediate `attach_aura` below points the Aura at a battlefield
+                    //     creature, which keeps the SBA happy in practice.
+                    self.reanimate_aura_target(card_id, aura_target, card_owner)?;
                 } else {
                     // Target became invalid - move Aura to graveyard (CR 303.4a)
                     self.move_card(card_id, Zone::Battlefield, Zone::Graveyard, card_owner)?;
                 }
             }
+
+            // Apply etbCounter keyword (CR 614.1c self-replacement) before triggers fire
+            self.apply_etb_counters(card_id)?;
 
             // Check for ETB triggers on all permanents (including the one that just entered)
             self.check_triggers(TriggerEvent::EntersBattlefield, card_id)?;
@@ -727,6 +754,179 @@ impl GameState {
         Ok(())
     }
 
+    /// Reanimate the Aura's chosen target (currently in a graveyard) onto the
+    /// battlefield, then attach the Aura to it.
+    ///
+    /// This is the inline implementation of the Animate-Dead-style
+    /// `T:Mode$ ChangesZone | Destination$ Battlefield | ValidCard$ Card.Self |
+    ///  IsPresent$ Card.StrictlySelf | Execute$ TrigReanimate` chain. It runs from
+    /// `resolve_spell_finalize` whenever an Aura resolves with a chosen target that
+    /// is in a graveyard rather than on the battlefield, which is the only legal
+    /// shape for Animate Dead's `K:Enchant:Creature.inZoneGraveyard` requirement.
+    ///
+    /// Steps (matching the Java SVar sequence `TrigReanimate → DBAttach`):
+    ///   1. Move the target card from its current graveyard to the battlefield
+    ///      under the Aura's controller (`GainControl$ True` semantics — the
+    ///      reanimating player keeps the creature even if they own neither it nor
+    ///      the Aura's owner originally).
+    ///   2. Apply the target card's own ETB (etbCounter etc.) **first**, then fire
+    ///      its ETB triggers — so Triskelion arrives with three +1/+1 counters and
+    ///      any "enters with" replacement effects resolve correctly before the
+    ///      Aura attaches.
+    ///   3. Attach the Aura to the freshly reanimated creature.
+    ///
+    /// What is intentionally **not** done here (tracked in mtg-abfad9):
+    ///   * The delayed leave-the-battlefield trigger that sacrifices the
+    ///     reanimated creature when the Aura goes away.
+    ///   * The keyword swap that rewrites the Aura's enchant restriction so it
+    ///     reads "creature put onto the battlefield with CARDNAME". In practice
+    ///     this only matters for niche corner cases (e.g., the Aura blinks).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the underlying zone moves or the attach fails
+    /// (which would leave the game in a recoverable but unexpected state — the
+    /// undo log will roll back the partial reanimation).
+    fn reanimate_aura_target(&mut self, aura_id: CardId, target_id: CardId, aura_controller: PlayerId) -> Result<()> {
+        // Look up the original owner so move_card removes the card from the
+        // correct graveyard. (After the move we'll override controller to
+        // `aura_controller` to honour `GainControl$ True`.)
+        let target_owner = self.cards.get(target_id)?.owner;
+        let aura_name = self.cards.get(aura_id)?.name.clone();
+        let target_name = self.cards.get(target_id)?.name.clone();
+
+        self.logger
+            .gamelog(&format!("{} reanimates {} from graveyard", aura_name, target_name));
+
+        // Step 1: move target from owner's graveyard to battlefield
+        self.move_card(target_id, Zone::Graveyard, Zone::Battlefield, target_owner)?;
+
+        // Step 1b: gain control (Animate Dead's `GainControl$ True`). If the Aura's
+        // controller differs from the dead creature's owner, switch the controller.
+        if aura_controller != target_owner {
+            // Mirror what `GainControl` effects do: stash old controller for SBA/undo,
+            // overwrite, log. Reuse the existing `take_control_of` helper if present;
+            // otherwise mutate `card.controller` directly with an undo entry.
+            let prior_log_size = self.logger.log_count();
+            let card = self.cards.get_mut(target_id)?;
+            let old_controller = card.controller;
+            card.controller = aura_controller;
+            self.undo_log.log(
+                crate::undo::GameAction::ChangeController {
+                    card_id: target_id,
+                    old_controller,
+                    new_controller: aura_controller,
+                },
+                prior_log_size,
+            );
+        }
+
+        // Step 1c: record turn entered (summoning sickness clock starts now)
+        if let Ok(card) = self.cards.get_mut(target_id) {
+            let old_value = card.turn_entered_battlefield;
+            let prior_log_size = self.logger.log_count();
+            let new_value = Some(self.turn.turn_number);
+            card.turn_entered_battlefield = new_value;
+            self.undo_log.log(
+                crate::undo::GameAction::SetTurnEnteredBattlefield {
+                    card_id: target_id,
+                    old_value,
+                    new_value,
+                },
+                prior_log_size,
+            );
+        }
+
+        // Step 2: apply the reanimated creature's own ETB (etbCounter + triggers).
+        self.apply_etb_counters(target_id)?;
+        self.check_triggers(TriggerEvent::EntersBattlefield, target_id)?;
+
+        // Step 3: attach the Aura. Both cards are on the battlefield now, so
+        // `attach_aura`'s zone checks will succeed. This runs after the target's
+        // ETB triggers — matching the Java SVar order
+        // `TrigReanimate (move) → DBAnimate (no-op for us) → DBAttach`.
+        if self.battlefield.contains(aura_id) && self.battlefield.contains(target_id) {
+            self.attach_aura(aura_id, target_id)?;
+        }
+
+        Ok(())
+    }
+
+    /// Apply counters from `K:etbCounter` keyword as a card enters the battlefield.
+    ///
+    /// Implements MTG CR 614.1c — "X enters the battlefield with N counters" is a
+    /// self-replacement effect on a permanent's own ETB. We model it by placing the
+    /// counters immediately after the card moves into the Battlefield zone but
+    /// **before** any ETB triggers fire, so triggers like "whenever a creature enters
+    /// with +1/+1 counters" observe the counters correctly.
+    ///
+    /// Triggered for every entry into the battlefield (cast, played as land, returned
+    /// from any zone via `ChangeZone`, etc.) — this is what makes a reanimated
+    /// Triskelion arrive with its three +1/+1 counters.
+    ///
+    /// Silently no-ops for cards without the keyword. Logs a warning and skips the
+    /// counter for unsupported counter types or non-numeric amounts (e.g. `X`/`Y`,
+    /// which would require evaluation context — TODO).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if `add_counters` itself fails (card disappeared between
+    /// the lookup and the mutation, which should not happen during a single ETB
+    /// resolution).
+    fn apply_etb_counters(&mut self, card_id: CardId) -> Result<()> {
+        use crate::core::{CounterType, Keyword, KeywordArgs};
+
+        let (counter_type, amount, card_name) = {
+            let Some(card) = self.cards.try_get(card_id) else {
+                return Ok(());
+            };
+            let Some(args) = card.keywords.get_args(Keyword::EtbCounter) else {
+                return Ok(());
+            };
+            let KeywordArgs::EtbCounter {
+                counter_type,
+                amount,
+                condition: _,
+            } = args
+            else {
+                return Ok(());
+            };
+            let Some(ct) = CounterType::parse(counter_type) else {
+                log::warn!(
+                    "apply_etb_counters: unknown counter type '{}' on {}",
+                    counter_type,
+                    card.name
+                );
+                return Ok(());
+            };
+            let Ok(amt) = amount.parse::<u8>() else {
+                // TODO(mtg-abfad9): symbolic amounts like "X" / "Y" require an
+                // evaluation context (caster's choice, X paid, etc.).
+                log::warn!(
+                    "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
+                    amount,
+                    card.name
+                );
+                return Ok(());
+            };
+            (ct, amt, card.name.clone())
+        };
+
+        if amount == 0 {
+            return Ok(());
+        }
+
+        self.logger.gamelog(&format!(
+            "{} enters the battlefield with {} {} counter{}",
+            card_name,
+            amount,
+            counter_type.display_name(),
+            if amount == 1 { "" } else { "s" }
+        ));
+        self.add_counters(card_id, counter_type, amount)?;
+        Ok(())
+    }
+
     /// Attach Aura to a target card
     ///
     /// This is called when an Aura spell resolves and enters the battlefield.
@@ -772,7 +972,21 @@ impl GameState {
         });
 
         let target = self.cards.get(target_id)?;
-        let target_valid = match enchant_type.as_deref() {
+        // Strip the `.inZone<X>` qualifier (used by reanimation Auras like Animate Dead
+        // — `Enchant:Creature.inZoneGraveyard`). This qualifier filters the **casting**
+        // target to a graveyard card; once we've reanimated the creature and are
+        // attaching the Aura on the battlefield, only the bare card type matters.
+        // Without this, Animate Dead would refuse to attach to its own reanimated
+        // target because Triskelion has no "Creature.inZoneGraveyard" subtype.
+        let strip_inzone = |s: &str| -> String {
+            if let Some(idx) = s.to_ascii_lowercase().find(".inzone") {
+                s[..idx].to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        let normalized = enchant_type.as_deref().map(strip_inzone);
+        let target_valid = match normalized.as_deref() {
             Some("Creature") | None => target.is_creature(), // Default: Enchant creature
             Some("Land") => target.is_land(),
             Some("Artifact") => target.is_artifact(),

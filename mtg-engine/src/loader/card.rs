@@ -5521,6 +5521,44 @@ Oracle:Triskelion enters the battlefield with three +1/+1 counters on it.
     }
 
     #[test]
+    fn test_triskelion_real_card_etb_counter_keyword() {
+        // The REAL Triskelion card-script (forge-java) uses K:etbCounter:P1P1:3,
+        // not the redundant SVar trigger above. Make sure the keyword survives
+        // parsing so the runtime `apply_etb_counters` path can place the counters.
+        use crate::core::{Keyword, KeywordArgs, PlayerId};
+
+        let content = r#"
+Name:Triskelion
+ManaCost:6
+Types:Artifact Creature Construct
+PT:1/1
+K:etbCounter:P1P1:3
+A:AB$ DealDamage | AILogic$ Triskelion | Cost$ SubCounter<1/P1P1> | ValidTgts$ Any | NumDmg$ 1 | SpellDescription$ It deals 1 damage to any target.
+Oracle:Triskelion enters with three +1/+1 counters on it.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+        let card = def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+
+        let args = card
+            .keywords
+            .get_args(Keyword::EtbCounter)
+            .expect("etbCounter keyword should be parsed onto the card");
+
+        if let KeywordArgs::EtbCounter {
+            counter_type,
+            amount,
+            condition: _,
+        } = args
+        {
+            assert_eq!(counter_type, "P1P1", "Triskelion ETB counter type");
+            assert_eq!(amount, "3", "Triskelion ETB counter amount");
+        } else {
+            panic!("expected EtbCounter args, got {args:?}");
+        }
+    }
+
+    #[test]
     fn test_bazaar_of_baghdad_draw_discard_chain() {
         use crate::core::{Effect, PlayerId};
 

@@ -1,0 +1,24 @@
+[metadata]
+Name:Triskelion ETB With Three Counters
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Cast Triskelion (6 mana). Triskelion's K:etbCounter:P1P1:3 must place three +1/+1 counters as it enters. Effective P/T should be 4/4 (1/1 + 3 counters).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Triskelion
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mox Sapphire; Mox Jet; Mox Pearl; Mox Ruby; Mox Emerald; Sol Ring
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=
+p1exile=

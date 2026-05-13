@@ -3259,7 +3259,12 @@ impl GameState {
     }
 
     /// Find which zone a card is currently in.
-    fn find_card_zone(&self, card_id: CardId) -> Option<Zone> {
+    /// Look up which zone a card is currently in, if any.
+    ///
+    /// Scans battlefield, stack, then every player's hidden zones (hand, library,
+    /// graveyard, exile, command). Returns `None` if the card has been completely
+    /// removed (e.g. token leaving play).
+    pub fn find_card_zone(&self, card_id: CardId) -> Option<Zone> {
         // Check battlefield
         if self.battlefield.cards.contains(&card_id) {
             return Some(Zone::Battlefield);

@@ -97,9 +97,9 @@ fi
 echo
 echo -e "${GREEN}=== Test PASSED ===${NC}"
 echo
-echo "NOTE: Animate Dead's ETB trigger that reanimates the targeted creature"
-echo "is NOT yet implemented in mtg-forge-rs (TrigReanimate / DBAnimate /"
-echo "DBAttach / DBDelay chain). See follow-up bug filed against this card."
+echo "Full reanimation behaviour (target returns to battlefield, Aura attaches,"
+echo "etbCounter + continuous -1/-0 resolve correctly) is verified separately"
+echo "by tests/animate_dead_reanimate_triskelion_e2e.sh."
 echo
 echo "Full log: $LOG"
 exit 0
