@@ -472,82 +472,116 @@ pub fn tui_get_layout_json(viewport_width: u16, viewport_height: u16) -> String 
     .to_string()
 }
 
-/// Run one turn or continue game - called from JavaScript button
+/// Run one turn or continue game - called from JavaScript button.
+///
+/// Ratzilla-free: notifies JS via `window.onRenderComplete` directly so
+/// game.html does not have to wait for the hidden ratzilla render tick.
 #[wasm_bindgen]
 pub fn tui_run_turn() {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            s.run_until_choice();
-            s.needs_redraw = true; // State changed, need redraw
-        }
+    with_state_mut_notify(|s| {
+        s.run_until_choice();
+        s.needs_redraw = true; // State changed, need redraw
     });
 }
 
-/// Select current choice - called from JavaScript or keyboard Enter
+/// Select current choice - called from JavaScript or keyboard Enter.
+///
+/// Ratzilla-free: see `tui_run_turn` for notification semantics.
 #[wasm_bindgen]
 pub fn tui_select_choice() {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            s.select_current_choice();
-            s.needs_redraw = true; // State changed, need redraw
-        }
+    with_state_mut_notify(|s| {
+        s.select_current_choice();
+        s.needs_redraw = true; // State changed, need redraw
     });
 }
 
-/// Move to previous choice in the list
+/// Move to previous choice in the list.
+///
+/// Ratzilla-free: choice navigation is pure data manipulation
+/// (`select_previous_choice`) and does not need a ratzilla terminal to be
+/// attached. This export is what the upcoming game.html keydown handler will
+/// call directly for the Up arrow, replacing the legacy
+/// `terminal.on_key_event` route through the hidden ratzilla div.
 #[wasm_bindgen]
 pub fn tui_prev_choice() {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            s.select_previous_choice();
-            // needs_redraw already set by select_previous_choice()
-        }
+    with_state_mut_notify(|s| {
+        s.select_previous_choice();
+        // needs_redraw already set by select_previous_choice()
     });
 }
 
-/// Move to next choice in the list
+/// Move to next choice in the list. Ratzilla-free; see `tui_prev_choice`.
 #[wasm_bindgen]
 pub fn tui_next_choice() {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            s.select_next_choice();
-            // needs_redraw already set by select_next_choice()
-        }
+    with_state_mut_notify(|s| {
+        s.select_next_choice();
+        // needs_redraw already set by select_next_choice()
     });
 }
 
-/// Set choice index directly (for number key quick-select)
+/// Set choice index directly (for number key quick-select).
 ///
 /// Sets the highlighted choice to the given index without navigating
 /// through intermediate choices. Used by native GUI for 1-9 quick select.
+/// Ratzilla-free.
 #[wasm_bindgen]
 pub fn tui_set_choice_idx(idx: usize) {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            if idx < s.current_choices.len() {
-                s.selected_choice_idx = idx;
-                s.update_choice_highlights();
-                s.needs_redraw = true;
-            }
+    with_state_mut_notify(|s| {
+        if idx < s.current_choices.len() {
+            s.selected_choice_idx = idx;
+            s.update_choice_highlights();
+            s.needs_redraw = true;
         }
     });
 }
 
-/// Toggle auto-run mode - called from JavaScript button
+/// Toggle auto-run mode - called from JavaScript button.
+///
+/// Ratzilla-free: see `tui_run_turn` for notification semantics.
 #[wasm_bindgen]
 pub fn tui_toggle_auto() {
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            s.auto_run = !s.auto_run;
-            s.needs_redraw = true; // UI state changed, need redraw
-        }
+    with_state_mut_notify(|s| {
+        s.auto_run = !s.auto_run;
+        s.needs_redraw = true; // UI state changed, need redraw
     });
+}
+
+/// Advance the game one step if auto-run is enabled, and refresh JS observers.
+///
+/// **Ratzilla-free counterpart to the auto-run logic baked into the ratzilla
+/// `draw_web` closure** (see `setup_terminal_and_render`). Intended for
+/// game.html to call from `requestAnimationFrame` (or a `setTimeout` loop)
+/// once it stops launching the hidden ratzilla terminal — at that point this
+/// is the only thing driving forward progress between human inputs.
+///
+/// The behavior matches what `draw_web` does today, minus the visible draw:
+///   1. If `should_auto_run(state)` is true, run the game until the next
+///      choice point and mark `needs_redraw`.
+///   2. If `needs_redraw` is set (from auto-run advance, from a recent mutator,
+///      or from a controller callback), fire `window.onRenderComplete` /
+///      `window.updateTurnInfo` and clear the flag.
+///
+/// Returns `true` if either step did something (i.e. JS should refresh its
+/// view); `false` if the game is paused/idle and nothing changed.
+#[wasm_bindgen]
+pub fn tui_tick() -> bool {
+    GLOBAL_TUI_STATE.with(|state| {
+        let Some(ref state_rc) = *state.borrow() else {
+            return false;
+        };
+        let mut s = state_rc.borrow_mut();
+        let mut changed = false;
+        if should_auto_run(&s) {
+            s.run_until_choice();
+            s.needs_redraw = true;
+            changed = true;
+        }
+        if s.needs_redraw {
+            run_post_render_js_callbacks(&mut s);
+            changed = true;
+        }
+        changed
+    })
 }
 
 /// Select a card by stable id (called from the HTML GUI).
@@ -597,6 +631,11 @@ pub fn tui_select_card(card_id: u32) -> String {
         match result {
             CardSelectionResult::Selected { .. } => {
                 s.needs_redraw = true;
+                // Notify JS observers immediately (ratzilla-free path) so the
+                // GUI updates its `is_selected` highlights without waiting on
+                // the hidden ratzilla draw_web tick. Safe to call here: only
+                // borrows `&s` immutably.
+                fire_render_complete_callback(s);
                 let detail = selected_card_detail(&s.game, perspective, cid);
                 selected_card_detail_json(detail)
             }
@@ -613,17 +652,15 @@ pub fn tui_select_card(card_id: u32) -> String {
 /// Clear any current card selection (deselect the details pane).
 ///
 /// Updates the same shared state that the TUI uses, so both modes show an
-/// empty details pane after this call.
+/// empty details pane after this call. Ratzilla-free: see `tui_run_turn`
+/// for notification semantics.
 #[wasm_bindgen]
 pub fn tui_clear_card_selection() {
     use crate::game::fancy_tui_events::clear_card_selection;
 
-    GLOBAL_TUI_STATE.with(|state| {
-        if let Some(ref state) = *state.borrow() {
-            let mut s = state.borrow_mut();
-            clear_card_selection(&mut s.renderer.state);
-            s.needs_redraw = true;
-        }
+    with_state_mut_notify(|s| {
+        clear_card_selection(&mut s.renderer.state);
+        s.needs_redraw = true;
     });
 }
 
@@ -3177,16 +3214,24 @@ fn draw_tui_frame(f: &mut Frame, state: &mut WasmFancyTuiState) {
     renderer.draw_ui(f, &view, prompt, &choices);
 }
 
-/// Run post-render JavaScript callbacks when state has changed.
+/// Fire `window.updateTurnInfo` and `window.onRenderComplete` from the current
+/// state, unconditionally and without touching `needs_redraw`.
 ///
-/// Updates turn info in the header, exports card positions for image overlays,
-/// and notifies JavaScript that rendering is complete via onRenderComplete().
-fn run_post_render_js_callbacks(state: &mut WasmFancyTuiState) {
-    if !state.needs_redraw {
-        return;
-    }
-    state.needs_redraw = false;
-
+/// This is the **ratzilla-free** notification path: it can be called from any
+/// pure-logic mutator (or from `tui_tick()`) so that JavaScript receives a
+/// "state changed, please re-render" signal even when the hidden ratzilla
+/// `draw_web` loop is not the one driving updates.
+///
+/// Notes:
+/// - `entity_positions` is populated as a side-effect of the ratatui draw, so
+///   when this is invoked from a pure-logic mutator the positions reflect the
+///   *previous* drawn frame. game.html does not consume positions for
+///   click-handling (it uses `tui_select_card` directly), and fancy.html still
+///   gets a follow-up call from `run_post_render_js_callbacks()` after the
+///   next ratzilla draw, so the slight staleness self-corrects.
+/// - The handlers in JS (`window.onRenderComplete`, `window.updateTurnInfo`)
+///   are idempotent and debounced, so duplicate firings are harmless.
+fn fire_render_complete_callback(state: &WasmFancyTuiState) {
     let turn_number = state.game.turn.turn_number;
     let game_over = state.game_over;
     let _ = js_sys::eval(&format!(
@@ -3226,6 +3271,45 @@ fn run_post_render_js_callbacks(state: &mut WasmFancyTuiState) {
         positions_json, selected_card_json
     );
     let _ = js_sys::eval(&js_code);
+}
+
+/// Run post-render JavaScript callbacks when state has changed.
+///
+/// Updates turn info in the header, exports card positions for image overlays,
+/// and notifies JavaScript that rendering is complete via onRenderComplete().
+///
+/// Consumes `needs_redraw` (clears it). Called from the ratzilla `draw_web`
+/// closure and from `tui_tick()` — i.e. anywhere that has *just* drawn and
+/// wants the JS observers to refresh.
+fn run_post_render_js_callbacks(state: &mut WasmFancyTuiState) {
+    if !state.needs_redraw {
+        return;
+    }
+    state.needs_redraw = false;
+    fire_render_complete_callback(state);
+}
+
+/// Run a closure that may mutate the global TUI state, then notify JS if the
+/// closure flipped `needs_redraw`.
+///
+/// This is the canonical wrapper for ratzilla-free WASM mutator exports
+/// (`tui_run_turn`, `tui_select_choice`, `tui_toggle_auto`, …). It guarantees
+/// that game.html receives a `window.onRenderComplete` callback for every
+/// state-changing action without depending on the hidden ratzilla draw_web
+/// tick. The `needs_redraw` flag is intentionally **not** cleared here so
+/// that any active ratzilla terminal still sees it on the next animation
+/// frame and refreshes its visible canvas (the duplicate JS callback is
+/// idempotent — see `fire_render_complete_callback` doc).
+fn with_state_mut_notify<F: FnOnce(&mut WasmFancyTuiState)>(f: F) {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            let mut s = state.borrow_mut();
+            f(&mut s);
+            if s.needs_redraw {
+                fire_render_complete_callback(&s);
+            }
+        }
+    });
 }
 
 /// Set up the terminal with event handlers and render callback.
