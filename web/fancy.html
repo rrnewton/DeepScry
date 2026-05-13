@@ -11,8 +11,16 @@
          font-size: 16 * FONT_SCALE px. Net effect: more cells, smaller cells, fills viewport. -->
     <script>
       (function() {
-        // Read persisted scale (default 0.75 = small/12px). Range: 0.5..1.5.
-        let scale = 0.75;
+        // Read persisted scale (default 1.0 = native, no shim). Range: 0.5..1.5.
+        // The default MUST be 1.0 so the no-localStorage path returns early below
+        // and behaves byte-identically to a build without the shim — otherwise
+        // CI tests (which load the page with empty localStorage) get a differently
+        // sized terminal grid than main, which (a) shifts click coordinates so
+        // network click tests miss their targets and (b) extends the human-input
+        // game far enough to expose a rewind/replay verifier divergence.
+        // Users who want a smaller font select 0.75 from the dropdown, which
+        // writes localStorage explicitly.
+        let scale = 1.0;
         try {
           const v = parseFloat(localStorage.getItem('mtg.tui.fontScale'));
           if (Number.isFinite(v) && v >= 0.5 && v <= 1.5) scale = v;
