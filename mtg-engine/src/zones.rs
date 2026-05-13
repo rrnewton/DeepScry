@@ -104,6 +104,21 @@ impl CardZone {
         self.cards.push(card_id);
     }
 
+    /// Insert `card_id` at `position`, clamping to `cards.len()` if the
+    /// position is past the end. Used by undo to restore a card to the
+    /// exact slot it occupied before a `MoveCard` action; without
+    /// position-aware reinsertion the card silently moves to the end of
+    /// the zone, permuting hand/library order across an undo cycle.
+    pub fn add_at(&mut self, card_id: CardId, position: usize) {
+        let pos = position.min(self.cards.len());
+        self.cards.insert(pos, card_id);
+    }
+
+    /// Index of `card_id` in this zone, or `None` if it is not present.
+    pub fn position_of(&self, card_id: CardId) -> Option<usize> {
+        self.cards.iter().position(|&id| id == card_id)
+    }
+
     pub fn remove(&mut self, card_id: CardId) -> bool {
         if let Some(pos) = self.cards.iter().position(|&id| id == card_id) {
             // Note: We use remove() instead of swap_remove() even for semantically unordered zones

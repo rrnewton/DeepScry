@@ -1791,7 +1791,17 @@ impl<'a> GameLoop<'a> {
                                                     continue;
                                                 }
 
-                                                // Route through controller protocol
+                                                // Route through controller protocol.
+                                                // Capture log size BEFORE asking controller so the
+                                                // ChoicePoint we log below can rewind cleanly to the
+                                                // pre-choice state. Without logging this ChoicePoint,
+                                                // rewind/replay loops infinitely on cards like
+                                                // Bazaar of Baghdad ("draw 2, discard 3"): the user's
+                                                // discard pick is never recorded, so on replay the
+                                                // ReplayController has no Discard entry to consume,
+                                                // delegates back to the (empty) human controller,
+                                                // and we re-prompt for the same discard forever.
+                                                let prior_log_size = self.game.logger.log_count();
                                                 let choice = self.choose_discard_with_hook(
                                                     controller,
                                                     discard_player,
@@ -1812,6 +1822,16 @@ impl<'a> GameLoop<'a> {
                                                         handle_choice_result_break!(other, self.game, current_priority)
                                                     }
                                                 };
+
+                                                // Log the discard choice for snapshot/replay so a
+                                                // later rewind can replay it deterministically.
+                                                let replay_choice =
+                                                    crate::game::ReplayChoice::Discard(cards_to_discard.clone());
+                                                self.log_choice_point(
+                                                    discard_player,
+                                                    Some(replay_choice),
+                                                    prior_log_size,
+                                                );
 
                                                 for card_id in cards_to_discard {
                                                     if remember {
@@ -1870,6 +1890,11 @@ impl<'a> GameLoop<'a> {
 
                                                     let actual_count = d_count.min(hand.len());
                                                     if actual_count > 0 {
+                                                        // Capture log size BEFORE the choice so the
+                                                        // ChoicePoint we log can rewind cleanly.
+                                                        // See DiscardCards branch above for why this
+                                                        // is mandatory (Bazaar of Baghdad rewind loop).
+                                                        let prior_log_size = self.game.logger.log_count();
                                                         let choice = self.choose_discard_with_hook(
                                                             controller,
                                                             loot_player,
@@ -1891,6 +1916,17 @@ impl<'a> GameLoop<'a> {
                                                                 )
                                                             }
                                                         };
+
+                                                        // Log the discard choice for replay.
+                                                        let replay_choice = crate::game::ReplayChoice::Discard(
+                                                            cards_to_discard.clone(),
+                                                        );
+                                                        self.log_choice_point(
+                                                            loot_player,
+                                                            Some(replay_choice),
+                                                            prior_log_size,
+                                                        );
+
                                                         for card_id in cards_to_discard {
                                                             if let Err(e) = self.game.discard_card(loot_player, card_id)
                                                             {
@@ -2742,6 +2778,13 @@ impl<'a> GameLoop<'a> {
                             } else {
                                 controller2
                             };
+                            // Capture log size BEFORE the choice so the ChoicePoint
+                            // we log below can rewind cleanly to the pre-choice
+                            // state. Mandatory for replay determinism — without
+                            // this, a rewind that lands inside the spell will
+                            // re-prompt the user (infinite loop). See the matching
+                            // discard site in the activated-ability branch.
+                            let prior_log_size = self.game.logger.log_count();
                             let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
                             let cards_to_discard = match choice {
                                 crate::game::controller::ChoiceResult::Ok(v) => v,
@@ -2763,6 +2806,11 @@ impl<'a> GameLoop<'a> {
                                     SmallVec::new()
                                 }
                             };
+
+                            // Log the discard choice for replay.
+                            let replay_choice = crate::game::ReplayChoice::Discard(cards_to_discard.clone());
+                            self.log_choice_point(*player, Some(replay_choice), prior_log_size);
+
                             for card_id in cards_to_discard {
                                 if remember {
                                     self.game.remembered_cards.push(card_id);
@@ -2800,12 +2848,20 @@ impl<'a> GameLoop<'a> {
                                 } else {
                                     controller2
                                 };
+                                // Capture log size BEFORE the choice so the
+                                // ChoicePoint we log can rewind cleanly.
+                                let prior_log_size = self.game.logger.log_count();
                                 let choice = self.choose_discard_with_hook(controller, *player, &hand, actual_count);
                                 let cards_to_discard = choice.into_result().map_err(|e| {
                                     crate::MtgError::InvalidAction(format!(
                                         "Loot discard choice failed during spell resolution: {e}"
                                     ))
                                 })?;
+
+                                // Log the discard choice for replay.
+                                let replay_choice = crate::game::ReplayChoice::Discard(cards_to_discard.clone());
+                                self.log_choice_point(*player, Some(replay_choice), prior_log_size);
+
                                 for card_id in cards_to_discard {
                                     if let Err(e) = self.game.discard_card(*player, card_id) {
                                         if should_log {

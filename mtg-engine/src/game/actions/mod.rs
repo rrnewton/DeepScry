@@ -6029,9 +6029,29 @@ impl GameState {
     pub fn check_spellcast_triggers(&mut self, cast_spell_id: CardId, caster_id: PlayerId) -> Result<()> {
         use crate::core::Trigger;
 
-        // Increment spell cast counter for the caster
+        // Increment spell cast counter for the caster.
+        //
+        // Logged via `SetSpellsCastThisTurn` so that undo / rewind can
+        // restore the previous count. Without the undo entry, the WASM
+        // rewind/replay verifier sees a `players[].spells_cast_this_turn`
+        // drift across rewinds (the value monotonically grows on every
+        // forward pass but is never decremented on rollback).
+        let prior_log_size = self.logger.log_count();
+        let mut new_count = None;
         if let Ok(player) = self.get_player_mut(caster_id) {
-            player.spells_cast_this_turn += 1;
+            let old_value = player.spells_cast_this_turn;
+            player.spells_cast_this_turn = old_value.saturating_add(1);
+            new_count = Some((old_value, player.spells_cast_this_turn));
+        }
+        if let Some((old_value, new_value)) = new_count {
+            self.undo_log.log(
+                crate::undo::GameAction::SetSpellsCastThisTurn {
+                    player_id: caster_id,
+                    old_value,
+                    new_value,
+                },
+                prior_log_size,
+            );
         }
 
         // Check if the cast spell is a creature (for noncreature-only triggers)

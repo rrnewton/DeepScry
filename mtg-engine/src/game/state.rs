@@ -962,6 +962,21 @@ impl GameState {
             }
         }
 
+        // Capture the card's position in `from` BEFORE removing it, so
+        // `GameAction::MoveCard` can record where to reinsert on undo.
+        // Without this, undo re-appends to the end of the source zone,
+        // silently permuting Hand/Library order across rewind/replay
+        // cycles (root cause of the WASM verifier's hand-reorder drift).
+        let from_position: Option<u32> = match from {
+            Zone::Battlefield => self.battlefield.position_of(card_id).map(|p| p as u32),
+            Zone::Stack => self.stack.position_of(card_id).map(|p| p as u32),
+            Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => self
+                .get_player_zones(owner)
+                .and_then(|z| z.get_zone(from))
+                .and_then(|z| z.position_of(card_id))
+                .map(|p| p as u32),
+        };
+
         // Remove from source zone
         let removed = match from {
             Zone::Battlefield => self.battlefield.remove(card_id),
@@ -1060,6 +1075,7 @@ impl GameState {
                 from_zone: from,
                 to_zone: to,
                 owner,
+                from_position,
             },
             prior_log_size,
         );
@@ -1281,6 +1297,11 @@ impl GameState {
 
             // Try to draw from the library
             if let Some(card_id) = zones.library.draw_top() {
+                // The card was at the top of the library; after `draw_top`
+                // pops it, the new library length equals the slot index it
+                // used to occupy. Capture this so undo can restore the card
+                // to the same position on the library stack.
+                let from_position = Some(zones.library.cards.len() as u32);
                 zones.hand.add(card_id);
 
                 let prior_log_size = self.logger.log_count();
@@ -1296,6 +1317,7 @@ impl GameState {
                         from_zone: crate::zones::Zone::Library,
                         to_zone: crate::zones::Zone::Hand,
                         owner: player_id,
+                        from_position,
                     },
                     prior_log_size,
                 );
@@ -1612,6 +1634,11 @@ impl GameState {
             card.owner
         };
 
+        // Capture stack position BEFORE removal so undo can restore the
+        // countered spell to the same slot on the stack (matters for
+        // top-of-stack semantics during rewind/replay).
+        let from_position = self.stack.position_of(spell_id).map(|p| p as u32);
+
         // Remove from stack
         self.stack.remove(spell_id);
 
@@ -1628,6 +1655,7 @@ impl GameState {
                 from_zone: crate::zones::Zone::Stack,
                 to_zone: crate::zones::Zone::Graveyard,
                 owner: owner_id,
+                from_position,
             },
             prior_log_size,
         );
@@ -2268,6 +2296,7 @@ impl GameState {
                             from_zone,
                             to_zone,
                             owner,
+                            from_position,
                         } => {
                             // Move card back from to_zone to from_zone
                             let removed = match to_zone {
@@ -2287,13 +2316,26 @@ impl GameState {
                             };
 
                             if removed {
+                                // Reinsert at original position when known so
+                                // hand/library/stack order is preserved across
+                                // undo (see `add_at` doc on `CardZone`).
+                                let pos = from_position.map(|p| p as usize);
                                 match from_zone {
-                                    Zone::Battlefield => self.battlefield.add(card_id),
-                                    Zone::Stack => self.stack.add(card_id),
+                                    Zone::Battlefield => match pos {
+                                        Some(p) => self.battlefield.add_at(card_id, p),
+                                        None => self.battlefield.add(card_id),
+                                    },
+                                    Zone::Stack => match pos {
+                                        Some(p) => self.stack.add_at(card_id, p),
+                                        None => self.stack.add(card_id),
+                                    },
                                     _ => {
                                         if let Some(zones) = self.get_player_zones_mut(owner) {
                                             if let Some(zone) = zones.get_zone_mut(from_zone) {
-                                                zone.add(card_id);
+                                                match pos {
+                                                    Some(p) => zone.add_at(card_id, p),
+                                                    None => zone.add(card_id),
+                                                }
                                             }
                                         }
                                     }
@@ -2430,6 +2472,15 @@ impl GameState {
                                 player.lands_played_this_turn = old_value;
                             }
                         }
+                        crate::undo::GameAction::SetSpellsCastThisTurn {
+                            player_id,
+                            old_value,
+                            new_value: _,
+                        } => {
+                            if let Ok(player) = self.get_player_mut(player_id) {
+                                player.spells_cast_this_turn = old_value;
+                            }
+                        }
                         crate::undo::GameAction::ChangeController {
                             card_id,
                             old_controller,
@@ -2547,6 +2598,7 @@ impl GameState {
                     from_zone,
                     to_zone,
                     owner,
+                    from_position,
                 } => {
                     // Move card back from to_zone to from_zone
                     // Don't log this action since it's a revert
@@ -2589,13 +2641,25 @@ impl GameState {
                         eprintln!("UNDO BUG: Card {} not found in to_zone {:?}, cannot undo move from {:?} → {:?}. Card is actually in: {:?}",
                                   card_id.as_u32(), to_zone, from_zone, to_zone, actual_zone);
                     } else {
+                        // Reinsert at original position when known so
+                        // hand/library/stack order is preserved on undo.
+                        let pos = from_position.map(|p| p as usize);
                         match from_zone {
-                            Zone::Battlefield => self.battlefield.add(card_id),
-                            Zone::Stack => self.stack.add(card_id),
+                            Zone::Battlefield => match pos {
+                                Some(p) => self.battlefield.add_at(card_id, p),
+                                None => self.battlefield.add(card_id),
+                            },
+                            Zone::Stack => match pos {
+                                Some(p) => self.stack.add_at(card_id, p),
+                                None => self.stack.add(card_id),
+                            },
                             Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
                                 if let Some(zones) = self.get_player_zones_mut(owner) {
                                     if let Some(zone) = zones.get_zone_mut(from_zone) {
-                                        zone.add(card_id);
+                                        match pos {
+                                            Some(p) => zone.add_at(card_id, p),
+                                            None => zone.add(card_id),
+                                        }
                                     }
                                 }
                             }
@@ -2769,6 +2833,16 @@ impl GameState {
                     // Restore the previous cards_drawn_this_turn count
                     if let Ok(player) = self.get_player_mut(player_id) {
                         player.cards_drawn_this_turn = old_value;
+                    }
+                }
+                crate::undo::GameAction::SetSpellsCastThisTurn {
+                    player_id,
+                    old_value,
+                    new_value: _,
+                } => {
+                    // Restore the previous spells_cast_this_turn count
+                    if let Ok(player) = self.get_player_mut(player_id) {
+                        player.spells_cast_this_turn = old_value;
                     }
                 }
                 crate::undo::GameAction::ChangeController {

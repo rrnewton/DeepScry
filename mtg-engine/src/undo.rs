@@ -33,6 +33,20 @@ pub enum GameAction {
         from_zone: Zone,
         to_zone: Zone,
         owner: PlayerId,
+        /// Position of the card in `from_zone` *before* the move, so undo
+        /// can restore it to the same slot.
+        ///
+        /// Card order matters in many zones (Library is obviously ordered;
+        /// Hand iteration order affects controller decisions; Battlefield
+        /// iteration order is stable for determinism — see
+        /// `CardZone::remove`'s comment). Without this field, undo
+        /// re-appends the card at the end of `from_zone`, which permutes
+        /// hand order across rewind/replay cycles and trips the WASM
+        /// rewind/replay verifier (turn-start hash drifts on repeated
+        /// rewinds to the same turn). `None` is accepted for
+        /// backward-compatibility with snapshots that predate this field.
+        #[serde(default)]
+        from_position: Option<u32>,
     },
 
     /// Tap/untap a permanent
@@ -117,6 +131,19 @@ pub enum GameAction {
 
     /// Set lands_played_this_turn counter (for land play limit tracking)
     SetLandsPlayedThisTurn {
+        player_id: PlayerId,
+        /// Previous count
+        old_value: u8,
+        /// New count
+        new_value: u8,
+    },
+
+    /// Set spells_cast_this_turn counter (for prowess / cast triggers).
+    ///
+    /// Without this, the counter increments forward but never decrements
+    /// on undo, so the WASM rewind/replay verifier sees a drift on the
+    /// `players[].spells_cast_this_turn` field across rewinds.
+    SetSpellsCastThisTurn {
         player_id: PlayerId,
         /// Previous count
         old_value: u8,
@@ -285,11 +312,13 @@ impl fmt::Display for GameAction {
                 from_zone,
                 to_zone,
                 owner,
+                from_position,
             } => write!(
                 f,
-                "MoveCard({} {:?} -> {:?} owner=P{})",
+                "MoveCard({} {:?}@{:?} -> {:?} owner=P{})",
                 card_id.as_u32(),
                 from_zone,
+                from_position,
                 to_zone,
                 owner.as_u32()
             ),
@@ -368,6 +397,9 @@ impl fmt::Display for GameAction {
             GameAction::SetCardsDrawnThisTurn {
                 player_id, new_value, ..
             } => write!(f, "CardsDrawn(P{} = {})", player_id.as_u32(), new_value),
+            GameAction::SetSpellsCastThisTurn {
+                player_id, new_value, ..
+            } => write!(f, "SpellsCast(P{} = {})", player_id.as_u32(), new_value),
             GameAction::ChangeController {
                 card_id,
                 new_controller,
@@ -462,10 +494,64 @@ impl GameAction {
                 from_zone,
                 to_zone,
                 owner,
+                from_position,
             } => {
-                // Reverse the move: move from to_zone back to from_zone
-                game.move_card(*card_id, *to_zone, *from_zone, *owner)
-                    .map_err(|e| format!("Failed to undo MoveCard: {}", e))?;
+                // Reverse the move: move from to_zone back to from_zone.
+                // Done with raw zone ops (NOT `game.move_card`) so we can
+                // reinsert the card at its original `from_position` and
+                // skip the forward-direction logging/reveal side effects.
+                use crate::zones::Zone;
+                let removed = match to_zone {
+                    Zone::Battlefield => game.battlefield.remove(*card_id),
+                    Zone::Stack => game.stack.remove(*card_id),
+                    Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
+                        if let Some(zones) = game.get_player_zones_mut(*owner) {
+                            if let Some(zone) = zones.get_zone_mut(*to_zone) {
+                                zone.remove(*card_id)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if !removed {
+                    // Some forward `move_card` calls log a MoveCard even
+                    // when the source/destination removal silently no-ops
+                    // (e.g. shadow-mode tolerance). Don't fail undo for
+                    // those; just nothing to put back.
+                    return Ok(());
+                }
+
+                // Reinsert at the original `from_position` when known so
+                // Hand/Library/Stack order is preserved across the undo
+                // cycle. Without this, `add()` appends to the end and the
+                // WASM rewind/replay verifier sees a "hand reordering"
+                // drift (root cause of `bug-rewind-infinite-loop`'s
+                // turn-start hash divergence).
+                let pos = from_position.as_ref().map(|p| *p as usize);
+                match from_zone {
+                    Zone::Battlefield => match pos {
+                        Some(p) => game.battlefield.add_at(*card_id, p),
+                        None => game.battlefield.add(*card_id),
+                    },
+                    Zone::Stack => match pos {
+                        Some(p) => game.stack.add_at(*card_id, p),
+                        None => game.stack.add(*card_id),
+                    },
+                    Zone::Library | Zone::Hand | Zone::Graveyard | Zone::Exile | Zone::Command => {
+                        if let Some(zones) = game.get_player_zones_mut(*owner) {
+                            if let Some(zone) = zones.get_zone_mut(*from_zone) {
+                                match pos {
+                                    Some(p) => zone.add_at(*card_id, p),
+                                    None => zone.add(*card_id),
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             GameAction::TapCard { card_id, tapped } => {
@@ -657,6 +743,22 @@ impl GameAction {
                 } else {
                     return Err(format!(
                         "Player {} not found for SetCardsDrawnThisTurn undo",
+                        player_id.as_u32()
+                    ));
+                }
+            }
+
+            GameAction::SetSpellsCastThisTurn {
+                player_id,
+                old_value,
+                new_value: _,
+            } => {
+                // Restore the previous spells_cast_this_turn count
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.spells_cast_this_turn = *old_value;
+                } else {
+                    return Err(format!(
+                        "Player {} not found for SetSpellsCastThisTurn undo",
                         player_id.as_u32()
                     ));
                 }
