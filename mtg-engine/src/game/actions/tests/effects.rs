@@ -2607,4 +2607,177 @@ mod tests {
             card.keywords
         );
     }
+
+    /// Card compat: City of Brass (cardsfolder/c/city_of_brass.txt)
+    ///
+    /// Script:
+    ///   ManaCost:no cost
+    ///   Types:Land
+    ///   A:AB$ Mana | Cost$ T | Produced$ Any | Amount$ 1
+    ///   T:Mode$ Taps | ValidCard$ Card.Self | Execute$ TrigDamage
+    ///   SVar:TrigDamage:DB$ DealDamage | Defined$ You | NumDmg$ 1
+    ///
+    /// Verifies (parser + runtime):
+    /// - Card is a Land (zero mana cost)
+    /// - Mana ability cache is `ManaProductionKind::AnyColor`
+    /// - Has a `TriggerEvent::Taps` trigger
+    /// - Tapping the card via `tap_for_mana` fires the trigger and
+    ///   reduces controller's life to 19 (regression for the Taps-trigger
+    ///   chain on lands; wiring lives in `tap_for_mana` actions/mod.rs).
+    #[test]
+    fn test_card_compat_city_of_brass() {
+        use crate::core::{ManaProductionKind, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/city_of_brass.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("City of Brass should load");
+        assert_eq!(def.name.as_str(), "City of Brass");
+        assert!(def.types.contains(&CardType::Land));
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let card_id = game.next_card_id();
+        let card = def.instantiate(card_id, p1_id);
+
+        assert!(
+            matches!(card.definition.cache.mana_production.kind, ManaProductionKind::AnyColor),
+            "City of Brass must produce any colour. Got: {:?}",
+            card.definition.cache.mana_production.kind
+        );
+        assert!(
+            card.triggers.iter().any(|t| matches!(t.event, TriggerEvent::Taps)),
+            "City of Brass must have a Taps trigger. Got triggers: {:?}",
+            card.triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
+        );
+
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let life_before = game.get_player(p1_id).unwrap().life;
+        assert_eq!(life_before, 20, "Sanity check: starting life is 20");
+
+        game.tap_for_mana(p1_id, card_id)
+            .expect("tap_for_mana should succeed for City of Brass");
+
+        let life_after = game.get_player(p1_id).unwrap().life;
+        assert_eq!(
+            life_after, 19,
+            "City of Brass tap trigger must deal 1 damage to controller. Life before: {}, after: {}",
+            life_before, life_after
+        );
+    }
+
+    /// Card compat: Strip Mine (cardsfolder/s/strip_mine.txt)
+    ///
+    /// Script:
+    ///   ManaCost:no cost
+    ///   Types:Land
+    ///   A:AB$ Mana | Cost$ T | Produced$ C
+    ///   A:AB$ Destroy | ValidTgts$ Land | Cost$ T Sac<1/CARDNAME>
+    ///                | AILogic$ LandForLand | SpellDescription$ Destroy target land.
+    ///
+    /// Verifies (parser):
+    /// - Land with zero mana cost
+    /// - Has at least one activated ability whose effect is
+    ///   DestroyPermanent
+    /// - Cost includes a sacrifice component (NOT pure Tap or Mana —
+    ///   that would silently drop the Sac<1/CARDNAME> half and turn
+    ///   Strip Mine into a one-sided land-destroyer-every-turn).
+    ///
+    /// The runtime behaviour ("Strip Mine activates, both it and the
+    /// target land go to graveyards") is verified by the gameplay
+    /// reproducer recorded in the compat issue.
+    #[test]
+    fn test_card_compat_strip_mine() {
+        use crate::core::Cost;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/strip_mine.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Strip Mine should load");
+        assert_eq!(def.name.as_str(), "Strip Mine");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        let destroy_ability = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::DestroyPermanent { .. })));
+        assert!(
+            destroy_ability.is_some(),
+            "Strip Mine must have a Destroy activated ability. Got abilities: {:?}",
+            card.activated_abilities
+        );
+
+        let cost = &destroy_ability.unwrap().cost;
+        assert!(
+            !matches!(cost, Cost::Tap | Cost::Mana(_)),
+            "Strip Mine's destroy ability cost must include sacrifice, not just Tap or Mana. \
+             Got: {:?} — if this is just Cost::Tap the Sac<1/CARDNAME> half was silently dropped \
+             and Strip Mine becomes a one-sided land-destroyer every turn.",
+            cost
+        );
+    }
+
+    /// Card compat: Sengir Vampire (cardsfolder/s/sengir_vampire.txt)
+    ///
+    /// Script:
+    ///   ManaCost:3 B B
+    ///   Types:Creature Vampire
+    ///   PT:4/4
+    ///   K:Flying
+    ///   T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard
+    ///                       | ValidCard$ Creature.DamagedBy
+    ///                       | TriggerZones$ Battlefield | Execute$ TrigPutCounter
+    ///
+    /// Verifies the parser correctly picks up the static side
+    /// (cost {3}{B}{B}, 4/4, Flying).
+    ///
+    /// KNOWN GAP filed as separate bug: the
+    /// `Mode$ ChangesZone | ValidCard$ Creature.DamagedBy` trigger is
+    /// silently dropped by the trigger parser (loader/card.rs:1874 only
+    /// matches `ValidCard$ Card.Self`; line 1901 matches
+    /// `Card.EquippedBy`; no branch matches `Creature.DamagedBy`). Even
+    /// with parser support, the engine does not currently track "which
+    /// sources have damaged which creatures this turn", so the trigger
+    /// could not fire. Affects all "Whenever a creature dealt damage by
+    /// ~ this turn dies" effects.
+    #[test]
+    fn test_card_compat_sengir_vampire() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sengir_vampire.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sengir Vampire should load");
+
+        assert_eq!(def.name.as_str(), "Sengir Vampire");
+        assert_eq!(def.mana_cost.generic, 3, "Cost should be {{3}}{{B}}{{B}}");
+        assert_eq!(def.mana_cost.black, 2, "Cost should include {{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(4));
+        assert_eq!(def.toughness, Some(4));
+
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Sengir Vampire must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+    }
 }

@@ -382,9 +382,29 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let produces_chosen_color = produced_str.contains("Chosen");
 
             let mana_cost = if produced_str == "Any" {
-                // Any color - for now, default to colorless
-                // TODO: Implement player choice for "Any"
-                ManaCost::from_string("C")
+                // `Produced$ Any` — produces one mana of any colour
+                // (City of Brass, Mana Confluence, Vivid lands, etc.).
+                //
+                // We encode "any colour" as "all five colours set to 1"; the
+                // mana-production cache derivation in core/card.rs converts
+                // that pattern to `ManaProductionKind::AnyColor`. We must
+                // NOT add `colorless = 1` here — the cache derivation
+                // requires `mana.colorless == 0` for the AnyColor branch
+                // (see card.rs::derive_mana_production), and any colour
+                // mana doesn't include true {C} colourless anyway (CR 106.7
+                // — "any colour" means W/U/B/R/G, distinct from {C}).
+                //
+                // Previously this returned `ManaCost::from_string("C")`,
+                // which made City of Brass effectively a Colourless Source —
+                // unable to satisfy any single-pip coloured cost. Pinned by
+                // test_card_compat_city_of_brass.
+                let mut mana = ManaCost::default();
+                mana.white = 1;
+                mana.blue = 1;
+                mana.black = 1;
+                mana.red = 1;
+                mana.green = 1;
+                mana
             } else if produced_str.starts_with("Combo") {
                 // Combo means choice between colors (e.g., "Combo B G" = {B} or {G})
                 // Parse all listed colors and return them as a ManaCost with all colors set to 1
