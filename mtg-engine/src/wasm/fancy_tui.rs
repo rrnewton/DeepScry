@@ -1349,6 +1349,70 @@ struct WasmFancyTuiState {
     turn_start_jsons: HashMap<u32, serde_json::Value>,
 }
 
+/// Extract the cards that are valid choices for the current `ChoiceContext`.
+///
+/// Decouple-step6 (mtg-81ed52): the WASM `WasmHumanController` returns a
+/// `ChoiceResult::NeedInput(ChoiceContext::*)` to signal "what cards can be
+/// picked", while the GUI's `is_valid_choice` highlight reads from
+/// `GameUiSessionState::valid_choices`. Bridging the two requires a tiny bit
+/// of pattern matching that mirrors what the native
+/// `FancyTuiController::choose_*` methods write into
+/// `state.session.valid_choices` directly. Keeping this helper next to
+/// `update_choices_from_context` keeps the two in lock-step.
+///
+/// Returns an empty `Vec` for context variants that don't correspond to a
+/// "card choice" (e.g. modal spell mode picker — there's no card to
+/// highlight, the choices are mode descriptions).
+fn valid_choice_cards(context: &ChoiceContext) -> Vec<crate::core::CardId> {
+    match context {
+        ChoiceContext::SpellAbility { available, .. } => {
+            available.iter().map(crate::core::SpellAbility::card_id).collect()
+        }
+        ChoiceContext::Targets { valid_targets, .. } => valid_targets.clone(),
+        ChoiceContext::ManaSources { available_sources, .. } => available_sources.clone(),
+        ChoiceContext::Attackers {
+            available_creatures, ..
+        } => available_creatures.clone(),
+        // Mirrors the native FancyTuiController: chains blockers and attackers
+        // so both groups of cards highlight during a Blockers prompt.
+        ChoiceContext::Blockers {
+            available_blockers,
+            attackers,
+            ..
+        } => available_blockers.iter().chain(attackers.iter()).copied().collect(),
+        ChoiceContext::DamageOrder { blockers, .. } => blockers.clone(),
+        ChoiceContext::Discard { hand, .. } => hand.clone(),
+        ChoiceContext::LibrarySearch { valid_cards, .. } => valid_cards.clone(),
+        ChoiceContext::SacrificePermanents { valid_permanents, .. } => valid_permanents.clone(),
+        ChoiceContext::Modes { .. } => Vec::new(),
+    }
+}
+
+/// Map the rich `controller::ChoiceContext` (variant + payloads) onto the
+/// simple `renderer::ChoiceContext` category enum used for ratatui's
+/// dim-non-valid-cards rendering. The renderer only needs to know the
+/// *kind* of choice in progress; the actual card lists live in
+/// `GameUiSessionState::valid_choices`.
+fn renderer_choice_category(context: &ChoiceContext) -> crate::game::fancy_tui_renderer::ChoiceContext {
+    use crate::game::fancy_tui_renderer::ChoiceContext as Cat;
+    match context {
+        ChoiceContext::SpellAbility { .. } => Cat::PlayingSpell,
+        ChoiceContext::Targets { .. } => Cat::TargetSelection,
+        ChoiceContext::Attackers { .. } => Cat::DeclareAttackers,
+        ChoiceContext::Blockers { .. } => Cat::DeclareBlockers,
+        // The remaining variants don't have a dedicated category in the
+        // renderer enum — fall back to TargetSelection, which produces the
+        // same "highlight valid, dim invalid" treatment we want for these
+        // (mana sources, discard targets, library search results, etc.).
+        ChoiceContext::ManaSources { .. }
+        | ChoiceContext::DamageOrder { .. }
+        | ChoiceContext::Discard { .. }
+        | ChoiceContext::LibrarySearch { .. }
+        | ChoiceContext::SacrificePermanents { .. }
+        | ChoiceContext::Modes { .. } => Cat::TargetSelection,
+    }
+}
+
 impl WasmFancyTuiState {
     /// Create a new WASM fancy TUI state from a GameState (local game mode)
     fn new(game: GameState, p1_controller_type: WasmControllerType, p2_controller_type: WasmControllerType) -> Self {
@@ -1923,6 +1987,7 @@ impl WasmFancyTuiState {
                         self.game_over = true;
                         self.pending_context = None;
                         self.current_choices.clear();
+                        self.clear_pending_choice_highlights();
                         if let Some(winner) = game_result.winner {
                             let winner_name = self
                                 .game
@@ -1968,6 +2033,7 @@ impl WasmFancyTuiState {
                     self.game_over = true;
                     self.pending_context = None;
                     self.current_choices.clear();
+                    self.clear_pending_choice_highlights();
                     if let Some(winner) = game_result.winner {
                         let winner_name = self
                             .game
@@ -2409,6 +2475,7 @@ impl WasmFancyTuiState {
                 self.game_over = true;
                 self.pending_context = None;
                 self.current_choices.clear();
+                self.clear_pending_choice_highlights();
                 if let Some(winner) = game_result.winner {
                     let winner_name = self
                         .game
@@ -2442,6 +2509,11 @@ impl WasmFancyTuiState {
                             self.pending_context = Some(context);
                             self.current_prompt = Some("Waiting for server...".to_string());
                             self.current_choices.clear();
+                            // No real choices to highlight while we wait —
+                            // mirror update_choices_from_context's clear so
+                            // cards on the battlefield don't get dimmed
+                            // (decouple-step6 / mtg-81ed52).
+                            self.clear_pending_choice_highlights();
                             return;
                         }
                     }
@@ -2491,11 +2563,34 @@ impl WasmFancyTuiState {
         }
     }
 
+    /// Clear the choice-highlight state when no choice is pending or the
+    /// previous one has been resolved. Mirrors what the native
+    /// `FancyTuiController` / `FancyFixedController` write at their
+    /// "after the prompt" code paths (see e.g.
+    /// `fancy_tui_controller.rs:407-413`) so the GUI / TUI stop dimming
+    /// non-valid cards as soon as no decision is outstanding
+    /// (decouple-step6 / mtg-81ed52).
+    fn clear_pending_choice_highlights(&mut self) {
+        self.renderer.state.session.valid_choices.clear();
+        self.renderer.state.session.choice_context = crate::game::fancy_tui_renderer::ChoiceContext::None;
+    }
+
     /// Update the current_choices display from a ChoiceContext
     ///
     /// Uses shared formatting functions from controller.rs to ensure consistency
-    /// with native TUI.
+    /// with native TUI. Also populates
+    /// `state.session.valid_choices` and `state.session.choice_context`
+    /// so the GUI's `is_valid_choice` highlighting matches the native TUI
+    /// (decouple-step6 / mtg-81ed52): the WASM controllers signal "what
+    /// cards can be picked" via the `ChoiceContext` returned from
+    /// `NeedInput`, but the highlight code reads from
+    /// `GameUiSessionState::valid_choices` and dims non-valid cards based
+    /// on `GameUiSessionState::choice_context`. Mirrors the writes the
+    /// native `FancyTuiController` / `FancyFixedController` make from
+    /// inside their `choose_*` methods.
     fn update_choices_from_context(&mut self, context: &ChoiceContext) {
+        self.renderer.state.session.valid_choices = valid_choice_cards(context);
+        self.renderer.state.session.choice_context = renderer_choice_category(context);
         self.current_choices.clear();
         // Drop any in-flight multi-blocker selection state when we leave the
         // Blockers prompt, otherwise stale staged pairs would carry over and

@@ -4,67 +4,93 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-05-13T01:00:49.521576282+00:00
-updated_at: 2026-05-13T03:22:09.775298631+00:00
+updated_at: 2026-05-13T03:47:13.197437852+00:00
 ---
 
 # Description
 
 Track the 6-step plan to decouple `web/game.html` from the hidden ratzilla
-terminal it currently launches. Design doc lives as tg note on
-`design-gamehtml-decouple` (also captured in `ai_docs/` if extracted).
+terminal it currently launches. **ALL 6 STEPS COMPLETE.**
 
 ## 6-Step Migration Plan
 
-- **Step 1 — DONE** (commit 7c18f3a9 → rebased 34a6d8e0): Added
-  `tui_tick()`, `fire_render_complete_callback`,
-  `with_state_mut_notify`. Pure-logic mutators notify JS without
-  the ratzilla draw_web tick.
+- **Step 1 — DONE** (commit 7c18f3a9 → rebased ...): Added `tui_tick()`,
+  `fire_render_complete_callback`, `with_state_mut_notify`. Pure-logic
+  mutators notify JS without the ratzilla draw_web tick.
 
-- **Step 2 — DONE** (commit 199c7dfd → rebased 42613d9f): Bound
-  ArrowUp/ArrowDown/Enter in `web/game.html` to call ratzilla-free
-  WASM exports directly with `e.stopImmediatePropagation()`.
+- **Step 2 — DONE** (commit 199c7dfd → rebased ...): Bound
+  ArrowUp/ArrowDown/Enter in web/game.html with
+  `e.stopImmediatePropagation()`.
 
-- **Step 3 — DONE** (commit 193f9c35 → rebased 17d0a631): Extracted
-  `install_global_session`, `attach_ratzilla_renderer` helpers.
-  New WASM export `launch_game_session(...)` creates session WITHOUT
-  ratzilla. `launch_fancy_tui` is now `launch_game_session +
-  attach_ratzilla_renderer`.
+- **Step 3 — DONE** (commit 193f9c35 → rebased ...): Extracted
+  `install_global_session`, `attach_ratzilla_renderer`. New WASM
+  export `launch_game_session(...)` creates session WITHOUT ratzilla.
 
-- **Step 4 — DONE** (commit d4e028fd → rebased dfdc0e9e): Switched
-  `web/game.html` to `launch_game_session`, removed the hidden
-  `<div id="ratzilla-terminal">`. Fixed Space-handler regression
-  (now calls `tui_select_choice() + tui_run_turn()`).
+- **Step 4 — DONE** (commit d4e028fd → rebased ...): Switched
+  web/game.html to `launch_game_session`, removed hidden
+  ratzilla-terminal div. Fixed Space-handler regression.
 
-- **Step 5 — DONE** (commit TBD): Split `FancyTuiState` into
-  `GameUiSessionState` (shared: highlighted_choice,
-  selected_card_id, valid_choices, choice_context, digit_buffer,
-  rewind_message — NO ratatui types) + `RatatuiViewState` (ratatui
-  only: focused_pane, selected_card_in_*, entity_positions,
-  *_pane_area, log_*, log_wrap_cache, logger_memory_mode_enabled).
-  All log_* methods moved from `impl FancyTuiState` to
-  `impl RatatuiViewState`. `FancyTuiState` is now a thin wrapper
-  `{ pub session: GameUiSessionState, pub view: RatatuiViewState }`.
-  Updated ~340 field-access sites across 5 files
-  (fancy_tui_renderer.rs, fancy_tui_events.rs, fancy_tui.rs,
-  fancy_fixed_controller.rs, fancy_tui_controller.rs).
-  Bonus: pre-existing CI fixes in main.rs (test mod `use super::*;`),
-  game_loop/actions.rs (unnested or-patterns), effect_converter.rs
-  (field_reassign_with_default), state.rs (missing # Errors doc).
+- **Step 5 — DONE** (commit 2c250e72 → rebased ...): Split
+  `FancyTuiState` into `GameUiSessionState` (shared, NO ratatui types)
+  + `RatatuiViewState` (ratatui-only). Updated ~340 access sites.
 
-- **Step 6** — Fix latent `valid_choices` wire-up bug in WASM
-  (`WasmHumanController` doesn't populate it).
+- **Step 6 — DONE** (commit TBD): Fix latent valid_choices wire-up
+  bug in WASM. The native `FancyTuiController` /
+  `FancyFixedController` write `state.session.valid_choices` directly
+  from inside their `choose_*` methods, but the WASM
+  `WasmHumanController` doesn't (it returns `NeedInput(ChoiceContext::*)`
+  instead). So `is_valid_choice` highlighting in the GUI silently
+  always rendered false — none of the cards the human could pick lit
+  up as such.
 
-## Step 5 evidence (commit TBD)
+  **Fix in mtg-engine/src/wasm/fancy_tui.rs:**
+  - `valid_choice_cards(&ChoiceContext)` helper extracts the cards from
+    each ChoiceContext variant (mirrors the native pattern: SpellAbility
+    → available.iter().map(SpellAbility::card_id), Targets →
+    valid_targets.clone(), Blockers → blockers + attackers chained, etc.)
+  - `renderer_choice_category(&ChoiceContext)` maps the rich controller
+    ChoiceContext to the simple renderer-side category enum (PlayingSpell
+    / TargetSelection / DeclareAttackers / DeclareBlockers / None) used
+    for the native ratatui dim-non-valid-cards rendering.
+  - `clear_pending_choice_highlights()` method clears valid_choices
+    and resets choice_context to None — called at all 3 game-end sites
+    + the network "waiting for server" idle case.
+  - `update_choices_from_context()` now writes both
+    `state.session.valid_choices` and `state.session.choice_context`
+    every time a new ChoiceContext arrives.
 
-- 760 lib tests pass; cargo fmt clean; clippy clean on native +
-  wasm-tui + wasm,network feature sets.
-- web/test_decouple_step3_launch_game_session.js: 7/7 PASS.
-- web/test_card_size_stability.js: 10/10 PASS.
-- WASM bindings unchanged (visible export surface still
-  `launch_game_session`, `tui_tick`, `tui_*_choice`, etc.).
-- Pre-existing failures NOT introduced by this commit (verified
-  by checking out origin/integration directly):
-  - `vinebender_waterbend_test::vinebender_activation_places_p1p1_counter_on_self` — `EntityNotFound(4294967292)`. Likely caused by the chaos-orb / All Hallow's Eve target-resolution refactors on integration.
-  - `shell_scripts__commander_e2e` — long-running shell test
-    fails on integration too. Out of scope for the WASM/UI
-    decoupling work.
+  **Verification (web/test_decouple_step6_valid_choices.js, in
+  validate-wasm-e2e-step):**
+  - Initial state (turn 1, human prompted with 4 actions): 3 valid
+    cards highlighted (Bazaar of Baghdad + 2x City of Brass).
+  - After 4x Space (advance to turn 3): 8 valid cards highlighted
+    (recomputed correctly after each prompt cycle).
+  - Pre-step-6 baseline (verified by stashing my changes and
+    rebuilding wasm): 0 valid cards in both states. The test fails
+    catastrophically without the fix — proves the regression guard
+    is real.
+
+## Files Changed (final summary across all 6 steps)
+
+- `mtg-engine/src/wasm/fancy_tui.rs` — main WASM driver, all 6 steps
+- `mtg-engine/src/game/fancy_tui_renderer.rs` — step 5 struct split
+- `mtg-engine/src/game/fancy_tui_events.rs` — step 5 access updates
+- `mtg-engine/src/game/fancy_tui_controller.rs` — step 5 access updates
+- `mtg-engine/src/game/fancy_fixed_controller.rs` — step 5 access updates
+- `mtg-engine/src/wasm/human_controller.rs` — step 1 clippy fix
+- `web/game.html` — steps 2 + 4 keyboard + launch + (step 5 layout fix)
+- `Makefile` — wired all new e2e tests into validate-wasm-e2e-step
+- `web/test_decouple_step3_launch_game_session.js` — new e2e
+- `web/test_card_size_stability.js` — new e2e
+- `web/test_decouple_step6_valid_choices.js` — new e2e
+- `web/test_game_gui_bugfixes.js` — adjusted Space-press loop count
+- Bonus pre-existing CI fixes (steps 1, 5):
+  `human_controller.rs::tests` allow,
+  `main.rs` ungated `use super::*;`,
+  `actions.rs` unnested or-patterns,
+  `effect_converter.rs` field-reassign rewrite,
+  `state.rs` # Errors doc.
+
+The decoupling is complete — game.html is fully ratzilla-free, runs
+on a clean shared `GameUiSessionState`, and shows the same valid-choice
+highlights the native TUI shows.
