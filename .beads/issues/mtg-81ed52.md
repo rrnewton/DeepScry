@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-05-13T01:00:49.521576282+00:00
-updated_at: 2026-05-13T01:00:49.521576282+00:00
+updated_at: 2026-05-13T01:27:22.962171706+00:00
 ---
 
 # Description
@@ -31,16 +31,32 @@ entire DOM render) calls ratzilla-free WASM exports.
 
 ## 6-Step Migration Plan
 
-- **Step 1 — DONE** (this issue tracks remaining steps):
-  - Add `tui_tick() -> bool` (drives `should_auto_run` + `run_until_choice`).
-  - Make every WASM mutator that sets `needs_redraw` *also* call
-    `window.onRenderComplete` via new `fire_render_complete_callback`
-    helper, so the redraw signal stops being conditional on ratzilla.
-  - Files: `mtg-engine/src/wasm/fancy_tui.rs`.
+- **Step 1 — DONE** (commit 7c18f3a9):
+  - Added `tui_tick() -> bool` (drives `should_auto_run` + `run_until_choice`).
+  - Added `fire_render_complete_callback` + `with_state_mut_notify`
+    helpers; wired all pure-logic mutators so the redraw signal stops
+    being conditional on ratzilla.
+  - Files: `mtg-engine/src/wasm/fancy_tui.rs`,
+    `mtg-engine/src/wasm/human_controller.rs` (bonus clippy fix).
 
-- **Step 2** — Bind Up/Down/Enter in game.html JS directly (calls existing
-  `tui_prev_choice` / `tui_next_choice` / `tui_select_choice`). Keep
-  hidden ratzilla in place; A/B test the explicit bindings.
+- **Step 2 — DONE** (commit TBD):
+  - Bound ArrowUp/ArrowDown/Enter in `web/game.html`'s document-level
+    keydown listener calling `tui_prev_choice` / `tui_next_choice` /
+    `tui_select_choice` directly.
+  - Used `e.stopImmediatePropagation()` on those three keys to prevent
+    ratzilla's *also*-document-level keydown listener (registered later
+    in `launch_fancy_tui`) from double-firing them.
+  - Other keys (Space, A, q/Q/Esc, c/C, ?, 1-9) intentionally left
+    unchanged so this step stays scoped — those have their own
+    subtleties step 4 will revisit when ratzilla is removed.
+  - Files: `web/game.html` (keyboard handler only).
+  - Verified by `web/test_game_gui_bugfixes.js` (15/15 PASS):
+    - "Down arrow moves selection by exactly 1"
+    - "Second Down arrow moves by exactly 1 more"
+    - "Up arrow moves selection back by 1"
+    - "Enter key does not double-advance"
+    - "Enter key advances game (log grows)"
+  - And by `make validate` (full run, green).
 
 - **Step 3** — Extract `launch_game_session` (ratzilla-free launcher).
   Refactor `launch_fancy_tui` body so the game-creation/session-install
@@ -51,7 +67,10 @@ entire DOM render) calls ratzilla-free WASM exports.
 - **Step 4** — Switch game.html to `launch_game_session`. Delete the
   hidden `<div id="ratzilla-terminal">`. Drop `tui_set_cell_dimensions`
   calls. Drive UI tick from `requestAnimationFrame(tui_tick)` or the
-  existing `setTimeout` autorun chain.
+  existing `setTimeout` autorun chain. At this point the
+  `stopImmediatePropagation()` calls from step 2 become harmless
+  no-ops. Also a good time to revisit the Space/A/digit keys that step
+  2 left untouched.
 
 - **Step 5** — Split `FancyTuiState` into `GameUiSessionState` (shared:
   selected_card_id, valid_choices, choice_context, highlighted_choice,
@@ -78,7 +97,7 @@ entire DOM render) calls ratzilla-free WASM exports.
 Each step compiles, passes `make validate`, and leaves both fancy.html
 and game.html working. WASM E2E (`web/test_*.js`) should stay green.
 
-## Step 1 evidence (2026-05-12_#hash-tbd)
+## Step 1 evidence (2026-05-12, commit 7c18f3a9)
 
 - 749 lib tests pass; clippy clean (native + wasm targets).
 - `make validate` green: WASM E2E "Made 20 choices to advance game ...
@@ -88,3 +107,19 @@ and game.html working. WASM E2E (`web/test_*.js`) should stay green.
   test mod in `mtg-engine/src/wasm/human_controller.rs` (mirrors
   e3327009's fix to `replay_verifier.rs`) — was a pre-existing CI break
   on `origin/integration` with `cargo clippy --features wasm,network`.
+
+## Step 2 evidence (2026-05-12, layout-engine)
+
+- `web/test_game_gui_bugfixes.js`: 15/15 PASS (all the explicit
+  ArrowUp/ArrowDown/Enter assertions verify "moves by 1" and "doesn't
+  double-advance").
+- `make wasm-test-game-gui-playtest`: both seeds pass (game1_seed42
+  turns 1→18, game2_seed123 turns 1→60, 0 bugs, 0 errors).
+- `make validate` green end-to-end.
+- During development, observed that being too-aggressive with
+  `stopImmediatePropagation` (applying to ALL handled keys) regresses
+  the "Log contains draw actions" assertion, because the existing
+  game.html relies on ratzilla also processing Space — the legacy Space
+  double-fire (JS run_until_choice + ratzilla run_until_choice on the
+  same keypress) was advancing the game faster than expected. Step 2
+  preserves that behavior; step 4 will clean it up holistically.

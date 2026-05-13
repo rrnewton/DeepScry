@@ -1697,6 +1697,30 @@
         }
 
         // ==================== KEYBOARD HANDLING ====================
+        //
+        // game.html dispatches to ratzilla-free WASM exports.
+        //
+        // For the newly-bound Up/Down/Enter keys (decouple-step2), we call
+        // `e.stopImmediatePropagation()` so the hidden ratzilla terminal's
+        // own document-level keydown listener (registered later, in
+        // `launch_fancy_tui()`) does NOT also process the same key — without
+        // it, the choice index would move by 2 / Enter would submit twice.
+        // See `mtg-engine/src/wasm/fancy_tui.rs::process_key_event` for the
+        // ratzilla side. Once `decouple-step4` removes the hidden ratzilla
+        // terminal, the `stopImmediatePropagation` calls become harmless
+        // no-ops.
+        //
+        // For the *pre-existing* keybindings (Space, A, q/Q/Esc, c/C, ?,
+        // 1-9) we deliberately leave the existing pass-through behavior
+        // unchanged so step 2 stays scoped to Up/Down/Enter — those keys
+        // have their own subtleties (Space's "advance" semantics, A's
+        // toggle, digit-buffer accumulation for >10-choice prompts) that
+        // step 4 will revisit holistically when ratzilla is removed.
+        //
+        // See `decouple-step1` (`tui_tick`, `with_state_mut_notify`) for the
+        // mutator-side wiring that lets each WASM call notify JS via
+        // `window.onRenderComplete` without depending on the ratzilla
+        // draw_web tick.
         document.addEventListener('keydown', function(e) {
             if (!tuiLaunched) return;
 
@@ -1719,10 +1743,35 @@
                     document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
                     if (autoRunning) startAutoRun();
                     break;
-                // ArrowUp, ArrowDown, Enter are handled by the hidden
-                // RatZilla terminal via WASM process_key_event — do NOT
-                // duplicate here or choices will move by 2 instead of 1.
-                // This matches fancy.html which has no JS arrow/enter handlers.
+                case 'ArrowUp':
+                    // decouple-step2: dispatch Up/Down/Enter to ratzilla-free
+                    // WASM exports directly. `tui_prev_choice` fires
+                    // `window.onRenderComplete` via `with_state_mut_notify`
+                    // (decouple-step1), so `updateUI` runs automatically.
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    debugLog('key: ArrowUp (prev choice)');
+                    tui_prev_choice();
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    debugLog('key: ArrowDown (next choice)');
+                    tui_next_choice();
+                    break;
+                case 'Enter':
+                    // Mirrors the ratzilla `KeyInput::Enter` path
+                    // (`process_key_event`): commit the currently-highlighted
+                    // choice. `select_current_choice` internally calls
+                    // `run_until_choice` (fancy_tui.rs:2755) so the game
+                    // advances to the next choice point — no separate
+                    // `tui_run_turn` needed (that would double-advance, see
+                    // BUG #5 in `web/test_game_gui_bugfixes.js`).
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    debugLog('key: Enter (select choice)');
+                    tui_select_choice();
+                    break;
                 case 'q':
                 case 'Q':
                 case 'Escape':
