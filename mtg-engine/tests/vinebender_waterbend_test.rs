@@ -268,15 +268,18 @@ fn vinebender_activation_places_p1p1_counter_on_self() {
     game.pay_ability_cost(p2, vinebender, &cost)
         .expect("Waterbend 5 payment must succeed");
 
-    // Now resolve effects — emulate the placeholder fix-up the priority loop
-    // does at game_loop/priority.rs (PutCounter Defined$ Self → source).
+    // Now resolve effects — emulate the SELF_TARGET fix-up the priority loop
+    // does via `resolve_self_target` in actions/mod.rs (PutCounter
+    // Defined$ Self → source). After commit cf19a07b, the parser encodes
+    // `Defined$ Self` as `CardId::self_target()` (sentinel u32::MAX-3) rather
+    // than the old id=0 placeholder, so we must match `is_self_target()` here.
     for effect in &effects {
         let fixed = match effect {
             mtg_forge_rs::core::Effect::PutCounter {
                 target,
                 counter_type,
                 amount,
-            } if target.is_placeholder() => mtg_forge_rs::core::Effect::PutCounter {
+            } if target.is_self_target() => mtg_forge_rs::core::Effect::PutCounter {
                 target: vinebender,
                 counter_type: *counter_type,
                 amount: *amount,
