@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-05-13T01:00:49.521576282+00:00
-updated_at: 2026-05-13T01:27:22.962171706+00:00
+updated_at: 2026-05-13T01:48:25.567546150+00:00
 ---
 
 # Description
@@ -36,33 +36,34 @@ entire DOM render) calls ratzilla-free WASM exports.
   - Added `fire_render_complete_callback` + `with_state_mut_notify`
     helpers; wired all pure-logic mutators so the redraw signal stops
     being conditional on ratzilla.
-  - Files: `mtg-engine/src/wasm/fancy_tui.rs`,
-    `mtg-engine/src/wasm/human_controller.rs` (bonus clippy fix).
 
-- **Step 2 — DONE** (commit TBD):
-  - Bound ArrowUp/ArrowDown/Enter in `web/game.html`'s document-level
-    keydown listener calling `tui_prev_choice` / `tui_next_choice` /
-    `tui_select_choice` directly.
+- **Step 2 — DONE** (commit 199c7dfd):
+  - Bound ArrowUp/ArrowDown/Enter in `web/game.html` to call
+    `tui_prev_choice` / `tui_next_choice` / `tui_select_choice` directly.
   - Used `e.stopImmediatePropagation()` on those three keys to prevent
-    ratzilla's *also*-document-level keydown listener (registered later
-    in `launch_fancy_tui`) from double-firing them.
-  - Other keys (Space, A, q/Q/Esc, c/C, ?, 1-9) intentionally left
-    unchanged so this step stays scoped — those have their own
-    subtleties step 4 will revisit when ratzilla is removed.
-  - Files: `web/game.html` (keyboard handler only).
-  - Verified by `web/test_game_gui_bugfixes.js` (15/15 PASS):
-    - "Down arrow moves selection by exactly 1"
-    - "Second Down arrow moves by exactly 1 more"
-    - "Up arrow moves selection back by 1"
-    - "Enter key does not double-advance"
-    - "Enter key advances game (log grows)"
-  - And by `make validate` (full run, green).
+    ratzilla's also-document-level keydown listener from double-firing.
+  - Other keys deliberately left unchanged to keep step 2 scoped.
 
-- **Step 3** — Extract `launch_game_session` (ratzilla-free launcher).
-  Refactor `launch_fancy_tui` body so the game-creation/session-install
-  half (`fancy_tui.rs:3127–3140`) is a free function callable without a
-  `DomBackend`. `launch_fancy_tui` becomes
-  `launch_game_session + attach_ratzilla_renderer`.
+- **Step 3 — DONE** (commit TBD):
+  - Extracted `install_global_session(state)`, `attach_ratzilla_renderer()`
+    helpers from `setup_terminal_and_render` /  `launch_fancy_tui`.
+  - New WASM export `launch_game_session(card_db, p1_deck, p2_deck,
+    starting_life, seed, p1_ctrl, p2_ctrl) -> Result<(), JsValue>` —
+    creates the session WITHOUT touching ratzilla. Exposed in
+    `pkg/mtg_forge_rs.d.ts: export function launch_game_session(...)`.
+  - `launch_fancy_tui` is now a thin two-step wrapper:
+    `launch_game_session(...) + attach_ratzilla_renderer()`.
+  - `launch_network_game` uses the same `install_global_session +
+    attach_ratzilla_renderer` pattern.
+  - New JS smoke test `web/test_decouple_step3_launch_game_session.js`
+    DELETES the `<div id="ratzilla-terminal">` from the DOM, then calls
+    `launch_game_session` + drives the game forward 30 turns of
+    Heuristic-vs-Heuristic via `tui_run_turn` / `tui_tick` and confirms
+    the view-model JSON shows the game progressed (turn 1 → 13, GAME
+    OVER reached). Wired into `make validate` via
+    `validate-wasm-e2e-step` in the Makefile.
+  - Files: `mtg-engine/src/wasm/fancy_tui.rs` (refactor + new export),
+    `Makefile` (add new test), `web/test_decouple_step3_launch_game_session.js` (new).
 
 - **Step 4** — Switch game.html to `launch_game_session`. Delete the
   hidden `<div id="ratzilla-terminal">`. Drop `tui_set_cell_dimensions`
@@ -103,23 +104,30 @@ and game.html working. WASM E2E (`web/test_*.js`) should stay green.
 - `make validate` green: WASM E2E "Made 20 choices to advance game ...
   PASS: Click events work" with the new mutator → JS callback wiring.
 - `pkg/mtg_forge_rs.d.ts` exports `tui_tick(): boolean`.
-- Bonus fix: added `#[allow(clippy::wildcard_enum_match_arm)]` to the
-  test mod in `mtg-engine/src/wasm/human_controller.rs` (mirrors
-  e3327009's fix to `replay_verifier.rs`) — was a pre-existing CI break
-  on `origin/integration` with `cargo clippy --features wasm,network`.
 
-## Step 2 evidence (2026-05-12, layout-engine)
+## Step 2 evidence (2026-05-12, commit 199c7dfd)
 
-- `web/test_game_gui_bugfixes.js`: 15/15 PASS (all the explicit
-  ArrowUp/ArrowDown/Enter assertions verify "moves by 1" and "doesn't
-  double-advance").
-- `make wasm-test-game-gui-playtest`: both seeds pass (game1_seed42
-  turns 1→18, game2_seed123 turns 1→60, 0 bugs, 0 errors).
+- `web/test_game_gui_bugfixes.js`: 15/15 PASS, identical to baseline.
+- `make wasm-test-game-gui-playtest`: both seeds pass, 0 bugs/errors.
 - `make validate` green end-to-end.
-- During development, observed that being too-aggressive with
-  `stopImmediatePropagation` (applying to ALL handled keys) regresses
-  the "Log contains draw actions" assertion, because the existing
-  game.html relies on ratzilla also processing Space — the legacy Space
-  double-fire (JS run_until_choice + ratzilla run_until_choice on the
-  same keypress) was advancing the game faster than expected. Step 2
-  preserves that behavior; step 4 will clean it up holistically.
+
+## Step 3 evidence (2026-05-12, layout-engine)
+
+- `web/test_decouple_step3_launch_game_session.js` (new, wired into
+  `validate-wasm-e2e-step`) — 7/7 PASS:
+    PASS: ratzilla-terminal element removed before launch
+    PASS: ratzilla-terminal element absent after removal
+    PASS: launch_game_session callable + drives game without ratzilla
+          — initialTurn=1 → finalTurn=13
+    PASS: view model JSON contained turn_number — final turn_number = 13
+    PASS: view model JSON contained status_text
+          — final status_text = Turn 13 | Phase: CombatDamage |
+            Active: P1 | GAME OVER
+    PASS: tui_tick returns a boolean
+          — typeof tui_tick() = boolean, sample values: true, false
+    PASS: game state advanced after run_turn calls (turn number grew)
+          — turn 1 → 13
+    PASS: no browser pageerrors / console errors during the run — clean
+- `make validate` green; cargo fmt clean; both clippy invocations clean.
+- `pkg/mtg_forge_rs.d.ts` now exports `launch_game_session(...)`
+  alongside the existing `launch_fancy_tui(...)`.

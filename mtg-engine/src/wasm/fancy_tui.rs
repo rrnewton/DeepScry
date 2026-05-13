@@ -3312,13 +3312,31 @@ fn with_state_mut_notify<F: FnOnce(&mut WasmFancyTuiState)>(f: F) {
     });
 }
 
+/// Install the WASM session into `GLOBAL_TUI_STATE` so the pure-logic exports
+/// (`tui_tick`, `tui_prev_choice`, `tui_select_card`, …) can find it.
+///
+/// Single source of truth for the thread-local write. Called by
+/// `launch_game_session` (ratzilla-free entry point) and by
+/// `launch_network_game` (ratzilla-coupled). `attach_ratzilla_renderer` reads
+/// state back out from `GLOBAL_TUI_STATE` rather than receiving it as an arg
+/// so callers don't have to keep their own `Rc` alive.
+fn install_global_session(state: Rc<RefCell<WasmFancyTuiState>>) {
+    GLOBAL_TUI_STATE.with(|s| {
+        *s.borrow_mut() = Some(state);
+    });
+}
+
 /// Set up the terminal with event handlers and render callback.
 ///
-/// Shared terminal setup for both local and network modes:
+/// Pure ratzilla glue:
 /// 1. Installs keyboard event handler (key navigation, shortcuts)
 /// 2. Installs mouse event handler (click-to-select cards)
-/// 3. Stores state in thread-local for button callbacks
-/// 4. Starts the render loop with auto-run + draw + JS callbacks
+/// 3. Starts the render loop with auto-run + draw + JS callbacks
+///
+/// Does NOT touch `GLOBAL_TUI_STATE` — the caller (`attach_ratzilla_renderer`)
+/// has already run `install_global_session`. Keeping the global write out of
+/// here lets `launch_game_session` (game.html) skip the ratzilla path entirely
+/// while still having a session that the pure-logic exports can drive.
 fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<WasmFancyTuiState>>) {
     terminal.on_key_event({
         let state = Rc::clone(&state);
@@ -3337,10 +3355,6 @@ fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<W
         }
     });
 
-    GLOBAL_TUI_STATE.with(|s| {
-        *s.borrow_mut() = Some(Rc::clone(&state));
-    });
-
     terminal.draw_web({
         move |f| {
             let mut state = state.borrow_mut();
@@ -3354,16 +3368,113 @@ fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<W
     });
 }
 
-/// Launch the WASM fancy TUI in the browser
+/// Attach a ratzilla renderer to the currently-installed session.
 ///
-/// This function creates and runs the RatZilla-based TUI application.
+/// Looks up the active session from `GLOBAL_TUI_STATE` (must be populated
+/// first by `launch_game_session` / `launch_network_game`), creates a
+/// `DomBackend` targeting the `#ratzilla-terminal` element, and wires up the
+/// keyboard / mouse / draw_web closures via `setup_terminal_and_render`.
 ///
-/// Note: Wildcards are intentional - ratzilla KeyCode has 25+ variants, KeyInput
-/// and FocusedPane have many variants; we handle the subset used in WASM TUI.
+/// This is the OPT-IN ratzilla half of the launcher, separated from session
+/// creation so `web/game.html` (decouple-step4) can call
+/// `launch_game_session` and skip this — it has no `#ratzilla-terminal` div
+/// and drives the UI from JS via `tui_tick()` instead.
+///
+/// # Errors
+/// Returns `JsValue` if no session is installed, or if the
+/// `#ratzilla-terminal` element / `DomBackend` / `Terminal` cannot be
+/// constructed.
+fn attach_ratzilla_renderer() -> Result<(), JsValue> {
+    let state = GLOBAL_TUI_STATE
+        .with(|s| s.borrow().as_ref().map(Rc::clone))
+        .ok_or_else(|| {
+            JsValue::from_str(
+                "attach_ratzilla_renderer: GLOBAL_TUI_STATE empty — \
+                 call launch_game_session() first",
+            )
+        })?;
+
+    let backend = DomBackend::new_by_id("ratzilla-terminal")
+        .map_err(|e| JsValue::from_str(&format!("Failed to create backend: {}", e)))?;
+    let terminal =
+        Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
+
+    setup_terminal_and_render(terminal, state);
+    Ok(())
+}
+
+/// Launch a ratzilla-free game session.
+///
+/// Creates `WasmFancyTuiState` (game + controllers + selection + choice nav +
+/// auto_run flag), runs the game forward to the first choice point if the
+/// human or fixed controller is involved, and installs the session into
+/// `GLOBAL_TUI_STATE` so the pure-logic exports (`tui_tick`,
+/// `tui_prev_choice`, `tui_select_card`, …) can find it.
+///
+/// **Does NOT touch ratzilla** — the caller is responsible for driving the
+/// UI:
+/// - `web/game.html` (decouple-step4 onwards) drives via JS:
+///   `requestAnimationFrame(tui_tick)` + DOM event listeners that call the
+///   pure-logic exports directly.
+/// - `web/fancy.html` keeps using `launch_fancy_tui`, which is now a thin
+///   wrapper around `launch_game_session() + attach_ratzilla_renderer()`.
+///
+/// The struct is still called `WasmFancyTuiState` because step 5 of the
+/// decoupling plan splits it into `GameUiSessionState` (shared) +
+/// `RatatuiViewState` (ratatui-only) — see beads `mtg-81ed52`. The split
+/// is cosmetic; the public API (the WASM exports) is already ratatui-free.
 ///
 /// # Errors
 ///
 /// Returns a `JsValue` error if game creation from the database fails.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn launch_game_session(
+    card_db: &WasmCardDatabase,
+    p1_deck_name: &str,
+    p2_deck_name: &str,
+    starting_life: i32,
+    seed: u64,
+    p1_controller: WasmControllerType,
+    p2_controller: WasmControllerType,
+) -> Result<(), JsValue> {
+    let game = create_game_from_database(card_db, p1_deck_name, p2_deck_name, starting_life, seed)?;
+
+    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(game, p1_controller, p2_controller)));
+
+    // For human / fixed controller games, run until the first choice point
+    // so the initial choice list is populated for the human's first decision
+    // (or the script's first command starts processing).
+    if p1_controller == WasmControllerType::Human || p1_controller == WasmControllerType::Fixed {
+        state.borrow_mut().run_until_choice();
+    }
+
+    install_global_session(state);
+    Ok(())
+}
+
+/// Launch the WASM fancy TUI in the browser.
+///
+/// Thin two-step wrapper as of decouple-step3:
+///   1. `launch_game_session(…)` — create the ratzilla-free session.
+///   2. `attach_ratzilla_renderer()` — wire up the hidden
+///      `#ratzilla-terminal` `DomBackend` for visible canvas rendering and
+///      legacy keyboard/mouse routing.
+///
+/// `web/fancy.html` keeps calling this entry point unchanged. `web/game.html`
+/// calls `launch_game_session` directly (step 4) and skips the ratzilla
+/// attachment — the hidden `<div id="ratzilla-terminal">` and the entire
+/// ratzilla draw_web tick are no-ops there once the page stops requesting
+/// them.
+///
+/// Note: Wildcards in `process_key_event` are intentional — ratzilla
+/// `KeyCode` has 25+ variants, `KeyInput` and `FocusedPane` have many
+/// variants; we handle the subset used in WASM TUI.
+///
+/// # Errors
+///
+/// Returns a `JsValue` error if game creation from the database fails or if
+/// the `#ratzilla-terminal` element cannot be wrapped in a `DomBackend`.
 ///
 /// # Panics
 ///
@@ -3381,28 +3492,16 @@ pub fn launch_fancy_tui(
     _canvas_width: u32,
     _canvas_height: u32,
 ) -> Result<(), JsValue> {
-    // Create the game
-    let game = create_game_from_database(card_db, p1_deck_name, p2_deck_name, starting_life, seed)?;
-
-    // Create the shared state
-    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(game, p1_controller, p2_controller)));
-
-    // For human controller games, run until the first choice point
-    // This populates the initial choice list for the player
-    // For fixed controller, also run to start processing the script
-    if p1_controller == WasmControllerType::Human || p1_controller == WasmControllerType::Fixed {
-        state.borrow_mut().run_until_choice();
-    }
-
-    // Create the RatZilla backend, targeting our specific container element
-    let backend = DomBackend::new_by_id("ratzilla-terminal")
-        .map_err(|e| JsValue::from_str(&format!("Failed to create backend: {}", e)))?;
-    let terminal =
-        Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
-
-    setup_terminal_and_render(terminal, state);
-
-    Ok(())
+    launch_game_session(
+        card_db,
+        p1_deck_name,
+        p2_deck_name,
+        starting_life,
+        seed,
+        p1_controller,
+        p2_controller,
+    )?;
+    attach_ratzilla_renderer()
 }
 
 /// Launch a network game TUI
@@ -3587,13 +3686,13 @@ pub fn launch_network_game(
     // Run until the first choice point
     state.borrow_mut().run_until_choice();
 
-    // Create the RatZilla backend
-    let backend = DomBackend::new_by_id("ratzilla-terminal")
-        .map_err(|e| JsValue::from_str(&format!("Failed to create backend: {}", e)))?;
-    let terminal =
-        Terminal::new(backend).map_err(|e| JsValue::from_str(&format!("Failed to create terminal: {}", e)))?;
-
-    setup_terminal_and_render(terminal, state);
+    // Install + attach using the same two-step pattern as `launch_fancy_tui`
+    // (decouple-step3). Network mode currently always wants the ratzilla
+    // canvas; if a ratzilla-free network UI is ever needed (e.g. game.html
+    // for network games), split this into install + optional attach the same
+    // way `launch_game_session` does.
+    install_global_session(state);
+    attach_ratzilla_renderer()?;
 
     log::info!("launch_network_game: Network TUI ready");
     Ok(())
