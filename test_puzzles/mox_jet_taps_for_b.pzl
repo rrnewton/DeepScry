@@ -1,0 +1,24 @@
+[metadata]
+Name:Mox Jet Pays for Black Spell
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Mox Jet ({0} Artifact) taps to add {B} mana, and that the mana can pay for a black spell that requires {B} (Dark Ritual {B} → adds {B}{B}{B}). Without Mox Jet, P1 cannot cast Dark Ritual on turn 1 from an empty board.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Dark Ritual
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mox Jet
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

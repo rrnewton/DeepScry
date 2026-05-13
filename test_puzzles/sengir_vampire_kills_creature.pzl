@@ -1,0 +1,26 @@
+[metadata]
+Name:Sengir Vampire Gets +1/+1 When Damaged Creature Dies
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:Sengir Vampire (4/4 Flying) attacks a 1/1 Grizzly Bears variant (here using Birds of Paradise, a 0/1 with flying so it can block flying). When the blocked creature dies from Sengir's combat damage, a +1/+1 counter is placed on Sengir.
+
+Setup uses Grizzly Bears (2/2) as blocker so Sengir kills Grizzly with overflow damage; Sengir survives (4 vs 2). After combat, Sengir should have a +1/+1 counter and be 5/5.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Sengir Vampire
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Birds of Paradise
+p1exile=

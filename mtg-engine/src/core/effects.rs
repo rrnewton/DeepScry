@@ -1519,6 +1519,15 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Card.EquippedBy
     /// Example: Skullclamp - "Whenever equipped creature dies, draw two cards."
     EquippedCreatureDies,
+
+    /// When a creature dealt damage by this card this turn dies.
+    /// Corresponds to: T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard | ValidCard$ Creature.DamagedBy | TriggerZones$ Battlefield
+    /// Example: Sengir Vampire — "Whenever a creature dealt damage by Sengir
+    /// Vampire this turn dies, put a +1/+1 counter on Sengir Vampire."
+    /// Fires from the trigger source (Sengir) when ANY creature in the
+    /// dying card's `damaged_by_this_turn` list contains the trigger source's
+    /// CardId.
+    DamagedCreatureDies,
 }
 
 /// A triggered ability that executes when an event occurs

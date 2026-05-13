@@ -216,6 +216,20 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             amount: *amount,
         },
 
+        // `Defined$ Self` PutCounter (Sengir Vampire's TrigPutCounter SVar):
+        // self_target() is a distinct sentinel from placeholder() — set by
+        // the effect_converter when parsing `Defined$ Self`. Resolve it to
+        // the trigger source so the counter lands on the source card itself.
+        Effect::PutCounter {
+            target,
+            counter_type,
+            amount,
+        } if target.is_self_target() => Effect::PutCounter {
+            target: ctx.trigger_source,
+            counter_type: *counter_type,
+            amount: *amount,
+        },
+
         // Note: PumpCreature with CardId::new(0) is NOT handled here because it's ambiguous:
         // - CardDrawn triggers: "this creature gets +X/+Y" → target is self
         // - ETB triggers: "target creature gets +X/+Y" → need to find a target

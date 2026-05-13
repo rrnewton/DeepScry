@@ -528,6 +528,9 @@ impl<'a> GameLoop<'a> {
         }
 
         // Remove damage from creatures and clear regeneration/prevention shields (CR 514.2)
+        // Also clear `damaged_by_this_turn` so next turn's "Whenever a creature
+        // dealt damage by this card this turn dies, ..." triggers (Sengir
+        // Vampire et al.) start with a clean slate per CR 514.2 (3rd bullet).
         for &card_id in &self.game.battlefield.cards {
             if let Ok(card) = self.game.cards.get_mut(card_id) {
                 if card.is_creature() {
@@ -535,6 +538,7 @@ impl<'a> GameLoop<'a> {
                     card.regeneration_shields = 0;
                 }
                 card.damage_prevention = 0;
+                card.damaged_by_this_turn.clear();
             }
         }
 

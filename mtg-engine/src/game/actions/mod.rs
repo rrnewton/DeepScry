@@ -6109,6 +6109,62 @@ impl GameState {
             }
         }
 
+        // Check `DamagedCreatureDies` triggers (Sengir Vampire et al.):
+        // for any battlefield permanent whose CardId appears in the dying
+        // card's `damaged_by_this_turn` list, fire that permanent's matching
+        // trigger with itself as `Defined$ Self`.
+        //
+        // Snapshot the dying card's damage-source list first to avoid holding
+        // a borrow during the trigger-execution loop. Iterating the
+        // battlefield in CardId order keeps the trigger fire ordering
+        // deterministic.
+        let damage_sources: smallvec::SmallVec<[CardId; 2]> = self
+            .cards
+            .try_get(dying_card_id)
+            .map(|c| c.damaged_by_this_turn.clone())
+            .unwrap_or_default();
+
+        if !damage_sources.is_empty() {
+            let damaged_dies_triggers: Vec<(CardId, PlayerId, Vec<Effect>, String)> = self
+                .battlefield
+                .cards
+                .iter()
+                .filter_map(|&source_id| {
+                    if !damage_sources.contains(&source_id) {
+                        return None;
+                    }
+                    let source = self.cards.try_get(source_id)?;
+                    let effects: Vec<Effect> = source
+                        .triggers
+                        .iter()
+                        .filter(|t| t.event == TriggerEvent::DamagedCreatureDies)
+                        .flat_map(|t| t.effects.clone())
+                        .collect();
+                    if effects.is_empty() {
+                        return None;
+                    }
+                    let desc = source
+                        .triggers
+                        .iter()
+                        .find(|t| t.event == TriggerEvent::DamagedCreatureDies)
+                        .map(|t| t.description.clone())
+                        .unwrap_or_default();
+                    Some((source_id, source.controller, effects, desc))
+                })
+                .collect();
+
+            for (source_id, source_controller, effects, desc) in damaged_dies_triggers {
+                if let Some(source) = self.cards.try_get(source_id) {
+                    self.logger.gamelog(&format!("Trigger: {} - {}", source.name, desc));
+                }
+                let ctx = TriggerContext::new(source_id, source_controller);
+                for effect in effects {
+                    let effect = resolve_effect_placeholder(&effect, &ctx);
+                    self.execute_effect(&effect)?;
+                }
+            }
+        }
+
         Ok(())
     }
 

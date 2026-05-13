@@ -689,6 +689,13 @@ impl HeuristicController {
                     }
                     // Positive upkeep triggers are rarer, handled by keyword checks above
                 }
+                crate::core::TriggerEvent::DamagedCreatureDies => {
+                    // "Whenever a creature dealt damage by this card this turn dies, ..."
+                    // (Sengir Vampire, Baron Sengir, Abattoir Ghoul, Blood Cultist).
+                    // High value: scales with successful combat — directly rewards
+                    // attacking and trading favorably.
+                    value += 15;
+                }
                 crate::core::TriggerEvent::BeginningOfEndStep
                 | crate::core::TriggerEvent::BeginningOfCombat
                 | crate::core::TriggerEvent::SpellCast

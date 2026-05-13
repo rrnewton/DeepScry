@@ -1,0 +1,24 @@
+[metadata]
+Name:Strip Mine Destroys Opponent Land
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Strip Mine's "{T}, Sacrifice CARDNAME: Destroy target land" ability. Tap + sacrifice cost; targets a land. After activation, both Strip Mine and the target land should be in their owners' graveyards.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Strip Mine
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain; Mountain; Mountain
+p1exile=

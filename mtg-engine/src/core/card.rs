@@ -540,6 +540,14 @@ pub struct Card {
     /// Only meaningful for creatures on the battlefield
     pub damage: i32,
 
+    /// Sources that have dealt damage to this card this turn. Cleared at the
+    /// cleanup step alongside `damage`. Drives "Whenever a creature dealt
+    /// damage by CARDNAME this turn dies, ..." triggers — Sengir Vampire,
+    /// Baron Sengir, Abattoir Ghoul, Blood Cultist, Garza Zol, etc.
+    /// (`ValidCard$ Creature.DamagedBy`).
+    #[serde(default)]
+    pub damaged_by_this_turn: SmallVec<[CardId; 2]>,
+
     /// Oracle text
     pub text: String,
 
@@ -688,6 +696,7 @@ impl Card {
             temp_base_power: None,
             temp_base_toughness: None,
             damage: 0,
+            damaged_by_this_turn: SmallVec::new(),
             text,
             owner,
             controller: owner,

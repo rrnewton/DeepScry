@@ -506,6 +506,14 @@ impl GameState {
         // Track creatures dealt deathtouch damage (for state-based destruction)
         let mut deathtouch_damaged_creatures: std::collections::BTreeSet<CardId> = std::collections::BTreeSet::new();
 
+        // Track damage source per target creature (for "damaged by this card"
+        // triggers like Sengir Vampire). Maps target_creature_id → set of source
+        // CardIds that dealt damage to it during this combat damage step. After
+        // all combat damage is computed below, each target's
+        // `damaged_by_this_turn` field is updated so the corresponding death
+        // triggers (DamagedCreatureDies) can fire when the target dies.
+        let mut damage_sources_per_target: BTreeMap<CardId, std::collections::BTreeSet<CardId>> = BTreeMap::new();
+
         // Capture initial life totals so that per-attacker player damage logs can show a
         // running "(life: X)" suffix that decreases as multiple attackers connect.
         // Damage hasn't been applied to players yet (that happens later in this function),
@@ -565,6 +573,10 @@ impl GameState {
                         if *damage > 0 {
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage;
+                            damage_sources_per_target
+                                .entry(*blocker_id)
+                                .or_default()
+                                .insert(attacker_id);
                             if has_deathtouch {
                                 deathtouch_damaged_creatures.insert(*blocker_id);
                             }
@@ -620,6 +632,10 @@ impl GameState {
                         if damage_to_assign > 0 {
                             *damage_to_creatures.entry(*blocker_id).or_insert(0) += damage_to_assign;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += damage_to_assign;
+                            damage_sources_per_target
+                                .entry(*blocker_id)
+                                .or_default()
+                                .insert(attacker_id);
                             if has_deathtouch {
                                 deathtouch_damaged_creatures.insert(*blocker_id);
                             }
@@ -688,6 +704,10 @@ impl GameState {
                         *damage_to_creatures.entry(attacker_id).or_insert(0) += blocker_power;
                         // Track damage for lifelink
                         *damage_dealt_by_creature.entry(*blocker_id).or_insert(0) += blocker_power;
+                        damage_sources_per_target
+                            .entry(attacker_id)
+                            .or_default()
+                            .insert(*blocker_id);
                         // Track deathtouch damage from blocker (MTG Rules 702.2b)
                         // Uses has_keyword_with_effects to account for granted deathtouch
                         if self.has_keyword_with_effects(*blocker_id, Keyword::Deathtouch) {
@@ -793,6 +813,20 @@ impl GameState {
             // Only fire if creature is still on the battlefield
             if self.battlefield.contains(creature_id) {
                 self.check_triggers(TriggerEvent::DealsCombatDamage, creature_id)?;
+            }
+        }
+
+        // Persist damage source tracking on each target so death triggers like
+        // Sengir Vampire's "Whenever a creature dealt damage by Sengir Vampire
+        // this turn dies, ..." can check membership later. Done BEFORE lethal-
+        // damage processing so check_death_triggers can read the field.
+        for (target_id, sources) in &damage_sources_per_target {
+            if let Ok(target_card) = self.cards.get_mut(*target_id) {
+                for &source_id in sources {
+                    if !target_card.damaged_by_this_turn.contains(&source_id) {
+                        target_card.damaged_by_this_turn.push(source_id);
+                    }
+                }
             }
         }
 
