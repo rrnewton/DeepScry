@@ -74,7 +74,7 @@ pub fn setup_opening_hands(
         } else {
             // Normal random draw (opening hands don't trigger "draw" abilities)
             for _ in 0..7 {
-                let _ = game.draw_card(player_id)?;
+                let _ = game.draw_card_silent(player_id)?;
             }
         }
     }

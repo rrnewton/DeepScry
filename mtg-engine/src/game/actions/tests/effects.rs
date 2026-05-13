@@ -2334,4 +2334,90 @@ mod tests {
             .find_effects_to_cleanup_on_zone_change(leonardo_id, crate::zones::Zone::Battlefield);
         assert_eq!(cleanup_ids.len(), 1, "Should clean up when Leonardo leaves battlefield");
     }
+
+    /// Regression test for Bazaar of Baghdad style draw effects.
+    ///
+    /// Bug: Bazaar of Baghdad ("{T}: Draw two cards, then discard three cards.")
+    /// resolved its DrawCards effect silently — the cards moved into the hand
+    /// but no "P draws CARD (id)" gamelog entry was emitted, so users seeing
+    /// only the discard messages thought the engine was skipping the draws
+    /// (see bug-bazaar-no-draw).
+    ///
+    /// Fix: per-card draw logging is centralised inside `GameState::draw_card`
+    /// so every draw source — the mandatory draw step, activated abilities
+    /// (Bazaar), spells (Ancestral Recall), and Loot effects — produces a
+    /// consistent gamelog entry.
+    ///
+    /// This test executes `Effect::DrawCards { count: 2 }` directly and asserts
+    /// that two `"P1 draws ..."` gamelog entries are recorded.
+    #[test]
+    fn test_draw_cards_effect_emits_per_card_gamelog() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Capture logs into the in-memory buffer instead of stdout
+        game.logger.set_output_mode(crate::game::logger::OutputMode::Memory);
+
+        // Seed P1's library with two named cards so we can assert on them
+        for name in ["Library Top", "Library Second"] {
+            let card_id = game.next_card_id();
+            let card = Card::new(card_id, name.to_string(), p1_id);
+            game.cards.insert(card_id, card);
+            game.get_player_zones_mut(p1_id).unwrap().library.add(card_id);
+        }
+        // Library order is push-back; draw_top pops from the back, so the
+        // top card (drawn first) is "Library Second".
+        let logs_before = game.logger.log_count();
+
+        // Execute Bazaar's first effect: draw 2.
+        game.execute_effect(&Effect::DrawCards {
+            player: p1_id,
+            count: 2,
+        })
+        .unwrap();
+
+        // Both cards should now be in hand
+        assert_eq!(
+            game.get_player_zones(p1_id).unwrap().hand.cards.len(),
+            2,
+            "P1 should have drawn 2 cards"
+        );
+
+        // Inspect the captured gamelog and assert per-card draw lines were emitted.
+        let logs = game.logger.get_logs();
+        let new_entries: Vec<&str> = logs[logs_before..]
+            .iter()
+            .filter(|e| e.category.as_deref() == Some("gamelog"))
+            .map(|e| e.message.as_str())
+            .collect();
+
+        let draw_log_count = new_entries.iter().filter(|m| m.contains(" draws ")).count();
+        assert_eq!(
+            draw_log_count, 2,
+            "Effect::DrawCards{{count:2}} should emit two per-card 'P1 draws CARD (id)' \
+             gamelog lines (regression for bug-bazaar-no-draw). Got entries: {:?}",
+            new_entries
+        );
+
+        // Both drawn card names should appear in the log
+        assert!(
+            new_entries.iter().any(|m| m.contains("Library Top")),
+            "Gamelog should mention 'Library Top'. Entries: {:?}",
+            new_entries
+        );
+        assert!(
+            new_entries.iter().any(|m| m.contains("Library Second")),
+            "Gamelog should mention 'Library Second'. Entries: {:?}",
+            new_entries
+        );
+
+        // Player name "P1" should be the prefix of the draw lines
+        assert!(
+            new_entries
+                .iter()
+                .all(|m| !m.contains(" draws ") || m.starts_with("P1 ")),
+            "Draw gamelog entries should start with the drawing player's name. Entries: {:?}",
+            new_entries
+        );
+    }
 }

@@ -86,6 +86,10 @@ impl<'a> GameLoop<'a> {
     /// Log an official game action using the logger's gamelog() method
     /// This adds [GAMELOG TurnN STEP] prefix when --tag-gamelogs is enabled
     /// Use for: card draws, mana tapping, spell resolution, ETB, combat damage
+    ///
+    /// Currently unused at GameLoop level — see `log_gamelog!` macro comment
+    /// in `mod.rs`. Kept around for future GameLoop-level gamelog calls.
+    #[allow(dead_code)]
     pub(super) fn log_gamelog(&mut self, message: &str) {
         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
             self.print_step_header_if_needed();

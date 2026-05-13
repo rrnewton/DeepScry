@@ -334,31 +334,12 @@ impl<'a> GameLoop<'a> {
             // This ensures clients receive the draw reveal before their GameLoop needs it
             self.push_reveals(active_player);
 
-            // Log the draw INSIDE the guard to prevent duplicates on GameLoop re-entry.
-            // When WASM creates a new GameLoop mid-turn (after NeedInput), the draw step
-            // is re-entered but already_drew prevents re-drawing. The log must also be
-            // guarded to avoid accumulating duplicate "draws a card" messages.
-            #[cfg(feature = "verbose-logging")]
-            {
-                if !self.replaying {
-                    let player_name = self.get_player_name(active_player);
-                    if let Some(zones) = self.game.get_player_zones(active_player) {
-                        if let Some(&card_id) = zones.hand.cards.last() {
-                            // Late-binding: CardID is known, but card identity may not be
-                            if let Some(card) = self.game.cards.try_get(card_id) {
-                                log_gamelog!(self, "{} draws {} ({})", player_name, card.name, card_id);
-                            } else {
-                                // Card not yet revealed - just log the draw
-                                log_gamelog!(self, "{} draws a card (id={})", player_name, card_id);
-                            }
-                        } else {
-                            log_gamelog!(self, "{} draws a card", player_name);
-                        }
-                    } else {
-                        log_gamelog!(self, "{} draws a card", player_name);
-                    }
-                }
-            }
+            // Per-card "P draws CARD (id)" logging is now centralised inside
+            // GameState::draw_card so every draw source — the mandatory draw
+            // step, activated abilities (e.g. Bazaar of Baghdad), spells (e.g.
+            // Ancestral Recall), and Loot effects — produces a consistent draw
+            // log. The `already_drew` guard above already prevents re-drawing
+            // (and therefore re-logging) on WASM GameLoop re-entry.
         }
 
         // Print battlefield state AFTER draw step completes

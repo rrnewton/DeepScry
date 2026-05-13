@@ -25,6 +25,12 @@ macro_rules! log_if_verbose {
 /// [GAMELOG TurnN STEP] prefix when --tag-gamelogs is enabled.
 /// Use for official game actions that should be comparable across
 /// local and network modes.
+///
+/// Currently unused at GameLoop level — per-card draw logging used to live
+/// here but has been centralised inside `GameState::draw_card`. Kept around
+/// as a convenience for future GameLoop-level gamelog calls (e.g. step
+/// announcements) that need replay/verbosity gating.
+#[allow(unused_macros)]
 macro_rules! log_gamelog {
     ($self:expr, $($arg:tt)*) => {
         #[cfg(feature = "verbose-logging")]
@@ -1060,15 +1066,17 @@ impl<'a> GameLoop<'a> {
                             }
 
                             // Draw remaining cards randomly to reach 7 total (opening hands don't trigger)
+                            // Use draw_card_silent so opening-hand draws aren't surfaced as
+                            // "P draws CARD (id)" gamelog noise (see bug-bazaar-no-draw fix).
                             let cards_in_hand = hand_setup.specific_cards.len();
                             let remaining_to_draw = 7usize.saturating_sub(cards_in_hand);
                             for _ in 0..remaining_to_draw {
-                                let _ = self.game.draw_card(player_id)?;
+                                let _ = self.game.draw_card_silent(player_id)?;
                             }
                         } else {
                             // No controlled setup, draw 7 cards normally (opening hands don't trigger)
                             for _ in 0..7 {
-                                let _ = self.game.draw_card(player_id)?;
+                                let _ = self.game.draw_card_silent(player_id)?;
                             }
                         }
                     }
@@ -1076,7 +1084,7 @@ impl<'a> GameLoop<'a> {
                     // No controlled hand setup, just draw 7 cards for each player (opening hands don't trigger)
                     for &player_id in &[player1_id, player2_id] {
                         for _ in 0..7 {
-                            let _ = self.game.draw_card(player_id)?;
+                            let _ = self.game.draw_card_silent(player_id)?;
                         }
                     }
                 }

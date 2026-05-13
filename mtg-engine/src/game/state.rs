@@ -1237,7 +1237,33 @@ impl GameState {
     /// Returns (Option<CardId>, draw_count) where draw_count is how many cards
     /// this player has drawn this turn (1 = first, 2 = second, etc.).
     /// This is used for "second card drawn" triggers like T:Mode$ Drawn.
+    ///
+    /// Emits a `"P draws CARD (id)"` gamelog entry on success. Use
+    /// [`Self::draw_card_silent`] for setup paths (opening hands) where the
+    /// per-card log noise is not desired.
     pub fn draw_card(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
+        self.draw_card_inner(player_id, /* log_gamelog = */ true)
+    }
+
+    /// Draw a card without emitting a gamelog entry.
+    ///
+    /// Used for opening hand setup (MTG Rules 103.4) where per-card draw
+    /// messages would clutter the game log before the game has even started.
+    /// All other code paths should call [`Self::draw_card`] so the draw is
+    /// surfaced to the user.
+    pub fn draw_card_silent(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
+        self.draw_card_inner(player_id, /* log_gamelog = */ false)
+    }
+
+    /// Internal helper backing both `draw_card` and `draw_card_silent`.
+    ///
+    /// Centralising the per-card "P draws CARD (id)" gamelog here ensures
+    /// that abilities such as Bazaar of Baghdad
+    /// ("Draw two cards, then discard three cards.") emit draw events in
+    /// their natural order (draw before discard) instead of silently
+    /// performing the draws — see regression test
+    /// `test_draw_cards_effect_emits_per_card_gamelog` and bug-bazaar-no-draw.
+    fn draw_card_inner(&mut self, player_id: PlayerId, log_gamelog: bool) -> Result<(Option<CardId>, u8)> {
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             let lib_size = zones.library.len();
             log::debug!(
@@ -1288,6 +1314,20 @@ impl GameState {
                 } else {
                     1 // Fallback, shouldn't happen
                 };
+
+                if log_gamelog {
+                    let player_name = self
+                        .get_player(player_id)
+                        .map(|p| p.name.to_string())
+                        .unwrap_or_else(|_| format!("Player {}", player_id.as_u32() + 1));
+                    let card_name = self
+                        .cards
+                        .try_get(card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| "a card".to_string());
+                    self.logger
+                        .gamelog(&format!("{} draws {} ({})", player_name, card_name, card_id));
+                }
 
                 return Ok((Some(card_id), draw_count));
             }
