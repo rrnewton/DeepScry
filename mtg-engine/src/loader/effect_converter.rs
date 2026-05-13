@@ -4,7 +4,7 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, ControllerRestriction, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -1298,10 +1298,18 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         // Chaos Orb: physical flip can't be simulated digitally.
-        // Convert to "destroy target nontoken permanent" (standard digital MTG behavior).
+        // Convert to "destroy target nontoken permanent controlled by an opponent"
+        // — the closest digital approximation. Java Forge picks via RNG over
+        // permanents near a simulated landing spot; without RNG-driven physics,
+        // restricting to opponent permanents matches typical AI/competitive intent
+        // (Chaos Orb is a removal piece, not a self-destruct of your own board).
+        // The chained DBDestroyChaosOrb (Defined$ Self) still destroys the Orb
+        // itself via the SubAbility chain — see cardsfolder/c/chaos_orb.txt.
+        // Tracking: mtg-4c1696, mtg-ad79fd.
         ApiType::Unknown(ref s) if s == "FlipOntoBattlefield" => {
             let mut restriction = TargetRestriction::any();
             restriction.requires_nontoken = true;
+            restriction.controller = ControllerRestriction::OppCtrl;
             Some(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction,
@@ -2893,6 +2901,32 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         assert!(effect.is_some(), "DestroyAll should produce a DestroyAll effect");
 
         assert!(matches!(effect.unwrap(), Effect::DestroyAll { .. }));
+    }
+
+    #[test]
+    fn test_convert_flip_onto_battlefield_targets_opponent() {
+        // Chaos Orb's "FlipOntoBattlefield" cannot be physically simulated;
+        // we degrade it to "destroy target nontoken permanent controlled by an
+        // opponent." Without the OppCtrl restriction the auto-target picker
+        // would pick the Orb itself (mtg-4c1696). This test pins that contract.
+        let params = AbilityParams::parse(
+            "A:AB$ FlipOntoBattlefield | Cost$ 1 T | SubAbility$ DBDestroyTouched | ActivationZone$ Battlefield",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).expect("FlipOntoBattlefield should produce an effect");
+
+        match effect {
+            Effect::DestroyPermanent { target, restriction } => {
+                assert!(target.is_placeholder(), "target should be placeholder until resolution");
+                assert!(restriction.requires_nontoken, "must restrict to nontoken permanents");
+                assert_eq!(
+                    restriction.controller,
+                    crate::core::ControllerRestriction::OppCtrl,
+                    "must restrict to opponent permanents (else Chaos Orb auto-targets itself)"
+                );
+            }
+            other => panic!("Expected DestroyPermanent, got {:?}", other),
+        }
     }
 
     #[test]

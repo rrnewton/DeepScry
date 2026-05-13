@@ -808,8 +808,9 @@ impl GameState {
                                 is_valid = false;
                             }
 
-                            // Check spell-level type restriction from ValidTgts
-                            if !restriction.matches(card) {
+                            // Check spell-level type + controller restriction from ValidTgts
+                            // (matches_with_controller honors YouCtrl/OppCtrl in addition to type/counter/power)
+                            if !restriction.matches_with_controller(card, ability_controller, card.controller) {
                                 is_valid = false;
                             }
 
