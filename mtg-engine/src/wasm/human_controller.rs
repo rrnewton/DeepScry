@@ -204,6 +204,32 @@ pub fn stage_discard_pick(
     }
 }
 
+/// Toggle one creature in the multi-attacker selection prompt.
+///
+/// The engine's `choose_attackers` is a single call that expects ALL chosen
+/// attackers in one response (e.g. attacking with both Triskelion and Sengir
+/// Vampire in the same combat). The fancy.html UI naturally collects clicks
+/// one creature at a time, so we accumulate `staged` indices client-side and
+/// only commit when the user picks "Done".
+///
+/// `creature_idx` is the index into `ChoiceContext::Attackers::available_creatures`.
+/// If the creature is not yet staged, it is added; if it was already staged, it
+/// is removed (toggle semantics so the user can correct mis-clicks before
+/// submitting). Native TUI's `choose_attackers` also displays an `[X]` marker
+/// for staged creatures, but is add-only — fancy.html improves on that by
+/// allowing un-staging.
+///
+/// Returns `true` if `creature_idx` is now staged, `false` if it was un-staged.
+pub fn toggle_staged_attacker(staged: &mut Vec<usize>, creature_idx: usize) -> bool {
+    if let Some(pos) = staged.iter().position(|&i| i == creature_idx) {
+        staged.remove(pos);
+        false
+    } else {
+        staged.push(creature_idx);
+        true
+    }
+}
+
 /// Human controller for WASM/browser gameplay
 ///
 /// This controller implements the event-driven input pattern:
@@ -694,6 +720,38 @@ mod tests {
             _ => panic!("expected committed PendingChoice::Discard, got {:?}", result),
         }
         assert!(staged.is_empty(), "staged should be drained on commit");
+    }
+
+    #[test]
+    fn test_toggle_staged_attacker_adds_then_removes() {
+        let mut staged: Vec<usize> = Vec::new();
+        // First pick: stage attacker at idx 0.
+        assert!(toggle_staged_attacker(&mut staged, 0));
+        assert_eq!(staged, vec![0]);
+        // Second pick: stage attacker at idx 2.
+        assert!(toggle_staged_attacker(&mut staged, 2));
+        assert_eq!(staged, vec![0, 2]);
+        // Third pick: re-pick idx 0 — should un-stage it.
+        assert!(!toggle_staged_attacker(&mut staged, 0));
+        assert_eq!(staged, vec![2]);
+        // Fourth pick: re-pick idx 0 — re-stages it (toggle).
+        assert!(toggle_staged_attacker(&mut staged, 0));
+        assert_eq!(staged, vec![2, 0]);
+    }
+
+    #[test]
+    fn test_toggle_staged_attacker_multiple_attackers_regression() {
+        // Regression for bug-multi-attacker-selection: in fancy.html, picking
+        // Triskelion then Sengir Vampire used to overwrite the first selection
+        // because the UI committed `vec![idx]` immediately on each click.
+        // After the fix, both stay staged until the user picks "Done".
+        let mut staged: Vec<usize> = Vec::new();
+        // Triskelion at available_creatures idx 0.
+        toggle_staged_attacker(&mut staged, 0);
+        // Sengir Vampire at available_creatures idx 1.
+        toggle_staged_attacker(&mut staged, 1);
+        // Both creatures are staged for attack — this used to be impossible.
+        assert_eq!(staged, vec![0, 1], "both attackers must remain staged");
     }
 
     #[test]

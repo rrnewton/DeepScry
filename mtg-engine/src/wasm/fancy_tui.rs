@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
-use super::human_controller::{stage_discard_pick, PendingChoice, WasmHumanController};
+use super::human_controller::{stage_discard_pick, toggle_staged_attacker, PendingChoice, WasmHumanController};
 use super::replay_verifier::{
     capture_pre_rewind, finish_capture, record_turn_start_hash_with_snapshot, verify_replay, PreRewindCapture,
     RewindVerification,
@@ -1237,6 +1237,14 @@ struct WasmFancyTuiState {
     /// is a single call expecting all `count` cards at once (e.g. Bazaar of
     /// Baghdad's "discard 3"), but the UI naturally collects picks one at a time.
     staged_discard_indices: Vec<usize>,
+    /// Multi-attacker selection state. Each element is an index into the
+    /// `ChoiceContext::Attackers::available_creatures` list that the user has
+    /// staged as an attacker in the current Attackers prompt. Nothing is
+    /// committed to the engine until the user selects "Done" (idx 0). Mirrors
+    /// the loop accumulator in the native TUI's `choose_attackers` so a single
+    /// engine `choose_attackers` call can collect multiple creatures from the
+    /// fancy.html UI (which only delivers one click at a time).
+    staged_attacker_indices: Vec<usize>,
     /// Mapping from the current Discard prompt's displayed choice index to
     /// the underlying hand index in `ChoiceContext::Discard::hand`. Recomputed
     /// in `update_choices_from_context` so we only show not-yet-staged cards.
@@ -1357,6 +1365,7 @@ impl WasmFancyTuiState {
             blocker_choice_pairs: Vec::new(),
             staged_discard_indices: Vec::new(),
             discard_choice_indices: Vec::new(),
+            staged_attacker_indices: Vec::new(),
             // Honour any `tui_set_verify_rewind_replay(true)` call that
             // landed BEFORE the TUI state was created (typical pattern in
             // Playwright tests that wire `enableReplayVerifier(page)` right
@@ -2420,6 +2429,13 @@ impl WasmFancyTuiState {
             self.staged_discard_indices.clear();
             self.discard_choice_indices.clear();
         }
+        // Drop any in-flight multi-attacker staging when we leave the
+        // Attackers prompt, otherwise stale staged indices would carry over
+        // to a future combat phase (different available creatures, different
+        // intent).
+        if !matches!(context, ChoiceContext::Attackers { .. }) {
+            self.staged_attacker_indices.clear();
+        }
         let choices: Vec<String> = match context {
             ChoiceContext::SpellAbility { formatted_choices, .. } => formatted_choices.clone(),
             ChoiceContext::Targets { formatted_targets, .. } => {
@@ -2432,9 +2448,19 @@ impl WasmFancyTuiState {
             ChoiceContext::Attackers {
                 formatted_creatures, ..
             } => {
-                // Use "Done" to match TUI (not "Done (no more attackers)")
+                // Use "Done" to match TUI (not "Done (no more attackers)").
+                // Mirror native TUI's `[X]` marker for already-staged attackers
+                // so the user can see which creatures they've toggled on this
+                // prompt before submitting "Done".
                 let mut choices = vec!["Done".to_string()];
-                choices.extend(formatted_creatures.clone());
+                for (i, creature_label) in formatted_creatures.iter().enumerate() {
+                    let marker = if self.staged_attacker_indices.contains(&i) {
+                        " [X]"
+                    } else {
+                        ""
+                    };
+                    choices.push(format!("{}{}", creature_label, marker));
+                }
                 choices
             }
             ChoiceContext::Blockers {
@@ -2650,9 +2676,25 @@ impl WasmFancyTuiState {
                 ChoiceContext::ManaSources { .. } => PendingChoice::ManaSources(vec![idx]),
                 ChoiceContext::Attackers { .. } => {
                     if idx == 0 {
-                        PendingChoice::Attackers(vec![]) // Done
+                        // "Done": commit everything the user staged this prompt
+                        // (which may be empty, meaning "don't attack").
+                        let indices = std::mem::take(&mut self.staged_attacker_indices);
+                        PendingChoice::Attackers(indices)
                     } else {
-                        PendingChoice::Attackers(vec![idx - 1])
+                        // Toggle: stage the picked creature if not already staged,
+                        // unstage it if it was. Then re-render and stay in the
+                        // Attackers prompt so the user can keep toggling more
+                        // creatures or finalize via "Done". We do NOT commit to
+                        // the engine yet — that happens when the user picks "Done".
+                        let creature_idx = idx - 1;
+                        toggle_staged_attacker(&mut self.staged_attacker_indices, creature_idx);
+                        // Recompute choices for the same context; selected idx
+                        // back to 0 ("Done") so a quick second Enter submits.
+                        let context = self.pending_context.clone().unwrap();
+                        self.selected_choice_idx = 0;
+                        self.update_choices_from_context(&context);
+                        self.needs_redraw = true;
+                        return;
                     }
                 }
                 ChoiceContext::Blockers { .. } => {
