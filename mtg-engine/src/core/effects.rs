@@ -832,6 +832,33 @@ pub enum Effect {
     /// Moves a card from the battlefield to the exile zone
     ExilePermanent { target: CardId },
 
+    /// Self-exile from the stack (override default sorcery → graveyard).
+    ///
+    /// Corresponds to `A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile`,
+    /// e.g. All Hallow's Eve ("Exile this card with two scream counters on
+    /// it.") or any other "this spell goes to exile when it resolves" effect.
+    ///
+    /// During spell resolution this effect moves the source card from the
+    /// stack to exile. `resolve_spell_finalize` then notices the card is no
+    /// longer on the stack and skips its default move-to-graveyard step, so
+    /// the spell ends up in exile rather than the graveyard.
+    ///
+    /// If `remember_changed` is true the moved card is pushed onto
+    /// `GameState::remembered_cards` so chained `Defined$ Remembered`
+    /// sub-abilities (e.g. "put two scream counters on it") can target it.
+    ///
+    /// The `source` field is filled in by `resolve_self_target` at spell
+    /// resolution time (it is `CardId::self_target()` straight out of the
+    /// converter, since the effect always operates on the resolving spell).
+    SelfExileFromStack {
+        /// The resolving spell's CardId. Stored as `self_target()` after
+        /// parsing and patched to the actual source by `resolve_self_target`.
+        source: CardId,
+        /// Whether to push the moved card onto `remembered_cards` so chained
+        /// SubAbilities with `Defined$ Remembered` can find it.
+        remember_changed: bool,
+    },
+
     /// Move all cards matching a filter from one zone to another
     /// Example: "Return all attacking creatures to their owner's hand" (Aetherize)
     /// Example: "Exile all cards from all graveyards" (Tormod's Crypt)
@@ -1356,6 +1383,7 @@ impl Effect {
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
+            | Effect::SelfExileFromStack { .. }
             | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)

@@ -77,6 +77,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::AddTurn { .. }
         | Effect::AddPhase { .. }
         | Effect::ChooseColor { .. }
+        | Effect::SelfExileFromStack { .. }
         | Effect::Unimplemented { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
@@ -185,6 +186,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
+            | Effect::SelfExileFromStack { .. }
             | Effect::Unimplemented { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
@@ -452,6 +454,27 @@ impl GameState {
                 target: source_card_id,
                 restriction,
             },
+            // `SP$ ChangeZone | Origin$ Stack | Destination$ Exile` — patch in
+            // the resolving spell's CardId so `Effect::SelfExileFromStack` can
+            // move *this* card from the stack to exile.
+            Effect::SelfExileFromStack {
+                source,
+                remember_changed,
+            } if source.is_self_target() => Effect::SelfExileFromStack {
+                source: source_card_id,
+                remember_changed,
+            },
+            // `DB$ PutCounter | Defined$ Self` chained on a SP$ — patch in the
+            // resolving spell's CardId so the counters land on the source card.
+            Effect::PutCounter {
+                target,
+                counter_type,
+                amount,
+            } if target.is_self_target() => Effect::PutCounter {
+                target: source_card_id,
+                counter_type,
+                amount,
+            },
             other => other,
         }
     }
@@ -477,6 +500,24 @@ impl GameState {
                 Zone::Battlefield
             }
         };
+
+        // If the card already left the stack during effect execution (e.g. an
+        // `SP$ ChangeZone | Origin$ Stack | Destination$ Exile` self-exile —
+        // All Hallow's Eve), don't try to move it again. The default
+        // sorcery-resolution path always sends sorceries to the graveyard,
+        // which would clobber the self-exile that the effect just performed.
+        // Checking `stack.contains` here lets `Effect::SelfExileFromStack`
+        // (and any future effect that relocates the resolving spell) override
+        // the default destination cleanly.
+        if !self.stack.contains(card_id) {
+            log::debug!(
+                target: "resolve_spell",
+                "resolve_spell_finalize: card {} no longer on stack (effect moved it), skipping default move-to-{:?}",
+                card_id.as_u32(),
+                destination
+            );
+            return Ok(());
+        }
 
         // Move card from stack to destination
         let owner = self.cards.get(card_id)?.owner;
@@ -3061,6 +3102,25 @@ impl GameState {
                 if target.is_placeholder() || target.is_reuse_previous() {
                     return Ok(());
                 }
+                // `Defined$ Remembered` (e.g. All Hallow's Eve's chained
+                // PutCounter after a RememberChanged self-exile) — apply the
+                // counters to every card currently in `remembered_cards`.
+                // Clone first to avoid the &self borrow held by `iter()`
+                // conflicting with `add_counters`'s &mut self.
+                if target.is_remembered_card() {
+                    let remembered: smallvec::SmallVec<[CardId; 4]> = self.remembered_cards.iter().copied().collect();
+                    if remembered.is_empty() {
+                        log::debug!(
+                            target: "put_counter",
+                            "PutCounter Defined$ Remembered with empty remembered_cards list, skipping"
+                        );
+                        return Ok(());
+                    }
+                    for cid in remembered {
+                        self.add_counters(cid, *counter_type, *amount)?;
+                    }
+                    return Ok(());
+                }
                 // Add counters using the GameState method (which logs for undo)
                 self.add_counters(*target, *counter_type, *amount)?;
             }
@@ -3253,6 +3313,42 @@ impl GameState {
                 // Exile the permanent by moving it from battlefield to exile
                 let owner = self.cards.get(*target)?.owner;
                 self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
+            }
+            Effect::SelfExileFromStack {
+                source,
+                remember_changed,
+            } => {
+                // `SP$ ChangeZone | Origin$ Stack | Destination$ Exile`
+                // (e.g. All Hallow's Eve). Move the resolving spell from the
+                // stack to exile so it doesn't get sent to the graveyard by the
+                // default sorcery resolution path; `resolve_spell_finalize` will
+                // notice the card is no longer on the stack and skip its move.
+                if source.is_placeholder() || source.is_self_target() {
+                    // resolve_self_target should have patched the source CardId;
+                    // if it didn't (effect was placed in an unexpected context),
+                    // fizzle silently rather than panicking.
+                    log::debug!(
+                        target: "self_exile",
+                        "SelfExileFromStack: source still placeholder/sentinel, skipping"
+                    );
+                    return Ok(());
+                }
+                if !self.stack.contains(*source) {
+                    log::debug!(
+                        target: "self_exile",
+                        "SelfExileFromStack: card {} no longer on stack",
+                        source.as_u32()
+                    );
+                    return Ok(());
+                }
+                let owner = self.cards.get(*source)?.owner;
+                self.move_card(*source, Zone::Stack, Zone::Exile, owner)?;
+                if *remember_changed {
+                    // Make the just-exiled card available to chained
+                    // SubAbilities with `Defined$ Remembered` (e.g. the
+                    // PutCounter that places two scream counters on it).
+                    self.remembered_cards.push(*source);
+                }
             }
             Effect::SetBasePowerToughness {
                 target,

@@ -324,6 +324,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     target: CardId::new(0), // Placeholder
                 })
             }
+            // Self-exile from stack: A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile
+            // (e.g. All Hallow's Eve "Exile this card with two scream counters on it.")
+            //
+            // The default sorcery-resolution path moves the card from the stack to
+            // the graveyard once effects finish executing. This effect overrides
+            // that: it moves the card from the stack to exile *during* effect
+            // resolution, and `resolve_spell_finalize` then notices the card is
+            // no longer on the stack and skips its default move-to-graveyard.
+            //
+            // RememberChanged$ True (the only flag we currently honour here) pushes
+            // the moved card onto `GameState::remembered_cards` so chained
+            // SubAbilities with `Defined$ Remembered` (e.g. the chained PutCounter
+            // that places two scream counters on it) can find it.
+            else if params.get("Origin") == Some("Stack") && params.get("Destination") == Some("Exile") {
+                let remember_changed = params.get("RememberChanged") == Some("True");
+                Some(Effect::SelfExileFromStack {
+                    // Patched to the resolving spell's CardId by
+                    // `resolve_self_target` during `resolve_spell_execute_effects`.
+                    source: CardId::self_target(),
+                    remember_changed,
+                })
+            }
             // Check for library search effects: Origin$ Library
             else if params.get("Origin") == Some("Library") {
                 let destination = params
@@ -440,8 +462,26 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // Parse counter count (default to 1)
             let amount = params.get_u8("CounterNum").unwrap_or(1);
 
+            // Encode `Defined$` into the placeholder target so the resolver knows
+            // what to substitute at execution time:
+            //   - Self      → CardId::self_target() (the source card)
+            //   - Remembered → CardId::remembered_card() (cards in remembered_cards)
+            //   - default   → placeholder (resolved from chosen_targets)
+            //
+            // The Remembered case is required by chains like
+            //   A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile | RememberChanged$ True
+            //                    | SubAbility$ DBPutCounter
+            //   SVar:DBPutCounter:DB$ PutCounter | Defined$ Remembered | ...
+            // (All Hallow's Eve), where the just-exiled card is the sole intended
+            // target of the chained PutCounter.
+            let target = match params.get("Defined") {
+                Some("Self") => CardId::self_target(),
+                Some("Remembered") => CardId::remembered_card(),
+                _ => CardId::new(0),
+            };
+
             Some(Effect::PutCounter {
-                target: CardId::new(0), // Placeholder - filled in at activation time
+                target,
                 counter_type,
                 amount,
             })

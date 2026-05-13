@@ -356,6 +356,29 @@ impl<'a> GameLoop<'a> {
                 counter_type,
                 amount,
             } => {
+                // `Defined$ Remembered` (e.g. All Hallow's Eve's chained
+                // PutCounter) — the *static* effect carries the
+                // remembered_card sentinel; the actual target is each card
+                // currently in `remembered_cards` and is substituted at
+                // execution time. Resolve it here so the log message names
+                // the real card instead of "Unknown (4294967291)".
+                if target.is_remembered_card() {
+                    if self.game.remembered_cards.is_empty() {
+                        let message = format!(
+                            "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on remembered card (none)"
+                        );
+                        self.game.logger.gamelog(&message);
+                    } else {
+                        for &cid in &self.game.remembered_cards {
+                            let target_name = self.game.cards.get(cid).map(|c| c.name.as_str()).unwrap_or("Unknown");
+                            let message = format!(
+                                "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on {target_name} ({cid})"
+                            );
+                            self.game.logger.gamelog(&message);
+                        }
+                    }
+                    return;
+                }
                 let target_name = self
                     .game
                     .cards
@@ -919,6 +942,17 @@ impl<'a> GameLoop<'a> {
             }
             Effect::Unimplemented { api_type } => {
                 let message = format!("{source_name} ({source_id}) has unimplemented effect '{api_type}'");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::SelfExileFromStack { remember_changed, .. } => {
+                // Surface the self-exile so users can see e.g. All Hallow's Eve
+                // moving from the stack to exile (and being remembered for the
+                // chained PutCounter).
+                let message = if *remember_changed {
+                    format!("{source_name} ({source_id}) is exiled (remembered)")
+                } else {
+                    format!("{source_name} ({source_id}) is exiled")
+                };
                 self.game.logger.gamelog(&message);
             }
         }

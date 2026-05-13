@@ -1450,4 +1450,142 @@ mod tests {
             "P1's Forest should be a valid earthbend target"
         );
     }
+
+    /// Regression test for All Hallow's Eve self-exile-with-counters
+    /// (mtg-2b3951, mtg-464870).
+    ///
+    /// Card script (cardsfolder/a/all_hallows_eve.txt):
+    /// ```text
+    /// A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile | RememberChanged$ True
+    ///                  | SubAbility$ DBPutCounter | SpellDescription$ ...
+    /// SVar:DBPutCounter:DB$ PutCounter | Defined$ Remembered | CounterType$ SCREAM
+    ///                                  | CounterNum$ 2 | SubAbility$ DBCleanup
+    /// SVar:DBCleanup:DB$ Cleanup | ClearRemembered$ True
+    /// ```
+    ///
+    /// The bug: prior to this fix `Origin$ Stack | Destination$ Exile` produced
+    /// no Effect, so the spell fell through to `resolve_spell_finalize`'s
+    /// default sorcery → graveyard move (graveyard count went 2 → 3, exile
+    /// stayed at 0). The chained PutCounter `Defined$ Remembered` had no
+    /// remembered card to land on (because RememberChanged$ True wasn't
+    /// honoured) and added zero counters anywhere.
+    ///
+    /// This test exercises the parsed card end-to-end and pins the contract:
+    ///   - All Hallow's Eve resolves *into exile*, not the graveyard.
+    ///   - It carries 2 SCREAM counters (CR 122 — counters stay with the card
+    ///     in zones where counter-having is valid, including exile here).
+    ///   - The exile zone receives the card; the graveyard does not.
+    #[test]
+    fn test_all_hallows_eve_self_exile_with_two_scream_counters() {
+        use crate::core::{CounterType, Effect};
+        use crate::loader::card::CardLoader;
+
+        // Use the actual cardsfolder script so we exercise the full parse →
+        // execute pipeline (not a hand-crafted Effect).
+        let content = r#"
+Name:All Hallow's Eve
+ManaCost:2 B B
+Types:Sorcery
+A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile | RememberChanged$ True | SubAbility$ DBPutCounter | SpellDescription$ Exile CARDNAME with two scream counters on it.
+SVar:DBPutCounter:DB$ PutCounter | Defined$ Remembered | CounterType$ SCREAM | CounterNum$ 2 | SubAbility$ DBCleanup
+SVar:DBCleanup:DB$ Cleanup | ClearRemembered$ True
+Oracle:Exile All Hallow's Eve with two scream counters on it.
+"#;
+        let def = CardLoader::parse(content).expect("All Hallow's Eve should parse");
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Instantiate the card from the parsed definition so its .effects
+        // pipeline matches what production card loading produces.
+        let spell_id = game.next_card_id();
+        let spell = def.instantiate(spell_id, p1_id);
+        game.cards.insert(spell_id, spell);
+
+        // Sanity-check: the parser MUST have produced both the SelfExile and
+        // PutCounter effects (regression for both bugs in the tracking issue).
+        let parsed_effects = &game.cards.get(spell_id).unwrap().effects;
+        assert!(
+            parsed_effects.iter().any(|e| matches!(
+                e,
+                Effect::SelfExileFromStack {
+                    remember_changed: true,
+                    ..
+                }
+            )),
+            "Parser must emit Effect::SelfExileFromStack {{ remember_changed: true }} \
+             for `Origin$ Stack | Destination$ Exile | RememberChanged$ True`. \
+             Got effects: {:?}",
+            parsed_effects
+        );
+        assert!(
+            parsed_effects.iter().any(|e| matches!(
+                e,
+                Effect::PutCounter {
+                    counter_type: CounterType::Scream,
+                    amount: 2,
+                    ..
+                }
+            )),
+            "Parser must emit Effect::PutCounter {{ counter_type: Scream, amount: 2 }} \
+             for the chained `Defined$ Remembered` PutCounter SubAbility. \
+             Got effects: {:?}",
+            parsed_effects
+        );
+
+        // Place the spell on the stack and resolve it (skipping mana payment;
+        // we're isolating the resolution-time behaviour).
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.hand.add(spell_id);
+        }
+        game.move_card(spell_id, crate::zones::Zone::Hand, crate::zones::Zone::Stack, p1_id)
+            .unwrap();
+        assert!(game.stack.contains(spell_id), "Spell should be on stack pre-resolution");
+
+        game.resolve_spell(spell_id, &[]).expect("resolve_spell should succeed");
+
+        // Bug 1: card must land in exile, NOT in the graveyard.
+        let zones = game.get_player_zones(p1_id).unwrap();
+        assert!(
+            zones.exile.contains(spell_id),
+            "All Hallow's Eve must end up in exile after resolving \
+             (regression for ChangeZone Origin$ Stack | Destination$ Exile). \
+             Exile contents: {:?}, Graveyard contents: {:?}",
+            zones.exile.cards,
+            zones.graveyard.cards
+        );
+        assert!(
+            !zones.graveyard.contains(spell_id),
+            "All Hallow's Eve must NOT end up in the graveyard \
+             (the default sorcery resolution must be overridden by SelfExile). \
+             Graveyard contents: {:?}",
+            zones.graveyard.cards
+        );
+        assert!(
+            !game.stack.contains(spell_id),
+            "Spell must no longer be on the stack after resolution"
+        );
+
+        // Bug 2: the chained PutCounter must have landed 2 SCREAM counters
+        // on the just-exiled card (regression for RememberChanged$ True
+        // populating remembered_cards before the SubAbility runs).
+        let scream_counters = game.cards.get(spell_id).unwrap().get_counter(CounterType::Scream);
+        assert_eq!(
+            scream_counters, 2,
+            "All Hallow's Eve must have 2 SCREAM counters after resolving \
+             (regression for `Defined$ Remembered` PutCounter chained on \
+             RememberChanged self-exile). Got {} SCREAM counters.",
+            scream_counters
+        );
+
+        // The Cleanup sub-ability should have cleared the remembered list so
+        // that subsequent spells don't leak All Hallow's Eve into their
+        // remembered targeting.
+        assert!(
+            game.remembered_cards.is_empty(),
+            "remembered_cards should be cleared by the Cleanup SubAbility \
+             (DB$ Cleanup | ClearRemembered$ True). Got: {:?}",
+            game.remembered_cards
+        );
+    }
 }

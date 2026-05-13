@@ -69,6 +69,13 @@ pub const REMEMBERED_PLAYERS_ID: u32 = u32::MAX - 2;
 /// Sentinel value indicating "the source card itself" for Defined$ Self effects.
 pub const SELF_TARGET_ID: u32 = u32::MAX - 3;
 
+/// Sentinel value indicating "the cards in `GameState::remembered_cards`" for
+/// `Defined$ Remembered` on a card-targeting effect (e.g. PutCounter chained
+/// after a self-exile that used `RememberChanged$ True`, like All Hallow's
+/// Eve). At resolution time the engine substitutes this sentinel with each
+/// card in `remembered_cards` (in practice usually a single card).
+pub const REMEMBERED_CARD_ID: u32 = u32::MAX - 4;
+
 /// Sentinel value indicating "placeholder to be resolved".
 /// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
 pub const PLACEHOLDER_ID: u32 = 0;
@@ -135,6 +142,22 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn self_target() -> Self {
         EntityId::new(SELF_TARGET_ID)
+    }
+
+    /// Check if this ID means "the cards in `GameState::remembered_cards`"
+    /// (`Defined$ Remembered` on a card-targeting effect).
+    ///
+    /// Currently used by `PutCounter` chained after a `RememberChanged$ True`
+    /// self-exile (e.g. All Hallow's Eve).
+    #[inline]
+    pub fn is_remembered_card(&self) -> bool {
+        self.id == REMEMBERED_CARD_ID
+    }
+
+    /// Create a sentinel ID meaning "the cards in `remembered_cards`".
+    #[inline]
+    pub fn remembered_card() -> Self {
+        EntityId::new(REMEMBERED_CARD_ID)
     }
 
     /// Check if this ID is the "reuse previous target" sentinel.

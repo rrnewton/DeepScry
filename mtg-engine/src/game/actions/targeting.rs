@@ -534,7 +534,8 @@ impl GameState {
                             | Effect::Unimplemented { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
-                            | Effect::Fight { .. } => {
+                            | Effect::Fight { .. }
+                            | Effect::SelfExileFromStack { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -580,11 +581,13 @@ impl GameState {
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Unimplemented { .. }
-                | Effect::Proliferate => {
+                | Effect::Proliferate
+                | Effect::SelfExileFromStack { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
                     // Proliferate: player chooses permanents/players during resolution, no targeting
+                    // SelfExileFromStack: operates on the resolving spell itself, no targets
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
@@ -1032,6 +1035,7 @@ impl GameState {
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
                 | Effect::Proliferate
+                | Effect::SelfExileFromStack { .. }
                 | Effect::UnlessCostWrapper { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
@@ -1040,6 +1044,7 @@ impl GameState {
                     // EachDamage targeting is handled via parent ability's ValidTgts$
                     // UnlessCostWrapper delegates targeting to inner effect
                     // Proliferate: player chooses during resolution, no targeting
+                    // SelfExileFromStack: operates on the resolving spell itself, no targets
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
                 Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
@@ -1323,6 +1328,7 @@ impl GameState {
             | Effect::ChangeZoneAll { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
+            | Effect::SelfExileFromStack { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
