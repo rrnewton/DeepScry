@@ -3712,7 +3712,11 @@ async fn run_download(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "network")]
+    // `format_yyyymmdd_hhmmss_utc` is defined in this file and is exercised
+    // by the unconditional test below — its `use super::*;` import can't be
+    // gated behind `#[cfg(feature = "network")]` or the test fails to
+    // compile in CI matrices that build without `--features network`. The
+    // remaining gated tests are network-only and have their own `#[cfg]`s.
     use super::*;
 
     #[test]

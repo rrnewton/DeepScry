@@ -1251,6 +1251,13 @@ impl GameState {
     /// messages would clutter the game log before the game has even started.
     /// All other code paths should call [`Self::draw_card`] so the draw is
     /// surfaced to the user.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`Result`] from `draw_card_inner` — surfaces any
+    /// engine error encountered while moving the top library card to the
+    /// player's hand (e.g. an exhausted library is signalled separately via
+    /// the returned `Option<CardId>` being `None`, not via `Err`).
     pub fn draw_card_silent(&mut self, player_id: PlayerId) -> Result<(Option<CardId>, u8)> {
         self.draw_card_inner(player_id, /* log_gamelog = */ false)
     }

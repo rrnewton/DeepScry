@@ -186,8 +186,8 @@ impl PlayerController for FancyFixedController {
         available: &[SpellAbility],
     ) -> ChoiceResult<Option<SpellAbility>> {
         // Set up renderer state for screenshot
-        self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state.valid_choices = available.iter().map(SpellAbility::card_id).collect();
+        self.renderer.state.session.choice_context = ChoiceContext::PlayingSpell;
+        self.renderer.state.session.valid_choices = available.iter().map(SpellAbility::card_id).collect();
 
         let player_name = view.player_name();
         let prompt = format!("Priority {}: Choose action", player_name);
@@ -243,8 +243,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up renderer state
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
 
         // Early return for empty available (after taking screenshot)
         if available.is_empty() {
@@ -262,8 +262,8 @@ impl PlayerController for FancyFixedController {
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Set up renderer state
-        self.renderer.state.choice_context = ChoiceContext::TargetSelection;
-        self.renderer.state.valid_choices = valid_targets.to_vec();
+        self.renderer.state.session.choice_context = ChoiceContext::TargetSelection;
+        self.renderer.state.session.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_else(|| format!("Card {:?}", spell));
         let prompt = format!("Choose target for {}", spell_name);
@@ -279,8 +279,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
 
         // Early return for empty targets (after taking screenshot)
         if valid_targets.is_empty() {
@@ -308,8 +308,8 @@ impl PlayerController for FancyFixedController {
         available_creatures: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         // Set up renderer state
-        self.renderer.state.choice_context = ChoiceContext::DeclareAttackers;
-        self.renderer.state.valid_choices = available_creatures.to_vec();
+        self.renderer.state.session.choice_context = ChoiceContext::DeclareAttackers;
+        self.renderer.state.session.valid_choices = available_creatures.to_vec();
 
         let prompt = "Choose attackers (or Pass to skip)".to_string();
 
@@ -327,8 +327,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
 
         // Early return for empty creatures (after taking screenshot)
         if available_creatures.is_empty() {
@@ -346,8 +346,8 @@ impl PlayerController for FancyFixedController {
         attackers: &[CardId],
     ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
         // Set up renderer state
-        self.renderer.state.choice_context = ChoiceContext::DeclareBlockers;
-        self.renderer.state.valid_choices = available_blockers.to_vec();
+        self.renderer.state.session.choice_context = ChoiceContext::DeclareBlockers;
+        self.renderer.state.session.valid_choices = available_blockers.to_vec();
 
         let prompt = "Choose blockers (or Pass to skip)".to_string();
 
@@ -365,8 +365,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Clean up
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
 
         // Early return for empty blockers or attackers (after taking screenshot)
         if available_blockers.is_empty() || attackers.is_empty() {

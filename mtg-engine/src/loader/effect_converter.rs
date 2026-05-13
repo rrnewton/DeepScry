@@ -398,13 +398,14 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 // which made City of Brass effectively a Colourless Source —
                 // unable to satisfy any single-pip coloured cost. Pinned by
                 // test_card_compat_city_of_brass.
-                let mut mana = ManaCost::default();
-                mana.white = 1;
-                mana.blue = 1;
-                mana.black = 1;
-                mana.red = 1;
-                mana.green = 1;
-                mana
+                ManaCost {
+                    white: 1,
+                    blue: 1,
+                    black: 1,
+                    red: 1,
+                    green: 1,
+                    ..ManaCost::default()
+                }
             } else if produced_str.starts_with("Combo") {
                 // Combo means choice between colors (e.g., "Combo B G" = {B} or {G})
                 // Parse all listed colors and return them as a ManaCost with all colors set to 1

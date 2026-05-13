@@ -719,12 +719,53 @@ impl RenderConfig {
     }
 }
 
-/// UI state for the fancy TUI renderer
-pub struct FancyTuiState {
+/// Shared game-UI session state used by every renderer (native ratatui TUI,
+/// `web/fancy.html` ratzilla TUI, `web/game.html` native HTML GUI).
+///
+/// **Contains NO ratatui types.** This is the chunk of state that is safe
+/// for non-ratatui clients (game.html and any future renderer) to read /
+/// mutate via the WASM `tui_*` exports without dragging in `Rect`,
+/// `FocusedPane`, ratatui `EntityPosition`, etc. See decouple-step5
+/// (mtg-81ed52) for the architectural motivation.
+pub struct GameUiSessionState {
     /// Currently highlighted choice index (if in choice mode)
     pub highlighted_choice: usize,
     /// Currently selected card for details view
     pub selected_card_id: Option<CardId>,
+    /// Cards that can currently be chosen (for highlighting)
+    pub valid_choices: Vec<CardId>,
+    /// What kind of choice is being made
+    pub choice_context: ChoiceContext,
+    /// Buffer for multi-digit choice input (>10 choices)
+    pub digit_buffer: String,
+    /// Rewind message to display after undo operation
+    pub rewind_message: Option<String>,
+}
+
+impl Default for GameUiSessionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GameUiSessionState {
+    pub fn new() -> Self {
+        Self {
+            highlighted_choice: 0,
+            selected_card_id: None,
+            valid_choices: Vec::new(),
+            choice_context: ChoiceContext::None,
+            digit_buffer: String::new(),
+            rewind_message: None,
+        }
+    }
+}
+
+/// Ratatui-specific view state — focused pane, hit-test rectangles,
+/// per-pane card-selection indices, log scroll position, and the wrap
+/// cache. Lives only in the ratatui-flavoured renderer; game.html does
+/// not touch any of these fields.
+pub struct RatatuiViewState {
     /// Whether logger was configured for memory-only mode
     pub logger_memory_mode_enabled: bool,
     /// Currently focused pane
@@ -737,10 +778,6 @@ pub struct FancyTuiState {
     pub selected_card_in_opp_bf: Option<CardId>,
     /// Entity positions for mouse hit testing (cleared and rebuilt each frame)
     pub entity_positions: Vec<EntityPosition>,
-    /// Cards that can currently be chosen (for highlighting)
-    pub valid_choices: Vec<CardId>,
-    /// What kind of choice is being made
-    pub choice_context: ChoiceContext,
     /// Actions pane area (for mouse click detection)
     pub actions_pane_area: Option<Rect>,
     /// Hand pane area (for mouse click detection)
@@ -749,8 +786,6 @@ pub struct FancyTuiState {
     pub card_details_pane_area: Option<Rect>,
     /// Log pane area (for mouse click detection and scroll wheel)
     pub log_pane_area: Option<Rect>,
-    /// Rewind message to display after undo operation
-    pub rewind_message: Option<String>,
     /// Log scroll offset (0 = follow mode, showing latest; >0 = scrolled up by N lines)
     /// In unwrapped mode: counts original log entries from end
     /// In wrapped mode: counts wrapped lines from end
@@ -763,8 +798,34 @@ pub struct FancyTuiState {
     pub log_visible_lines: usize,
     /// Cache of wrapped log lines for efficient scrolling
     pub log_wrap_cache: LogWrapCache,
-    /// Buffer for multi-digit choice input (>10 choices)
-    pub digit_buffer: String,
+}
+
+impl Default for RatatuiViewState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// UI state for the fancy TUI renderer.
+///
+/// Decouple-step5 split this struct into two logical halves:
+///
+/// * `session: GameUiSessionState` — the **shared** subset (selection,
+///   choice navigation, digit buffer, rewind message). Every renderer
+///   reads from / mutates this; the WASM `tui_*` pure-logic exports
+///   (`tui_select_card`, `tui_*_choice`, `tui_get_gui_view_model_json`,
+///   …) operate on it directly. Contains no ratatui types.
+/// * `view: RatatuiViewState` — the **ratatui-only** subset (focused
+///   pane, entity hit-test rects, per-pane selection indices, log scroll
+///   state). Only the ratatui renderer (`FancyTuiRenderer::draw_ui`,
+///   ratzilla `process_*_event`) touches these.
+///
+/// Splitting the state means a future non-ratatui renderer (e.g. a
+/// React app pulling the view model JSON) can target
+/// `&mut GameUiSessionState` without ever importing ratatui.
+pub struct FancyTuiState {
+    pub session: GameUiSessionState,
+    pub view: RatatuiViewState,
 }
 
 impl Default for FancyTuiState {
@@ -776,27 +837,30 @@ impl Default for FancyTuiState {
 impl FancyTuiState {
     pub fn new() -> Self {
         Self {
-            highlighted_choice: 0,
-            selected_card_id: None,
+            session: GameUiSessionState::new(),
+            view: RatatuiViewState::new(),
+        }
+    }
+}
+
+impl RatatuiViewState {
+    pub fn new() -> Self {
+        Self {
             logger_memory_mode_enabled: false,
             focused_pane: FocusedPane::Actions, // Start with Actions focused
             selected_card_in_hand: None,
             selected_card_in_your_bf: None,
             selected_card_in_opp_bf: None,
             entity_positions: Vec::new(),
-            valid_choices: Vec::new(),
-            choice_context: ChoiceContext::None,
             actions_pane_area: None,
             hand_pane_area: None,
             card_details_pane_area: None,
             log_pane_area: None,
-            rewind_message: None,
             log_scroll_offset: 0,     // 0 = follow mode (show latest)
             log_horizontal_offset: 0, // 0 = no horizontal scroll
             log_wrap_lines: false,    // Default: no line wrapping (truncate)
             log_visible_lines: 20,    // Default estimate, updated during render
             log_wrap_cache: LogWrapCache::default(),
-            digit_buffer: String::new(),
         }
     }
 
@@ -1583,10 +1647,10 @@ impl FancyTuiRenderer {
         choices: &[(String, bool)], // (text, is_highlighted)
     ) {
         // Clear entity positions and pane areas from previous frame
-        self.state.entity_positions.clear();
-        self.state.actions_pane_area = None;
-        self.state.hand_pane_area = None;
-        self.state.log_pane_area = None;
+        self.state.view.entity_positions.clear();
+        self.state.view.actions_pane_area = None;
+        self.state.view.hand_pane_area = None;
+        self.state.view.log_pane_area = None;
 
         // Compute pane layout using shared layout engine
         let config = PaneLayoutConfig {
@@ -1614,9 +1678,9 @@ impl FancyTuiRenderer {
 
         // Draw all panels
         self.draw_log_pane(f, log_area, view);
-        self.state.log_pane_area = Some(log_area);
+        self.state.view.log_pane_area = Some(log_area);
         self.draw_prompt(f, actions_area, view, current_prompt, choices);
-        self.state.actions_pane_area = Some(actions_area);
+        self.state.view.actions_pane_area = Some(actions_area);
 
         // Get opponent ID
         let opponent_id = view.opponents().next();
@@ -1632,13 +1696,13 @@ impl FancyTuiRenderer {
         // Draw right column
         self.draw_card_details(f, card_details_area, view);
         self.draw_hand(f, hand_area, view);
-        self.state.hand_pane_area = Some(hand_area);
-        self.state.card_details_pane_area = Some(card_details_area);
+        self.state.view.hand_pane_area = Some(hand_area);
+        self.state.view.card_details_pane_area = Some(card_details_area);
     }
 
     /// Draw the Log pane (left column top)
     fn draw_log_pane(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
-        let is_focused = self.state.focused_pane == FocusedPane::Log;
+        let is_focused = self.state.view.focused_pane == FocusedPane::Log;
         let border_color = if is_focused { Color::Cyan } else { Color::Reset };
 
         // Draw the block with title
@@ -1660,10 +1724,10 @@ impl FancyTuiRenderer {
 
         // Render log status in the title bar (right side of top border)
         let visible_lines = content_area.height as usize;
-        let (total_lines, scroll_offset) = if self.state.log_wrap_lines {
-            let total = self.state.log_wrap_cache.lines.len();
+        let (total_lines, scroll_offset) = if self.state.view.log_wrap_lines {
+            let total = self.state.view.log_wrap_cache.lines.len();
             let max_offset = total.saturating_sub(visible_lines);
-            (total, self.state.log_scroll_offset.min(max_offset))
+            (total, self.state.view.log_scroll_offset.min(max_offset))
         } else {
             // Must use filtered count to match draw_log_view_unwrapped
             let logs = view.logger().logs();
@@ -1672,7 +1736,7 @@ impl FancyTuiRenderer {
                 .filter(|e| !e.message.starts_with(LOG_FILTER_PREFIX))
                 .count();
             let max_offset = filtered_count.saturating_sub(visible_lines);
-            (filtered_count, self.state.log_scroll_offset.min(max_offset))
+            (filtered_count, self.state.view.log_scroll_offset.min(max_offset))
         };
         let end_idx = total_lines.saturating_sub(scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
@@ -1683,7 +1747,7 @@ impl FancyTuiRenderer {
         } else {
             format!("{}-{}/{}", start_idx + 1, end_idx, total_lines)
         };
-        let wrap_indicator = if self.state.log_wrap_lines { " [W]" } else { "" };
+        let wrap_indicator = if self.state.view.log_wrap_lines { " [W]" } else { "" };
         let full_status = format!("{}{}", status_text, wrap_indicator);
 
         // Render status on the title bar line (y = area.y, right-aligned before border)
@@ -1772,13 +1836,13 @@ impl FancyTuiRenderer {
         let visible_lines = area.height as usize;
 
         // Store actual visible lines for turn navigation calculations
-        self.state.log_visible_lines = visible_lines;
+        self.state.view.log_visible_lines = visible_lines;
 
         if visible_lines == 0 || area.width < 10 {
             return;
         }
 
-        if self.state.log_wrap_lines {
+        if self.state.view.log_wrap_lines {
             // WRAPPED MODE: Use the wrap cache
             self.draw_log_view_wrapped(f, area, &logs);
         } else {
@@ -1800,16 +1864,16 @@ impl FancyTuiRenderer {
 
         // Clamp scroll offset FIRST - must happen before calculating indices
         let max_offset = total_lines.saturating_sub(visible_lines);
-        if self.state.log_scroll_offset > max_offset {
-            self.state.log_scroll_offset = max_offset;
+        if self.state.view.log_scroll_offset > max_offset {
+            self.state.view.log_scroll_offset = max_offset;
         }
 
         // Calculate which lines to show based on scroll offset
-        let end_idx = total_lines.saturating_sub(self.state.log_scroll_offset);
+        let end_idx = total_lines.saturating_sub(self.state.view.log_scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
 
         // Build log lines with horizontal offset and truncation
-        let h_offset = self.state.log_horizontal_offset;
+        let h_offset = self.state.view.log_horizontal_offset;
         let log_lines: Vec<ListItem> = filtered_logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
@@ -1851,26 +1915,26 @@ impl FancyTuiRenderer {
         let visible_lines = area.height as usize;
 
         // Update or rebuild cache as needed
-        if self.state.log_wrap_cache.needs_rebuild(area.width) {
-            self.state.log_wrap_cache.rebuild(logs, area.width);
-        } else if self.state.log_wrap_cache.needs_update(logs.len()) {
-            self.state.log_wrap_cache.update(logs, area.width);
+        if self.state.view.log_wrap_cache.needs_rebuild(area.width) {
+            self.state.view.log_wrap_cache.rebuild(logs, area.width);
+        } else if self.state.view.log_wrap_cache.needs_update(logs.len()) {
+            self.state.view.log_wrap_cache.update(logs, area.width);
         }
 
-        let total_wrapped = self.state.log_wrap_cache.lines.len();
+        let total_wrapped = self.state.view.log_wrap_cache.lines.len();
 
         // Clamp scroll offset for wrapped lines
         let max_offset = total_wrapped.saturating_sub(visible_lines);
-        if self.state.log_scroll_offset > max_offset {
-            self.state.log_scroll_offset = max_offset;
+        if self.state.view.log_scroll_offset > max_offset {
+            self.state.view.log_scroll_offset = max_offset;
         }
 
         // Calculate which wrapped lines to show
-        let end_idx = total_wrapped.saturating_sub(self.state.log_scroll_offset);
+        let end_idx = total_wrapped.saturating_sub(self.state.view.log_scroll_offset);
         let start_idx = end_idx.saturating_sub(visible_lines);
 
         // Build list items from wrapped cache
-        let log_lines: Vec<ListItem> = self.state.log_wrap_cache.lines[start_idx..end_idx]
+        let log_lines: Vec<ListItem> = self.state.view.log_wrap_cache.lines[start_idx..end_idx]
             .iter()
             .map(|wrapped| ListItem::new(Line::from(Span::styled(&wrapped.text, wrapped.style))))
             .collect();
@@ -1888,7 +1952,7 @@ impl FancyTuiRenderer {
         current_prompt: Option<&str>,
         choices: &[(String, bool)],
     ) {
-        let is_focused = self.state.focused_pane == FocusedPane::Actions;
+        let is_focused = self.state.view.focused_pane == FocusedPane::Actions;
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1962,7 +2026,7 @@ impl FancyTuiRenderer {
         }
 
         // Show rewind message if present
-        if let Some(ref msg) = self.state.rewind_message {
+        if let Some(ref msg) = self.state.session.rewind_message {
             lines.push(Line::from(Span::styled(
                 msg.as_str(),
                 Style::default().fg(Color::Magenta),
@@ -1984,10 +2048,10 @@ impl FancyTuiRenderer {
         }
 
         // Show digit buffer when non-empty (multi-digit input mode)
-        if !self.state.digit_buffer.is_empty() {
+        if !self.state.session.digit_buffer.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                format!("Select: {}_ (Enter to confirm)", self.state.digit_buffer),
+                format!("Select: {}_ (Enter to confirm)", self.state.session.digit_buffer),
                 Style::default().fg(Color::Cyan),
             )));
         }
@@ -3079,9 +3143,9 @@ impl FancyTuiRenderer {
         // Determine focus state
         let is_player_bf = owner_id == view.player_id();
         let is_focused = if is_player_bf {
-            self.state.focused_pane == FocusedPane::YourBattlefield
+            self.state.view.focused_pane == FocusedPane::YourBattlefield
         } else {
-            self.state.focused_pane == FocusedPane::OpponentBattlefield
+            self.state.view.focused_pane == FocusedPane::OpponentBattlefield
         };
         let border_color = if is_focused { Color::White } else { Color::Gray };
 
@@ -3292,7 +3356,7 @@ impl FancyTuiRenderer {
             f.render_widget(Paragraph::new(name.as_str()).style(style), card_area);
 
             // Record entity position for click detection
-            self.state.entity_positions.push(EntityPosition {
+            self.state.view.entity_positions.push(EntityPosition {
                 entity: Entity::GraveyardCard {
                     card_id: *card_id,
                     index: i,
@@ -3366,7 +3430,7 @@ impl FancyTuiRenderer {
         let inner_area = block.inner(area);
         f.render_widget(block, area);
 
-        if let Some(card_id) = self.state.selected_card_id {
+        if let Some(card_id) = self.state.session.selected_card_id {
             if let Some(card) = view.get_card(card_id) {
                 let mut lines = Vec::new();
 
@@ -3463,7 +3527,7 @@ impl FancyTuiRenderer {
 
     /// Draw the hand panel
     fn draw_hand(&mut self, f: &mut Frame, area: Rect, view: &GameStateView) {
-        let is_focused = self.state.focused_pane == FocusedPane::Hand;
+        let is_focused = self.state.view.focused_pane == FocusedPane::Hand;
 
         let hand = view.hand();
         let title = if is_focused {
@@ -3506,7 +3570,7 @@ impl FancyTuiRenderer {
             };
             // Only track if within visible area
             if card_area.y < inner_area.y + inner_area.height {
-                self.state.entity_positions.push(EntityPosition {
+                self.state.view.entity_positions.push(EntityPosition {
                     entity: Entity::HandCard { card_id, index: i },
                     area: card_area,
                     layout_area_px: None,
@@ -3519,8 +3583,8 @@ impl FancyTuiRenderer {
             .enumerate()
             .map(|(i, &card_id)| {
                 let name = view.card_name(card_id).unwrap_or_else(|| format!("{:?}", card_id));
-                let is_valid_choice = self.state.valid_choices.contains(&card_id);
-                let is_selected = self.state.selected_card_in_hand == Some(i);
+                let is_valid_choice = self.state.session.valid_choices.contains(&card_id);
+                let is_selected = self.state.view.selected_card_in_hand == Some(i);
 
                 let style = if is_selected {
                     Style::default().fg(Color::Black).bg(Color::Cyan)
@@ -3691,8 +3755,8 @@ impl FancyTuiRenderer {
         let card = view.get_card(card_id);
 
         // Check if this card is currently selected
-        let is_selected =
-            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+        let is_selected = Some(card_id) == self.state.view.selected_card_in_your_bf
+            || Some(card_id) == self.state.view.selected_card_in_opp_bf;
 
         // Determine border color from card colors
         let border_color = if let Some(card) = card.as_ref() {
@@ -3812,7 +3876,7 @@ impl FancyTuiRenderer {
 
         // Track entity position for mouse hit testing
         // Uses MAX bounds (layout_area) as the public bounding box
-        self.state.entity_positions.push(EntityPosition {
+        self.state.view.entity_positions.push(EntityPosition {
             entity: entity.clone(),
             area: layout_area, // MAX bounds - the public bounding box
             layout_area_px,
@@ -3830,8 +3894,8 @@ impl FancyTuiRenderer {
         let card = view.get_card(card_id);
 
         // Check if this card is currently selected
-        let is_selected =
-            Some(card_id) == self.state.selected_card_in_your_bf || Some(card_id) == self.state.selected_card_in_opp_bf;
+        let is_selected = Some(card_id) == self.state.view.selected_card_in_your_bf
+            || Some(card_id) == self.state.view.selected_card_in_opp_bf;
 
         // Calculate available content dimensions (excluding borders)
         // Use render_area (MIN bounds) for text content calculation
@@ -3856,8 +3920,8 @@ impl FancyTuiRenderer {
         };
 
         // Determine if card is in valid choices list
-        let is_valid_choice = self.state.valid_choices.contains(&card_id);
-        let has_choice_context = self.state.choice_context != ChoiceContext::None;
+        let is_valid_choice = self.state.session.valid_choices.contains(&card_id);
+        let has_choice_context = self.state.session.choice_context != ChoiceContext::None;
 
         // Apply highlighting/dimming based on choice context
         let text_style = if has_choice_context {

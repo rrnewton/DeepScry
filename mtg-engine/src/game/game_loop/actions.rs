@@ -601,11 +601,11 @@ impl<'a> GameLoop<'a> {
 
                                     let type_matches = |target_card: &crate::core::card::Card| -> bool {
                                         match base_type.as_deref() {
-                                            Some("creature") | Some("Creature") | None => target_card.is_creature(),
-                                            Some("land") | Some("Land") => target_card.is_land(),
-                                            Some("artifact") | Some("Artifact") => target_card.is_artifact(),
-                                            Some("enchantment") | Some("Enchantment") => target_card.is_enchantment(),
-                                            Some("permanent") | Some("Permanent") => true,
+                                            Some("creature" | "Creature") | None => target_card.is_creature(),
+                                            Some("land" | "Land") => target_card.is_land(),
+                                            Some("artifact" | "Artifact") => target_card.is_artifact(),
+                                            Some("enchantment" | "Enchantment") => target_card.is_enchantment(),
+                                            Some("permanent" | "Permanent") => true,
                                             Some(other) => {
                                                 // Creature subtype check
                                                 target_card.is_creature()

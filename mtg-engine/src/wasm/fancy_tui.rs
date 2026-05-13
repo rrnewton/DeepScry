@@ -679,7 +679,7 @@ pub fn tui_get_selected_card_details() -> String {
             return "null".to_string();
         };
         let s = state.borrow();
-        let Some(card_id) = s.renderer.state.selected_card_id else {
+        let Some(card_id) = s.renderer.state.session.selected_card_id else {
             return "null".to_string();
         };
         let detail = selected_card_detail(&s.game, s.renderer.player_id, card_id);
@@ -765,10 +765,10 @@ pub fn tui_get_gui_view_model_json() -> String {
         // The renderer's `valid_choices` (cards selectable by the human) is
         // the right thing to highlight on the GUI as well — same source of
         // truth as the TUI hand/battlefield highlighting.
-        let valid_choices: Vec<crate::core::CardId> = s.renderer.state.valid_choices.clone();
+        let valid_choices: Vec<crate::core::CardId> = s.renderer.state.session.valid_choices.clone();
 
         // Map the rendering-side choice context to a stable, JS-friendly name.
-        let choice_context = super::gui_view_model::choice_context_name(s.renderer.state.choice_context);
+        let choice_context = super::gui_view_model::choice_context_name(s.renderer.state.session.choice_context);
 
         // The pending controller-side ChoiceContext (e.g. Discard, Targets)
         // gives us a richer semantic label that the GUI can use to e.g. show
@@ -778,7 +778,7 @@ pub fn tui_get_gui_view_model_json() -> String {
 
         let inputs = ViewModelInputs {
             perspective_player_id: s.renderer.player_id,
-            selected_card_id: s.renderer.state.selected_card_id,
+            selected_card_id: s.renderer.state.session.selected_card_id,
             valid_choices: &valid_choices,
             current_prompt,
             choices: &s.current_choices,
@@ -2450,7 +2450,7 @@ impl WasmFancyTuiState {
                 // Need human input - display choices
                 self.pending_context = Some(context.clone());
                 self.selected_choice_idx = 0;
-                self.renderer.state.digit_buffer.clear();
+                self.renderer.state.session.digit_buffer.clear();
                 self.update_choices_from_context(&context);
 
                 // Debug logging: show game state when waiting for input
@@ -3053,15 +3053,15 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
             }
             KeyInput::Enter | KeyInput::Space => {
                 // If digit buffer is non-empty, parse and select that index
-                if !state.renderer.state.digit_buffer.is_empty() {
-                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                if !state.renderer.state.session.digit_buffer.is_empty() {
+                    if let Ok(idx) = state.renderer.state.session.digit_buffer.parse::<usize>() {
                         if idx < state.current_choices.len() {
                             state.selected_choice_idx = idx;
                             state.update_choice_highlights();
                             state.select_current_choice();
                         }
                     }
-                    state.renderer.state.digit_buffer.clear();
+                    state.renderer.state.session.digit_buffer.clear();
                     state.needs_redraw = true;
                     return;
                 }
@@ -3073,8 +3073,8 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
                 let num_choices = state.current_choices.len();
                 if num_choices > 10 {
                     // Multi-digit mode: accumulate in buffer, auto-highlight
-                    state.renderer.state.digit_buffer.push(char::from(b'0' + n));
-                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                    state.renderer.state.session.digit_buffer.push(char::from(b'0' + n));
+                    if let Ok(idx) = state.renderer.state.session.digit_buffer.parse::<usize>() {
                         if idx < num_choices {
                             state.selected_choice_idx = idx;
                             state.update_choice_highlights();
@@ -3094,9 +3094,9 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
                 return;
             }
             KeyInput::Backspace => {
-                if !state.renderer.state.digit_buffer.is_empty() {
-                    state.renderer.state.digit_buffer.pop();
-                    if let Ok(idx) = state.renderer.state.digit_buffer.parse::<usize>() {
+                if !state.renderer.state.session.digit_buffer.is_empty() {
+                    state.renderer.state.session.digit_buffer.pop();
+                    if let Ok(idx) = state.renderer.state.session.digit_buffer.parse::<usize>() {
                         if idx < state.current_choices.len() {
                             state.selected_choice_idx = idx;
                             state.update_choice_highlights();
@@ -3107,8 +3107,8 @@ fn process_key_event(state: &mut WasmFancyTuiState, code: KeyCode) {
                 return;
             }
             KeyInput::Escape => {
-                if !state.renderer.state.digit_buffer.is_empty() {
-                    state.renderer.state.digit_buffer.clear();
+                if !state.renderer.state.session.digit_buffer.is_empty() {
+                    state.renderer.state.session.digit_buffer.clear();
                     state.needs_redraw = true;
                     return;
                 }
@@ -3241,12 +3241,12 @@ fn fire_render_complete_callback(state: &WasmFancyTuiState) {
 
     let player_id = state.renderer.player_id;
     let positions_json =
-        export_card_positions_from_renderer(&state.renderer.state.entity_positions, &state.game, player_id);
+        export_card_positions_from_renderer(&state.renderer.state.view.entity_positions, &state.game, player_id);
 
-    let selected_card_json = if let Some(card_id) = state.renderer.state.selected_card_id {
+    let selected_card_json = if let Some(card_id) = state.renderer.state.session.selected_card_id {
         if let Ok(card) = state.game.cards.get(card_id) {
             let escaped_name = card.name.as_str().replace('\"', "\\\"");
-            if let Some(pane_area) = state.renderer.state.card_details_pane_area {
+            if let Some(pane_area) = state.renderer.state.view.card_details_pane_area {
                 format!(
                     r#"{{"card_id": {}, "name": "{}", "pane": {{"x": {}, "y": {}, "width": {}, "height": {}}}}}"#,
                     card_id.as_u32(),

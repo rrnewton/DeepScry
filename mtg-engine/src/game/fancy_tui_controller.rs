@@ -258,24 +258,31 @@ impl FancyTuiController {
         prompt: &str,
         choices: &[String],
     ) -> io::Result<PromptResult> {
-        self.renderer.state.highlighted_choice = 0;
-        self.renderer.state.digit_buffer.clear();
+        self.renderer.state.session.highlighted_choice = 0;
+        self.renderer.state.session.digit_buffer.clear();
 
         let mut terminal = Self::setup_terminal()?;
 
         loop {
-            let choice_tuples =
-                crate::game::display::format_choices_with_numbers(choices, self.renderer.state.highlighted_choice);
+            let choice_tuples = crate::game::display::format_choices_with_numbers(
+                choices,
+                self.renderer.state.session.highlighted_choice,
+            );
 
             terminal.draw(|f| {
                 self.renderer.draw_ui(f, view, Some(prompt), &choice_tuples);
                 // Render card image in the card details pane if available
                 #[cfg(feature = "ratatui-image")]
-                if let Some(area) = self.renderer.state.card_details_pane_area {
-                    let card_name = self.renderer.state.selected_card_id.and_then(|id| view.card_name(id));
+                if let Some(area) = self.renderer.state.view.card_details_pane_area {
+                    let card_name = self
+                        .renderer
+                        .state
+                        .session
+                        .selected_card_id
+                        .and_then(|id| view.card_name(id));
                     if self
                         .card_image
-                        .update_for_card(self.renderer.state.selected_card_id, card_name.as_deref())
+                        .update_for_card(self.renderer.state.session.selected_card_id, card_name.as_deref())
                     {
                         self.card_image.render(f, area);
                     }
@@ -368,8 +375,8 @@ impl PlayerController for FancyTuiController {
         }
 
         let sorted = sort_spell_abilities(available);
-        self.renderer.state.choice_context = ChoiceContext::PlayingSpell;
-        self.renderer.state.valid_choices = sorted.iter().map(SpellAbility::card_id).collect();
+        self.renderer.state.session.choice_context = ChoiceContext::PlayingSpell;
+        self.renderer.state.session.valid_choices = sorted.iter().map(SpellAbility::card_id).collect();
 
         let player_name = view.player_name();
         let prompt = prompt_spell_ability(&player_name);
@@ -377,8 +384,8 @@ impl PlayerController for FancyTuiController {
 
         match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(PromptResult::Undo) => {
-                self.renderer.state.choice_context = ChoiceContext::None;
-                self.renderer.state.valid_choices.clear();
+                self.renderer.state.session.choice_context = ChoiceContext::None;
+                self.renderer.state.session.valid_choices.clear();
                 ChoiceResult::UndoRequest(usize::MAX)
             }
             Ok(PromptResult::Choice(choice_opt)) => {
@@ -397,13 +404,13 @@ impl PlayerController for FancyTuiController {
                         .controller_choice("TUI", &format!("{} chose to pass priority", player_name));
                 }
 
-                self.renderer.state.choice_context = ChoiceContext::None;
-                self.renderer.state.valid_choices.clear();
+                self.renderer.state.session.choice_context = ChoiceContext::None;
+                self.renderer.state.session.valid_choices.clear();
                 ChoiceResult::Ok(result)
             }
             Err(e) => {
-                self.renderer.state.choice_context = ChoiceContext::None;
-                self.renderer.state.valid_choices.clear();
+                self.renderer.state.session.choice_context = ChoiceContext::None;
+                self.renderer.state.session.valid_choices.clear();
                 ChoiceResult::Error(format!("Failed to prompt for choice: {}", e))
             }
         }
@@ -419,8 +426,8 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        self.renderer.state.choice_context = ChoiceContext::TargetSelection;
-        self.renderer.state.valid_choices = valid_targets.to_vec();
+        self.renderer.state.session.choice_context = ChoiceContext::TargetSelection;
+        self.renderer.state.session.valid_choices = valid_targets.to_vec();
 
         let spell_name = view.card_name(spell).unwrap_or_default();
         let prompt = prompt_target(&spell_name);
@@ -429,8 +436,8 @@ impl PlayerController for FancyTuiController {
         let mut targets = SmallVec::new();
         match self.prompt_for_choice(view, &prompt, &choices) {
             Ok(PromptResult::Undo) => {
-                self.renderer.state.choice_context = ChoiceContext::None;
-                self.renderer.state.valid_choices.clear();
+                self.renderer.state.session.choice_context = ChoiceContext::None;
+                self.renderer.state.session.valid_choices.clear();
                 return ChoiceResult::UndoRequest(usize::MAX);
             }
             Ok(PromptResult::Choice(Some(idx))) if idx > 0 && idx <= valid_targets.len() => {
@@ -438,8 +445,8 @@ impl PlayerController for FancyTuiController {
             }
             Ok(PromptResult::Choice(_)) => {}
             Err(e) => {
-                self.renderer.state.choice_context = ChoiceContext::None;
-                self.renderer.state.valid_choices.clear();
+                self.renderer.state.session.choice_context = ChoiceContext::None;
+                self.renderer.state.session.valid_choices.clear();
                 return ChoiceResult::Error(format!("Failed to prompt for choice: {}", e));
             }
         }
@@ -455,8 +462,8 @@ impl PlayerController for FancyTuiController {
                 .controller_choice("TUI", &format!("chose target {}", target_names.join(", ")));
         }
 
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
         ChoiceResult::Ok(targets)
     }
 
@@ -499,8 +506,8 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        self.renderer.state.choice_context = ChoiceContext::DeclareAttackers;
-        self.renderer.state.valid_choices = available_creatures.to_vec();
+        self.renderer.state.session.choice_context = ChoiceContext::DeclareAttackers;
+        self.renderer.state.session.valid_choices = available_creatures.to_vec();
         let mut attackers = SmallVec::new();
 
         loop {
@@ -516,8 +523,8 @@ impl PlayerController for FancyTuiController {
 
             match self.prompt_for_choice(view, prompt, &choices) {
                 Ok(PromptResult::Undo) => {
-                    self.renderer.state.choice_context = ChoiceContext::None;
-                    self.renderer.state.valid_choices.clear();
+                    self.renderer.state.session.choice_context = ChoiceContext::None;
+                    self.renderer.state.session.valid_choices.clear();
                     return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(0) | None)) => break,
@@ -529,8 +536,8 @@ impl PlayerController for FancyTuiController {
                 }
                 Ok(PromptResult::Choice(_)) => break,
                 Err(e) => {
-                    self.renderer.state.choice_context = ChoiceContext::None;
-                    self.renderer.state.valid_choices.clear();
+                    self.renderer.state.session.choice_context = ChoiceContext::None;
+                    self.renderer.state.session.valid_choices.clear();
                     return ChoiceResult::Error(format!("Failed to prompt for attackers: {}", e));
                 }
             }
@@ -555,8 +562,8 @@ impl PlayerController for FancyTuiController {
             );
         }
 
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
         ChoiceResult::Ok(attackers)
     }
 
@@ -570,8 +577,9 @@ impl PlayerController for FancyTuiController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        self.renderer.state.choice_context = ChoiceContext::DeclareBlockers;
-        self.renderer.state.valid_choices = available_blockers.iter().chain(attackers.iter()).copied().collect();
+        self.renderer.state.session.choice_context = ChoiceContext::DeclareBlockers;
+        self.renderer.state.session.valid_choices =
+            available_blockers.iter().chain(attackers.iter()).copied().collect();
         let mut blocks = SmallVec::new();
 
         for &blocker_id in available_blockers {
@@ -592,8 +600,8 @@ impl PlayerController for FancyTuiController {
 
             match self.prompt_for_choice(view, &prompt, &choices) {
                 Ok(PromptResult::Undo) => {
-                    self.renderer.state.choice_context = ChoiceContext::None;
-                    self.renderer.state.valid_choices.clear();
+                    self.renderer.state.session.choice_context = ChoiceContext::None;
+                    self.renderer.state.session.valid_choices.clear();
                     return ChoiceResult::UndoRequest(usize::MAX);
                 }
                 Ok(PromptResult::Choice(Some(0) | None)) => continue,
@@ -602,8 +610,8 @@ impl PlayerController for FancyTuiController {
                 }
                 Ok(PromptResult::Choice(_)) => break,
                 Err(e) => {
-                    self.renderer.state.choice_context = ChoiceContext::None;
-                    self.renderer.state.valid_choices.clear();
+                    self.renderer.state.session.choice_context = ChoiceContext::None;
+                    self.renderer.state.session.valid_choices.clear();
                     return ChoiceResult::Error(format!("Failed to prompt for blockers: {}", e));
                 }
             }
@@ -625,8 +633,8 @@ impl PlayerController for FancyTuiController {
             );
         }
 
-        self.renderer.state.choice_context = ChoiceContext::None;
-        self.renderer.state.valid_choices.clear();
+        self.renderer.state.session.choice_context = ChoiceContext::None;
+        self.renderer.state.session.valid_choices.clear();
         ChoiceResult::Ok(blocks)
     }
 

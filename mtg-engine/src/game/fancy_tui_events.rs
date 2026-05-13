@@ -127,54 +127,54 @@ pub fn handle_key_event(
     match key {
         // Pane focus shortcuts
         KeyInput::FocusHand => {
-            state.focused_pane = FocusedPane::Hand;
+            state.view.focused_pane = FocusedPane::Hand;
             // Initialize selection to first card if hand not empty
             let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
-            if !sorted_hand.is_empty() && state.selected_card_in_hand.is_none() {
-                state.selected_card_in_hand = Some(0);
-                state.selected_card_id = Some(sorted_hand[0]);
+            if !sorted_hand.is_empty() && state.view.selected_card_in_hand.is_none() {
+                state.view.selected_card_in_hand = Some(0);
+                state.session.selected_card_id = Some(sorted_hand[0]);
             }
             EventResult::Handled
         }
         KeyInput::FocusInfo => {
-            state.focused_pane = FocusedPane::Log;
+            state.view.focused_pane = FocusedPane::Log;
             EventResult::Handled
         }
         KeyInput::FocusYourBf => {
-            state.focused_pane = FocusedPane::YourBattlefield;
+            state.view.focused_pane = FocusedPane::YourBattlefield;
             // Initialize selection to first card if battlefield not empty
             let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, view.player_id());
-            if !bf_cards.is_empty() && state.selected_card_in_your_bf.is_none() {
-                state.selected_card_in_your_bf = Some(bf_cards[0]);
-                state.selected_card_id = Some(bf_cards[0]);
+            if !bf_cards.is_empty() && state.view.selected_card_in_your_bf.is_none() {
+                state.view.selected_card_in_your_bf = Some(bf_cards[0]);
+                state.session.selected_card_id = Some(bf_cards[0]);
             }
             EventResult::Handled
         }
         KeyInput::FocusOpponentBf => {
-            state.focused_pane = FocusedPane::OpponentBattlefield;
+            state.view.focused_pane = FocusedPane::OpponentBattlefield;
             // Initialize selection to first card if battlefield not empty
             if let Some(opp_id) = view.opponents().next() {
                 let bf_cards = FancyTuiRenderer::get_battlefield_cards_in_order(view, opp_id);
-                if !bf_cards.is_empty() && state.selected_card_in_opp_bf.is_none() {
-                    state.selected_card_in_opp_bf = Some(bf_cards[0]);
-                    state.selected_card_id = Some(bf_cards[0]);
+                if !bf_cards.is_empty() && state.view.selected_card_in_opp_bf.is_none() {
+                    state.view.selected_card_in_opp_bf = Some(bf_cards[0]);
+                    state.session.selected_card_id = Some(bf_cards[0]);
                 }
             }
             EventResult::Handled
         }
         KeyInput::FocusActions => {
-            state.focused_pane = FocusedPane::Actions;
+            state.view.focused_pane = FocusedPane::Actions;
             update_card_id_from_action(state);
             EventResult::Handled
         }
         KeyInput::FocusStack => {
             // Stack is now part of Actions pane, so focus Actions
-            state.focused_pane = FocusedPane::Actions;
+            state.view.focused_pane = FocusedPane::Actions;
             EventResult::Handled
         }
         KeyInput::Tab => {
             // Cycle through panes (Stack removed, now part of Actions)
-            state.focused_pane = match state.focused_pane {
+            state.view.focused_pane = match state.view.focused_pane {
                 FocusedPane::Hand => FocusedPane::Log,
                 FocusedPane::Log => FocusedPane::YourBattlefield,
                 FocusedPane::YourBattlefield => FocusedPane::OpponentBattlefield,
@@ -182,7 +182,7 @@ pub fn handle_key_event(
                 FocusedPane::Actions => FocusedPane::Hand,
             };
             // When tabbing to Actions, show the card for the highlighted action
-            if state.focused_pane == FocusedPane::Actions {
+            if state.view.focused_pane == FocusedPane::Actions {
                 update_card_id_from_action(state);
             }
             EventResult::Handled
@@ -199,8 +199,8 @@ pub fn handle_key_event(
 
         // Pass/Cancel - but if digit buffer is non-empty, clear it first
         KeyInput::Pass | KeyInput::Escape => {
-            if !state.digit_buffer.is_empty() {
-                state.digit_buffer.clear();
+            if !state.session.digit_buffer.is_empty() {
+                state.session.digit_buffer.clear();
                 EventResult::Handled
             } else {
                 EventResult::Pass
@@ -224,13 +224,13 @@ pub fn handle_key_event(
 
         // Digit selection (only in Actions pane)
         KeyInput::Digit(d) => {
-            if state.focused_pane == FocusedPane::Actions {
+            if state.view.focused_pane == FocusedPane::Actions {
                 if num_choices > 10 {
                     // Multi-digit mode: accumulate in buffer, auto-highlight
-                    state.digit_buffer.push(char::from(b'0' + d));
-                    if let Ok(idx) = state.digit_buffer.parse::<usize>() {
+                    state.session.digit_buffer.push(char::from(b'0' + d));
+                    if let Ok(idx) = state.session.digit_buffer.parse::<usize>() {
                         if idx < num_choices {
-                            state.highlighted_choice = idx;
+                            state.session.highlighted_choice = idx;
                         }
                     }
                     update_card_id_from_action(state);
@@ -251,12 +251,12 @@ pub fn handle_key_event(
 
         // Backspace: remove last digit from buffer
         KeyInput::Backspace => {
-            if !state.digit_buffer.is_empty() {
-                state.digit_buffer.pop();
+            if !state.session.digit_buffer.is_empty() {
+                state.session.digit_buffer.pop();
                 // Update highlight based on remaining buffer
-                if let Ok(idx) = state.digit_buffer.parse::<usize>() {
+                if let Ok(idx) = state.session.digit_buffer.parse::<usize>() {
                     if idx < num_choices {
-                        state.highlighted_choice = idx;
+                        state.session.highlighted_choice = idx;
                     }
                 }
                 EventResult::Handled
@@ -267,35 +267,35 @@ pub fn handle_key_event(
 
         // Page navigation (only effective for Info pane log)
         KeyInput::PageUp => {
-            if state.focused_pane == FocusedPane::Log {
+            if state.view.focused_pane == FocusedPane::Log {
                 // Page size of 10 - renderer will clamp based on actual log size
-                state.log_page_up(usize::MAX, 10);
+                state.view.log_page_up(usize::MAX, 10);
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
             }
         }
         KeyInput::PageDown => {
-            if state.focused_pane == FocusedPane::Log {
-                state.log_page_down(10);
+            if state.view.focused_pane == FocusedPane::Log {
+                state.view.log_page_down(10);
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
             }
         }
         KeyInput::Home => {
-            if state.focused_pane == FocusedPane::Log {
+            if state.view.focused_pane == FocusedPane::Log {
                 // Scroll to beginning (oldest messages)
-                state.log_scroll_home(usize::MAX, 10);
+                state.view.log_scroll_home(usize::MAX, 10);
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
             }
         }
         KeyInput::End => {
-            if state.focused_pane == FocusedPane::Log {
+            if state.view.focused_pane == FocusedPane::Log {
                 // Scroll to end (follow mode - newest messages)
-                state.log_scroll_end();
+                state.view.log_scroll_end();
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
@@ -304,9 +304,9 @@ pub fn handle_key_event(
 
         // Toggle line wrapping in log (W key)
         KeyInput::ToggleWrap => {
-            if state.focused_pane == FocusedPane::Log {
+            if state.view.focused_pane == FocusedPane::Log {
                 let logs = view.logger().logs();
-                state.log_toggle_wrap(logs.len());
+                state.view.log_toggle_wrap(logs.len());
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
@@ -324,22 +324,22 @@ pub fn handle_key_event(
 /// and indices 1..N map to valid_choices[0..N-1]. When the focused pane is not
 /// Actions, this is a no-op.
 fn update_card_id_from_action(state: &mut FancyTuiState) {
-    if state.focused_pane != FocusedPane::Actions {
+    if state.view.focused_pane != FocusedPane::Actions {
         return;
     }
-    if state.highlighted_choice > 0 {
-        if let Some(&card_id) = state.valid_choices.get(state.highlighted_choice - 1) {
-            state.selected_card_id = Some(card_id);
+    if state.session.highlighted_choice > 0 {
+        if let Some(&card_id) = state.session.valid_choices.get(state.session.highlighted_choice - 1) {
+            state.session.selected_card_id = Some(card_id);
         }
     }
 }
 
 /// Handle Up arrow key navigation
 fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_choices: usize) -> EventResult {
-    match state.focused_pane {
+    match state.view.focused_pane {
         FocusedPane::Actions => {
-            if state.highlighted_choice > 0 {
-                state.highlighted_choice -= 1;
+            if state.session.highlighted_choice > 0 {
+                state.session.highlighted_choice -= 1;
             }
             update_card_id_from_action(state);
             EventResult::Handled
@@ -347,18 +347,18 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
         FocusedPane::Hand => {
             let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
             if !sorted_hand.is_empty() {
-                let current = state.selected_card_in_hand.unwrap_or(0);
+                let current = state.view.selected_card_in_hand.unwrap_or(0);
                 if current > 0 {
-                    state.selected_card_in_hand = Some(current - 1);
-                    state.selected_card_id = Some(sorted_hand[current - 1]);
+                    state.view.selected_card_in_hand = Some(current - 1);
+                    state.session.selected_card_id = Some(sorted_hand[current - 1]);
                 }
             }
             EventResult::Handled
         }
         FocusedPane::YourBattlefield => {
             navigate_battlefield_up(
-                &mut state.selected_card_in_your_bf,
-                &mut state.selected_card_id,
+                &mut state.view.selected_card_in_your_bf,
+                &mut state.session.selected_card_id,
                 view,
                 view.player_id(),
             );
@@ -367,8 +367,8 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
         FocusedPane::OpponentBattlefield => {
             if let Some(opp_id) = view.opponents().next() {
                 navigate_battlefield_up(
-                    &mut state.selected_card_in_opp_bf,
-                    &mut state.selected_card_id,
+                    &mut state.view.selected_card_in_opp_bf,
+                    &mut state.session.selected_card_id,
                     view,
                     opp_id,
                 );
@@ -378,7 +378,7 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
         FocusedPane::Log => {
             // Scroll log up (toward older messages)
             // Use large values - renderer will clamp based on actual log size
-            state.log_scroll_up(usize::MAX, 10);
+            state.view.log_scroll_up(usize::MAX, 10);
             EventResult::Handled
         }
     }
@@ -386,10 +386,10 @@ fn handle_up_navigation(state: &mut FancyTuiState, view: &GameStateView, _num_ch
 
 /// Handle Down arrow key navigation
 fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_choices: usize) -> EventResult {
-    match state.focused_pane {
+    match state.view.focused_pane {
         FocusedPane::Actions => {
-            if state.highlighted_choice + 1 < num_choices {
-                state.highlighted_choice += 1;
+            if state.session.highlighted_choice + 1 < num_choices {
+                state.session.highlighted_choice += 1;
             }
             update_card_id_from_action(state);
             EventResult::Handled
@@ -397,18 +397,18 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
         FocusedPane::Hand => {
             let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
             if !sorted_hand.is_empty() {
-                let current = state.selected_card_in_hand.unwrap_or(0);
+                let current = state.view.selected_card_in_hand.unwrap_or(0);
                 if current + 1 < sorted_hand.len() {
-                    state.selected_card_in_hand = Some(current + 1);
-                    state.selected_card_id = Some(sorted_hand[current + 1]);
+                    state.view.selected_card_in_hand = Some(current + 1);
+                    state.session.selected_card_id = Some(sorted_hand[current + 1]);
                 }
             }
             EventResult::Handled
         }
         FocusedPane::YourBattlefield => {
             navigate_battlefield_down(
-                &mut state.selected_card_in_your_bf,
-                &mut state.selected_card_id,
+                &mut state.view.selected_card_in_your_bf,
+                &mut state.session.selected_card_id,
                 view,
                 view.player_id(),
             );
@@ -417,8 +417,8 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
         FocusedPane::OpponentBattlefield => {
             if let Some(opp_id) = view.opponents().next() {
                 navigate_battlefield_down(
-                    &mut state.selected_card_in_opp_bf,
-                    &mut state.selected_card_id,
+                    &mut state.view.selected_card_in_opp_bf,
+                    &mut state.session.selected_card_id,
                     view,
                     opp_id,
                 );
@@ -427,7 +427,7 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
         }
         FocusedPane::Log => {
             // Scroll log down (toward newer messages)
-            state.log_scroll_down();
+            state.view.log_scroll_down();
             EventResult::Handled
         }
     }
@@ -438,11 +438,11 @@ fn handle_down_navigation(state: &mut FancyTuiState, view: &GameStateView, num_c
 /// we handle the relevant subset for left navigation.
 #[allow(clippy::wildcard_enum_match_arm)]
 fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
-    match state.focused_pane {
+    match state.view.focused_pane {
         FocusedPane::YourBattlefield => {
             navigate_battlefield_left(
-                &mut state.selected_card_in_your_bf,
-                &mut state.selected_card_id,
+                &mut state.view.selected_card_in_your_bf,
+                &mut state.session.selected_card_id,
                 view,
                 view.player_id(),
             );
@@ -451,8 +451,8 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
         FocusedPane::OpponentBattlefield => {
             if let Some(opp_id) = view.opponents().next() {
                 navigate_battlefield_left(
-                    &mut state.selected_card_in_opp_bf,
-                    &mut state.selected_card_id,
+                    &mut state.view.selected_card_in_opp_bf,
+                    &mut state.session.selected_card_id,
                     view,
                     opp_id,
                 );
@@ -462,8 +462,8 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
         FocusedPane::Log => {
             // Scroll to previous turn header
             let logs = view.logger().logs();
-            let visible_lines = state.log_visible_lines;
-            state.log_scroll_prev_turn(&logs, visible_lines);
+            let visible_lines = state.view.log_visible_lines;
+            state.view.log_scroll_prev_turn(&logs, visible_lines);
             EventResult::Handled
         }
         _ => EventResult::Handled,
@@ -475,11 +475,11 @@ fn handle_left_navigation(state: &mut FancyTuiState, view: &GameStateView) -> Ev
 /// we handle the relevant subset for right navigation.
 #[allow(clippy::wildcard_enum_match_arm)]
 fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
-    match state.focused_pane {
+    match state.view.focused_pane {
         FocusedPane::YourBattlefield => {
             navigate_battlefield_right(
-                &mut state.selected_card_in_your_bf,
-                &mut state.selected_card_id,
+                &mut state.view.selected_card_in_your_bf,
+                &mut state.session.selected_card_id,
                 view,
                 view.player_id(),
             );
@@ -488,8 +488,8 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
         FocusedPane::OpponentBattlefield => {
             if let Some(opp_id) = view.opponents().next() {
                 navigate_battlefield_right(
-                    &mut state.selected_card_in_opp_bf,
-                    &mut state.selected_card_id,
+                    &mut state.view.selected_card_in_opp_bf,
+                    &mut state.session.selected_card_id,
                     view,
                     opp_id,
                 );
@@ -499,8 +499,8 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
         FocusedPane::Log => {
             // Scroll to next turn header
             let logs = view.logger().logs();
-            let visible_lines = state.log_visible_lines;
-            state.log_scroll_next_turn(&logs, visible_lines);
+            let visible_lines = state.view.log_visible_lines;
+            state.view.log_scroll_next_turn(&logs, visible_lines);
             EventResult::Handled
         }
         _ => EventResult::Handled,
@@ -510,38 +510,38 @@ fn handle_right_navigation(state: &mut FancyTuiState, view: &GameStateView) -> E
 /// Handle Enter key
 fn handle_enter(state: &mut FancyTuiState, view: &GameStateView) -> EventResult {
     // If digit buffer is non-empty, parse and select that choice index
-    if !state.digit_buffer.is_empty() {
-        if let Ok(idx) = state.digit_buffer.parse::<usize>() {
-            state.digit_buffer.clear();
+    if !state.session.digit_buffer.is_empty() {
+        if let Ok(idx) = state.session.digit_buffer.parse::<usize>() {
+            state.session.digit_buffer.clear();
             return EventResult::SelectChoice(idx);
         }
-        state.digit_buffer.clear();
+        state.session.digit_buffer.clear();
         return EventResult::Handled;
     }
 
     // In Actions pane, select the highlighted choice
-    if state.focused_pane == FocusedPane::Actions {
-        return EventResult::SelectChoice(state.highlighted_choice);
+    if state.view.focused_pane == FocusedPane::Actions {
+        return EventResult::SelectChoice(state.session.highlighted_choice);
     }
 
     // In other panes, Enter selects a card to view in Card Details
-    match state.focused_pane {
+    match state.view.focused_pane {
         FocusedPane::Hand => {
-            if let Some(idx) = state.selected_card_in_hand {
+            if let Some(idx) = state.view.selected_card_in_hand {
                 let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
                 if idx < sorted_hand.len() {
-                    state.selected_card_id = Some(sorted_hand[idx]);
+                    state.session.selected_card_id = Some(sorted_hand[idx]);
                 }
             }
         }
         FocusedPane::YourBattlefield => {
-            if let Some(card_id) = state.selected_card_in_your_bf {
-                state.selected_card_id = Some(card_id);
+            if let Some(card_id) = state.view.selected_card_in_your_bf {
+                state.session.selected_card_id = Some(card_id);
             }
         }
         FocusedPane::OpponentBattlefield => {
-            if let Some(card_id) = state.selected_card_in_opp_bf {
-                state.selected_card_id = Some(card_id);
+            if let Some(card_id) = state.view.selected_card_in_opp_bf {
+                state.session.selected_card_id = Some(card_id);
             }
         }
         FocusedPane::Log | FocusedPane::Actions => {
@@ -668,7 +668,7 @@ fn navigate_battlefield_right(
 pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &GameStateView) -> bool {
     // Check entity positions FIRST (more specific than pane areas)
     // This allows clicking on individual cards within panes
-    for entity_pos in &state.entity_positions {
+    for entity_pos in &state.view.entity_positions {
         if x >= entity_pos.area.x
             && x < entity_pos.area.x + entity_pos.area.width
             && y >= entity_pos.area.y
@@ -680,28 +680,28 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
             match &entity_pos.entity {
                 Entity::HandCard { card_id, index } => {
                     // Hand card clicked - select it and focus hand pane
-                    state.selected_card_in_hand = Some(*index);
-                    state.selected_card_id = Some(*card_id);
-                    state.focused_pane = FocusedPane::Hand;
+                    state.view.selected_card_in_hand = Some(*index);
+                    state.session.selected_card_id = Some(*card_id);
+                    state.view.focused_pane = FocusedPane::Hand;
                 }
                 Entity::GraveyardCard { card_id, .. } => {
                     // Graveyard card clicked - just select it to show details
                     // Don't change focused pane since graveyard isn't a navigable pane
-                    state.selected_card_id = Some(*card_id);
+                    state.session.selected_card_id = Some(*card_id);
                 }
                 _ => {
                     // Battlefield entity clicked
                     let representative = entity_pos.entity.representative_card();
-                    state.selected_card_id = Some(representative);
+                    state.session.selected_card_id = Some(representative);
 
                     // Update battlefield selection
                     if let Some(card) = view.get_card(representative) {
                         if card.controller == view.player_id() {
-                            state.selected_card_in_your_bf = Some(representative);
-                            state.focused_pane = FocusedPane::YourBattlefield;
+                            state.view.selected_card_in_your_bf = Some(representative);
+                            state.view.focused_pane = FocusedPane::YourBattlefield;
                         } else {
-                            state.selected_card_in_opp_bf = Some(representative);
-                            state.focused_pane = FocusedPane::OpponentBattlefield;
+                            state.view.selected_card_in_opp_bf = Some(representative);
+                            state.view.focused_pane = FocusedPane::OpponentBattlefield;
                         }
                     }
                 }
@@ -713,38 +713,38 @@ pub fn handle_mouse_click(state: &mut FancyTuiState, x: u16, y: u16, view: &Game
 
     // Check pane areas (fallback for clicks on empty areas within panes)
     // Check Actions pane
-    if let Some(actions_area) = state.actions_pane_area {
+    if let Some(actions_area) = state.view.actions_pane_area {
         if x >= actions_area.x
             && x < actions_area.x + actions_area.width
             && y >= actions_area.y
             && y < actions_area.y + actions_area.height
         {
-            state.focused_pane = FocusedPane::Actions;
+            state.view.focused_pane = FocusedPane::Actions;
             return true;
         }
     }
 
     // Check Log pane area
-    if let Some(log_area) = state.log_pane_area {
+    if let Some(log_area) = state.view.log_pane_area {
         if x >= log_area.x && x < log_area.x + log_area.width && y >= log_area.y && y < log_area.y + log_area.height {
-            state.focused_pane = FocusedPane::Log;
+            state.view.focused_pane = FocusedPane::Log;
             return true;
         }
     }
 
     // Check Hand pane (for clicks on empty space in hand)
-    if let Some(hand_area) = state.hand_pane_area {
+    if let Some(hand_area) = state.view.hand_pane_area {
         if x >= hand_area.x
             && x < hand_area.x + hand_area.width
             && y >= hand_area.y
             && y < hand_area.y + hand_area.height
         {
-            state.focused_pane = FocusedPane::Hand;
+            state.view.focused_pane = FocusedPane::Hand;
             // Initialize selection to first card if hand not empty (use sorted order)
             let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
-            if !sorted_hand.is_empty() && state.selected_card_in_hand.is_none() {
-                state.selected_card_in_hand = Some(0);
-                state.selected_card_id = Some(sorted_hand[0]);
+            if !sorted_hand.is_empty() && state.view.selected_card_in_hand.is_none() {
+                state.view.selected_card_in_hand = Some(0);
+                state.session.selected_card_id = Some(sorted_hand[0]);
             }
             return true;
         }
@@ -818,10 +818,10 @@ pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &Game
         // the GUI view model).
         let sorted_hand = FancyTuiRenderer::get_sorted_hand(view);
         if let Some(idx) = sorted_hand.iter().position(|&cid| cid == card_id) {
-            state.selected_card_in_hand = Some(idx);
+            state.view.selected_card_in_hand = Some(idx);
         }
-        state.selected_card_id = Some(card_id);
-        state.focused_pane = FocusedPane::Hand;
+        state.session.selected_card_id = Some(card_id);
+        state.view.focused_pane = FocusedPane::Hand;
         return CardSelectionResult::Selected {
             zone: SelectedCardZone::OurHand,
         };
@@ -829,16 +829,16 @@ pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &Game
 
     // 2. Battlefield (split by controller — same as the mouse handler).
     if view.battlefield().contains(&card_id) {
-        state.selected_card_id = Some(card_id);
+        state.session.selected_card_id = Some(card_id);
         if card.controller == perspective {
-            state.selected_card_in_your_bf = Some(card_id);
-            state.focused_pane = FocusedPane::YourBattlefield;
+            state.view.selected_card_in_your_bf = Some(card_id);
+            state.view.focused_pane = FocusedPane::YourBattlefield;
             return CardSelectionResult::Selected {
                 zone: SelectedCardZone::OurBattlefield,
             };
         }
-        state.selected_card_in_opp_bf = Some(card_id);
-        state.focused_pane = FocusedPane::OpponentBattlefield;
+        state.view.selected_card_in_opp_bf = Some(card_id);
+        state.view.focused_pane = FocusedPane::OpponentBattlefield;
         return CardSelectionResult::Selected {
             zone: SelectedCardZone::OpponentBattlefield,
         };
@@ -848,7 +848,7 @@ pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &Game
     //    a stack click as a battlefield-like selection (just sets the
     //    detail pane), and we mirror that here.
     if view.stack().contains(&card_id) {
-        state.selected_card_id = Some(card_id);
+        state.session.selected_card_id = Some(card_id);
         return CardSelectionResult::Selected {
             zone: SelectedCardZone::Stack,
         };
@@ -858,13 +858,13 @@ pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &Game
     let all_players: SmallVec<[PlayerId; 4]> = std::iter::once(perspective).chain(view.opponents()).collect();
     for pid in all_players {
         if view.player_graveyard(pid).contains(&card_id) {
-            state.selected_card_id = Some(card_id);
+            state.session.selected_card_id = Some(card_id);
             return CardSelectionResult::Selected {
                 zone: SelectedCardZone::Graveyard,
             };
         }
         if view.player_command_zone(pid).contains(&card_id) {
-            state.selected_card_id = Some(card_id);
+            state.session.selected_card_id = Some(card_id);
             return CardSelectionResult::Selected {
                 zone: SelectedCardZone::Command,
             };
@@ -879,10 +879,10 @@ pub fn select_card_by_id(state: &mut FancyTuiState, card_id: CardId, view: &Game
 /// Clear any current card selection and reset per-pane selection indices that
 /// reference a specific card. Mirrors `select_card_by_id` for the negative case.
 pub fn clear_card_selection(state: &mut FancyTuiState) {
-    state.selected_card_id = None;
-    state.selected_card_in_hand = None;
-    state.selected_card_in_your_bf = None;
-    state.selected_card_in_opp_bf = None;
+    state.session.selected_card_id = None;
+    state.view.selected_card_in_hand = None;
+    state.view.selected_card_in_your_bf = None;
+    state.view.selected_card_in_opp_bf = None;
 }
 
 /// Get help text describing all keyboard shortcuts
@@ -965,6 +965,7 @@ pub fn handle_ui_event(
 /// Scrolls the log pane if the pointer is over it.
 fn handle_scroll_wheel(state: &mut FancyTuiState, direction: ScrollDirection, col: u16, row: u16) -> EventResult {
     let in_log = state
+        .view
         .log_pane_area
         .is_some_and(|area| col >= area.x && col < area.x + area.width && row >= area.y && row < area.y + area.height);
 
@@ -974,24 +975,24 @@ fn handle_scroll_wheel(state: &mut FancyTuiState, direction: ScrollDirection, co
 
     match direction {
         ScrollDirection::Up => {
-            state.log_scroll_up(usize::MAX, 10);
+            state.view.log_scroll_up(usize::MAX, 10);
             EventResult::Handled
         }
         ScrollDirection::Down => {
-            state.log_scroll_down();
+            state.view.log_scroll_down();
             EventResult::Handled
         }
         ScrollDirection::Left => {
-            if !state.log_wrap_lines {
-                state.log_scroll_left();
+            if !state.view.log_wrap_lines {
+                state.view.log_scroll_left();
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
             }
         }
         ScrollDirection::Right => {
-            if !state.log_wrap_lines {
-                state.log_scroll_right();
+            if !state.view.log_wrap_lines {
+                state.view.log_scroll_right();
                 EventResult::Handled
             } else {
                 EventResult::NotHandled
@@ -1021,7 +1022,7 @@ mod tests {
         };
 
         // Position the entity at (10, 5) with width 15, height 1
-        state.entity_positions.push(EntityPosition {
+        state.view.entity_positions.push(EntityPosition {
             entity: graveyard_entity,
             area: Rect {
                 x: 10,
@@ -1033,7 +1034,7 @@ mod tests {
         });
 
         // Verify initial state
-        assert!(state.selected_card_id.is_none());
+        assert!(state.session.selected_card_id.is_none());
 
         // Simulate clicking at coordinates within the entity area
         // Note: handle_mouse_click needs a view, but for entity clicks
@@ -1045,7 +1046,7 @@ mod tests {
         let click_y: u16 = 5;
 
         // Find matching entity (mimicking handle_mouse_click logic)
-        for entity_pos in &state.entity_positions {
+        for entity_pos in &state.view.entity_positions {
             if click_x >= entity_pos.area.x
                 && click_x < entity_pos.area.x + entity_pos.area.width
                 && click_y >= entity_pos.area.y
@@ -1054,7 +1055,7 @@ mod tests {
                 // Entity matched! Verify it's our graveyard card
                 match &entity_pos.entity {
                     Entity::GraveyardCard { card_id: cid, .. } => {
-                        state.selected_card_id = Some(*cid);
+                        state.session.selected_card_id = Some(*cid);
                     }
                     _ => panic!("Expected GraveyardCard entity"),
                 }
@@ -1062,7 +1063,7 @@ mod tests {
         }
 
         // Verify the click set selected_card_id
-        assert_eq!(state.selected_card_id, Some(card_id));
+        assert_eq!(state.session.selected_card_id, Some(card_id));
     }
 
     /// Test that clicking outside entity area doesn't match
@@ -1118,7 +1119,10 @@ mod tests {
         // CardId(9999) is guaranteed not to exist in a fresh 2-player game.
         let result = select_card_by_id(&mut state, CardId::new(9999), &view);
         assert_eq!(result, CardSelectionResult::NotFound);
-        assert!(state.selected_card_id.is_none(), "state must not change on NotFound");
+        assert!(
+            state.session.selected_card_id.is_none(),
+            "state must not change on NotFound"
+        );
     }
 
     /// Selecting our own battlefield card focuses YourBattlefield and updates
@@ -1150,10 +1154,10 @@ mod tests {
                 zone: SelectedCardZone::OurBattlefield,
             }
         );
-        assert_eq!(state.selected_card_id, Some(card_id));
-        assert_eq!(state.selected_card_in_your_bf, Some(card_id));
-        assert_eq!(state.focused_pane, FocusedPane::YourBattlefield);
-        assert!(state.selected_card_in_opp_bf.is_none());
+        assert_eq!(state.session.selected_card_id, Some(card_id));
+        assert_eq!(state.view.selected_card_in_your_bf, Some(card_id));
+        assert_eq!(state.view.focused_pane, FocusedPane::YourBattlefield);
+        assert!(state.view.selected_card_in_opp_bf.is_none());
     }
 
     /// Selecting an opponent's battlefield card focuses OpponentBattlefield.
@@ -1182,26 +1186,26 @@ mod tests {
                 zone: SelectedCardZone::OpponentBattlefield,
             }
         );
-        assert_eq!(state.selected_card_id, Some(card_id));
-        assert_eq!(state.selected_card_in_opp_bf, Some(card_id));
-        assert_eq!(state.focused_pane, FocusedPane::OpponentBattlefield);
-        assert!(state.selected_card_in_your_bf.is_none());
+        assert_eq!(state.session.selected_card_id, Some(card_id));
+        assert_eq!(state.view.selected_card_in_opp_bf, Some(card_id));
+        assert_eq!(state.view.focused_pane, FocusedPane::OpponentBattlefield);
+        assert!(state.view.selected_card_in_your_bf.is_none());
     }
 
     /// `clear_card_selection` zeros out every card-pointing field.
     #[test]
     fn clear_card_selection_zeros_card_pointers() {
         let mut state = FancyTuiState::new();
-        state.selected_card_id = Some(CardId::new(7));
-        state.selected_card_in_hand = Some(2);
-        state.selected_card_in_your_bf = Some(CardId::new(7));
-        state.selected_card_in_opp_bf = Some(CardId::new(8));
+        state.session.selected_card_id = Some(CardId::new(7));
+        state.view.selected_card_in_hand = Some(2);
+        state.view.selected_card_in_your_bf = Some(CardId::new(7));
+        state.view.selected_card_in_opp_bf = Some(CardId::new(8));
 
         clear_card_selection(&mut state);
 
-        assert!(state.selected_card_id.is_none());
-        assert!(state.selected_card_in_hand.is_none());
-        assert!(state.selected_card_in_your_bf.is_none());
-        assert!(state.selected_card_in_opp_bf.is_none());
+        assert!(state.session.selected_card_id.is_none());
+        assert!(state.view.selected_card_in_hand.is_none());
+        assert!(state.view.selected_card_in_your_bf.is_none());
+        assert!(state.view.selected_card_in_opp_bf.is_none());
     }
 }
