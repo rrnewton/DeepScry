@@ -1,0 +1,24 @@
+[metadata]
+Name:Animate Dead Reanimates Sengir Vampire from Graveyard
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:Cast Animate Dead targeting Sengir Vampire in P1's graveyard. Verify (a) Animate Dead targets a creature in graveyard, (b) ETB trigger returns Sengir Vampire to battlefield, (c) Animate Dead attaches to Sengir Vampire, (d) -1/-0 continuous effect (Sengir is 4/4, becomes 3/4), (e) destroying Animate Dead sacrifices the reanimated creature.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Animate Dead
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=Sengir Vampire
+p0battlefield=Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

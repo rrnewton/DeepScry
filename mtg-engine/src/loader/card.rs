@@ -701,7 +701,14 @@ impl CardDefinition {
                         }
                     }
                     "Enchant" => {
-                        let card_type = Subtype::new(param);
+                        // K:Enchant:<TypeSpec>[:<human-readable description>]
+                        // e.g. "Enchant:Creature" (Spirit Link)
+                        // e.g. "Enchant:Creature.inZoneGraveyard:creature card in a graveyard"
+                        //      (Animate Dead — the trailing description must be stripped, otherwise
+                        //      targeting code that splits on ".inzone" sees zone="graveyard:creature ..."
+                        //      and fails to match "graveyard").
+                        let type_spec = param.split(':').next().unwrap_or(param).trim();
+                        let card_type = Subtype::new(type_spec);
                         keyword_set.insert_complex(KeywordArgs::Enchant { card_type });
                     }
                     "Landwalk" => {

@@ -567,8 +567,16 @@ impl<'a> GameLoop<'a> {
                                 // For Aura spells, check if there are valid targets
                                 // MTG Rule 303.4a: You can only cast an Aura spell if there's a legal object or player it could enchant
                                 if card.is_aura() {
-                                    // Check if there are valid enchantment targets on the battlefield
-                                    // Parse enchant restriction from KeywordArgs::Enchant
+                                    // Check if there are valid enchantment targets.
+                                    // MTG Rule 303.4a / 601.2c: an Aura can only be cast if a
+                                    // legal target exists in the relevant zone.
+                                    //
+                                    // Most Auras enchant battlefield permanents, but some
+                                    // (Animate Dead, Dance of the Dead, Spellweaver Volute)
+                                    // use `Enchant:Creature.inZoneGraveyard` and target a
+                                    // creature card in a graveyard. Strip the `.inZone<X>`
+                                    // qualifier from the type check and search zone X for
+                                    // those cards.
                                     let enchant_type =
                                         card.keywords.get_args(crate::core::Keyword::Enchant).and_then(|args| {
                                             if let crate::core::KeywordArgs::Enchant { card_type } = args {
@@ -578,25 +586,51 @@ impl<'a> GameLoop<'a> {
                                             }
                                         });
 
-                                    let has_valid_targets = self.game.battlefield.cards.iter().any(|&target_id| {
-                                        self.game.cards.try_get(target_id).is_some_and(|target_card| {
-                                            match enchant_type.as_deref() {
-                                                Some("Creature") | None => target_card.is_creature(),
-                                                Some("Land") => target_card.is_land(),
-                                                Some("Artifact") => target_card.is_artifact(),
-                                                Some("Enchantment") => target_card.is_enchantment(),
-                                                Some("Permanent" | "permanent") => true,
-                                                Some(other) => {
-                                                    // Creature subtype check
-                                                    target_card.is_creature()
-                                                        && target_card
-                                                            .subtypes
-                                                            .iter()
-                                                            .any(|st| st.as_str().eq_ignore_ascii_case(other))
+                                    let (base_type, target_zone): (Option<String>, Option<String>) =
+                                        match enchant_type.as_deref() {
+                                            Some(s) => {
+                                                let lower = s.to_lowercase();
+                                                if let Some((bt, zone)) = lower.split_once(".inzone") {
+                                                    (Some(bt.to_string()), Some(zone.to_string()))
+                                                } else {
+                                                    (Some(s.to_string()), None)
                                                 }
                                             }
-                                        })
-                                    });
+                                            None => (None, None),
+                                        };
+
+                                    let type_matches = |target_card: &crate::core::card::Card| -> bool {
+                                        match base_type.as_deref() {
+                                            Some("creature") | Some("Creature") | None => target_card.is_creature(),
+                                            Some("land") | Some("Land") => target_card.is_land(),
+                                            Some("artifact") | Some("Artifact") => target_card.is_artifact(),
+                                            Some("enchantment") | Some("Enchantment") => target_card.is_enchantment(),
+                                            Some("permanent") | Some("Permanent") => true,
+                                            Some(other) => {
+                                                // Creature subtype check
+                                                target_card.is_creature()
+                                                    && target_card
+                                                        .subtypes
+                                                        .iter()
+                                                        .any(|st| st.as_str().eq_ignore_ascii_case(other))
+                                            }
+                                        }
+                                    };
+
+                                    let has_valid_targets = match target_zone.as_deref() {
+                                        Some("graveyard") => {
+                                            // Search ALL graveyards (own and opponent's) for
+                                            // matching cards (CR 303.4f).
+                                            self.game.player_zones.iter().any(|(_, zones)| {
+                                                zones.graveyard.cards.iter().any(|&card_id| {
+                                                    self.game.cards.try_get(card_id).is_some_and(&type_matches)
+                                                })
+                                            })
+                                        }
+                                        _ => self.game.battlefield.cards.iter().any(|&target_id| {
+                                            self.game.cards.try_get(target_id).is_some_and(&type_matches)
+                                        }),
+                                    };
 
                                     if has_valid_targets {
                                         self.abilities_buffer.push(SpellAbility::CastSpell { card_id });
@@ -1037,6 +1071,17 @@ impl<'a> GameLoop<'a> {
                             // Check affordability for SubLoyalty (works for top-level and Composite)
                             let loyalty = card.get_counter(crate::core::CounterType::Loyalty);
                             if loyalty < amount {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    // Check generic counter-removal affordability (Cost::SubCounter, e.g.,
+                    // Triskelion's "remove a +1/+1 counter"). Unlike loyalty there is no
+                    // once-per-turn restriction — only the counter-presence check.
+                    if can_activate {
+                        if let Some((amount, counter_type)) = ability.cost.get_sub_counter_requirement() {
+                            if card.get_counter(counter_type) < amount {
                                 can_activate = false;
                             }
                         }

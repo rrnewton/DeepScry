@@ -3,7 +3,7 @@
 //! Represents the various costs players can pay to activate abilities,
 //! such as tapping, paying mana, sacrificing permanents, etc.
 
-use crate::core::{CardId, ManaCost};
+use crate::core::{CardId, CounterType, ManaCost};
 use serde::{Deserialize, Serialize};
 
 /// A cost that must be paid to activate an ability
@@ -55,6 +55,13 @@ pub enum Cost {
     /// Remove loyalty counters (planeswalker - ability cost, e.g., "SubCounter<3/LOYALTY>")
     /// The amount is the number of loyalty counters to remove.
     SubLoyalty { amount: u8 },
+
+    /// Remove counters of a specific (non-loyalty) type from the source card,
+    /// e.g., "SubCounter<1/P1P1>" (Triskelion: remove a +1/+1 counter to deal
+    /// 1 damage). Distinct from `SubLoyalty` so we don't tag the activation as
+    /// the once-per-turn planeswalker ability and don't trigger the
+    /// 0-loyalty-dies rule.
+    SubCounter { amount: u8, counter_type: CounterType },
 }
 
 impl Cost {
@@ -123,7 +130,8 @@ impl Cost {
                         | Cost::Composite(_)
                         | Cost::Waterbend { .. }
                         | Cost::AddLoyalty { .. }
-                        | Cost::SubLoyalty { .. } => costs.push(parsed),
+                        | Cost::SubLoyalty { .. }
+                        | Cost::SubCounter { .. } => costs.push(parsed),
                     }
                 } else {
                     // Might be mana symbol
@@ -226,6 +234,21 @@ impl Cost {
             }
         }
 
+        // SubCounter<N/X> - remove N counters of type X from the source card
+        // (e.g., Triskelion: "SubCounter<1/P1P1>"). LOYALTY is handled above.
+        if trimmed.starts_with("SubCounter<") && trimmed.ends_with('>') {
+            if let Some(spec) = trimmed.strip_prefix("SubCounter<").and_then(|s| s.strip_suffix('>')) {
+                let mut parts = spec.split('/');
+                if let (Some(amount_str), Some(counter_str)) = (parts.next(), parts.next()) {
+                    if let (Ok(amount), Some(counter_type)) =
+                        (amount_str.parse::<u8>(), CounterType::parse(counter_str))
+                    {
+                        return Some(Cost::SubCounter { amount, counter_type });
+                    }
+                }
+            }
+        }
+
         // Waterbend cost (e.g., "Waterbend<3>") - Avatar set mechanic
         // While paying a waterbend cost, you can tap your artifacts and creatures to help.
         // Each one pays for {1}. For now, treat as generic mana.
@@ -278,7 +301,8 @@ impl Cost {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => false,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => false,
         }
     }
 
@@ -295,7 +319,8 @@ impl Cost {
             | Cost::Discard { .. }
             | Cost::DiscardHand
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => false,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => false,
         }
     }
 
@@ -313,7 +338,8 @@ impl Cost {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => None,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => None,
         }
     }
 
@@ -332,7 +358,8 @@ impl Cost {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => None,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => None,
         }
     }
 
@@ -350,7 +377,8 @@ impl Cost {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => false,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => false,
         }
     }
 
@@ -369,7 +397,8 @@ impl Cost {
             | Cost::Discard { .. }
             | Cost::DiscardHand
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => None,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => None,
         }
     }
 
@@ -388,7 +417,31 @@ impl Cost {
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
-            | Cost::Waterbend { .. } => false,
+            | Cost::Waterbend { .. }
+            | Cost::SubCounter { .. } => false,
+        }
+    }
+
+    /// Get the (amount, counter_type) requirement if this cost contains a
+    /// `SubCounter` component (Triskelion-style "remove a +1/+1 counter"),
+    /// recursing into Composite costs. Returns `None` for `SubLoyalty` —
+    /// loyalty has its own dedicated path with the once-per-turn rule.
+    pub fn get_sub_counter_requirement(&self) -> Option<(u8, CounterType)> {
+        match self {
+            Cost::SubCounter { amount, counter_type } => Some((*amount, *counter_type)),
+            Cost::Composite(costs) => costs.iter().find_map(|c| c.get_sub_counter_requirement()),
+            Cost::AddLoyalty { .. }
+            | Cost::SubLoyalty { .. }
+            | Cost::Tap
+            | Cost::Untap
+            | Cost::Mana(_)
+            | Cost::TapAndMana(_)
+            | Cost::Sacrifice { .. }
+            | Cost::SacrificePattern { .. }
+            | Cost::PayLife { .. }
+            | Cost::Discard { .. }
+            | Cost::DiscardHand
+            | Cost::Waterbend { .. } => None,
         }
     }
 
@@ -408,7 +461,8 @@ impl Cost {
             | Cost::PayLife { .. }
             | Cost::Discard { .. }
             | Cost::DiscardHand
-            | Cost::Waterbend { .. } => None,
+            | Cost::Waterbend { .. }
+            | Cost::SubCounter { .. } => None,
         }
     }
 
@@ -428,7 +482,8 @@ impl Cost {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => None,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => None,
         }
     }
 }
@@ -528,5 +583,35 @@ mod tests {
         let cost = Cost::parse("Waterbend<5>").unwrap();
         assert_eq!(cost, Cost::Waterbend { amount: 5 });
         assert_eq!(cost.get_waterbend_amount(), Some(5));
+    }
+
+    #[test]
+    fn test_parse_sub_counter_p1p1() {
+        // Triskelion: "SubCounter<1/P1P1>" — remove a +1/+1 counter to deal 1 damage
+        let cost = Cost::parse("SubCounter<1/P1P1>").unwrap();
+        assert_eq!(
+            cost,
+            Cost::SubCounter {
+                amount: 1,
+                counter_type: CounterType::P1P1,
+            }
+        );
+        assert!(!cost.includes_tap());
+        assert!(!cost.includes_mana());
+        assert_eq!(cost.get_sub_counter_requirement(), Some((1, CounterType::P1P1)));
+        // SubCounter is NOT a loyalty cost (no once-per-turn restriction).
+        assert!(!cost.contains_loyalty_cost());
+        assert_eq!(cost.get_sub_loyalty_amount(), None);
+    }
+
+    #[test]
+    fn test_sub_counter_loyalty_still_routes_to_subloyalty() {
+        // Pre-existing planeswalker behaviour must be preserved:
+        // SubCounter<N/LOYALTY> stays a Cost::SubLoyalty (so the
+        // once-per-turn rule and 0-loyalty-dies still apply).
+        let cost = Cost::parse("SubCounter<3/LOYALTY>").unwrap();
+        assert_eq!(cost, Cost::SubLoyalty { amount: 3 });
+        assert_eq!(cost.get_sub_counter_requirement(), None);
+        assert!(cost.contains_loyalty_cost());
     }
 }

@@ -1,0 +1,24 @@
+[metadata]
+Name:Wheel of Fortune Each Player Discards then Draws Seven
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Wheel of Fortune resolves correctly: each player discards their hand, then each player draws 7. Verifies (a) BOTH players' hands emptied, (b) BOTH players draw 7, (c) discard precedes draw (CR 608.2c).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Wheel of Fortune; Plains; Plains
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=Forest; Forest
+p1library=Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Forest
+p1exile=

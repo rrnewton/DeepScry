@@ -744,7 +744,8 @@ impl GameState {
             | Cost::DiscardHand
             | Cost::Waterbend { .. }
             | Cost::AddLoyalty { .. }
-            | Cost::SubLoyalty { .. } => false,
+            | Cost::SubLoyalty { .. }
+            | Cost::SubCounter { .. } => false,
         }
     }
 

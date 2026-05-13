@@ -10,6 +10,17 @@ use crate::game::phase::Step;
 impl<'a> GameLoop<'a> {
     /// Get player name for display
     pub(super) fn get_player_name(&self, player_id: PlayerId) -> String {
+        // Handle sentinel player IDs (Wheel of Fortune-style "each player" effects)
+        // before falling through to GameState::get_player. The post-resolution
+        // logger receives the unresolved Effect, which still carries the
+        // ALL_PLAYERS / REMEMBERED_PLAYERS sentinel; display them as "each player"
+        // / "remembered players" instead of the raw u32::MAX value.
+        if player_id.is_all_players() {
+            return "each player".to_string();
+        }
+        if player_id.is_remembered_players() {
+            return "remembered players".to_string();
+        }
         self.game
             .get_player(player_id)
             .map(|p| p.name.to_string())
@@ -184,7 +195,14 @@ impl<'a> GameLoop<'a> {
             }
             Effect::DiscardCards { player, count, .. } => {
                 let player_name = self.get_player_name(*player);
-                let message = format!("{source_name} ({source_id}) causes {player_name} to discard {count} card(s)");
+                // Mode$ Hand uses count=u8::MAX as a sentinel meaning "entire hand"
+                // (Wheel of Fortune: "Each player discards their hand"). Format it
+                // textually rather than as the raw 255 value.
+                let message = if *count == u8::MAX {
+                    format!("{source_name} ({source_id}) causes {player_name} to discard their hand")
+                } else {
+                    format!("{source_name} ({source_id}) causes {player_name} to discard {count} card(s)")
+                };
                 self.game.logger.gamelog(&message);
             }
             Effect::DiscardCardsXPaid { player, .. } => {

@@ -6753,7 +6753,8 @@ impl GameState {
                     | Cost::DiscardHand
                     | Cost::Waterbend { .. }
                     | Cost::AddLoyalty { .. }
-                    | Cost::SubLoyalty { .. } => {
+                    | Cost::SubLoyalty { .. }
+                    | Cost::SubCounter { .. } => {
                         // These cost types aren't currently used in mana ability costs
                     }
                 }
@@ -7300,6 +7301,33 @@ impl GameState {
                     let dest = self.death_destination_for_card(card_id);
                     self.move_card(card_id, Zone::Battlefield, dest, owner)?;
                 }
+                Ok(())
+            }
+
+            Cost::SubCounter { amount, counter_type } => {
+                // Generic counter-removal cost (e.g. Triskelion's
+                // SubCounter<1/P1P1>). Distinct from Cost::SubLoyalty so we
+                // don't tag the activation as the once-per-turn planeswalker
+                // ability and don't enforce "0 counters → graveyard" — Triskelion
+                // happily lives at 1/1 with zero P1P1 counters.
+                let current = self.cards.get(card_id)?.get_counter(*counter_type);
+                if current < *amount {
+                    return Err(MtgError::InvalidAction(format!(
+                        "Not enough {:?} counters ({} < {}) on {}",
+                        counter_type,
+                        current,
+                        amount,
+                        self.cards.get(card_id)?.name
+                    )));
+                }
+                let card = self.cards.get_mut(card_id)?;
+                card.remove_counter(*counter_type, *amount);
+                let card_name = card.name.to_string();
+                let new_count = card.get_counter(*counter_type);
+                self.logger.verbose(&format!(
+                    "{} loses {} {:?} counter(s) (now {})",
+                    card_name, amount, counter_type, new_count
+                ));
                 Ok(())
             }
         }
