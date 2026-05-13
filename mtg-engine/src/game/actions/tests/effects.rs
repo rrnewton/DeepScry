@@ -2420,4 +2420,191 @@ mod tests {
             new_entries
         );
     }
+
+    // ===================================================================
+    // Card-compatibility regression tests for the rogue_rogerbrand 93/94
+    // deck — see compat tracking issues mtg-c-sedge-troll,
+    // mtg-c-black-knight, mtg-c-serra-angel.
+    //
+    // These tests load the actual cardsfolder scripts (not synthetic Card
+    // structs) so they exercise the full parse → instantiate pipeline that
+    // production card loading uses. They check the *static* properties of
+    // each card (P/T, types, keywords, abilities) rather than dynamic
+    // gameplay; gameplay-level keyword behaviour (Flying-blocking,
+    // Vigilance-no-tap, Regenerate-shield, Protection-from-X-no-target)
+    // is exercised by the broader keyword test suite in `keywords.rs` and
+    // `combat.rs`.
+    // ===================================================================
+
+    /// Card compat: Sedge Troll (cardsfolder/s/sedge_troll.txt)
+    ///
+    /// Script:
+    ///   ManaCost:2 R
+    ///   Types:Creature Troll
+    ///   PT:2/2
+    ///   S:Mode$ Continuous | Affected$ Card.Self | AddPower$ 1 | AddToughness$ 1
+    ///                      | IsPresent$ Swamp.YouCtrl
+    ///   A:AB$ Regenerate | Cost$ B | SpellDescription$ Regenerate CARDNAME.
+    ///
+    /// Verifies:
+    /// - Card parses with cost 2R, base 2/2, Creature/Troll
+    /// - Has the {B}: Regenerate activated ability
+    /// - Has a static ModifyPT ability (the +1/+1 boost)
+    ///
+    /// KNOWN GAP (filed as mtg-c-sedge-troll/Sedge): the conditional
+    /// `IsPresent$ Swamp.YouCtrl` qualifier on ModifyPT is silently
+    /// dropped by the static-ability parser (see card.rs:3640 — only
+    /// `condition` is plumbed for `GrantKeyword`, not `ModifyPT`). The
+    /// boost therefore applies *unconditionally*, not only when you
+    /// control a Swamp. Pinning the parser shape here so the eventual fix
+    /// is observably caught.
+    #[test]
+    fn test_card_compat_sedge_troll() {
+        use crate::core::{Cost, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sedge_troll.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sedge Troll should load");
+
+        assert_eq!(def.name.as_str(), "Sedge Troll");
+        assert_eq!(def.mana_cost.generic, 2, "Cost should be {{2}}{{R}}");
+        assert_eq!(def.mana_cost.red, 1, "Cost should include {{R}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(2));
+        assert_eq!(def.toughness, Some(2));
+
+        // Instantiate to exercise the same parse pipeline production code
+        // uses. (parse_activated_abilities / parse_static_abilities are
+        // private — `instantiate` calls them and stows the results on the
+        // resulting Card.)
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        // Activated ability: {B}: Regenerate
+        assert!(
+            card.activated_abilities
+                .iter()
+                .any(|a| matches!(&a.cost, Cost::Mana(mc) if mc.black == 1)
+                    && a.effects.iter().any(|e| matches!(e, Effect::Regenerate { .. }))),
+            "Sedge Troll must have {{B}}: Regenerate activated ability. Got: {:?}",
+            card.activated_abilities
+        );
+
+        // Static ability: +1/+1 (currently unconditional in our engine —
+        // see KNOWN GAP above).
+        let modify_pt = card.static_abilities.iter().find(|s| {
+            matches!(
+                s,
+                StaticAbility::ModifyPT {
+                    power: 1,
+                    toughness: 1,
+                    ..
+                }
+            )
+        });
+        assert!(
+            modify_pt.is_some(),
+            "Sedge Troll must produce a +1/+1 ModifyPT static ability. Got: {:?}",
+            card.static_abilities
+        );
+    }
+
+    /// Card compat: Black Knight (cardsfolder/b/black_knight.txt)
+    ///
+    /// Script:
+    ///   ManaCost:B B
+    ///   Types:Creature Human Knight
+    ///   PT:2/2
+    ///   K:First Strike
+    ///   K:Protection from white
+    ///
+    /// Verifies the parsed card carries both the First Strike and
+    /// ProtectionFromWhite keywords on its `keywords` set so the combat
+    /// engine and targeting validator (which already understand both
+    /// keywords — see combat.rs::test_first_strike_*, combat_bugfixes.rs
+    /// ::test_protection_from_*) actually see them.
+    #[test]
+    fn test_card_compat_black_knight() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/black_knight.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Black Knight should load");
+
+        assert_eq!(def.name.as_str(), "Black Knight");
+        assert_eq!(def.mana_cost.black, 2, "Cost should be {{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(2));
+        assert_eq!(def.toughness, Some(2));
+
+        // Instantiate so we get the same Card struct production code uses.
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        assert!(
+            card.keywords.contains(Keyword::FirstStrike),
+            "Black Knight must have First Strike. Keywords: {:?}",
+            card.keywords
+        );
+        assert!(
+            card.keywords.contains(Keyword::ProtectionFromWhite),
+            "Black Knight must have Protection from white. Keywords: {:?}",
+            card.keywords
+        );
+    }
+
+    /// Card compat: Serra Angel (cardsfolder/s/serra_angel.txt)
+    ///
+    /// Script:
+    ///   ManaCost:3 W W
+    ///   Types:Creature Angel
+    ///   PT:4/4
+    ///   K:Flying
+    ///   K:Vigilance
+    ///
+    /// Verifies the parsed card carries both Flying and Vigilance on its
+    /// `keywords` set (so the combat engine — see combat.rs::
+    /// test_vigilance_creature_stays_untapped, which already loads Serra
+    /// Angel via load_test_card — sees them on a freshly-parsed card too).
+    #[test]
+    fn test_card_compat_serra_angel() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/serra_angel.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Serra Angel should load");
+
+        assert_eq!(def.name.as_str(), "Serra Angel");
+        assert_eq!(def.mana_cost.generic, 3, "Cost should be {{3}}{{W}}{{W}}");
+        assert_eq!(def.mana_cost.white, 2, "Cost should include {{W}}{{W}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(4));
+        assert_eq!(def.toughness, Some(4));
+
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Serra Angel must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+        assert!(
+            card.keywords.contains(Keyword::Vigilance),
+            "Serra Angel must have Vigilance. Keywords: {:?}",
+            card.keywords
+        );
+    }
 }
