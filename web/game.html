@@ -333,11 +333,33 @@
             z-index: 1;
         }
         .card.tapped {
-            transform: rotate(8deg);
+            /* Full 90° rotation matches `web/fancy.html`'s
+               TUICoordinateSystem.getCardBox(isTapped=true) (rotate 90deg
+               around center) AND the native ratatui TUI's tapped layout
+               from `battlefield_layout::entity_size` (1.5× wider, 0.6×
+               shorter). Pre bug-gamehtml-tapped-rotation this was an 8°
+               "tilt" — visually ambiguous and out of sync with the
+               other two renderers.
+
+               .card-grid only sets a single `--card-w`/`--card-h` per
+               pane (the portrait dims the engine picked for untapped
+               cards), so we can't have CSS-grid-level different sizes
+               for tapped vs. untapped. Instead, swap the *outer* box
+               width/height on `.card.tapped` so flex reserves the
+               landscape footprint the engine already accounts for, and
+               let `transform: rotate(90deg)` rotate the still-portrait
+               inner content into that landscape box. `overflow: visible`
+               (default) keeps the rotated content visible past its
+               pre-rotation bounding box. */
+            width: var(--card-h, 130px);
+            min-width: var(--card-h, 80px);
+            max-width: var(--card-h, 130px);
+            transform: rotate(90deg);
+            transform-origin: center center;
             opacity: 0.8;
         }
         .card.tapped:hover {
-            transform: rotate(8deg) translateY(-2px);
+            transform: rotate(90deg) translateY(-2px);
         }
         .card.selected-card {
             border-color: #ffd700;
