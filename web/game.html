@@ -152,6 +152,10 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            /* `position: relative` so children with `position: absolute`
+               (notably the .graveyard-overlay on the battlefield panes)
+               are positioned against the pane, not the page. */
+            position: relative;
         }
         .pane-header {
             padding: 6px 10px;
@@ -487,7 +491,10 @@
             font-weight: bold;
         }
 
-        /* Graveyard in card details */
+        /* Graveyard in card details (legacy detail-pane list — kept for
+           the card details renderer if it ever surfaces a graveyard
+           preview). The new battlefield overlay below is what
+           game.html actually uses for the per-player graveyard view. */
         .graveyard-list {
             font-size: 11px;
             color: #888;
@@ -495,6 +502,58 @@
         .graveyard-item {
             padding: 2px 4px;
             border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+
+        /* Graveyard overlay — bottom-right of each battlefield pane.
+           Mirrors the native ratatui TUI's `render_graveyard_overlay`
+           (fancy_tui_renderer.rs:3304): a small text widget showing
+           "Graveyard (N):" header + a clickable list of card names.
+           Position absolute against .pane (which is `position: relative`
+           — see above). The pane.body has `overflow: hidden` so the
+           overlay sits visually on top of the card grid in the
+           bottom-right corner without participating in the grid's
+           flow / scroll. Hidden when the graveyard is empty so it
+           doesn't visually clutter empty corners. */
+        .graveyard-overlay {
+            position: absolute;
+            right: 6px;
+            bottom: 6px;
+            max-width: 30%;
+            max-height: 50%;
+            padding: 4px 6px;
+            background: rgba(10, 14, 26, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.35;
+            overflow-y: auto;
+            pointer-events: auto;
+            z-index: 2;
+            display: none; /* shown by JS when graveyard is non-empty */
+        }
+        .graveyard-overlay.has-cards { display: block; }
+        .graveyard-overlay-header {
+            color: #aaa;
+            font-weight: 600;
+            margin-bottom: 2px;
+            white-space: nowrap;
+        }
+        .graveyard-overlay-card {
+            cursor: pointer;
+            padding: 1px 2px;
+            border-radius: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .graveyard-overlay-card:hover {
+            background: rgba(76, 201, 240, 0.18);
+            color: #ccc;
+        }
+        .graveyard-overlay-card.selected-card {
+            background: rgba(255, 215, 0, 0.18);
+            color: #ffd700;
         }
 
         /* Player info */
@@ -766,12 +825,20 @@
                 <div class="pane-body">
                     <div class="card-grid" id="opp-field-cards"></div>
                 </div>
+                <!-- Graveyard overlay — bottom-right corner of the
+                     battlefield pane. Mirrors the native ratatui TUI's
+                     render_graveyard_overlay (fancy_tui_renderer.rs:3304),
+                     including the cards-clickable behaviour. Sibling of
+                     pane-body (not a child) so it doesn't scroll with the
+                     card grid. Positioned absolutely against .pane. -->
+                <div class="graveyard-overlay" id="opp-graveyard-overlay"></div>
             </div>
             <div id="pane-player-field" class="pane">
                 <div class="pane-header">Your Battlefield</div>
                 <div class="pane-body">
                     <div class="card-grid" id="player-field-cards"></div>
                 </div>
+                <div class="graveyard-overlay" id="player-graveyard-overlay"></div>
             </div>
             <div id="pane-player-info" class="pane info-bar">
                 <div class="info-bar-content" id="player-info-body"></div>
@@ -1497,6 +1564,8 @@
 
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
             renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
+            renderGraveyard(ourPlayer, 'player-graveyard-overlay', state.selected_card?.card_id);
+            renderGraveyard(oppPlayer,  'opp-graveyard-overlay',    state.selected_card?.card_id);
             renderHand(ourPlayer);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
@@ -1574,6 +1643,46 @@
                 secEl.appendChild(grid);
                 container.appendChild(secEl);
             }
+        }
+
+        /// Render the per-player graveyard overlay in the bottom-right
+        /// corner of that player's battlefield pane. Mirrors the native
+        /// ratatui TUI's `render_graveyard_overlay`
+        /// (mtg-engine/src/game/fancy_tui_renderer.rs:3304):
+        ///
+        ///   - Header: "Graveyard (N):"
+        ///   - One row per card, oldest first, full card name.
+        ///   - Click a row → `tui_select_card(card_id)` → details pane.
+        ///
+        /// Hidden when the graveyard is empty so it doesn't clutter
+        /// empty corners. The overlay is `position: absolute` against
+        /// `.pane` (NOT inside `.pane-body`'s scroll container) so it
+        /// stays pinned even as the card grid grows / scrolls.
+        function renderGraveyard(player, overlayId, selectedCardId) {
+            const overlay = document.getElementById(overlayId);
+            if (!overlay) return;
+
+            const graveyard = player?.graveyard || [];
+            if (graveyard.length === 0) {
+                overlay.classList.remove('has-cards');
+                overlay.innerHTML = '';
+                return;
+            }
+
+            // Header includes the count so the player can see at a
+            // glance how many cards are in the graveyard without
+            // hovering / counting rows.
+            const headerHtml =
+                `<div class="graveyard-overlay-header">Graveyard (${graveyard.length}):</div>`;
+            const rowsHtml = graveyard.map(card => {
+                const cls = 'graveyard-overlay-card' +
+                    (card.card_id === selectedCardId ? ' selected-card' : '');
+                return `<div class="${cls}" data-card-id="${card.card_id}" ` +
+                    `title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
+            }).join('');
+
+            overlay.innerHTML = headerHtml + rowsHtml;
+            overlay.classList.add('has-cards');
         }
 
         /// Render the hand as a text list. Cards are already in display order
@@ -2078,6 +2187,18 @@
                 if (!item) return;
                 selectCardById(parseInt(item.dataset.cardId, 10), 'stack');
             });
+
+            // Graveyard overlay clicks — each card row carries
+            // data-card-id and routes through the same selection
+            // pipeline as hand/battlefield clicks (mirrors the native
+            // ratatui TUI's clickable graveyard list).
+            for (const overlayId of ['player-graveyard-overlay', 'opp-graveyard-overlay']) {
+                document.getElementById(overlayId).addEventListener('click', (e) => {
+                    const item = e.target.closest('.graveyard-overlay-card');
+                    if (!item) return;
+                    selectCardById(parseInt(item.dataset.cardId, 10), `gy:${overlayId}`);
+                });
+            }
 
             // Action clicks (controller choices) — unchanged routing.
             document.getElementById('actions-body').addEventListener('click', (e) => {
