@@ -281,12 +281,23 @@ pub struct LogWrapCache {
     pub width: u16,
     /// Number of original log entries processed into this cache
     pub processed_count: usize,
+    /// Perspective player whose `LogEntry::message_for` was used when
+    /// building the cache. `None` means the cache has never been populated.
+    /// Switching perspective forces a full rebuild because the masked text
+    /// for opponent-private entries (e.g. per-card draws) differs.
+    pub perspective: Option<crate::core::PlayerId>,
 }
 
 impl LogWrapCache {
-    /// Check if cache needs full rebuild (width changed or empty)
-    pub fn needs_rebuild(&self, current_width: u16) -> bool {
-        self.width == 0 || self.width != current_width
+    /// Check if cache needs full rebuild (width changed, perspective
+    /// changed, or cache empty).
+    ///
+    /// Perspective is included so that switching the rendering player
+    /// re-masks per-card draws and other `private_to` entries — without
+    /// this, a cache built for P1 could feed P1's view of an opponent's
+    /// hand to a P2 viewer.
+    pub fn needs_rebuild(&self, current_width: u16, perspective: crate::core::PlayerId) -> bool {
+        self.width == 0 || self.width != current_width || self.perspective != Some(perspective)
     }
 
     /// Check if cache needs incremental update (new log entries)
@@ -300,6 +311,7 @@ impl LogWrapCache {
         self.line_starts.clear();
         self.width = 0;
         self.processed_count = 0;
+        self.perspective = None;
     }
 
     /// Wrap a single log message into multiple lines
@@ -334,17 +346,29 @@ impl LogWrapCache {
         result
     }
 
-    /// Rebuild entire cache from scratch
-    pub fn rebuild(&mut self, logs: &[crate::game::logger::LogEntry], width: u16) {
+    /// Rebuild entire cache from scratch from the given perspective.
+    ///
+    /// `perspective` is used by `LogEntry::message_for` to mask
+    /// opponent-private entries (per-card draws, etc.) so the wrong-side
+    /// renderer cannot read hidden information off the log pane. Closes
+    /// the in-process renderer half of bug-draw-reveals-opponent-hand —
+    /// the WASM JSON exporters were already filtered in c19429a5, but
+    /// `draw_log_view_wrapped` rendered straight from this cache, which
+    /// kept showing the raw `entry.message` (e.g. "P2 draws Bayou (121)")
+    /// to a P1 viewer.
+    pub fn rebuild(&mut self, logs: &[crate::game::logger::LogEntry], width: u16, perspective: crate::core::PlayerId) {
         self.lines.clear();
         self.line_starts.clear();
         self.width = width;
         self.processed_count = 0;
+        self.perspective = Some(perspective);
 
         let wrap_width = width.saturating_sub(1) as usize;
 
         for (idx, entry) in logs.iter().enumerate() {
-            // Filter out <Choice> lines - they clutter the game history
+            // Filter out <Choice> lines - they clutter the game history.
+            // The "<Choice>" prefix only appears in the canonical message
+            // (never in masked public_message), so filter on raw .message.
             if entry.message.starts_with(LOG_FILTER_PREFIX) {
                 self.line_starts.push(self.lines.len()); // Still track for index mapping
                 continue;
@@ -352,10 +376,13 @@ impl LogWrapCache {
 
             self.line_starts.push(self.lines.len());
 
-            // Use content-aware coloring
-            let style = style_for_log_content(&entry.message, entry.level);
+            // Render the perspective-appropriate text: opponent-private
+            // entries surface their masked `public_message`, everything
+            // else shows the canonical text.
+            let displayed = entry.message_for(perspective);
+            let style = style_for_log_content(displayed, entry.level);
 
-            let wrapped = Self::wrap_message(&entry.message, wrap_width);
+            let wrapped = Self::wrap_message(displayed, wrap_width);
             for text in wrapped {
                 self.lines.push(WrappedLogLine {
                     original_idx: idx,
@@ -368,11 +395,15 @@ impl LogWrapCache {
         self.processed_count = logs.len();
     }
 
-    /// Incrementally add new log entries to cache
-    pub fn update(&mut self, logs: &[crate::game::logger::LogEntry], width: u16) {
-        // If width changed, need full rebuild
-        if self.width != width {
-            self.rebuild(logs, width);
+    /// Incrementally add new log entries to cache from the given perspective.
+    ///
+    /// Falls back to a full rebuild if width or perspective changed since
+    /// the cache was last populated. See `rebuild` for the perspective
+    /// privacy contract.
+    pub fn update(&mut self, logs: &[crate::game::logger::LogEntry], width: u16, perspective: crate::core::PlayerId) {
+        // If width or perspective changed, need full rebuild
+        if self.width != width || self.perspective != Some(perspective) {
+            self.rebuild(logs, width, perspective);
             return;
         }
 
@@ -387,10 +418,10 @@ impl LogWrapCache {
 
             self.line_starts.push(self.lines.len());
 
-            // Use content-aware coloring
-            let style = style_for_log_content(&entry.message, entry.level);
+            let displayed = entry.message_for(perspective);
+            let style = style_for_log_content(displayed, entry.level);
 
-            let wrapped = Self::wrap_message(&entry.message, wrap_width);
+            let wrapped = Self::wrap_message(displayed, wrap_width);
             for text in wrapped {
                 self.lines.push(WrappedLogLine {
                     original_idx: idx,
@@ -1842,17 +1873,30 @@ impl FancyTuiRenderer {
             return;
         }
 
+        let perspective = view.player_id();
         if self.state.view.log_wrap_lines {
             // WRAPPED MODE: Use the wrap cache
-            self.draw_log_view_wrapped(f, area, &logs);
+            self.draw_log_view_wrapped(f, area, &logs, perspective);
         } else {
             // UNWRAPPED MODE: Original truncation logic
-            self.draw_log_view_unwrapped(f, area, &logs);
+            self.draw_log_view_unwrapped(f, area, &logs, perspective);
         }
     }
 
-    /// Draw log view in unwrapped mode (truncate long lines with ellipsis)
-    fn draw_log_view_unwrapped(&mut self, f: &mut Frame, area: Rect, logs: &[crate::game::logger::LogEntry]) {
+    /// Draw log view in unwrapped mode (truncate long lines with ellipsis).
+    ///
+    /// `perspective` is the rendering player; private log entries (e.g. the
+    /// per-card "P draws CARD (id)" line) get masked to their public form
+    /// for the wrong perspective. Closes bug-draw-reveals-opponent-hand for
+    /// the in-process renderer path — the WASM JSON exporters were already
+    /// patched in c19429a5.
+    fn draw_log_view_unwrapped(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        logs: &[crate::game::logger::LogEntry],
+        perspective: crate::core::PlayerId,
+    ) {
         // Filter out <Choice> lines for cleaner game history display
         let filtered_logs: Vec<_> = logs
             .iter()
@@ -1877,12 +1921,15 @@ impl FancyTuiRenderer {
         let log_lines: Vec<ListItem> = filtered_logs[start_idx..end_idx]
             .iter()
             .map(|entry| {
-                // Use content-aware coloring
-                let style = style_for_log_content(&entry.message, entry.level);
+                // Use perspective-masked text for opponent-private entries
+                // so a P1 viewer never sees "P2 draws Foo (123)" — see
+                // bug-draw-reveals-opponent-hand.
+                let displayed = entry.message_for(perspective);
+                let style = style_for_log_content(displayed, entry.level);
                 let max_width = area.width.saturating_sub(1) as usize;
 
                 // Apply horizontal offset first, then truncate
-                let msg = &entry.message;
+                let msg = displayed;
                 let message = if h_offset >= msg.len() {
                     // Scrolled past end of line
                     String::new()
@@ -1910,15 +1957,24 @@ impl FancyTuiRenderer {
         f.render_widget(log_list, area);
     }
 
-    /// Draw log view in wrapped mode (multi-line display for long messages)
-    fn draw_log_view_wrapped(&mut self, f: &mut Frame, area: Rect, logs: &[crate::game::logger::LogEntry]) {
+    /// Draw log view in wrapped mode (multi-line display for long messages).
+    ///
+    /// `perspective` is the rendering player; the wrap cache is keyed by
+    /// perspective so switching viewer rebuilds with the correct masking.
+    fn draw_log_view_wrapped(
+        &mut self,
+        f: &mut Frame,
+        area: Rect,
+        logs: &[crate::game::logger::LogEntry],
+        perspective: crate::core::PlayerId,
+    ) {
         let visible_lines = area.height as usize;
 
         // Update or rebuild cache as needed
-        if self.state.view.log_wrap_cache.needs_rebuild(area.width) {
-            self.state.view.log_wrap_cache.rebuild(logs, area.width);
+        if self.state.view.log_wrap_cache.needs_rebuild(area.width, perspective) {
+            self.state.view.log_wrap_cache.rebuild(logs, area.width, perspective);
         } else if self.state.view.log_wrap_cache.needs_update(logs.len()) {
-            self.state.view.log_wrap_cache.update(logs, area.width);
+            self.state.view.log_wrap_cache.update(logs, area.width, perspective);
         }
 
         let total_wrapped = self.state.view.log_wrap_cache.lines.len();
@@ -4661,5 +4717,105 @@ mod tests {
 
         let rows_small = renderer.simulate_layout_rows(small_area, &view, &items, 10, 7, false);
         assert_eq!(rows_small, usize::MAX, "Should not fit in height=9");
+    }
+
+    /// Regression test for the in-process renderer half of
+    /// bug-draw-reveals-opponent-hand. `LogWrapCache::rebuild` historically
+    /// used the raw `entry.message` when wrapping log lines, so the
+    /// per-card "P2 draws Foo (id)" line (private to P2) was visible to P1
+    /// in the fancy TUI log pane — even though the WASM JSON exporters had
+    /// been patched in c19429a5. With the fix, rebuilding the cache from
+    /// P1's perspective surfaces the masked "P2 draws a card" public form.
+    #[test]
+    fn log_wrap_cache_masks_opponent_private_entries() {
+        use crate::game::logger::{LogEntry, PrivateLogInfo};
+        use crate::game::VerbosityLevel;
+
+        let p1 = PlayerId::new(0);
+        let p2 = PlayerId::new(1);
+
+        let entries = vec![
+            LogEntry {
+                message: ">>> Turn 3 - P1 20 (P2 20) <<<<".to_string(),
+                level: VerbosityLevel::Normal,
+                category: None,
+                private_to: None,
+            },
+            LogEntry {
+                message: "P2 draws Bayou (121)".to_string(),
+                level: VerbosityLevel::Normal,
+                category: None,
+                private_to: Some(PrivateLogInfo {
+                    owner: p2,
+                    public_message: "P2 draws a card".to_string(),
+                }),
+            },
+            LogEntry {
+                message: "P1 draws Mox Jet (21)".to_string(),
+                level: VerbosityLevel::Normal,
+                category: None,
+                private_to: Some(PrivateLogInfo {
+                    owner: p1,
+                    public_message: "P1 draws a card".to_string(),
+                }),
+            },
+        ];
+
+        // P1 perspective: opponent's per-card draw must be masked.
+        let mut cache = LogWrapCache::default();
+        cache.rebuild(&entries, 80, p1);
+        let texts: Vec<&str> = cache.lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains(">>> Turn 3")),
+            "public turn line should appear: {:?}",
+            texts
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("Bayou")),
+            "leak: opponent's drawn card name visible from P1: {:?}",
+            texts
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("P2 draws a card")),
+            "expected public form for masked entry: {:?}",
+            texts
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("Mox Jet")),
+            "P1's own draw should keep full text: {:?}",
+            texts
+        );
+
+        // Switching perspective MUST force a rebuild even at the same
+        // width — needs_rebuild is keyed on (width, perspective).
+        assert!(cache.needs_rebuild(80, p2), "perspective change must force rebuild");
+
+        // P2 perspective: their own draws keep full text, P1's are masked.
+        cache.rebuild(&entries, 80, p2);
+        let texts2: Vec<&str> = cache.lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            texts2.iter().any(|t| t.contains("Bayou")),
+            "P2 should see their own drawn card name: {:?}",
+            texts2
+        );
+        assert!(
+            !texts2.iter().any(|t| t.contains("Mox Jet")),
+            "leak: P1's drawn card name visible from P2: {:?}",
+            texts2
+        );
+        assert!(
+            texts2.iter().any(|t| t.contains("P1 draws a card")),
+            "expected public form for P1's draw from P2's view: {:?}",
+            texts2
+        );
+
+        // Same perspective + width: cache stays valid.
+        assert!(
+            !cache.needs_rebuild(80, p2),
+            "same perspective + width must NOT force rebuild"
+        );
+
+        // Width change still triggers rebuild.
+        assert!(cache.needs_rebuild(40, p2), "width change must force rebuild");
     }
 }
