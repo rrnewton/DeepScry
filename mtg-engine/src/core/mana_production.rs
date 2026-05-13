@@ -103,7 +103,8 @@ impl Default for ManaProductionKind {
 ///
 /// Use `net_delta()` to check if this source produces net positive mana after costs.
 ///
-/// This is Copy-eligible: 2 bytes (ManaProductionKind) + 9 bytes (Option<ManaCost>) = 11 bytes.
+/// This is Copy-eligible: 2 bytes (ManaProductionKind) + 9 bytes (Option<ManaCost>)
+/// + 1 byte (amount) = 12 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManaProduction {
     /// The type of mana this source produces (upper bound, OR semantics)
@@ -112,6 +113,26 @@ pub struct ManaProduction {
     /// Optional activation cost (e.g., pay {2} to produce mana)
     /// None means no mana cost (tap-only or free ability)
     pub activation_cost: Option<ManaCost>,
+
+    /// How many mana this source produces per activation
+    ///
+    /// For most permanents (basic lands, single-color Moxes) this is 1. Cards
+    /// like Sol Ring (`Amount$ 2`) and Black Lotus (`Amount$ 3`) produce more
+    /// than one mana per tap and use a higher value.
+    ///
+    /// For `Choice`/`AnyColor`, the amount is the number of mana of the chosen
+    /// color produced (e.g. Black Lotus → AnyColor, amount 3 = "add three of any
+    /// one color"). For `Fixed`/`Colorless`, the amount is the count of that
+    /// specific color.
+    ///
+    /// Defaults to 1 to keep older snapshots / tests working transparently when
+    /// they predate this field.
+    #[serde(default = "default_amount")]
+    pub amount: u8,
+}
+
+fn default_amount() -> u8 {
+    1
 }
 
 impl Default for ManaProduction {
@@ -120,6 +141,7 @@ impl Default for ManaProduction {
         Self {
             kind: ManaProductionKind::default(),
             activation_cost: None,
+            amount: 1,
         }
     }
 }
@@ -130,6 +152,7 @@ impl ManaProduction {
         Self {
             kind,
             activation_cost: None,
+            amount: 1,
         }
     }
 
@@ -138,13 +161,26 @@ impl ManaProduction {
         Self {
             kind,
             activation_cost: Some(cost),
+            amount: 1,
+        }
+    }
+
+    /// Create a new mana production with a specific output amount
+    ///
+    /// Use this for permanents like Sol Ring (`Amount$ 2`) or Black Lotus
+    /// (`Amount$ 3`) that produce multiple mana per activation.
+    pub fn with_amount(kind: ManaProductionKind, amount: u8) -> Self {
+        Self {
+            kind,
+            activation_cost: None,
+            amount: amount.max(1),
         }
     }
 
     /// Get the net mana delta (production - cost) for total mana bounds checking
     /// This is an i8 because you can have negative delta (pay more than you produce)
     pub fn net_delta(&self) -> i8 {
-        let production = 1; // Each source produces 1 mana (we'll handle Amount$ later)
+        let production = self.amount as i8;
         let cost = self.activation_cost.as_ref().map(|c| c.cmc() as i8).unwrap_or(0);
         production - cost
     }

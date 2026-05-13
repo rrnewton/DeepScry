@@ -119,59 +119,66 @@ fn bounds_check_payment(cost: &ManaCost, sources: &[ManaSource]) -> PaymentResul
         // Accumulate net delta for total mana check
         available_delta += i16::from(source.production.net_delta());
 
+        // Each activation of this source produces `n` mana. For Plains/Mox this is
+        // 1; for Sol Ring it is 2; for Black Lotus it is 3. We must multiply the
+        // bounds contribution by `n`, otherwise a single Black Lotus would only
+        // appear to provide one mana of any color and a 3-cost spell would look
+        // unpayable.
+        let n = source.production.amount;
         match &source.production.kind {
             ManaProductionKind::Fixed(color) => {
                 // Fixed sources contribute to both lower and upper bounds
                 match color {
                     ManaColor::White => {
-                        min_white += 1;
-                        max_white += 1;
+                        min_white += n;
+                        max_white += n;
                     }
                     ManaColor::Blue => {
-                        min_blue += 1;
-                        max_blue += 1;
+                        min_blue += n;
+                        max_blue += n;
                     }
                     ManaColor::Black => {
-                        min_black += 1;
-                        max_black += 1;
+                        min_black += n;
+                        max_black += n;
                     }
                     ManaColor::Red => {
-                        min_red += 1;
-                        max_red += 1;
+                        min_red += n;
+                        max_red += n;
                     }
                     ManaColor::Green => {
-                        min_green += 1;
-                        max_green += 1;
+                        min_green += n;
+                        max_green += n;
                     }
                 }
             }
             ManaProductionKind::Colorless => {
                 // Colorless contributes to both bounds for colorless requirement
-                min_colorless += 1;
-                max_colorless += 1;
+                min_colorless += n;
+                max_colorless += n;
             }
             ManaProductionKind::Choice(colors) => {
                 // Choice lands only contribute to UPPER bounds (no guarantee of specific color)
-                // But they do contribute to flexible sources for generic costs
-                flexible_sources += 1;
+                // But they do contribute to flexible sources for generic costs.
+                // A single activation provides `n` mana of one chosen colour from the set.
+                flexible_sources = flexible_sources.saturating_add(n);
                 for color in colors.iter() {
                     match color {
-                        ManaColor::White => max_white += 1,
-                        ManaColor::Blue => max_blue += 1,
-                        ManaColor::Black => max_black += 1,
-                        ManaColor::Red => max_red += 1,
-                        ManaColor::Green => max_green += 1,
+                        ManaColor::White => max_white += n,
+                        ManaColor::Blue => max_blue += n,
+                        ManaColor::Black => max_black += n,
+                        ManaColor::Red => max_red += n,
+                        ManaColor::Green => max_green += n,
                     }
                 }
             }
             ManaProductionKind::AnyColor => {
                 // Any-color only contributes to UPPER bounds
-                flexible_sources += 1;
-                max_white += 1;
-                max_blue += 1;
-                max_black += 1;
-                max_red += 1;
-                max_green += 1;
+                flexible_sources = flexible_sources.saturating_add(n);
+                max_white += n;
+                max_blue += n;
+                max_black += n;
+                max_red += n;
+                max_green += n;
             }
         }
     }
@@ -369,9 +376,18 @@ impl ManaPaymentResolver for SimpleManaResolver {
         tap_order.clear();
         let mut remaining_cost = *cost;
 
-        // Helper to tap sources of a specific color
-        let mut tap_color = |color: ManaColor, amount: u8, sources: &[ManaSource]| {
-            let mut tapped = 0;
+        // Multi-mana sources (Sol Ring → 2) can over-produce when tapped for a
+        // smaller colored/colorless requirement. We track the surplus and
+        // consume it before tapping additional sources for generic.
+        let mut extra_generic: u8 = 0;
+
+        // Helper to tap sources of a specific color and accumulate any surplus.
+        // Returns the total mana actually tapped (may exceed `amount`).
+        let mut tap_color = |color: ManaColor, amount: u8, sources: &[ManaSource]| -> u8 {
+            if amount == 0 {
+                return 0;
+            }
+            let mut tapped: u8 = 0;
             for source in sources {
                 if tapped >= amount {
                     break;
@@ -382,30 +398,38 @@ impl ManaPaymentResolver for SimpleManaResolver {
                 if let ManaProductionKind::Fixed(c) = source.production.kind {
                     if c == color {
                         tap_order.push(source.card_id);
-                        tapped += 1;
+                        tapped = tapped.saturating_add(source.production.amount);
                     }
                 }
             }
+            tapped
         };
 
-        // Tap sources for specific color requirements first
-        tap_color(ManaColor::White, remaining_cost.white, sources);
+        // Tap sources for specific color requirements first; bank any surplus
+        // into extra_generic.
+        let t = tap_color(ManaColor::White, remaining_cost.white, sources);
+        extra_generic = extra_generic.saturating_add(t.saturating_sub(remaining_cost.white));
         remaining_cost.white = 0;
 
-        tap_color(ManaColor::Blue, remaining_cost.blue, sources);
+        let t = tap_color(ManaColor::Blue, remaining_cost.blue, sources);
+        extra_generic = extra_generic.saturating_add(t.saturating_sub(remaining_cost.blue));
         remaining_cost.blue = 0;
 
-        tap_color(ManaColor::Black, remaining_cost.black, sources);
+        let t = tap_color(ManaColor::Black, remaining_cost.black, sources);
+        extra_generic = extra_generic.saturating_add(t.saturating_sub(remaining_cost.black));
         remaining_cost.black = 0;
 
-        tap_color(ManaColor::Red, remaining_cost.red, sources);
+        let t = tap_color(ManaColor::Red, remaining_cost.red, sources);
+        extra_generic = extra_generic.saturating_add(t.saturating_sub(remaining_cost.red));
         remaining_cost.red = 0;
 
-        tap_color(ManaColor::Green, remaining_cost.green, sources);
+        let t = tap_color(ManaColor::Green, remaining_cost.green, sources);
+        extra_generic = extra_generic.saturating_add(t.saturating_sub(remaining_cost.green));
         remaining_cost.green = 0;
 
-        // Tap colorless sources for colorless requirement
-        let mut tapped_colorless = 0;
+        // Tap colorless sources for colorless requirement. Each Sol Ring tap
+        // contributes 2 colorless; the surplus drops into extra_generic.
+        let mut tapped_colorless: u8 = 0;
         for source in sources {
             if tapped_colorless >= remaining_cost.colorless {
                 break;
@@ -415,13 +439,21 @@ impl ManaPaymentResolver for SimpleManaResolver {
             }
             if source.production.kind == ManaProductionKind::Colorless {
                 tap_order.push(source.card_id);
-                tapped_colorless += 1;
+                tapped_colorless = tapped_colorless.saturating_add(source.production.amount);
             }
         }
+        extra_generic = extra_generic.saturating_add(tapped_colorless.saturating_sub(remaining_cost.colorless));
         remaining_cost.colorless = 0;
 
-        // Tap any remaining sources for generic cost
-        let mut tapped_generic = 0;
+        // Apply banked surplus to generic before tapping more sources.
+        if remaining_cost.generic > 0 {
+            let from_extra = remaining_cost.generic.min(extra_generic);
+            remaining_cost.generic -= from_extra;
+        }
+
+        // Tap any remaining sources for generic cost; each tap contributes its
+        // full per-activation amount.
+        let mut tapped_generic: u8 = 0;
         for source in sources {
             if tapped_generic >= remaining_cost.generic {
                 break;
@@ -433,7 +465,7 @@ impl ManaPaymentResolver for SimpleManaResolver {
             match source.production.kind {
                 ManaProductionKind::Fixed(_) | ManaProductionKind::Colorless => {
                     tap_order.push(source.card_id);
-                    tapped_generic += 1;
+                    tapped_generic = tapped_generic.saturating_add(source.production.amount);
                 }
                 _ => {} // Skip complex sources (shouldn't be any at this point)
             }
@@ -560,75 +592,99 @@ impl GreedyManaResolver {
 
         let mut remaining_cost = *cost;
 
+        // Multi-mana sources (Sol Ring → 2, Black Lotus → 3) can over-produce
+        // when tapped to satisfy a smaller colored or colorless requirement;
+        // the leftover pips can then cover generic. We accumulate these spares
+        // in `extra_generic` and apply them before tapping additional sources
+        // for generic.
+        let mut extra_generic: u8 = 0;
+
         // Pay specific color requirements first
-        if remaining_cost.white > 0
-            && !Self::tap_for_color(
+        if remaining_cost.white > 0 {
+            match Self::tap_for_color(
                 sources,
                 &mut tap_order,
                 &mut candidates,
                 ManaColor::White,
                 remaining_cost.white,
-            )
-        {
-            return false;
+            ) {
+                Some(tapped) => {
+                    extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.white));
+                }
+                None => return false,
+            }
         }
         remaining_cost.white = 0;
 
-        if remaining_cost.blue > 0
-            && !Self::tap_for_color(
+        if remaining_cost.blue > 0 {
+            match Self::tap_for_color(
                 sources,
                 &mut tap_order,
                 &mut candidates,
                 ManaColor::Blue,
                 remaining_cost.blue,
-            )
-        {
-            return false;
+            ) {
+                Some(tapped) => {
+                    extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.blue));
+                }
+                None => return false,
+            }
         }
         remaining_cost.blue = 0;
 
-        if remaining_cost.black > 0
-            && !Self::tap_for_color(
+        if remaining_cost.black > 0 {
+            match Self::tap_for_color(
                 sources,
                 &mut tap_order,
                 &mut candidates,
                 ManaColor::Black,
                 remaining_cost.black,
-            )
-        {
-            return false;
+            ) {
+                Some(tapped) => {
+                    extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.black));
+                }
+                None => return false,
+            }
         }
         remaining_cost.black = 0;
 
-        if remaining_cost.red > 0
-            && !Self::tap_for_color(
+        if remaining_cost.red > 0 {
+            match Self::tap_for_color(
                 sources,
                 &mut tap_order,
                 &mut candidates,
                 ManaColor::Red,
                 remaining_cost.red,
-            )
-        {
-            return false;
+            ) {
+                Some(tapped) => {
+                    extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.red));
+                }
+                None => return false,
+            }
         }
         remaining_cost.red = 0;
 
-        if remaining_cost.green > 0
-            && !Self::tap_for_color(
+        if remaining_cost.green > 0 {
+            match Self::tap_for_color(
                 sources,
                 &mut tap_order,
                 &mut candidates,
                 ManaColor::Green,
                 remaining_cost.green,
-            )
-        {
-            return false;
+            ) {
+                Some(tapped) => {
+                    extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.green));
+                }
+                None => return false,
+            }
         }
         remaining_cost.green = 0;
 
-        // Pay colorless requirement with colorless sources
+        // Pay colorless requirement with colorless sources. Each tap contributes
+        // `source.production.amount` pips (Sol Ring → 2). Surplus drops into
+        // extra_generic for the generic phase below.
         if remaining_cost.colorless > 0 {
-            let mut tapped = 0u8;
+            let mut tapped: u8 = 0;
             for source in sources {
                 if tapped >= remaining_cost.colorless {
                     break;
@@ -638,18 +694,25 @@ impl GreedyManaResolver {
                 }
                 if source.production.kind == ManaProductionKind::Colorless {
                     tap_order.push(source.card_id);
-                    tapped += 1;
+                    tapped = tapped.saturating_add(source.production.amount);
                 }
             }
             if tapped < remaining_cost.colorless {
                 return false;
             }
+            extra_generic = extra_generic.saturating_add(tapped.saturating_sub(remaining_cost.colorless));
         }
         remaining_cost.colorless = 0;
 
-        // Pay generic cost with any remaining sources
+        // Pay generic cost with any remaining sources, first consuming spare
+        // pips already produced by over-tapping for colored/colorless above.
         if remaining_cost.generic > 0 {
-            let mut tapped = 0u8;
+            let from_extra = remaining_cost.generic.min(extra_generic);
+            remaining_cost.generic -= from_extra;
+            // (extra_generic bookkeeping not needed past this point)
+        }
+        if remaining_cost.generic > 0 {
+            let mut tapped: u8 = 0;
             for source in sources {
                 if tapped >= remaining_cost.generic {
                     break;
@@ -658,7 +721,8 @@ impl GreedyManaResolver {
                     continue;
                 }
                 tap_order.push(source.card_id);
-                tapped += 1;
+                // Each activation contributes `amount` mana toward generic.
+                tapped = tapped.saturating_add(source.production.amount);
             }
             if tapped < remaining_cost.generic {
                 return false;
@@ -678,6 +742,11 @@ impl GreedyManaResolver {
     ///
     /// OPT-7: Takes a reusable `candidates` buffer to avoid allocation per color.
     /// The buffer is cleared at the start and reused.
+    ///
+    /// Returns `Some(total_mana_tapped)` if the requested amount was satisfied
+    /// (the value may exceed `amount` when a multi-mana source like Black Lotus
+    /// produces more pips than needed — caller credits the surplus to generic),
+    /// or `None` if not enough sources of the requested colour are available.
     #[inline]
     fn tap_for_color(
         sources: &[ManaSource],
@@ -685,7 +754,7 @@ impl GreedyManaResolver {
         candidates: &mut SmallVec<[(usize, u8); 8]>,
         color: ManaColor,
         amount: u8,
-    ) -> bool {
+    ) -> Option<u8> {
         // Clear and reuse the candidates buffer (retains capacity)
         candidates.clear();
 
@@ -704,17 +773,23 @@ impl GreedyManaResolver {
         // Sort by score (lower = more specific = tap first)
         candidates.sort_by_key(|(_, score)| *score);
 
-        // Tap sources in priority order
-        let mut tapped = 0u8;
+        // Tap sources in priority order. Each activation contributes
+        // `source.production.amount` mana of the chosen colour (Black Lotus = 3).
+        let mut tapped: u8 = 0;
         for &(idx, _score) in candidates.iter() {
             if tapped >= amount {
                 break;
             }
+            let n = sources[idx].production.amount;
             tap_order.push(sources[idx].card_id);
-            tapped += 1;
+            tapped = tapped.saturating_add(n);
         }
 
-        tapped >= amount
+        if tapped >= amount {
+            Some(tapped)
+        } else {
+            None
+        }
     }
 }
 
@@ -1244,8 +1319,17 @@ mod tests {
         let free_source = ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red));
         assert_eq!(free_source.net_delta(), 1);
 
-        // Positive delta: Sol Ring ({T}: Add {C}{C}) - produces 2, costs 0 = +2 delta
-        // Note: We'll handle Amount$ later, for now each source produces 1
+        // Positive delta: Sol Ring ({T}: Add {C}{C}) — amount=2, costs 0 = +2.
+        // After the multi-mana fix, `net_delta` reflects the per-activation
+        // amount instead of always returning 1.
+        let sol_ring = ManaProduction::with_amount(ManaProductionKind::Colorless, 2);
+        assert_eq!(sol_ring.net_delta(), 2);
+
+        // Black Lotus: AnyColor with amount=3, no cost = +3 delta.
+        let black_lotus = ManaProduction::with_amount(ManaProductionKind::AnyColor, 3);
+        assert_eq!(black_lotus.net_delta(), 3);
+
+        // Default amount is 1.
         let free_colorless = ManaProduction::free(ManaProductionKind::Colorless);
         assert_eq!(free_colorless.net_delta(), 1);
 
@@ -1256,6 +1340,89 @@ mod tests {
         // Negative delta: Celestial Prism ({2}, {T}: Add one mana of any color) - produces 1, costs 2 = -1 delta
         let negative_delta = ManaProduction::with_cost(ManaProductionKind::AnyColor, ManaCost::from_string("2"));
         assert_eq!(negative_delta.net_delta(), -1);
+    }
+
+    /// Regression: Black Lotus must satisfy a 3-mana spell on its own.
+    /// Pre-fix, `bounds_check_payment` only counted Black Lotus as 1 mana of
+    /// any color, so casting Su-Chi (`{4}` ≥ 3) or Psionic Blast (`{2}{U}`)
+    /// off a single Black Lotus appeared impossible — the spell never
+    /// surfaced as a castable action. Two assertions:
+    ///   1. `{2}{U}` is payable from a single AnyColor Amount=3 source.
+    ///   2. `{3}` (pure generic) is also payable.
+    /// And the negative case: `{4}` is NOT payable from one Black Lotus alone.
+    #[test]
+    fn test_greedy_resolver_black_lotus_pays_three_mana_spell() {
+        let resolver = GreedyManaResolver::new();
+        let lotus = vec![ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::with_amount(ManaProductionKind::AnyColor, 3),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        }];
+
+        // Psionic Blast: {2}{U} = 1 blue + 2 generic
+        let psionic = ManaCost {
+            generic: 2,
+            white: 0,
+            blue: 1,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+        assert_eq!(resolver.check_payment(&psionic, &lotus, None), PaymentResult::Yes);
+
+        // Su-Chi: {3} = pure generic; one Lotus tap covers it.
+        let su_chi = ManaCost {
+            generic: 3,
+            white: 0,
+            blue: 0,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+        assert_eq!(resolver.check_payment(&su_chi, &lotus, None), PaymentResult::Yes);
+
+        // {4} is NOT payable from a single Black Lotus (only 3 mana available).
+        let four_cost = ManaCost {
+            generic: 4,
+            white: 0,
+            blue: 0,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+        assert_eq!(resolver.check_payment(&four_cost, &lotus, None), PaymentResult::No);
+    }
+
+    /// Regression: Sol Ring's `Amount$ 2` colorless production must be counted
+    /// as 2 mana, not 1. A single Sol Ring should be able to pay {2}.
+    #[test]
+    fn test_simple_resolver_sol_ring_pays_two_generic() {
+        let resolver = SimpleManaResolver::new();
+        let sol_ring = vec![ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::with_amount(ManaProductionKind::Colorless, 2),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        }];
+
+        let two_cost = ManaCost {
+            generic: 2,
+            white: 0,
+            blue: 0,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+        assert_eq!(resolver.check_payment(&two_cost, &sol_ring, None), PaymentResult::Yes);
     }
 
     #[test]

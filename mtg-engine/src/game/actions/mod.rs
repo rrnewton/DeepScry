@@ -1825,53 +1825,77 @@ impl GameState {
             }
             tapped_sources.push(source_id);
 
-            // Update remaining hint based on what color this source produced
-            // Check mana production kind to know what color was produced
+            // Update remaining hint based on what color this source produced.
+            // Check mana production kind to know what color was produced. Multi-mana
+            // sources (Sol Ring → 2, Black Lotus → 3) deduct their full per-tap
+            // amount so subsequent taps in the same payment see the correct hint.
             if let Some(card) = self.cards.try_get(source_id) {
-                match &card.definition.cache.mana_production.kind {
+                let production = &card.definition.cache.mana_production;
+                let mut remaining_amount = production.amount.max(1);
+                match &production.kind {
                     crate::core::ManaProductionKind::Fixed(color) => {
                         // Deduct the fixed color from remaining hint
                         match color {
                             crate::core::ManaColor::White => {
-                                remaining_hint.white = remaining_hint.white.saturating_sub(1);
+                                let take = remaining_hint.white.min(remaining_amount);
+                                remaining_hint.white -= take;
+                                remaining_amount -= take;
                             }
                             crate::core::ManaColor::Blue => {
-                                remaining_hint.blue = remaining_hint.blue.saturating_sub(1);
+                                let take = remaining_hint.blue.min(remaining_amount);
+                                remaining_hint.blue -= take;
+                                remaining_amount -= take;
                             }
                             crate::core::ManaColor::Black => {
-                                remaining_hint.black = remaining_hint.black.saturating_sub(1);
+                                let take = remaining_hint.black.min(remaining_amount);
+                                remaining_hint.black -= take;
+                                remaining_amount -= take;
                             }
                             crate::core::ManaColor::Red => {
-                                remaining_hint.red = remaining_hint.red.saturating_sub(1);
+                                let take = remaining_hint.red.min(remaining_amount);
+                                remaining_hint.red -= take;
+                                remaining_amount -= take;
                             }
                             crate::core::ManaColor::Green => {
-                                remaining_hint.green = remaining_hint.green.saturating_sub(1);
+                                let take = remaining_hint.green.min(remaining_amount);
+                                remaining_hint.green -= take;
+                                remaining_amount -= take;
                             }
                         }
+                        // Any leftover mana from this single tap covers generic.
+                        let take = remaining_hint.generic.min(remaining_amount);
+                        remaining_hint.generic -= take;
                     }
                     crate::core::ManaProductionKind::Colorless => {
-                        // Colorless reduces colorless or generic
-                        if remaining_hint.colorless > 0 {
-                            remaining_hint.colorless = remaining_hint.colorless.saturating_sub(1);
-                        } else {
-                            remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
-                        }
+                        // Colorless covers colorless first, then generic.
+                        let take_c = remaining_hint.colorless.min(remaining_amount);
+                        remaining_hint.colorless -= take_c;
+                        remaining_amount -= take_c;
+                        let take_g = remaining_hint.generic.min(remaining_amount);
+                        remaining_hint.generic -= take_g;
                     }
                     crate::core::ManaProductionKind::Choice(_) | crate::core::ManaProductionKind::AnyColor => {
-                        // For choice/any-color lands, we produced the first needed color
-                        // Deduct in same priority order as tap_for_mana_for_cost
-                        if remaining_hint.white > 0 {
-                            remaining_hint.white = remaining_hint.white.saturating_sub(1);
-                        } else if remaining_hint.blue > 0 {
-                            remaining_hint.blue = remaining_hint.blue.saturating_sub(1);
-                        } else if remaining_hint.black > 0 {
-                            remaining_hint.black = remaining_hint.black.saturating_sub(1);
-                        } else if remaining_hint.red > 0 {
-                            remaining_hint.red = remaining_hint.red.saturating_sub(1);
-                        } else if remaining_hint.green > 0 {
-                            remaining_hint.green = remaining_hint.green.saturating_sub(1);
-                        } else {
-                            remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                        // For choice/any-color lands, the chosen colour matches the
+                        // first remaining colored requirement; remaining mana from
+                        // this tap can satisfy generic. This loop drains all `n`
+                        // pips produced by this single activation.
+                        while remaining_amount > 0 {
+                            if remaining_hint.white > 0 {
+                                remaining_hint.white -= 1;
+                            } else if remaining_hint.blue > 0 {
+                                remaining_hint.blue -= 1;
+                            } else if remaining_hint.black > 0 {
+                                remaining_hint.black -= 1;
+                            } else if remaining_hint.red > 0 {
+                                remaining_hint.red -= 1;
+                            } else if remaining_hint.green > 0 {
+                                remaining_hint.green -= 1;
+                            } else if remaining_hint.generic > 0 {
+                                remaining_hint.generic -= 1;
+                            } else {
+                                break; // No more cost to cover
+                            }
+                            remaining_amount -= 1;
                         }
                     }
                 }
@@ -6914,6 +6938,20 @@ impl GameState {
                 })
                 .unwrap_or(false);
 
+            // For multi-mana any-color sources like Black Lotus (`Amount$ 3`),
+            // each activation produces N mana of the chosen colour, not 1. Read
+            // the per-activation amount from the cached production BEFORE
+            // borrowing the player mutably (otherwise we'd hold incompatible
+            // borrows on `self.cards` and `self.players`).
+            let any_color_amount = if is_any_color {
+                self.cards
+                    .get(card_id)
+                    .map(|c| c.definition.cache.mana_production.amount.max(1))
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+
             // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
             let prior_log_size = self.logger.log_count();
 
@@ -6936,33 +6974,40 @@ impl GameState {
                     crate::core::Color::Green
                 };
 
-                player.mana_pool.add_color(color);
+                // Use the per-activation amount captured above before the
+                // mutable borrow.
+                let amount = any_color_amount;
 
-                // Log the mana addition
                 let mut mana = crate::core::ManaCost::new();
                 let color_symbol = match color {
                     crate::core::Color::White => {
-                        mana.white = 1;
+                        player.mana_pool.white += amount;
+                        mana.white = amount;
                         "W"
                     }
                     crate::core::Color::Blue => {
-                        mana.blue = 1;
+                        player.mana_pool.blue += amount;
+                        mana.blue = amount;
                         "U"
                     }
                     crate::core::Color::Black => {
-                        mana.black = 1;
+                        player.mana_pool.black += amount;
+                        mana.black = amount;
                         "B"
                     }
                     crate::core::Color::Red => {
-                        mana.red = 1;
+                        player.mana_pool.red += amount;
+                        mana.red = amount;
                         "R"
                     }
                     crate::core::Color::Green => {
-                        mana.green = 1;
+                        player.mana_pool.green += amount;
+                        mana.green = amount;
                         "G"
                     }
                     crate::core::Color::Colorless => {
-                        mana.colorless = 1;
+                        player.mana_pool.colorless += amount;
+                        mana.colorless = amount;
                         "C"
                     }
                 };
@@ -6973,7 +7018,10 @@ impl GameState {
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                     let card = self.cards.get(card_id).ok();
                     let name = card.map(|c| c.name.as_str()).unwrap_or("Unknown");
-                    let message = format!("Tap {} for {{{}}}", name, color_symbol);
+                    // Render amount-many pips, e.g. Black Lotus → "Tap Black Lotus for {G}{G}{G}".
+                    let pip = format!("{{{}}}", color_symbol);
+                    let pips: String = pip.repeat(amount as usize);
+                    let message = format!("Tap {} for {}", name, pips);
                     self.logger.gamelog(&message);
                 }
             } else {

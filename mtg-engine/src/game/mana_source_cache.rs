@@ -193,8 +193,12 @@ impl ManaSourceCache {
             return;
         }
 
-        // Classify card based on mana production type
+        // Classify card based on mana production type. The `amount` field on the
+        // production captures multi-mana sources (Sol Ring → 2 colorless, etc.)
+        // and is added to the per-colour untapped totals so that bounds checks
+        // and capacity queries see the full mana available.
         let production = &card.definition.cache.mana_production;
+        let n = u32::from(production.amount.max(1));
 
         match &production.kind {
             ManaProductionKind::Fixed(color) => {
@@ -204,40 +208,41 @@ impl ManaSourceCache {
                     ManaColor::White => {
                         self.white_sources.push(card_id);
                         if !card.tapped {
-                            self.untapped_white += 1;
+                            self.untapped_white += n;
                         }
                     }
                     ManaColor::Blue => {
                         self.blue_sources.push(card_id);
                         if !card.tapped {
-                            self.untapped_blue += 1;
+                            self.untapped_blue += n;
                         }
                     }
                     ManaColor::Black => {
                         self.black_sources.push(card_id);
                         if !card.tapped {
-                            self.untapped_black += 1;
+                            self.untapped_black += n;
                         }
                     }
                     ManaColor::Red => {
                         self.red_sources.push(card_id);
                         if !card.tapped {
-                            self.untapped_red += 1;
+                            self.untapped_red += n;
                         }
                     }
                     ManaColor::Green => {
                         self.green_sources.push(card_id);
                         if !card.tapped {
-                            self.untapped_green += 1;
+                            self.untapped_green += n;
                         }
                     }
                 }
             }
             ManaProductionKind::Colorless => {
-                // Colorless source (Wastes, Sol Ring, etc.)
+                // Colorless source (Wastes, Sol Ring, etc.). Sol Ring's amount=2
+                // means each untapped Sol Ring contributes 2 to the colorless capacity.
                 self.colorless_sources.push(card_id);
                 if !card.tapped {
-                    self.untapped_colorless += 1;
+                    self.untapped_colorless += n;
                 }
             }
             ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
@@ -262,43 +267,46 @@ impl ManaSourceCache {
             return;
         }
 
-        // Remove from all lists (card should only be in one, but safe to check all)
+        // Remove from all lists (card should only be in one, but safe to check all).
+        // Multi-mana sources (Sol Ring → 2, Black Lotus → 3) deduct their full
+        // per-activation `amount` from the corresponding untapped total.
         let was_untapped = !card.tapped;
+        let n = u32::from(card.definition.cache.mana_production.amount.max(1));
 
         if let Some(pos) = self.white_sources.iter().position(|&id| id == card_id) {
             self.white_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_white = self.untapped_white.saturating_sub(1);
+                self.untapped_white = self.untapped_white.saturating_sub(n);
             }
         }
         if let Some(pos) = self.blue_sources.iter().position(|&id| id == card_id) {
             self.blue_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_blue = self.untapped_blue.saturating_sub(1);
+                self.untapped_blue = self.untapped_blue.saturating_sub(n);
             }
         }
         if let Some(pos) = self.black_sources.iter().position(|&id| id == card_id) {
             self.black_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_black = self.untapped_black.saturating_sub(1);
+                self.untapped_black = self.untapped_black.saturating_sub(n);
             }
         }
         if let Some(pos) = self.red_sources.iter().position(|&id| id == card_id) {
             self.red_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_red = self.untapped_red.saturating_sub(1);
+                self.untapped_red = self.untapped_red.saturating_sub(n);
             }
         }
         if let Some(pos) = self.green_sources.iter().position(|&id| id == card_id) {
             self.green_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_green = self.untapped_green.saturating_sub(1);
+                self.untapped_green = self.untapped_green.saturating_sub(n);
             }
         }
         if let Some(pos) = self.colorless_sources.iter().position(|&id| id == card_id) {
             self.colorless_sources.swap_remove(pos);
             if was_untapped {
-                self.untapped_colorless = self.untapped_colorless.saturating_sub(1);
+                self.untapped_colorless = self.untapped_colorless.saturating_sub(n);
             }
         }
         if let Some(pos) = self.complex_sources.iter().position(|&id| id == card_id) {
@@ -321,20 +329,22 @@ impl ManaSourceCache {
             return;
         }
 
-        // Decrement untapped count for the appropriate color
-        // Only simple sources track untapped counts
+        // Decrement untapped count for the appropriate color. Multi-mana sources
+        // (Sol Ring → 2, etc.) deduct their full `amount` so capacity stays in sync.
+        // Only simple sources track untapped counts.
+        let n = u32::from(card.definition.cache.mana_production.amount.max(1));
         if self.white_sources.contains(&card_id) {
-            self.untapped_white = self.untapped_white.saturating_sub(1);
+            self.untapped_white = self.untapped_white.saturating_sub(n);
         } else if self.blue_sources.contains(&card_id) {
-            self.untapped_blue = self.untapped_blue.saturating_sub(1);
+            self.untapped_blue = self.untapped_blue.saturating_sub(n);
         } else if self.black_sources.contains(&card_id) {
-            self.untapped_black = self.untapped_black.saturating_sub(1);
+            self.untapped_black = self.untapped_black.saturating_sub(n);
         } else if self.red_sources.contains(&card_id) {
-            self.untapped_red = self.untapped_red.saturating_sub(1);
+            self.untapped_red = self.untapped_red.saturating_sub(n);
         } else if self.green_sources.contains(&card_id) {
-            self.untapped_green = self.untapped_green.saturating_sub(1);
+            self.untapped_green = self.untapped_green.saturating_sub(n);
         } else if self.colorless_sources.contains(&card_id) {
-            self.untapped_colorless = self.untapped_colorless.saturating_sub(1);
+            self.untapped_colorless = self.untapped_colorless.saturating_sub(n);
         }
         // Complex sources don't track untapped counts
     }
@@ -353,20 +363,22 @@ impl ManaSourceCache {
             return;
         }
 
-        // Increment untapped count for the appropriate color
-        // Only simple sources track untapped counts
+        // Increment untapped count for the appropriate color. Multi-mana sources
+        // restore their full `amount` to capacity (Sol Ring → +2, etc.).
+        // Only simple sources track untapped counts.
+        let n = u32::from(card.definition.cache.mana_production.amount.max(1));
         if self.white_sources.contains(&card_id) {
-            self.untapped_white += 1;
+            self.untapped_white += n;
         } else if self.blue_sources.contains(&card_id) {
-            self.untapped_blue += 1;
+            self.untapped_blue += n;
         } else if self.black_sources.contains(&card_id) {
-            self.untapped_black += 1;
+            self.untapped_black += n;
         } else if self.red_sources.contains(&card_id) {
-            self.untapped_red += 1;
+            self.untapped_red += n;
         } else if self.green_sources.contains(&card_id) {
-            self.untapped_green += 1;
+            self.untapped_green += n;
         } else if self.colorless_sources.contains(&card_id) {
-            self.untapped_colorless += 1;
+            self.untapped_colorless += n;
         }
         // Complex sources don't track untapped counts
     }

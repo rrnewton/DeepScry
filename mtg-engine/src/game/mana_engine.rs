@@ -395,24 +395,25 @@ impl ManaEngine {
                     scratch_complex_sources.push(card_id);
                 } else {
                     // Classify source and update capacity based on effective production
+                    let n = effective_production.amount.max(1);
                     match &effective_production.kind {
                         ManaProductionKind::Fixed(color) => {
                             use crate::core::ManaColor;
                             scratch_simple_sources.push(card_id);
                             if !card.tapped {
                                 match color {
-                                    ManaColor::White => scratch_capacity.white += 1,
-                                    ManaColor::Blue => scratch_capacity.blue += 1,
-                                    ManaColor::Black => scratch_capacity.black += 1,
-                                    ManaColor::Red => scratch_capacity.red += 1,
-                                    ManaColor::Green => scratch_capacity.green += 1,
+                                    ManaColor::White => scratch_capacity.white += n,
+                                    ManaColor::Blue => scratch_capacity.blue += n,
+                                    ManaColor::Black => scratch_capacity.black += n,
+                                    ManaColor::Red => scratch_capacity.red += n,
+                                    ManaColor::Green => scratch_capacity.green += n,
                                 }
                             }
                         }
                         ManaProductionKind::Colorless => {
                             scratch_simple_sources.push(card_id);
                             if !card.tapped {
-                                scratch_capacity.colorless += 1;
+                                scratch_capacity.colorless += n;
                             }
                         }
                         ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
@@ -674,25 +675,28 @@ impl ManaEngine {
                 if card.is_creature() {
                     self.complex_sources.push(card_id);
                 } else {
-                    // Classify source and update capacity based on effective production
+                    // Classify source and update capacity based on effective production.
+                    // Multi-mana sources contribute their full `amount` (Sol Ring → 2,
+                    // Black Lotus → 3 in the AnyColor branch below).
+                    let n = effective_production.amount.max(1);
                     match &effective_production.kind {
                         ManaProductionKind::Fixed(color) => {
                             use crate::core::ManaColor;
                             self.simple_sources.push(card_id);
                             if !card.tapped {
                                 match color {
-                                    ManaColor::White => self.simple_capacity.white += 1,
-                                    ManaColor::Blue => self.simple_capacity.blue += 1,
-                                    ManaColor::Black => self.simple_capacity.black += 1,
-                                    ManaColor::Red => self.simple_capacity.red += 1,
-                                    ManaColor::Green => self.simple_capacity.green += 1,
+                                    ManaColor::White => self.simple_capacity.white += n,
+                                    ManaColor::Blue => self.simple_capacity.blue += n,
+                                    ManaColor::Black => self.simple_capacity.black += n,
+                                    ManaColor::Red => self.simple_capacity.red += n,
+                                    ManaColor::Green => self.simple_capacity.green += n,
                                 }
                             }
                         }
                         ManaProductionKind::Colorless => {
                             self.simple_sources.push(card_id);
                             if !card.tapped {
-                                self.simple_capacity.colorless += 1;
+                                self.simple_capacity.colorless += n;
                             }
                         }
                         ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {
@@ -806,13 +810,15 @@ impl ManaEngine {
         // Process simple sources by pushing directly to self vectors (no intermediate allocation)
         // This pattern is repeated for each color to avoid closure overhead and temp vecs
 
-        // White sources
+        // White sources. Use the card's actual cached production (preserves
+        // per-card amount for cards like a hypothetical "{T}: Add {W}{W}").
         for &card_id in cache.white_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::White)),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false, // Lands don't have summoning sickness
                 });
@@ -823,9 +829,10 @@ impl ManaEngine {
         for &card_id in cache.blue_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Blue)),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false,
                 });
@@ -836,9 +843,10 @@ impl ManaEngine {
         for &card_id in cache.black_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Black)),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false,
                 });
@@ -849,9 +857,10 @@ impl ManaEngine {
         for &card_id in cache.red_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Red)),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false,
                 });
@@ -862,22 +871,24 @@ impl ManaEngine {
         for &card_id in cache.green_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false,
                 });
             }
         }
 
-        // Colorless sources
+        // Colorless sources (Wastes, Sol Ring `{T}: Add {C}{C}`, etc.)
         for &card_id in cache.colorless_sources() {
             self.simple_sources.push(card_id);
             if let Some(card) = game.cards.try_get(card_id) {
+                let production = card.definition.cache.mana_production;
                 self.mana_sources.push(ManaSource {
                     card_id,
-                    production: ManaProduction::free(ManaProductionKind::Colorless),
+                    production,
                     is_tapped: card.tapped,
                     has_summoning_sickness: false,
                 });

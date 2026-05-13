@@ -1101,6 +1101,30 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             None
         }
 
+        ApiType::DamageResolve => {
+            // DamageResolve is a marker that all damage accumulated in the
+            // damage map (via DealDamage | DamageMap$ True) should be applied
+            // simultaneously. See ApiType::DamageResolve doc comment for the
+            // full design rationale.
+            //
+            // Our engine applies each DealDamage immediately during effect
+            // execution, so by the time we reach the trailing DamageResolve
+            // in a SubAbility chain, all damage has already been dealt.
+            // Returning None means we contribute no Effect to the chain;
+            // SubAbility recursion (`follow_sub_ability_chain`) continues past
+            // this without warning. This is the correct no-op for our model.
+            //
+            // Affected cards (~62): Psionic Blast, Char, Arc Trail, Boulder
+            // Dash, Brothers of Fire, Bonfire of the Damned, Chandra Nalaar,
+            // and other multi-damage spells/abilities. See forge-java
+            // cardsfolder for the full list.
+            log::debug!(
+                target: "effect_converter",
+                "DamageResolve: marker effect resolved as no-op (damage already dealt eagerly)"
+            );
+            None
+        }
+
         ApiType::Cleanup => {
             // Clear remembered cards storage
             // Example: DB$ Cleanup | ClearRemembered$ True
@@ -1842,6 +1866,46 @@ mod tests {
                 assert!(matches!(target, TargetRef::None));
             }
             _ => panic!("Expected DealDamage effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_damage_resolve_is_noop() {
+        // DB$ DamageResolve is a marker — see ApiType::DamageResolve doc.
+        // It must (a) be recognized (no Unknown / Unimplemented) and (b)
+        // contribute no Effect to a SubAbility chain.
+        let params = AbilityParams::parse("A:DB$ DamageResolve").unwrap();
+        assert_eq!(
+            params.api_type,
+            ApiType::DamageResolve,
+            "DamageResolve must parse to ApiType::DamageResolve, not Unknown"
+        );
+
+        let effect = params_to_effect(&params);
+        assert!(
+            effect.is_none(),
+            "DamageResolve must produce no effect (no-op marker), got {:?}",
+            effect
+        );
+    }
+
+    #[test]
+    fn test_psionic_blast_chain_parses() {
+        // Psionic Blast is the canonical DamageResolve consumer:
+        //   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 4 | DamageMap$ True | SubAbility$ DBDealDamage
+        //   SVar:DBDealDamage:DB$ DealDamage | Defined$ You | NumDmg$ 2 | SubAbility$ DBDamageResolve
+        //   SVar:DBDamageResolve:DB$ DamageResolve
+        // This test exercises only the head of the chain; full SubAbility
+        // resolution is covered by the e2e gameplay log captured in the
+        // commit message (no SBA-relevant ordering issues for these targets).
+        let params = AbilityParams::parse(
+            "A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 4 | DamageMap$ True | SubAbility$ DBDealDamage",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).expect("head DealDamage must convert");
+        match effect {
+            Effect::DealDamage { amount, .. } => assert_eq!(amount, 4),
+            other => panic!("Expected DealDamage(4), got {:?}", other),
         }
     }
 

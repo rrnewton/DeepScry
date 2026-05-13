@@ -66,6 +66,24 @@ pub enum ApiType {
     ///   ValidTgts$ Creature - the target receiving damage
     ///   NumDmg$ Count$CardPower - damage equals each damager's power
     EachDamage,
+    /// Marker effect that resolves accumulated damage from a CardDamageMap
+    /// (cf. forge.game.ability.effects.DamageResolveEffect.java).
+    ///
+    /// In Java Forge, `DealDamage | DamageMap$ True` defers damage by adding
+    /// it to a damage map; a trailing `DB$ DamageResolve` then applies all
+    /// accumulated damage simultaneously (CR 120) so state-based actions see
+    /// every damage event at once (matters for lifelink, deathtouch, multi-
+    /// target damage that kills several creatures, replacement effects, etc.).
+    ///
+    /// Our Rust engine applies each `DealDamage` immediately during effect
+    /// execution, so `DamageResolve` is currently a no-op marker — the damage
+    /// has already been applied when the SubAbility chain reaches this point.
+    /// This is a documented approximation: it produces correct answers for the
+    /// common case (Psionic Blast, Char, Arc Trail, etc.) where the ordering
+    /// of multiple damage events within a single spell does not affect the
+    /// game state. See ai_docs/ for tracking of cases where simultaneous
+    /// damage matters.
+    DamageResolve,
     GainLife,
     LoseLife,
     SetLife,
@@ -279,6 +297,7 @@ impl ApiType {
             "DealDamage" => Self::DealDamage,
             "DamageAll" => Self::DamageAll,
             "EachDamage" => Self::EachDamage,
+            "DamageResolve" => Self::DamageResolve,
             "GainLife" => Self::GainLife,
             "LoseLife" => Self::LoseLife,
             "SetLife" => Self::SetLife,
@@ -410,6 +429,7 @@ impl ApiType {
             Self::DealDamage => "DealDamage",
             Self::DamageAll => "DamageAll",
             Self::EachDamage => "EachDamage",
+            Self::DamageResolve => "DamageResolve",
             Self::GainLife => "GainLife",
             Self::LoseLife => "LoseLife",
             Self::SetLife => "SetLife",

@@ -1,0 +1,24 @@
+[metadata]
+Name:Black Lotus Castability Test
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+
+# Player 1 has only Black Lotus on battlefield + Psionic Blast (cost {2}{U}) in hand.
+# Engine should offer Psionic Blast as castable because Black Lotus's mana ability
+# (`{T}, Sacrifice Black Lotus: Add three mana of any one color`) provides the
+# {U}{U}{U} needed via choosing blue.
+# Pre-fix bug: Black Lotus was treated as only 1 mana of any color in the
+# mana-engine bounds check, so the spell did not even appear in the action list.
+p0life=20
+p0hand=Psionic Blast
+p0battlefield=Black Lotus
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+
+p1life=20
+p1battlefield=Forest
+p1library=Forest; Forest; Forest; Forest; Forest; Forest

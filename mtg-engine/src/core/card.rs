@@ -412,6 +412,11 @@ impl CardCache {
         let mut colors = ManaColors::new();
         let mut produces_colorless = false;
         let mut produces_any = false;
+        // Maximum amount produced by any single mana ability. Sol Ring (`Amount$ 2`)
+        // produces 2 colorless per activation; Black Lotus (`Amount$ 3 | Produced$ Any`)
+        // produces 3 mana of one chosen color per activation. We track the OR of
+        // abilities by taking the max (best single-source production).
+        let mut max_amount: u8 = 0;
 
         for ability in abilities {
             // Only consider mana abilities
@@ -448,13 +453,33 @@ impl CardCache {
                     if mana.white > 0 && mana.blue > 0 && mana.black > 0 && mana.red > 0 && mana.green > 0 {
                         produces_any = true;
                     }
+
+                    // The amount of mana this single activation produces is the max of
+                    // any individual color/colorless component. For `Produced$ Any |
+                    // Amount$ 3`, the converter fills mana with {W:3,U:3,B:3,R:3,G:3}
+                    // (you choose ONE colour and get that amount of it). For
+                    // `Produced$ C | Amount$ 2`, mana is {C:2}. For Plains, mana is
+                    // {W:1}. Max across components captures the "per choice" amount.
+                    let component_amount = mana
+                        .white
+                        .max(mana.blue)
+                        .max(mana.black)
+                        .max(mana.red)
+                        .max(mana.green)
+                        .max(mana.colorless);
+                    if component_amount > max_amount {
+                        max_amount = component_amount;
+                    }
                 }
             }
         }
 
+        // Always at least 1 if we found any mana ability, otherwise 1 is the safe default.
+        let amount = max_amount.max(1);
+
         // Build ManaProduction from accumulated colors
         if produces_any {
-            return ManaProduction::free(ManaProductionKind::AnyColor);
+            return ManaProduction::with_amount(ManaProductionKind::AnyColor, amount);
         }
 
         // Cards that produce chosen color (like Thriving lands) need special handling.
@@ -469,16 +494,16 @@ impl CardCache {
         // happens via the Card.chosen_color field set at ETB time.
 
         match colors.len() {
-            0 if produces_colorless => ManaProduction::free(ManaProductionKind::Colorless),
+            0 if produces_colorless => ManaProduction::with_amount(ManaProductionKind::Colorless, amount),
             0 => ManaProduction::default(), // No mana production
             1 => {
                 // Single color - use Fixed variant
                 let color = colors.iter().next().unwrap();
-                ManaProduction::free(ManaProductionKind::Fixed(color))
+                ManaProduction::with_amount(ManaProductionKind::Fixed(color), amount)
             }
             _ => {
                 // Multiple colors - use Choice variant (OR logic)
-                ManaProduction::free(ManaProductionKind::Choice(colors))
+                ManaProduction::with_amount(ManaProductionKind::Choice(colors), amount)
             }
         }
     }
