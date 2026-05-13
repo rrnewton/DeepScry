@@ -258,7 +258,7 @@ validate-wasm-step:
 validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
 	@cd web && $(NPM) install --silent 2>/dev/null
-	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js
+	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games

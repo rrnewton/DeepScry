@@ -389,13 +389,27 @@
             white-space: nowrap;
         }
 
-        /* Card grid in battlefield */
+        /* Card grid in battlefield.
+           Fills the parent .pane-body so JS can measure a STABLE pixel
+           rectangle (the available battlefield area) instead of the
+           cards' content-driven height — prevents the size-feedback loop
+           that used to shrink cards on every render
+           (bug-gamehtml-card-size-v2). */
         .card-grid {
             display: flex;
-            flex-wrap: wrap;
-            align-items: flex-start;
+            flex-direction: column;
+            min-height: 100%;
             gap: 2px;
             padding: 4px;
+            box-sizing: border-box;
+        }
+        /* Each section row inside the grid spreads its cards horizontally
+           across the available width — matches fancy.html's behaviour
+           where cards "spread out" instead of clumping at the left edge.
+           `justify-content: center` keeps them visually balanced; switch
+           to `space-around` if a denser look is preferred. */
+        .bf-section-cards {
+            justify-content: center;
         }
 
         /* Battlefield section labels match the TUI's inline section markers
@@ -1261,50 +1275,88 @@
         window.addEventListener('resize', () => {
             if (tuiLaunched) {
                 applySharedLayout();
-                // Card sizes also depend on pane pixel dimensions, so
-                // recompute them whenever the viewport changes.
-                applyBattlefieldCardSizes();
+                // Card sizes depend on pane pixel dimensions, so
+                // recompute against the new viewport. updateUI does the
+                // full compute → render → apply sequence; calling it
+                // here also re-renders <img>s with the right resolution
+                // for the new size (bug-gamehtml-card-size-v2 #4).
+                updateUI();
             }
         });
 
         // ==================== BATTLEFIELD CARD SIZING ====================
-        // Drives per-pane CSS variables (--card-w / --card-h) from the
-        // shared Rust battlefield layout engine
-        // (battlefield_layout::pick_card_size_for_battlefield via the WASM
-        // export `tui_get_card_layout_json`). This is what makes cards
-        // visibly shrink when many permanents are on the battlefield —
-        // the engine returns the largest card size for which all that
-        // player's cards fit inside the measured pane area.
-        function applyBattlefieldCardSizes() {
-            if (typeof tui_get_card_layout_json !== 'function') return;
+        // Cached battlefield card sizes from the most recent layout
+        // computation. Used by `renderBattlefield` so the <img>'s requested
+        // height matches the actual rendered card height — driving
+        // `tui_get_image_urls` to return a 'normal' (488x680) image
+        // instead of 'small' (146x204) once cards are large enough to need
+        // it. Without this, large cards would render the small image
+        // upscaled and look blurry (bug-gamehtml-card-size-v2 #4).
+        let _battlefieldCardSizes = { your: null, opp: null };
 
-            // Measure the *card grid* inside each battlefield pane (not
-            // the pane itself), so the engine sizes against the actual
-            // area the cards flow into and accounts for the pane header.
-            const yourGrid = document.getElementById('player-field-cards');
-            const oppGrid = document.getElementById('opp-field-cards');
-            if (!yourGrid || !oppGrid) return;
+        /// Compute per-battlefield card sizes via the shared Rust layout
+        /// engine (`battlefield_layout::pick_card_size_for_battlefield`),
+        /// measuring the **pane-body** (the available area), NOT the
+        /// card-grid (which is content-driven).
+        ///
+        /// Measuring the card-grid caused a contracting feedback loop
+        /// (bug-gamehtml-card-size-v2 #1, #2, #3):
+        ///
+        ///   tall grid → engine picks big cards → cards rendered → grid
+        ///   shrinks to fit smaller cards → next render measures shorter
+        ///   grid → engine picks smaller cards → repeat (cards shrink
+        ///   incrementally on every interaction).
+        ///
+        /// The pane-body has a stable height driven by the outer CSS grid
+        /// (.center-col with #pane-opp-field/#pane-player-field both
+        /// `flex: 1`), independent of card content — same input every
+        /// frame, so the engine returns the same card size.
+        ///
+        /// Returns `{ your, opp }` where each entry is the
+        /// `{ card_width_px, card_height_px, ... }` JSON returned by
+        /// `tui_get_card_layout_json` (or `null` if the pane wasn't
+        /// measurable).
+        function computeBattlefieldCardSizes() {
+            if (typeof tui_get_card_layout_json !== 'function') {
+                return { your: null, opp: null };
+            }
+            const yourPaneBody = document.querySelector('#pane-player-field .pane-body');
+            const oppPaneBody = document.querySelector('#pane-opp-field .pane-body');
+            if (!yourPaneBody || !oppPaneBody) return { your: null, opp: null };
 
-            const yourW = yourGrid.clientWidth;
-            const yourH = yourGrid.clientHeight;
-            const oppW = oppGrid.clientWidth;
-            const oppH = oppGrid.clientHeight;
+            const yourW = yourPaneBody.clientWidth;
+            const yourH = yourPaneBody.clientHeight;
+            const oppW = oppPaneBody.clientWidth;
+            const oppH = oppPaneBody.clientHeight;
 
             let layoutJson;
             try {
                 layoutJson = tui_get_card_layout_json(yourW, yourH, oppW, oppH);
             } catch (e) {
                 console.error('tui_get_card_layout_json failed:', e);
-                return;
+                return { your: null, opp: null };
             }
-            if (!layoutJson || layoutJson === '{}') return;
+            if (!layoutJson || layoutJson === '{}') return { your: null, opp: null };
 
             let layout;
             try { layout = JSON.parse(layoutJson); }
-            catch (e) { console.error('parse card layout JSON:', e); return; }
+            catch (e) { console.error('parse card layout JSON:', e); return { your: null, opp: null }; }
 
-            applyPaneCardSize(yourGrid, layout.your_battlefield);
-            applyPaneCardSize(oppGrid, layout.opp_battlefield);
+            const result = {
+                your: layout.your_battlefield || null,
+                opp:  layout.opp_battlefield  || null,
+            };
+            _battlefieldCardSizes = result;
+            return result;
+        }
+
+        /// Apply the computed card sizes as CSS vars on the battlefield
+        /// `.card-grid` containers. Every `.card` inside reads
+        /// `var(--card-w)` / `var(--card-h)` and scales uniformly.
+        function applyBattlefieldCardSizes(sizes) {
+            if (!sizes) sizes = _battlefieldCardSizes;
+            applyPaneCardSize(document.getElementById('player-field-cards'), sizes.your);
+            applyPaneCardSize(document.getElementById('opp-field-cards'),    sizes.opp);
         }
 
         /// Set --card-w / --card-h CSS vars on the pane container so
@@ -1410,15 +1462,19 @@
 
             renderPlayerInfo(ourPlayer, 'player-info-body');
             renderPlayerInfo(oppPlayer, 'opp-info-body');
-            renderBattlefield(ourPlayer, 'player-field-cards');
-            renderBattlefield(oppPlayer, 'opp-field-cards');
-            // Apply per-pane card sizing from the shared layout engine
-            // (battlefield_layout::pick_card_size_for_battlefield). Cards
-            // shrink as more permanents enter play, matching the TUI/fancy.html
-            // behaviour. Run *after* renderBattlefield so the pane bodies have
-            // their final laid-out width/height (the function reads
-            // clientWidth/clientHeight).
-            applyBattlefieldCardSizes();
+
+            // Compute battlefield card sizes BEFORE rendering so the
+            // <img> elements can request the right resolution (small vs
+            // normal) and so cards never have to flicker through a
+            // wrong size. The compute function measures the pane-body
+            // (stable area) — see `computeBattlefieldCardSizes` for the
+            // feedback-loop fix it solves
+            // (bug-gamehtml-card-size-v2 #1, #2, #3, #4).
+            const cardSizes = computeBattlefieldCardSizes();
+            applyBattlefieldCardSizes(cardSizes);
+
+            renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
+            renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
             renderHand(ourPlayer);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
@@ -1449,12 +1505,20 @@
         /// Each section comes pre-ordered and labelled by the view model
         /// (PWs/Creatures/Enchants/Artifacts/Lands for the local player;
         /// reversed for the opponent), so JS just maps them to DOM.
-        function renderBattlefield(player, containerId) {
+        function renderBattlefield(player, containerId, paneSize) {
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             if (!player || !player.battlefield_sections || player.battlefield_sections.length === 0) {
                 return;
             }
+            // Pick the image resolution to match the rendered card height
+            // (bug-gamehtml-card-size-v2 #4). `tui_get_image_urls` returns
+            // 'small' (146x204) for ≤204px and 'normal' (488x680) above.
+            // Falls back to 106 (= small) when the pane wasn't measured
+            // yet — the next render will upgrade.
+            const imgHeightPx = paneSize?.card_height_px
+                ? Math.round(paneSize.card_height_px)
+                : 106;
             for (const section of player.battlefield_sections) {
                 if (!section.cards || section.cards.length === 0) continue;
 
@@ -1473,7 +1537,7 @@
                     // already shows an equipment badge for it, mirroring
                     // the TUI's stacked rendering.
                     if (card.attached_to != null) continue;
-                    const el = createCardElement(card, false);
+                    const el = createCardElement(card, false, imgHeightPx);
                     if (card.attachments && card.attachments.length > 0) {
                         const equipNames = card.attachments.map(a => a.name).join(', ');
                         const badge = document.createElement('div');
@@ -1515,7 +1579,7 @@
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
         /// and the is_selected/is_valid_choice flags all come from the view
         /// model — we never re-derive them from the card name here.
-        function createCardElement(card, showMana) {
+        function createCardElement(card, showMana, imgHeightPx) {
             const div = document.createElement('div');
             const classes = (card.css_classes && card.css_classes.length > 0) ? card.css_classes.slice() : ['card'];
             if (card.is_selected) classes.push('selected-card');
@@ -1526,8 +1590,15 @@
             if (showImages) {
                 // Image lookup is keyed by card NAME (file naming convention,
                 // shared with the TUI's image overlay). The selection /
-                // identity key remains card_id.
-                const urls = getCardImageFallbackUrls(card.name, 106);
+                // identity key remains card_id. `imgHeightPx` is the
+                // rendered card height the engine picked (or 106 for
+                // hand-list cards) — `tui_get_image_urls` uses it to
+                // choose between 'small' (≤204) and 'normal' images so
+                // big battlefield cards aren't a blurry up-scaled small.
+                const heightPx = (typeof imgHeightPx === 'number' && imgHeightPx > 0)
+                    ? imgHeightPx
+                    : 106;
+                const urls = getCardImageFallbackUrls(card.name, heightPx);
                 if (urls.length > 0) {
                     const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
                     imgHtml = `<img class="card-image" src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" loading="lazy" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'">`;
