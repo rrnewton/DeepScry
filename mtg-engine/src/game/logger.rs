@@ -3,6 +3,7 @@
 //! This implementation is 100% safe Rust with no unsafe keyword usage.
 //! It uses owned Strings in LogEntry and returns a guard type for iteration.
 
+use crate::core::PlayerId;
 use crate::game::VerbosityLevel;
 use bumpalo::Bump;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,24 @@ pub enum OutputMode {
     Both,
 }
 
+/// Marks a log entry as containing hidden information visible only to a
+/// specific player (e.g., the contents of a card a player just drew).
+///
+/// UIs viewing the game from another player's perspective MUST substitute
+/// `public_message` for the entry's full `message` to prevent information
+/// leaks. See `GameLogger::gamelog_private` and the per-card draw log in
+/// `GameState::draw_card_inner` for the canonical example.
+///
+/// Closes bug-draw-reveals-opponent-hand.
+#[derive(Debug, Clone)]
+pub struct PrivateLogInfo {
+    /// The player to whom the full `message` is visible.
+    pub owner: PlayerId,
+    /// The masked replacement other players (and spectators) should see —
+    /// e.g. `"P2 draws a card"` instead of `"P2 draws Disenchant (88)"`.
+    pub public_message: String,
+}
+
 /// A log entry with owned strings (no lifetime parameters)
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -40,6 +59,24 @@ pub struct LogEntry {
     pub message: String,
     /// Optional category (e.g., "controller_choice", "game_event")
     pub category: Option<String>,
+    /// If `Some`, this entry contains hidden information visible only to
+    /// `owner`. UIs rendering from a different perspective should display
+    /// `public_message` instead. See [`PrivateLogInfo`].
+    pub private_to: Option<PrivateLogInfo>,
+}
+
+impl LogEntry {
+    /// Return the message text appropriate for the given perspective player.
+    ///
+    /// Returns `&self.message` for entries that aren't perspective-restricted
+    /// or where `perspective` matches the owner; otherwise returns the masked
+    /// `public_message` so opponent-private info is not leaked.
+    pub fn message_for(&self, perspective: PlayerId) -> &str {
+        match &self.private_to {
+            Some(info) if info.owner != perspective => &info.public_message,
+            _ => &self.message,
+        }
+    }
 }
 
 /// Guard type that provides read-only access to log entries
@@ -550,6 +587,7 @@ impl GameLogger {
                 level: VerbosityLevel::Minimal,
                 message: message.to_string(),
                 category: None,
+                private_to: None,
             });
         }
 
@@ -579,6 +617,7 @@ impl GameLogger {
                 level: VerbosityLevel::Normal,
                 message: message.to_string(),
                 category: None,
+                private_to: None,
             });
         }
 
@@ -613,6 +652,7 @@ impl GameLogger {
             level: VerbosityLevel::Normal,
             message: message.to_string(),
             category: None,
+            private_to: None,
         });
     }
 
@@ -636,6 +676,7 @@ impl GameLogger {
                 level: VerbosityLevel::Verbose,
                 message: message.to_string(),
                 category: None,
+                private_to: None,
             });
         }
 
@@ -689,10 +730,72 @@ impl GameLogger {
                 level: VerbosityLevel::Normal,
                 message: formatted.clone(),
                 category: Some("gamelog".to_string()),
+                private_to: None,
             });
         }
 
         // Output to stdout if mode requires it and verbosity allows
+        if should_output && VerbosityLevel::Normal <= self.verbosity {
+            self.log_to_stdout(VerbosityLevel::Normal, &formatted);
+        }
+    }
+
+    /// Log a perspective-restricted official game action at Normal level.
+    ///
+    /// Identical to [`Self::gamelog`] except that the captured log entry is
+    /// marked as containing hidden information visible only to `owner`. UIs
+    /// rendering from another player's perspective MUST substitute
+    /// `public_message` for the full `message` (see
+    /// [`LogEntry::message_for`]).
+    ///
+    /// **stdout is unaffected** — the full message is still printed for the
+    /// CLI/server log (which is the canonical, full-information replay log).
+    /// Filtering happens only at the structured-view boundary used by
+    /// `web/game.html` and `web/fancy.html`.
+    ///
+    /// Closes bug-draw-reveals-opponent-hand.
+    #[inline]
+    pub fn gamelog_private(&self, message: &str, owner: PlayerId, public_message: &str) {
+        if self.suppressed {
+            return;
+        }
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
+
+        // Early exit if message won't be used
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        // Format with tag prefix if enabled (matches `gamelog` so the tagged
+        // entry stays comparable across local/network modes).
+        let formatted = if self.tag_gamelogs {
+            let turn = *self.gamelog_turn.borrow();
+            let step = *self.gamelog_step.borrow();
+            format!("[GAMELOG Turn{} {}] {}", turn, step, message)
+        } else {
+            message.to_string()
+        };
+        let formatted_public = if self.tag_gamelogs {
+            let turn = *self.gamelog_turn.borrow();
+            let step = *self.gamelog_step.borrow();
+            format!("[GAMELOG Turn{} {}] {}", turn, step, public_message)
+        } else {
+            public_message.to_string()
+        };
+
+        if should_capture {
+            self.log_buffer.borrow_mut().push(LogEntry {
+                level: VerbosityLevel::Normal,
+                message: formatted.clone(),
+                category: Some("gamelog".to_string()),
+                private_to: Some(PrivateLogInfo {
+                    owner,
+                    public_message: formatted_public,
+                }),
+            });
+        }
+
         if should_output && VerbosityLevel::Normal <= self.verbosity {
             self.log_to_stdout(VerbosityLevel::Normal, &formatted);
         }
@@ -738,6 +841,7 @@ impl GameLogger {
                 level: VerbosityLevel::Normal,
                 message: formatted.clone(),
                 category: Some("controller_choice".to_string()),
+                private_to: None,
             });
         }
 

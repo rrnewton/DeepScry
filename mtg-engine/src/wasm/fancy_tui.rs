@@ -719,7 +719,17 @@ pub fn tui_get_logs_json() -> String {
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
             let s = state.borrow();
-            let logs: Vec<String> = s.game.logger.logs().iter().map(|entry| entry.message.clone()).collect();
+            // Filter perspective-restricted entries (e.g. per-card draws)
+            // so opponent card names don't leak through this raw exporter.
+            // See bug-draw-reveals-opponent-hand.
+            let perspective = s.renderer.player_id;
+            let logs: Vec<String> = s
+                .game
+                .logger
+                .logs()
+                .iter()
+                .map(|entry| entry.message_for(perspective).to_string())
+                .collect();
             serde_json::to_string(&logs).unwrap_or_else(|_| "[]".to_string())
         } else {
             "[]".to_string()
@@ -1012,7 +1022,14 @@ pub fn tui_get_full_state_json() -> String {
                 })
                 .collect();
 
-            // Recent logs (last 100) with CSS color hints
+            // Recent logs (last 100) with CSS color hints.
+            //
+            // Apply per-perspective filtering: entries marked `private_to`
+            // (e.g. per-card draws) leak hidden info to anyone but their
+            // owner. Substitute the masked `public_message` from every
+            // other perspective. See `LogEntry::message_for` and
+            // bug-draw-reveals-opponent-hand.
+            let perspective = s.renderer.player_id;
             let logs: Vec<serde_json::Value> = game
                 .logger
                 .logs()
@@ -1021,12 +1038,13 @@ pub fn tui_get_full_state_json() -> String {
                 .take(100)
                 .rev()
                 .map(|entry| {
-                    let color = css_color_for_log(&entry.message);
-                    let bold = entry.message.contains(">>> Turn")
-                        || entry.message.contains("<<<< ")
-                        || (entry.message.contains("damage") && entry.message.contains("life:"));
+                    let text = entry.message_for(perspective);
+                    let color = css_color_for_log(text);
+                    let bold = text.contains(">>> Turn")
+                        || text.contains("<<<< ")
+                        || (text.contains("damage") && text.contains("life:"));
                     serde_json::json!({
-                        "text": entry.message,
+                        "text": text,
                         "color": color,
                         "bold": bold,
                     })

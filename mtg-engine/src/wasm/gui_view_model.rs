@@ -739,6 +739,11 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
         .collect();
 
     // Logs (last `log_tail_size`, oldest first).
+    //
+    // Apply per-perspective filtering: entries marked `private_to` (e.g.
+    // per-card draw lines) reveal hidden info to their owner only. From any
+    // other perspective we display the masked `public_message` instead.
+    // See `LogEntry::message_for` and bug-draw-reveals-opponent-hand.
     let logs: Vec<LogEntryView> = game
         .logger
         .logs()
@@ -747,10 +752,11 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
         .take(inputs.log_tail_size)
         .rev()
         .map(|entry| {
-            let class = classify_log_message(&entry.message);
+            let text = entry.message_for(perspective);
+            let class = classify_log_message(text);
             let (color, semantic_class) = css_color_for_log_class(class);
             LogEntryView {
-                text: entry.message.clone(),
+                text: text.to_string(),
                 color,
                 bold: class.is_bold(),
                 is_choice: class == LogClass::Choice,
@@ -995,6 +1001,77 @@ mod tests {
             !json.contains("EntityId"),
             "raw debug-printed ID leaked into JSON: {}",
             json,
+        );
+    }
+
+    /// Regression for bug-draw-reveals-opponent-hand:
+    /// the GUI view model — the JSON shape consumed by
+    /// `web/game.html` and `web/fancy.html` — must hide opponent
+    /// per-card draw lines, replacing them with the masked
+    /// "P draws a card" form.
+    ///
+    /// Before the fix, every draw line was a plain
+    /// `gamelog("P2 draws Disenchant (88)")` and the WASM
+    /// exporter served the raw message, leaking P2's hand to P1.
+    #[test]
+    fn opponent_draws_are_masked_in_view_model_logs() {
+        use crate::core::Card;
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+        game.logger.set_output_mode(crate::game::logger::OutputMode::Memory);
+
+        // Seed P2's library with a recognisable card and have P2 draw it.
+        let secret_id = game.next_card_id();
+        let secret = Card::new(secret_id, "Disenchant".to_string(), p2_id);
+        game.cards.insert(secret_id, secret);
+        game.get_player_zones_mut(p2_id).unwrap().library.add(secret_id);
+        game.draw_card(p2_id).expect("p2 draw");
+
+        // Render the view model from P1's perspective.
+        let inputs_p1 = ViewModelInputs {
+            perspective_player_id: p1_id,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: None,
+            choices: &[],
+            selected_choice_idx: 0,
+            choice_context: "None",
+            game_over: false,
+            log_tail_size: 50,
+        };
+        let json_p1 = build_view_model_json(&game, inputs_p1);
+
+        assert!(
+            !json_p1.contains("Disenchant"),
+            "P1's view model JSON must NOT contain P2's drawn card name; got {}",
+            json_p1,
+        );
+        assert!(
+            json_p1.contains("draws a card"),
+            "P1's view model JSON should contain the masked 'draws a card' line; got {}",
+            json_p1,
+        );
+
+        // From P2's own perspective, the full draw line is preserved.
+        let inputs_p2 = ViewModelInputs {
+            perspective_player_id: p2_id,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: None,
+            choices: &[],
+            selected_choice_idx: 0,
+            choice_context: "None",
+            game_over: false,
+            log_tail_size: 50,
+        };
+        let json_p2 = build_view_model_json(&game, inputs_p2);
+        assert!(
+            json_p2.contains("Disenchant"),
+            "P2's own view model JSON should still show the full draw line; got {}",
+            json_p2,
         );
     }
 

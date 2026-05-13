@@ -2421,6 +2421,97 @@ mod tests {
         );
     }
 
+    /// Regression: opponent draws must not leak the drawn card name to
+    /// other perspectives.
+    ///
+    /// Closes bug-draw-reveals-opponent-hand. Before the fix, the per-card
+    /// draw line emitted by `GameState::draw_card_inner` was a plain
+    /// `gamelog(...)` — the WASM exporter for `web/game.html` re-served the
+    /// raw message, so P1 could see "P2 draws Disenchant (88)" in the game
+    /// log and effectively read P2's hand.
+    ///
+    /// The fix tags the entry with `private_to: PrivateLogInfo { owner,
+    /// public_message }` so `LogEntry::message_for(perspective)` returns the
+    /// masked "P2 draws a card" string from any non-owner perspective.
+    /// This test asserts:
+    /// 1. The captured entry carries the `private_to` marker pointing at
+    ///    the drawing player.
+    /// 2. The owner sees the full "P draws CARD (id)" message.
+    /// 3. The opponent sees only the masked "P draws a card" message
+    ///    (no card name, no card id).
+    /// 4. The full message is still preserved in the log buffer so server
+    ///    replays / full-info logs are unchanged.
+    #[test]
+    fn test_opponent_draws_do_not_leak_card_name() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        game.logger.set_output_mode(crate::game::logger::OutputMode::Memory);
+
+        // Seed P2's library with a recognisable card and draw it.
+        let secret_card_id = game.next_card_id();
+        let secret = Card::new(secret_card_id, "Disenchant".to_string(), p2_id);
+        game.cards.insert(secret_card_id, secret);
+        game.get_player_zones_mut(p2_id).unwrap().library.add(secret_card_id);
+
+        let logs_before = game.logger.log_count();
+        game.draw_card(p2_id).expect("p2 draw");
+
+        let logs = game.logger.get_logs();
+        let draw_entry = logs[logs_before..]
+            .iter()
+            .find(|e| e.category.as_deref() == Some("gamelog") && e.message.contains(" draws "))
+            .expect("expected a per-card draw gamelog entry for P2");
+
+        // (1) Marker present and points at the drawing player.
+        let private = draw_entry
+            .private_to
+            .as_ref()
+            .expect("draw entry should be marked private_to the drawing player");
+        assert_eq!(
+            private.owner, p2_id,
+            "private_to.owner must match the drawing player so the owning \
+             perspective continues to see the card name"
+        );
+
+        // (2) Owner perspective: full message with card name + id.
+        let owner_view = draw_entry.message_for(p2_id);
+        assert!(
+            owner_view.contains("Disenchant") && owner_view.contains(&format!("({})", secret_card_id)),
+            "owner (P2) perspective should still see the full draw message; got {:?}",
+            owner_view
+        );
+
+        // (3) Opponent perspective: masked message, NO card name, NO id.
+        let opp_view = draw_entry.message_for(p1_id);
+        assert!(
+            !opp_view.contains("Disenchant"),
+            "opponent (P1) perspective MUST NOT see the drawn card name; got {:?}",
+            opp_view
+        );
+        assert!(
+            !opp_view.contains(&format!("({})", secret_card_id)),
+            "opponent (P1) perspective MUST NOT see the drawn card id; got {:?}",
+            opp_view
+        );
+        assert!(
+            opp_view.contains("draws a card"),
+            "opponent (P1) perspective should see the masked 'draws a card' message; got {:?}",
+            opp_view
+        );
+
+        // (4) The full message is still preserved in `LogEntry::message`,
+        // so server-side / full-info logs (including the network gamelog
+        // capture used by `--game-logs`) keep complete information.
+        assert!(
+            draw_entry.message.contains("Disenchant"),
+            "raw entry.message must preserve the full info for full-info \
+             consumers (server gamelog, replay verifier, etc); got {:?}",
+            draw_entry.message
+        );
+    }
+
     // ===================================================================
     // Card-compatibility regression tests for the rogue_rogerbrand 93/94
     // deck — see compat tracking issues mtg-c-sedge-troll,

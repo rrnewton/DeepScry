@@ -353,6 +353,7 @@ mod tests {
             level: VerbosityLevel::Normal,
             message: msg.to_string(),
             category: None,
+            private_to: None,
         }
     }
 
@@ -361,6 +362,7 @@ mod tests {
             level: VerbosityLevel::Normal,
             message: msg.to_string(),
             category: Some("controller_choice".to_string()),
+            private_to: None,
         }
     }
 
@@ -369,6 +371,7 @@ mod tests {
             level: VerbosityLevel::Normal,
             message: msg.to_string(),
             category: Some("gamelog".to_string()),
+            private_to: None,
         }
     }
 

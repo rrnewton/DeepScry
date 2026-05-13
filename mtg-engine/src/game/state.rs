@@ -1332,8 +1332,17 @@ impl GameState {
                         .try_get(card_id)
                         .map(|c| c.name.to_string())
                         .unwrap_or_else(|| "a card".to_string());
-                    self.logger
-                        .gamelog(&format!("{} draws {} ({})", player_name, card_name, card_id));
+                    // Per-card draw lines reveal hidden information (the
+                    // identity of a card the drawing player just put into
+                    // their hand). Mark the entry as private to `player_id`
+                    // so the WASM/web UIs can mask it as "P draws a card"
+                    // when rendering from another player's perspective.
+                    // Closes bug-draw-reveals-opponent-hand.
+                    self.logger.gamelog_private(
+                        &format!("{} draws {} ({})", player_name, card_name, card_id),
+                        player_id,
+                        &format!("{} draws a card", player_name),
+                    );
                 }
 
                 return Ok((Some(card_id), draw_count));
