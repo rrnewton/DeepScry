@@ -244,6 +244,8 @@ To get changes into main, use the `ci-integration-monitor` agent (see `.claude/a
 
 ARCHIVE completed feature branches. Upon merging a feature branch X, archive it as tag `X.v1` or `X.(N+1)` if that tag is taken.
 
+When merging, archiving, or deleting a feature branch, also update `ai_docs/OLD_BRANCH_HISTORY.md` with a brief note describing what the branch contained and its disposition (merged into integration/main, archived as tag, deleted, etc.). This preserves institutional memory about historical work even after the branch ref is gone.
+
 **CRITICAL**: NEVER use `git clean` commands (`git clean -f`, `git clean -fd`, `git clean -fxd`, etc.) in this repository. The `.devcontainer/` directory contains valuable container home directory configuration that must not be deleted. To clean working directory, use ONLY `git reset --hard HEAD` which resets tracked files without removing untracked files/directories.
 
 But make sure we do NOT have a dirty working copy in terms of `git status`. Any accidental untracked files must be (1) properly tracked, or (2) gitignored. We don't want untracked files hanging around.
