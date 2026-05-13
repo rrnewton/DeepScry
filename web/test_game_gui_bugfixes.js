@@ -262,8 +262,16 @@ async function runTest() {
         // ============================================================
         log('\n=== BUG #4: Log Display ===');
 
-        // Run a few more turns to populate log
-        for (let i = 0; i < 3; i++) {
+        // Run several Space presses to populate the log. Bumped from 3 → 10
+        // after decouple-step4 (mtg-81ed52): pre-step-4 game.html had a
+        // hidden ratzilla terminal that ALSO processed Space (calling
+        // run_until_choice on top of the JS-side tui_run_turn), so 3 Space
+        // presses gave 6 effective game advances. Post-step-4 there's no
+        // ratzilla, so Space fires once per press; we now need a few more
+        // presses to reach a draw step from the test's seed-42 starting
+        // position. Either way, the assertion below is robust as long as
+        // *some* Space presses cause card draws to appear in the log.
+        for (let i = 0; i < 10; i++) {
             await page.keyboard.press('Space');
             await page.waitForTimeout(200);
         }

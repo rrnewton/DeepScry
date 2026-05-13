@@ -73,8 +73,21 @@ function log(msg) {
         }, { timeout: 30000 });
         log('WASM module loaded, decks ready');
 
-        // ===== Step 1: Remove the hidden ratzilla terminal div =====
-        const ratzillaRemoved = await page.evaluate(() => {
+        // ===== Step 1: Confirm there is no #ratzilla-terminal in the DOM =====
+        //
+        // Pre decouple-step4 (mtg-81ed52), `web/game.html` shipped with a
+        // hidden `<div id="ratzilla-terminal" style="display:none">` that
+        // `launch_fancy_tui` populated with a ratzilla `DomBackend`. This
+        // test deliberately asserted the div *was* there and removed it,
+        // so any leftover `launch_fancy_tui` call would error out at
+        // `DomBackend::new_by_id`.
+        //
+        // Post step 4, `web/game.html` no longer contains the div at all
+        // (verified here) AND no longer calls `launch_fancy_tui` — it
+        // uses `launch_game_session` directly. As a defence-in-depth
+        // measure we ALSO try to remove the element if some future
+        // refactor accidentally re-adds it.
+        const initiallyPresent = await page.evaluate(() => {
             const el = document.getElementById('ratzilla-terminal');
             if (el) {
                 el.parentNode.removeChild(el);
@@ -82,13 +95,15 @@ function log(msg) {
             }
             return false;
         });
-        check('ratzilla-terminal element removed before launch',
-              ratzillaRemoved,
-              'div was present in initial DOM and is now gone');
+        check('ratzilla-terminal element absent from game.html (decouple-step4)',
+              !initiallyPresent,
+              initiallyPresent
+                ? 'div was present (and was just removed for the test)'
+                : 'div was already absent — game.html ships without it');
 
-        // Sanity: confirm it really is gone.
+        // Sanity: confirm there's no #ratzilla-terminal anywhere now.
         const stillThere = await page.evaluate(() => !!document.getElementById('ratzilla-terminal'));
-        check('ratzilla-terminal element absent after removal',
+        check('ratzilla-terminal element confirmed absent before launch',
               !stillThere,
               `getElementById returned ${stillThere ? 'present' : 'null'}`);
 

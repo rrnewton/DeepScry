@@ -762,8 +762,20 @@
         </div>
     </div>
 
-    <!-- Hidden RatZilla terminal (TUI renderer still runs internally) -->
-    <div id="ratzilla-terminal" style="display: none; position: absolute; left: -9999px;"></div>
+    <!--
+        decouple-step4 (mtg-81ed52): the hidden `<div id="ratzilla-terminal">`
+        used to live here. It hosted a RatZilla `DomBackend` that the WASM
+        TUI rendered into off-screen so the JS-driven HTML overlay could
+        sit on top. After step 4, game.html uses `launch_game_session()`
+        (decouple-step3) which never touches ratzilla, so the div — and
+        the entire hidden ratatui draw_web tick — is gone.
+
+        web/fancy.html still uses ratzilla and keeps its own visible
+        `#ratzilla-terminal` element; this comment intentionally does
+        not declare the id here so any leftover ratzilla code path
+        attempting `DomBackend::new_by_id("ratzilla-terminal")` fails
+        loudly on game.html instead of silently rendering to nothing.
+    -->
 
     <!-- Game controls overlay -->
     <div class="game-controls" id="game-controls" style="display:none;">
@@ -821,8 +833,14 @@
             is_ready,
             WasmCardDatabase,
             WasmControllerType,
-            launch_fancy_tui,
+            // decouple-step4 (mtg-81ed52): we used to import `launch_fancy_tui`
+            // and let it spin up a hidden ratzilla terminal behind the visible
+            // DOM. Now we use the ratzilla-free `launch_game_session` (from
+            // decouple-step3) and drive the UI entirely from JS — DOM event
+            // listeners + `tui_tick`/`tui_run_turn` for forward progress.
+            launch_game_session,
             tui_run_turn,
+            tui_tick,
             tui_toggle_auto,
             tui_select_choice,
             tui_prev_choice,
@@ -1173,11 +1191,16 @@
                 // Apply shared layout from Rust
                 applySharedLayout();
 
-                // Launch the TUI internally (hidden — we read state via JSON)
-                launch_fancy_tui(
+                // decouple-step4: ratzilla-free session launch (no hidden
+                // terminal, no canvas dimensions, no DomBackend creation).
+                // The pure-logic WASM exports (`tui_run_turn`, `tui_tick`,
+                // `tui_select_card`, …) all read from `GLOBAL_TUI_STATE`
+                // which `launch_game_session` populates via
+                // `install_global_session` — see
+                // `mtg-engine/src/wasm/fancy_tui.rs::launch_game_session`.
+                launch_game_session(
                     cardDb, p1Deck, p2Deck, 20, seed,
-                    p1Controller, p2Controller,
-                    window.innerWidth, window.innerHeight
+                    p1Controller, p2Controller
                 );
                 tuiLaunched = true;
 
@@ -1698,29 +1721,22 @@
 
         // ==================== KEYBOARD HANDLING ====================
         //
-        // game.html dispatches to ratzilla-free WASM exports.
+        // After decouple-step4 (mtg-81ed52), game.html owns the keyboard
+        // outright — there is no hidden ratzilla `terminal.on_key_event`
+        // listener to compete with. Each branch below dispatches to a
+        // ratzilla-free WASM export that mutates `GLOBAL_TUI_STATE` and
+        // then fires `window.onRenderComplete` itself (decouple-step1's
+        // `with_state_mut_notify`), which `updateUI` debounces.
         //
-        // For the newly-bound Up/Down/Enter keys (decouple-step2), we call
-        // `e.stopImmediatePropagation()` so the hidden ratzilla terminal's
-        // own document-level keydown listener (registered later, in
-        // `launch_fancy_tui()`) does NOT also process the same key — without
-        // it, the choice index would move by 2 / Enter would submit twice.
-        // See `mtg-engine/src/wasm/fancy_tui.rs::process_key_event` for the
-        // ratzilla side. Once `decouple-step4` removes the hidden ratzilla
-        // terminal, the `stopImmediatePropagation` calls become harmless
-        // no-ops.
+        // Up/Down/Enter still call `e.stopImmediatePropagation()` even
+        // though there's no ratzilla document-level listener anymore
+        // (the call is now a no-op): kept as defensive code in case some
+        // future feature re-attaches a global keydown listener and would
+        // otherwise re-introduce the "choice index moves by 2" bug from
+        // decouple-step2.
         //
-        // For the *pre-existing* keybindings (Space, A, q/Q/Esc, c/C, ?,
-        // 1-9) we deliberately leave the existing pass-through behavior
-        // unchanged so step 2 stays scoped to Up/Down/Enter — those keys
-        // have their own subtleties (Space's "advance" semantics, A's
-        // toggle, digit-buffer accumulation for >10-choice prompts) that
-        // step 4 will revisit holistically when ratzilla is removed.
-        //
-        // See `decouple-step1` (`tui_tick`, `with_state_mut_notify`) for the
-        // mutator-side wiring that lets each WASM call notify JS via
-        // `window.onRenderComplete` without depending on the ratzilla
-        // draw_web tick.
+        // See `mtg-engine/src/wasm/fancy_tui.rs` for the WASM side:
+        // `tui_tick`, `tui_run_turn`, `tui_select_choice`, etc.
         document.addEventListener('keydown', function(e) {
             if (!tuiLaunched) return;
 
@@ -1730,7 +1746,17 @@
             switch (e.key) {
                 case ' ':
                     e.preventDefault();
-                    debugLog('key: Space (run turn)');
+                    // decouple-step4: mirror the legacy ratzilla Space
+                    // behaviour (`process_key_event` →
+                    // `select_current_choice` when pending, then
+                    // `run_until_choice`). Without this, Space at a human
+                    // choice point would only call `run_until_choice` —
+                    // which immediately re-blocks on the same prompt — and
+                    // the game would never advance past human turns.
+                    // `tui_select_choice` early-returns if there is no
+                    // pending choice, so this is safe in AI-vs-AI mode too.
+                    debugLog('key: Space (commit + run turn)');
+                    tui_select_choice();
                     tui_run_turn();
                     setTimeout(updateUI, 50);
                     break;
