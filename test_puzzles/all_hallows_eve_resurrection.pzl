@@ -1,0 +1,24 @@
+[metadata]
+Name:All Hallow's Eve Resurrection
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify All Hallow's Eve self-exile + counter-tick + mass resurrection. Cast All Hallow's Eve, it exiles itself with 2 SCREAM counters. Each upkeep removes one counter. When counters hit 0, all creatures from all graveyards return to battlefield.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=All Hallow's Eve
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=Sengir Vampire; Sedge Troll
+p0battlefield=Swamp; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=Grizzly Bears; Lightning Bolt
+p1battlefield=Mountain
+p1exile=

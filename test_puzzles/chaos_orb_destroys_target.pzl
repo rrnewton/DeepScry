@@ -1,0 +1,24 @@
+[metadata]
+Name:Chaos Orb Destroys Permanent
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Chaos Orb activated ability ({1}, {T}: flip onto battlefield, destroy touched permanents, then destroy itself). Tests FlipOntoBattlefield API + DestroyAll subability + self-destroy. Checks: (a) cost paid, (b) opponent permanent destroyed (simulated touch), (c) Chaos Orb sacrificed/destroyed itself.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Chaos Orb; Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1graveyard=
+p1battlefield=Mountain; Grizzly Bears
+p1exile=
