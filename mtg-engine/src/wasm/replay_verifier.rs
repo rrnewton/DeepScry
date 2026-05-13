@@ -57,6 +57,14 @@ pub struct RewindVerification {
     /// [`record_turn_start_hash`] and compared against any cached value for
     /// the same `turn_number`.
     pub post_rewind_turn_start_hash: u64,
+    /// Optional full JSON snapshot of the post-rewind game state. Populated
+    /// at the same moment as `post_rewind_turn_start_hash` so that, if a
+    /// later rewind to the same turn produces a divergent hash, the caller
+    /// can diff this snapshot field-by-field against the live state to
+    /// pinpoint *which* field drifted. Only populated when verification is
+    /// enabled (callers should use `record_turn_start_hash_with_snapshot`
+    /// in that case); kept `None` on the zero-cost happy path.
+    pub post_rewind_state_snapshot: Option<serde_json::Value>,
 }
 
 /// Result of running the post-replay consistency checks. `Ok` means everything
@@ -191,6 +199,7 @@ pub fn finish_capture(pre: PreRewindCapture, game: &GameState, log_size_at_turn:
         pre_rewind_log_tail,
         log_size_at_turn,
         post_rewind_turn_start_hash: 0,
+        post_rewind_state_snapshot: None,
     }
 }
 
@@ -198,6 +207,38 @@ pub fn finish_capture(pre: PreRewindCapture, game: &GameState, log_size_at_turn:
 /// has restored the game state but BEFORE the engine starts replaying choices.
 pub fn record_turn_start_hash(verification: &mut RewindVerification, game: &GameState) {
     verification.post_rewind_turn_start_hash = compute_state_hash(game);
+}
+
+/// Like [`record_turn_start_hash`] but also captures a full JSON snapshot of
+/// the post-rewind state. Use this when verification is enabled so a later
+/// hash drift can be diffed field-by-field. The snapshot is taken at the
+/// same instant as the hash, so the two are guaranteed consistent.
+pub fn record_turn_start_hash_with_snapshot(verification: &mut RewindVerification, game: &GameState) {
+    verification.post_rewind_turn_start_hash = compute_state_hash(game);
+    verification.post_rewind_state_snapshot = serde_json::to_value(game).ok();
+}
+
+/// Returns `true` if the verifier should compare this entry across forward
+/// play and replay.
+///
+/// The `controller_choice` category — `<Choice> ...` lines emitted by the
+/// inner `RandomController` / `HeuristicController` / etc. via
+/// `GameLogger::controller_choice` — is **not** reproducible on replay because
+/// `ReplayController` short-circuits the inner controller (it returns the
+/// saved choice directly without invoking the inner controller, so the inner
+/// controller's `controller_choice(...)` log call never fires). On the original
+/// forward pass the inner controller logged the choice; on replay it's silent.
+/// Including these entries in the comparison would surface a spurious
+/// divergence on every AI choice. They're presentation-layer noise (no
+/// gameplay state behind them) and safe to skip.
+///
+/// All other entries — `gamelog` (game actions: draws, plays, casts, combat
+/// damage), turn separators, freeform `normal()` / `verbose()` — must match
+/// exactly because they originate from the engine, not from the controller's
+/// presentation layer, and the engine runs identically on forward play and
+/// replay.
+fn is_replayable_entry(entry: &LogEntry) -> bool {
+    !matches!(entry.category.as_deref(), Some("controller_choice"))
 }
 
 /// Run all post-replay consistency checks against the live `game` state.
@@ -208,6 +249,10 @@ pub fn record_turn_start_hash(verification: &mut RewindVerification, game: &Game
 /// and is reported in preference to log checks (since a corrupt turn-start
 /// state will usually cascade into log divergence and the root cause is the
 /// hash drift).
+///
+/// Log-tail comparison is performed on the **filtered** view of both the
+/// captured tail and the live replay tail, dropping `controller_choice`
+/// entries that `ReplayController` cannot reproduce (see [`is_replayable_entry`]).
 pub fn verify_replay(
     verification: &RewindVerification,
     game: &GameState,
@@ -223,37 +268,57 @@ pub fn verify_replay(
         }
     }
 
-    let captured_len = verification.pre_rewind_log_tail.len();
+    // Build filtered captured tail with original indices preserved so error
+    // messages can still pinpoint the offending entry in the raw buffer.
+    let captured_filtered: Vec<(usize, &LogEntry)> = verification
+        .pre_rewind_log_tail
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| is_replayable_entry(e))
+        .collect();
+
     let logs = game.logger.logs();
     let total_replay_len = logs.len();
-    let replay_tail_len = total_replay_len.saturating_sub(verification.log_size_at_turn);
+    let replay_tail_start = verification.log_size_at_turn;
+    let replay_filtered: Vec<(usize, &LogEntry)> = logs[replay_tail_start..]
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| is_replayable_entry(e))
+        .collect();
 
-    if replay_tail_len < captured_len {
-        let first_missing = verification
-            .pre_rewind_log_tail
-            .get(replay_tail_len)
-            .map(|e| e.message.clone());
+    let captured_filtered_len = captured_filtered.len();
+    let replay_filtered_len = replay_filtered.len();
+
+    if replay_filtered_len < captured_filtered_len {
+        let first_missing = captured_filtered
+            .get(replay_filtered_len)
+            .map(|(_, e)| e.message.clone());
         return ReplayCheckOutcome::LogTruncated {
-            captured_len,
-            replay_tail_len,
+            captured_len: captured_filtered_len,
+            replay_tail_len: replay_filtered_len,
             first_missing,
         };
     }
 
-    for offset in 0..captured_len {
-        let captured = &verification.pre_rewind_log_tail[offset];
-        let actual = &logs[verification.log_size_at_turn + offset];
+    for offset in 0..captured_filtered_len {
+        let (cap_raw_idx, captured) = captured_filtered[offset];
+        let (rep_raw_idx, actual) = replay_filtered[offset];
         if captured.message != actual.message {
+            // Report the absolute buffer index in the live `logger.logs()`
+            // view — that's what a developer would grep against.
+            let _ = cap_raw_idx;
             return ReplayCheckOutcome::LogMismatch {
-                index: verification.log_size_at_turn + offset,
+                index: replay_tail_start + rep_raw_idx,
                 prefix_offset: offset,
                 expected: captured.message.clone(),
                 actual: actual.message.clone(),
-                captured_len,
-                replay_tail_len,
+                captured_len: captured_filtered_len,
+                replay_tail_len: replay_filtered_len,
             };
         }
     }
+
+    let _ = total_replay_len; // currently unused after refactor; retained for future invariants
 
     ReplayCheckOutcome::Ok
 }
@@ -291,6 +356,22 @@ mod tests {
         }
     }
 
+    fn make_choice_entry(msg: &str) -> LogEntry {
+        LogEntry {
+            level: VerbosityLevel::Normal,
+            message: msg.to_string(),
+            category: Some("controller_choice".to_string()),
+        }
+    }
+
+    fn make_gamelog_entry(msg: &str) -> LogEntry {
+        LogEntry {
+            level: VerbosityLevel::Normal,
+            message: msg.to_string(),
+            category: Some("gamelog".to_string()),
+        }
+    }
+
     #[test]
     fn test_verify_replay_ok_when_logs_match_exactly() {
         // Pretend the rewind boundary is at log index 1 (so "turn header" stays
@@ -321,6 +402,7 @@ mod tests {
             ],
             log_size_at_turn: 1,
             post_rewind_turn_start_hash: 0xCAFE,
+            post_rewind_state_snapshot: None,
         };
 
         // Build a "replay" log buffer where the second entry diverged
@@ -368,6 +450,7 @@ mod tests {
             ],
             log_size_at_turn: 1,
             post_rewind_turn_start_hash: 0x1234,
+            post_rewind_state_snapshot: None,
         };
 
         let game = fresh_game_with_logs(&["preserved turn header", "entry A"]);
@@ -398,6 +481,7 @@ mod tests {
             pre_rewind_log_tail: Vec::new(),
             log_size_at_turn: 0,
             post_rewind_turn_start_hash: 0xABCD_EF01_2345_6789,
+            post_rewind_state_snapshot: None,
         };
 
         // Logs are empty and identical, so the only thing that *could* fail is
@@ -431,6 +515,89 @@ mod tests {
         assert_eq!(verification.pre_rewind_log_tail[0].message, "choice X");
         assert_eq!(verification.pre_rewind_log_tail[1].message, "choice Y");
         assert_eq!(verification.post_rewind_turn_start_hash, 0); // not yet recorded
+    }
+
+    #[test]
+    fn test_verify_replay_skips_controller_choice_entries() {
+        // The forward-pass captured tail mixes engine `gamelog` entries with
+        // the inner controller's `<Choice>` entries. The replay tail (driven
+        // by `ReplayController`) only re-emits the engine entries — the
+        // inner controller is short-circuited so its `controller_choice(...)`
+        // calls never fire. The verifier must filter out
+        // `controller_choice`-category entries from BOTH sides before
+        // comparing, otherwise it would flag every AI choice as a divergence.
+        let verification = RewindVerification {
+            turn_number: 4,
+            pre_rewind_state_hash: 0,
+            pre_rewind_action_count: 0,
+            pre_rewind_log_count: 5,
+            pre_rewind_log_tail: vec![
+                make_gamelog_entry("P1 draws Bayou"),
+                make_choice_entry("<Choice> P2 chose 0 - play Badlands"),
+                make_gamelog_entry("P2 plays Badlands (66)"),
+                make_choice_entry("<Choice> P2 chose 'p' (pass priority)"),
+            ],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xAAAA,
+            post_rewind_state_snapshot: None,
+        };
+
+        // Replay regenerated the gamelog entries but emitted NO
+        // controller_choice entries (because ReplayController fed the
+        // saved choices directly without invoking the inner controller).
+        // The non-`controller_choice` entries match exactly, so the
+        // verifier must accept this as `Ok`.
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.logger.set_output_mode(crate::game::logger::OutputMode::Memory);
+        game.logger.gamelog("turn header"); // log_size_at_turn = 1
+        game.logger.gamelog("P1 draws Bayou");
+        game.logger.gamelog("P2 plays Badlands (66)");
+        let outcome = verify_replay(&verification, &game, Some(0xAAAA));
+        assert_eq!(
+            outcome,
+            ReplayCheckOutcome::Ok,
+            "controller_choice entries from inner controllers must be filtered out \
+             on both sides; ReplayController's short-circuit means they don't reproduce"
+        );
+    }
+
+    #[test]
+    fn test_verify_replay_still_catches_real_gamelog_mismatch_when_choice_entries_present() {
+        // Even when controller_choice entries are present in both tails, a
+        // genuine divergence in a `gamelog` entry must STILL be caught.
+        // Filtering is purely about ignoring controller_choice entries — it
+        // must not weaken any other check.
+        let verification = RewindVerification {
+            turn_number: 1,
+            pre_rewind_state_hash: 0,
+            pre_rewind_action_count: 0,
+            pre_rewind_log_count: 4,
+            pre_rewind_log_tail: vec![
+                make_choice_entry("<Choice> P1 chose 0"),
+                make_gamelog_entry("P1 casts Lightning Bolt"),
+                make_gamelog_entry("Lightning Bolt deals 3 to P2"),
+            ],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xBEEF,
+            post_rewind_state_snapshot: None,
+        };
+
+        // Replay produced WRONG damage line (deals 4 instead of 3) — even
+        // though the captured controller_choice entry is missing on replay,
+        // the gamelog mismatch in the second engine entry must surface.
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.logger.set_output_mode(crate::game::logger::OutputMode::Memory);
+        game.logger.gamelog("turn header");
+        game.logger.gamelog("P1 casts Lightning Bolt");
+        game.logger.gamelog("Lightning Bolt deals 4 to P2"); // diverged
+        let outcome = verify_replay(&verification, &game, Some(0xBEEF));
+        match outcome {
+            ReplayCheckOutcome::LogMismatch { expected, actual, .. } => {
+                assert_eq!(expected, "Lightning Bolt deals 3 to P2");
+                assert_eq!(actual, "Lightning Bolt deals 4 to P2");
+            }
+            other => panic!("expected LogMismatch despite choice-entry filtering, got {:?}", other),
+        }
     }
 
     #[test]

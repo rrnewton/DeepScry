@@ -36,7 +36,8 @@ use wasm_bindgen::prelude::*;
 
 use super::human_controller::{stage_discard_pick, PendingChoice, WasmHumanController};
 use super::replay_verifier::{
-    capture_pre_rewind, finish_capture, record_turn_start_hash, verify_replay, PreRewindCapture, RewindVerification,
+    capture_pre_rewind, finish_capture, record_turn_start_hash_with_snapshot, verify_replay, PreRewindCapture,
+    RewindVerification,
 };
 use super::rich_input_controller::WasmRichInputController;
 use super::{WasmCardDatabase, WasmControllerType};
@@ -56,6 +57,11 @@ thread_local! {
     // Thread-local storage for measured cell dimensions from JavaScript
     // Default to RatZilla's magic numbers (10x20 pixels per cell)
     static CELL_DIMENSIONS: RefCell<(f32, f32)> = const { RefCell::new((10.0, 20.0)) };
+    // Stash for `tui_set_verify_rewind_replay` calls that arrive BEFORE the
+    // TUI state is created (e.g. Playwright tests that call `enableReplayVerifier(page)`
+    // right after WASM init but before clicking Launch). Read by
+    // `WasmFancyTuiState::new` so the next launch picks the requested setting up.
+    static PENDING_VERIFY_REWIND_REPLAY: RefCell<bool> = const { RefCell::new(false) };
 }
 
 /// Set the fixed script for player 1's Fixed controller
@@ -116,18 +122,26 @@ pub fn cleanup_tui_state() {
 /// "Debug Mode" checkbox is checked, so production play pays no cost.
 #[wasm_bindgen]
 pub fn tui_set_verify_rewind_replay(enabled: bool) {
+    let mut applied_now = false;
     GLOBAL_TUI_STATE.with(|state| {
         if let Some(ref state) = *state.borrow() {
             let mut s = state.borrow_mut();
             s.set_verify_rewind_replay(enabled);
-        } else {
-            log::debug!(
-                target: "wasm_tui",
-                "tui_set_verify_rewind_replay({}) called before TUI state initialized; will be applied at next launch",
-                enabled,
-            );
+            applied_now = true;
         }
     });
+    if !applied_now {
+        // Stash so the next launch picks it up. Without this the comment in
+        // earlier versions ("will be applied at next launch") was a lie —
+        // the flag was silently dropped, and Playwright tests that set the
+        // verifier BEFORE clicking Launch ran with verification disabled.
+        PENDING_VERIFY_REWIND_REPLAY.with(|s| *s.borrow_mut() = enabled);
+        log::info!(
+            target: "wasm_tui",
+            "tui_set_verify_rewind_replay({}) stashed; will be applied when TUI state is created",
+            enabled,
+        );
+    }
 }
 
 /// Set cell dimensions measured by JavaScript
@@ -1242,6 +1256,7 @@ struct WasmFancyTuiState {
     /// must produce the same hash, otherwise the undo log is no longer a
     /// faithful inverse of forward play.
     turn_start_hashes: HashMap<u32, u64>,
+    turn_start_jsons: HashMap<u32, serde_json::Value>,
 }
 
 impl WasmFancyTuiState {
@@ -1342,9 +1357,14 @@ impl WasmFancyTuiState {
             blocker_choice_pairs: Vec::new(),
             staged_discard_indices: Vec::new(),
             discard_choice_indices: Vec::new(),
-            verify_rewind_replay: false,
+            // Honour any `tui_set_verify_rewind_replay(true)` call that
+            // landed BEFORE the TUI state was created (typical pattern in
+            // Playwright tests that wire `enableReplayVerifier(page)` right
+            // after WASM init but before clicking Launch).
+            verify_rewind_replay: PENDING_VERIFY_REWIND_REPLAY.with(|s| *s.borrow()),
             pending_verification: None,
             turn_start_hashes: HashMap::new(),
+            turn_start_jsons: HashMap::new(),
         }
     }
 
@@ -1436,7 +1456,7 @@ impl WasmFancyTuiState {
         // gone), and record_turn_start_hash captures state-at-turn-boundary.
         if let Some(pre) = pre_capture {
             let mut verification = finish_capture(pre, &self.game, log_size_at_turn);
-            record_turn_start_hash(&mut verification, &self.game);
+            record_turn_start_hash_with_snapshot(&mut verification, &self.game);
             self.pending_verification = Some(verification);
         } else {
             self.pending_verification = None;
@@ -1504,6 +1524,7 @@ impl WasmFancyTuiState {
         if !enabled {
             self.pending_verification = None;
             self.turn_start_hashes.clear();
+            self.turn_start_jsons.clear();
         }
         log::info!(target: "wasm_tui", "Rewind/replay verification {}", if enabled { "enabled" } else { "disabled" });
     }
@@ -1519,6 +1540,51 @@ impl WasmFancyTuiState {
     fn run_replay_verification(&mut self) -> Option<String> {
         let verification = self.pending_verification.take()?;
         let prior_turn_start_hash = self.turn_start_hashes.get(&verification.turn_number).copied();
+
+        // Diagnostic: when hash drift is detected, dump a per-top-level-field
+        // JSON diff against the snapshot we cached the FIRST time we rewound
+        // to this turn. Both snapshots are captured AT the turn-boundary
+        // moment (not post-replay) so the diff truly reflects what the rewind
+        // restored vs. what it restored last time. Without this, a
+        // `TurnStartHashChanged` violation gives only "expected X, got Y" —
+        // useless for finding the field that drifted. The dump only runs
+        // when drift is detected, so it costs nothing in the happy path.
+        if let Some(prior) = prior_turn_start_hash {
+            if prior != verification.post_rewind_turn_start_hash {
+                let prior_json_opt = self.turn_start_jsons.get(&verification.turn_number).cloned();
+                let cur_json_opt = verification.post_rewind_state_snapshot.clone();
+                if let (Some(prior_json), Some(cur_json)) = (prior_json_opt, cur_json_opt) {
+                    if let (serde_json::Value::Object(cur), serde_json::Value::Object(prior_obj)) =
+                        (cur_json, prior_json)
+                    {
+                        for (k, cv) in cur.iter() {
+                            if let Some(pv) = prior_obj.get(k) {
+                                if pv != cv {
+                                    let cs = serde_json::to_string(cv).unwrap_or_default();
+                                    let ps = serde_json::to_string(pv).unwrap_or_default();
+                                    let cs_s = if cs.len() > 600 {
+                                        format!("{}…", &cs[..600])
+                                    } else {
+                                        cs
+                                    };
+                                    let ps_s = if ps.len() > 600 {
+                                        format!("{}…", &ps[..600])
+                                    } else {
+                                        ps
+                                    };
+                                    log::error!(
+                                        target: "wasm_tui",
+                                        "[VERIFIER FIELD DIFF] '{}' \nPRIOR: {}\nCURRENT: {}",
+                                        k, ps_s, cs_s
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let outcome = verify_replay(&verification, &self.game, prior_turn_start_hash);
         // Always cache the freshly-recorded turn-start hash so the FIRST
         // rewind to a turn establishes the baseline and later rewinds can
@@ -1527,6 +1593,15 @@ impl WasmFancyTuiState {
         if outcome.is_ok() {
             self.turn_start_hashes
                 .insert(verification.turn_number, verification.post_rewind_turn_start_hash);
+            // Cache the at-boundary JSON snapshot (captured by
+            // `record_turn_start_hash_with_snapshot` at the same instant as
+            // the hash) so the next rewind can diff it field-by-field if the
+            // hash drifts. We keep the snapshot from `verification` rather
+            // than re-snapshotting `self.game` here because the live state
+            // has already been mutated by the replay phase.
+            if let Some(snap) = verification.post_rewind_state_snapshot.clone() {
+                self.turn_start_jsons.insert(verification.turn_number, snap);
+            }
         }
         // `fatal_message()` returns `None` for Ok and Some(...) for the three
         // failure variants — keeping the dispatch in one place avoids a
