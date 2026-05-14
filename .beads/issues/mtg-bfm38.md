@@ -6,7 +6,7 @@ issue_type: task
 depends_on:
   mtg-to96y: parent-child
 created_at: 2025-12-05T17:58:29.730244324+00:00
-updated_at: 2025-12-05T23:16:26.742820585+00:00
+updated_at: 2026-05-14T15:36:40.306623916+00:00
 ---
 
 # Description
@@ -105,108 +105,26 @@ networking layer with existing E2E test scripts.
 
 ### Usage
 ```bash
-# Direct invocation
-python3 scripts/mtg_tui_networked.py deck1.dck deck2.dck --p1 heuristic --p2 zero
 
-# Via test_helpers (automatic with env var)
-MTG_NETWORK_MODE=1 ./tests/some_e2e_test.sh
-```
+Dependencies:
+  mtg-to96y (parent-child)
 
-### Integration with test_helpers
-When `MTG_NETWORK_MODE=1` is set, `run_mtg tui ...` will:
-1. Try network mode first
-2. Fall back to local mode if unsupported options are used (exit code 2)
-3. Log clearly which mode is being used
+## QA fuzz session 2026-05-14 (qa-fuzz-testing @ fe820468)
 
-## Client-Side UI Progress (2025-12-05)
+Ran `bug_finding/network_fuzz_test.py` across 130+ configurations (native↔native, native↔WASM, WASM↔WASM, --local-equivalence). Findings filed:
 
-### Completed
-- **RemoteController**: Created controller for receiving opponent choices from server
-  - Implements full PlayerController trait
-  - Receives choices via mpsc channel
-  - Returns ChoiceResult::ExitGame on disconnect
-- **Shared display function**: Extracted `print_battlefield_state` to game::display module
-  - Used by both GameLoop and NetworkClient
-  - Eliminates code duplication
-  - Shows viewer's hand (not just active player)
-- **Connect CLI enhanced**: Added --controller, --fixed-inputs, --seed-player, --visual-stacks, --verbosity
-- **--real-gameloop flag**: Added CLI flag to use run_game_real (commits c0c6500e, d5f84f80)
-- **SharedRevealQueue**: Infrastructure for passing card reveals from WebSocket to game thread (commit ba0fba13)
-- **Makefile/test_helpers**: Added --features network to validation (commit c0c6500e)
+- **mtg-c54e90** (P2): Network desync — Seismic Sense triggers FATAL P2 state hash mismatch every time it resolves (~30% of native runs hit this).
+- **mtg-e05f9c** (P2): WASM combat-damage desync — distinct from Seismic Sense, only triggers on mixed/wasm runs.
+- **mtg-ced6d1** (P2): ABILITY SYNC BUG — Cycle (Mountaincycling) ability missing on client; FATAL DESYNC on choice index.
+- **mtg-a5e7f1** (P2): Twin Blades crashes client with 'Only Equipment or Auras can be attached'.
+- **mtg-6b510d** (P3): Heuristic AI infinite-loop after Plainscycling discard ('Insufficient mana' retried until timeout).
+- **mtg-65073f** (P4): Fuzz infrastructure missing for fancy.html / game.html clients.
+- **mtg-df3fb6** (P4): deck_submission.json.tmp race when --client wasm/mixed runs in parallel.
 
-### In Progress
-- **run_game_real timing**: Reveals only drained at startup, not during gameplay
-  - Need to either hook GameLoop or have controllers drain queue
-  - Core infrastructure is in place
+Pass-rate breakdown observed:
+- native↔native, 60 configs:   42/60 (70%) pass
+- native↔WASM mixed, 10 configs: 5/10 (50%) pass
+- WASM↔WASM,  10 configs:        2/10 (20%) pass
+- random↔random, 30 configs:    19/30 (63%) pass
 
-### FIXME-UNFINISHED Items
-See markers in code for stubbed functionality:
-- Client doesn't replay opponent choices on shadow state
-- Hash verification accepts server hash without computing local
-- Multi-select not supported for targets, mana, attackers, blockers, discard
-- GameEndReason not from actual GameLoop
-
-## Fixed Issues
-
-- **Server now sends GameEnded**: Added oneshot channels to signal game end to WebSocket handlers.
-  Handlers now properly send GameEnded message with winner, reason, and final state hash before closing.
-
-## Known Issues
-
-### FIXED: test_run_game_with_random_controllers (2025-12-06)
-
-The `test_run_game_with_random_controllers` test was flaky due to two timing issues. Both have been fixed.
-
-**Fix #1 (2025-12-06_#1251)**: Added `RemoteMessage::GameEnded` signal
-- `RemoteMessage` enum with `Choice` and `GameEnded` variants
-- WebSocket handler sends `RemoteMessage::GameEnded` through `remote_choice_tx` before exiting
-- `RemoteController` handles `GameEnded` gracefully (no disconnect warning)
-
-**Fix #2 (2025-12-06_#1252)**: action_count sync and graceful shutdown
-- WebSocket handler now stores server's `action_count` from `ChoiceRequest` and uses it
-  when sending `SubmitChoice`, instead of using client's shadow state action_count
-- When GameLoop returns "Game exit requested" error, the client tries to receive winner
-  from `game_end_rx` before reporting error - treats it as graceful shutdown
-- Test now passes consistently (20/20 runs in testing)
-
-The test is now enabled (no `#[ignore]` attribute).
-
-## Test Strategy
-
-Use localhost connections with fixed-script or heuristic controllers.
-Compare network game results with equivalent local games to verify determinism.
-
-## Analysis: Network Game Display Issues (2025-12-07)
-
-Running `network_game_e2e.sh` with Spiderman draft decks revealed display issues:
-
-### Observed Behavior
-- Game reported 418 choices, 209 "turns" (choice opportunities per player)
-- Client display shows **wrong game state**:
-  - `Hand: 0 | Library: 41` when cards should have been drawn
-  - `Battlefield: (empty)` when lands/creatures should be present
-  - Life totals static at 20/20 throughout game
-
-### Root Cause
-The `FIXME-UNFINISHED` items documented above:
-1. `process_opponent_choice()` in client.rs is a no-op - doesn't replay choices on shadow state
-2. Our own choices also don't update the shadow state display
-3. Only `CardRevealed` messages are processed (queueing for library draws)
-
-### Impact
-- **Display is cosmetic only** - shows initial state, not current state
-- **Game logic is correct** - server runs the real game, choices are valid
-- Game completes successfully with both clients exiting with code 0
-
-### Why This Works
-Despite broken display:
-1. Server runs authoritative game simulation
-2. Client sends choices based on options server provides (not local state)
-3. Server validates choices and executes them
-4. Game ends correctly when win condition met
-
-### To Fix
-Would need to:
-1. Replay opponent choices on shadow state (integrate with GameLoop)
-2. Track our own choice results on shadow state
-3. Or: receive full/delta state updates from server after each choice
+Most desyncs are deterministic (re-running with the same seed reproduces them) but at least one mixed-mode failure was FLAKY (3/3 pass on rerun) — see mtg-e05f9c.
