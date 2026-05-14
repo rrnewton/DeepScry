@@ -54,11 +54,21 @@ if __package__ in (None, ""):
         ClaudeResumeSession,
         MockSession,
     )
+    from agentplay.lib.prompts import build_choice_prompt_with_summary
+    from agentplay.lib.wasm_process import (
+        WASM_PAGE_FANCY,
+        WASM_PAGE_GAME,
+        WASM_PAGES,
+        WasmLaunchConfig,
+        WasmPlaywrightProcess,
+        deck_path_to_wasm_name,
+    )
 else:
     from .lib.engine import GameEngine, new_log_tail_lines
     from .lib.prompts import (
         AgentDecision,
         build_choice_prompt,
+        build_choice_prompt_with_summary,
         build_intro_section,
         extract_bug_report,
         format_deck_preamble,
@@ -72,15 +82,28 @@ else:
         ClaudeResumeSession,
         MockSession,
     )
+    from .lib.wasm_process import (
+        WASM_PAGE_FANCY,
+        WASM_PAGE_GAME,
+        WASM_PAGES,
+        WasmLaunchConfig,
+        WasmPlaywrightProcess,
+        deck_path_to_wasm_name,
+    )
 
 
-# Engine driver modes selected via `--driver`. The persistent mode keeps a
-# single `mtg tui --p1=tui` subprocess alive and feeds choices via stdin; the
-# legacy stop-and-go mode re-runs the entire game from scratch on every
-# decision via `--p1=fixed --p2=fixed`. Both produce the same on-disk
-# artefacts (pN_choices.txt, snapshot.json, game.log, enriched_log.md).
+# Engine driver modes selected via `--driver`. Three backends now share the
+# `GameProcess` protocol; `agent_game.py` pipes the same prompts through any
+# of them and writes the same on-disk artefacts (pN_choices.txt,
+# snapshot.json, game.log, enriched_log.md):
+#
+#   * `persistent`   (default, native): one `mtg tui --p1=tui` subprocess.
+#   * `stop-and-go`  (legacy):          re-run `mtg tui` per decision.
+#   * `wasm`:                           one headless Chromium tab driving
+#                                       fancy.html / game.html via Playwright.
 DRIVER_PERSISTENT = "persistent"
 DRIVER_STOP_AND_GO = "stop-and-go"
+DRIVER_WASM = "wasm"
 
 
 # Re-exported here so existing callers (and tests) can keep importing
@@ -213,13 +236,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--driver",
-        choices=(DRIVER_PERSISTENT, DRIVER_STOP_AND_GO),
+        choices=(DRIVER_PERSISTENT, DRIVER_STOP_AND_GO, DRIVER_WASM),
         default=DRIVER_PERSISTENT,
         help=(
             "Engine driver. `persistent` keeps one `mtg tui --p1=tui` process "
             "alive and pipes choices via stdin; `stop-and-go` re-runs the engine "
             "from scratch on every decision (legacy default before persistent "
-            "mode existed). Both produce identical on-disk artefacts."
+            "mode existed); `wasm` drives a headless Chromium tab against "
+            "fancy.html / game.html via Playwright. All three produce identical "
+            "on-disk artefacts."
+        ),
+    )
+    parser.add_argument(
+        "--wasm-page",
+        choices=WASM_PAGES,
+        default=WASM_PAGE_FANCY,
+        help=(
+            "Which WASM page the `wasm` driver loads. `fancy` runs the "
+            "ratzilla-rendered TUI (matches the native `mtg tui`); `game` "
+            "runs the native HTML GUI. Both call the same WASM exports so "
+            "the protocol is identical — only the visible rendering differs. "
+            "Has no effect when --driver != wasm."
+        ),
+    )
+    parser.add_argument(
+        "--screenshot-dir",
+        default=None,
+        help=(
+            "Directory the `wasm` driver writes a per-choice full-page "
+            "screenshot to (filename `choice_NNNN_<player>.png`). Defaults "
+            "to <game_dir>/screenshots when --driver=wasm."
+        ),
+    )
+    parser.add_argument(
+        "--wasm-headed",
+        action="store_true",
+        help=(
+            "Run the WASM driver in HEADED mode (visible browser window) "
+            "instead of headless. Useful for debugging."
         ),
     )
     parser.add_argument(
@@ -326,6 +380,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         # lifecycle and on-disk artefacts, but reuses every prompt-building
         # helper above so the agent sees identical content.
         return _run_persistent(
+            args=args,
+            mtg_args=mtg_args,
+            engine=engine,
+            card_db=card_db,
+            all_card_names=all_card_names,
+            seen_card_names=seen_card_names,
+            deck_preamble=deck_preamble,
+            rules_paths=rules_paths,
+            intro_text=intro_text,
+            repo_root=repo_root,
+        )
+
+    if args.driver == DRIVER_WASM:
+        # Hand off to the WASM/Playwright driver. Same prompt content, same
+        # artefacts; the engine lives in a headless browser tab instead of
+        # a native subprocess.
+        return _run_wasm(
             args=args,
             mtg_args=mtg_args,
             engine=engine,
@@ -941,6 +1012,364 @@ def _persistent_choose(
         choice_number=choice_number,
         raw_response=f"{controller_kind} choice\n{choice_number}",
     )
+
+
+# ---------------------------------------------------------------------------
+# WASM driver
+# ---------------------------------------------------------------------------
+
+
+def _run_wasm(
+    *,
+    args: argparse.Namespace,
+    mtg_args: Sequence[str],
+    engine: GameEngine,
+    card_db: CardDatabase,
+    all_card_names: set[str],
+    seen_card_names: set[str],
+    deck_preamble: str | None,
+    rules_paths: list[str],
+    intro_text: str,
+    repo_root: Path,
+) -> int:
+    """Drive a game using ONE headless Chromium tab against the WASM build.
+
+    Mirrors `_run_persistent` exactly except the engine lives in a browser
+    tab driven by Playwright instead of a native subprocess. Same prompt
+    content (rebuilt via `build_choice_prompt_with_summary` so the
+    `Current game state:` block is structurally identical to native), same
+    on-disk artefacts (`pN_choices.txt`, `snapshot.json`, `game.log`,
+    `enriched_log.md`), and additionally a per-choice screenshot dir.
+
+    Limitations vs. the native drivers (Phase 2):
+      * Decks must come from the WASM-exported set (`web/data/deck_index.json`)
+        — we map the user's `decks/foo.dck` paths to the bare deck name `foo`
+        and surface a clear error if the requested deck wasn't exported.
+      * Only Player 1 is human-driven (the WASM TUI's renderer has a single
+        perspective). Player 2 is engine-driven; agent-vs-agent in WASM mode
+        is a follow-up.
+    """
+
+    # ------------------------------------------------------------------
+    # Set up artefact paths (parity with stop-and-go / persistent modes)
+    # ------------------------------------------------------------------
+    engine.game_dir.mkdir(parents=True, exist_ok=True)
+    engine.p1_choices_path.touch()
+    engine.p2_choices_path.touch()
+    if not engine.initial_args_path.exists():
+        engine.initial_args_path.write_text(
+            "\n".join(str(a) for a in mtg_args) + "\n", encoding="utf-8"
+        )
+    game_log_path = engine.game_dir / "game.log"
+    game_log_path.touch()
+    printed_log_lines: list[str] = []
+
+    rng = random.Random(args.seed)
+
+    # ------------------------------------------------------------------
+    # Resolve decks → WASM-exported names
+    # ------------------------------------------------------------------
+    deck_paths: list[str] = [a for a in mtg_args if str(a).endswith(".dck")]
+    if len(deck_paths) < 2:
+        # If only one was provided, mirror the native default of using the
+        # same deck for both players.
+        if not deck_paths:
+            print("Error: WASM driver requires at least one .dck path", file=sys.stderr)
+            return 1
+        deck_paths = [deck_paths[0], deck_paths[0]]
+    p1_deck_name = deck_path_to_wasm_name(deck_paths[0])
+    p2_deck_name = deck_path_to_wasm_name(deck_paths[1])
+
+    # ------------------------------------------------------------------
+    # Pick controller types for each player
+    # ------------------------------------------------------------------
+    p1_kind = _controller_for_player(args.mode, "p1", mock=args.mock)
+    p2_kind = _controller_for_player(args.mode, "p2", mock=args.mock)
+    p1_wasm = _wasm_controller_for_kind(p1_kind)
+    p2_wasm = _wasm_controller_for_kind(p2_kind)
+    if p2_wasm == "human" and p1_wasm == "human":
+        print(
+            "Warning: WASM driver currently supports only one human-driven "
+            "player; forcing P2 to heuristic. (Phase 3: bidirectional WASM.)",
+            file=sys.stderr,
+        )
+        p2_wasm = "heuristic"
+
+    # ------------------------------------------------------------------
+    # Spawn the headless Chromium tab + WASM session
+    # ------------------------------------------------------------------
+    web_dir = repo_root / "web"
+    if not (web_dir / "pkg" / "mtg_forge_rs.js").exists():
+        print(
+            f"Error: WASM build not found at {web_dir / 'pkg'}.\n"
+            "Build it with: make wasm-dev (or symlink web/pkg from a built checkout)",
+            file=sys.stderr,
+        )
+        return 1
+    if not (web_dir / "data" / "decks.bin").exists():
+        print(
+            f"Error: WASM data not found at {web_dir / 'data'}.\n"
+            "Generate it with: mtg export-wasm",
+            file=sys.stderr,
+        )
+        return 1
+
+    screenshot_dir = (
+        Path(args.screenshot_dir)
+        if args.screenshot_dir
+        else (engine.game_dir / "screenshots")
+    )
+
+    proc = WasmPlaywrightProcess(
+        config=WasmLaunchConfig(
+            p1_deck=p1_deck_name,
+            p2_deck=p2_deck_name,
+            p1_controller=p1_wasm,
+            p2_controller=p2_wasm,
+            seed=args.seed,
+            page=args.wasm_page,
+            headless=not args.wasm_headed,
+        ),
+        web_dir=web_dir,
+        game_dir=engine.game_dir,
+        screenshot_dir=screenshot_dir,
+        verbose=args.verbose,
+    )
+
+    # ------------------------------------------------------------------
+    # Per-player AgentSession objects
+    # ------------------------------------------------------------------
+    sessions: dict[str, AgentSession] = {}
+    if args.mock:
+        sessions["p1"] = MockSession(seed=args.seed, label="p1-mock")
+        sessions["p2"] = MockSession(seed=args.seed + 1, label="p2-mock")
+    else:
+        if p1_kind == "agent":
+            sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
+        if p2_kind == "agent":
+            sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
+
+    # ------------------------------------------------------------------
+    # Run the loop (mirrors `_run_persistent`)
+    # ------------------------------------------------------------------
+    history_entries: list[HistoryEntry] = []
+    choice_count = 0
+    try:
+        event = proc.start()
+        while isinstance(event, ChoicePoint):
+            player = event.player
+            controller_kind = _controller_for_player(args.mode, player, mock=args.mock)
+            turn_number = event.turn_number
+
+            if turn_number is not None and turn_number > args.max_turns:
+                print(f"Stopped: reached turn limit {args.max_turns}", file=sys.stderr)
+                return 2
+
+            choices = list(event.choices)
+            if not choices:
+                print("Stopped: no available choices found in WASM view model", file=sys.stderr)
+                return 1
+
+            new_text_block = "\n".join(event.log_lines).strip()
+            if new_text_block:
+                print(new_text_block, file=sys.stderr, flush=True)
+                _append_to_file(game_log_path, new_text_block)
+                printed_log_lines.extend(new_text_block.splitlines())
+
+            full_log_so_far = "\n".join(printed_log_lines)
+            newly_seen = find_mentioned_cards(full_log_so_far, all_card_names) - seen_card_names
+            seen_card_names.update(newly_seen)
+
+            interleaved_history = _format_history(history_entries)
+            previous_decision = _format_previous_decision(history_entries)
+            card_defs_text = (
+                card_db.format_definitions(seen_card_names) if seen_card_names else None
+            )
+            # Use the precomputed text summary attached by WasmPlaywrightProcess
+            # (built from the GuiViewModel via text_formatter.py). This keeps
+            # the prompt's "Current game state:" section structurally
+            # identical to what the native drivers produce.
+            state_summary = (
+                event.snapshot.get("_state_summary_text", "")
+                if isinstance(event.snapshot, dict)
+                else ""
+            )
+            prompt_text = build_choice_prompt_with_summary(
+                state_summary=state_summary,
+                choices=choices,
+                log_since_last_decision=new_text_block,
+                goal=args.goal,
+                scenario=args.scenario,
+                interleaved_history=interleaved_history,
+                previous_decision=previous_decision,
+                card_definitions=card_defs_text,
+                rules_paths=rules_paths if rules_paths else None,
+                bug_detection=args.bug_detection,
+                deck_preamble=deck_preamble,
+            )
+            game_state_summary = _extract_game_state_summary(prompt_text)
+            before_snapshot = event.snapshot
+
+            choice_display = "\n".join(
+                f"  [{i}] {c}" for i, c in enumerate(["pass"] + choices)
+            )
+            print(
+                f"--- {player} ({controller_kind}) | Turn {turn_number or '?'} | "
+                f"{len(choices)} choices ---",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(choice_display, file=sys.stderr, flush=True)
+            if controller_kind == "agent":
+                print(
+                    f"========== Agent invoked for choice #{choice_count + 1} ==========",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            t0 = time.time()
+            try:
+                decision = _persistent_choose(
+                    controller_kind=controller_kind,
+                    player=player,
+                    sessions=sessions,
+                    prompt_text=prompt_text,
+                    choice_count=len(choices),
+                    rng=rng,
+                    bug_detection=args.bug_detection,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            elapsed = time.time() - t0
+            raw_response = decision.raw_response
+
+            if decision.stopped_for_bug:
+                bug_report_path = _append_bug_report(
+                    engine.game_dir,
+                    player=player,
+                    turn_number=turn_number,
+                    bug_report_text=decision.bug_report
+                    or "(agent stopped for a suspected gameplay bug, but no details were provided)",
+                    raw_response=raw_response,
+                )
+                print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
+                print(
+                    f"Stopped: {player} reported a suspected gameplay bug.",
+                    file=sys.stderr,
+                )
+                return 0
+
+            if decision.choice_number is None:
+                print(
+                    "Stopped: agent decision did not include a choice number",
+                    file=sys.stderr,
+                )
+                return 1
+            choice_number = decision.choice_number
+            if choice_number == 0:
+                choice_text = "pass"
+            else:
+                if choice_number > len(choices):
+                    print(
+                        f"Stopped: choice {choice_number} out of range (1..{len(choices)})",
+                        file=sys.stderr,
+                    )
+                    return 1
+                choice_text = choices[choice_number - 1]
+
+            if controller_kind == "agent":
+                print(
+                    f"  => Agent chose [{choice_number}] {choice_text}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(
+                    f"========== Agent responded in {elapsed:.1f}s ==========",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
+            else:
+                print(
+                    f"  => {controller_kind.title()} chose [{choice_number}] {choice_text}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            history_entries.append(
+                HistoryEntry(
+                    decision_number=choice_count + 1,
+                    player=player,
+                    controller_kind=controller_kind,
+                    turn_number=turn_number,
+                    log_since_last_decision=new_text_block,
+                    chosen_action=choice_text,
+                    reasoning=raw_response,
+                )
+            )
+
+            bug_report_text = extract_bug_report(raw_response)
+            if bug_report_text is not None:
+                bug_report_path = _append_bug_report(
+                    engine.game_dir,
+                    player=player,
+                    turn_number=turn_number,
+                    bug_report_text=bug_report_text,
+                    raw_response=raw_response,
+                )
+                print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
+
+            engine.append_choice(player, choice_text)
+            event = proc.send_choice(player, choice_text)
+
+            engine.append_enriched_log(
+                before_snapshot=before_snapshot,
+                game_state_summary=game_state_summary,
+                available_choices=choices,
+                agent_response=raw_response,
+                chosen_action=choice_text,
+                after_snapshot=event.snapshot if isinstance(event, ChoicePoint) else {},
+            )
+            choice_count += 1
+
+            if choice_count > 10000:
+                print(
+                    "Stopped: exceeded internal choice safety limit",
+                    file=sys.stderr,
+                )
+                return 2
+
+        assert isinstance(event, GameOver)
+        if event.fresh_output.strip():
+            print(event.fresh_output, file=sys.stderr, flush=True)
+            _append_to_file(game_log_path, event.fresh_output)
+        if event.log_lines:
+            tail = "\n".join(event.log_lines)
+            _append_to_file(game_log_path, tail)
+        print("Game over.", file=sys.stderr)
+        return 0
+    finally:
+        for sess in sessions.values():
+            sess.close()
+        proc.close()
+
+
+def _wasm_controller_for_kind(kind: str) -> str:
+    """Map an agentplay 'controller_kind' to a WASM `WasmControllerType` name.
+
+    The WASM driver only knows about engine-side controllers (zero/random/
+    heuristic) and the special `human` controller which blocks for input
+    that comes from `tui_set_choice_idx` + `tui_select_choice`. `agent` and
+    `mock` are Python-side concepts implemented as `human` on the engine
+    side (with the Python harness driving the choice).
+    """
+
+    if kind in ("agent", "mock"):
+        return "human"
+    if kind in ("heuristic", "random", "zero"):
+        return kind
+    raise ValueError(f"unsupported controller kind for WASM driver: {kind!r}")
 
 
 def _query_agent(
