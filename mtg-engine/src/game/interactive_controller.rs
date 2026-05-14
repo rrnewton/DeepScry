@@ -7,6 +7,7 @@ use crate::game::command_parsing::{card_matches, parse_spell_ability_choice};
 use crate::game::controller::{sort_spell_abilities, ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 /// A controller that prompts a human player for decisions via stdin
 pub struct InteractiveController {
@@ -14,6 +15,15 @@ pub struct InteractiveController {
     numeric_choices: bool,
     /// Command buffer for semicolon-separated inputs
     command_buffer: Vec<String>,
+    /// Optional path to dump a JSON `GameSnapshot` of the current game state
+    /// before each interactive prompt.
+    ///
+    /// This is used by the persistent `agent_play.py --mode persistent` driver
+    /// to read the same structured `game_state` JSON the legacy stop-and-go mode
+    /// gets from `--snapshot-output`, without rewinding the game. The file is
+    /// rewritten before every choice (only `JSON` format is used so the Python
+    /// harness can parse it directly).
+    snapshot_path: Option<PathBuf>,
 }
 
 impl InteractiveController {
@@ -23,6 +33,7 @@ impl InteractiveController {
             player_id,
             numeric_choices: false,
             command_buffer: Vec::new(),
+            snapshot_path: None,
         }
     }
 
@@ -32,7 +43,57 @@ impl InteractiveController {
             player_id,
             numeric_choices,
             command_buffer: Vec::new(),
+            snapshot_path: None,
         }
+    }
+
+    /// Set the path to which a JSON snapshot of the current game state will
+    /// be written before every interactive prompt.
+    ///
+    /// Used by the persistent agentplay driver so it can read the same
+    /// structured `game_state` the legacy stop-and-go mode gets from
+    /// `--snapshot-output`. Returns `self` for builder-style chaining.
+    pub fn with_snapshot_path(mut self, path: PathBuf) -> Self {
+        self.snapshot_path = Some(path);
+        self
+    }
+
+    /// Write a fresh JSON `GameSnapshot` of the current game state to
+    /// `self.snapshot_path` (if set), then print the persistent-agentplay
+    /// "ready for input" marker on stdout so the Python harness knows the
+    /// engine is blocked waiting for stdin input.
+    ///
+    /// Errors are logged but never fatal — the snapshot is informational;
+    /// failing to write it should not crash an interactive game. If
+    /// `snapshot_path` is unset (the normal interactive case) this is a no-op,
+    /// so existing human stdin gameplay is unaffected.
+    fn maybe_write_snapshot(&self, view: &GameStateView) {
+        let Some(path) = self.snapshot_path.as_ref() else {
+            return;
+        };
+        // Clone the GameState so we can hand ownership to GameSnapshot
+        // without disturbing the live game. This is the same pattern used by
+        // `save_snapshot_and_exit` in game_loop/snapshot.rs (which clones
+        // after rewinding); since we don't rewind, this is just a shallow
+        // serializable copy.
+        let game_state = view.game().clone();
+        let turn_number = view.game().turn.turn_number;
+        let snapshot = crate::game::GameSnapshot::new(game_state, turn_number, Vec::new());
+        if let Err(e) = snapshot.save_to_file(path, crate::game::snapshot::SnapshotFormat::Json) {
+            // Don't crash the interactive game on I/O errors; log and continue.
+            log::warn!(
+                "InteractiveController: failed to write live snapshot to {}: {}",
+                path.display(),
+                e
+            );
+            return;
+        }
+        // Emit the marker that tells the persistent agentplay driver
+        // "snapshot is fresh on disk, the engine is now blocked on stdin".
+        // Must use `println!` (not `log::*`) so it shows up regardless of
+        // RUST_LOG filtering.
+        println!("[AGENTPLAY: ready for input]");
+        let _ = io::stdout().flush();
     }
 
     /// Get the next buffered command, or read new input from stdin
@@ -408,6 +469,11 @@ impl PlayerController for InteractiveController {
                 println!("  [{}] {}", idx + 1, desc);
             }
 
+            // Persistent agentplay hook: dump JSON snapshot + emit "ready"
+            // marker now that the menu has been written to stdout. (No-op
+            // when --tui-snapshot-path is not set.)
+            self.maybe_write_snapshot(view);
+
             let choice_opt = self.get_user_choice_with_view(
                 &format!("Enter choice (0-{}, or ? for help):", sorted.len()),
                 sorted.len() + 1,
@@ -449,6 +515,11 @@ impl PlayerController for InteractiveController {
                 "{}",
                 crate::game::controller::format_choice_menu(view, &sorted, self.wants_context())
             );
+
+            // Persistent agentplay hook: dump JSON snapshot + emit "ready"
+            // marker now that the menu has been written to stdout. (No-op
+            // when --tui-snapshot-path is not set.)
+            self.maybe_write_snapshot(view);
 
             // Read user input and try rich command parsing first
             loop {
@@ -557,6 +628,8 @@ impl PlayerController for InteractiveController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
+        self.maybe_write_snapshot(view);
+
         let spell_name = view.card_name(spell).unwrap_or_default();
         println!("\n--- Targeting for: {} ---", spell_name);
 
@@ -663,6 +736,8 @@ impl PlayerController for InteractiveController {
         if available_creatures.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }
+
+        self.maybe_write_snapshot(view);
 
         // Note: Attacker selection prompt is now printed by game loop before this method is called
         let mut attackers = SmallVec::new();
@@ -801,6 +876,8 @@ impl PlayerController for InteractiveController {
         if attackers.is_empty() || available_blockers.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }
+
+        self.maybe_write_snapshot(view);
 
         // Note: Blocker selection prompt is now printed by game loop before this method is called
         let mut blocks = SmallVec::new();
@@ -1049,10 +1126,11 @@ impl PlayerController for InteractiveController {
 
     fn choose_cards_to_discard(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
+        self.maybe_write_snapshot(view);
         // Note: Discard selection prompt is now printed by game loop before this method is called
         let mut discards = SmallVec::new();
 
@@ -1106,7 +1184,7 @@ impl PlayerController for InteractiveController {
 
     fn choose_from_library(
         &mut self,
-        _view: &GameStateView,
+        view: &GameStateView,
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         // Interactive: Show library and let user choose
@@ -1114,6 +1192,8 @@ impl PlayerController for InteractiveController {
             println!("\nLibrary search: No valid cards found.");
             return ChoiceResult::Ok(None);
         }
+
+        self.maybe_write_snapshot(view);
 
         println!("\n=== Library Search ===");
         println!("Choose a card from your library (or enter 'n' to fail to find):");
@@ -1162,6 +1242,8 @@ impl PlayerController for InteractiveController {
         if valid_permanents.is_empty() || count == 0 {
             return ChoiceResult::Ok(SmallVec::new());
         }
+
+        self.maybe_write_snapshot(view);
 
         println!("\n=== Sacrifice {} ===", card_type_description);
         println!("You must sacrifice {} {}:", count, card_type_description);
@@ -1225,6 +1307,8 @@ impl PlayerController for InteractiveController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
+        self.maybe_write_snapshot(view);
+
         println!("\n=== Untap Step ===");
         println!("The following permanents have 'You may choose not to untap':");
         for (idx, &card_id) in may_not_untap_permanents.iter().enumerate() {
@@ -1265,6 +1349,8 @@ impl PlayerController for InteractiveController {
         if mode_descriptions.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }
+
+        self.maybe_write_snapshot(view);
 
         let spell_name = view
             .get_card_name(spell_id)

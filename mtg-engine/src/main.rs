@@ -358,6 +358,18 @@ enum Commands {
         /// Example: "Island;Counterspell;Island"
         #[arg(long, value_name = "CARDS")]
         p2_draw: Option<String>,
+
+        /// Persistent agentplay snapshot path: when set, the interactive (TUI)
+        /// controller writes a JSON `GameSnapshot` of the current game state
+        /// to this path before every prompt.
+        ///
+        /// Used by `agentplay/agent_game.py --mode persistent`, which keeps a
+        /// single `mtg tui` subprocess alive and needs the same structured
+        /// `game_state` JSON the legacy stop-and-go mode gets from
+        /// `--snapshot-output`. The file is rewritten before each choice
+        /// (always JSON, regardless of `--json`).
+        #[arg(long, value_name = "FILE")]
+        tui_snapshot_path: Option<PathBuf>,
     },
 
     /// Run games for profiling (use with cargo-heaptrack or cargo-flamegraph)
@@ -785,6 +797,7 @@ async fn main() -> Result<()> {
             log_tail,
             p1_draw,
             p2_draw,
+            tui_snapshot_path,
         } => {
             // Convert json flag to SnapshotFormat
             let snapshot_format = if json {
@@ -829,6 +842,7 @@ async fn main() -> Result<()> {
                 log_tail,
                 p1_draw,
                 p2_draw,
+                tui_snapshot_path,
             )
             .await?;
 
@@ -1288,6 +1302,7 @@ async fn run_tui(
     log_tail: Option<usize>,
     p1_draw: Option<String>,
     p2_draw: Option<String>,
+    tui_snapshot_path: Option<PathBuf>,
 ) -> Result<()> {
     let verbosity: VerbosityLevel = verbosity.into();
     let suppress_output = log_tail.is_some();
@@ -1599,7 +1614,16 @@ async fn run_tui(
                 Box::new(RandomController::with_seed(p1_id, entropy_seed))
             }
         }
-        ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
+        ControllerType::Tui => {
+            // Build base TUI controller; if --tui-snapshot-path was given,
+            // attach it so the persistent agentplay driver can read structured
+            // game state between choices.
+            let mut ctrl = InteractiveController::with_numeric_choices(p1_id, numeric_choices);
+            if let Some(ref path) = tui_snapshot_path {
+                ctrl = ctrl.with_snapshot_path(path.clone());
+            }
+            Box::new(ctrl)
+        }
         ControllerType::Fancy => Box::new(
             FancyTuiController::new(p1_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
@@ -1709,14 +1733,27 @@ async fn run_tui(
                 Box::new(RandomController::with_seed(p2_id, entropy_seed))
             }
         }
-        ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices)),
+        ControllerType::Tui => {
+            // Build base TUI controller; if --tui-snapshot-path was given,
+            // attach it so the persistent agentplay driver can read structured
+            // game state between choices.
+            let mut ctrl = InteractiveController::with_numeric_choices(p2_id, numeric_choices);
+            if let Some(ref path) = tui_snapshot_path {
+                ctrl = ctrl.with_snapshot_path(path.clone());
+            }
+            Box::new(ctrl)
+        }
         ControllerType::Fancy => {
             // Fancy TUI is only available for Player 1
             if !suppress_output {
                 log::warn!("Warning: Fancy TUI controller is only available for Player 1");
                 log::warn!("  Using regular TUI controller for Player 2 instead");
             }
-            Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
+            let mut ctrl = InteractiveController::with_numeric_choices(p2_id, numeric_choices);
+            if let Some(ref path) = tui_snapshot_path {
+                ctrl = ctrl.with_snapshot_path(path.clone());
+            }
+            Box::new(ctrl)
         }
         ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
         ControllerType::Fixed => {
