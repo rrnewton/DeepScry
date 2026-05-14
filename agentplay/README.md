@@ -46,6 +46,37 @@ agentplay/
 ./agentplay/agent_game.py --mock --seed 42 -- decks/simple_bolt.dck decks/simple_bolt.dck
 ```
 
+### Engine driver: persistent vs stop-and-go
+
+`agent_game.py` supports two engine driver modes via `--driver`:
+
+| `--driver`     | Engine subprocess                                       | LLM session                              |
+|----------------|---------------------------------------------------------|------------------------------------------|
+| `persistent`   | ONE long-running `mtg tui --p1=tui --p2=<X>` process    | Per-player `claude --resume <session>`   |
+| `stop-and-go`  | Re-runs `mtg tui --p1=fixed --p2=fixed` per decision    | Per-decision `claude -p <prompt>`        |
+
+Both modes produce the same on-disk artefacts (see "Game Directory
+Structure" below) so a game played in persistent mode can be replayed in
+stop-and-go mode (and vice-versa). The default is `persistent`.
+
+```bash
+# Default — persistent driver, per-player resume sessions
+./agentplay/agent_game.py -- decks/simple_bolt.dck decks/simple_bolt.dck
+
+# Force the legacy stop-and-go driver (one mtg tui invocation per choice)
+./agentplay/agent_game.py --driver=stop-and-go -- decks/simple_bolt.dck decks/simple_bolt.dck
+
+# Persistent driver, but use one-shot `claude -p` per turn instead of `--resume`
+./agentplay/agent_game.py --persistent-claude=oneshot -- decks/simple_bolt.dck decks/simple_bolt.dck
+```
+
+Persistent mode requires the engine to be built with the
+`--tui-snapshot-path` flag (added in `mtg-engine/src/main.rs`) so the
+Python harness can read the same structured `GameSnapshot` JSON between
+choices that stop-and-go mode reads from `--snapshot-output`. If
+`AGENTPLAY_FORCE_ONESHOT=1` is set in the environment, the
+`ClaudeResumeSession` falls back to one-shot mode.
+
 Bug-detection mode is enabled by default. Each agent prompt includes:
 - the current game state,
 - the full game log interleaved with prior choices and rationale,

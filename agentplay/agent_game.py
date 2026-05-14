@@ -47,6 +47,13 @@ if __package__ in (None, ""):
         parse_agent_decision,
     )
     from agentplay.lib.card_defs import CardDatabase, find_mentioned_cards
+    from agentplay.lib.game_process import ChoicePoint, GameOver, NativeTuiProcess
+    from agentplay.lib.agent_session import (
+        AgentSession,
+        ClaudeOneShotSession,
+        ClaudeResumeSession,
+        MockSession,
+    )
 else:
     from .lib.engine import GameEngine, new_log_tail_lines
     from .lib.prompts import (
@@ -58,6 +65,22 @@ else:
         parse_agent_decision,
     )
     from .lib.card_defs import CardDatabase, find_mentioned_cards
+    from .lib.game_process import ChoicePoint, GameOver, NativeTuiProcess
+    from .lib.agent_session import (
+        AgentSession,
+        ClaudeOneShotSession,
+        ClaudeResumeSession,
+        MockSession,
+    )
+
+
+# Engine driver modes selected via `--driver`. The persistent mode keeps a
+# single `mtg tui --p1=tui` subprocess alive and feeds choices via stdin; the
+# legacy stop-and-go mode re-runs the entire game from scratch on every
+# decision via `--p1=fixed --p2=fixed`. Both produce the same on-disk
+# artefacts (pN_choices.txt, snapshot.json, game.log, enriched_log.md).
+DRIVER_PERSISTENT = "persistent"
+DRIVER_STOP_AND_GO = "stop-and-go"
 
 
 # Re-exported here so existing callers (and tests) can keep importing
@@ -188,6 +211,29 @@ def build_parser() -> argparse.ArgumentParser:
             f"through to `claude --model <value>` unchanged. Default: {DEFAULT_MODEL}."
         ),
     )
+    parser.add_argument(
+        "--driver",
+        choices=(DRIVER_PERSISTENT, DRIVER_STOP_AND_GO),
+        default=DRIVER_PERSISTENT,
+        help=(
+            "Engine driver. `persistent` keeps one `mtg tui --p1=tui` process "
+            "alive and pipes choices via stdin; `stop-and-go` re-runs the engine "
+            "from scratch on every decision (legacy default before persistent "
+            "mode existed). Both produce identical on-disk artefacts."
+        ),
+    )
+    parser.add_argument(
+        "--persistent-claude",
+        choices=("resume", "oneshot"),
+        default="resume",
+        help=(
+            "How the persistent driver talks to Claude. `resume` (default) "
+            "keeps one `claude --resume <session>` conversation per player so "
+            "follow-up turns reuse context; `oneshot` re-invokes "
+            "`claude -p` per turn (matching the stop-and-go cost profile). "
+            "Has no effect when --driver=stop-and-go."
+        ),
+    )
     return parser
 
 
@@ -274,6 +320,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("===== Agent intro prompt =====", flush=True)
     print(intro_text, flush=True)
     print("===== End agent intro prompt =====", flush=True)
+
+    if args.driver == DRIVER_PERSISTENT:
+        # Hand off to the persistent driver. It manages its own subprocess
+        # lifecycle and on-disk artefacts, but reuses every prompt-building
+        # helper above so the agent sees identical content.
+        return _run_persistent(
+            args=args,
+            mtg_args=mtg_args,
+            engine=engine,
+            card_db=card_db,
+            all_card_names=all_card_names,
+            seen_card_names=seen_card_names,
+            deck_preamble=deck_preamble,
+            rules_paths=rules_paths,
+            intro_text=intro_text,
+            repo_root=repo_root,
+        )
 
     try:
         snapshot = engine.start_game()
@@ -466,6 +529,418 @@ def main(argv: Sequence[str] | None = None) -> int:
         if choice_count > 10000:
             print("Stopped: exceeded internal choice safety limit", file=sys.stderr)
             return 2
+
+
+# ---------------------------------------------------------------------------
+# Persistent driver
+# ---------------------------------------------------------------------------
+
+
+def _run_persistent(
+    *,
+    args: argparse.Namespace,
+    mtg_args: Sequence[str],
+    engine: GameEngine,
+    card_db: CardDatabase,
+    all_card_names: set[str],
+    seen_card_names: set[str],
+    deck_preamble: str | None,
+    rules_paths: list[str],
+    intro_text: str,
+    repo_root: Path,
+) -> int:
+    """Drive a game using ONE long-running `mtg tui --p1=tui` subprocess.
+
+    Mirrors the per-decision artefacts and prompt structure of the legacy
+    stop-and-go loop so a game played here can be inspected, replayed, or
+    diffed against one played in the legacy mode. Differences:
+
+    * Engine is started ONCE; choices are piped via stdin instead of being
+      replayed via `--p1-fixed-inputs`.
+    * The structured `game_state` JSON used by `build_choice_prompt` is read
+      from a per-prompt snapshot the engine writes via `--tui-snapshot-path`
+      (added in `mtg-engine/src/game/interactive_controller.rs`).
+    * Each `agent` decision goes through an `AgentSession` that may keep a
+      persistent `claude --resume <session>` conversation alive across turns.
+    """
+
+    # ------------------------------------------------------------------
+    # Set up artefact paths (parity with stop-and-go mode)
+    # ------------------------------------------------------------------
+    engine.game_dir.mkdir(parents=True, exist_ok=True)
+    # Touch the same files the legacy mode creates so downstream tooling
+    # (e.g. continue_game.py) can find them.
+    engine.p1_choices_path.touch()
+    engine.p2_choices_path.touch()
+    # initial_args.txt lets a follow-up stop-and-go run resume from this
+    # exact game configuration.
+    if not engine.initial_args_path.exists():
+        engine.initial_args_path.write_text(
+            "\n".join(str(a) for a in mtg_args) + "\n", encoding="utf-8"
+        )
+    game_log_path = engine.game_dir / "game.log"
+    game_log_path.touch()
+    printed_log_lines: list[str] = []
+
+    rng = random.Random(args.seed)
+
+    # ------------------------------------------------------------------
+    # Resolve where the engine binary and cardsfolder live
+    # ------------------------------------------------------------------
+    binary_path = engine.binary_path
+    if not binary_path.exists():
+        print(
+            f"Error: MTG engine binary not found at {binary_path}\n"
+            "Build it with: cargo build --release",
+            file=sys.stderr,
+        )
+        return 1
+    cardsfolder: Path | None = None
+    for candidate in (engine.cardsfolder_path, engine.forge_cardsfolder_path):
+        if candidate.exists() and all((candidate / letter).is_dir() for letter in ("a", "b", "c")):
+            cardsfolder = candidate
+            break
+
+    # ------------------------------------------------------------------
+    # Pick controller types for each player based on --mode/--mock
+    # ------------------------------------------------------------------
+    p1_kind = _controller_for_player(args.mode, "p1", mock=args.mock)
+    p2_kind = _controller_for_player(args.mode, "p2", mock=args.mock)
+    # The engine needs exactly one of: tui|heuristic|random|fixed for each
+    # player. "agent" is a Python-side concept implemented as an
+    # InteractiveController on the engine side that we drive over stdin.
+    p1_engine = _engine_controller_for_kind(p1_kind)
+    p2_engine = _engine_controller_for_kind(p2_kind)
+
+    # ------------------------------------------------------------------
+    # Spawn the persistent subprocess
+    # ------------------------------------------------------------------
+    proc = NativeTuiProcess(
+        binary=binary_path,
+        mtg_args=mtg_args,
+        game_dir=engine.game_dir,
+        seed=args.seed,
+        p1_controller=p1_engine,
+        p2_controller=p2_engine,
+        cardsfolder=cardsfolder,
+        cwd=repo_root,
+        verbose=args.verbose,
+    )
+
+    # ------------------------------------------------------------------
+    # Build per-player AgentSession objects (only the ones we need)
+    # ------------------------------------------------------------------
+    sessions: dict[str, AgentSession] = {}
+    if args.mock:
+        sessions["p1"] = MockSession(seed=args.seed, label="p1-mock")
+        sessions["p2"] = MockSession(seed=args.seed + 1, label="p2-mock")
+    else:
+        if p1_kind == "agent":
+            sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
+        if p2_kind == "agent":
+            sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
+
+    # ------------------------------------------------------------------
+    # Run the loop
+    # ------------------------------------------------------------------
+    history_entries: list[HistoryEntry] = []
+    choice_count = 0
+    try:
+        event = proc.start()
+        while isinstance(event, ChoicePoint):
+            player = event.player
+            controller_kind = _controller_for_player(args.mode, player, mock=args.mock)
+            turn_number = event.turn_number
+
+            # Safety: turn limit
+            if turn_number is not None and turn_number > args.max_turns:
+                print(f"Stopped: reached turn limit {args.max_turns}", file=sys.stderr)
+                return 2
+
+            choices = list(event.choices)
+            if not choices:
+                # No menu items besides pass — the snapshot probably gives
+                # us 0 actions; surface and stop, matching legacy behaviour.
+                print("Stopped: no available choices found in engine output", file=sys.stderr)
+                return 1
+
+            # Cumulative dedup against everything we've already shown the
+            # user — same scheme as stop-and-go mode (which uses
+            # _new_log_tail_lines on the engine's log_tail). Here our
+            # source of truth is `event.log_lines` (incremental, already
+            # filtered by NativeTuiProcess._maybe_record_log_line).
+            new_text_block = "\n".join(event.log_lines).strip()
+            if new_text_block:
+                print(new_text_block, file=sys.stderr, flush=True)
+                _append_to_file(game_log_path, new_text_block)
+                printed_log_lines.extend(new_text_block.splitlines())
+
+            # Track which cards have been mentioned in the game so we can
+            # show their definitions in the prompt.
+            full_log_so_far = "\n".join(printed_log_lines)
+            newly_seen = find_mentioned_cards(full_log_so_far, all_card_names) - seen_card_names
+            seen_card_names.update(newly_seen)
+
+            # Build the same prompt the stop-and-go loop builds.
+            interleaved_history = _format_history(history_entries)
+            previous_decision = _format_previous_decision(history_entries)
+            card_defs_text = (
+                card_db.format_definitions(seen_card_names) if seen_card_names else None
+            )
+            # `event.snapshot` is the full GameSnapshot dict (game_state +
+            # turn_number + ...); build_choice_prompt's `_snapshot_root`
+            # already handles either wrapping shape.
+            prompt_text = build_choice_prompt(
+                event.snapshot,
+                choices,
+                new_text_block,
+                goal=args.goal,
+                scenario=args.scenario,
+                interleaved_history=interleaved_history,
+                previous_decision=previous_decision,
+                card_definitions=card_defs_text,
+                rules_paths=rules_paths if rules_paths else None,
+                bug_detection=args.bug_detection,
+                deck_preamble=deck_preamble,
+            )
+            game_state_summary = _extract_game_state_summary(prompt_text)
+            before_snapshot = event.snapshot
+
+            # Show the choice point header (parity with legacy mode).
+            choice_display = "\n".join(
+                f"  [{i}] {c}" for i, c in enumerate(["pass"] + choices)
+            )
+            print(
+                f"--- {player} ({controller_kind}) | Turn {turn_number or '?'} | "
+                f"{len(choices)} choices ---",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(choice_display, file=sys.stderr, flush=True)
+            if controller_kind == "agent":
+                print(
+                    f"========== Agent invoked for choice #{choice_count + 1} ==========",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            # Get a decision.
+            t0 = time.time()
+            try:
+                decision = _persistent_choose(
+                    controller_kind=controller_kind,
+                    player=player,
+                    sessions=sessions,
+                    prompt_text=prompt_text,
+                    choice_count=len(choices),
+                    rng=rng,
+                    bug_detection=args.bug_detection,
+                )
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            elapsed = time.time() - t0
+            raw_response = decision.raw_response
+
+            # Bug-report handling (mirrors legacy mode).
+            if decision.stopped_for_bug:
+                bug_report_path = _append_bug_report(
+                    engine.game_dir,
+                    player=player,
+                    turn_number=turn_number,
+                    bug_report_text=decision.bug_report
+                    or "(agent stopped for a suspected gameplay bug, but no details were provided)",
+                    raw_response=raw_response,
+                )
+                print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
+                print(
+                    f"Stopped: {player} reported a suspected gameplay bug.",
+                    file=sys.stderr,
+                )
+                return 0
+
+            if decision.choice_number is None:
+                print(
+                    "Stopped: agent decision did not include a choice number",
+                    file=sys.stderr,
+                )
+                return 1
+            choice_number = decision.choice_number
+            if choice_number == 0:
+                choice_text = "pass"
+            else:
+                if choice_number > len(choices):
+                    # Defensive guard; AgentSession should already filter this.
+                    print(
+                        f"Stopped: choice {choice_number} out of range (1..{len(choices)})",
+                        file=sys.stderr,
+                    )
+                    return 1
+                choice_text = choices[choice_number - 1]
+
+            if controller_kind == "agent":
+                print(
+                    f"  => Agent chose [{choice_number}] {choice_text}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(
+                    f"========== Agent responded in {elapsed:.1f}s ==========",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                print(f"  [reasoning] {raw_response.strip()}", file=sys.stderr)
+            else:
+                print(
+                    f"  => {controller_kind.title()} chose [{choice_number}] {choice_text}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            history_entries.append(
+                HistoryEntry(
+                    decision_number=choice_count + 1,
+                    player=player,
+                    controller_kind=controller_kind,
+                    turn_number=turn_number,
+                    log_since_last_decision=new_text_block,
+                    chosen_action=choice_text,
+                    reasoning=raw_response,
+                )
+            )
+
+            # Inline bug-report extraction (same as legacy mode).
+            bug_report_text = extract_bug_report(raw_response)
+            if bug_report_text is not None:
+                bug_report_path = _append_bug_report(
+                    engine.game_dir,
+                    player=player,
+                    turn_number=turn_number,
+                    bug_report_text=bug_report_text,
+                    raw_response=raw_response,
+                )
+                print(f"  [bug-report] logged to {bug_report_path}", file=sys.stderr)
+
+            # Persist the chosen action to pN_choices.txt — this gives us
+            # cross-driver replay parity. A game played with --driver=
+            # persistent can be replayed with --driver=stop-and-go from the
+            # same game_dir.
+            engine.append_choice(player, choice_text)
+
+            # Send the choice to the engine. We send the TEXT command (e.g.
+            # "play Mountain") rather than the index because:
+            # (a) it matches what the legacy mode writes to pN_choices.txt
+            #     (the engine.py `*;<text>` script form), and
+            # (b) the InteractiveController accepts rich text commands
+            #     (controller.rs:parse_spell_ability_choice).
+            event = proc.send_choice(player, choice_text)
+
+            engine.append_enriched_log(
+                before_snapshot=before_snapshot,
+                game_state_summary=game_state_summary,
+                available_choices=choices,
+                agent_response=raw_response,
+                chosen_action=choice_text,
+                after_snapshot=event.snapshot if isinstance(event, ChoicePoint) else {},
+            )
+            choice_count += 1
+
+            if choice_count > 10000:
+                print(
+                    "Stopped: exceeded internal choice safety limit",
+                    file=sys.stderr,
+                )
+                return 2
+
+        # Drained out of the ChoicePoint loop ⇒ engine reported game over.
+        assert isinstance(event, GameOver)
+        if event.fresh_output.strip():
+            print(event.fresh_output, file=sys.stderr, flush=True)
+            _append_to_file(game_log_path, event.fresh_output)
+        if event.log_lines:
+            tail = "\n".join(event.log_lines)
+            _append_to_file(game_log_path, tail)
+        print("Game over.", file=sys.stderr)
+        return 0
+    finally:
+        for sess in sessions.values():
+            sess.close()
+        proc.close()
+
+
+def _engine_controller_for_kind(kind: str) -> str:
+    """Map an agentplay 'controller_kind' to an `mtg tui --p?=` value.
+
+    The persistent driver only knows two engine-side identities for a
+    player: `tui` (Python pipes choices over stdin) or one of the engine's
+    built-in controllers (heuristic/random/zero/etc.). `agent` and `mock`
+    are Python-side concepts implemented as an InteractiveController.
+    """
+
+    if kind in ("agent", "mock"):
+        return "tui"
+    if kind in ("heuristic", "random", "zero"):
+        return kind
+    raise ValueError(f"unsupported controller kind for persistent driver: {kind!r}")
+
+
+def _build_agent_session(
+    args: argparse.Namespace, intro_text: str, *, label: str
+) -> AgentSession:
+    """Construct a per-player AgentSession according to --persistent-claude."""
+
+    if args.persistent_claude == "oneshot":
+        return ClaudeOneShotSession(
+            claude_args=args.claude_args,
+            verbose=args.verbose,
+            label=label,
+        )
+    return ClaudeResumeSession(
+        intro_text=intro_text,
+        claude_args=args.claude_args,
+        verbose=args.verbose,
+        label=label,
+    )
+
+
+def _persistent_choose(
+    *,
+    controller_kind: str,
+    player: str,
+    sessions: dict[str, AgentSession],
+    prompt_text: str,
+    choice_count: int,
+    rng: random.Random,
+    bug_detection: bool,
+) -> AgentDecision:
+    """Resolve a single decision in persistent mode.
+
+    For `agent`/`mock`, defer to the per-player AgentSession. For
+    `heuristic`/`random`, the engine itself is making the decision and the
+    Python harness should never get a ChoicePoint for that player — we
+    raise loudly if we do.
+    """
+
+    if controller_kind in ("agent", "mock"):
+        sess = sessions.get(player)
+        if sess is None:
+            raise RuntimeError(
+                f"persistent driver: no AgentSession registered for {player!r}"
+            )
+        return sess.ask(
+            prompt_text,
+            choice_count,
+            bug_detection=bug_detection,
+        )
+    # In random/heuristic engine-side modes the InteractiveController is
+    # never spawned for that player, so the engine should never ask us for
+    # a choice on their behalf. Pick locally as a defensive fallback (same
+    # as legacy stop-and-go behaviour).
+    choice_number = rng.randint(0, choice_count)
+    return AgentDecision(
+        choice_number=choice_number,
+        raw_response=f"{controller_kind} choice\n{choice_number}",
+    )
 
 
 def _query_agent(
