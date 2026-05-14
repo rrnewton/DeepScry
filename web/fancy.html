@@ -4,6 +4,64 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MTG Forge - Fancy TUI (WASM)</title>
+    <!-- TUI font scaling shim. Must run BEFORE the WASM module initialises ratzilla
+         so that ratzilla's get_window_size() (which does (innerWidth/10, innerHeight/20))
+         allocates a buffer matching the SCALED font size. We override window.innerWidth
+         and window.innerHeight to return real / FONT_SCALE, then use CSS to render at
+         font-size: 16 * FONT_SCALE px. Net effect: more cells, smaller cells, fills viewport. -->
+    <script>
+      (function() {
+        // Read persisted scale (default 1.0 = native, no shim). Range: 0.5..1.5.
+        // The default MUST be 1.0 so the no-localStorage path returns early below
+        // and behaves byte-identically to a build without the shim — otherwise
+        // CI tests (which load the page with empty localStorage) get a differently
+        // sized terminal grid than main, which (a) shifts click coordinates so
+        // network click tests miss their targets and (b) extends the human-input
+        // game far enough to expose a rewind/replay verifier divergence.
+        // Users who want a smaller font select 0.75 from the dropdown, which
+        // writes localStorage explicitly.
+        let scale = 1.0;
+        try {
+          const v = parseFloat(localStorage.getItem('mtg.tui.fontScale'));
+          if (Number.isFinite(v) && v >= 0.5 && v <= 1.5) scale = v;
+        } catch (_) {}
+        window.__MTG_FONT_SCALE__ = scale;
+        // Publish to CSS so the terminal CSS can do calc(16px * var(--mtg-tui-font-scale)).
+        document.documentElement.style.setProperty('--mtg-tui-font-scale', String(scale));
+        if (scale === 1.0) return; // Skip the innerWidth/Height monkey-patch when scale is 1.0
+        // Walk the prototype chain to find the real innerWidth/innerHeight getter
+        // (Chromium puts them on Window.prototype, but other engines may differ).
+        function findGetter(obj, name) {
+          let proto = obj;
+          while (proto) {
+            const d = Object.getOwnPropertyDescriptor(proto, name);
+            if (d && typeof d.get === 'function') return d.get;
+            proto = Object.getPrototypeOf(proto);
+          }
+          return null;
+        }
+        const realWidthGetter = findGetter(window, 'innerWidth');
+        const realHeightGetter = findGetter(window, 'innerHeight');
+        if (!realWidthGetter || !realHeightGetter) {
+          console.warn('[mtg-tui] could not locate innerWidth/innerHeight getter on window prototype chain; font scaling disabled');
+          return;
+        }
+        // Define on the actual `window` instance.  In Chromium this shadows the prototype getter.
+        Object.defineProperty(window, 'innerWidth', {
+          configurable: true,
+          get: function() { return Math.floor(realWidthGetter.call(window) / scale); }
+        });
+        Object.defineProperty(window, 'innerHeight', {
+          configurable: true,
+          get: function() { return Math.floor(realHeightGetter.call(window) / scale); }
+        });
+        window.__MTG_REAL_VIEWPORT__ = function() {
+          return { w: realWidthGetter.call(window), h: realHeightGetter.call(window) };
+        };
+        console.log('[mtg-tui] font scale shim active: scale=' + scale +
+          ', reported innerWidth=' + window.innerWidth + ' (real=' + realWidthGetter.call(window) + ')');
+      })();
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -125,8 +183,13 @@
             width: 100vw;
             height: 100vh;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-            font-size: 16px;
-            line-height: 20px;  /* Note: actual rendered height is 19px, not 20px! */
+            /* Default: 16px font / 20px line-height matches ratzilla's hardcoded 10x20 grid math.
+               The shim in <head> rewrites window.innerWidth/Height to (real / scale) so ratzilla
+               allocates a larger buffer; here we reduce font/line-height by the same factor so
+               the rendered grid still fills 100vw x 100vh.  The "calc(... * var(...))" picks up
+               the scale that the shim wrote to the :root element. */
+            font-size: calc(16px * var(--mtg-tui-font-scale, 1));
+            line-height: calc(20px * var(--mtg-tui-font-scale, 1));
             background: #000;
             overflow: hidden;
         }
@@ -764,6 +827,19 @@
                     <label>Seed (determinism)</label>
                     <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
                     <span class="hint">Leave empty for random</span>
+                </div>
+
+                <div class="pane-row" style="margin-bottom: 0;">
+                    <label>TUI font size</label>
+                    <select id="tui-font-scale" style="width: 140px;">
+                        <option value="0.625">10px (smallest)</option>
+                        <option value="0.75" selected>12px (small, default)</option>
+                        <option value="0.875">14px</option>
+                        <option value="1.0">16px</option>
+                        <option value="1.125">18px</option>
+                        <option value="1.25">20px (large)</option>
+                    </select>
+                    <span class="hint">Reloads page on change</span>
                 </div>
 
                 <div>
@@ -1663,6 +1739,33 @@ Name=My Deck
 
         // Initialize settings persistence after DOM is ready
         setupSettingsPersistence();
+
+        // Wire up TUI font scale dropdown.  We persist via the dedicated
+        // 'mtg.tui.fontScale' key (read by the shim in <head>) so the value is
+        // available BEFORE the WASM module loads.  Changing the value reloads
+        // the page so the new scale takes effect on the next ratzilla init.
+        (function wireTuiFontScale() {
+            const sel = document.getElementById('tui-font-scale');
+            if (!sel) return;
+            try {
+                const v = parseFloat(localStorage.getItem('mtg.tui.fontScale'));
+                if (Number.isFinite(v)) {
+                    for (let i = 0; i < sel.options.length; i++) {
+                        if (Math.abs(parseFloat(sel.options[i].value) - v) < 0.001) {
+                            sel.selectedIndex = i;
+                            break;
+                        }
+                    }
+                }
+            } catch (_) {}
+            sel.addEventListener('change', () => {
+                const v = parseFloat(sel.value);
+                if (Number.isFinite(v) && v >= 0.5 && v <= 1.5) {
+                    localStorage.setItem('mtg.tui.fontScale', String(v));
+                    location.reload();
+                }
+            });
+        })();
 
         // Game mode change handler
         function updateGameModeUI() {
