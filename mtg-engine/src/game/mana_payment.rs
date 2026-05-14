@@ -507,20 +507,65 @@ impl GreedyManaResolver {
         }
     }
 
-    /// Score a source for a specific color (lower = better = more specific)
-    /// This helps us tap the most specific sources first
+    /// Score a source for a specific color (lower = better = more specific).
     ///
-    /// Note: Wildcard is intentional - sources that can't produce the color get worst score.
-    #[allow(clippy::wildcard_enum_match_arm)]
-    fn score_for_color(production: &ManaProduction, color: ManaColor) -> u8 {
-        match &production.kind {
+    /// The score combines two dimensions:
+    ///
+    /// - **Color specificity** (low byte): exact `Fixed(color)` is best, then
+    ///   dual/multi-color `Choice` (smaller choice = better), then `AnyColor`.
+    /// - **Side cost** (high byte): plain lands < utility lands < pain lands
+    ///   < sacrifice sources. We multiply the side-cost severity into the
+    ///   score so it dominates color specificity. That way Mox Emerald (Fixed
+    ///   Green, no side cost) is always preferred over Black Lotus (AnyColor,
+    ///   sacrifices the source) when both can pay a green pip.
+    ///
+    /// This is the score used by `tap_for_color` — see also `generic_score`
+    /// which orders the generic-pip phase.
+    fn score_for_color(production: &ManaProduction, color: ManaColor) -> u16 {
+        let kind_score: u16 = match &production.kind {
             ManaProductionKind::Fixed(c) if *c == color => 0, // Best: exact match
             ManaProductionKind::Choice(colors) if colors.contains(color) => {
-                colors.len() as u8 // Better: dual land (prefer fewer options)
+                colors.len() as u16 // Better: dual land (prefer fewer options)
             }
             ManaProductionKind::AnyColor => 100, // Worst: save for last resort
-            _ => 255,                            // Can't produce this color
+            // Anything else can't produce this color and shouldn't be scored.
+            ManaProductionKind::Fixed(_) | ManaProductionKind::Choice(_) | ManaProductionKind::Colorless => u16::MAX,
+        };
+        // Side cost dominates color specificity: a plain land of any kind
+        // beats every pain/sacrifice source. We saturate to keep things
+        // monotone.
+        production.side_cost_score().saturating_add(kind_score)
+    }
+
+    /// Score a source for the **generic** phase. Used to deprioritize
+    /// expensive sources (sacrifice / pain / utility lands / multi-mana
+    /// over-tap) when paying generic pips.
+    ///
+    /// Ordering rules (lowest = tap first):
+    /// 1. Plain free sources (basic lands, Moxen, dual lands).
+    /// 2. Utility lands (Mishra's Factory, Strip Mine).
+    /// 3. Pain lands (City of Brass).
+    /// 4. Multi-mana sources with `amount > 1` are weighted up so we don't
+    ///    waste a Sol Ring / Black Lotus on a single generic pip when single-
+    ///    mana sources suffice.
+    /// 5. Sacrifice sources (Black Lotus, Treasure tokens) absolutely last.
+    fn generic_score(production: &ManaProduction) -> u16 {
+        let mut score = production.side_cost_score();
+        // Penalize over-production: every "extra" mana beyond 1 adds a small
+        // surcharge so a 1-mana source beats a 3-mana source for a single
+        // generic pip. The side-cost score already swamps this for
+        // sacrifice/pain sources, so this only matters between equals.
+        if production.amount > 1 {
+            score = score.saturating_add(u16::from(production.amount - 1) * 2);
         }
+        // Mild preference: Fixed/Colorless (single-color) over Choice/AnyColor
+        // for generic, so we save flexible sources for later colored needs.
+        let kind_bias: u16 = match &production.kind {
+            ManaProductionKind::Fixed(_) | ManaProductionKind::Colorless => 0,
+            ManaProductionKind::Choice(colors) => colors.len() as u16,
+            ManaProductionKind::AnyColor => 4,
+        };
+        score.saturating_add(kind_bias)
     }
 }
 
@@ -587,8 +632,10 @@ impl GreedyManaResolver {
         let mut tap_order: SmallVec<[CardId; 8]> = SmallVec::new();
 
         // OPT-7: Reusable buffer for candidates - cleared and reused for each color
-        // instead of creating a new SmallVec 5 times per payment
-        let mut candidates: SmallVec<[(usize, u8); 8]> = SmallVec::new();
+        // instead of creating a new SmallVec 5 times per payment.
+        // Score is u16 because we now combine kind specificity (low byte) with
+        // side-cost severity (high byte) — see `score_for_color`.
+        let mut candidates: SmallVec<[(usize, u16); 8]> = SmallVec::new();
 
         let mut remaining_cost = *cost;
 
@@ -680,22 +727,30 @@ impl GreedyManaResolver {
         }
         remaining_cost.green = 0;
 
-        // Pay colorless requirement with colorless sources. Each tap contributes
-        // `source.production.amount` pips (Sol Ring → 2). Surplus drops into
-        // extra_generic for the generic phase below.
+        // Pay colorless requirement with colorless sources. We sort the
+        // colorless candidates by `generic_score` so utility/sacrifice
+        // colorless sources (rare but possible) tap last among colorless.
+        // Each tap contributes `source.production.amount` pips (Sol Ring → 2);
+        // surplus drops into `extra_generic` for the generic phase below.
         if remaining_cost.colorless > 0 {
-            let mut tapped: u8 = 0;
-            for source in sources {
-                if tapped >= remaining_cost.colorless {
-                    break;
-                }
+            candidates.clear();
+            for (idx, source) in sources.iter().enumerate() {
                 if source.is_tapped || source.has_summoning_sickness || tap_order.contains(&source.card_id) {
                     continue;
                 }
                 if source.production.kind == ManaProductionKind::Colorless {
-                    tap_order.push(source.card_id);
-                    tapped = tapped.saturating_add(source.production.amount);
+                    candidates.push((idx, Self::generic_score(&source.production)));
                 }
+            }
+            candidates.sort_by_key(|(_, score)| *score);
+
+            let mut tapped: u8 = 0;
+            for &(idx, _) in candidates.iter() {
+                if tapped >= remaining_cost.colorless {
+                    break;
+                }
+                tap_order.push(sources[idx].card_id);
+                tapped = tapped.saturating_add(sources[idx].production.amount);
             }
             if tapped < remaining_cost.colorless {
                 return false;
@@ -712,19 +767,13 @@ impl GreedyManaResolver {
             // (extra_generic bookkeeping not needed past this point)
         }
         if remaining_cost.generic > 0 {
-            let mut tapped: u8 = 0;
-            for source in sources {
-                if tapped >= remaining_cost.generic {
-                    break;
-                }
-                if source.is_tapped || source.has_summoning_sickness || tap_order.contains(&source.card_id) {
-                    continue;
-                }
-                tap_order.push(source.card_id);
-                // Each activation contributes `amount` mana toward generic.
-                tapped = tapped.saturating_add(source.production.amount);
-            }
-            if tapped < remaining_cost.generic {
+            // Use the priority-aware helper instead of iterating in source
+            // order — that's what causes Black Lotus / Mishra's Factory to be
+            // tapped wastefully. The helper sorts by `generic_score`:
+            //   plain land < utility land < pain land < sacrifice source,
+            // and prefers single-mana over multi-mana within each tier so we
+            // don't burn a Sol Ring on one generic pip when a Forest will do.
+            if Self::tap_for_generic(sources, &mut tap_order, &mut candidates, remaining_cost.generic).is_none() {
                 return false;
             }
         }
@@ -751,7 +800,7 @@ impl GreedyManaResolver {
     fn tap_for_color(
         sources: &[ManaSource],
         tap_order: &mut SmallVec<[CardId; 8]>,
-        candidates: &mut SmallVec<[(usize, u8); 8]>,
+        candidates: &mut SmallVec<[(usize, u16); 8]>,
         color: ManaColor,
         amount: u8,
     ) -> Option<u8> {
@@ -770,11 +819,65 @@ impl GreedyManaResolver {
             }
         }
 
-        // Sort by score (lower = more specific = tap first)
+        // Sort by score (lower = more specific / cheaper = tap first).
+        // The score now bakes in side-cost severity (sacrifice / pain) so
+        // a Mountain beats a Black Lotus when both can pay {R}.
         candidates.sort_by_key(|(_, score)| *score);
 
         // Tap sources in priority order. Each activation contributes
         // `source.production.amount` mana of the chosen colour (Black Lotus = 3).
+        let mut tapped: u8 = 0;
+        for &(idx, _score) in candidates.iter() {
+            if tapped >= amount {
+                break;
+            }
+            let n = sources[idx].production.amount;
+            tap_order.push(sources[idx].card_id);
+            tapped = tapped.saturating_add(n);
+        }
+
+        if tapped >= amount {
+            Some(tapped)
+        } else {
+            None
+        }
+    }
+
+    /// Helper to tap sources for **generic** mana, in priority order.
+    ///
+    /// Unlike the colored phases, this iterated sources in their input order
+    /// before — which led to the Black Lotus / Mishra's Factory bugs where
+    /// expensive sources got tapped early just because they appeared first in
+    /// the cache. Now we collect candidates and sort by `generic_score` so
+    /// plain free lands tap before utility/pain/sacrifice sources, and small
+    /// sources are spent before multi-mana ones.
+    ///
+    /// Returns `Some(total_mana_tapped)` if the requested generic amount is
+    /// satisfied (may exceed `amount` if a multi-mana source over-pays), or
+    /// `None` otherwise.
+    #[inline]
+    fn tap_for_generic(
+        sources: &[ManaSource],
+        tap_order: &mut SmallVec<[CardId; 8]>,
+        candidates: &mut SmallVec<[(usize, u16); 8]>,
+        amount: u8,
+    ) -> Option<u8> {
+        candidates.clear();
+
+        for (idx, source) in sources.iter().enumerate() {
+            if source.is_tapped || source.has_summoning_sickness || tap_order.contains(&source.card_id) {
+                continue;
+            }
+            // Sources that produce *no* mana shouldn't appear in `sources` in
+            // the first place, but be defensive.
+            if !source.production.produces_mana() {
+                continue;
+            }
+            candidates.push((idx, Self::generic_score(&source.production)));
+        }
+
+        candidates.sort_by_key(|(_, score)| *score);
+
         let mut tapped: u8 = 0;
         for &(idx, _score) in candidates.iter() {
             if tapped >= amount {
@@ -1651,6 +1754,229 @@ mod tests {
         // Island should be tapped for Blue, Breeding Pool for Green
         assert_eq!(tap_order[0], CardId::new(3)); // Island for Blue (more specific)
         assert_eq!(tap_order[1], CardId::new(1)); // Breeding Pool for Green
+    }
+
+    /// Regression: with Underground Sea + Tundra + Mox Emerald + Black Lotus,
+    /// casting Psionic Blast `{2}{U}` MUST NOT sacrifice the Black Lotus.
+    /// The greedy resolver should prefer cheaper, non-sacrifice sources first.
+    ///
+    /// Source ordering used by ManaEngine::read_from_cache puts simple (Fixed)
+    /// sources before complex sources, so the iteration order here mirrors what
+    /// the engine actually sees:
+    ///   1. Mox Emerald (Fixed Green, simple)
+    ///   2. Underground Sea (Choice U|B, complex)
+    ///   3. Tundra (Choice W|U, complex)
+    ///   4. Black Lotus (AnyColor amount=3, sacrifice cost, complex)
+    #[test]
+    fn test_greedy_resolver_prefers_non_sacrifice_sources() {
+        let resolver = GreedyManaResolver::new();
+
+        let mox_emerald = ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let underground_sea = ManaSource {
+            card_id: CardId::new(2),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::Blue).with(ManaColor::Black),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let tundra = ManaSource {
+            card_id: CardId::new(3),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::White).with(ManaColor::Blue),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        // Sacrifice cost on the Lotus — encoded by adding a non-mana payment cost
+        // (we model it by giving the source a non-zero activation cost).
+        // For now, the resolver only sees the production kind/amount, so we
+        // simply mark the production as a multi-mana AnyColor source with a
+        // large `amount` and rely on the resolver's preference logic.
+        let black_lotus = ManaSource {
+            card_id: CardId::new(4),
+            production: ManaProduction::with_amount(ManaProductionKind::AnyColor, 3),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+
+        // Order matches what ManaSourceCache produces: simple (green) first,
+        // then complex sources in cache insertion order.
+        let sources = vec![mox_emerald, underground_sea, tundra, black_lotus];
+
+        // Psionic Blast: {2}{U} = 1 blue + 2 generic
+        let psionic = ManaCost {
+            generic: 2,
+            white: 0,
+            blue: 1,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+
+        let mut tap_order = Vec::new();
+        assert!(
+            resolver.compute_tap_order(&psionic, &sources, &mut tap_order),
+            "should be payable without Black Lotus"
+        );
+
+        // CRITICAL: Black Lotus (CardId 4) MUST NOT be in the tap order.
+        assert!(
+            !tap_order.contains(&CardId::new(4)),
+            "Black Lotus should not be tapped when cheaper sources suffice. Got: {:?}",
+            tap_order
+        );
+
+        // Tap order should be exactly 3 sources (one per pip).
+        assert_eq!(tap_order.len(), 3, "Got tap order: {:?}", tap_order);
+    }
+
+    /// Regression: when *only* Underground Sea, Tundra and Black Lotus are
+    /// available (no Mox), the resolver previously tapped Black Lotus for the
+    /// last generic pip (because complex sources were iterated in cache order
+    /// and Lotus came after the dual lands). With the side-cost-aware
+    /// `tap_for_generic` ordering, Black Lotus must still be preserved — the
+    /// dual lands cover both the colored and generic phases.
+    #[test]
+    fn test_greedy_resolver_avoids_lotus_when_duals_suffice() {
+        let resolver = GreedyManaResolver::new();
+        let underground_sea = ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::Blue).with(ManaColor::Black),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let tundra = ManaSource {
+            card_id: CardId::new(2),
+            production: ManaProduction::free(ManaProductionKind::Choice(
+                ManaColors::new().with(ManaColor::White).with(ManaColor::Blue),
+            )),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        // Black Lotus produces 3 mana of any color but sacrifices itself.
+        let black_lotus = ManaSource {
+            card_id: CardId::new(3),
+            production: ManaProduction::with_amount(ManaProductionKind::AnyColor, 3)
+                .with_side_cost(crate::core::ManaSideCost::Sacrifice),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let sources = vec![underground_sea, tundra, black_lotus];
+
+        // {1}{U}: 1 blue + 1 generic = 2 mana total. Both duals are needed.
+        let cost = ManaCost {
+            generic: 1,
+            white: 0,
+            blue: 1,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources, &mut tap_order));
+        assert!(
+            !tap_order.contains(&CardId::new(3)),
+            "Black Lotus must NOT be tapped when 2 dual lands cover {{1}}{{U}}. Got: {:?}",
+            tap_order
+        );
+    }
+
+    /// Regression: Mishra's Factory should be tapped LAST among free lands so
+    /// its `{1}: become a 2/2 Assembly-Worker creature` ability stays usable.
+    /// With the side-cost-aware `generic_score`, Utility lands rank above
+    /// plain lands (Forest) but well below pain/sacrifice sources.
+    #[test]
+    fn test_greedy_resolver_prefers_basic_over_utility_land() {
+        let resolver = GreedyManaResolver::new();
+
+        let forest = ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let mishras_factory = ManaSource {
+            card_id: CardId::new(2),
+            production: ManaProduction::free(ManaProductionKind::Colorless)
+                .with_side_cost(crate::core::ManaSideCost::Utility),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+
+        // Cost: {1} (one generic). Either land covers it; Forest should win.
+        let cost = ManaCost {
+            generic: 1,
+            white: 0,
+            blue: 0,
+            black: 0,
+            red: 0,
+            green: 0,
+            colorless: 0,
+            x_count: 0,
+        };
+
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(
+            &cost,
+            &sources(&[forest.clone(), mishras_factory.clone()]),
+            &mut tap_order
+        ));
+        assert_eq!(
+            tap_order,
+            vec![CardId::new(1)],
+            "Forest must tap before Mishra's Factory"
+        );
+
+        // Swap input order — Utility should still rank below plain.
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &sources(&[mishras_factory, forest]), &mut tap_order));
+        assert_eq!(
+            tap_order,
+            vec![CardId::new(1)],
+            "Forest must tap before Mishra's Factory regardless of source order"
+        );
+
+        fn sources(s: &[ManaSource]) -> Vec<ManaSource> {
+            s.to_vec()
+        }
+    }
+
+    /// Regression: pain lands (City of Brass) tap *after* plain lands. With
+    /// a Forest and a City of Brass and a {1} cost, Forest wins.
+    #[test]
+    fn test_greedy_resolver_prefers_basic_over_pain_land() {
+        let resolver = GreedyManaResolver::new();
+        let forest = ManaSource {
+            card_id: CardId::new(1),
+            production: ManaProduction::free(ManaProductionKind::Fixed(ManaColor::Green)),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+        let city_of_brass = ManaSource {
+            card_id: CardId::new(2),
+            production: ManaProduction::free(ManaProductionKind::AnyColor)
+                .with_side_cost(crate::core::ManaSideCost::PayLife(1)),
+            is_tapped: false,
+            has_summoning_sickness: false,
+        };
+
+        let cost = ManaCost::from_string("1");
+        let mut tap_order = Vec::new();
+        assert!(resolver.compute_tap_order(&cost, &[forest, city_of_brass], &mut tap_order));
+        assert_eq!(tap_order, vec![CardId::new(1)], "Forest must tap before City of Brass");
     }
 
     /// Test for mana payment bug: 3 green sources cannot pay 3G cost

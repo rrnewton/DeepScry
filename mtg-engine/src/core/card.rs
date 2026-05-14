@@ -406,7 +406,7 @@ impl CardCache {
     /// count check ensuring the iterator has at least one element.
     #[allow(clippy::missing_panics_doc)]
     pub fn derive_mana_production_from_abilities(abilities: &[crate::core::ActivatedAbility]) -> ManaProduction {
-        use crate::core::{Effect, ManaColor, ManaProductionKind};
+        use crate::core::{Effect, ManaColor, ManaProductionKind, ManaSideCost};
         use crate::game::mana_colors::ManaColors;
 
         let mut colors = ManaColors::new();
@@ -417,12 +417,32 @@ impl CardCache {
         // produces 3 mana of one chosen color per activation. We track the OR of
         // abilities by taking the max (best single-source production).
         let mut max_amount: u8 = 0;
+        // Lowest non-mana side cost across mana abilities
+        // (None < Utility < PayLife < Sacrifice). We OR over abilities by
+        // taking the *minimum* — if any way to tap is free, prefer that one.
+        // The resolver still pays the actual ability's cost when the card is
+        // activated; this is just a hint for ranking.
+        let mut min_side_cost: Option<ManaSideCost> = None;
+        // Does the card have any non-mana activated abilities? Used to
+        // detect "utility" lands (Mishra's Factory animates, Strip Mine
+        // destroys lands, etc.) so the resolver can prefer plain lands.
+        let mut has_other_abilities = false;
 
         for ability in abilities {
             // Only consider mana abilities
             if !ability.is_mana_ability {
+                if !ability.effects.is_empty() {
+                    has_other_abilities = true;
+                }
                 continue;
             }
+
+            // Inspect the ability cost for non-mana side effects (sacrifice / pay life).
+            let ab_side_cost = derive_side_cost_from_cost(&ability.cost);
+            min_side_cost = Some(match min_side_cost {
+                Some(prev) => prev.min(ab_side_cost),
+                None => ab_side_cost,
+            });
 
             for effect in &ability.effects {
                 if let Effect::AddMana { mana, .. } = effect {
@@ -476,10 +496,17 @@ impl CardCache {
 
         // Always at least 1 if we found any mana ability, otherwise 1 is the safe default.
         let amount = max_amount.max(1);
+        // If the card's mana ability is itself free (no sacrifice / pay-life)
+        // but the card has *other* activated abilities, treat it as Utility so
+        // the resolver prefers plain lands first.
+        let side_cost = match min_side_cost.unwrap_or_default() {
+            ManaSideCost::None if has_other_abilities => ManaSideCost::Utility,
+            other => other,
+        };
 
         // Build ManaProduction from accumulated colors
         if produces_any {
-            return ManaProduction::with_amount(ManaProductionKind::AnyColor, amount);
+            return ManaProduction::with_amount(ManaProductionKind::AnyColor, amount).with_side_cost(side_cost);
         }
 
         // Cards that produce chosen color (like Thriving lands) need special handling.
@@ -494,18 +521,62 @@ impl CardCache {
         // happens via the Card.chosen_color field set at ETB time.
 
         match colors.len() {
-            0 if produces_colorless => ManaProduction::with_amount(ManaProductionKind::Colorless, amount),
+            0 if produces_colorless => {
+                ManaProduction::with_amount(ManaProductionKind::Colorless, amount).with_side_cost(side_cost)
+            }
             0 => ManaProduction::default(), // No mana production
             1 => {
                 // Single color - use Fixed variant
                 let color = colors.iter().next().unwrap();
-                ManaProduction::with_amount(ManaProductionKind::Fixed(color), amount)
+                ManaProduction::with_amount(ManaProductionKind::Fixed(color), amount).with_side_cost(side_cost)
             }
             _ => {
                 // Multiple colors - use Choice variant (OR logic)
-                ManaProduction::with_amount(ManaProductionKind::Choice(colors), amount)
+                ManaProduction::with_amount(ManaProductionKind::Choice(colors), amount).with_side_cost(side_cost)
             }
         }
+    }
+}
+
+/// Inspect an `ActivatedAbility` cost and extract the worst non-mana side
+/// cost component. Composite costs combine via max so e.g. `T Sac<1/CARDNAME>`
+/// reports `Sacrifice`, while `T PayLife<1>` reports `PayLife(1)`.
+///
+/// Used by `derive_mana_production_from_abilities` so the resolver can rank
+/// mana sources by activation expense (None < PayLife < Sacrifice).
+fn derive_side_cost_from_cost(cost: &crate::core::Cost) -> crate::core::ManaSideCost {
+    use crate::core::{Cost, ManaSideCost};
+    match cost {
+        Cost::Sacrifice { .. } => ManaSideCost::Sacrifice,
+        Cost::SacrificePattern { .. } => ManaSideCost::Sacrifice,
+        // Cap pay-life at u8::MAX; spells with PayLife<999> aren't realistic
+        // for mana abilities and the side-cost score saturates anyway.
+        Cost::PayLife { amount } => ManaSideCost::PayLife((*amount).clamp(1, i32::from(u8::MAX)) as u8),
+        Cost::Composite(parts) => {
+            // Combine sub-costs by taking the max (most expensive wins).
+            let mut worst = ManaSideCost::None;
+            for part in parts {
+                let sub = derive_side_cost_from_cost(part);
+                if sub > worst {
+                    worst = sub;
+                }
+            }
+            worst
+        }
+        // Tap, Untap, Mana, TapAndMana, Discard*, Waterbend, AddLoyalty,
+        // SubLoyalty, SubCounter — none are "destructive" in the sense the
+        // resolver cares about for ordering. (Discard is unusual for a mana
+        // ability and is handled separately at activation time.)
+        Cost::Tap
+        | Cost::Untap
+        | Cost::Mana(_)
+        | Cost::TapAndMana(_)
+        | Cost::Discard { .. }
+        | Cost::DiscardHand
+        | Cost::Waterbend { .. }
+        | Cost::AddLoyalty { .. }
+        | Cost::SubLoyalty { .. }
+        | Cost::SubCounter { .. } => ManaSideCost::None,
     }
 }
 

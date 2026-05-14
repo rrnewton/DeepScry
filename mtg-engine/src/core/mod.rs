@@ -27,7 +27,7 @@ pub use effects::{
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};
 pub use mana::{Color, ManaCost, ManaPool};
-pub use mana_production::{ManaColor, ManaProduction, ManaProductionKind};
+pub use mana_production::{ManaColor, ManaProduction, ManaProductionKind, ManaSideCost};
 pub use persistent_effect::{
     CleanupCondition, PersistentEffect, PersistentEffectId, PersistentEffectKind, PersistentEffectStore,
 };

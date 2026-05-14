@@ -92,6 +92,41 @@ impl Default for ManaProductionKind {
     }
 }
 
+/// Activation-cost / preservation severity for a mana source.
+///
+/// This combines two concerns the resolver wants to bake into a single
+/// orderable score:
+/// 1. The non-mana cost paid to activate the mana ability itself.
+/// 2. The strategic value of "saving" the source for a non-mana use.
+///
+/// Variants are deliberately ordered cheapest → most expensive so simple
+/// `Ord` comparisons let the resolver tap the most expendable source last:
+/// - **None** — basic lands, Moxen, dual lands. No cost, no other use.
+/// - **Utility** — lands/permanents with *other* (non-mana) activated
+///   abilities (Mishra's Factory, Strip Mine, Mutavault, manlands). Free to
+///   tap *for mana*, but tapping prevents you from using the utility ability
+///   that turn, so prefer plain lands first.
+/// - **PayLife(n)** — pain lands such as City of Brass / Mana Confluence
+///   (`n` = printed life cost).
+/// - **Sacrifice** — destroys the source on tap (Black Lotus, Lotus Petal,
+///   Treasure tokens). Almost always the worst choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+pub enum ManaSideCost {
+    /// No side cost — free to tap (basic lands, Moxen, dual lands).
+    #[default]
+    None,
+    /// Source has another activated ability the player may want to use later
+    /// (Mishra's Factory, Strip Mine, Mutavault). Tapping for mana spends the
+    /// ability slot, so prefer plain lands first.
+    Utility,
+    /// Pay life as part of activation (City of Brass, Mana Confluence).
+    /// `amount` is the printed life cost (1 for City of Brass).
+    PayLife(u8),
+    /// Sacrifice the source as part of activation (Black Lotus, Lotus Petal,
+    /// Treasure tokens). The card is destroyed when activated.
+    Sacrifice,
+}
+
 /// What mana a source can produce and at what cost
 ///
 /// This struct represents the UPPER BOUND on what mana a permanent can produce.
@@ -129,6 +164,15 @@ pub struct ManaProduction {
     /// they predate this field.
     #[serde(default = "default_amount")]
     pub amount: u8,
+
+    /// Non-mana cost paid alongside tapping this source. Used by the mana
+    /// resolver to deprioritize destructive sources (Black Lotus → Sacrifice,
+    /// City of Brass → PayLife) so cheap lands are tapped first.
+    ///
+    /// Defaults to `ManaSideCost::None` to keep older snapshots/tests working
+    /// transparently when they predate this field.
+    #[serde(default)]
+    pub side_cost: ManaSideCost,
 }
 
 fn default_amount() -> u8 {
@@ -142,6 +186,7 @@ impl Default for ManaProduction {
             kind: ManaProductionKind::default(),
             activation_cost: None,
             amount: 1,
+            side_cost: ManaSideCost::None,
         }
     }
 }
@@ -153,6 +198,7 @@ impl ManaProduction {
             kind,
             activation_cost: None,
             amount: 1,
+            side_cost: ManaSideCost::None,
         }
     }
 
@@ -162,6 +208,7 @@ impl ManaProduction {
             kind,
             activation_cost: Some(cost),
             amount: 1,
+            side_cost: ManaSideCost::None,
         }
     }
 
@@ -174,6 +221,32 @@ impl ManaProduction {
             kind,
             activation_cost: None,
             amount: amount.max(1),
+            side_cost: ManaSideCost::None,
+        }
+    }
+
+    /// Builder helper: attach a non-mana side cost (sacrifice / pay life).
+    pub fn with_side_cost(mut self, side_cost: ManaSideCost) -> Self {
+        self.side_cost = side_cost;
+        self
+    }
+
+    /// Numeric severity score for the side cost, used by the mana resolver to
+    /// order sources from cheapest to most expensive. Lower = tap first.
+    ///
+    /// We weight `Sacrifice` heavily — losing the source itself is almost
+    /// always worse than paying a few life. PayLife scales with the printed
+    /// life cost so a 2-life ability is preferred over a 3-life ability.
+    #[inline]
+    pub fn side_cost_score(&self) -> u16 {
+        match self.side_cost {
+            ManaSideCost::None => 0,
+            // Utility lands sit just above plain lands — preferred over pain
+            // and sacrifice but tapped after vanilla lands.
+            ManaSideCost::Utility => 5,
+            // Pay 1 life ≈ score 20, scale linearly. Stays well below sacrifice.
+            ManaSideCost::PayLife(n) => 20u16.saturating_mul(u16::from(n)).min(900),
+            ManaSideCost::Sacrifice => 1000,
         }
     }
 

@@ -1,0 +1,24 @@
+[metadata]
+Name:Mana resolver should prefer cheap sources over Black Lotus
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+
+# Reproduces the source-ordering bug: with Underground Sea, Tundra, Mox Emerald,
+# Black Lotus on the battlefield, casting Psionic Blast ({2}{U}) MUST tap the
+# three cheap sources (a dual land + Tundra + Mox) rather than wasting Black Lotus
+# (which costs the entire card via sacrifice for only 1 of the 3 mana needed).
+# Expected: tap Underground Sea (or Tundra) for U, plus the other dual + Mox for
+# generic. Black Lotus stays on the battlefield.
+p0life=20
+p0hand=Psionic Blast
+p0battlefield=Underground Sea; Tundra; Mox Emerald; Black Lotus
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+
+p1life=20
+p1battlefield=Forest
+p1library=Forest; Forest; Forest; Forest; Forest; Forest

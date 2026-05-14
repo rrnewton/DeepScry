@@ -3162,3 +3162,102 @@ async fn test_indestructible_keyword_loading() -> Result<()> {
 
     Ok(())
 }
+
+/// Regression: When Underground Sea + Tundra + Mox Emerald + Black Lotus are
+/// available and the player casts Psionic Blast ({2}{U}), the mana resolver
+/// MUST tap the cheap sources and leave Black Lotus on the battlefield.
+///
+/// Pre-fix bug: the resolver could tap Underground Sea + Mox Emerald + Black
+/// Lotus (sacrificing the Lotus for a single mana of generic) instead of
+/// using the free Tundra alongside the other cheap sources.
+///
+/// See task `bug-mana-engine-sacrifice-last`.
+#[tokio::test]
+async fn test_psionic_blast_does_not_waste_black_lotus() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    // Load puzzle: P0 has [Underground Sea, Tundra, Mox Emerald, Black Lotus]
+    // and Psionic Blast in hand.
+    let puzzle_path = PathBuf::from("../test_puzzles/mana_sacrifice_last.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(12345);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    // Sanity-check the starting battlefield.
+    let starting_lotus = game.battlefield.cards.iter().any(|&id| {
+        game.cards
+            .try_get(id)
+            .is_some_and(|c| c.name.as_str() == "Black Lotus" && c.owner == p0_id)
+    });
+    assert!(starting_lotus, "Black Lotus must be on the battlefield at start");
+
+    // Force P0 to cast Psionic Blast (script: 1 = first castable spell, then
+    // 1 = first valid target — the opponent — when prompted).
+    // After the script exhausts, the controller defaults to passing priority.
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 1]);
+    let mut controller1 = HeuristicController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _ = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    // Inspect game state directly — this is more robust than scraping
+    // `logger.logs()` (the harness prints some lines via eprintln rather than
+    // the captured logger).
+    let lotus_still_alive = game_loop.game.battlefield.cards.iter().any(|&id| {
+        game_loop
+            .game
+            .cards
+            .try_get(id)
+            .is_some_and(|c| c.name.as_str() == "Black Lotus" && c.owner == p0_id)
+    });
+    let lotus_in_graveyard = game_loop
+        .game
+        .player_zones
+        .iter()
+        .find(|(id, _)| *id == p0_id)
+        .map(|(_, zones)| {
+            zones.graveyard.cards.iter().any(|&id| {
+                game_loop
+                    .game
+                    .cards
+                    .try_get(id)
+                    .is_some_and(|c| c.name.as_str() == "Black Lotus")
+            })
+        })
+        .unwrap_or(false);
+
+    // Verify the cast actually happened by checking damage to P2
+    // (Psionic Blast deals 4 damage). If it never resolved, P2 is still at 20.
+    let p2_life_after = game_loop.game.get_player(p1_id)?.life;
+    let psionic_resolved = p2_life_after < 20;
+
+    println!("\n=== Mana sacrifice-last regression ===");
+    println!("P2 life after: {p2_life_after} (Psionic Blast resolved = {psionic_resolved})");
+    println!("Lotus on battlefield = {lotus_still_alive}, in graveyard = {lotus_in_graveyard}");
+    println!("=== End ===\n");
+
+    assert!(
+        psionic_resolved,
+        "Psionic Blast should have resolved and dealt 4 damage to P2 \
+         (P2 life unchanged at 20). FixedScript may have failed to force the cast."
+    );
+    assert!(
+        !lotus_in_graveyard,
+        "Black Lotus must NOT have been sacrificed for Psionic Blast — \
+         the cheap sources (Underground Sea + Tundra + Mox Emerald) cover {{2}}{{U}} on their own."
+    );
+    assert!(
+        lotus_still_alive,
+        "Black Lotus must remain on the battlefield after casting Psionic Blast."
+    );
+
+    println!("✓ Black Lotus preserved when cheaper sources can pay");
+    Ok(())
+}
