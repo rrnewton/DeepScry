@@ -308,12 +308,89 @@ pub fn sort_spell_abilities(abilities: &[SpellAbility]) -> Vec<SpellAbility> {
     sorted
 }
 
+/// Predict which side costs will be paid by the mana resolver if the player
+/// casts a spell with the given mana cost right now, and format them as a
+/// parenthetical hint suitable for the action menu.
+///
+/// Returns e.g.
+///   "(sacrificing Black Lotus)"
+///   "(1 damage from City of Brass)"
+///   "(sacrificing Black Lotus; 2 damage from City of Brass)"
+/// or `None` if the resolver wouldn't tap any source with a non-None side
+/// cost (the common case — basic lands and Moxen are free).
+///
+/// Speculatively runs the GreedyManaResolver against the player's current
+/// untapped sources. The resolver already orders sources cheapest-first
+/// (`mtg-0f9d13`), so this hint is what *will* actually happen if the
+/// player accepts the action. If the spell can't be paid at all, returns
+/// `None` (the action wouldn't have been offered in the first place).
+fn predicted_side_costs_hint(view: &GameStateView, card_id: crate::core::CardId) -> Option<String> {
+    use crate::core::ManaSideCost;
+    use crate::game::mana_engine::ManaEngine;
+    use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+    let cost = view.game.cards.try_get(card_id)?.mana_cost;
+    if cost.cmc() == 0 {
+        return None;
+    }
+
+    let mut engine = ManaEngine::new();
+    engine.update(view.game, view.player_id);
+    let sources = engine.all_sources();
+
+    let resolver = GreedyManaResolver::new();
+    let mut tap_order = Vec::new();
+    if !resolver.compute_tap_order(&cost, sources, &mut tap_order) {
+        return None;
+    }
+
+    // Bucket the predicted side costs.
+    let mut sacrificed: Vec<&str> = Vec::new();
+    let mut total_pain_life: u32 = 0;
+    let mut pain_sources: Vec<&str> = Vec::new();
+    for source_id in &tap_order {
+        let card = match view.game.cards.try_get(*source_id) {
+            Some(c) => c,
+            None => continue,
+        };
+        match card.definition.cache.mana_production.side_cost {
+            ManaSideCost::None | ManaSideCost::Utility => {}
+            ManaSideCost::Sacrifice => sacrificed.push(card.name.as_str()),
+            ManaSideCost::PayLife(n) => {
+                total_pain_life = total_pain_life.saturating_add(u32::from(n));
+                pain_sources.push(card.name.as_str());
+            }
+        }
+    }
+
+    if sacrificed.is_empty() && pain_sources.is_empty() {
+        return None;
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if !sacrificed.is_empty() {
+        parts.push(format!("sacrificing {}", sacrificed.join(", ")));
+    }
+    if !pain_sources.is_empty() {
+        // "1 damage from City of Brass" / "2 damage from City of Brass, Mana Confluence"
+        parts.push(format!("{} damage from {}", total_pain_life, pain_sources.join(", ")));
+    }
+    Some(format!("({})", parts.join("; ")))
+}
+
 /// Format a single spell ability choice for display
 ///
 /// Returns a string matching the rich input syntax:
 /// - "play Forest" for lands
 /// - "cast Lightning Bolt" for spells
 /// - "activate Forest" for abilities
+///
+/// Cast actions are annotated with predicted side costs when the resolver
+/// will need to sacrifice a permanent or a pain land — e.g.
+///   "cast Psionic Blast (sacrificing Black Lotus)"
+///   "cast Lightning Bolt (1 damage from City of Brass)"
+/// — so the player sees the cost before accepting the action. See task
+/// `bug-sacrifice-cost-display` and `mtg-0f9d13` for the broader context.
 ///
 /// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
 pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility) -> String {
@@ -324,7 +401,10 @@ pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility)
         }
         SpellAbility::CastSpell { card_id } => {
             let name = view.card_name(*card_id).unwrap_or_default();
-            format!("cast {}", name)
+            match predicted_side_costs_hint(view, *card_id) {
+                Some(hint) => format!("cast {} {}", name, hint),
+                None => format!("cast {}", name),
+            }
         }
         SpellAbility::ActivateAbility { card_id, ability_index } => {
             let name = view.card_name(*card_id).unwrap_or_default();

@@ -1518,6 +1518,17 @@ impl<'a> GameLoop<'a> {
     ) -> crate::Result<Option<crate::game::GameResult>> {
         self.cleanup_step(controller1, controller2)
     }
+
+    /// Test hook: list creatures the declare-attackers step would offer for
+    /// `player_id`. Mirrors the filter inside `declare_attackers_step` exactly
+    /// (delegates to the same private helper) so regression tests can verify
+    /// e.g. that an animated Mishra's Factory shows up as an attacker.
+    pub fn get_available_attacker_creatures_for_test(
+        &self,
+        player_id: crate::core::PlayerId,
+    ) -> smallvec::SmallVec<[crate::core::CardId; 8]> {
+        self.get_available_attacker_creatures(player_id)
+    }
 }
 
 #[cfg(test)]

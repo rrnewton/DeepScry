@@ -1581,12 +1581,18 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                types_added,
+                                                subtypes_added,
+                                                remove_creature_subtypes,
                                             } if target.is_placeholder() && chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: card_id, // Target self (the source of the ability)
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    types_added: types_added.clone(),
+                                                    subtypes_added: subtypes_added.clone(),
+                                                    remove_creature_subtypes: *remove_creature_subtypes,
                                                 }
                                             }
                                             // Targeted SetBasePowerToughness: "Target creature has base P/T X/Y"
@@ -1595,12 +1601,18 @@ impl<'a> GameLoop<'a> {
                                                 power,
                                                 toughness,
                                                 keywords_granted,
+                                                types_added,
+                                                subtypes_added,
+                                                remove_creature_subtypes,
                                             } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::SetBasePowerToughness {
                                                     target: chosen_targets_vec[0],
                                                     power: *power,
                                                     toughness: *toughness,
                                                     keywords_granted: keywords_granted.clone(),
+                                                    types_added: types_added.clone(),
+                                                    subtypes_added: subtypes_added.clone(),
+                                                    remove_creature_subtypes: *remove_creature_subtypes,
                                                 }
                                             }
                                             crate::core::Effect::AttachEquipment {

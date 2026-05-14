@@ -1,0 +1,29 @@
+[metadata]
+Name:Mishra's Factory animates and attacks
+Goal:Win
+Difficulty:Easy
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+
+# P0 has Mishra's Factory on the battlefield. Forests are present so the
+# resolver doesn't pick the Factory for mana. The Factory has been on the
+# battlefield since turn 0 (no summoning sickness). Activating its
+# `{1}: become a 2/2 Assembly-Worker artifact creature until end of turn`
+# ability should let it attack this turn.
+#
+# Pre-fix bug: even though the activate ability fires and base P/T goes to
+# 2/2, Mishra's Factory's CardCache.is_creature flag stays false because the
+# Animate effect ignored the `Types$ Artifact,Creature,Assembly-Worker`
+# parameter on the ability. The declare-attackers step filters by
+# `card.is_creature()` so the Factory is invisible to combat.
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Forest; Mishra's Factory
+p0library=Forest; Forest; Forest; Forest; Forest; Forest
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest; Forest

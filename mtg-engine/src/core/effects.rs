@@ -966,12 +966,36 @@ pub enum Effect {
     /// The effect lasts until end of turn.
     /// Power and Toughness are optional - None means "don't change".
     /// Keywords can be granted along with P/T changes.
+    ///
+    /// `types_added` / `subtypes_added` model the `Types$` parameter on
+    /// `AB$ Animate` — e.g. Mishra's Factory's `Types$ Artifact,Creature,Assembly-Worker`.
+    /// These are the *card* types and subtypes the source becomes for the
+    /// duration of the effect (Mishra's Factory becomes Land + Artifact +
+    /// Creature with the Assembly-Worker subtype). They're removed at end of
+    /// turn cleanup along with the temp P/T.
+    ///
+    /// `remove_creature_subtypes` mirrors `RemoveCreatureTypes$ True`: any
+    /// pre-existing creature subtypes on the source are stripped before the
+    /// new ones are added. Used when a manland animates into a *different*
+    /// creature type than its printed subtypes.
     SetBasePowerToughness {
         target: CardId,
         power: Option<i32>,
         toughness: Option<i32>,
         /// Keywords to grant (e.g., Trample from Keywords$ parameter)
         keywords_granted: smallvec::SmallVec<[Keyword; 2]>,
+        /// Card types to add until end of turn (e.g. `Types$ Artifact,Creature`).
+        /// Empty = don't change types.
+        #[serde(default)]
+        types_added: smallvec::SmallVec<[crate::core::CardType; 2]>,
+        /// Subtypes to add until end of turn (e.g. `Assembly-Worker` from
+        /// `Types$ Artifact,Creature,Assembly-Worker`).
+        #[serde(default)]
+        subtypes_added: smallvec::SmallVec<[crate::core::Subtype; 2]>,
+        /// If true, strip any pre-existing creature subtypes before adding
+        /// the new ones (`RemoveCreatureTypes$ True`).
+        #[serde(default)]
+        remove_creature_subtypes: bool,
     },
 
     /// Airbend: Exile a permanent and grant its owner permission to cast it for {2}.

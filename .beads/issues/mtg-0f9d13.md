@@ -169,17 +169,90 @@ Expected: Psionic Blast taps Underground Sea + Mox Emerald + Tundra; Black
 Lotus stays on the battlefield. Pre-fix the resolver could choose any
 ordering of the complex sources, including the wasteful Lotus tap.
 
+### Mishra's Factory animate fix (fix-mishras-factory-attacker)
+
+Follow-up patch on top of the resolver fix. The `AB$ Animate` parser was
+ignoring `Types$ Artifact,Creature,Assembly-Worker` and
+`RemoveCreatureTypes$ True`, so when Mishra's Factory's `{1}: become a 2/2
+Assembly-Worker artifact creature` activated ability resolved, the card's
+typeline never actually changed. The declare-attackers step's
+`card.is_creature() && !card.tapped` filter therefore excluded the
+animated Factory, and the manland could never attack.
+
+Code touched:
+
+- `mtg-engine/src/core/effects.rs` — `Effect::SetBasePowerToughness` gains
+  `types_added`, `subtypes_added`, `remove_creature_subtypes` fields.
+- `mtg-engine/src/loader/effect_converter.rs` — Animate parser reads the
+  `Types$` parameter, splitting tokens between known `CardType` variants
+  and creature subtypes (anything not a known card type).
+- `mtg-engine/src/core/card.rs` — Card gains
+  `temp_animate_types`, `temp_animate_subtypes`, `temp_removed_subtypes`
+  to track what was added/removed for end-of-turn rollback.
+- `mtg-engine/src/game/actions/mod.rs` — `Effect::SetBasePowerToughness`
+  resolution now adds the types/subtypes, refreshes
+  `definition.cache.update_from_types/subtypes` (so `is_creature()` /
+  `is_artifact()` flip immediately), and bumps the per-player
+  `ManaSourceCache` if the card is a mana source (Mishra's Factory: simple
+  colorless source ↔ complex source as it animates and reverts).
+- `mtg-engine/src/game/state.rs` — `cleanup_temporary_effects` rolls back
+  the temp types/subtypes at end of turn, refreshes the cache, and
+  re-marks the mana caches dirty if any animated mana source reverted.
+- `mtg-engine/src/game/game_loop/{priority.rs,logging.rs,mod.rs}` —
+  pattern updates + new `get_available_attacker_creatures_for_test` hook.
+
+Regression coverage:
+
+- `tests/puzzle_e2e.rs::test_mishras_factory_animates_and_is_eligible_attacker`
+  applies the animate effect directly, asserts the Factory becomes a
+  Creature/Artifact with the Assembly-Worker subtype, asserts it shows up
+  in `get_available_attacker_creatures`, then runs `cleanup_temporary_effects`
+  and asserts the typeline rolls back to land-only.
+- Existing `tests/mana_cache_debug_stress_test.rs` (oldschool tournament,
+  20 games of 4 decks) now passes — the mana cache invalidation hooks
+  prevent the cache desync that the stress test would otherwise flag when
+  Mishra's Factory animates mid-game.
+- New puzzle: `puzzles/mishras_factory_attacks.pzl` (also in
+  `test_puzzles/`) for manual replay.
+
+### Action menu side-cost hints (fix-mishras-factory-attacker)
+
+Closes the second open follow-up: cast actions in the menu now surface
+predicted sacrifice / pain costs so the player sees them before
+accepting. Renders e.g.
+`[2] cast Psionic Blast (sacrificing Black Lotus)` or
+`[3] cast Lightning Bolt (1 damage from City of Brass)` when those are
+the only payment options the resolver would pick.
+
+Code touched:
+
+- `mtg-engine/src/game/controller.rs` — new `predicted_side_costs_hint`
+  helper runs the GreedyManaResolver speculatively against the player's
+  current sources, inspects each tap'd source's
+  `mana_production.side_cost`, and buckets them into a `(sacrificing X;
+  N damage from Y)` parenthetical. Hooked into
+  `format_spell_ability_choice` for the `CastSpell` arm.
+
+Regression coverage:
+
+- `tests/puzzle_e2e.rs::test_action_menu_shows_sacrifice_and_pain_hints`
+  builds three small in-memory scenarios:
+    1. Black Lotus alone + 3-mana spell — hint must contain
+       "sacrificing Black Lotus".
+    2. Three Forests + Black Lotus + 3-mana spell — hint must NOT
+       contain "sacrificing" (resolver picks the Forests).
+    3. City of Brass alone + Lightning Bolt — hint must contain
+       "damage from City of Brass".
+
 ### Open follow-ups (not in this fix)
 
-- **Action menu hint**: when the resolver will need a pain/sacrifice source,
-  the `[N] cast Foo` menu entry should annotate the side cost so the player
-  sees `[N] cast Foo (1 damage from City of Brass)` /
-  `[N] cast Foo (sacrificing Black Lotus)`. The resolver already has the
-  information; rendering happens in `mtg-engine/src/game/controller.rs:327`
-  (`format!("cast {}", name)`). Needs a speculative resolver run inside the
-  action-menu builder or a precomputed "predicted side costs" attached to
-  the action.
-- **Mishra's Factory attacker bug**: separate from mana — once animated,
-  Mishra's Factory should appear in the declare-attackers menu but currently
-  doesn't. Combat-system fix, not a mana issue. (User-reported alongside
-  the mana ordering bug; tracked here as a pointer.)
+- **Mishra's Factory + summoning-sickness corner cases**: the current
+  patch deliberately doesn't reset `turn_entered_battlefield` when a
+  land animates, mirroring Forge-Java's "becomes a creature doesn't
+  reset summoning sickness" rule. A standalone test exercising the
+  same-turn-played-then-animated case would confirm we don't accidentally
+  let a freshly-played Mishra's Factory attack on its own turn.
+- **`AnimateAll` doesn't yet take the `Types$` parameter** — same
+  pattern as the per-card Animate. Cards that mass-animate land into
+  creatures (e.g. some Avatar set "all your lands become 1/1 Elementals"
+  effects) still need this. Filed for future work.

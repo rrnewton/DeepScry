@@ -617,8 +617,48 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 smallvec::smallvec![]
             };
 
-            // At least one of power, toughness, or keywords must be set
-            if power.is_none() && toughness.is_none() && keywords_granted.is_empty() {
+            // Parse Types$ parameter — e.g. "Artifact,Creature,Assembly-Worker"
+            // for Mishra's Factory. Per Forge-Java conventions, this is a
+            // comma-separated list mixing card types (Artifact, Creature,
+            // Land, Enchantment, ...) and subtypes (Assembly-Worker, etc.).
+            // We split it into the two buckets; anything that isn't a known
+            // CardType becomes a Subtype.
+            let mut types_added: smallvec::SmallVec<[crate::core::CardType; 2]> = smallvec::SmallVec::new();
+            let mut subtypes_added: smallvec::SmallVec<[crate::core::Subtype; 2]> = smallvec::SmallVec::new();
+            if let Some(types_str) = params.get("Types") {
+                for part in types_str.split(',').map(|s| s.trim()) {
+                    if part.is_empty() {
+                        continue;
+                    }
+                    match part {
+                        "Artifact" => types_added.push(crate::core::CardType::Artifact),
+                        "Creature" => types_added.push(crate::core::CardType::Creature),
+                        "Land" => types_added.push(crate::core::CardType::Land),
+                        "Enchantment" => types_added.push(crate::core::CardType::Enchantment),
+                        "Instant" => types_added.push(crate::core::CardType::Instant),
+                        "Sorcery" => types_added.push(crate::core::CardType::Sorcery),
+                        "Planeswalker" => types_added.push(crate::core::CardType::Planeswalker),
+                        // Anything else is a creature subtype
+                        // (Assembly-Worker, Goblin, Wall, etc.)
+                        other => subtypes_added.push(crate::core::Subtype::new(other)),
+                    }
+                }
+            }
+
+            // Per Forge-Java, "RemoveCreatureTypes$ True" strips existing
+            // creature subtypes before the new ones are added.
+            let remove_creature_subtypes = params
+                .get("RemoveCreatureTypes")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+            // At least one of power, toughness, keywords, or types must be set
+            if power.is_none()
+                && toughness.is_none()
+                && keywords_granted.is_empty()
+                && types_added.is_empty()
+                && subtypes_added.is_empty()
+            {
                 return None;
             }
 
@@ -627,6 +667,9 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 power,
                 toughness,
                 keywords_granted,
+                types_added,
+                subtypes_added,
+                remove_creature_subtypes,
             })
         }
 

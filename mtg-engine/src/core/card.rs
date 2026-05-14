@@ -632,6 +632,27 @@ pub struct Card {
     /// Use set_temp_base_toughness() to write, clear_temp_base_stats() to reset
     temp_base_toughness: Option<i8>,
 
+    /// Card types added by an until-end-of-turn `AB$ Animate | Types$ ...`
+    /// effect (Mishra's Factory's `{1}: become a 2/2 Assembly-Worker artifact
+    /// creature` is the canonical case). Removed during cleanup along with
+    /// `temp_base_power` / `temp_base_toughness`.
+    ///
+    /// Only types that were *not already on the card* are recorded here, so
+    /// cleanup can safely strip them without touching the printed type line.
+    #[serde(default)]
+    pub temp_animate_types: SmallVec<[CardType; 2]>,
+
+    /// Subtypes added by an until-end-of-turn `AB$ Animate | Types$ ...`
+    /// effect (e.g. `Assembly-Worker`). Cleared at end of turn.
+    #[serde(default)]
+    pub temp_animate_subtypes: SmallVec<[Subtype; 2]>,
+
+    /// Subtypes that were temporarily *removed* by `RemoveCreatureTypes$ True`
+    /// on an animate effect. Restored at end of turn so the card's printed
+    /// creature subtype line returns intact.
+    #[serde(default)]
+    pub temp_removed_subtypes: SmallVec<[Subtype; 2]>,
+
     /// Damage marked on this permanent (cleared at end of turn per CR 704.5g)
     /// Only meaningful for creatures on the battlefield
     pub damage: i32,
@@ -791,6 +812,9 @@ impl Card {
             toughness_bonus: 0,
             temp_base_power: None,
             temp_base_toughness: None,
+            temp_animate_types: SmallVec::new(),
+            temp_animate_subtypes: SmallVec::new(),
+            temp_removed_subtypes: SmallVec::new(),
             damage: 0,
             damaged_by_this_turn: SmallVec::new(),
             text,

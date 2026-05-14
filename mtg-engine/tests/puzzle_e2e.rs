@@ -3261,3 +3261,287 @@ async fn test_psionic_blast_does_not_waste_black_lotus() -> Result<()> {
     println!("✓ Black Lotus preserved when cheaper sources can pay");
     Ok(())
 }
+
+/// Regression: Mishra's Factory's `{1}: become a 2/2 Assembly-Worker artifact
+/// creature` ability must mutate the card's typeline so combat recognizes
+/// it as a creature, and the change must roll back at end-of-turn cleanup.
+///
+/// Pre-fix bug: the Animate effect ignored the `Types$ Artifact,Creature,
+/// Assembly-Worker` parameter on the ability, so `card.is_creature()` stayed
+/// false and the declare-attackers step's `card.is_creature() && !card.tapped`
+/// filter excluded the Factory entirely.
+///
+/// We exercise the animate effect directly (skipping the priority loop's
+/// many-round-pass dance) so the test pins down the typeline behaviour with
+/// no ambiguity, then call `get_available_attacker_creatures` (via the
+/// existing test hook) to confirm combat sees the animated land. A separate
+/// end-of-turn check verifies that `cleanup_temporary_effects` reverts the
+/// Factory back to a land.
+///
+/// See task `bug-mishras-factory-tapping`.
+#[tokio::test]
+async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> {
+    use mtg_forge_rs::core::{CardType, Effect, Subtype};
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/mishras_factory_attacks.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(12345);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+
+    // Find Mishra's Factory's CardId so we can verify state changes.
+    let factory_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Mishra's Factory" && c.controller == p0_id)
+        })
+        .expect("Mishra's Factory should be on the battlefield at start");
+
+    // Backdate ETB so the Factory doesn't have summoning sickness this turn
+    // (CR 302.1 — only matters if it'd be relevant, but cleaner this way).
+    game.cards.get_mut(factory_id)?.turn_entered_battlefield = Some(0);
+
+    // Sanity: pre-animate, Mishra's Factory is a Land but not a Creature.
+    {
+        let factory = game.cards.get(factory_id)?;
+        assert!(factory.is_land(), "Factory must be a Land before animate");
+        assert!(!factory.is_creature(), "Factory must NOT be a creature before animate");
+    }
+
+    // Apply the animate effect directly. This is what the {1} activated
+    // ability resolves to per the parser:
+    //   AB$ Animate | Defined$ Self | Power$ 2 | Toughness$ 2
+    //              | Types$ Artifact,Creature,Assembly-Worker
+    //              | RemoveCreatureTypes$ True
+    let animate = Effect::SetBasePowerToughness {
+        target: factory_id,
+        power: Some(2),
+        toughness: Some(2),
+        keywords_granted: smallvec::SmallVec::new(),
+        types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
+        subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
+        remove_creature_subtypes: true,
+    };
+    game.execute_effect(&animate)?;
+
+    // After animate: Factory is Land + Artifact + Creature with subtype
+    // Assembly-Worker, and `is_creature()` flips true so combat sees it.
+    {
+        let factory = game.cards.get(factory_id)?;
+        println!(
+            "Post-animate Factory: types={:?}, subtypes={:?}, is_creature={}, is_land={}, P/T={}/{}, tapped={}",
+            factory.types,
+            factory.subtypes,
+            factory.is_creature(),
+            factory.is_land(),
+            factory.current_power(),
+            factory.current_toughness(),
+            factory.tapped,
+        );
+        assert!(factory.is_creature(), "Factory must BE a creature after animate");
+        assert!(factory.is_land(), "Factory remains a Land (per oracle text)");
+        assert!(factory.is_artifact(), "Factory must be an Artifact after animate");
+        assert!(
+            factory.subtypes.iter().any(|s| s.as_str() == "Assembly-Worker"),
+            "Factory must have Assembly-Worker subtype after animate"
+        );
+        assert_eq!(factory.current_power() as i32, 2);
+        assert_eq!(factory.current_toughness() as i32, 2);
+        assert!(!factory.tapped, "Factory must remain untapped after animate");
+    }
+
+    // The declare-attackers helper must now include the Factory.
+    let game_loop = GameLoop::new(&mut game);
+    let attackers = game_loop.get_available_attacker_creatures_for_test(p0_id);
+    assert!(
+        attackers.contains(&factory_id),
+        "Mishra's Factory must appear in get_available_attacker_creatures \
+         after being animated. Got: {:?}",
+        attackers,
+    );
+    drop(game_loop);
+
+    // Trigger cleanup_temporary_effects (the end-of-turn step) and confirm
+    // the typeline rolls back to land-only.
+    game.cleanup_temporary_effects();
+    {
+        let factory = game.cards.get(factory_id)?;
+        println!(
+            "Post-cleanup Factory: types={:?}, subtypes={:?}, is_creature={}, is_land={}",
+            factory.types,
+            factory.subtypes,
+            factory.is_creature(),
+            factory.is_land(),
+        );
+        assert!(
+            !factory.is_creature(),
+            "Factory must NOT be a creature after end-of-turn cleanup"
+        );
+        assert!(factory.is_land(), "Factory must still be a Land after cleanup");
+        assert!(
+            !factory.is_artifact(),
+            "Factory must no longer be an Artifact after cleanup — Animate is EOT only"
+        );
+        assert!(
+            !factory.subtypes.iter().any(|s| s.as_str() == "Assembly-Worker"),
+            "Factory must no longer have Assembly-Worker subtype after cleanup"
+        );
+    }
+
+    println!("✓ Mishra's Factory animates, becomes attacker-eligible, reverts at cleanup");
+    Ok(())
+}
+
+/// Regression: action menu must surface predicted side costs for cast actions
+/// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
+/// sees them before accepting.
+///
+/// See task `bug-sacrifice-cost-display` and tracking issue `mtg-0f9d13`.
+#[tokio::test]
+async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
+    use mtg_forge_rs::core::{
+        Card, CardId, CardType, ManaCost, ManaProduction, ManaProductionKind, ManaSideCost, SpellAbility,
+    };
+    use mtg_forge_rs::game::controller::{format_spell_ability_choice, GameStateView};
+    use mtg_forge_rs::game::GameState;
+
+    // Build a tiny game by hand so we don't need a card database round-trip.
+    // P0 has only Black Lotus on the battlefield + a 3-mana spell in hand.
+    // Casting the spell MUST sacrifice the Lotus (the only payment option),
+    // and the menu hint must say so.
+    let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+    let p0 = game.players[0].id;
+
+    let lotus_id = game.next_card_id();
+    let mut lotus = Card::new(lotus_id, "Black Lotus".to_string(), p0);
+    lotus.add_type(CardType::Artifact);
+    lotus.controller = p0;
+    lotus.definition.cache.set_mana_production(
+        ManaProduction::with_amount(ManaProductionKind::AnyColor, 3).with_side_cost(ManaSideCost::Sacrifice),
+    );
+    game.cards.insert(lotus_id, lotus);
+    game.battlefield.add(lotus_id);
+
+    // 3-mana spell in hand (Su-Chi-style {3}).
+    let spell_id = game.next_card_id();
+    let mut spell = Card::new(spell_id, "Su-Chi".to_string(), p0);
+    spell.add_type(CardType::Creature);
+    spell.controller = p0;
+    spell.mana_cost = ManaCost::from_string("3");
+    game.cards.insert(spell_id, spell);
+    if let Some((_, zones)) = game.player_zones.iter_mut().find(|(id, _)| *id == p0) {
+        zones.hand.cards.push(spell_id);
+    }
+
+    let view = GameStateView::new(&game, p0);
+    let cast = SpellAbility::CastSpell { card_id: spell_id };
+    let label = format_spell_ability_choice(&view, &cast);
+    println!("Cast label (Lotus only): {label}");
+    assert!(
+        label.contains("sacrificing Black Lotus"),
+        "Menu label must surface sacrifice cost. Got: {label:?}"
+    );
+
+    // Now add a Forest. With a free source available, the resolver will tap
+    // it for {1} and need only 2 more from Lotus (still has to sacrifice for
+    // a 3-cost spell since Forest only contributes 1 toward {3}). Wait —
+    // Lotus produces 3 in one go, so tapping Lotus for any of {3} sacrifices
+    // it. Add 3 Forests so the resolver has a no-sacrifice path and check
+    // the hint disappears.
+    for _ in 0..3 {
+        let f_id = game.next_card_id();
+        let mut f = Card::new(f_id, "Forest".to_string(), p0);
+        f.add_type(CardType::Land);
+        f.controller = p0;
+        // Subtype-derived mana production fires via `update_from_subtypes`.
+        f.definition
+            .cache
+            .set_mana_production(ManaProduction::free(ManaProductionKind::Fixed(
+                mtg_forge_rs::core::ManaColor::Green,
+            )));
+        f.definition.cache.is_mana_source = true;
+        game.cards.insert(f_id, f);
+        game.battlefield.add(f_id);
+    }
+    // The mana cache may need a rebuild (the test bypasses event emission).
+    if let Some((_, cache)) = game.mana_caches.iter_mut().find(|(id, _)| *id == p0) {
+        cache.mark_dirty();
+    }
+    game.increment_mana_version();
+
+    let view = GameStateView::new(&game, p0);
+    let label = format_spell_ability_choice(&view, &cast);
+    println!("Cast label (Forests + Lotus): {label}");
+    assert!(
+        !label.contains("sacrificing"),
+        "With 3 Forests available, the resolver should tap Forests instead of Lotus. \
+         Got: {label:?}"
+    );
+
+    // Replace the Lotus with a City of Brass (`PayLife(1)`) and a 1-mana
+    // spell needing pain. Verify "1 damage from City of Brass" hint.
+    drop(view);
+    game.battlefield.cards.retain(|&id| id != lotus_id);
+    let cob_id = game.next_card_id();
+    let mut cob = Card::new(cob_id, "City of Brass".to_string(), p0);
+    cob.add_type(CardType::Land);
+    cob.controller = p0;
+    cob.definition.cache.set_mana_production(
+        ManaProduction::free(ManaProductionKind::AnyColor).with_side_cost(ManaSideCost::PayLife(1)),
+    );
+    cob.definition.cache.is_mana_source = true;
+    game.cards.insert(cob_id, cob);
+    game.battlefield.add(cob_id);
+
+    // Replace the spell with a 1-mana spell so only City of Brass can pay.
+    // Drop all Forests so City of Brass is the only source.
+    let to_remove: Vec<CardId> = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .filter(|id| game.cards.try_get(*id).is_some_and(|c| c.name.as_str() == "Forest"))
+        .collect();
+    for id in to_remove {
+        game.battlefield.cards.retain(|&x| x != id);
+    }
+
+    let bolt_id = game.next_card_id();
+    let mut bolt = Card::new(bolt_id, "Lightning Bolt".to_string(), p0);
+    bolt.add_type(CardType::Instant);
+    bolt.controller = p0;
+    bolt.mana_cost = ManaCost::from_string("R");
+    game.cards.insert(bolt_id, bolt);
+    if let Some((_, zones)) = game.player_zones.iter_mut().find(|(id, _)| *id == p0) {
+        zones.hand.cards.clear();
+        zones.hand.cards.push(bolt_id);
+    }
+
+    if let Some((_, cache)) = game.mana_caches.iter_mut().find(|(id, _)| *id == p0) {
+        cache.mark_dirty();
+    }
+    game.increment_mana_version();
+
+    let view = GameStateView::new(&game, p0);
+    let bolt_cast = SpellAbility::CastSpell { card_id: bolt_id };
+    let label = format_spell_ability_choice(&view, &bolt_cast);
+    println!("Cast label (City of Brass only): {label}");
+    assert!(
+        label.contains("damage from City of Brass"),
+        "With only City of Brass available, menu must warn about pain damage. Got: {label:?}"
+    );
+
+    println!("✓ Action menu surfaces sacrifice and pain side costs");
+    Ok(())
+}

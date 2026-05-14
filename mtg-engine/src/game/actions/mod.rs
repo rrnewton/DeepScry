@@ -3593,6 +3593,9 @@ impl GameState {
                 power,
                 toughness,
                 keywords_granted,
+                types_added,
+                subtypes_added,
+                remove_creature_subtypes,
             } => {
                 // Skip if target is still placeholder (0) - no valid targets found
                 if target.is_placeholder() {
@@ -3600,7 +3603,8 @@ impl GameState {
                     return Ok(());
                 }
                 // Set temporary base P/T override (until end of turn)
-                // This is used by Animate effects like Flexible Waterbender and Turtle-Duck
+                // This is used by Animate effects like Flexible Waterbender,
+                // Turtle-Duck, and manlands such as Mishra's Factory.
                 let card = self.cards.get_mut(*target)?;
                 let card_name = card.name.clone();
                 let _old_power = card.current_power();
@@ -3622,8 +3626,84 @@ impl GameState {
                     card.keywords.insert(*kw);
                 }
 
+                // Animate: add card types (Mishra's Factory becomes
+                // Land + Artifact + Creature). We track only the types we
+                // actually push so cleanup_temporary_effects can remove them
+                // without disturbing the printed type line.
+                for ty in types_added {
+                    if !card.types.contains(ty) {
+                        card.types.push(*ty);
+                        card.temp_animate_types.push(*ty);
+                    }
+                }
+
+                // Animate: optionally strip pre-existing creature subtypes
+                // (RemoveCreatureTypes$ True). For the common manland case
+                // this is a no-op because the printed card has no subtypes,
+                // but it matters for cards that animate into a *different*
+                // creature type than their printed line.
+                if *remove_creature_subtypes && !card.subtypes.is_empty() {
+                    let removed: smallvec::SmallVec<[crate::core::Subtype; 2]> = card.subtypes.drain(..).collect();
+                    card.temp_removed_subtypes.extend(removed);
+                }
+
+                // Add subtypes (Assembly-Worker, etc.)
+                for st in subtypes_added {
+                    if !card.subtypes.contains(st) {
+                        card.subtypes.push(st.clone());
+                        card.temp_animate_subtypes.push(st.clone());
+                    }
+                }
+
+                // If we touched types or subtypes, refresh the cache flags
+                // (`is_creature`, `is_artifact`, etc.) so combat / mana / target
+                // logic sees the new typeline immediately.
+                let types_changed = !types_added.is_empty() || !subtypes_added.is_empty() || *remove_creature_subtypes;
+                if types_changed {
+                    let types = card.types.clone();
+                    let subtypes = card.subtypes.clone();
+                    let name = card.name.clone();
+                    card.definition.cache.update_from_types(&types);
+                    card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+
+                    // A card that just became a creature must record its
+                    // ETB turn so summoning-sickness logic works (CR 302.1).
+                    // Without this, animated lands could attack the same turn
+                    // they were played even without Haste — and conversely,
+                    // if `turn_entered_battlefield` is set to the current
+                    // turn the engine correctly demands Haste.
+                    //
+                    // The land itself entered the battlefield earlier (on a
+                    // prior turn for Mishra's Factory's typical use), so we
+                    // intentionally leave `turn_entered_battlefield` alone:
+                    // the land's existing entry timestamp already satisfies
+                    // summoning sickness once it's been on the battlefield
+                    // for a turn, mirroring Forge-Java's "becomes a creature"
+                    // not resetting summoning sickness.
+                }
+
+                // Snapshot post-animate state we need *after* dropping the
+                // mutable card borrow (so we can re-borrow self below).
                 let new_power = card.current_power();
                 let new_toughness = card.current_toughness();
+                let is_mana_source_now = card.definition.cache.is_mana_source;
+
+                // If a permanent's typeline changed AND it's a mana source,
+                // the per-player ManaSourceCache classification may now be
+                // wrong. Mishra's Factory is the canonical case: it was a
+                // colorless *simple* source before animate, but post-animate
+                // a from-scratch scan re-classifies it as a *complex* source
+                // (because creatures with mana abilities go to
+                // `complex_sources`). Mark all mana caches dirty so the next
+                // ManaEngine update rebuilds, and bump the mana-state version
+                // so memoized engine state is invalidated. Mirrors what the
+                // undo path already does.
+                if types_changed && is_mana_source_now {
+                    for (_, cache) in &mut self.mana_caches {
+                        cache.mark_dirty();
+                    }
+                    self.increment_mana_version();
+                }
 
                 // Log the effect
                 if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
@@ -3649,6 +3729,14 @@ impl GameState {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ));
+                    }
+
+                    // Surface "becomes a creature" so the gamelog reads
+                    // sensibly when a manland animates.
+                    if !types_added.is_empty() {
+                        let type_names: Vec<_> = types_added.iter().map(|t| format!("{:?}", t)).collect();
+                        self.logger
+                            .gamelog(&format!("{} becomes {}", card_name, type_names.join(" + ")));
                     }
                 }
             }

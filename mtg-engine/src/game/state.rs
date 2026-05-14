@@ -2055,6 +2055,12 @@ impl GameState {
     /// This resets power/toughness bonuses from pump spells and clears damage
     /// MTG CR 514.2: Damage marked on permanents is removed (CR 704.5f)
     pub fn cleanup_temporary_effects(&mut self) {
+        // Track whether any animated mana source reverted, so we can
+        // invalidate the per-player ManaSourceCache afterwards (Mishra's
+        // Factory: complex source while animated, simple colorless source
+        // again after cleanup — same desync as the activate path).
+        let mut any_mana_source_typeline_reverted = false;
+
         for card_id in self.battlefield.cards.iter() {
             if let Some(card) = self.cards.try_get_mut(*card_id) {
                 // Reset temporary bonuses (pump effects last until end of turn)
@@ -2064,7 +2070,45 @@ impl GameState {
                 card.clear_temp_base_stats();
                 // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
                 card.damage = 0;
+
+                // Roll back animation type changes (Mishra's Factory and
+                // friends become land-only again at end of turn). We have to
+                // refresh the cache flags so combat / mana / target logic
+                // stops treating the manland as a creature.
+                let touched_types = !card.temp_animate_types.is_empty();
+                let touched_subtypes = !card.temp_animate_subtypes.is_empty() || !card.temp_removed_subtypes.is_empty();
+                if touched_types {
+                    let removed: smallvec::SmallVec<[crate::core::CardType; 2]> =
+                        card.temp_animate_types.drain(..).collect();
+                    card.types.retain(|t| !removed.contains(t));
+                }
+                if touched_subtypes {
+                    let added: smallvec::SmallVec<[crate::core::Subtype; 2]> =
+                        card.temp_animate_subtypes.drain(..).collect();
+                    card.subtypes.retain(|s| !added.contains(s));
+                    // Restore subtypes that RemoveCreatureTypes$ True stripped.
+                    let restored: smallvec::SmallVec<[crate::core::Subtype; 2]> =
+                        card.temp_removed_subtypes.drain(..).collect();
+                    card.subtypes.extend(restored);
+                }
+                if touched_types || touched_subtypes {
+                    let types = card.types.clone();
+                    let subtypes = card.subtypes.clone();
+                    let name = card.name.clone();
+                    card.definition.cache.update_from_types(&types);
+                    card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+                    if card.definition.cache.is_mana_source {
+                        any_mana_source_typeline_reverted = true;
+                    }
+                }
             }
+        }
+
+        if any_mana_source_typeline_reverted {
+            for (_, cache) in &mut self.mana_caches {
+                cache.mark_dirty();
+            }
+            self.increment_mana_version();
         }
     }
 

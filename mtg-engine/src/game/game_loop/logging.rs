@@ -549,6 +549,7 @@ impl<'a> GameLoop<'a> {
                 power,
                 toughness,
                 keywords_granted,
+                ..
             } => {
                 let target_name = self
                     .game
