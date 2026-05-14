@@ -37,8 +37,13 @@ def strip_metadata_fields(obj):
             # - output_format: presentation setting (Text vs JSON)
             # - numeric_choices: presentation setting
             # - step_header_printed: transient UI state
+            # - mana_state_version: bookkeeping counter for the ManaEngine
+            #   incremental cache; gets one or two extra bumps after restoring
+            #   from a snapshot because the cache is rebuilt from scratch.
+            #   Not actual game state.
             if key in ("choice_id", "undo_log", "show_choice_menu", "output_mode",
-                      "output_format", "numeric_choices", "step_header_printed"):
+                      "output_format", "numeric_choices", "step_header_printed",
+                      "mana_state_version"):
                 continue
             result[key] = strip_metadata_fields(value)
         return result

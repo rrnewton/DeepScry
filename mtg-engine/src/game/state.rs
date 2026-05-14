@@ -664,11 +664,46 @@ impl GameState {
             .map(|(_, cache)| cache)
     }
 
+    /// Ensure that a per-player mana cache slot exists for the given player.
+    ///
+    /// This is needed after restoring a `GameState` from a snapshot, because
+    /// `mana_caches` is `#[serde(skip)]` and therefore comes back as an empty
+    /// `Vec` after deserialization. Without this initialization the next call
+    /// to `ManaEngine::update`/`update_mut` would panic in
+    /// `mana_engine.rs::update_mut` at `expect("Cache exists after rebuild")`.
+    ///
+    /// The cache is inserted in a "dirty" state so the next call lazily
+    /// rebuilds it from the live battlefield.
+    pub fn ensure_mana_cache(&mut self, player_id: PlayerId) {
+        if self.mana_caches.iter().any(|(id, _)| *id == player_id) {
+            return;
+        }
+        let mut cache = ManaSourceCache::new(player_id);
+        cache.mark_dirty();
+        self.mana_caches.push((player_id, cache));
+    }
+
+    /// Initialize missing per-player mana caches for ALL existing players.
+    ///
+    /// Convenience wrapper around `ensure_mana_cache` that walks the players
+    /// list — useful immediately after deserializing a snapshot.
+    pub fn ensure_mana_caches_for_all_players(&mut self) {
+        let player_ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
+        for pid in player_ids {
+            self.ensure_mana_cache(pid);
+        }
+    }
+
     /// Rebuild mana cache for a player if it needs rebuilding
     ///
     /// This is a helper for ManaEngine that handles borrow checker issues
     /// when calling rebuild_from_battlefield (which needs &mut cache and &GameState).
     pub fn rebuild_mana_cache_if_needed(&mut self, player_id: PlayerId) {
+        // Make sure the cache slot exists. This guards against snapshot/restore
+        // where `mana_caches` is `#[serde(skip)]` and therefore empty after
+        // deserialization (see `ensure_mana_cache`).
+        self.ensure_mana_cache(player_id);
+
         // Check if rebuild is needed
         let needs_rebuild = self
             .get_mana_cache(player_id)
@@ -3452,6 +3487,58 @@ mod tests {
         assert_eq!(game.player_zones.len(), 2);
         assert_eq!(game.turn.turn_number, 1);
         assert_eq!(game.turn.current_step, Step::Untap);
+    }
+
+    /// Regression for the snapshot/resume `Cache exists after rebuild` panic.
+    ///
+    /// `GameState::mana_caches` is `#[serde(skip)]`, so after deserialising
+    /// a snapshot it comes back as an empty `Vec`. Before the fix,
+    /// `rebuild_mana_cache_if_needed` would silently no-op when the cache
+    /// slot was missing and `ManaEngine::update_mut` would panic on the
+    /// follow-up `expect("Cache exists after rebuild")`.
+    ///
+    /// The fix adds `ensure_mana_cache` (and the bulk variant
+    /// `ensure_mana_caches_for_all_players`) and calls it from
+    /// `rebuild_mana_cache_if_needed`. This test simulates the post-restore
+    /// state by manually clearing `mana_caches` and asserts that the
+    /// rebuild path re-creates the slot instead of leaving it empty.
+    #[test]
+    fn test_ensure_mana_cache_after_simulated_resume() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Simulate the post-deserialize state: `mana_caches` empty.
+        game.mana_caches.clear();
+        assert!(
+            game.get_mana_cache(p1_id).is_none(),
+            "precondition: cache should be missing"
+        );
+
+        // Calling rebuild_mana_cache_if_needed must not panic and must
+        // populate the cache slot for the requested player.
+        game.rebuild_mana_cache_if_needed(p1_id);
+        assert!(
+            game.get_mana_cache(p1_id).is_some(),
+            "rebuild_mana_cache_if_needed must create missing slot"
+        );
+
+        // ensure_mana_caches_for_all_players should fill in any remaining
+        // players (here: p2).
+        game.ensure_mana_caches_for_all_players();
+        assert!(
+            game.get_mana_cache(p2_id).is_some(),
+            "ensure_mana_caches_for_all_players must populate every player"
+        );
+
+        // Idempotency: calling again must not duplicate entries.
+        let len_before = game.mana_caches.len();
+        game.ensure_mana_caches_for_all_players();
+        assert_eq!(
+            game.mana_caches.len(),
+            len_before,
+            "ensure_mana_caches must be idempotent"
+        );
     }
 
     #[test]

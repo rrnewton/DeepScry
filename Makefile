@@ -164,6 +164,8 @@ validate-impl-sequential:
 	@echo ""
 	@$(MAKE) validate-commander-step
 	@echo ""
+	@$(MAKE) validate-snapshot-resume-step
+	@echo ""
 	@$(MAKE) validate-wasm-step
 	@echo ""
 	@$(MAKE) validate-wasm-e2e-step
@@ -200,6 +202,8 @@ validate-impl-sequential-no-network:
 	@echo ""
 	@$(MAKE) validate-commander-step
 	@echo ""
+	@$(MAKE) validate-snapshot-resume-step
+	@echo ""
 	@$(MAKE) validate-wasm-step
 	@echo ""
 	@$(MAKE) validate-wasm-e2e-step
@@ -209,9 +213,9 @@ validate-impl-sequential-no-network:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step
-validate-parallel-steps: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
-validate-parallel-steps-no-network: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step
+validate-parallel-steps: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
+validate-parallel-steps-no-network: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-wasm-step validate-wasm-e2e-step deck_list
 
 # Formatting check - matches the CI `fmt` job in .github/workflows/ci.yml.
 # This must be wired into validate so that formatting drift is caught locally
@@ -248,6 +252,13 @@ validate-commander-step:
 	@echo "=== Running commander E2E test ==="
 	@bash tests/commander_e2e.sh
 	@echo "✓ commander E2E completed"
+
+# Snapshot/resume determinism + smoke test for `mtg resume` subcommand.
+# See tests/snapshot_resume_e2e.sh for what is covered.
+validate-snapshot-resume-step:
+	@echo "=== Running snapshot/resume E2E test ==="
+	@bash tests/snapshot_resume_e2e.sh
+	@echo "✓ snapshot/resume E2E completed"
 
 validate-wasm-step:
 	@$(MAKE) wasm-dev

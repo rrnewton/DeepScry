@@ -1349,6 +1349,7 @@ mod tests {
     /// surfaced as a castable action. Two assertions:
     ///   1. `{2}{U}` is payable from a single AnyColor Amount=3 source.
     ///   2. `{3}` (pure generic) is also payable.
+    ///
     /// And the negative case: `{4}` is NOT payable from one Black Lotus alone.
     #[test]
     fn test_greedy_resolver_black_lotus_pays_three_mana_spell() {

@@ -3,9 +3,9 @@ title: Randomized stress tests with invariants for snapshot resume
 status: open
 priority: 0
 issue_type: task
-created_at: "2025-10-27T09:12:20Z"
-updated_at: "2025-10-28T11:04:59Z"
-closed_at: "2025-10-28T00:55:30Z"
+created_at: 2025-10-27T09:12:20+00:00
+updated_at: 2026-05-14T14:16:46.778693579+00:00
+closed_at: 2025-10-28T00:55:30+00:00
 ---
 
 # Description
@@ -170,4 +170,26 @@ primarily additional CLI flags and final verification testing.
 - ✅ Test methodology matches engine architecture
 - ✅ Full determinism achieved for random vs heuristic
 - ✅ Independent RNG architecture complete
-- ⏳ Final flags and deep state comparison pending
+
+Tracking - Update 2026-05-14_#2240
+==============================================================================
+
+Added new e2e test tests/snapshot_resume_e2e.sh wired into make validate
+(both -j parallel and sequential paths) and the cargo shell-script test
+harness. Coverage:
+- Phase 2: 3 stop points x JSON snapshot, deep gamestate diff vs baseline
+- Phase 3: 3 stop points x bincode snapshot, smoke (turn-count match vs baseline)
+- Phase 4: resume with --override-p2 random, smoke
+
+Also fixed a pre-existing crash in mtg resume: see new bug mtg-cc4837.
+The bug (Cache exists after rebuild panic) had been hiding because the old
+disabled stress test (tests/disabled/run_stress_tests.sh) used the
+--stop-every CLI flag which has since been renamed to --stop-on-choice, so
+nothing was actually exercising the resume path in CI.
+
+Still TODO for closing mtg-89:
+- Re-enable & adapt scripts/snapshot_stress_test_single.py to the
+  current CLI (--stop-on-choice instead of --stop-every).
+- Add --seed-shuffle / --seed-engine flags (currently only --seed-p1/-p2 split).
+- Run on royal_assassin / white_aggro_4ed / moonred decks per the
+  closing criteria above.

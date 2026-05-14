@@ -2337,6 +2337,11 @@ async fn run_resume(
     // Restore game state from snapshot
     let mut game = snapshot.game_state.clone();
 
+    // The `mana_caches` field is `#[serde(skip)]`, so it comes back empty
+    // after deserialization. Re-initialize entries (lazy / dirty) for every
+    // player so the first call to ManaEngine doesn't panic.
+    game.ensure_mana_caches_for_all_players();
+
     // Override game engine seed if requested
     if let Some(seed_value) = override_seed_resolved {
         game.seed_rng(seed_value);
