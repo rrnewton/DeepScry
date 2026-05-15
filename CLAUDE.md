@@ -231,6 +231,8 @@ Branches and pushing
 
 You may push after validation and can check CI status with github MCP. Don't force push unless you're asked to or ask permission.
 
+**MANDATORY: MTG rules review for bug fixes.** Every bug fix — regardless of where it originated (fuzz testing, user report, tournament discovery, differential testing against Forge-Java) — MUST pass an MTG Comprehensive Rules compliance review before merging into `integration` (and therefore before any promotion to `main`). The review is documented in `.claude/skills/mtg-rules-review.md` and produces an explicit `PASS`/`CONCERN`/`FAIL` verdict block in the PR description / commit message. A `FAIL` verdict blocks the merge; a `CONCERN` verdict requires a linked beads follow-up issue. This is in addition to (not a replacement for) `make validate` and the fmt check.
+
 **IMPORTANT: The `main` branch is protected.** Do NOT merge directly to main. We use a three-tier branch structure:
 - **main**: Stable branch - only receives merges from `integration` after CI passes
 - **integration**: Staging branch - receives merges from feature branches with green CI, or direct commits when working on integration branch.
