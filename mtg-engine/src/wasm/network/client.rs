@@ -52,6 +52,11 @@ pub struct OpponentChoiceData {
     /// For LibrarySearchByName choices: the specific CardId that was chosen.
     /// Allows the shadow game's WasmRemoteController to know which card moved to hand.
     pub library_search_result: Option<crate::core::CardId>,
+    /// Authoritative target CardIds for choices that need them (e.g., damage
+    /// assignment among multiple blockers). Used by `WasmRemoteController` to
+    /// pick the correct blocker even when the index would point to a different
+    /// CardId in the client's view than in the server's view.
+    pub target_card_ids: Option<Vec<crate::core::CardId>>,
 }
 
 /// Data from a ChoiceRequest message
@@ -521,6 +526,7 @@ impl WasmNetworkClient {
                 spell_ability,
                 action_count,
                 library_search_result,
+                target_card_ids,
                 ..
             } => {
                 log::debug!(
@@ -537,6 +543,7 @@ impl WasmNetworkClient {
                     spell_ability,
                     action_count,
                     library_search_result,
+                    target_card_ids,
                 });
             }
 
@@ -627,6 +634,16 @@ impl WasmNetworkClient {
         self.opponent_choices.pop_front()
     }
 
+    /// Peek at the next OpponentChoice without consuming it.
+    ///
+    /// Used by SMART damage assignment overrides in `WasmRemoteController` so
+    /// the override can extract `target_card_ids` BEFORE calling `try_get_choice`,
+    /// which pops the entry. The peek-then-pop pattern is needed because the
+    /// trait method receives no protocol context, only blocker lists.
+    pub fn peek_opponent_choice(&self) -> Option<&OpponentChoiceData> {
+        self.opponent_choices.front()
+    }
+
     /// Check if reveals are pending
     pub fn has_pending_reveals(&self) -> bool {
         !self.pending_reveals.is_empty()
@@ -648,6 +665,22 @@ impl WasmNetworkClient {
 
     /// Queue a SubmitChoice response
     pub fn submit_choice(&mut self, choice_indices: Vec<usize>, action_count: u64, state_hash: Option<u64>) {
+        self.submit_choice_with_targets(choice_indices, action_count, state_hash, None)
+    }
+
+    /// Queue a SubmitChoice response, including authoritative `target_card_ids`.
+    ///
+    /// Used for choices like SMART damage assignment (`choose_blocker_for_lethal_damage`,
+    /// `choose_blocker_for_remaining_damage`) where the server needs the actual chosen
+    /// CardId — not just an index — because the client and server may have different
+    /// blocker lists in network mode (mtg-e05f9c).
+    pub fn submit_choice_with_targets(
+        &mut self,
+        choice_indices: Vec<usize>,
+        action_count: u64,
+        state_hash: Option<u64>,
+        target_card_ids: Option<Vec<crate::core::CardId>>,
+    ) {
         if let Some(ref request) = self.current_choice_request {
             let choice_seq = request.choice_seq;
             let msg = ClientMessage::SubmitChoice {
@@ -657,8 +690,8 @@ impl WasmNetworkClient {
                 timestamp_ms: crate::network::now_ms(),
                 client_state_hash: state_hash,
                 debug_info: None,
-                spell_ability: None,   // WASM client doesn't track spell_ability yet
-                target_card_ids: None, // WASM client doesn't track target_card_ids yet
+                spell_ability: None, // WASM client doesn't track spell_ability yet
+                target_card_ids,
             };
             self.queue_outbound(msg);
             self.choice_acknowledged = false;

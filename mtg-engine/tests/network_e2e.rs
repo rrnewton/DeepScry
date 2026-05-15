@@ -135,6 +135,54 @@ mod async_tests {
         }
     }
 
+    /// Regression test for mtg-e05f9c: SMART damage assignment OpponentChoice
+    /// must carry `target_card_ids` so the WASM client's shadow game can resolve
+    /// the chosen blocker by CardId rather than by index.
+    ///
+    /// Before the fix, `target_card_ids` was being silently dropped on the way
+    /// into `OpponentChoiceData`, leaving the WASM `WasmRemoteController` with
+    /// no way to pick the correct blocker — leading to immediate state-hash
+    /// desync the moment a creature died from combat damage in a multi-blocker
+    /// scenario.
+    #[test]
+    fn test_opponent_choice_preserves_target_card_ids() {
+        use mtg_forge_rs::core::CardId;
+
+        let blocker_id = CardId::new(72);
+        let msg = ServerMessage::OpponentChoice {
+            choice_seq: 158,
+            player: PlayerId::new(1),
+            choice_type: ChoiceType::LethalDamageAssignment {
+                attacker: CardId::new(31),
+                killable_count: 2,
+                remaining_power: 4,
+            },
+            choice_indices: vec![0],
+            description: "lethal damage to Boulder (72)".to_string(),
+            action_count: 422,
+            timestamp_ms: 1234567890,
+            spell_ability: None,
+            library_search_result: None,
+            target_card_ids: Some(vec![blocker_id]),
+            state_hash_after: Some(0xDEAD_BEEF_CAFE_BABE),
+            debug_info: None,
+        };
+
+        // Round-trip through JSON, simulating WASM message arrival.
+        let json = serde_json::to_string(&msg).expect("serialize OpponentChoice");
+        let decoded: ServerMessage = serde_json::from_str(&json).expect("deserialize OpponentChoice");
+
+        match decoded {
+            ServerMessage::OpponentChoice {
+                target_card_ids: Some(ids),
+                ..
+            } => {
+                assert_eq!(ids, vec![blocker_id], "target_card_ids must be preserved");
+            }
+            other => panic!("Expected OpponentChoice with target_card_ids, got {:?}", other),
+        }
+    }
+
     /// Test card reveal flow
     #[test]
     fn test_card_reveal_flow() {

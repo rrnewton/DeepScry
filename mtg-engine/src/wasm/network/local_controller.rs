@@ -239,6 +239,29 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         // submit_choice internally tracks the sequence and consumes the ChoiceRequest
         client.submit_choice(choice_indices, action_count, state_hash);
     }
+
+    /// Submit a SMART damage assignment choice, attaching the authoritative
+    /// CardId in `target_card_ids` so the opponent's shadow game can resolve
+    /// the correct blocker by CardId rather than by index.
+    ///
+    /// Used for `choose_blocker_for_lethal_damage` and
+    /// `choose_blocker_for_remaining_damage` (mtg-e05f9c).
+    fn submit_damage_choice_to_server(&self, choice_indices: Vec<usize>, blocker_id: CardId, view: &GameStateView) {
+        let mut client = self.network_client.borrow_mut();
+
+        let action_count = client
+            .peek_choice_request()
+            .map(|req| req.action_count)
+            .unwrap_or_else(|| view.action_count() as u64);
+
+        let state_hash = if client.is_network_debug() {
+            Some(crate::game::compute_view_hash(view))
+        } else {
+            None
+        };
+
+        client.submit_choice_with_targets(choice_indices, action_count, state_hash, Some(vec![blocker_id]));
+    }
 }
 
 impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
@@ -511,6 +534,75 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
                 };
                 self.submit_choice_to_server(choice_indices, view);
                 ChoiceResult::Ok(order)
+            }
+            other => other,
+        }
+    }
+
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        // SMART damage assignment (mtg-e05f9c). Server pre-sends the matching
+        // ChoiceRequest of type LethalDamageAssignment; we delegate to the inner
+        // controller, then submit BOTH the index AND the chosen CardId so the
+        // opponent's shadow game can resolve the correct blocker even if its
+        // killable list ordering differs from ours.
+        if self.check_choice_request_ready().is_none() {
+            if self.has_pending_submission() {
+                if self.check_and_clear_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_server_context());
+                }
+                return ChoiceResult::NeedInput(waiting_for_ack_context());
+            }
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self
+            .inner
+            .choose_blocker_for_lethal_damage(view, attacker, killable_blockers, remaining_power)
+        {
+            ChoiceResult::Ok(blocker_id) => {
+                let idx = killable_blockers
+                    .iter()
+                    .position(|(id, _)| *id == blocker_id)
+                    .unwrap_or(0);
+                self.submit_damage_choice_to_server(vec![idx], blocker_id, view);
+                ChoiceResult::Ok(blocker_id)
+            }
+            other => other,
+        }
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        remaining_blockers: &[CardId],
+        remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        // Mirror of choose_blocker_for_lethal_damage above (mtg-e05f9c).
+        if self.check_choice_request_ready().is_none() {
+            if self.has_pending_submission() {
+                if self.check_and_clear_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_server_context());
+                }
+                return ChoiceResult::NeedInput(waiting_for_ack_context());
+            }
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self
+            .inner
+            .choose_blocker_for_remaining_damage(view, attacker, remaining_blockers, remaining_damage)
+        {
+            ChoiceResult::Ok(blocker_id) => {
+                let idx = remaining_blockers.iter().position(|id| *id == blocker_id).unwrap_or(0);
+                self.submit_damage_choice_to_server(vec![idx], blocker_id, view);
+                ChoiceResult::Ok(blocker_id)
             }
             other => other,
         }

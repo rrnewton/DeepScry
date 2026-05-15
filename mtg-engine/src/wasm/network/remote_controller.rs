@@ -292,6 +292,121 @@ impl PlayerController for WasmRemoteController {
         }
     }
 
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        _view: &GameStateView,
+        _attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        _remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        // SMART damage assignment (mtg-e05f9c): the server sends the index AND the
+        // authoritative CardId via target_card_ids. Prefer the CardId — index-based
+        // lookup is unreliable in shadow state where blocker ordering may differ.
+        //
+        // CRITICAL: We MUST consume an OpponentChoice from the queue here, even
+        // though we have a default impl on the trait. Failing to consume the message
+        // would leave it in the queue and shift every subsequent OpponentChoice by
+        // one, causing immediate state-hash desync (the bug described in mtg-e05f9c).
+        // Peek at the next queued OpponentChoice (which try_get_choice will pop)
+        // and capture its target_card_ids before consuming the choice.
+        let target_card_ids = self
+            .network_client
+            .borrow()
+            .peek_opponent_choice()
+            .and_then(|c| c.target_card_ids.clone());
+
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                // The server-provided target CardId (if any) is authoritative.
+                if let Some(ids) = target_card_ids {
+                    if let Some(&blocker_id) = ids.first() {
+                        if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
+                            log::debug!(
+                                "WasmRemoteController::choose_blocker_for_lethal_damage: using target CardId {:?}",
+                                blocker_id
+                            );
+                            return ChoiceResult::Ok(blocker_id);
+                        }
+                        log::warn!(
+                            "WasmRemoteController::choose_blocker_for_lethal_damage: target CardId {:?} not in killable blockers, falling back to index",
+                            blocker_id
+                        );
+                    }
+                }
+                // Fall back to index-based selection.
+                let idx = indices.first().copied().unwrap_or(0);
+                if let Some((blocker_id, _)) = killable_blockers.get(idx) {
+                    ChoiceResult::Ok(*blocker_id)
+                } else {
+                    let msg = format!(
+                        "FATAL DESYNC: WasmRemoteController received invalid lethal-damage \
+                         blocker index {} (only {} killable)",
+                        idx,
+                        killable_blockers.len(),
+                    );
+                    log::error!("{}", msg);
+                    ChoiceResult::Error(msg)
+                }
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        _view: &GameStateView,
+        _attacker: CardId,
+        remaining_blockers: &[CardId],
+        _remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        // Mirror of choose_blocker_for_lethal_damage above (mtg-e05f9c).
+        let target_card_ids = self
+            .network_client
+            .borrow()
+            .peek_opponent_choice()
+            .and_then(|c| c.target_card_ids.clone());
+
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                if let Some(ids) = target_card_ids {
+                    if let Some(&blocker_id) = ids.first() {
+                        if remaining_blockers.contains(&blocker_id) {
+                            log::debug!(
+                                "WasmRemoteController::choose_blocker_for_remaining_damage: using target CardId {:?}",
+                                blocker_id
+                            );
+                            return ChoiceResult::Ok(blocker_id);
+                        }
+                        log::warn!(
+                            "WasmRemoteController::choose_blocker_for_remaining_damage: target CardId {:?} not in remaining blockers, falling back to index",
+                            blocker_id
+                        );
+                    }
+                }
+                let idx = indices.first().copied().unwrap_or(0);
+                if let Some(&blocker_id) = remaining_blockers.get(idx) {
+                    ChoiceResult::Ok(blocker_id)
+                } else {
+                    let msg = format!(
+                        "FATAL DESYNC: WasmRemoteController received invalid remaining-damage \
+                         blocker index {} (only {} remaining)",
+                        idx,
+                        remaining_blockers.len(),
+                    );
+                    log::error!("{}", msg);
+                    ChoiceResult::Error(msg)
+                }
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         _view: &GameStateView,

@@ -1,10 +1,10 @@
 ---
 title: WASM client desyncs after combat damage when a creature dies (separate from Seismic Sense)
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-14T15:07:48.235624408+00:00
-updated_at: 2026-05-14T15:07:48.235624408+00:00
+updated_at: 2026-05-15T14:24:04.027994751+00:00
 ---
 
 # Description
@@ -66,3 +66,45 @@ One mixed run also showed FLAKY behavior (3/3 pass on rerun of the originally-fa
 ## Discovered by
 
 `bug_finding/network_fuzz_test.py --quick --client mixed --parallel 2` on `qa-fuzz-testing` @ fe820468, 2026-05-14.
+
+# Notes
+
+FIXED 2026-05-15_#2257(2422d770) on branch fix-wasm-combat.
+
+ROOT CAUSE: WasmRemoteController and WasmNetworkLocalController did NOT override
+choose_blocker_for_lethal_damage / choose_blocker_for_remaining_damage from the
+PlayerController trait. The trait's default implementation returns the first
+killable blocker WITHOUT consuming an OpponentChoice from the queue (remote
+side) or submitting a SubmitChoice to the server (local side).
+
+When SMART damage assignment ran on the server and sent a LethalDamageAssignment
+ChoiceRequest + OpponentChoice, the WASM client had no handler. On the
+opponent's WASM client this caused every subsequent OpponentChoice to be
+mis-mapped (queue stayed full of one extra entry), and on the attacker's WASM
+client the server never received a response, leading to immediate state-hash
+desync the moment a multi-blocker creature died from combat damage.
+
+FIX: Added overrides for both methods in:
+- mtg-engine/src/wasm/network/remote_controller.rs (consume OpponentChoice;
+  prefer authoritative target_card_ids over index)
+- mtg-engine/src/wasm/network/local_controller.rs (delegate to inner controller,
+  submit SubmitChoice with target_card_ids carrying the chosen blocker CardId)
+
+Also extended the WASM client to:
+- Carry target_card_ids on incoming OpponentChoiceData (was being silently dropped)
+- Provide submit_choice_with_targets() and peek_opponent_choice() helpers
+
+REGRESSION TEST: tests/network_e2e.rs::test_opponent_choice_preserves_target_card_ids
+verifies the protocol message round-trips target_card_ids through JSON.
+
+VERIFICATION: Mixed native/wasm fuzz pass rate went from 0/10 to 5/10.
+Remaining failures are entirely from the SEPARATE Seismic Sense desync
+(mtg-c54e90, server hash a37e19ca97a4d125) which is tracked independently.
+
+KNOWN LIMITATION (filed as follow-up): When the LethalDamageAssignment
+ChoiceRequest hasn't yet arrived at the WASM client by the time its local
+combat damage step runs, the new override returns NeedInput, which the
+synchronous smart_damage_assignment in mtg-engine/src/game/actions/combat.rs
+treats as a fatal InvalidAction. This matches the FLAKY behavior already
+documented in the original bug report (1/10 reproducer). Game still
+completes; tracked separately.
