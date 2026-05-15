@@ -1,3 +1,8 @@
+# Phase 1 build determinism experiment: opt in to the unstable `trim-paths`
+# profile field. Requires nightly cargo (this repo pins nightly-2025-11-28).
+# See .cargo/config.toml for the [profile.*] settings that consume it.
+cargo-features = ["trim-paths"]
+
 [workspace]
 resolver = "2"
 members = [

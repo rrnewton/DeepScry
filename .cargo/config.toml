@@ -1,0 +1,34 @@
+# Phase 1 build determinism experiment.
+# trim-paths strips absolute paths (workspace path, registry path, toolchain sysroot)
+# from compiled artifacts so two worktrees with different absolute paths produce
+# bit-identical dependency outputs. This is a prerequisite for sccache hits
+# across worktrees and for reproducible CI artifacts.
+#
+# Stable in Rust 1.81+; this repo pins nightly-2025-11-28 (rustc 1.93-nightly).
+# Requires `cargo-features = ["trim-paths"]` in workspace Cargo.toml because
+# the field is still unstable in cargo as of 1.93-nightly.
+
+[profile.dev]
+trim-paths = "all"
+
+[profile.release]
+trim-paths = "all"
+
+# NOTE: rustc-wrapper = "sccache" was tried in Phase 2 and removed. It yielded
+# only ~1.4% cross-worktree hit rate and added 15-18 s of overhead because
+# trim-paths injects a per-worktree --remap-path-prefix into every rustc
+# invocation that sccache cannot canonicalize. See tg note 'phase2-sccache'
+# for the full diagnosis. Re-enable only if/when sccache learns to strip
+# SCCACHE_BASEDIR from --remap-path-prefix args, or trim-paths is replaced
+# with a path-canonicalizing alternative.
+
+# Phase 2 working trick (kept as documentation, not active):
+#   Setting CFLAGS=-ffile-prefix-map=$PWD/=. before `cargo build` makes
+#   216/217 cc-rs / autotools .o artifacts byte-identical across worktrees.
+#   For reproducible distribution builds:
+#       CFLAGS="-ffile-prefix-map=$PWD/=." \
+#       CXXFLAGS="-ffile-prefix-map=$PWD/=." \
+#         cargo build --release --features network
+#
+# This isn't auto-applied via [env] here because cargo's [env] table doesn't
+# expand $PWD/$WORKSPACE_DIR; would need a wrapper script to be portable.
