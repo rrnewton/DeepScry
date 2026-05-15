@@ -2760,20 +2760,31 @@ impl<'a> GameLoop<'a> {
                         }
                     })
                     .collect();
-                let has_discard = card.effects.iter().any(|e| {
+                let needs_interactive = card.effects.iter().any(|e| {
                     matches!(
                         e,
                         crate::core::Effect::DiscardCards { count, .. } if *count != u8::MAX
                     ) || matches!(e, crate::core::Effect::Loot { .. })
+                    // mtg-c54e90: Dig effects on the active player's own library
+                    // (e.g. Seismic Sense) need pre-reveal + sync so the network
+                    // shadow client knows the card identities before filtering.
+                    // Without this, the client's filter (ChangeValid$) sees an
+                    // unknown card and short-circuits to "no valid pick", desyncing
+                    // hand/library against the server.
+                        || matches!(
+                            e,
+                            crate::core::Effect::Dig { target_self: true, .. }
+                        )
                 });
-                (balances, has_discard, card.svars.clone())
+                (balances, needs_interactive, card.svars.clone())
             } else {
                 (Vec::new(), false, std::collections::HashMap::new())
             };
 
         if has_choice_discard {
             // Use effect-by-effect resolution so we can intercept discard choices
-            // and route them through the controller protocol (mtg-xomxx).
+            // (mtg-xomxx) or pre-reveal Dig cards (mtg-c54e90) to route everything
+            // through the controller protocol for network-safe operation.
             self.resolve_top_spell_with_discard_hook(spell_id, controller1, controller2)?;
         } else {
             // Resolve the spell normally (Balance effects are no-ops in execute_effect)
@@ -2972,6 +2983,237 @@ impl<'a> GameLoop<'a> {
                                     let _ = self.game.check_card_drawn_triggers(*player, draw_num);
                                 }
                                 Err(_) => break,
+                            }
+                        }
+                    }
+                    // mtg-c54e90: Dig from your own library (e.g. Seismic Sense).
+                    //
+                    // The naive `execute_effect` path looks at top-N cards, then
+                    // filters them by ChangeValid$ before moving any to hand.
+                    // In network mode the shadow client doesn't know the
+                    // identities of those top-N cards yet (RevealCard messages
+                    // only get pushed at the next ChoiceRequest), so its filter
+                    // always fizzles, every card goes to "rest", and hand /
+                    // library zones diverge from the server (FATAL state hash
+                    // mismatch).
+                    //
+                    // Fix: route the "which of these N cards do you keep"
+                    // decision through `choose_from_library_with_hook` — the
+                    // same mechanism cycling/tutoring use. The server's call
+                    // builds a ChoiceRequest with `library_search_cards` so the
+                    // ChoiceAccepted reply tells the client the
+                    // server-authoritative CardId. Both sides then perform the
+                    // same move_card operations using only top_ids (which is
+                    // synced via LibraryReordered) and the chosen CardId.
+                    //
+                    // We always iterate `min(change_count, top_ids.len())`
+                    // times so that the per-side ChoicePoint sequences match,
+                    // even when one side has empty `valid_ids`.
+                    crate::core::Effect::Dig {
+                        target_self: true,
+                        dig_count,
+                        change_count,
+                        change_all,
+                        destination,
+                        rest_destination,
+                        optional: _,
+                        rest_random,
+                        reveal,
+                        change_valid,
+                        ..
+                    } => {
+                        use crate::zones::Zone;
+                        let digger = self.game.turn.active_player;
+                        let take_count = *dig_count as usize;
+
+                        // Snapshot top N library CardIds (top is end of Vec).
+                        let top_ids: SmallVec<[CardId; 8]> = self
+                            .game
+                            .get_player_zones(digger)
+                            .map(|z| z.library.cards.iter().rev().take(take_count).copied().collect())
+                            .unwrap_or_default();
+
+                        if !top_ids.is_empty() {
+                            // No explicit pre-reveal needed: the server's
+                            // network handler (server.rs handles
+                            // library_search_cards) sends CardRevealed for
+                            // every CardId in `library_search_cards` BEFORE
+                            // forwarding the ChoiceRequest, and the auto-reveal
+                            // inside `move_card` (Library->Hand path) logs the
+                            // matching RevealCard action symmetrically on both
+                            // sides. Adding a manual maybe_reveal_to_player
+                            // here would diverge action_counts because on the
+                            // server the card is already in EntityStore (mask
+                            // gets set, single RevealCard logged) while on the
+                            // client it's late-binding (RevealCard logged
+                            // without setting mask, then move_card's auto-
+                            // reveal logs ANOTHER RevealCard once the card is
+                            // materialized).
+
+                            let digger_name = self
+                                .game
+                                .get_player(digger)
+                                .map(|p| p.name.to_string())
+                                .unwrap_or_else(|_| format!("Player {}", digger.as_u32()));
+                            let verb = if *reveal { "reveals" } else { "looks at" };
+                            self.game.logger.gamelog(&format!(
+                                "{} {} the top {} card{} of their library",
+                                digger_name,
+                                verb,
+                                top_ids.len(),
+                                if top_ids.len() == 1 { "" } else { "s" }
+                            ));
+
+                            // Maximum number of choose_from_library iterations.
+                            // Driven by top_ids.len() (same on both sides) so
+                            // the per-side ChoicePoint sequence matches even
+                            // when local ChangeValid$ filtering yields zero
+                            // candidates on the shadow client.
+                            let max_iterations = if *change_all {
+                                top_ids.len()
+                            } else {
+                                (*change_count as usize).min(top_ids.len())
+                            };
+
+                            let has_filter = !change_valid.is_empty();
+                            let mut chosen: SmallVec<[CardId; 8]> = SmallVec::new();
+                            let mut remaining_top: SmallVec<[CardId; 8]> = top_ids.clone();
+
+                            for _ in 0..max_iterations {
+                                // Filter remaining_top by ChangeValid$. On the
+                                // server this is non-empty; on the client it
+                                // typically ends up empty (cards not yet
+                                // materialized) but choose_from_library_with_hook
+                                // still works because NLC falls back to
+                                // server-provided library_search_names.
+                                let valid_ids: SmallVec<[CardId; 8]> = if has_filter {
+                                    remaining_top
+                                        .iter()
+                                        .copied()
+                                        .filter(|&id| {
+                                            self.game
+                                                .cards
+                                                .try_get(id)
+                                                .is_some_and(|card| change_valid.iter().any(|f| f.matches(card)))
+                                        })
+                                        .collect()
+                                } else {
+                                    remaining_top.clone()
+                                };
+
+                                let prior_log_size = self.game.logger.log_count();
+                                let controller: &mut dyn PlayerController = if digger == controller1.player_id() {
+                                    controller1
+                                } else {
+                                    controller2
+                                };
+                                let pick = self.choose_from_library_with_hook(controller, digger, &valid_ids);
+                                let chosen_card_opt = match pick {
+                                    crate::game::controller::ChoiceResult::Ok(v) => v,
+                                    crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                        return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                    }
+                                    crate::game::controller::ChoiceResult::ExitGame => {
+                                        return Err(crate::MtgError::InvalidAction(
+                                            "Game exit requested during Dig".into(),
+                                        ));
+                                    }
+                                    crate::game::controller::ChoiceResult::Error(e) => {
+                                        return Err(crate::MtgError::InvalidAction(format!(
+                                            "Controller error during Dig: {e}"
+                                        )));
+                                    }
+                                    crate::game::controller::ChoiceResult::UndoRequest(_) => None,
+                                };
+
+                                // Log the choice for snapshot/replay (mirrors
+                                // typecycling). Index is into the local
+                                // valid_ids — None means declined.
+                                let chosen_index = chosen_card_opt.and_then(|c| valid_ids.iter().position(|&v| v == c));
+                                let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                                self.log_choice_point(digger, Some(replay_choice), prior_log_size);
+
+                                if let Some(c) = chosen_card_opt {
+                                    chosen.push(c);
+                                    if let Some(pos) = remaining_top.iter().position(|&x| x == c) {
+                                        remaining_top.remove(pos);
+                                    }
+                                } else {
+                                    // Declined: stop picking. Leftover top_ids
+                                    // go to rest_destination below.
+                                    break;
+                                }
+                            }
+
+                            // Move chosen cards to destination via move_card
+                            // (handles auto-reveal + undo logging on both
+                            // sides).
+                            for card_id in &chosen {
+                                let card_name = self
+                                    .game
+                                    .cards
+                                    .get(*card_id)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
+                                let _ = self.game.move_card(*card_id, Zone::Library, *destination, digger);
+                                let action = if *reveal { "reveals and puts" } else { "puts" };
+                                self.game.logger.gamelog(&format!(
+                                    "{} {} {} into {:?}",
+                                    digger_name, action, card_name, destination
+                                ));
+                            }
+
+                            // Move "rest" (everything not chosen) to
+                            // rest_destination. remaining_top is already in
+                            // top-of-library order; both sides agree on it
+                            // because top_ids comes from the synced library.
+                            let mut rest = remaining_top;
+                            if !rest.is_empty() {
+                                if *rest_random {
+                                    // Same deterministic shuffle as the legacy
+                                    // execute_effect path (driven by CardId
+                                    // alone so both sides agree).
+                                    let len = rest.len();
+                                    for i in (1..len).rev() {
+                                        let j = (rest[i].as_u32() as usize + i) % (i + 1);
+                                        rest.swap(i, j);
+                                    }
+                                }
+                                if *rest_destination == Zone::Library {
+                                    if let Some(zones) = self.game.get_player_zones_mut(digger) {
+                                        for &card_id in &rest {
+                                            zones.library.remove(card_id);
+                                            zones.library.add_to_bottom(card_id);
+                                        }
+                                    }
+                                    self.game.logger.gamelog(&format!(
+                                        "{} puts {} card{} on the bottom of their library",
+                                        digger_name,
+                                        rest.len(),
+                                        if rest.len() == 1 { "" } else { "s" }
+                                    ));
+                                } else {
+                                    for &card_id in &rest {
+                                        let card_name = self
+                                            .game
+                                            .cards
+                                            .get(card_id)
+                                            .map(|c| c.name.to_string())
+                                            .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
+                                        let _ = self.game.move_card(card_id, Zone::Library, *rest_destination, digger);
+                                        let dest_name = match rest_destination {
+                                            Zone::Graveyard => "their graveyard",
+                                            Zone::Exile => "exile",
+                                            Zone::Hand => "their hand",
+                                            Zone::Library | Zone::Battlefield | Zone::Stack | Zone::Command => {
+                                                "another zone"
+                                            }
+                                        };
+                                        self.game
+                                            .logger
+                                            .gamelog(&format!("{} puts {} into {}", digger_name, card_name, dest_name));
+                                    }
+                                }
                             }
                         }
                     }

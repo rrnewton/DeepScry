@@ -1,0 +1,18 @@
+[metadata]
+Name:Seismic Sense Dig From Own Library
+Goal:Win
+Difficulty:Easy
+Description:Regression for mtg-c54e90 — Dig (target_self=true) must move the top creature/land of the digger's library to hand. Library has Ostrich-Horse on top, then 5 Forests; with 1 Forest in play X=1 so Seismic Sense looks at 1 card and keeps it. Pre-fix the network shadow client failed the ChangeValid filter and put the card on the bottom instead; this puzzle pins the local single-player behaviour so the routing through choose_from_library_with_hook stays correct.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Seismic Sense
+p0battlefield=Forest
+p0library=Forest;Forest;Forest;Forest;Ostrich-Horse
+p1life=20
+p1hand=
+p1battlefield=
+p1library=Plains;Plains;Plains;Plains;Plains
