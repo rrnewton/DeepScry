@@ -1,0 +1,62 @@
+---
+title: 'Local-equivalence drift: gamelog Turn2 M1 vs M2 phase annotation between local and network modes'
+status: open
+priority: 3
+issue_type: bug
+labels:
+- network
+- gamelog
+- local-equivalence
+- fuzz
+created_at: 2026-05-15T16:04:11.093882743+00:00
+updated_at: 2026-05-15T16:04:11.093882743+00:00
+---
+
+# Description
+
+## Summary
+
+`--local-equivalence` mode of `bug_finding/network_fuzz_test.py` has dramatically lower pass rates than network-only mode for what appear to be otherwise-identical action sequences:
+
+| Mode    | Network-only | Equivalence | Drop |
+|---------|-------------:|------------:|-----:|
+| Native  | 80%          | 35%         | -45pp |
+| Mixed   | 25%          |  5%         | -20pp |
+| WASM    |  0%          | 10%         |  n/a |
+
+Many of the early-game equivalence failures show a gamelog annotation mismatch around Turn 2: one mode emits `Turn2 M1` and the other emits `Turn2 M2` for what looks like the same engine action. It is NOT yet known whether this is:
+
+(a) **benign formatter drift** — two code paths label the same action differently (cosmetic), or
+(b) **real phase tracking divergence** — local-mode coordinator advances the priority/phase state machine differently than network-mode coordinator at the start of the game.
+
+If (a), the equivalence comparator should normalize away the M1/M2 annotation OR the offending formatter should be made authoritative. If (b), this is a real engine bug masquerading as a formatting issue and could mask other desyncs in equivalence mode.
+
+Tracker: mtg-1f7ab9
+
+## Reproducer
+
+```bash
+cd /home/newton/working_copies/mtg/mtg-forge-rs
+python3 bug_finding/network_fuzz_test.py --configs 20 --mode network --local-equivalence --seed-base 0
+## Inspect any failing run; diff its local.log against its network.log around the
+## very first divergence (typically Turn1 or Turn2, M1/M2 annotation).
+```
+
+Logs preserved at:
+- `/tmp/fuzz_after_fixes_native_equiv.log`  (35% pass)
+- `/tmp/fuzz_after_fixes_mixed.log`         (5% pass)
+- `/tmp/fuzz_after_fixes_wasm.log`          (10% pass)
+
+## Investigation Steps
+
+1. Pick a failing seed from any of the equivalence logs above.
+2. Re-run with verbose gamelogs in BOTH local and network modes.
+3. Identify the first diverging line. If it's a phase annotation only (same player, same action, same target), this is class (a).
+4. Grep for the gamelog formatter that produces the `Turn{N} {Phase}` prefix; check whether the local coordinator and network coordinator use the same source-of-truth for current phase.
+5. If formatter drift: normalize. If real divergence: file this as a CRITICAL desync (and bump priority).
+
+## Acceptance Criteria
+
+- Root cause classified (cosmetic vs real phase divergence) with evidence.
+- If cosmetic: equivalence pass rate parity with network-only pass rate within 5pp.
+- If real: separate desync issue filed with priority 2, this issue closed as duplicate.
