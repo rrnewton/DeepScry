@@ -2363,25 +2363,107 @@ impl<'a> GameLoop<'a> {
                                 }
 
                                 // 1. Pay the cycling cost
+                                //
+                                // Cycling is an activated ability whose cost is just mana — there
+                                // is no implicit tap of the cycled card. We must (a) auto-tap
+                                // lands to fill the pool, then (b) DEDUCT the cost from the pool
+                                // via `pay_ability_cost`. Previously this code only tapped lands
+                                // and never deducted, which made cycling effectively free; worse,
+                                // it ignored the result of `compute_tap_order`, so when no
+                                // untapped sources existed (e.g. after a costly activated ability
+                                // emptied the board's lands) the cycling proceeded anyway —
+                                // discarding the card without paying — and left the controller
+                                // looping on the next "available" spell that it then couldn't
+                                // afford either. (Tracked in mtg-6b510d.)
                                 self.mana_engine.update_mut(self.game, current_priority);
                                 use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
+
+                                // First check whether the pool already covers the cost (e.g.
+                                // floating mana from Dark Ritual). If not, compute the tap order.
+                                let pool_can_pay = self
+                                    .game
+                                    .try_get_player(current_priority)
+                                    .map(|p| p.mana_pool.can_pay(&cost))
+                                    .unwrap_or(false);
 
                                 let mana_sources = self.mana_engine.all_sources();
                                 let resolver = GreedyManaResolver::new();
                                 self.sources_to_tap_buffer.clear();
-                                resolver.compute_tap_order(&cost, mana_sources, &mut self.sources_to_tap_buffer);
+                                let tap_order_ok =
+                                    resolver.compute_tap_order(&cost, mana_sources, &mut self.sources_to_tap_buffer);
+
+                                if !pool_can_pay && !tap_order_ok {
+                                    // Nothing in pool and no way to tap for it. The action menu
+                                    // should not have offered this option — bail out cleanly so
+                                    // the controller can pick a different action next iteration.
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game.logger.normal(&format!(
+                                            "Failed to activate {} on {}: cannot pay cost {} (no untapped lands or floating mana)",
+                                            type_str, card_name, cost
+                                        ));
+                                    }
+                                    log::warn!(
+                                        "Cycling activation aborted for card {:?} (player {:?}): unpayable cost {}",
+                                        card_id,
+                                        current_priority,
+                                        cost
+                                    );
+                                    self.game.pending_activation = None;
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
+                                }
 
                                 let mut remaining_hint = cost;
+                                let mut tap_ok = true;
                                 for &source_id in &self.sources_to_tap_buffer {
                                     if let Err(e) =
                                         self.game
                                             .tap_for_mana_for_cost(current_priority, source_id, &remaining_hint)
                                     {
+                                        tap_ok = false;
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             self.game.logger.normal(&format!("Failed to tap for cycling: {e}"));
                                         }
                                     }
                                     remaining_hint.generic = remaining_hint.generic.saturating_sub(1);
+                                }
+
+                                // Now deduct the actual mana cost from the pool. This is the
+                                // step that was missing — without it, the cycled mana stayed
+                                // floating in the pool and no MTG cost was actually paid.
+                                if let Err(e) = self.game.pay_ability_cost(
+                                    current_priority,
+                                    card_id,
+                                    &crate::core::Cost::Mana(cost),
+                                ) {
+                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                        self.game
+                                            .logger
+                                            .normal(&format!("Failed to pay cycling cost for {}: {e}", card_name));
+                                    }
+                                    log::warn!(
+                                        "Cycling pay_ability_cost failed for {:?} (tap_ok={}): {}",
+                                        card_id,
+                                        tap_ok,
+                                        e
+                                    );
+                                    self.game.pending_activation = None;
+                                    consecutive_passes += 1;
+                                    self.game.turn.consecutive_passes = consecutive_passes;
+                                    current_priority = if current_priority == active_player {
+                                        non_active_player
+                                    } else {
+                                        active_player
+                                    };
+                                    self.game.turn.priority_player = Some(current_priority);
+                                    continue;
                                 }
 
                                 // 2. Discard the card (move from hand to graveyard)

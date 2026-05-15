@@ -1,0 +1,21 @@
+[metadata]
+Name=Twin Blades ETB attaches and grants double strike
+Goal=Win
+Turns=2
+Difficulty=Easy
+Description=Regression for mtg-a5e7f1: casting Twin Blades crashed with "Only Equipment or Auras can be attached" because the ETB trigger left source_equipment as a CardId placeholder. P1 casts Twin Blades from hand; the trigger must attach it to Grizzly Bears (the only legal Creature.YouCtrl target) without crashing.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Twin Blades
+p0battlefield=Mountain;Mountain;Mountain;Grizzly Bears
+p0library=Mountain;Mountain;Mountain
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Forest
+p1library=Forest;Forest;Forest
+p1graveyard=

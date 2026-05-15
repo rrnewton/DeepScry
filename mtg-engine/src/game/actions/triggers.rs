@@ -236,6 +236,25 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         // Let context-specific handlers deal with this ambiguity.
 
         // =========================================================================
+        // AttachEquipment: source_equipment placeholder → trigger source (Card.Self)
+        //
+        // Used by Equipment ETB triggers like Twin Blades:
+        //   T:Mode$ ChangesZone | ... | ValidCard$ Card.Self | Execute$ TrigAttach
+        //   SVar:TrigAttach:DB$ Attach | ValidTgts$ Creature.YouCtrl
+        //
+        // The Equipment attaching is *itself* (Card.Self), so resolve the source
+        // to the trigger source. Target creature is still a placeholder and is
+        // resolved by the calling trigger handler (battlefield search).
+        // =========================================================================
+        Effect::AttachEquipment {
+            source_equipment,
+            target_creature,
+        } if source_equipment.is_placeholder() => Effect::AttachEquipment {
+            source_equipment: ctx.trigger_source,
+            target_creature: *target_creature,
+        },
+
+        // =========================================================================
         // Damage effects: various target resolution strategies
         // =========================================================================
 

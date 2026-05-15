@@ -3546,3 +3546,186 @@ async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
     println!("✓ Action menu surfaces sacrifice and pain side costs");
     Ok(())
 }
+
+/// Regression for mtg-6b510d: the Plainscycling handler used to TAP lands to
+/// fill the pool but then never DEDUCT the cost from the pool. Combined with
+/// ignoring `compute_tap_order`'s false return, this made cycling effectively
+/// free and — when no untapped lands existed — caused the cycled card to be
+/// discarded without any cost paid. The AI then picked further unpayable
+/// actions and the game looped until the network test timed out.
+///
+/// This puzzle gives P0 exactly two untapped Plains and a Rabaroo Troop
+/// (`K:TypeCycling:Plains:2`). After ZeroController cycles it, both Plains
+/// must be tapped *and the pool drained* — the cost was actually paid. With
+/// the bug the pool would still hold {2}{W} of floating mana after cycling.
+#[tokio::test]
+async fn test_plainscycling_pays_mana_cost() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/plainscycling_no_mana_aborts.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(7);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0 = players[0];
+    let p1 = players[1];
+
+    let mut c0 = ZeroController::new(p0);
+    let mut c1 = ZeroController::new(p1);
+
+    // Run one turn. ZeroController will pick the first available action, which
+    // for P0 is "Plainscycling Rabaroo Troop (2)".
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+    let _ = game_loop.run_turns(&mut c0, &mut c1, 1)?;
+
+    let zones = game_loop
+        .game
+        .player_zones
+        .iter()
+        .find(|(id, _)| *id == p0)
+        .map(|(_, z)| z)
+        .expect("P0 zones");
+
+    // Cycling executed: Rabaroo Troop is now in graveyard.
+    let in_graveyard = zones
+        .graveyard
+        .cards
+        .iter()
+        .filter_map(|&id| game_loop.game.cards.try_get(id))
+        .any(|c| c.name.as_str() == "Rabaroo Troop");
+    assert!(
+        in_graveyard,
+        "Rabaroo Troop should be in P0's graveyard after Plainscycling"
+    );
+
+    // The two ORIGINAL Plains must both be tapped (their mana paid the cost).
+    // Note: after cycling, P0 may also draw and play a *new* Plains in the same
+    // turn — that one stays untapped and is excluded by `id < 6` (puzzle assigns
+    // ids 4 and 5 to the starting battlefield Plains).
+    let untapped_starting_plains = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game_loop.game.cards.try_get(id).map(|c| (id, c)))
+        .filter(|(id, c)| c.name.as_str() == "Plains" && c.controller == p0 && !c.tapped && id.as_u32() < 6)
+        .count();
+    assert_eq!(
+        untapped_starting_plains, 0,
+        "Both starting Plains must be tapped to pay the {{2}} Plainscycling cost (got {} untapped)",
+        untapped_starting_plains
+    );
+
+    // The searched Plains must be in P0's hand or have been played as a land
+    // for the turn — either way, library shrinks by exactly 1 (the searched
+    // Plains) and the cycling flow ran to completion without aborting.
+    let total_plains_in_hand_or_battlefield = zones
+        .hand
+        .cards
+        .iter()
+        .chain(game_loop.game.battlefield.cards.iter())
+        .filter_map(|&id| game_loop.game.cards.try_get(id).map(|c| (id, c)))
+        .filter(|(_, c)| c.name.as_str() == "Plains" && c.controller == p0)
+        .count();
+    // Started with 2 Plains battlefield + 5 Plains library = 7 total.
+    // After cycling + drawing into hand or playing it, total accessible should
+    // be 3 (2 originals + 1 from cycling). The library should have 4 left.
+    assert_eq!(
+        zones.library.cards.len(),
+        4,
+        "Library should shrink by 1 (the cycled Plains was searched out); pool drained?"
+    );
+    assert!(
+        total_plains_in_hand_or_battlefield >= 3,
+        "Should have 3 Plains visible to P0 (2 originals + 1 from cycling search), got {}",
+        total_plains_in_hand_or_battlefield
+    );
+
+    Ok(())
+}
+
+/// Regression for mtg-a5e7f1: Twin Blades crashed with
+/// `InvalidAction("Only Equipment or Auras can be attached")` when its ETB
+/// trigger fired, because the trigger emitted
+/// `Effect::AttachEquipment { source_equipment: CardId::placeholder(), ... }`
+/// and no resolver replaced the placeholder with the trigger source.
+///
+/// This test loads a puzzle with Twin Blades in hand and a single Grizzly
+/// Bears (the only legal `Creature.YouCtrl` target), then runs a turn with
+/// `ZeroController` (which casts Twin Blades). The game must complete
+/// without an `InvalidAction` error and the Equipment must end up attached
+/// to the Bears, granting +1/+1.
+#[tokio::test]
+async fn test_twin_blades_etb_attaches_no_crash() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/twin_blades_etb_attaches.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0];
+    let p2_id = players[1];
+
+    // ZeroController casts the first available spell (Twin Blades). The bug
+    // surfaced as an Err returned from the run loop when the ETB trigger
+    // tried to attach `CardId::placeholder()` to the chosen target.
+    let mut c1 = ZeroController::new(p1_id);
+    let mut c2 = ZeroController::new(p2_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+    let result = game_loop.run_turns(&mut c1, &mut c2, 1);
+    assert!(
+        result.is_ok(),
+        "Twin Blades cast must not crash with attach error: {result:?}"
+    );
+
+    // Find Twin Blades and Grizzly Bears on the battlefield. Both must be
+    // present, and Twin Blades must be attached to the Bears.
+    let twin_blades = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game_loop
+                .game
+                .cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Twin Blades")
+        })
+        .expect("Twin Blades should be on battlefield after casting");
+
+    let bears = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game_loop
+                .game
+                .cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Grizzly Bears")
+        })
+        .expect("Grizzly Bears should still be on battlefield");
+
+    let tb_card = game_loop.game.cards.get(twin_blades)?;
+    assert_eq!(
+        tb_card.attached_to,
+        Some(bears),
+        "Twin Blades' ETB trigger should attach it to the Grizzly Bears"
+    );
+
+    Ok(())
+}

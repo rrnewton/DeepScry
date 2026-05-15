@@ -5752,6 +5752,13 @@ impl GameState {
                 ctx
             };
 
+            // Track the most recent target chosen during this trigger's effect chain.
+            // Used to share targets across SubAbility chains like
+            //   DB$ Attach | ValidTgts$ Creature.YouCtrl | SubAbility$ DBPump
+            //   SVar:DBPump:DB$ Pump | Defined$ Targeted | KW$ Double Strike
+            // where the Pump must apply to the same creature the Attach picked.
+            let mut last_chosen_target: Option<CardId> = None;
+
             // Execute all trigger effects with placeholder resolution
             for effect in trigger_to_exec.effects {
                 // Step 1: Apply shared placeholder resolution for simple cases
@@ -5826,13 +5833,14 @@ impl GameState {
                             };
                         }
                     }
-                    Effect::PumpCreature {
-                        target,
-                        power_bonus,
-                        toughness_bonus,
-                        keywords_granted,
-                    } if target.is_placeholder() => {
-                        // Find a valid target (any creature on battlefield),
+                    // AttachEquipment: target_creature placeholder → find a creature
+                    // controlled by the trigger's controller (Card.YouCtrl restriction).
+                    // Used by Equipment ETB triggers like Twin Blades.
+                    Effect::AttachEquipment {
+                        source_equipment,
+                        target_creature,
+                    } if target_creature.is_placeholder() => {
+                        // Find a valid target creature controlled by the trigger's controller,
                         // sorted by CardId for determinism after rewind+replay.
                         let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
                             .battlefield
@@ -5841,6 +5849,7 @@ impl GameState {
                             .filter(|&card_id| {
                                 if let Some(card) = self.cards.try_get(*card_id) {
                                     card.is_creature()
+                                        && card.controller == controller
                                         && targeting::is_legal_target(card, controller, &trigger_source_colors)
                                 } else {
                                     false
@@ -5850,12 +5859,62 @@ impl GameState {
                             .collect();
                         candidates.sort_by_key(|id| id.as_u32());
                         if let Some(&target_id) = candidates.first() {
+                            effect = Effect::AttachEquipment {
+                                source_equipment: *source_equipment,
+                                target_creature: target_id,
+                            };
+                            last_chosen_target = Some(target_id);
+                        } else {
+                            // No valid creature target — trigger fizzles (CR 603.10)
+                            log::debug!(
+                                "AttachEquipment trigger from {:?} fizzles: no valid Creature.YouCtrl target",
+                                trigger_source
+                            );
+                            continue;
+                        }
+                    }
+                    Effect::PumpCreature {
+                        target,
+                        power_bonus,
+                        toughness_bonus,
+                        keywords_granted,
+                    } if target.is_placeholder() => {
+                        // If a previous effect in this trigger chain (e.g. Attach) chose a
+                        // target, reuse it — this models Defined$ Targeted in SubAbility
+                        // chains like Twin Blades' DBPump.
+                        if let Some(prior_target) = last_chosen_target {
                             effect = Effect::PumpCreature {
-                                target: target_id,
+                                target: prior_target,
                                 power_bonus: *power_bonus,
                                 toughness_bonus: *toughness_bonus,
                                 keywords_granted: keywords_granted.clone(),
                             };
+                        } else {
+                            // Find a valid target (any creature on battlefield),
+                            // sorted by CardId for determinism after rewind+replay.
+                            let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+                                .battlefield
+                                .cards
+                                .iter()
+                                .filter(|&card_id| {
+                                    if let Some(card) = self.cards.try_get(*card_id) {
+                                        card.is_creature()
+                                            && targeting::is_legal_target(card, controller, &trigger_source_colors)
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .copied()
+                                .collect();
+                            candidates.sort_by_key(|id| id.as_u32());
+                            if let Some(&target_id) = candidates.first() {
+                                effect = Effect::PumpCreature {
+                                    target: target_id,
+                                    power_bonus: *power_bonus,
+                                    toughness_bonus: *toughness_bonus,
+                                    keywords_granted: keywords_granted.clone(),
+                                };
+                            }
                         }
                     }
                     Effect::DebuffCreature {

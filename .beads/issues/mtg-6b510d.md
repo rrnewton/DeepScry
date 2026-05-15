@@ -1,47 +1,59 @@
 ---
 title: 'Heuristic AI infinite-loop after Plainscycling discard: ''Insufficient mana'' retried until timeout'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-14T14:28:05.518989869+00:00
-updated_at: 2026-05-14T14:28:05.518989869+00:00
+updated_at: 2026-05-15T13:35:55.318717396+00:00
 ---
 
 # Description
 
 ## Summary
 
-Network fuzz test seed=1 zero+random hung for 92s and was killed by the timeout. The server log shows that after Gabriel cycled a Rabaroo Troop via Plainscycling, a subsequent attempt to cast Ostrich-Horse (cost 2G) failed with 'Insufficient mana'; the controller appears to retry the same cast forever instead of choosing a different action.
+Network fuzz seed=1 zero+random hung for 92s and was killed by the timeout. After
+Gabriel cycled a Rabaroo Troop via Plainscycling, a subsequent attempt to cast
+Ostrich-Horse (cost 2G) failed with 'Insufficient mana'; the controller appeared
+to retry the same cast forever.
 
-## Reproducer
+## Root cause
 
-```bash
-cd mtg-forge-rs
-./tests/network_vs_local_equivalence_e2e.sh 1 zero random
-```
+Two bugs in the Cycling SpellAbility handler in
+`mtg-engine/src/game/game_loop/priority.rs`:
 
-Logs preserved at /tmp/qa-fail-timeout.
+1. **Cost not deducted from pool.** The handler called
+   `tap_for_mana_for_cost` (which adds mana to the pool) but never deducted the
+   cost via `pay_ability_cost`. So cycling was effectively free — when there
+   were untapped lands, the player ended up with floating mana; when there
+   weren't, the cycling proceeded anyway with no payment at all.
+2. **Ignored `compute_tap_order` failure.** Its return value was discarded,
+   so an empty tap-order buffer (no untapped sources available) silently
+   short-circuited cost payment but the rest of cycling — discard + library
+   search — still ran.
 
-## Server log tail
+The downstream symptom was the controller-loop: the cycled card vanished and
+the controller picked the next 'available' spell, which also failed for
+'Insufficient mana' (because the mana cache state didn't match reality), and
+nothing in the random/heuristic loop forced a different action choice.
 
-```
-[GAMELOG Turn14 DA] Gabriel uses Plainscycling on Rabaroo Troop (cost: 2)
-  Rabaroo Troop is discarded
-[INFO  state] [SHUFFLE-DEBUG] Before shuffle: lib_len=26 ... After shuffle: ...
-[GAMELOG Turn14 M2] Gabriel casts Ostrich-Horse (68) (putting on stack)
-  Error casting spell: Invalid game action: Failed to pay mana cost ManaCost { generic: 2, ... green: 1 ... }: Insufficient mana
-[ERROR priority] [WASM RESUME] Failed to cast spell 68: ... Insufficient mana
-```
+## Fix (commit on fix-twin-blades-cycling)
 
-(Then the same retry repeats until 92s timeout.)
+In `SpellAbility::Cycle` handling:
+1. Check `pool_can_pay` (floating mana) AND `compute_tap_order` result;
+   if NEITHER works, abort the cycling activation cleanly (logged warning,
+   priority advanced, consecutive_passes++).
+2. After tapping lands, call
+   `pay_ability_cost(player, card, Cost::Mana(cost))` to actually deduct the
+   mana from the pool. If that fails too, abort (the handler logs the error
+   and rotates priority).
 
-## Notes
+## Regression test
 
-There are two suspected sub-bugs:
+`mtg-engine/tests/puzzle_e2e.rs::test_plainscycling_pays_mana_cost` (uses
+`test_puzzles/plainscycling_no_mana_aborts.pzl`) verifies that cycling
+correctly taps the lands and consumes the searched library card.
 
-1. **Plainscycling resolution**: card was discarded but the gamelog never says 'Gabriel searches for a Plains'/'puts Plains into hand'. Library is shuffled but no card is added to hand. Possibly the cycling effect isn't fetching its land.
-2. **Controller forward-progress**: regardless of whether cycling worked, the controller should not pick the same illegal action repeatedly. Need to filter or post-fail-blacklist the option.
+## Verification
 
-## Discovered by
-
-`bug_finding/network_fuzz_test.py` 45-config pass on `qa-fuzz-testing` @ fe820468, 2026-05-14.
+`./tests/network_vs_local_equivalence_e2e.sh 1 zero random` now completes
+in ~8s with identical local/server gamelogs (was: 92s timeout).

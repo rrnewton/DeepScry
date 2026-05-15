@@ -1,55 +1,47 @@
 ---
 title: Twin Blades crashes client with 'Only Equipment or Auras can be attached' on resolution
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-14T14:28:04.644518025+00:00
-updated_at: 2026-05-14T14:28:04.644518025+00:00
+updated_at: 2026-05-15T13:35:36.154594614+00:00
 ---
 
 # Description
 
 ## Summary
 
-In a network fuzz test, Player 1 (Ryan) cast Twin Blades, which crashed the client process the moment it resolved. The error is from the engine, not network sync:
+In a network fuzz test, Player 1 (Ryan) cast Twin Blades, which crashed the client process the moment it resolved.
 
-```
-Error: InvalidAction("Game error: Game error: Invalid game action: Only Equipment or Auras can be attached")
-```
+## Root cause
 
-The crash terminates the client which then triggers a downstream connection_reset on the server side and an unrelated 'Game 1: P1 handler exited unexpectedly' error.
+The Twin Blades trigger `T:... | ValidCard$ Card.Self | Execute$ TrigAttach` produced
+`Effect::AttachEquipment { source_equipment: CardId::placeholder(), target_creature: CardId::placeholder() }`
+at parse time. When the trigger fired, no resolver replaced the
+`source_equipment` placeholder with the trigger source itself (Card.Self), so
+`attach_equipment(0, …)` was called with CardId(0), failing the `is_equipment()`
+check in the engine with "Only Equipment or Auras can be attached".
 
-## Reproducer
+## Fix (commit on fix-twin-blades-cycling)
 
-```bash
-cd mtg-forge-rs
-./tests/network_vs_local_equivalence_e2e.sh 5 random random
-```
+1. `triggers.rs::resolve_effect_placeholder`: added an arm for
+   `Effect::AttachEquipment { source_equipment, .. }` that maps a placeholder
+   source to `ctx.trigger_source` (the Equipment itself).
+2. `actions/mod.rs` Step 2 of `check_triggers`: added an arm for
+   `Effect::AttachEquipment { target_creature, .. }` that finds a Creature.YouCtrl
+   target by scanning the controller's battlefield (sorted by CardId for
+   determinism) and fizzles the trigger if no legal target exists.
+3. Same loop tracks `last_chosen_target`, so the chained
+   `SVar:DBPump:DB$ Pump | Defined$ Targeted | KW$ Double Strike` reuses the
+   same creature picked by the parent Attach (matching Defined$ Targeted
+   semantics).
 
-Logs preserved at /tmp/qa-fail-equipment.
+## Regression test
 
-## Client log excerpt
+`mtg-engine/tests/puzzle_e2e.rs::test_twin_blades_etb_attaches_no_crash` (uses
+`test_puzzles/twin_blades_etb_attaches.pzl`).
 
-```
-========================================
-Turn 17 - Ryan's turn
-========================================
-  <Choice> Ryan chose 0 - cast Twin Blades
-  [GAMELOG Turn17 UP] Ryan casts Twin Blades (7) (putting on stack)
-  [GAMELOG Turn17 UP] Tap Mountain for {R}
-  [GAMELOG Turn17 UP] Tap Swamp for {B}
-  [GAMELOG Turn17 UP] Tap Swamp for {B}
-  <Choice> Ryan chose 'p' (pass priority)
-  [GAMELOG Turn17 UP] Twin Blades (7) resolves
-Error: InvalidAction("Game error: Game error: Invalid game action: Only Equipment or Auras can be attached")
-```
+## Verification
 
-## Card
-
-Twin Blades is from the Avatar set (Ryan's deck). Per upstream Forge it creates two Equipment artifact tokens and attaches them. The error suggests the rust engine is calling 'attach' on a non-Equipment object, possibly the source instant itself rather than the spawned token, or the token is being created without the Equipment supertype.
-
-Search `forge-java/forge-gui/res/cardsfolder` for 'twinblades' and compare to AbilityFactory_Token / AttachEffect handling in Rust.
-
-## Discovered by
-
-`bug_finding/network_fuzz_test.py` 45-config pass on `qa-fuzz-testing` @ fe820468, 2026-05-14.
+`./tests/network_vs_local_equivalence_e2e.sh 5 random random` now completes
+with identical local/server gamelogs (was: client crash → connection_reset).
