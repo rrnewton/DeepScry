@@ -1,0 +1,22 @@
+---
+title: Feed agent's prior reasoning back into prompt for subsequent choices in agent_game.py
+status: open
+priority: 3
+issue_type: task
+labels:
+- agentplay
+- prompt
+created_at: 2026-05-15T17:07:43.394724930+00:00
+updated_at: 2026-05-15T17:07:43.394724930+00:00
+---
+
+# Description
+
+Files: agentplay/agent_game.py, agentplay/prompts.py
+
+_Imported from tg task `agent-interleaved-reasoning` (status was OPEN); priority preserved._
+
+## Notes (imported from tg)
+
+Deferred by user — focus on UI first. Will return to agentplay after UI is in reasonable shape.
+DEFERRED (2026-05-08) — pausing to focus on UI issues. No code changes made.

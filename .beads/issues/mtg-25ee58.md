@@ -1,0 +1,18 @@
+---
+title: Prefetch large-format images for all drawn/visible cards and their tokens
+status: open
+priority: 3
+issue_type: task
+labels:
+- feature
+- performance
+- game-html
+created_at: 2026-05-15T17:07:51.348075978+00:00
+updated_at: 2026-05-15T17:07:51.348075978+00:00
+---
+
+# Description
+
+Currently card detail images only load on click (fully lazy). Prefetch large-format images for cards that have been drawn/revealed so far, plus their associated tokens.
+
+_Imported from tg task `prefetch-drawn-card-images` (status was BACKLOG); priority preserved._
