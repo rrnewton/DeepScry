@@ -366,6 +366,11 @@ enum GameToHandler {
         /// For LibrarySearchByName choices: the specific CardId that was chosen
         library_search_result: Option<CardId>,
     },
+    /// Server wants to broadcast a library reorder to this client (e.g., after
+    /// the engine ran a hidden-info-dependent scry/surveil heuristic on the
+    /// authoritative game state). Handler forwards as
+    /// `ServerMessage::LibraryReordered`. See mtg-ced6d1.
+    LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
     /// Game has ended normally.
     /// Handler should forward to client and exit.
     GameEnded(GameEndInfo),
@@ -1357,6 +1362,37 @@ async fn run_coordinator(
                         let server_state_hash = choice_request.state_hash;
                         let server_debug_info = choice_request.debug_info.clone();
 
+                        // mtg-ced6d1: Broadcast any pending LibraryReorders (from server-side
+                        // scry/surveil) to BOTH clients BEFORE forwarding the ChoiceRequest.
+                        // The client's sync_callback drains LibraryReordered queue at its
+                        // priority sync point, ensuring its shadow library matches the server
+                        // before ability enumeration. Sending to both clients keeps the
+                        // opponent's shadow game in sync as well.
+                        if !choice_request.library_reorders.is_empty() {
+                            log::debug!(
+                                "Coordinator: Broadcasting {} library reorder(s) before P1 ChoiceRequest",
+                                choice_request.library_reorders.len()
+                            );
+                            for (player, new_order) in &choice_request.library_reorders {
+                                let msg_p1 = GameToHandler::LibraryReordered {
+                                    player: *player,
+                                    new_order: new_order.clone(),
+                                };
+                                let msg_p2 = GameToHandler::LibraryReordered {
+                                    player: *player,
+                                    new_order: new_order.clone(),
+                                };
+                                if p1_to_handler_tx.send(msg_p1).await.is_err() {
+                                    log::error!("Coordinator: Failed to send LibraryReordered to P1");
+                                    return Err(anyhow!("P1 handler channel closed"));
+                                }
+                                if p2_to_handler_tx.send(msg_p2).await.is_err() {
+                                    log::error!("Coordinator: Failed to send LibraryReordered to P2");
+                                    return Err(anyhow!("P2 handler channel closed"));
+                                }
+                            }
+                        }
+
                         // Forward to P1 handler
                         if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
                             log::error!("Coordinator: Failed to send ChoiceRequest to P1 handler");
@@ -1520,6 +1556,33 @@ async fn run_coordinator(
                         // For network debug: capture server's state hash and debug info
                         let server_state_hash = choice_request.state_hash;
                         let server_debug_info = choice_request.debug_info.clone();
+
+                        // mtg-ced6d1: Broadcast pending LibraryReorders to BOTH clients
+                        // before forwarding the ChoiceRequest. See P1 branch above.
+                        if !choice_request.library_reorders.is_empty() {
+                            log::debug!(
+                                "Coordinator: Broadcasting {} library reorder(s) before P2 ChoiceRequest",
+                                choice_request.library_reorders.len()
+                            );
+                            for (player, new_order) in &choice_request.library_reorders {
+                                let msg_p1 = GameToHandler::LibraryReordered {
+                                    player: *player,
+                                    new_order: new_order.clone(),
+                                };
+                                let msg_p2 = GameToHandler::LibraryReordered {
+                                    player: *player,
+                                    new_order: new_order.clone(),
+                                };
+                                if p1_to_handler_tx.send(msg_p1).await.is_err() {
+                                    log::error!("Coordinator: Failed to send LibraryReordered to P1");
+                                    return Err(anyhow!("P1 handler channel closed"));
+                                }
+                                if p2_to_handler_tx.send(msg_p2).await.is_err() {
+                                    log::error!("Coordinator: Failed to send LibraryReordered to P2");
+                                    return Err(anyhow!("P2 handler channel closed"));
+                                }
+                            }
+                        }
 
                         // Forward to P2 handler
                         if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
@@ -1896,6 +1959,17 @@ async fn handle_player_websocket(
                             action_count,
                             timestamp_ms,
                             library_search_result,
+                        }).await?;
+                    }
+
+                    Some(GameToHandler::LibraryReordered { player, new_order }) => {
+                        log::debug!(
+                            "Handler P{}: Forwarding LibraryReordered for {:?} ({} cards)",
+                            conn.player_id, player, new_order.len()
+                        );
+                        conn.send(&ServerMessage::LibraryReordered {
+                            player,
+                            new_order,
                         }).await?;
                     }
 
