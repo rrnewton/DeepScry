@@ -742,45 +742,76 @@ enum Commands {
     },
 }
 
-/// Maximum number of blocking threads tokio is allowed to spawn.
+/// Lower/upper guards for the tokio worker pool size.
 ///
-/// Tokio's default cap is 512. Combined with the per-card `tokio::fs::read_to_string`
-/// calls in `loader::database_async::eager_load` (32K card scripts) and the
-/// rayon worker pool spawned by jwalk for directory walking, this produced 800+
-/// live OS threads at server startup on a 176-vCPU host. That trips
-/// `pthread_create` limits, balloons RSS, and yields no throughput gain — the
-/// disk queue saturates long before we reach hundreds of concurrent reads.
-///
-/// 64 is plenty to keep NVMe queues full.
-const TOKIO_MAX_BLOCKING_THREADS: usize = 64;
+/// Game logic per match is largely sequential, network I/O is event-driven,
+/// and parallel card parsing already saturates disk before the runtime needs
+/// more than a handful of workers. So we want at least a couple of workers
+/// even on tiny VMs (`MIN`), and a hard ceiling (`MAX`) on beefy hosts where
+/// tokio's default `num_cpus` choice would spin up dozens of idle threads.
+/// On a 176-vCPU dev box this caps the worker pool well below `num_cpus`;
+/// on a 4-vCPU laptop it lets us use all 4.
+const TOKIO_WORKER_THREADS_MIN: usize = 2;
+const TOKIO_WORKER_THREADS_MAX: usize = 16;
 
-/// Bound on tokio worker threads.
+/// Lower/upper guards for the tokio blocking-thread pool.
 ///
-/// Defaults to `num_cpus`, which on a beefy host (e.g. 176-vCPU dev VM) is way
-/// more than the engine can use. Game logic per match is largely sequential,
-/// network I/O is event-driven, and parallel card parsing already saturates
-/// disk before the runtime needs more than a handful of workers. We pick a
-/// conservative-but-comfortable cap so total live thread count stays
-/// predictable across host sizes.
-const TOKIO_WORKER_THREADS: usize = 16;
+/// Tokio's default cap is 512. Combined with the per-card
+/// `tokio::fs::read_to_string` calls in `loader::database_async::eager_load`
+/// (32K card scripts) and the rayon worker pool spawned by jwalk for
+/// directory walking, the default produced 800+ live OS threads at server
+/// startup on a 176-vCPU host. That trips `pthread_create` limits, balloons
+/// RSS, and yields no throughput gain — the disk queue saturates long before
+/// we reach hundreds of concurrent reads.
+///
+/// We size this pool as a multiple of the worker pool (`* MULT`) so machines
+/// with more cores get more concurrent blocking I/O, then clamp into a sane
+/// band. On a 176-vCPU box this lands at `MAX`; on a 4-vCPU laptop it lands
+/// at `MIN`, which is still plenty to keep an NVMe queue full.
+const TOKIO_BLOCKING_THREADS_PER_WORKER: usize = 4;
+const TOKIO_BLOCKING_THREADS_MIN: usize = 16;
+const TOKIO_BLOCKING_THREADS_MAX: usize = 64;
+
+/// Pick a tokio worker-thread count derived from `num_cpus::get()`, clamped
+/// into [`TOKIO_WORKER_THREADS_MIN`, `TOKIO_WORKER_THREADS_MAX`].
+///
+/// The clamp keeps total live thread count predictable across host sizes
+/// while still letting small VMs use all of their cores.
+fn tokio_worker_threads() -> usize {
+    num_cpus::get().clamp(TOKIO_WORKER_THREADS_MIN, TOKIO_WORKER_THREADS_MAX)
+}
+
+/// Pick a tokio max-blocking-thread count from the worker count
+/// (`workers * TOKIO_BLOCKING_THREADS_PER_WORKER`), clamped into
+/// [`TOKIO_BLOCKING_THREADS_MIN`, `TOKIO_BLOCKING_THREADS_MAX`]. Scales with
+/// the host so disk-bound startup parallelism tracks core count.
+fn tokio_max_blocking_threads(worker_threads: usize) -> usize {
+    worker_threads
+        .saturating_mul(TOKIO_BLOCKING_THREADS_PER_WORKER)
+        .clamp(TOKIO_BLOCKING_THREADS_MIN, TOKIO_BLOCKING_THREADS_MAX)
+}
 
 fn main() -> Result<()> {
+    let worker_threads = tokio_worker_threads();
+    let max_blocking_threads = tokio_max_blocking_threads(worker_threads);
+
     // Also bound the global rayon pool used by jwalk during card-tree
     // discovery. jwalk defaults to num_cpus, which on a 176-vCPU host adds
     // another ~176 OS threads on top of the tokio runtime. We do not need
-    // that much parallelism to walk a small directory tree.
+    // that much parallelism to walk a small directory tree, so we reuse the
+    // (already num_cpus-derived) tokio worker count.
     //
     // `build_global` only succeeds the first time it is called; we ignore an
     // error (e.g. if a test harness already initialised rayon) rather than
     // failing startup.
     let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(TOKIO_WORKER_THREADS)
+        .num_threads(worker_threads)
         .build_global();
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(TOKIO_WORKER_THREADS)
-        .max_blocking_threads(TOKIO_MAX_BLOCKING_THREADS)
+        .worker_threads(worker_threads)
+        .max_blocking_threads(max_blocking_threads)
         .build()?;
     runtime.block_on(async_main())
 }
