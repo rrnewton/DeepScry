@@ -3129,7 +3129,7 @@ impl<'a> GameLoop<'a> {
                                 crate::game::controller::ChoiceResult::UndoRequest(_) => {
                                     // Undo during scry: fall back to engine heuristic
                                     // (matches legacy behaviour for the no-controller path).
-                                    self.game.scry_default_heuristic_decision(scry_player, &revealed)
+                                    crate::game::ScryDecision::keep_all_on_top(&revealed)
                                 }
                             };
 
@@ -3183,7 +3183,7 @@ impl<'a> GameLoop<'a> {
                                     )));
                                 }
                                 crate::game::controller::ChoiceResult::UndoRequest(_) => {
-                                    self.game.surveil_default_heuristic_decision(surveil_player, &revealed)
+                                    crate::game::SurveilDecision::keep_all_on_top(&revealed)
                                 }
                             };
 

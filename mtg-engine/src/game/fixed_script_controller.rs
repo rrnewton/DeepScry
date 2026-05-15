@@ -301,6 +301,44 @@ impl PlayerController for FixedScriptController {
         ChoiceResult::Ok(hand.iter().take(num_discarding).copied().collect())
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::ScryDecision> {
+        // FixedController has no scry-specific script syntax, so we
+        // use a fully deterministic, easy-to-reason-about default:
+        // keep every revealed card on top in its ORIGINAL library
+        // order (a true no-op — same semantics as
+        // [`crate::game::ScryDecision::keep_all_on_top`]).
+        //
+        // Rationale: existing fixed scripts were written against the
+        // pre-controller engine heuristic (which reordered the keep
+        // pile). Replicating that heuristic here would couple the
+        // FixedController to game-state inspection (lands in hand),
+        // defeating the purpose of "fixed". A true no-op is the
+        // safest stable contract for replay-style tests; if a script
+        // ever needs a different scry partition we can add a
+        // dedicated `scry NN` directive to the fixed-input syntax.
+        view.logger()
+            .controller_choice("SCRIPT", &format!("Scry {}: keep all on top (no-op)", revealed.len()));
+        ChoiceResult::Ok(crate::game::ScryDecision::keep_all_on_top(revealed))
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::SurveilDecision> {
+        // Same rationale as choose_scry_order above — true no-op
+        // (no cards milled to graveyard).
+        view.logger().controller_choice(
+            "SCRIPT",
+            &format!("Surveil {}: keep all on top, mill 0 (no-op)", revealed.len()),
+        );
+        ChoiceResult::Ok(crate::game::SurveilDecision::keep_all_on_top(revealed))
+    }
+
     fn choose_from_library(
         &mut self,
         view: &GameStateView,
