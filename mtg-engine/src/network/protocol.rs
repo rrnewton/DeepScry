@@ -94,11 +94,64 @@ pub fn now_ms() -> u64 {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum ClientMessage {
-    /// Initial authentication and deck submission
+    /// Initial authentication and deck submission.
+    ///
+    /// **Legacy single-game entry point** — kept for backwards compatibility
+    /// with clients that pre-date the lobby. The server treats this as an
+    /// implicit `JoinOrCreate` against a well-known game named
+    /// [`DEFAULT_LOBBY_GAME`]: the first authenticator becomes that game's
+    /// creator, the second joins it. New clients should use `CreateGame` /
+    /// `JoinGame` / `ListGames` for explicit lobby control.
     Authenticate {
         /// Server password
         password: String,
         /// Player's display name (None = let server assign a default name with suffix)
+        player_name: Option<String>,
+        /// Deck to use for the game
+        deck: DeckSubmission,
+    },
+
+    /// List currently waiting (pre-game) lobby games.
+    ///
+    /// The server replies with a single [`ServerMessage::GameList`]. The
+    /// connection remains open afterwards so the client can follow up with a
+    /// `CreateGame` or `JoinGame`. Sending `Authenticate`/`CreateGame`/
+    /// `JoinGame` after `ListGames` is the normal flow for a UI client that
+    /// shows a lobby browser.
+    ListGames {
+        /// Server password (must match server config if non-empty)
+        password: String,
+    },
+
+    /// Create a new pre-game lobby slot and become its creator.
+    ///
+    /// The connection then waits in the same way the legacy `Authenticate`
+    /// flow does: the server sends `GameCreated` followed by
+    /// `WaitingForOpponent`, and the game starts when a second player
+    /// `JoinGame`s the same `game_name`.
+    CreateGame {
+        /// Server password (must match server config if non-empty)
+        password: String,
+        /// Optional human-friendly name for the game; if `None` the server
+        /// generates a unique one (e.g., `"game-7"`).
+        game_name: Option<String>,
+        /// Optional per-game password — `JoinGame` must echo it.
+        game_password: Option<String>,
+        /// Player's display name (None = server assigns "Player1")
+        player_name: Option<String>,
+        /// Deck to use for the game
+        deck: DeckSubmission,
+    },
+
+    /// Join an existing pre-game lobby slot.
+    JoinGame {
+        /// Server password (must match server config if non-empty)
+        password: String,
+        /// Name of the game to join (must already exist via `CreateGame`).
+        game_name: String,
+        /// Per-game password if the game was created with one.
+        game_password: Option<String>,
+        /// Player's display name (None = server assigns "Player2")
         player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
@@ -225,6 +278,60 @@ pub enum ServerMessage {
 
     /// Waiting for opponent to connect
     WaitingForOpponent,
+
+    /// Reply to `ClientMessage::ListGames`. Lists waiting (pre-game) lobby
+    /// slots only — games already in progress are NOT advertised here.
+    GameList {
+        /// One entry per waiting game. Order is server-defined (currently
+        /// insertion order); clients should not rely on it.
+        games: Vec<LobbyGameEntry>,
+        /// Host system memory used as a percentage of total, if the server
+        /// can read it (Linux only). Lets a UI show a "Server Full" warning
+        /// before the user even tries to `CreateGame`.
+        system_memory_used_percent: Option<u32>,
+        /// Configured memory ceiling as a percentage (`0` = unlimited). New
+        /// joins are denied with `ServerFull` once
+        /// `system_memory_used_percent > max_memory_percent`.
+        max_memory_percent: u32,
+    },
+
+    /// Acknowledge a `CreateGame` succeeded — the client is now the creator
+    /// of `game_name` and will receive `WaitingForOpponent` next, then the
+    /// usual `GameStarted` flow once a second player joins.
+    GameCreated {
+        /// Final game name (server may rewrite an empty/duplicate request).
+        game_name: String,
+        /// Player ID assigned to the creator (always P1=0 for now).
+        your_player_id: PlayerId,
+        /// Display name the server settled on for the creator.
+        your_name: Option<String>,
+    },
+
+    /// `CreateGame`/`JoinGame` rejected because host memory pressure is at or
+    /// above the configured ceiling. The client should back off; a follow-up
+    /// `ListGames` is fine. We deliberately reuse `Error { fatal: true }`
+    /// semantics here — the connection closes after this message so the
+    /// client can retry with a fresh socket later.
+    ///
+    /// SECURITY: The wire-visible payload is intentionally generic — host
+    /// memory percentages and the configured ceiling are NOT exposed to the
+    /// client (they would leak server infrastructure detail). The server
+    /// logs the precise values at `warn` level for operators. See
+    /// `build_server_full_message` in `network::lobby`.
+    ServerFull {
+        /// Generic, opaque reason intended for end users (e.g. "Server is
+        /// full, try again later"). Must not include host memory metrics or
+        /// any other operational telemetry.
+        reason: String,
+    },
+
+    /// `JoinGame` rejected for a non-capacity reason.
+    JoinFailed {
+        /// Game name the client tried to join.
+        game_name: String,
+        /// Specific failure reason.
+        reason: JoinFailReason,
+    },
 
     /// Game is starting - includes initial setup info
     GameStarted {
@@ -466,6 +573,58 @@ pub enum ServerMessage {
         /// Client's reported hash (if applicable)
         client_hash: Option<u64>,
     },
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LOBBY TYPES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Well-known game name used when a legacy client connects with `Authenticate`.
+///
+/// First authenticator becomes the creator of this game; second authenticator
+/// joins it. New clients should prefer explicit `CreateGame`/`JoinGame` with
+/// their own `game_name` so multiple legacy-style sessions can coexist.
+pub const DEFAULT_LOBBY_GAME: &str = "default";
+
+/// One entry in the lobby browser response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LobbyGameEntry {
+    /// Game name (the key clients use in `JoinGame`).
+    pub name: String,
+    /// Display name of the player currently waiting.
+    pub creator_name: String,
+    /// `true` iff this game requires a password to join.
+    pub has_password: bool,
+    /// Wall-clock ms when the game was created (Unix epoch). Lets the UI
+    /// show "waiting for 30s" instead of just "waiting".
+    pub created_at_ms: u64,
+}
+
+/// Reasons a `JoinGame` may fail (other than `ServerFull`).
+///
+/// We use a closed enum so client UIs can render different messages per case
+/// without parsing free-form `Error` strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum JoinFailReason {
+    /// `game_name` did not match any waiting game. The client may have raced
+    /// another joiner (the game already started) or the creator disconnected.
+    NotFound,
+    /// The game requires a password and the client either omitted it or
+    /// supplied the wrong one. We do not distinguish "missing" vs "wrong" so
+    /// password presence cannot be probed.
+    BadPassword,
+    /// The client tried to join a game it created itself (creator and joiner
+    /// have the same connection identity — currently determined by
+    /// connection-not-yet-detached state). Should be rare but can happen if a
+    /// client double-fires `CreateGame` then `JoinGame`.
+    AlreadyInGame,
+    /// Server password missing or wrong. Distinct from `BadPassword` (which
+    /// is per-game).
+    BadServerPassword,
+    /// Submitted deck failed validation (size, unknown cards, etc.). The
+    /// detail string is human-readable.
+    InvalidDeck { detail: String },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

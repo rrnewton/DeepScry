@@ -11,8 +11,14 @@ use crate::core::{CardId, PlayerId, SpellAbility};
 use crate::game::state_hash::compute_network_state_hash;
 use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
+use crate::network::lobby::{
+    build_server_full_message, hash_game_password, new_shared_lobby, ActiveGame, JoinedPlayer, PendingGame,
+    SharedLobby, DEFAULT_GAME_TIMEOUT,
+};
+use crate::network::memory::{check_memory_admission, current_system_memory, AdmissionVerdict};
 use crate::network::protocol::{
-    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, RevealReason, ServerMessage,
+    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason, RevealReason,
+    ServerMessage, DEFAULT_LOBBY_GAME,
 };
 use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
@@ -42,8 +48,27 @@ pub struct ServerConfig {
     pub password: String,
     /// Optional password for elevated/trusted bug report handling
     pub trusted_bug_report_password: String,
-    /// Maximum concurrent games (0 = unlimited)
+    /// Maximum concurrent games (0 = unlimited).
+    ///
+    /// **Deprecated**: kept for backwards compatibility with older config
+    /// files. The lobby admission gate now uses `max_memory_percent` against
+    /// host system memory rather than a fixed game count, because the right
+    /// concurrency limit depends on host size and other workloads. New code
+    /// should leave this at `0`.
     pub max_games: usize,
+    /// Maximum host memory utilisation, as a percentage in `0..=100`.
+    ///
+    /// New `CreateGame`/`JoinGame` requests are denied with
+    /// `ServerMessage::ServerFull` when
+    /// `(MemTotal - MemAvailable) / MemTotal * 100` exceeds this value.
+    /// `0` disables the gate. Existing in-flight games are NEVER killed — we
+    /// only refuse new admissions, so a transient spike does not lose live
+    /// matches.
+    ///
+    /// Default `80` leaves comfortable headroom for the kernel page cache
+    /// and other tenants on the host. See `network::memory` for the exact
+    /// calculation and platform support.
+    pub max_memory_percent: u32,
     /// Starting life total
     pub starting_life: i32,
     /// Whether to share deck lists between players (tournament mode)
@@ -73,6 +98,7 @@ impl Default for ServerConfig {
             password: String::new(),
             trusted_bug_report_password: String::new(),
             max_games: 0,
+            max_memory_percent: crate::network::lobby::DEFAULT_MAX_MEMORY_PERCENT,
             starting_life: 20,
             deck_visibility: false,
             cardsfolder: PathBuf::from("cardsfolder"),
@@ -462,12 +488,14 @@ impl PlayerConnection {
 pub struct GameServer {
     /// Server configuration
     config: ServerConfig,
-    /// Currently waiting player (first to connect)
-    waiting_player: Option<WaitingPlayer>,
-    /// Game ID counter (used for logging)
-    next_game_id: u64,
-    /// Card database (shared across games)
+    /// Card database (shared across games via `Arc`)
     card_db: Option<Arc<AsyncCardDatabase>>,
+    /// Multi-game lobby state shared across per-connection tasks.
+    ///
+    /// Replaces the old `waiting_player: Option<WaitingPlayer>` (single-slot)
+    /// design. See `network::lobby` for layout and the
+    /// `server-lobby-multiplexing` task for the rationale.
+    lobby: SharedLobby,
 }
 
 impl GameServer {
@@ -475,22 +503,38 @@ impl GameServer {
     pub fn new(config: ServerConfig) -> Self {
         Self {
             config,
-            waiting_player: None,
-            next_game_id: 1,
             card_db: None,
+            lobby: new_shared_lobby(),
         }
     }
 
-    /// Run the server (blocking)
+    /// Run the server (long-lived).
     ///
-    /// This is a single-game server: it accepts exactly two players, runs one game,
-    /// and then exits. For a multi-game lobby server, use a different implementation.
+    /// Each TCP accept spawns its own connection task immediately, so two
+    /// players completing auth do NOT block other players from doing so. The
+    /// shared [`SharedLobby`] is the rendezvous point; see
+    /// `network::lobby` and the `server-lobby-multiplexing` task notes for
+    /// the full design.
+    ///
+    /// **Behavioural change vs. the legacy single-game server:** `run()` no
+    /// longer exits after one game completes. The server accepts connections
+    /// until it is killed. The previous `loop_mode` flag therefore only
+    /// affects logging now (it is still respected so existing config files
+    /// keep working).
     ///
     /// # Errors
     ///
     /// Returns an error if card database loading or TCP binding fails.
+    /// Per-connection errors are logged and dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the card database `Arc` is somehow `None` after the load
+    /// step above succeeded — this would indicate a programmer error in
+    /// `Server::run` (the load above unconditionally stores `Some(...)`),
+    /// not a recoverable failure.
     pub async fn run(&mut self) -> Result<()> {
-        // Load card database
+        // Load card database (shared across all games via Arc)
         log::info!("Loading card database from {:?}...", self.config.cardsfolder);
         let card_db = AsyncCardDatabase::new(self.config.cardsfolder.clone());
         card_db.eager_load().await?;
@@ -502,101 +546,186 @@ impl GameServer {
         let listener = TcpListener::bind(&addr).await?;
         log::info!("MTG Server listening on {}", addr);
         log::info!("Password required: {}", !self.config.password.is_empty());
+        log::info!(
+            "Lobby memory ceiling: {}% (0 = unlimited)",
+            self.config.max_memory_percent
+        );
 
-        // Accept connections and run games
-        // In loop mode, keep accepting new games after each one completes
+        // Per-connection accept loop. Accepts cannot block waiting for game
+        // completion any more — that work happens entirely inside the spawned
+        // task.
         loop {
-            // Accept connections until we have two players and start a game
-            let game_handle = loop {
-                match listener.accept().await {
-                    Ok((stream, addr)) => {
-                        log::info!("New connection from {}", addr);
-                        match self.handle_connection(stream).await {
-                            Ok(Some(handle)) => break handle,
-                            Ok(None) => {
-                                // First player connected, waiting for second
-                            }
-                            Err(e) => {
-                                log::error!("Connection error: {}", e);
-                            }
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    log::info!("New connection from {}", peer);
+                    let lobby = Arc::clone(&self.lobby);
+                    let card_db = Arc::clone(self.card_db.as_ref().expect("card db loaded above"));
+                    let config = self.config.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_lobby_connection(stream, lobby, card_db, config).await {
+                            log::warn!("Connection from {peer} ended with error: {e}");
                         }
-                    }
-                    Err(e) => {
-                        log::error!("Accept error: {}", e);
-                    }
+                    });
                 }
-            };
-
-            // Game started - wait for it to complete
-            log::info!("Game {} started, waiting for completion...", self.next_game_id);
-            if let Err(e) = game_handle.await {
-                log::error!("Game task error: {}", e);
-            }
-
-            if self.config.loop_mode {
-                log::info!(
-                    "Game {} completed. Loop mode: waiting for new clients...",
-                    self.next_game_id
-                );
-                // Reset waiting player state for the next game
-                self.waiting_player = None;
-                // Increment game ID (next_game_id was already incremented in start_game)
-            } else {
-                log::info!("Game completed, server exiting");
-                return Ok(());
+                Err(e) => {
+                    log::error!("Accept error: {}", e);
+                }
             }
         }
     }
+}
 
-    /// Handle a new WebSocket connection
-    ///
-    /// Returns `Ok(Some(handle))` when a game was started (second player connected),
-    /// or `Ok(None)` when still waiting for the second player.
-    ///
-    /// Note: Wildcard is intentional - ClientMessage has several variants;
-    /// we allow Authenticate or BugReport at connection time, others are errors.
-    #[allow(clippy::wildcard_enum_match_arm)]
-    async fn handle_connection(&mut self, stream: TcpStream) -> Result<Option<tokio::task::JoinHandle<()>>> {
-        let ws_stream = accept_async(stream).await?;
-        let (ws_tx, mut ws_rx) = ws_stream.split();
+// ═══════════════════════════════════════════════════════════════════════════
+// LOBBY CONNECTION HANDLING
+// ═══════════════════════════════════════════════════════════════════════════
 
-        // Wait for authentication message
-        let auth_msg = match ws_rx.next().await {
-            Some(Ok(Message::Text(text))) => {
-                // Log at DEBUG level with truncation for long messages
-                if log::log_enabled!(log::Level::Debug) {
-                    let truncated = if text.len() > 500 {
-                        format!("{}... ({} bytes total)", &text[..500], text.len())
-                    } else {
-                        text.to_string()
-                    };
-                    log::debug!("[CLIENT->SERVER auth] {}", truncated);
+/// How long a `CreateGame` waits for a joiner before giving up.
+///
+/// 30 minutes is generous for a casual game-finding flow but short enough that
+/// orphan entries do not pin `Arc<AsyncCardDatabase>` references forever.
+const WAIT_FOR_JOINER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Top-level dispatcher for one freshly-accepted WebSocket connection.
+///
+/// Reads the first message and routes it. Lobby-only messages (`ListGames`)
+/// can repeat; the connection stays open until the client sends a
+/// "commitment" message (`CreateGame`/`JoinGame`/`Authenticate`/`BugReport`).
+async fn handle_lobby_connection(
+    stream: TcpStream,
+    lobby: SharedLobby,
+    card_db: Arc<AsyncCardDatabase>,
+    config: ServerConfig,
+) -> Result<()> {
+    let mut ws_stream = accept_async(stream).await?;
+
+    loop {
+        let msg = read_one_lobby_message(&mut ws_stream).await?;
+        match msg {
+            ClientMessage::ListGames { password } => {
+                if !check_server_password(&config, &password) {
+                    // We send AuthResult { success: false, .. } so legacy
+                    // clients can decode it; ListGames is intentionally a
+                    // pre-auth probe, but the server password still gates it.
+                    send_message(
+                        &mut ws_stream,
+                        &ServerMessage::AuthResult {
+                            success: false,
+                            error: Some("Invalid server password".to_string()),
+                            your_player_id: None,
+                            your_name: None,
+                        },
+                    )
+                    .await?;
+                    return Ok(());
                 }
-                serde_json::from_str::<ClientMessage>(&text)?
+                let games = {
+                    let l = lobby.lock().await;
+                    l.list_waiting()
+                };
+                let mem = current_system_memory();
+                send_message(
+                    &mut ws_stream,
+                    &ServerMessage::GameList {
+                        games,
+                        system_memory_used_percent: mem.map(|m| m.used_percent()),
+                        max_memory_percent: config.max_memory_percent,
+                    },
+                )
+                .await?;
+                // Loop: connection stays open for a follow-up Create/Join.
             }
-            Some(Ok(_)) => return Err(anyhow!("Expected text message")),
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(anyhow!("Connection closed before auth")),
-        };
 
-        // Reunite the split stream for WaitingPlayer
-        let ws_stream = ws_tx.reunite(ws_rx)?;
+            ClientMessage::CreateGame {
+                password,
+                game_name,
+                game_password,
+                player_name,
+                deck,
+            } => {
+                return run_create_flow(
+                    ws_stream,
+                    lobby,
+                    card_db,
+                    config,
+                    password,
+                    game_name,
+                    game_password,
+                    player_name,
+                    deck,
+                )
+                .await;
+            }
 
-        match auth_msg {
+            ClientMessage::JoinGame {
+                password,
+                game_name,
+                game_password,
+                player_name,
+                deck,
+            } => {
+                return run_join_flow(
+                    ws_stream,
+                    lobby,
+                    config,
+                    password,
+                    game_name,
+                    game_password,
+                    player_name,
+                    deck,
+                )
+                .await;
+            }
+
             ClientMessage::Authenticate {
                 password,
                 player_name,
                 deck,
-            } => self.handle_auth(ws_stream, password, player_name, deck).await,
+            } => {
+                // Legacy single-game flow: the first authenticator creates the
+                // well-known DEFAULT_LOBBY_GAME, the second joins it. Once two
+                // legacy clients have paired up we treat further Authenticates
+                // as fresh CreateGames (so a 3rd legacy client doesn't error
+                // immediately — they'll wait for a 4th).
+                let exists = {
+                    let l = lobby.lock().await;
+                    l.waiting_games.contains_key(DEFAULT_LOBBY_GAME)
+                };
+                if exists {
+                    return run_join_flow(
+                        ws_stream,
+                        lobby,
+                        config,
+                        password,
+                        DEFAULT_LOBBY_GAME.to_string(),
+                        None,
+                        player_name,
+                        deck,
+                    )
+                    .await;
+                } else {
+                    return run_create_flow(
+                        ws_stream,
+                        lobby,
+                        card_db,
+                        config,
+                        password,
+                        Some(DEFAULT_LOBBY_GAME.to_string()),
+                        None,
+                        player_name,
+                        deck,
+                    )
+                    .await;
+                }
+            }
+
             ClientMessage::BugReport {
                 description,
                 game_logs,
                 console_logs,
                 trusted_password,
             } => {
-                let mut ws_stream = ws_stream;
                 let response = submit_bug_report(
-                    &self.config,
+                    &config,
                     BugReportRequest {
                         description,
                         game_logs,
@@ -607,161 +736,396 @@ impl GameServer {
                 )
                 .await;
                 send_message(&mut ws_stream, &response).await?;
-                Ok(None)
+                return Ok(());
             }
-            _ => {
-                let mut ws_stream = ws_stream;
-                send_error(&mut ws_stream, "Expected authentication or bug_report message", true).await?;
-                Ok(None)
+
+            // Anything else at the lobby level is an error — Submit/Disconnect/
+            // Ping belong inside an active game. Spelled out (rather than `_`)
+            // so that adding a new `ClientMessage` variant forces a compile
+            // error here, ensuring lobby intent is reviewed.
+            other @ (ClientMessage::SubmitChoice { .. } | ClientMessage::Disconnect | ClientMessage::Ping { .. }) => {
+                send_error(
+                    &mut ws_stream,
+                    &format!("Unexpected pre-game message: {:?}", std::mem::discriminant(&other)),
+                    true,
+                )
+                .await?;
+                return Ok(());
             }
         }
     }
+}
 
-    /// Handle authentication attempt
-    ///
-    /// Returns `Ok(Some(handle))` when a game was started (second player connected),
-    /// or `Ok(None)` when still waiting for the second player or auth failed.
-    ///
-    /// Player naming logic:
-    /// - If player provides a name (Some), use it exactly as-is (no suffix)
-    /// - If player doesn't provide a name (None), generate "Player1" or "Player2"
-    async fn handle_auth(
-        &mut self,
-        mut ws_stream: WebSocketStream<TcpStream>,
-        password: String,
-        player_name: Option<String>,
-        deck: DeckSubmission,
-    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
-        // Check password
-        if !self.config.password.is_empty() && password != self.config.password {
-            send_message(
-                &mut ws_stream,
-                &ServerMessage::AuthResult {
-                    success: false,
-                    error: Some("Invalid password".to_string()),
-                    your_player_id: None,
-                    your_name: None,
-                },
-            )
-            .await?;
-            return Ok(None);
+/// Read a single ClientMessage off the WebSocket. Used by the lobby loop and
+/// `handle_lobby_connection`.
+async fn read_one_lobby_message(ws_stream: &mut WebSocketStream<TcpStream>) -> Result<ClientMessage> {
+    use futures_util::StreamExt;
+    loop {
+        match ws_stream.next().await {
+            Some(Ok(Message::Text(text))) => {
+                if log::log_enabled!(log::Level::Debug) {
+                    let truncated = if text.len() > 500 {
+                        format!("{}... ({} bytes total)", &text[..500], text.len())
+                    } else {
+                        text.to_string()
+                    };
+                    log::debug!("[CLIENT->SERVER lobby] {}", truncated);
+                }
+                return Ok(serde_json::from_str::<ClientMessage>(&text)?);
+            }
+            // Skip binary, ping, pong frames silently — tungstenite handles
+            // pong frames automatically; we just loop and read again.
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => return Err(e.into()),
+            None => return Err(anyhow!("Connection closed before message")),
         }
+    }
+}
 
-        // Validate deck
-        if deck.main_deck_size() < 40 {
+/// Server password gate, shared by all lobby entry points.
+fn check_server_password(config: &ServerConfig, supplied: &str) -> bool {
+    config.password.is_empty() || supplied == config.password
+}
+
+/// Helper: respond to a creator/joiner that the host is at its memory ceiling
+/// and close the connection. Returns once the message has been sent.
+async fn refuse_with_server_full(
+    ws_stream: &mut WebSocketStream<TcpStream>,
+    used_percent: Option<u32>,
+    ceiling_percent: u32,
+) -> Result<()> {
+    let msg = build_server_full_message(used_percent, ceiling_percent);
+    send_message(ws_stream, &msg).await?;
+    Ok(())
+}
+
+/// Run the "creator" half of a lobby match.
+///
+/// 1. Validate server password / memory ceiling / deck.
+/// 2. Allocate game id, register a `PendingGame` carrying a oneshot
+///    `Sender<JoinedPlayer>`.
+/// 3. Notify the client (`GameCreated` + `WaitingForOpponent`).
+/// 4. Await the joiner via the oneshot (with `WAIT_FOR_JOINER` timeout).
+/// 5. Move from `waiting_games` → `active_games` and run the game with a
+///    `DEFAULT_GAME_TIMEOUT` cap.
+/// 6. On any exit path, clear our entry from the lobby state.
+#[allow(clippy::too_many_arguments)]
+async fn run_create_flow(
+    mut ws_stream: WebSocketStream<TcpStream>,
+    lobby: SharedLobby,
+    card_db: Arc<AsyncCardDatabase>,
+    config: ServerConfig,
+    server_password: String,
+    requested_game_name: Option<String>,
+    game_password: Option<String>,
+    player_name: Option<String>,
+    deck: DeckSubmission,
+) -> Result<()> {
+    if !check_server_password(&config, &server_password) {
+        send_message(
+            &mut ws_stream,
+            &ServerMessage::AuthResult {
+                success: false,
+                error: Some("Invalid server password".to_string()),
+                your_player_id: None,
+                your_name: None,
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // Memory gate (best-effort on non-Linux — see network::memory).
+    if let AdmissionVerdict::Reject {
+        memory,
+        ceiling_percent,
+    } = check_memory_admission(config.max_memory_percent)
+    {
+        return refuse_with_server_full(&mut ws_stream, Some(memory.used_percent()), ceiling_percent).await;
+    }
+
+    if deck.main_deck_size() < 40 {
+        send_message(
+            &mut ws_stream,
+            &ServerMessage::JoinFailed {
+                game_name: requested_game_name.clone().unwrap_or_default(),
+                reason: JoinFailReason::InvalidDeck {
+                    detail: format!("Deck too small: {} cards (minimum 40)", deck.main_deck_size()),
+                },
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let creator_name = player_name.unwrap_or_else(|| "Player1".to_string());
+    let (handoff_tx, handoff_rx) = tokio::sync::oneshot::channel::<JoinedPlayer>();
+
+    // Allocate id + name and register the pending entry. Unique-name check is
+    // done under the same lock to avoid a TOCTOU race against a concurrent
+    // CreateGame for the same name.
+    let (game_id, game_name) = {
+        let mut l = lobby.lock().await;
+        let id = l.next_game_id();
+        let name = requested_game_name.unwrap_or_else(|| l.default_game_name());
+        let key = name.to_lowercase();
+        if l.waiting_games.contains_key(&key) {
+            drop(l);
             send_message(
                 &mut ws_stream,
-                &ServerMessage::AuthResult {
-                    success: false,
-                    error: Some(format!("Deck too small: {} cards (minimum 40)", deck.main_deck_size())),
-                    your_player_id: None,
-                    your_name: None,
-                },
-            )
-            .await?;
-            return Ok(None);
-        }
-
-        log::info!(
-            "Player '{}' authenticated with {} card deck",
-            player_name.as_deref().unwrap_or("<auto>"),
-            deck.main_deck_size()
-        );
-
-        // Check if we have a waiting player
-        if let Some(waiting) = self.waiting_player.take() {
-            // Generate player names:
-            // - If explicitly provided, use as-is (no suffix)
-            // - If None, generate "Player1" or "Player2"
-            let p1_name = waiting.name.unwrap_or_else(|| "Player1".to_string());
-            let p2_name = player_name.unwrap_or_else(|| "Player2".to_string());
-
-            // Start game with both players
-            log::info!("Starting game: {} vs {}", p1_name, p2_name);
-
-            // Send auth success to player 2 with their assigned name
-            send_message(
-                &mut ws_stream,
-                &ServerMessage::AuthResult {
-                    success: true,
-                    error: None,
-                    your_player_id: Some(PlayerId::new(1)),
-                    your_name: Some(p2_name.clone()),
-                },
-            )
-            .await?;
-
-            // Send P1's assigned name to them (they were waiting)
-            // Note: P1 already received AuthResult when they first connected,
-            // but we need to send them their final name now. We do this via
-            // updating their name in the WaitingPlayer struct before starting the game.
-
-            // Start the game and return the handle
-            let handle = self
-                .start_game(
-                    WaitingPlayer {
-                        name: Some(p1_name),
-                        deck: waiting.deck,
-                        ws_stream: waiting.ws_stream,
+                &ServerMessage::JoinFailed {
+                    game_name: name.clone(),
+                    reason: JoinFailReason::InvalidDeck {
+                        detail: format!("Game name '{name}' is already waiting"),
                     },
-                    WaitingPlayer {
-                        name: Some(p2_name),
-                        deck,
-                        ws_stream,
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+        l.waiting_games.insert(
+            key.clone(),
+            PendingGame {
+                id,
+                name: name.clone(),
+                creator_name: creator_name.clone(),
+                has_password: game_password.is_some(),
+                password_hash: game_password.as_deref().map(hash_game_password),
+                created_at: std::time::Instant::now(),
+                created_at_ms: now_ms(),
+                handoff_tx: Some(handoff_tx),
+            },
+        );
+        (id, name)
+    };
+
+    log::info!(
+        "Game {} ({}): created by {} (password={})",
+        game_id,
+        game_name,
+        creator_name,
+        game_password.is_some()
+    );
+
+    send_message(
+        &mut ws_stream,
+        &ServerMessage::GameCreated {
+            game_name: game_name.clone(),
+            your_player_id: PlayerId::new(0),
+            your_name: Some(creator_name.clone()),
+        },
+    )
+    .await?;
+    send_message(&mut ws_stream, &ServerMessage::WaitingForOpponent).await?;
+
+    // Wait for joiner with a long timeout. We must always remove our
+    // PendingGame from the map on every exit path, otherwise it leaks.
+    let joiner_result = tokio::time::timeout(WAIT_FOR_JOINER, handoff_rx).await;
+    let key = game_name.to_lowercase();
+
+    let joiner = match joiner_result {
+        Ok(Ok(j)) => j,
+        Ok(Err(_)) => {
+            // Sender was dropped without sending — joiner's task likely died.
+            let mut l = lobby.lock().await;
+            l.waiting_games.remove(&key);
+            drop(l);
+            let _ = send_error(&mut ws_stream, "Internal error: joiner dropped before pairing", true).await;
+            return Ok(());
+        }
+        Err(_) => {
+            // Wait timeout — cleanup and tell the client.
+            let mut l = lobby.lock().await;
+            l.waiting_games.remove(&key);
+            drop(l);
+            let _ = send_error(
+                &mut ws_stream,
+                &format!("No opponent joined within {} minutes", WAIT_FOR_JOINER.as_secs() / 60),
+                true,
+            )
+            .await;
+            return Ok(());
+        }
+    };
+
+    // Joiner's task already removed us from waiting_games; promote to active.
+    {
+        let mut l = lobby.lock().await;
+        l.active_games.insert(
+            game_id,
+            ActiveGame {
+                id: game_id,
+                name: game_name.clone(),
+                p1_name: creator_name.clone(),
+                p2_name: joiner.name.clone(),
+                started_at: std::time::Instant::now(),
+            },
+        );
+    }
+
+    log::info!(
+        "Game {} ({}): starting {} vs {}",
+        game_id,
+        game_name,
+        creator_name,
+        joiner.name
+    );
+
+    let p1 = WaitingPlayer {
+        name: Some(creator_name.clone()),
+        deck,
+        ws_stream,
+    };
+    let p2 = WaitingPlayer {
+        name: Some(joiner.name.clone()),
+        deck: joiner.deck,
+        ws_stream: joiner.ws_stream,
+    };
+
+    // Per-game wall-clock cap so a stuck/desynced game never holds memory
+    // forever. Errors and timeouts are logged but don't propagate further —
+    // the connection task is the right place to absorb them.
+    let game_fut = run_game(game_id, p1, p2, card_db, config);
+    match tokio::time::timeout(DEFAULT_GAME_TIMEOUT, game_fut).await {
+        Ok(Ok(())) => log::info!("Game {} ({}): completed", game_id, game_name),
+        Ok(Err(e)) => log::error!("Game {} ({}): error: {}", game_id, game_name, e),
+        Err(_) => log::warn!(
+            "Game {} ({}): timed out after {:?}",
+            game_id,
+            game_name,
+            DEFAULT_GAME_TIMEOUT
+        ),
+    }
+
+    // Always remove from active_games, even on error/timeout.
+    {
+        let mut l = lobby.lock().await;
+        l.active_games.remove(&game_id);
+    }
+
+    Ok(())
+}
+
+/// Run the "joiner" half of a lobby match.
+///
+/// 1. Validate server password / memory ceiling / deck.
+/// 2. Lock lobby; look up the game by name; verify the per-game password.
+/// 3. On match: remove the entry, send `AuthResult { success: true, .. }`,
+///    hand the WebSocket to the creator's task via the pending oneshot, and
+///    exit. The creator's task drives the per-game lifecycle from here on.
+#[allow(clippy::too_many_arguments)]
+async fn run_join_flow(
+    mut ws_stream: WebSocketStream<TcpStream>,
+    lobby: SharedLobby,
+    config: ServerConfig,
+    server_password: String,
+    game_name: String,
+    game_password: Option<String>,
+    player_name: Option<String>,
+    deck: DeckSubmission,
+) -> Result<()> {
+    if !check_server_password(&config, &server_password) {
+        send_message(
+            &mut ws_stream,
+            &ServerMessage::JoinFailed {
+                game_name: game_name.clone(),
+                reason: JoinFailReason::BadServerPassword,
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if let AdmissionVerdict::Reject {
+        memory,
+        ceiling_percent,
+    } = check_memory_admission(config.max_memory_percent)
+    {
+        return refuse_with_server_full(&mut ws_stream, Some(memory.used_percent()), ceiling_percent).await;
+    }
+
+    if deck.main_deck_size() < 40 {
+        send_message(
+            &mut ws_stream,
+            &ServerMessage::JoinFailed {
+                game_name,
+                reason: JoinFailReason::InvalidDeck {
+                    detail: format!("Deck too small: {} cards (minimum 40)", deck.main_deck_size()),
+                },
+            },
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let joiner_name = player_name.unwrap_or_else(|| "Player2".to_string());
+    let key = game_name.to_lowercase();
+
+    // Atomically: look up + password-check + remove. Doing this under one lock
+    // closes the TOCTOU window where two joiners both pass the lookup and only
+    // one wins the remove.
+    let pending = {
+        let mut l = lobby.lock().await;
+        let Some(pg) = l.waiting_games.get(&key) else {
+            drop(l);
+            send_message(
+                &mut ws_stream,
+                &ServerMessage::JoinFailed {
+                    game_name,
+                    reason: JoinFailReason::NotFound,
+                },
+            )
+            .await?;
+            return Ok(());
+        };
+
+        if pg.has_password {
+            let supplied = game_password.as_deref().map(hash_game_password);
+            if supplied != pg.password_hash {
+                drop(l);
+                send_message(
+                    &mut ws_stream,
+                    &ServerMessage::JoinFailed {
+                        game_name,
+                        reason: JoinFailReason::BadPassword,
                     },
                 )
                 .await?;
-            Ok(Some(handle))
-        } else {
-            // First player - send auth success and wait
-            // Note: We can't assign final name yet because we don't know if they'll be P1 or P2
-            // (though in current design, first to connect is always P1)
-            // We'll generate their name when P2 connects
-            send_message(
-                &mut ws_stream,
-                &ServerMessage::AuthResult {
-                    success: true,
-                    error: None,
-                    your_player_id: Some(PlayerId::new(0)),
-                    // Send the assigned name now if they provided one, otherwise None
-                    // If None, their final name will be determined when P2 connects
-                    your_name: player_name.clone(),
-                },
-            )
-            .await?;
-
-            send_message(&mut ws_stream, &ServerMessage::WaitingForOpponent).await?;
-
-            self.waiting_player = Some(WaitingPlayer {
-                name: player_name,
-                deck,
-                ws_stream,
-            });
-
-            log::info!("Player waiting for opponent...");
-            Ok(None)
-        }
-    }
-
-    /// Start a game between two players
-    ///
-    /// Returns the task handle for the game, allowing the caller to await completion.
-    async fn start_game(&mut self, p1: WaitingPlayer, p2: WaitingPlayer) -> Result<tokio::task::JoinHandle<()>> {
-        let game_id = self.next_game_id;
-        self.next_game_id += 1;
-
-        let card_db = self.card_db.clone().expect("Card DB not loaded");
-        let config = self.config.clone();
-
-        // Spawn game task
-        let task_handle = tokio::spawn(async move {
-            if let Err(e) = run_game(game_id, p1, p2, card_db, config).await {
-                log::error!("Game {} error: {}", game_id, e);
+                return Ok(());
             }
-        });
+        }
 
-        Ok(task_handle)
+        l.waiting_games.remove(&key)
+    };
+    let mut pending = pending.expect("entry was present under the lock just above");
+
+    send_message(
+        &mut ws_stream,
+        &ServerMessage::AuthResult {
+            success: true,
+            error: None,
+            your_player_id: Some(PlayerId::new(1)),
+            your_name: Some(joiner_name.clone()),
+        },
+    )
+    .await?;
+
+    // Hand the WebSocket to the creator's task. If the Sender is gone (creator
+    // died after we removed the entry) we lose the joiner — close cleanly.
+    let Some(tx) = pending.handoff_tx.take() else {
+        log::error!("Pending game '{game_name}' missing handoff channel — joiner dropped");
+        return Ok(());
+    };
+
+    let payload = JoinedPlayer {
+        name: joiner_name,
+        deck,
+        ws_stream,
+    };
+    if tx.send(payload).is_err() {
+        log::error!("Pending game '{game_name}' creator gone — joiner dropped");
     }
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2091,9 +2455,15 @@ async fn handle_player_websocket(
                                 break;
                             }
 
-                            Ok(ClientMessage::Authenticate { .. }) => {
+                            Ok(ClientMessage::Authenticate { .. }
+                            | ClientMessage::CreateGame { .. }
+                            | ClientMessage::JoinGame { .. }
+                            | ClientMessage::ListGames { .. }) => {
+                                // Lobby/auth messages are not legal once a game
+                                // has started for this connection. We surface a
+                                // non-fatal Error so test clients can recover.
                                 conn.send(&ServerMessage::Error {
-                                    message: "Already authenticated".to_string(),
+                                    message: "Already authenticated / in a game".to_string(),
                                     fatal: false,
                                 }).await?;
                             }

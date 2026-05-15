@@ -597,6 +597,56 @@ impl WasmNetworkClient {
                 // Debug info, just log
                 log::debug!("WasmNetworkClient: Received debug state dump");
             }
+
+            // ─── Lobby messages ────────────────────────────────────────────
+            // The WASM client doesn't yet drive the multi-game lobby UI
+            // (it joins a single game at a time), so for now we just log
+            // these so the match stays exhaustive and so a developer can see
+            // them in the browser console while the lobby UI is wired up.
+            // TODO(server-lobby): plumb GameList / GameCreated through to
+            // the browser UI once the lobby front-end lands.
+            ServerMessage::GameList {
+                games,
+                system_memory_used_percent,
+                max_memory_percent,
+            } => {
+                log::info!(
+                    "WasmNetworkClient: GameList ({} waiting games, host_mem={:?}%, ceiling={}%)",
+                    games.len(),
+                    system_memory_used_percent,
+                    max_memory_percent
+                );
+            }
+
+            ServerMessage::GameCreated {
+                game_name,
+                your_player_id,
+                your_name,
+            } => {
+                log::info!(
+                    "WasmNetworkClient: GameCreated name={:?} player={:?} display_name={:?}",
+                    game_name,
+                    your_player_id,
+                    your_name
+                );
+                self.our_player_id = Some(your_player_id);
+                self.state = NetworkState::WaitingForOpponent;
+            }
+
+            ServerMessage::ServerFull { reason } => {
+                // Server-side admission denial. Treat as fatal for this
+                // socket — the server will close it. The wire `reason` is
+                // intentionally generic (no host metrics); see
+                // `protocol::ServerMessage::ServerFull` docs.
+                log::warn!("WasmNetworkClient: ServerFull: {}", reason);
+                self.state = NetworkState::Error;
+                self.last_error = Some(reason);
+            }
+
+            ServerMessage::JoinFailed { game_name, reason } => {
+                log::warn!("WasmNetworkClient: JoinFailed for {:?}: {:?}", game_name, reason);
+                self.last_error = Some(format!("Join failed for {game_name}: {reason:?}"));
+            }
         }
     }
 
