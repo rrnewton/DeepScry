@@ -158,7 +158,15 @@ def build_choice_prompt(
     bug_detection: bool = True,
     deck_preamble: str | None = None,
 ) -> str:
-    """Build the prompt sent to a headless agent for one MTG choice."""
+    """Build the prompt sent to a headless agent for one MTG choice.
+
+    `game_state` is the structured `GameSnapshot` JSON shape produced by
+    `mtg tui --snapshot-output` / `--tui-snapshot-path` (i.e. an outer
+    `GameSnapshot` dict with a nested `game_state` field). For drivers that
+    don't have that JSON shape (e.g. the WASM bridge, which has a `GuiViewModel`
+    instead), use `build_choice_prompt_with_summary` directly with a
+    pre-formatted state summary string.
+    """
 
     root = _snapshot_root(game_state)
     card_map = _build_card_map(root)
@@ -169,6 +177,47 @@ def build_choice_prompt(
     priority_player = _normalize_scalar(turn.get("priority_player"))
     battlefield = _zone_cards(root.get("battlefield"))
     stack = _zone_cards(root.get("stack"))
+
+    state_summary = _format_state_summary(
+        root, players, zone_map, turn, active_player, priority_player, battlefield, stack, card_map
+    )
+    return build_choice_prompt_with_summary(
+        state_summary=state_summary,
+        choices=choices,
+        log_since_last_decision=log_since_last_decision,
+        goal=goal,
+        scenario=scenario,
+        interleaved_history=interleaved_history,
+        previous_decision=previous_decision,
+        card_definitions=card_definitions,
+        rules_paths=rules_paths,
+        bug_detection=bug_detection,
+        deck_preamble=deck_preamble,
+    )
+
+
+def build_choice_prompt_with_summary(
+    state_summary: str,
+    choices: list[str],
+    log_since_last_decision: str,
+    goal: str | None = None,
+    scenario: str | None = None,
+    interleaved_history: str | None = None,
+    previous_decision: str | None = None,
+    card_definitions: str | None = None,
+    rules_paths: list[str] | None = None,
+    bug_detection: bool = True,
+    deck_preamble: str | None = None,
+) -> str:
+    """Build the prompt with a precomputed state-summary text block.
+
+    This is the variant the WASM driver uses: the state summary is
+    derived from `GuiViewModel` JSON (via `agentplay/lib/text_formatter.py`)
+    rather than the `GameSnapshot` shape `_format_state_summary` consumes.
+    Every other section (intro, history, log, choices, rules context,
+    response format) is identical to what `build_choice_prompt` produces,
+    so the LLM sees structurally-identical prompts across every driver.
+    """
 
     available_choices = _normalize_choices(choices)
     choice_lines = ["[0] pass"]
@@ -192,7 +241,7 @@ def build_choice_prompt(
         [
             "",
             "Current game state:",
-            _format_state_summary(root, players, zone_map, turn, active_player, priority_player, battlefield, stack, card_map),
+            state_summary.strip() if state_summary.strip() else "(no game state available)",
             "",
             "Interleaved history so far:",
             interleaved_history.strip() if interleaved_history and interleaved_history.strip() else "(no prior decisions)",

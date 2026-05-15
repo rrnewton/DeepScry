@@ -246,6 +246,8 @@ validate-agentplay-step:
 	@python3 -m pytest agentplay/ -v
 	@python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; \
 		rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi
+	@echo "=== Running mode-equivalence orchestrator ==="
+	@./scripts/test_mode_equivalence.sh
 	@echo "✓ agentplay tests completed"
 
 validate-commander-step:

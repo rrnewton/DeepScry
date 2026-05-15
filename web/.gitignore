@@ -4,3 +4,10 @@ package-lock.json
 data/
 screenshots/
 server.log
+# Also ignore the bare names so worktrees that symlink web/pkg, web/data,
+# and web/node_modules to a sibling built checkout don't show those as
+# untracked. The trailing-slash patterns above only match real
+# directories; symlinks to directories don't.
+pkg
+data
+node_modules
