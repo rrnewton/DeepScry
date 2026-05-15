@@ -953,6 +953,41 @@ impl<'a> GameStateView<'a> {
         self.game.undo_log.actions()
     }
 
+    /// Drain the queue of pending library reorders that need to be broadcast
+    /// to network clients.
+    ///
+    /// Returns each (player, current top-to-bottom library order) pair queued
+    /// by `scry_cards` / `surveil_cards` since the last drain. The returned
+    /// `Vec` is empty when nothing changed (the common case). The order is
+    /// the same direction the protocol uses (`LibraryReordered`), i.e.
+    /// `cards[0]` is the next card to be drawn.
+    ///
+    /// Only invoked by the server-side `NetworkController` when assembling a
+    /// `ChoiceRequest`; safe to call on any `GameStateView` (no-op if nothing
+    /// queued).
+    ///
+    /// See `mtg-ced6d1` for the bug this plumbing fixes.
+    pub fn take_pending_library_reorders(&self) -> Vec<(PlayerId, Vec<crate::core::CardId>)> {
+        let mut queue = self.game.pending_library_reorders.borrow_mut();
+        if queue.is_empty() {
+            return Vec::new();
+        }
+        let players: Vec<PlayerId> = queue.drain(..).collect();
+        players
+            .into_iter()
+            .map(|player| {
+                // Snapshot the current library order in PROTOCOL direction
+                // (top-to-bottom) — internal storage is bottom-to-top.
+                let order: Vec<crate::core::CardId> = self
+                    .game
+                    .get_player_zones(player)
+                    .map(|z| z.library.cards.iter().rev().copied().collect())
+                    .unwrap_or_default();
+                (player, order)
+            })
+            .collect()
+    }
+
     /// Format the last N actions as a multi-line string for debugging
     ///
     /// Used for sync debugging in network mode. Returns a string with

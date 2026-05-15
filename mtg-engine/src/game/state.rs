@@ -282,6 +282,26 @@ pub struct GameState {
     /// Not serialized — transient game loop state for WASM resumption only.
     #[serde(skip)]
     pub spell_targets: Vec<(CardId, smallvec::SmallVec<[CardId; 2]>)>,
+
+    /// Player IDs whose library order changed via a hidden-info-dependent operation
+    /// (currently scry; future: surveil and similar) and therefore need to be
+    /// resynchronised to network clients via a `LibraryReordered` message.
+    ///
+    /// On the SERVER (`is_shadow_game == false`), `scry_cards` appends the scrying
+    /// player's id whenever its heuristic actually moves cards. The
+    /// `NetworkController` drains this list when building the next `ChoiceRequest`
+    /// and the coordinator broadcasts `LibraryReordered` to both clients before
+    /// the request is forwarded.
+    ///
+    /// On the CLIENT (`is_shadow_game == true`), `scry_cards` short-circuits when
+    /// the top card identity is unknown, so this list stays empty there.
+    ///
+    /// Not serialized — purely a transient network-sync side channel.
+    /// `RefCell` is required because `NetworkController` only sees an immutable
+    /// `GameStateView`, but must drain the queue to assemble each `ChoiceRequest`.
+    /// (Same pattern as `rng`.)
+    #[serde(skip)]
+    pub pending_library_reorders: std::cell::RefCell<Vec<PlayerId>>,
 }
 
 impl GameState {
@@ -365,6 +385,7 @@ impl GameState {
             pending_activation: None,
             pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
+            pending_library_reorders: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -1485,6 +1506,23 @@ impl GameState {
             return Ok(());
         }
 
+        // NETWORK SYNC: A network client (`is_shadow_game == true`) does not yet
+        // know the identity of unrevealed library cards, so it cannot run the
+        // server's land-aware scry heuristic without diverging. Bail out and let
+        // the server send a `LibraryReordered` message that fixes the shadow
+        // library before the next draw. Without this guard, the client would
+        // treat unknown cards as non-lands and always "keep on top", whereas the
+        // server might "put on bottom" — causing the very desync this method
+        // exists to prevent (mtg-ced6d1: cycling/Mountaincycling FATAL DESYNC).
+        if self.is_shadow_game && top_cards.iter().any(|cid| self.cards.try_get(*cid).is_none()) {
+            log::debug!(
+                "scry_cards: shadow game with unrevealed top card(s) for {:?}; \
+                 deferring reorder to server-authoritative LibraryReordered",
+                player_id
+            );
+            return Ok(());
+        }
+
         // AI heuristic: Decide which cards to keep on top vs put on bottom
         // Simple heuristic: keep spells (non-lands) on top, put lands on bottom
         // unless we're short on lands
@@ -1547,6 +1585,8 @@ impl GameState {
         // 2. Put "bottom" cards at the actual bottom of library
         // 3. Put "top" cards back at the top
 
+        let library_actually_changed = !put_on_bottom.is_empty();
+
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             // Remove all scried cards from library
             for card_id in &top_cards {
@@ -1563,6 +1603,16 @@ impl GameState {
             for card_id in keep_on_top {
                 zones.library.cards.push(card_id);
             }
+        }
+
+        // NETWORK SYNC: If we're the server (`!is_shadow_game`) running in
+        // network mode (`!skip_reveals`) AND our heuristic actually moved at
+        // least one card, signal that the scrying player's library order must
+        // be broadcast to clients. The `NetworkController` drains this queue
+        // when assembling the next `ChoiceRequest`. Local games and pure
+        // client-side runs leave the queue alone.
+        if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
+            self.pending_library_reorders.borrow_mut().push(player_id);
         }
 
         Ok(())
@@ -1595,6 +1645,20 @@ impl GameState {
             return Ok(());
         }
 
+        // NETWORK SYNC (mirror of scry_cards / mtg-ced6d1): a network client
+        // (`is_shadow_game`) doesn't know unrevealed library card identities and
+        // therefore can't run the creature/land surveil heuristic without
+        // diverging from the server. Defer to the server-authoritative
+        // `LibraryReordered` message instead of guessing.
+        if self.is_shadow_game && top_cards.iter().any(|cid| self.cards.try_get(*cid).is_none()) {
+            log::debug!(
+                "surveil_cards: shadow game with unrevealed top card(s) for {:?}; \
+                 deferring reorder to server-authoritative LibraryReordered",
+                player_id
+            );
+            return Ok(());
+        }
+
         // AI heuristic: decide which cards to keep on top vs put into graveyard
         // Keep creatures and lands on top; put instants/sorceries/other into graveyard
         // (fuels graveyard strategies like Flashback, Escape, etc.)
@@ -1623,6 +1687,8 @@ impl GameState {
             put_in_graveyard.len()
         ));
 
+        let library_actually_changed = !put_in_graveyard.is_empty();
+
         // Move cards to graveyard first
         for card_id in &put_in_graveyard {
             // Remove from library and move to graveyard
@@ -1643,6 +1709,11 @@ impl GameState {
             for card_id in keep_on_top {
                 zones.library.cards.push(card_id);
             }
+        }
+
+        // NETWORK SYNC: see scry_cards for rationale.
+        if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
+            self.pending_library_reorders.borrow_mut().push(player_id);
         }
 
         Ok(())
@@ -3514,6 +3585,9 @@ impl Clone for GameState {
             pending_activation: None,
             pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
+            // Network sync queue is intentionally NOT cloned — clones are used
+            // for snapshots/replays which must not re-emit network messages.
+            pending_library_reorders: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -3713,5 +3787,134 @@ mod tests {
             actions[6],
             crate::undo::GameAction::TapCard { tapped: false, .. }
         ));
+    }
+
+    /// Regression for mtg-ced6d1: scry on a network client (`is_shadow_game`)
+    /// must NOT mutate the library when the top card identity is unknown.
+    ///
+    /// The pre-fix client-side behaviour called `is_land()` on an
+    /// uninstantiated CardId, got `false`, and then "kept the card on top",
+    /// which on the SERVER (with full data) might have moved a Swamp to the
+    /// bottom — diverging the libraries by one slot and corrupting the next
+    /// draw (Mongoose Lizard, in the original repro).
+    ///
+    /// The fix: shadow games short-circuit and rely on the server-pushed
+    /// `LibraryReordered` to bring the library back into sync.
+    #[test]
+    fn test_scry_shadow_game_skips_when_top_unrevealed() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+        game.set_shadow_game(true); // we are a CLIENT
+        let p1_id = game.players[0].id;
+
+        // Stuff three RESERVED-ONLY CardIds into P1's library: nothing in
+        // `game.cards`, mimicking init_game_reserve_only on the client.
+        let top_unknown = CardId::new(100);
+        let mid_unknown = CardId::new(101);
+        let bottom_unknown = CardId::new(102);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // Library Vec is bottom-to-top: index 0 = bottom, last = top.
+            zones.library.cards = vec![bottom_unknown, mid_unknown, top_unknown];
+        }
+        let before = game.get_player_zones(p1_id).unwrap().library.cards.clone();
+
+        game.scry_cards(p1_id, 1).expect("scry must not error");
+
+        let after = game.get_player_zones(p1_id).unwrap().library.cards.clone();
+        assert_eq!(
+            before, after,
+            "shadow-game scry of an unrevealed top card must be a no-op (mtg-ced6d1); \
+             otherwise the client diverges from the server-authoritative library order"
+        );
+        assert!(
+            game.pending_library_reorders.borrow().is_empty(),
+            "shadow games must NOT enqueue LibraryReorders — only the server does"
+        );
+    }
+
+    /// Regression for mtg-ced6d1: scry on the SERVER side (full card data,
+    /// not a shadow game) must enqueue the scrying player into
+    /// `pending_library_reorders` so NetworkController can broadcast a
+    /// `LibraryReordered` to clients.
+    #[test]
+    fn test_scry_server_enqueues_library_reorder_when_changed() {
+        use crate::core::CardType;
+
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false); // network mode
+                                      // NOT a shadow game -> we are the server / authoritative
+        let p1_id = game.players[0].id;
+
+        // Build a hand containing four lands so the scry heuristic decides
+        // the next land should go on the bottom (want_lands == false, since
+        // lands_in_hand >= 3).
+        for _ in 0..4 {
+            let cid = game.next_card_id();
+            let mut card = Card::new(cid, "Plains".to_string(), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(cid, card);
+            if let Some(zones) = game.get_player_zones_mut(p1_id) {
+                zones.hand.add(cid);
+            }
+        }
+
+        // Top of library = a Land; the heuristic should put it on the
+        // bottom, which IS a real library reorder and therefore must be
+        // queued for broadcast.
+        let top_land = game.next_card_id();
+        let mut top_card = Card::new(top_land, "Mountain".to_string(), p1_id);
+        top_card.add_type(CardType::Land);
+        game.cards.insert(top_land, top_card);
+        let other = game.next_card_id();
+        game.cards
+            .insert(other, Card::new(other, "Lightning Bolt".to_string(), p1_id));
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            // bottom-to-top: `other` is bottom, `top_land` is top
+            zones.library.cards = vec![other, top_land];
+        }
+
+        game.scry_cards(p1_id, 1).expect("scry must not error");
+
+        // The land should have moved to the bottom of the library
+        let lib = &game.get_player_zones(p1_id).unwrap().library.cards;
+        assert_eq!(lib.len(), 2, "library size unchanged");
+        assert_eq!(
+            lib[0], top_land,
+            "the Mountain heuristic should have moved to the bottom"
+        );
+
+        // And the server must have queued a LibraryReordered for P1.
+        let queued: Vec<PlayerId> = game.pending_library_reorders.borrow().clone();
+        assert_eq!(
+            queued,
+            vec![p1_id],
+            "server scry must enqueue exactly one pending LibraryReorder for the scrying player \
+             (mtg-ced6d1)"
+        );
+    }
+
+    /// A scry that doesn't actually move any cards (heuristic decided to
+    /// keep the top card on top) must NOT spam empty `LibraryReordered`
+    /// messages — both client and server already agree.
+    #[test]
+    fn test_scry_server_no_enqueue_when_unchanged() {
+        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
+        game.set_skip_reveals(false);
+        let p1_id = game.players[0].id;
+
+        // Top card is a NON-land spell — heuristic keeps it on top, so
+        // the library is unchanged and no broadcast is needed.
+        let spell_id = game.next_card_id();
+        game.cards
+            .insert(spell_id, Card::new(spell_id, "Lightning Bolt".to_string(), p1_id));
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.library.cards = vec![spell_id];
+        }
+
+        game.scry_cards(p1_id, 1).expect("scry must not error");
+        assert!(
+            game.pending_library_reorders.borrow().is_empty(),
+            "no library reorder => no broadcast (mtg-ced6d1)"
+        );
     }
 }

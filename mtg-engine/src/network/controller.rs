@@ -73,6 +73,20 @@ pub struct ChoiceRequest {
     /// instances of each name grouped together. Combined with name_counts,
     /// allows the coordinator to decode (name_index, instance_index).
     pub library_search_cards: Option<Vec<CardId>>,
+
+    /// Library reorders that must be broadcast to BOTH clients before the
+    /// `ChoiceRequest` itself.
+    ///
+    /// Queued by the engine (`scry_cards`, `surveil_cards`) when a
+    /// hidden-info-dependent heuristic moves cards in a player's library on
+    /// the server. Each entry is `(player, top_to_bottom_order)`. The
+    /// coordinator drains this list and emits a
+    /// `ServerMessage::LibraryReordered` to every connected client so each
+    /// shadow game can re-sync its library before running ability enumeration.
+    ///
+    /// Always empty for non-network controllers and for client-built
+    /// requests. See mtg-ced6d1 (Cycle/Mountaincycling FATAL DESYNC).
+    pub library_reorders: Vec<(PlayerId, Vec<CardId>)>,
 }
 
 /// Response received from the network handler
@@ -288,6 +302,21 @@ impl NetworkController {
         // This is used later for validation (LibrarySearchByName has special validation rules)
         let is_library_search = matches!(choice_type, ChoiceType::LibrarySearchByName { .. });
 
+        // Drain any queued library reorders from the engine
+        // (e.g., scry/surveil heuristic moved cards). These must be sent to
+        // BOTH clients before the ChoiceRequest so their shadow libraries
+        // re-sync before ability enumeration. See mtg-ced6d1.
+        let library_reorders = view.take_pending_library_reorders();
+        if !library_reorders.is_empty() {
+            log::debug!(
+                "NetworkController {:?}: collected {} library reorder(s) for ChoiceRequest \
+                 (action_count={})",
+                self.player_id,
+                library_reorders.len(),
+                action_count
+            );
+        }
+
         let request = ChoiceRequest {
             choice_seq: self.choice_seq + 1,
             choice_type,
@@ -298,6 +327,7 @@ impl NetworkController {
             debug_info,
             abilities,
             library_search_cards,
+            library_reorders,
         };
 
         // Send request
