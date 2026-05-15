@@ -729,8 +729,50 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Maximum number of blocking threads tokio is allowed to spawn.
+///
+/// Tokio's default cap is 512. Combined with the per-card `tokio::fs::read_to_string`
+/// calls in `loader::database_async::eager_load` (32K card scripts) and the
+/// rayon worker pool spawned by jwalk for directory walking, this produced 800+
+/// live OS threads at server startup on a 176-vCPU host. That trips
+/// `pthread_create` limits, balloons RSS, and yields no throughput gain — the
+/// disk queue saturates long before we reach hundreds of concurrent reads.
+///
+/// 64 is plenty to keep NVMe queues full.
+const TOKIO_MAX_BLOCKING_THREADS: usize = 64;
+
+/// Bound on tokio worker threads.
+///
+/// Defaults to `num_cpus`, which on a beefy host (e.g. 176-vCPU dev VM) is way
+/// more than the engine can use. Game logic per match is largely sequential,
+/// network I/O is event-driven, and parallel card parsing already saturates
+/// disk before the runtime needs more than a handful of workers. We pick a
+/// conservative-but-comfortable cap so total live thread count stays
+/// predictable across host sizes.
+const TOKIO_WORKER_THREADS: usize = 16;
+
+fn main() -> Result<()> {
+    // Also bound the global rayon pool used by jwalk during card-tree
+    // discovery. jwalk defaults to num_cpus, which on a 176-vCPU host adds
+    // another ~176 OS threads on top of the tokio runtime. We do not need
+    // that much parallelism to walk a small directory tree.
+    //
+    // `build_global` only succeeds the first time it is called; we ignore an
+    // error (e.g. if a test harness already initialised rayon) rather than
+    // failing startup.
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(TOKIO_WORKER_THREADS)
+        .build_global();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(TOKIO_WORKER_THREADS)
+        .max_blocking_threads(TOKIO_MAX_BLOCKING_THREADS)
+        .build()?;
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     // Parse CLI first to check if we're in fancy TUI mode
     let cli = Cli::parse();
 
