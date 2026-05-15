@@ -283,18 +283,21 @@ pub struct GameState {
     #[serde(skip)]
     pub spell_targets: Vec<(CardId, smallvec::SmallVec<[CardId; 2]>)>,
 
-    /// Player IDs whose library order changed via a hidden-info-dependent operation
-    /// (currently scry; future: surveil and similar) and therefore need to be
-    /// resynchronised to network clients via a `LibraryReordered` message.
+    /// Player IDs whose library order changed via a hidden-info-dependent
+    /// operation (scry/surveil) and therefore need to be resynchronised to
+    /// network clients via a `LibraryReordered` message.
     ///
-    /// On the SERVER (`is_shadow_game == false`), `scry_cards` appends the scrying
-    /// player's id whenever its heuristic actually moves cards. The
-    /// `NetworkController` drains this list when building the next `ChoiceRequest`
-    /// and the coordinator broadcasts `LibraryReordered` to both clients before
-    /// the request is forwarded.
+    /// On the SERVER (`is_shadow_game == false`), `scry_apply_decision` /
+    /// `surveil_apply_decision` append the scrying player's id whenever the
+    /// caller-supplied decision actually moves cards. The `NetworkController`
+    /// drains this list when building the next `ChoiceRequest` and the
+    /// coordinator broadcasts `LibraryReordered` to both clients before the
+    /// request is forwarded.
     ///
-    /// On the CLIENT (`is_shadow_game == true`), `scry_cards` short-circuits when
-    /// the top card identity is unknown, so this list stays empty there.
+    /// On the CLIENT (`is_shadow_game == true`), the controller pipeline
+    /// applies the server-authoritative decision verbatim, so the resulting
+    /// library order matches the server by construction; no client-side
+    /// broadcast is needed and this list is left empty.
     ///
     /// Not serialized — purely a transient network-sync side channel.
     /// `RefCell` is required because `NetworkController` only sees an immutable
@@ -1470,97 +1473,77 @@ impl GameState {
         Ok(milled_cards)
     }
 
-    /// Scry - look at top N cards and put any number on bottom of library
+    /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
+    /// anything. Returns the cards top-down (`result[0]` is the current top
+    /// of the library). Returns an empty vec if the player has no zones or
+    /// an empty library.
     ///
-    /// This implements the scry mechanic: look at the top N cards of your library,
-    /// then put any number of them on the bottom in any order and the rest on top
-    /// in any order.
+    /// This is the "look at the top N cards" half of scry/surveil; the
+    /// caller then asks the controller for a decision and feeds the result
+    /// to [`scry_apply_decision`] (or [`surveil_apply_decision`]).
+    pub fn scry_snapshot_top_n(&self, player_id: PlayerId, count: u8) -> SmallVec<[CardId; 4]> {
+        let Some(zones) = self.get_player_zones(player_id) else {
+            return SmallVec::new();
+        };
+        zones
+            .library
+            .cards
+            .iter()
+            .rev() // Top of library is last in vec
+            .take(count as usize)
+            .copied()
+            .collect()
+    }
+
+    /// Apply a scry decision to the library, after the controller has chosen
+    /// how to partition the revealed cards.
     ///
-    /// AI Heuristic: Keep spells (non-lands) on top, put excess lands on bottom.
-    /// If we already have enough lands in hand (2-3), we prefer keeping spells.
+    /// `revealed` MUST be the same slice produced by
+    /// [`scry_snapshot_top_n`]; together they describe the cards the
+    /// controller saw. `decision.top` and `decision.bottom` together must
+    /// be a partition of `revealed`. Both decision vectors are stored
+    /// **bottom-up** so they can be applied directly via `library.cards.push()`
+    /// (see [`crate::game::ScryDecision`] for the convention).
+    ///
+    /// Emits the same logger messages the previous engine-baked
+    /// implementation did so existing snapshots / e2e logs are unchanged.
     ///
     /// # Errors
     ///
-    /// Returns Ok(()) even if library has fewer than N cards.
-    pub fn scry_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
-        // Get the top N cards from library (without removing them yet)
-        // Gracefully handle missing zones (can happen if player has lost the game
-        // but triggered effects are still resolving)
-        let top_cards: SmallVec<[CardId; 4]> = {
-            let Some(zones) = self.get_player_zones(player_id) else {
-                return Ok(());
-            };
-
-            zones
-                .library
-                .cards
-                .iter()
-                .rev() // Top of library is last in vec
-                .take(count as usize)
-                .copied()
-                .collect()
-        };
-
-        if top_cards.is_empty() {
-            // Nothing to scry
+    /// Returns `Ok(())` even when `revealed` is empty (nothing to do) or
+    /// when `player_id`'s zones are missing (player has lost the game but
+    /// triggered effects are still resolving). The result type is
+    /// reserved for future failure modes (e.g. structured logging /
+    /// undo-log allocation) so all callers thread `?` uniformly.
+    pub fn scry_apply_decision(
+        &mut self,
+        player_id: PlayerId,
+        revealed: &[CardId],
+        decision: &crate::game::ScryDecision,
+    ) -> Result<()> {
+        if revealed.is_empty() {
             return Ok(());
         }
 
-        // NETWORK SYNC: A network client (`is_shadow_game == true`) does not yet
-        // know the identity of unrevealed library cards, so it cannot run the
-        // server's land-aware scry heuristic without diverging. Bail out and let
-        // the server send a `LibraryReordered` message that fixes the shadow
-        // library before the next draw. Without this guard, the client would
-        // treat unknown cards as non-lands and always "keep on top", whereas the
-        // server might "put on bottom" — causing the very desync this method
-        // exists to prevent (mtg-ced6d1: cycling/Mountaincycling FATAL DESYNC).
-        if self.is_shadow_game && top_cards.iter().any(|cid| self.cards.try_get(*cid).is_none()) {
-            log::debug!(
-                "scry_cards: shadow game with unrevealed top card(s) for {:?}; \
-                 deferring reorder to server-authoritative LibraryReordered",
-                player_id
-            );
-            return Ok(());
-        }
+        // Log the scry action FIRST so message ordering matches the
+        // pre-refactor implementation exactly.
+        //
+        // NETWORK SYNC NOTE (post-merge of fix-cycle-desync + fix-scry-choice-pipeline):
+        // The previous shadow-game guard that bailed out when top cards
+        // were unrevealed has been removed. Under the Phase A-E controller
+        // pipeline, the SERVER's controller produces the decision and the
+        // CLIENT's NetworkController receives it via the ChoiceRequest
+        // payload (revealed CardIds inline + indices-into-revealed in the
+        // response), so both sides apply identical, server-authoritative
+        // decisions to the library — there's no client-side heuristic
+        // left to diverge. The `pending_library_reorders` broadcast below
+        // is kept as a defense-in-depth signal for cases where the
+        // controller pipeline isn't engaged (e.g. legacy effect paths).
+        let card_name = self.cards.try_get(revealed[0]).map(|c| c.name.clone());
 
-        // AI heuristic: Decide which cards to keep on top vs put on bottom
-        // Simple heuristic: keep spells (non-lands) on top, put lands on bottom
-        // unless we're short on lands
-        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
-        let mut put_on_bottom: SmallVec<[CardId; 4]> = SmallVec::new();
-
-        // Count lands in hand to decide if we want more lands
-        let lands_in_hand = self
-            .get_player_zones(player_id)
-            .map(|z| {
-                z.hand
-                    .cards
-                    .iter()
-                    .filter(|&cid| self.cards.try_get(*cid).is_some_and(|c| c.is_land()))
-                    .count()
-            })
-            .unwrap_or(0);
-
-        // If we have 3+ lands in hand, we probably don't need more
-        let want_lands = lands_in_hand < 3;
-
-        for card_id in &top_cards {
-            let is_land = self.cards.try_get(*card_id).is_some_and(|c| c.is_land());
-            if is_land && !want_lands {
-                // Put excess lands on bottom
-                put_on_bottom.push(*card_id);
-            } else {
-                // Keep spells and needed lands on top
-                keep_on_top.push(*card_id);
-            }
-        }
-
-        // Log the scry action
-        let card_name = self.cards.try_get(top_cards[0]).map(|c| c.name.clone());
-
-        if top_cards.len() == 1 {
+        if revealed.len() == 1 {
             let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
-            if put_on_bottom.is_empty() {
+            if decision.bottom.is_empty() {
                 self.logger
                     .normal(&format!("P{} scries 1, keeps {} on top", player_id.as_u32() + 1, name));
             } else {
@@ -1574,33 +1557,31 @@ impl GameState {
             self.logger.normal(&format!(
                 "P{} scries {}, keeps {} on top, puts {} on bottom",
                 player_id.as_u32() + 1,
-                top_cards.len(),
-                keep_on_top.len(),
-                put_on_bottom.len()
+                revealed.len(),
+                decision.top.len(),
+                decision.bottom.len()
             ));
         }
 
-        // Now rearrange the library:
-        // 1. Remove all scried cards from their positions
-        // 2. Put "bottom" cards at the actual bottom of library
-        // 3. Put "top" cards back at the top
-
-        let library_actually_changed = !put_on_bottom.is_empty();
+        let library_actually_changed = !decision.bottom.is_empty();
 
         if let Some(zones) = self.get_player_zones_mut(player_id) {
-            // Remove all scried cards from library
-            for card_id in &top_cards {
+            // Remove all revealed cards from library (they were on top).
+            for card_id in revealed {
                 zones.library.remove(*card_id);
             }
 
-            // Put "bottom" cards at the beginning (bottom of library)
-            // Insert at position 0 to put at bottom
-            for card_id in put_on_bottom.iter().rev() {
+            // Put "bottom" cards at the absolute bottom. `decision.bottom`
+            // is bottom-up, so iterating in reverse and inserting at index
+            // 0 leaves the first element at the deepest position.
+            for card_id in decision.bottom.iter().rev() {
                 zones.library.cards.insert(0, *card_id);
             }
 
-            // Put "top" cards at the end (top of library)
-            for card_id in keep_on_top {
+            // Put "top" cards back. `decision.top` is bottom-up, so the
+            // last element of `decision.top` ends up on top of the library
+            // (matching the meaning documented on ScryDecision).
+            for &card_id in decision.top.iter() {
                 zones.library.cards.push(card_id);
             }
         }
@@ -1618,80 +1599,59 @@ impl GameState {
         Ok(())
     }
 
-    /// Surveil N cards (CR 701.42)
+    /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
+    /// anything. Returns the cards top-down (`result[0]` is the current
+    /// top of the library). Returns an empty vec if the player has no
+    /// zones or an empty library.
+    pub fn surveil_snapshot_top_n(&self, player_id: PlayerId, count: u8) -> SmallVec<[CardId; 4]> {
+        let Some(zones) = self.get_player_zones(player_id) else {
+            return SmallVec::new();
+        };
+        zones.library.cards.iter().rev().take(count as usize).copied().collect()
+    }
+
+    /// Apply a surveil decision to the library and graveyard, after the
+    /// controller has chosen how to partition the revealed cards.
     ///
-    /// Look at the top N cards of your library, put any number into your graveyard
-    /// and the rest back on top in any order.
-    ///
-    /// AI heuristic: Put non-creature, non-land cards into graveyard (fuel for
-    /// graveyard strategies). Keep creatures and lands on top.
+    /// `revealed` MUST be the same slice produced by
+    /// [`surveil_snapshot_top_n`]. `decision.top` and `decision.graveyard`
+    /// together must be a partition of `revealed`. `decision.top` is
+    /// stored bottom-up (last element ends up on top of library);
+    /// `decision.graveyard` is stored in placement order (first element
+    /// ends up deepest in the graveyard pile).
     ///
     /// # Errors
     ///
-    /// Returns an error if player zones cannot be found.
-    pub fn surveil_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
-        // Get the top N cards from library
-        // Gracefully handle missing zones (can happen if player has lost the game
-        // but triggered effects are still resolving)
-        let top_cards: SmallVec<[CardId; 4]> = {
-            let Some(zones) = self.get_player_zones(player_id) else {
-                return Ok(());
-            };
-
-            zones.library.cards.iter().rev().take(count as usize).copied().collect()
-        };
-
-        if top_cards.is_empty() {
+    /// Returns `Ok(())` even when `revealed` is empty (nothing to do) or
+    /// when `player_id`'s zones are missing. The result type is reserved
+    /// for future failure modes so all callers thread `?` uniformly.
+    pub fn surveil_apply_decision(
+        &mut self,
+        player_id: PlayerId,
+        revealed: &[CardId],
+        decision: &crate::game::SurveilDecision,
+    ) -> Result<()> {
+        if revealed.is_empty() {
             return Ok(());
         }
 
-        // NETWORK SYNC (mirror of scry_cards / mtg-ced6d1): a network client
-        // (`is_shadow_game`) doesn't know unrevealed library card identities and
-        // therefore can't run the creature/land surveil heuristic without
-        // diverging from the server. Defer to the server-authoritative
-        // `LibraryReordered` message instead of guessing.
-        if self.is_shadow_game && top_cards.iter().any(|cid| self.cards.try_get(*cid).is_none()) {
-            log::debug!(
-                "surveil_cards: shadow game with unrevealed top card(s) for {:?}; \
-                 deferring reorder to server-authoritative LibraryReordered",
-                player_id
-            );
-            return Ok(());
-        }
-
-        // AI heuristic: decide which cards to keep on top vs put into graveyard
-        // Keep creatures and lands on top; put instants/sorceries/other into graveyard
-        // (fuels graveyard strategies like Flashback, Escape, etc.)
-        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
-        let mut put_in_graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
-
-        for &card_id in &top_cards {
-            let dominated_by_creature_or_land = self
-                .cards
-                .try_get(card_id)
-                .is_some_and(|c| c.is_creature() || c.is_land());
-
-            if dominated_by_creature_or_land {
-                keep_on_top.push(card_id);
-            } else {
-                put_in_graveyard.push(card_id);
-            }
-        }
-
-        // Log the surveil action
+        // Log the surveil action FIRST so message ordering matches the
+        // pre-refactor implementation exactly. See scry_apply_decision for
+        // the merged-cycle-desync-vs-scry-pipeline rationale (no shadow-game
+        // guard needed under the controller pipeline).
         self.logger.gamelog(&format!(
             "P{} surveils {}, keeps {} on top, puts {} into graveyard",
             player_id.as_u32() + 1,
-            top_cards.len(),
-            keep_on_top.len(),
-            put_in_graveyard.len()
+            revealed.len(),
+            decision.top.len(),
+            decision.graveyard.len()
         ));
 
-        let library_actually_changed = !put_in_graveyard.is_empty();
+        let library_actually_changed = !decision.graveyard.is_empty();
 
-        // Move cards to graveyard first
-        for card_id in &put_in_graveyard {
-            // Remove from library and move to graveyard
+        // Move graveyard cards first (in the order chosen — first element
+        // ends up deepest in the graveyard pile, matching push semantics).
+        for card_id in &decision.graveyard {
             if let Some(zones) = self.get_player_zones_mut(player_id) {
                 zones.library.remove(*card_id);
             }
@@ -1700,18 +1660,19 @@ impl GameState {
             }
         }
 
-        // Rearrange remaining cards: remove from current positions, put back on top
+        // Rearrange remaining cards: remove from current positions, put
+        // back on top in the order chosen. `decision.top` is bottom-up
+        // (last element ends up on top of library).
         if let Some(zones) = self.get_player_zones_mut(player_id) {
-            for card_id in &keep_on_top {
+            for card_id in &decision.top {
                 zones.library.remove(*card_id);
             }
-            // Put kept cards back on top of library
-            for card_id in keep_on_top {
+            for &card_id in &decision.top {
                 zones.library.cards.push(card_id);
             }
         }
 
-        // NETWORK SYNC: see scry_cards for rationale.
+        // NETWORK SYNC: see scry_apply_decision for rationale (mtg-ced6d1).
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
             self.pending_library_reorders.borrow_mut().push(player_id);
         }
@@ -3789,82 +3750,26 @@ mod tests {
         ));
     }
 
-    /// Regression for mtg-ced6d1: scry on a network client (`is_shadow_game`)
-    /// must NOT mutate the library when the top card identity is unknown.
+    /// Regression for mtg-ced6d1 (post-merge with fix-scry-choice-pipeline):
+    /// scry on the SERVER side must enqueue the scrying player into
+    /// `pending_library_reorders` whenever the decision actually moves cards
+    /// to the bottom, so NetworkController can broadcast a `LibraryReordered`.
     ///
-    /// The pre-fix client-side behaviour called `is_land()` on an
-    /// uninstantiated CardId, got `false`, and then "kept the card on top",
-    /// which on the SERVER (with full data) might have moved a Swamp to the
-    /// bottom — diverging the libraries by one slot and corrupting the next
-    /// draw (Mongoose Lizard, in the original repro).
-    ///
-    /// The fix: shadow games short-circuit and rely on the server-pushed
-    /// `LibraryReordered` to bring the library back into sync.
-    #[test]
-    fn test_scry_shadow_game_skips_when_top_unrevealed() {
-        let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
-        game.set_skip_reveals(false); // network mode
-        game.set_shadow_game(true); // we are a CLIENT
-        let p1_id = game.players[0].id;
-
-        // Stuff three RESERVED-ONLY CardIds into P1's library: nothing in
-        // `game.cards`, mimicking init_game_reserve_only on the client.
-        let top_unknown = CardId::new(100);
-        let mid_unknown = CardId::new(101);
-        let bottom_unknown = CardId::new(102);
-        if let Some(zones) = game.get_player_zones_mut(p1_id) {
-            // Library Vec is bottom-to-top: index 0 = bottom, last = top.
-            zones.library.cards = vec![bottom_unknown, mid_unknown, top_unknown];
-        }
-        let before = game.get_player_zones(p1_id).unwrap().library.cards.clone();
-
-        game.scry_cards(p1_id, 1).expect("scry must not error");
-
-        let after = game.get_player_zones(p1_id).unwrap().library.cards.clone();
-        assert_eq!(
-            before, after,
-            "shadow-game scry of an unrevealed top card must be a no-op (mtg-ced6d1); \
-             otherwise the client diverges from the server-authoritative library order"
-        );
-        assert!(
-            game.pending_library_reorders.borrow().is_empty(),
-            "shadow games must NOT enqueue LibraryReorders — only the server does"
-        );
-    }
-
-    /// Regression for mtg-ced6d1: scry on the SERVER side (full card data,
-    /// not a shadow game) must enqueue the scrying player into
-    /// `pending_library_reorders` so NetworkController can broadcast a
-    /// `LibraryReordered` to clients.
+    /// Under the Phase A-E controller pipeline, the decision is now passed
+    /// in by the caller (rather than computed by an engine-baked heuristic),
+    /// so this test calls `scry_apply_decision` directly with an explicit
+    /// "move the top card to the bottom" decision.
     #[test]
     fn test_scry_server_enqueues_library_reorder_when_changed() {
-        use crate::core::CardType;
-
         let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
         game.set_skip_reveals(false); // network mode
                                       // NOT a shadow game -> we are the server / authoritative
         let p1_id = game.players[0].id;
 
-        // Build a hand containing four lands so the scry heuristic decides
-        // the next land should go on the bottom (want_lands == false, since
-        // lands_in_hand >= 3).
-        for _ in 0..4 {
-            let cid = game.next_card_id();
-            let mut card = Card::new(cid, "Plains".to_string(), p1_id);
-            card.add_type(CardType::Land);
-            game.cards.insert(cid, card);
-            if let Some(zones) = game.get_player_zones_mut(p1_id) {
-                zones.hand.add(cid);
-            }
-        }
-
-        // Top of library = a Land; the heuristic should put it on the
-        // bottom, which IS a real library reorder and therefore must be
-        // queued for broadcast.
+        // Library top card to be scried.
         let top_land = game.next_card_id();
-        let mut top_card = Card::new(top_land, "Mountain".to_string(), p1_id);
-        top_card.add_type(CardType::Land);
-        game.cards.insert(top_land, top_card);
+        game.cards
+            .insert(top_land, Card::new(top_land, "Mountain".to_string(), p1_id));
         let other = game.next_card_id();
         game.cards
             .insert(other, Card::new(other, "Lightning Bolt".to_string(), p1_id));
@@ -3873,15 +3778,22 @@ mod tests {
             zones.library.cards = vec![other, top_land];
         }
 
-        game.scry_cards(p1_id, 1).expect("scry must not error");
+        let revealed = game.scry_snapshot_top_n(p1_id, 1);
+        assert_eq!(revealed.as_slice(), &[top_land]);
+
+        // Decision: move the revealed card to the bottom.
+        let decision = crate::game::ScryDecision {
+            top: SmallVec::new(),
+            bottom: smallvec::smallvec![top_land],
+        };
+
+        game.scry_apply_decision(p1_id, &revealed, &decision)
+            .expect("scry_apply_decision must not error");
 
         // The land should have moved to the bottom of the library
         let lib = &game.get_player_zones(p1_id).unwrap().library.cards;
         assert_eq!(lib.len(), 2, "library size unchanged");
-        assert_eq!(
-            lib[0], top_land,
-            "the Mountain heuristic should have moved to the bottom"
-        );
+        assert_eq!(lib[0], top_land, "the Mountain should have moved to the bottom");
 
         // And the server must have queued a LibraryReordered for P1.
         let queued: Vec<PlayerId> = game.pending_library_reorders.borrow().clone();
@@ -3893,17 +3805,15 @@ mod tests {
         );
     }
 
-    /// A scry that doesn't actually move any cards (heuristic decided to
-    /// keep the top card on top) must NOT spam empty `LibraryReordered`
-    /// messages — both client and server already agree.
+    /// A scry whose decision keeps the top card on top (no `bottom` cards) must
+    /// NOT spam empty `LibraryReordered` messages — both client and server
+    /// already agree on library order.
     #[test]
     fn test_scry_server_no_enqueue_when_unchanged() {
         let mut game = GameState::new_two_player("P1".into(), "P2".into(), 20);
         game.set_skip_reveals(false);
         let p1_id = game.players[0].id;
 
-        // Top card is a NON-land spell — heuristic keeps it on top, so
-        // the library is unchanged and no broadcast is needed.
         let spell_id = game.next_card_id();
         game.cards
             .insert(spell_id, Card::new(spell_id, "Lightning Bolt".to_string(), p1_id));
@@ -3911,7 +3821,16 @@ mod tests {
             zones.library.cards = vec![spell_id];
         }
 
-        game.scry_cards(p1_id, 1).expect("scry must not error");
+        let revealed = game.scry_snapshot_top_n(p1_id, 1);
+        // "Keep on top" decision: revealed → top, nothing to bottom.
+        let decision = crate::game::ScryDecision {
+            top: revealed.clone(),
+            bottom: SmallVec::new(),
+        };
+
+        game.scry_apply_decision(p1_id, &revealed, &decision)
+            .expect("scry_apply_decision must not error");
+
         assert!(
             game.pending_library_reorders.borrow().is_empty(),
             "no library reorder => no broadcast (mtg-ced6d1)"

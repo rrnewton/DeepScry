@@ -3241,12 +3241,32 @@ impl GameState {
                 self.mill_cards(*player, *count)?;
             }
             Effect::Scry { player, count } => {
-                // Scry - look at top N cards, put any number on bottom
-                self.scry_cards(*player, *count)?;
+                // Scry — CR 701.18. The "real" controller-dispatched path
+                // lives in `priority.rs` (see resolve_top_spell_with_discard_hook
+                // and the activated-ability resolution loop). Reaching this
+                // arm in execute_effect means we're on a fallback path that
+                // doesn't have controller access (e.g., the legacy
+                // `cast_spell + resolve_spell` v1 sequence in
+                // `game_loop/legacy.rs`, or a direct execute_effect call
+                // from a test harness). In those cases we use the safest
+                // possible default: keep every revealed card on top in
+                // its original library order (a true no-op).
+                let revealed = self.scry_snapshot_top_n(*player, *count);
+                if !revealed.is_empty() {
+                    let decision = crate::game::ScryDecision::keep_all_on_top(&revealed);
+                    self.scry_apply_decision(*player, &revealed, &decision)?;
+                }
             }
             Effect::Surveil { player, count } => {
-                // Surveil - look at top N cards, put any into graveyard, rest on top (CR 701.42)
-                self.surveil_cards(*player, *count)?;
+                // Surveil — CR 701.42. Same rationale as Effect::Scry above:
+                // the controller-dispatched path lives in priority.rs;
+                // reaching here is a fallback. Default to "no cards milled"
+                // — preserves library order, never destroys information.
+                let revealed = self.surveil_snapshot_top_n(*player, *count);
+                if !revealed.is_empty() {
+                    let decision = crate::game::SurveilDecision::keep_all_on_top(&revealed);
+                    self.surveil_apply_decision(*player, &revealed, &decision)?;
+                }
             }
             Effect::AddTurn { player, num_turns } => {
                 // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.

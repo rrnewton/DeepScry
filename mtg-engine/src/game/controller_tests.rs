@@ -132,3 +132,66 @@ fn test_build_choice_context_with_stack() {
     let view = GameStateView::new(&game, PlayerId::new(0));
     assert_eq!(view.build_choice_context(), "[Your_Main1 | Lightning Bolt on stack]");
 }
+
+#[test]
+fn test_scry_decision_keep_all_on_top_preserves_order() {
+    use crate::core::CardId;
+    use crate::game::ScryDecision;
+
+    // revealed is top-down: revealed[0] is the current top of library.
+    let revealed = vec![CardId::new(10), CardId::new(20), CardId::new(30)];
+    let decision = ScryDecision::keep_all_on_top(&revealed);
+
+    // No cards go to bottom in the no-op default.
+    assert!(decision.bottom.is_empty());
+
+    // top is bottom-up so library.cards.push() restores the original
+    // top order. After applying:
+    //   library.push(decision.top[0])  →  inserts CardId(30) just below
+    //   library.push(decision.top[1])  →  CardId(20)
+    //   library.push(decision.top[2])  →  CardId(10) (top of library)
+    // i.e. the new top is the original top (CardId(10)), preserved.
+    assert_eq!(
+        decision.top.as_slice(),
+        &[CardId::new(30), CardId::new(20), CardId::new(10)]
+    );
+}
+
+#[test]
+fn test_surveil_decision_keep_all_on_top_preserves_order() {
+    use crate::core::CardId;
+    use crate::game::SurveilDecision;
+
+    let revealed = vec![CardId::new(11), CardId::new(22), CardId::new(33)];
+    let decision = SurveilDecision::keep_all_on_top(&revealed);
+
+    assert!(decision.graveyard.is_empty());
+    // Same bottom-up convention: top of library after restore matches before.
+    assert_eq!(
+        decision.top.as_slice(),
+        &[CardId::new(33), CardId::new(22), CardId::new(11)]
+    );
+}
+
+#[test]
+fn test_scry_decision_partition_is_total() {
+    use crate::core::CardId;
+    use crate::game::ScryDecision;
+    use smallvec::SmallVec;
+
+    // A custom decision: send the middle card to the bottom, keep top + bottom
+    // of revealed pile on top in original order.
+    let _revealed = [CardId::new(1), CardId::new(2), CardId::new(3)];
+    let decision = ScryDecision {
+        // bottom-up: cards.push order = [3, 1] → top is CardId(1)
+        top: SmallVec::from_slice(&[CardId::new(3), CardId::new(1)]),
+        // bottom-up: deepest first → CardId(2) ends up at absolute bottom
+        bottom: SmallVec::from_slice(&[CardId::new(2)]),
+    };
+
+    // Sanity: every revealed CardId appears exactly once.
+    let mut all: Vec<CardId> = decision.top.iter().copied().collect();
+    all.extend(decision.bottom.iter().copied());
+    all.sort_by_key(|c| c.as_u32());
+    assert_eq!(all, vec![CardId::new(1), CardId::new(2), CardId::new(3)]);
+}

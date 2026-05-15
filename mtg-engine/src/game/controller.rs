@@ -1092,6 +1092,88 @@ impl<'a> GameStateView<'a> {
     }
 }
 
+/// Decision returned by a controller for a Scry choice (CR 701.18).
+///
+/// `top` and `bottom` together must be a partition of the `revealed`
+/// slice passed to [`PlayerController::choose_scry_order`] (every
+/// revealed card appears in exactly one of the two vectors, and no
+/// other CardIds are introduced).
+///
+/// ## Order semantics
+///
+/// Both vectors are stored **bottom-up** so the engine can apply them
+/// directly to a `Vec<CardId>` whose top-of-zone is the last element
+/// (matching the existing `zones.library.cards.push(card)` convention
+/// in `state.rs`):
+///
+/// - `top.last()` becomes the new top card of the library.
+/// - `bottom.first()` becomes the new absolute bottom of the library.
+///
+/// The default-impl convention "keep all on top in revealed order" is
+/// equivalent to `ScryDecision { top: revealed.iter().rev().collect(),
+/// bottom: SmallVec::new() }` — i.e. the first revealed card stays the
+/// top card after the operation, preserving pre-scry library order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScryDecision {
+    /// Cards to keep on top of the library, ordered bottom-up
+    /// (last element is the new top of the library).
+    pub top: SmallVec<[CardId; 4]>,
+    /// Cards to put on the bottom of the library, ordered bottom-up
+    /// (first element is the new absolute bottom of the library).
+    pub bottom: SmallVec<[CardId; 4]>,
+}
+
+impl ScryDecision {
+    /// Build the "keep all on top, preserve original order" decision
+    /// for the given revealed cards. This is the safe no-op default:
+    /// the library's top-N cards end up unchanged.
+    ///
+    /// `revealed` is given top-down (`revealed[0]` is the current top
+    /// of the library, matching what
+    /// [`PlayerController::choose_scry_order`] receives).
+    pub fn keep_all_on_top(revealed: &[CardId]) -> Self {
+        // Convert top-down → bottom-up so library.cards.push() restores order.
+        let top: SmallVec<[CardId; 4]> = revealed.iter().rev().copied().collect();
+        Self {
+            top,
+            bottom: SmallVec::new(),
+        }
+    }
+}
+
+/// Decision returned by a controller for a Surveil choice (CR 701.42).
+///
+/// `top` and `graveyard` together must be a partition of the
+/// `revealed` slice passed to [`PlayerController::choose_surveil`].
+///
+/// ## Order semantics
+///
+/// `top` is stored **bottom-up** so the engine can apply it directly
+/// (matching `ScryDecision::top`). `graveyard` is the order in which
+/// the cards should be moved to the graveyard (cards moved earlier
+/// end up further from the top of the graveyard pile).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurveilDecision {
+    /// Cards to keep on top of the library, ordered bottom-up
+    /// (last element is the new top of the library).
+    pub top: SmallVec<[CardId; 4]>,
+    /// Cards to put into the graveyard, in the order they should be
+    /// moved (first element ends up deepest in the graveyard pile).
+    pub graveyard: SmallVec<[CardId; 4]>,
+}
+
+impl SurveilDecision {
+    /// Build the "keep all on top, preserve original order" decision
+    /// for the given revealed cards (no cards milled to graveyard).
+    pub fn keep_all_on_top(revealed: &[CardId]) -> Self {
+        let top: SmallVec<[CardId; 4]> = revealed.iter().rev().copied().collect();
+        Self {
+            top,
+            graveyard: SmallVec::new(),
+        }
+    }
+}
+
 /// Result of a controller choice operation
 ///
 /// This enum allows controllers to return not just a choice, but also
@@ -1203,6 +1285,20 @@ pub enum ChoiceContext {
         card_type_description: String,
         /// Pre-formatted permanent strings for display
         formatted_permanents: Vec<String>,
+    },
+    /// Look at the top N cards and choose top/bottom partition (CR 701.18)
+    ScryOrder {
+        /// Cards being scried, top-down (revealed[0] is current top of library)
+        revealed: Vec<CardId>,
+        /// Pre-formatted card strings for display
+        formatted_revealed: Vec<String>,
+    },
+    /// Look at the top N cards and choose top/graveyard partition (CR 701.42)
+    Surveil {
+        /// Cards being surveiled, top-down (revealed[0] is current top of library)
+        revealed: Vec<CardId>,
+        /// Pre-formatted card strings for display
+        formatted_revealed: Vec<String>,
     },
     /// Choose modes for a modal spell (e.g., "Choose one —")
     Modes {
@@ -1625,6 +1721,68 @@ pub trait PlayerController {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>>;
+
+    /// Choose how to order cards revealed by a Scry effect (CR 701.18)
+    ///
+    /// The controller is given the top N cards of its own library
+    /// (`revealed`, top-down — `revealed[0]` is the current top of the
+    /// library) and must return a [`ScryDecision`] partitioning them
+    /// into a "stay on top" pile and a "go to bottom" pile.
+    ///
+    /// ## Information visibility
+    ///
+    /// CR 701.18 — only the scrying player sees the revealed cards.
+    /// The engine never calls this method on an opponent's controller,
+    /// and (in network mode) the protocol only sends the revealed
+    /// CardIds in the [`ChoiceRequest`] addressed to the scrying
+    /// player. Controllers MUST NOT consult any hidden information
+    /// beyond `revealed` and the public `view`.
+    ///
+    /// ## Default behavior
+    ///
+    /// The default implementation keeps every revealed card on top in
+    /// its original library order (i.e. the scry is a no-op). Real
+    /// controllers (Heuristic, Random, Network, …) override this to
+    /// make a meaningful decision.
+    ///
+    /// ## Java Forge equivalent
+    ///
+    /// Matches `PlayerController.scry(List<Card>)` in Forge-Java,
+    /// which returns the cards split into top-of-library and
+    /// bottom-of-library lists.
+    fn choose_scry_order(&mut self, _view: &GameStateView, revealed: &[CardId]) -> ChoiceResult<ScryDecision> {
+        ChoiceResult::Ok(ScryDecision::keep_all_on_top(revealed))
+    }
+
+    /// Choose how to order cards revealed by a Surveil effect (CR 701.42)
+    ///
+    /// The controller is given the top N cards of its own library
+    /// (`revealed`, top-down — `revealed[0]` is the current top of the
+    /// library) and must return a [`SurveilDecision`] partitioning
+    /// them into a "stay on top" pile and a "put into graveyard" pile.
+    ///
+    /// ## Information visibility
+    ///
+    /// CR 701.42 — only the surveiling player sees the revealed cards
+    /// while making this choice. The engine never calls this method
+    /// on an opponent's controller, and (in network mode) the protocol
+    /// only sends the revealed CardIds in the [`ChoiceRequest`]
+    /// addressed to the surveiling player. The cards put into the
+    /// graveyard become public information after the choice resolves.
+    ///
+    /// ## Default behavior
+    ///
+    /// The default implementation keeps every revealed card on top in
+    /// its original library order (no cards milled to graveyard).
+    /// Real controllers override this to make a meaningful decision
+    /// (e.g. mill instants/sorceries to fuel Flashback / Escape).
+    ///
+    /// ## Java Forge equivalent
+    ///
+    /// Matches `PlayerController.surveil(List<Card>)` in Forge-Java.
+    fn choose_surveil(&mut self, _view: &GameStateView, revealed: &[CardId]) -> ChoiceResult<SurveilDecision> {
+        ChoiceResult::Ok(SurveilDecision::keep_all_on_top(revealed))
+    }
 
     /// Choose a card from library (for tutoring/searching effects)
     ///

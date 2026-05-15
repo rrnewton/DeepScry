@@ -5849,6 +5849,88 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(worst_blocker)
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::ScryDecision> {
+        // Heuristic owned in full by this controller (Phase C):
+        //   - count lands in hand;
+        //   - if we have ≥3 lands, push excess revealed lands to the
+        //     bottom (heuristic doesn't need more lands);
+        //   - otherwise keep all revealed cards on top.
+        //
+        // Order convention: ScryDecision.{top, bottom} are bottom-up,
+        // last element of `top` becomes the new top of library after
+        // [`GameState::scry_apply_decision`] runs. We INTENTIONALLY do
+        // not reverse the keep pile here — this preserves the legacy
+        // engine's existing reordering quirk so heuristic-driven games
+        // remain byte-identical with pre-Phase-B logs.
+        let player_id = view.player_id();
+        let lands_in_hand = view
+            .player_hand(player_id)
+            .iter()
+            .filter(|&&cid| view.get_card(cid).is_some_and(|c| c.is_land()))
+            .count();
+        let want_lands = lands_in_hand < 3;
+
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+        for &card_id in revealed {
+            let is_land = view.get_card(card_id).is_some_and(|c| c.is_land());
+            if is_land && !want_lands {
+                bottom.push(card_id);
+            } else {
+                top.push(card_id);
+            }
+        }
+
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Scry {}: keep {} on top, {} on bottom",
+                revealed.len(),
+                top.len(),
+                bottom.len(),
+            ),
+        );
+        ChoiceResult::Ok(crate::game::ScryDecision { top, bottom })
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::SurveilDecision> {
+        // Heuristic: keep creatures and lands on top; mill instants /
+        // sorceries / everything else into the graveyard (fuels
+        // graveyard strategies — Flashback, Escape, etc.).
+        //
+        // Same order convention as choose_scry_order (no reversal of the
+        // keep pile, preserving the legacy engine's quirk).
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
+        for &card_id in revealed {
+            let dominated_by_creature_or_land = view.get_card(card_id).is_some_and(|c| c.is_creature() || c.is_land());
+            if dominated_by_creature_or_land {
+                top.push(card_id);
+            } else {
+                graveyard.push(card_id);
+            }
+        }
+
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Surveil {}: keep {} on top, mill {} to graveyard",
+                revealed.len(),
+                top.len(),
+                graveyard.len(),
+            ),
+        );
+        ChoiceResult::Ok(crate::game::SurveilDecision { top, graveyard })
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,

@@ -1,0 +1,10 @@
+[metadata]
+Name=Preordain Scry Test
+Description=Mini deck containing Preordain to exercise the scry effect end-to-end
+
+[Main]
+20 Island
+20 Preordain
+20 Lightning Bolt
+
+[Sideboard]

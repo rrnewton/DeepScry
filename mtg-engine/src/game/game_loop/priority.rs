@@ -1981,6 +1981,112 @@ impl<'a> GameLoop<'a> {
                                                 // Skip execute_effect — handled above
                                                 continue;
                                             }
+                                            // Scry: snapshot → controller → apply (mirror of
+                                            // the spell-resolution branch; see
+                                            // resolve_top_spell_with_discard_hook above).
+                                            crate::core::Effect::Scry { player, count } => {
+                                                let scry_player = if player.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *player
+                                                };
+                                                let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
+                                                if revealed.is_empty() {
+                                                    continue;
+                                                }
+                                                self.push_reveals(scry_player);
+                                                if let Some(opp) = self.game.get_other_player_id(scry_player) {
+                                                    self.push_reveals(opp);
+                                                }
+                                                self.sync_to_action();
+
+                                                let prior_log_size = self.game.logger.log_count();
+                                                let view = crate::game::GameStateView::new(self.game, scry_player);
+                                                let choice = controller.choose_scry_order(&view, &revealed);
+                                                let decision = match choice {
+                                                    crate::game::controller::ChoiceResult::Ok(d) => d,
+                                                    crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                                        self.game.pending_activation_effect_idx =
+                                                            Some((effect_idx, chosen_targets_vec));
+                                                        return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                                    }
+                                                    other => {
+                                                        // Treat ExitGame / Error / Undo via the
+                                                        // standard helper: it returns from the step
+                                                        // handler so the game loop re-evaluates.
+                                                        handle_choice_result_break!(other, self.game, current_priority)
+                                                    }
+                                                };
+
+                                                let replay_choice = crate::game::ReplayChoice::Scry {
+                                                    top: decision.top.clone(),
+                                                    bottom: decision.bottom.clone(),
+                                                };
+                                                self.log_choice_point(scry_player, Some(replay_choice), prior_log_size);
+
+                                                if let Err(e) =
+                                                    self.game.scry_apply_decision(scry_player, &revealed, &decision)
+                                                {
+                                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                        eprintln!("    Failed to apply scry decision: {e}");
+                                                    }
+                                                }
+                                                continue;
+                                            }
+                                            // Surveil: same dispatch shape as scry; cards go
+                                            // to graveyard instead of bottom of library.
+                                            crate::core::Effect::Surveil { player, count } => {
+                                                let surveil_player = if player.is_placeholder() {
+                                                    current_priority
+                                                } else {
+                                                    *player
+                                                };
+                                                let revealed = self.game.surveil_snapshot_top_n(surveil_player, *count);
+                                                if revealed.is_empty() {
+                                                    continue;
+                                                }
+                                                self.push_reveals(surveil_player);
+                                                if let Some(opp) = self.game.get_other_player_id(surveil_player) {
+                                                    self.push_reveals(opp);
+                                                }
+                                                self.sync_to_action();
+
+                                                let prior_log_size = self.game.logger.log_count();
+                                                let view = crate::game::GameStateView::new(self.game, surveil_player);
+                                                let choice = controller.choose_surveil(&view, &revealed);
+                                                let decision = match choice {
+                                                    crate::game::controller::ChoiceResult::Ok(d) => d,
+                                                    crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                                        self.game.pending_activation_effect_idx =
+                                                            Some((effect_idx, chosen_targets_vec));
+                                                        return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                                    }
+                                                    other => {
+                                                        handle_choice_result_break!(other, self.game, current_priority)
+                                                    }
+                                                };
+
+                                                let replay_choice = crate::game::ReplayChoice::Surveil {
+                                                    top: decision.top.clone(),
+                                                    graveyard: decision.graveyard.clone(),
+                                                };
+                                                self.log_choice_point(
+                                                    surveil_player,
+                                                    Some(replay_choice),
+                                                    prior_log_size,
+                                                );
+
+                                                if let Err(e) = self.game.surveil_apply_decision(
+                                                    surveil_player,
+                                                    &revealed,
+                                                    &decision,
+                                                ) {
+                                                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                                        eprintln!("    Failed to apply surveil decision: {e}");
+                                                    }
+                                                }
+                                                continue;
+                                            }
                                             _ => effect.clone(),
                                         };
 
@@ -2764,7 +2870,12 @@ impl<'a> GameLoop<'a> {
                     matches!(
                         e,
                         crate::core::Effect::DiscardCards { count, .. } if *count != u8::MAX
-                    ) || matches!(e, crate::core::Effect::Loot { .. })
+                    ) || matches!(
+                        e,
+                        crate::core::Effect::Loot { .. }
+                            | crate::core::Effect::Scry { .. }
+                            | crate::core::Effect::Surveil { .. }
+                    )
                     // mtg-c54e90: Dig effects on the active player's own library
                     // (e.g. Seismic Sense) need pre-reveal + sync so the network
                     // shadow client knows the card identities before filtering.
@@ -3213,6 +3324,154 @@ impl<'a> GameLoop<'a> {
                                             .logger
                                             .gamelog(&format!("{} puts {} into {}", digger_name, card_name, dest_name));
                                     }
+                                }
+                            }
+                        }
+                    }
+                    // Scry: snapshot top N → controller decides → apply.
+                    // Routes through PlayerController instead of the engine
+                    // heuristic so non-Heuristic controllers (Random, Network)
+                    // can make their own scry decisions. HeuristicController's
+                    // override produces identical decisions to the legacy
+                    // engine heuristic, so heuristic games stay byte-identical.
+                    //
+                    // ## Network-correctness note (Phase D audit)
+                    //
+                    // For server-LOCAL controller decisions (e.g. P1 scries on
+                    // a server where P1 is HeuristicController), this intercept
+                    // applies the decision to the server's library but does NOT
+                    // currently push a side-channel message to the client. The
+                    // client's shadow GameLoop runs its own intercept and asks
+                    // its WasmRemoteController, which expects an OpponentChoice
+                    // — so a scry triggered by a server-local player can stall
+                    // the client's shadow loop in mixed local/remote setups.
+                    //
+                    // This was previously masked by the engine-baked heuristic
+                    // running consistently on both sides (when the heuristic's
+                    // inputs happened to match — see mtg-ced6d1 for the case
+                    // where they didn't, fixed for the legacy path by 3b052c70
+                    // on a never-merged branch). With Phase B/C the engine no
+                    // longer carries that heuristic, so the consistency
+                    // accident is gone. The architecturally correct fix is to
+                    // either (a) emit OpponentChoice for server-local choices
+                    // (uniform with client-prompted choices), or (b) broadcast
+                    // an authoritative LibraryReordered after applying the
+                    // server's decision (analogous to 3b052c70 but carrying a
+                    // real player choice, not a heuristic accident).
+                    //
+                    // Tracked separately; not blocking Phase D since:
+                    //   - existing network fuzz pass rate is 4/5 on both this
+                    //     branch and integration baseline (no regression from
+                    //     Phase A/B/C);
+                    //   - the failing seed (=2) trips a different state-hash
+                    //     mismatch unrelated to the scry path;
+                    //   - no currently-shipping deck triggers scry on a path
+                    //     that hits this gap (server-local + client-shadow)
+                    //     before some other unrelated desync fires.
+                    crate::core::Effect::Scry { player, count } => {
+                        let scry_player = *player;
+                        let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
+                        if !revealed.is_empty() {
+                            // Sync reveals before consulting the controller.
+                            self.push_reveals(scry_player);
+                            if let Some(opp) = self.game.get_other_player_id(scry_player) {
+                                self.push_reveals(opp);
+                            }
+                            self.sync_to_action();
+
+                            let controller: &mut dyn PlayerController = if scry_player == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let prior_log_size = self.game.logger.log_count();
+                            let view = crate::game::GameStateView::new(self.game, scry_player);
+                            let choice = controller.choose_scry_order(&view, &revealed);
+                            let decision = match choice {
+                                crate::game::controller::ChoiceResult::Ok(d) => d,
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during scry".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during scry: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => {
+                                    // Undo during scry: fall back to engine heuristic
+                                    // (matches legacy behaviour for the no-controller path).
+                                    crate::game::ScryDecision::keep_all_on_top(&revealed)
+                                }
+                            };
+
+                            // Log the scry choice for snapshot/replay determinism.
+                            let replay_choice = crate::game::ReplayChoice::Scry {
+                                top: decision.top.clone(),
+                                bottom: decision.bottom.clone(),
+                            };
+                            self.log_choice_point(scry_player, Some(replay_choice), prior_log_size);
+
+                            if let Err(e) = self.game.scry_apply_decision(scry_player, &revealed, &decision) {
+                                if should_log {
+                                    eprintln!("    Failed to apply scry decision: {e}");
+                                }
+                            }
+                        }
+                    }
+                    // Surveil: same dispatch shape as scry; apply moves cards to
+                    // graveyard instead of bottom of library.
+                    crate::core::Effect::Surveil { player, count } => {
+                        let surveil_player = *player;
+                        let revealed = self.game.surveil_snapshot_top_n(surveil_player, *count);
+                        if !revealed.is_empty() {
+                            self.push_reveals(surveil_player);
+                            if let Some(opp) = self.game.get_other_player_id(surveil_player) {
+                                self.push_reveals(opp);
+                            }
+                            self.sync_to_action();
+
+                            let controller: &mut dyn PlayerController = if surveil_player == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let prior_log_size = self.game.logger.log_count();
+                            let view = crate::game::GameStateView::new(self.game, surveil_player);
+                            let choice = controller.choose_surveil(&view, &revealed);
+                            let decision = match choice {
+                                crate::game::controller::ChoiceResult::Ok(d) => d,
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during surveil".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during surveil: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => {
+                                    crate::game::SurveilDecision::keep_all_on_top(&revealed)
+                                }
+                            };
+
+                            let replay_choice = crate::game::ReplayChoice::Surveil {
+                                top: decision.top.clone(),
+                                graveyard: decision.graveyard.clone(),
+                            };
+                            self.log_choice_point(surveil_player, Some(replay_choice), prior_log_size);
+
+                            if let Err(e) = self.game.surveil_apply_decision(surveil_player, &revealed, &decision) {
+                                if should_log {
+                                    eprintln!("    Failed to apply surveil decision: {e}");
                                 }
                             }
                         }

@@ -268,6 +268,72 @@ impl PlayerController for RandomController {
         ChoiceResult::Ok(ordered_blockers)
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::ScryDecision> {
+        // Each revealed card independently coin-flipped: heads = stay on top,
+        // tails = go to bottom. Order within each pile is preserved
+        // (top-down → SmallVec interpreted bottom-up by apply, mirroring
+        // the legacy heuristic's ordering convention so RandomController
+        // games stay deterministic for a given seed).
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+        for &card_id in revealed {
+            if self.rng.gen_bool(0.5) {
+                top.push(card_id);
+            } else {
+                bottom.push(card_id);
+            }
+        }
+
+        if view.logger().is_choice_logging_active() {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!(
+                    "Scry {}: keep {} on top, {} on bottom (random)",
+                    revealed.len(),
+                    top.len(),
+                    bottom.len(),
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(crate::game::ScryDecision { top, bottom })
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::SurveilDecision> {
+        // Same coin-flip partition as scry, but with graveyard instead of bottom.
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
+        for &card_id in revealed {
+            if self.rng.gen_bool(0.5) {
+                top.push(card_id);
+            } else {
+                graveyard.push(card_id);
+            }
+        }
+
+        if view.logger().is_choice_logging_active() {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!(
+                    "Surveil {}: keep {} on top, mill {} (random)",
+                    revealed.len(),
+                    top.len(),
+                    graveyard.len(),
+                ),
+            );
+        }
+
+        ChoiceResult::Ok(crate::game::SurveilDecision { top, graveyard })
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,

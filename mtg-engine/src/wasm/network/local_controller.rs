@@ -673,6 +673,85 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         }
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::ScryDecision> {
+        if self.check_choice_request_ready().is_none() {
+            if self.has_pending_submission() {
+                if self.check_and_clear_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_server_context());
+                }
+                return ChoiceResult::NeedInput(waiting_for_ack_context());
+            }
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self.inner.choose_scry_order(view, revealed) {
+            ChoiceResult::Ok(decision) => {
+                // Encode bottom pile as positions in revealed list, in placement order
+                // (first index → deepest bottom). Inner-controller decision.bottom is
+                // already in that placement order, so map each CardId → revealed index.
+                let mut choice_indices: Vec<usize> = Vec::with_capacity(decision.bottom.len());
+                for &card_id in &decision.bottom {
+                    if let Some(pos) = revealed.iter().position(|&c| c == card_id) {
+                        choice_indices.push(pos);
+                    } else {
+                        let msg = format!(
+                            "WasmNetworkLocalController::choose_scry_order: inner returned bottom card {:?} not in revealed list",
+                            card_id
+                        );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
+                    }
+                }
+                self.submit_choice_to_server(choice_indices, view);
+                ChoiceResult::Ok(decision)
+            }
+            other => other,
+        }
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::SurveilDecision> {
+        if self.check_choice_request_ready().is_none() {
+            if self.has_pending_submission() {
+                if self.check_and_clear_ack() {
+                    return ChoiceResult::NeedInput(waiting_for_server_context());
+                }
+                return ChoiceResult::NeedInput(waiting_for_ack_context());
+            }
+            return ChoiceResult::NeedInput(waiting_for_server_context());
+        }
+
+        match self.inner.choose_surveil(view, revealed) {
+            ChoiceResult::Ok(decision) => {
+                // Encode graveyard pile as positions in revealed list, in placement order
+                // (first index → deepest in graveyard pile).
+                let mut choice_indices: Vec<usize> = Vec::with_capacity(decision.graveyard.len());
+                for &card_id in &decision.graveyard {
+                    if let Some(pos) = revealed.iter().position(|&c| c == card_id) {
+                        choice_indices.push(pos);
+                    } else {
+                        let msg = format!(
+                            "WasmNetworkLocalController::choose_surveil: inner returned graveyard card {:?} not in revealed list",
+                            card_id
+                        );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
+                    }
+                }
+                self.submit_choice_to_server(choice_indices, view);
+                ChoiceResult::Ok(decision)
+            }
+            other => other,
+        }
+    }
+
     fn choose_from_library(
         &mut self,
         view: &GameStateView,
