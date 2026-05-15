@@ -521,6 +521,13 @@ impl GameServer {
     ///
     /// Returns an error if card database loading or TCP binding fails.
     /// Per-connection errors are logged and dropped.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the card database `Arc` is somehow `None` after the load
+    /// step above succeeded — this would indicate a programmer error in
+    /// `Server::run` (the load above unconditionally stores `Some(...)`),
+    /// not a recoverable failure.
     pub async fn run(&mut self) -> Result<()> {
         // Load card database (shared across all games via Arc)
         log::info!("Loading card database from {:?}...", self.config.cardsfolder);
@@ -546,8 +553,8 @@ impl GameServer {
             match listener.accept().await {
                 Ok((stream, peer)) => {
                     log::info!("New connection from {}", peer);
-                    let lobby = self.lobby.clone();
-                    let card_db = self.card_db.clone().expect("card db loaded above");
+                    let lobby = Arc::clone(&self.lobby);
+                    let card_db = Arc::clone(self.card_db.as_ref().expect("card db loaded above"));
                     let config = self.config.clone();
                     tokio::spawn(async move {
                         if let Err(e) = handle_lobby_connection(stream, lobby, card_db, config).await {
@@ -728,9 +735,10 @@ async fn handle_lobby_connection(
             }
 
             // Anything else at the lobby level is an error — Submit/Disconnect/
-            // Ping belong inside an active game.
-            #[allow(clippy::wildcard_enum_match_arm)]
-            other => {
+            // Ping belong inside an active game. Spelled out (rather than `_`)
+            // so that adding a new `ClientMessage` variant forces a compile
+            // error here, ensuring lobby intent is reviewed.
+            other @ (ClientMessage::SubmitChoice { .. } | ClientMessage::Disconnect | ClientMessage::Ping { .. }) => {
                 send_error(
                     &mut ws_stream,
                     &format!("Unexpected pre-game message: {:?}", std::mem::discriminant(&other)),
@@ -2373,10 +2381,10 @@ async fn handle_player_websocket(
                                 break;
                             }
 
-                            Ok(ClientMessage::Authenticate { .. })
-                            | Ok(ClientMessage::CreateGame { .. })
-                            | Ok(ClientMessage::JoinGame { .. })
-                            | Ok(ClientMessage::ListGames { .. }) => {
+                            Ok(ClientMessage::Authenticate { .. }
+                            | ClientMessage::CreateGame { .. }
+                            | ClientMessage::JoinGame { .. }
+                            | ClientMessage::ListGames { .. }) => {
                                 // Lobby/auth messages are not legal once a game
                                 // has started for this connection. We surface a
                                 // non-fatal Error so test clients can recover.

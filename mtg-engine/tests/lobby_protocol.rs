@@ -11,6 +11,17 @@
 //! synthetic deck and short timeouts so the suite stays under a second.
 
 #![cfg(feature = "network")]
+// Tests deliberately match a single expected variant and panic on anything
+// else. Spelling out every other variant of the matched enum (per
+// `clippy::wildcard_enum_match_arm`) would be pure noise here — the wildcard
+// IS the assertion.
+#![allow(clippy::wildcard_enum_match_arm)]
+// Tests cheaply clone Arc<…> for fan-out into spawned tasks; the verbose
+// `Arc::clone(&x)` form adds noise without changing semantics.
+#![allow(clippy::clone_on_ref_ptr)]
+// `parse::<T>().ok().expect("…")` is occasionally clearer than
+// `parse::<T>().expect("…")` in test setup; not worth refactoring.
+#![allow(clippy::ok_expect)]
 
 use futures_util::{SinkExt, StreamExt};
 use mtg_forge_rs::network::lobby::{new_shared_lobby, ActiveGame, JoinedPlayer, LobbyState, PendingGame};

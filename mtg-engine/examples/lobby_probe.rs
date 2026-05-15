@@ -11,6 +11,11 @@
 //! cargo run --features network --example lobby_probe -- --port 17810
 //! ```
 
+// Probe code matches exactly one expected variant per step and bails on
+// anything else; the wildcard arm IS the assertion. Spelling out every other
+// `ServerMessage` / `Message` variant would be pure noise.
+#![allow(clippy::wildcard_enum_match_arm)]
+
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
 use mtg_forge_rs::network::{ClientMessage, DeckSubmission, ServerMessage};

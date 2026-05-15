@@ -98,7 +98,9 @@ fn parse_meminfo(contents: &str) -> Option<SystemMemory> {
 
 fn parse_kb(rest: &str) -> Option<usize> {
     // Expected: "  16327688 kB"
-    let mut iter = rest.trim().split_whitespace();
+    // `split_whitespace` already skips leading/trailing whitespace, so an
+    // explicit `.trim()` is redundant (clippy::trim_split_whitespace).
+    let mut iter = rest.split_whitespace();
     let value: usize = iter.next()?.parse().ok()?;
     // Defensively check the unit is kB; older kernels always emit kB so this
     // should never differ in practice.

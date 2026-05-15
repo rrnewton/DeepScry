@@ -236,6 +236,10 @@ pub fn new_shared_lobby() -> SharedLobby {
 }
 
 #[cfg(test)]
+// Unit tests pattern-match the one variant they care about and bail on
+// anything else; the wildcard arm IS the assertion. Spelling out every other
+// variant would add noise without changing semantics.
+#[allow(clippy::wildcard_enum_match_arm)]
 mod tests {
     use super::*;
 
