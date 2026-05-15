@@ -124,7 +124,44 @@ The fix must not:
 - Bypass the shadow-state mechanism described in
   `docs/NETWORK_ARCHITECTURE.md`.
 
-### 4. Server / client state sync
+### 4. Decision authority (choices belong to the player, not the server)
+
+> **Are all player-facing decisions routed to the correct client's
+> PlayerController via ChoiceRequest, rather than being made
+> server-side?**
+
+The server drives the engine and determines WHAT choice is needed and
+WHO should make it. It must NEVER make gameplay decisions on behalf
+of a player. This includes:
+
+- **Scry** (CR 701.18) — the scrying player decides which cards go
+  on top/bottom
+- **Surveil** (CR 701.34) — the surveilling player decides which
+  cards to keep/mill
+- **Search/Tutor** (CR 701.20) — the searching player chooses what
+  to fetch
+- **Combat damage assignment** — the attacking/blocking player
+  assigns damage
+- **Mode/target choices** — the controlling player picks modes and
+  targets
+- **Sacrifice choices** — the player chooses which permanent to
+  sacrifice
+- **Discard choices** — the player chooses which cards to discard
+
+Red flags:
+
+- A heuristic or AI logic baked into `GameState` or the engine core
+  instead of living in a `PlayerController`
+- The server executing a choice and broadcasting the result instead
+  of sending a `ChoiceRequest`
+- A "skip" that avoids asking the player when the rules say the
+  player decides
+
+The heuristic/AI for making these decisions belongs in
+`HeuristicController` (or `RandomController`), NEVER in the engine
+itself. The engine must be controller-agnostic.
+
+### 5. Server / client state sync
 
 > **Does game state stay synchronized between server and client,
 > modulo information hiding?**
@@ -139,7 +176,7 @@ The fix must not:
 - **Reminder: desync is ALWAYS fatal.** A fix is unacceptable if it
   introduces silent recovery from inconsistent state.
 
-### 5. Semantic workaround vs. real fix
+### 6. Semantic workaround vs. real fix
 
 > **Does the fix change game semantics as a workaround, rather than
 > fixing the actual bug?**
@@ -163,7 +200,7 @@ If a true fix is out of scope, the workaround MUST:
    `// TODO(mtg-NNN):`).
 3. Be flagged as `CONCERN` in the verdict (see below), not `PASS`.
 
-### 6. Generalization / bug-class search
+### 7. Generalization / bug-class search
 
 > **Are there other cards or mechanics that could have the same bug
 > class?**
@@ -193,9 +230,10 @@ description / commit message:
 1. Correct rule implementation: <answer + CR cite>
 2. Reveal ordering:             <answer or N/A>
 3. Information hiding:          <answer or N/A>
-4. Server/client sync:          <answer or N/A>
-5. Workaround vs. real fix:     <answer>
-6. Bug-class generalization:    <answer + linked beads issues>
+4. Decision authority:          <answer or N/A>
+5. Server/client sync:          <answer or N/A>
+6. Workaround vs. real fix:     <answer>
+7. Bug-class generalization:    <answer + linked beads issues>
 
 Reasoning: <2–6 sentences explaining the verdict, calling out any
 follow-up issues filed and any items marked CONCERN.>
@@ -203,7 +241,7 @@ follow-up issues filed and any items marked CONCERN.>
 
 ### Verdict meanings
 
-- **PASS** — All six items are answered satisfactorily; the fix is
+- **PASS** — All seven items are answered satisfactorily; the fix is
   correct under the CR and respects information-hiding /
   determinism invariants. Safe to merge to `integration`.
 - **CONCERN** — The fix is acceptable to land, but at least one item
