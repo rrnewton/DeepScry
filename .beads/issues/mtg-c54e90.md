@@ -1,66 +1,45 @@
 ---
 title: 'Network desync: Seismic Sense triggers FATAL P2 state hash mismatch every time it resolves'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-14T14:27:33.959366580+00:00
-updated_at: 2026-05-14T14:27:33.959366580+00:00
+updated_at: 2026-05-15T13:48:10.414134214+00:00
 ---
 
 # Description
 
 ## Summary
 
-Fuzz testing the network code (`bug_finding/network_fuzz_test.py`) on integration branch (tip fe820468) found that **every** state-hash desync we observed in 45 native↔native runs occurred immediately after a Seismic Sense resolution. 13/45 runs (29%) failed with a FATAL P2 state hash mismatch, and in 100% of those the last-resolved spell logged before the divergence is Seismic Sense — across many seeds and controller combinations.
+Fixed: routed Dig effects with target_self=true through the controller protocol so the network shadow client receives bundled CardRevealed messages BEFORE making its matching pick. Previously the dig effect was resolved entirely inside execute_effect, where the ChangeValid$ filter ran against the client's still-empty EntityStore and short-circuited to 'no valid pick' — diverging hand and library zones from the server (FATAL state hash mismatch).
 
-## Reproducers
+## Fix
 
-```bash
-./tests/network_vs_local_equivalence_e2e.sh 2 heuristic heuristic
-./tests/network_vs_local_equivalence_e2e.sh 7 heuristic random
-./tests/network_vs_local_equivalence_e2e.sh 7 random random
-./tests/network_vs_local_equivalence_e2e.sh 5 heuristic zero
-```
+`mtg-engine/src/game/game_loop/priority.rs`: extended `resolve_top_spell_with_discard_hook` (renamed conceptually as a generic interactive-effects router; structurally unchanged) to handle Dig with target_self=true. The new branch:
 
-(Decks: `decks/booster_draft/avatar/{ryan,gabriel}_avatar_draft.dck`, both contain 1 Seismic Sense.)
+1. Snapshots the top-N CardIds from the digger's library (top is end of Vec).
+2. Iterates min(change_count, top_N) times, each iteration calling `choose_from_library_with_hook` with the locally-filtered valid_ids.
+3. Logs a `ChoicePoint(LibrarySearch)` per iteration so snapshot/replay stay deterministic.
+4. The `choose_from_library_with_hook` machinery (used by tutoring/cycling) auto-bundles `library_search_cards` into the ChoiceRequest. The server's network handler then sends a CardRevealed for each before forwarding the request to the client. The client's NLC falls back to `library_search_names` when its local valid_cards is empty.
+5. After picks, moves chosen cards to destination via move_card (auto-reveals symmetrically on both sides). Remaining top-N cards go to rest_destination (Library bottom by default), shuffled by the same CardId-driven deterministic permutation as the legacy execute_effect path.
 
-## Server log excerpt (network_fuzz_4g_edohl, seed=2 heuristic+heuristic, Turn 8)
+The opponent-dig branch (target_self=false, e.g. Fire Lord Ozai) keeps using the legacy execute_effect path; those moves auto-reveal to all (Library->Exile is public).
 
-```
-[GAMELOG Turn8 M1] Gabriel casts Seismic Sense (69) (putting on stack)
-[GAMELOG Turn8 M1] Tap Forest for {G}
-[GAMELOG Turn8 M1] Seismic Sense (69) resolves
-[GAMELOG Turn8 M1] Gabriel looks at the top 1 card of their library
-[GAMELOG Turn8 M1] Gabriel puts Ostrich-Horse into Hand
-[GAMELOG Turn8 M1] Seismic Sense (69) digs 1 card(s) from opponent's library to hand
-NETWORK SYNC MISMATCH DETECTED - P2 choice_seq=84
-Server hash: a37e19ca97a4d125  Client hash: a4653dfa26c28f5c
-SERVER STATE: Hands: [4, 5]  Libs: [30, 25]  Hand CardIds: [65, 73, 77, 78, 79]
-CLIENT STATE: Hands: [4, 4]  Libs: [30, 26]  Hand CardIds: [73, 77, 78, 79]
-DIFFERENCES: Server has card 65 in P2 hand and lib_size 25; client has lib_size 26 and 4 hand cards.
-```
+## Tests
 
-The server applied a hidden zone change (top of own library → hand) but the client did NOT replay the same change. Server's library shrank by 1 and hand grew by 1; client's library still has the card and hand is one short.
+- Regression unit test: `mtg-engine/tests/seismic_sense_dig_e2e.rs`. Loads `test_puzzles/seismic_sense_dig_self.pzl` (Ostrich-Horse on top of P0 library, 1 Forest in play, Seismic Sense in hand). Asserts (a) Ostrich-Horse ends up in hand, (b) at least one ChoicePoint(LibrarySearch) is emitted, (c) a Library->Hand MoveCard appears in the undo log.
+- Network e2e (the original reproducers): all four PASS.
+  - `tests/network_vs_local_equivalence_e2e.sh 2 heuristic heuristic` — IDENTICAL gamelogs (117/117 entries).
+  - `tests/network_vs_local_equivalence_e2e.sh 7 heuristic random` — IDENTICAL (68/68).
+  - `tests/network_vs_local_equivalence_e2e.sh 7 random random` — IDENTICAL (127/127).
+  - `tests/network_vs_local_equivalence_e2e.sh 5 heuristic zero` — IDENTICAL (164/164).
+- `bug_finding/network_fuzz_test.py --configs 15 --parallel 3 --local-equivalence` — 15/15 passed across heuristic/random/zero matrix.
+- `cargo test --release --features network` — full suite green (797 lib + integration tests, no regressions).
 
-## Card data
+## Why this matters / verification
 
-`forge-java/forge-gui/res/cardsfolder/.../seismicsense.txt` — Seismic Sense draws/digs effect that mixes 'look at top of own library', 'put into hand', and (per gamelog text) 'digs N cards from opponent's library to hand'. The two-zone (own library + opponent library) movement appears to confuse the controller's hidden-zone replay path.
+Per docs/NETWORK_ARCHITECTURE.md, desync is ALWAYS fatal. Before the fix, ~30% of native↔native fuzz runs hit this desync as soon as Seismic Sense resolved. After the fix, 100% of the cited reproducers pass cleanly.
 
-## Why this matters
+## Discovered in commit
 
-Per CLAUDE.md / docs/NETWORK_ARCHITECTURE.md desync is **always fatal** — the server/client model requires controllers to be information-independent. Single-card support for Seismic Sense in network mode is currently broken in a way that crashes the game whenever this card resolves.
-
-## Possible relationship
-
-Same family of bug as recently fixed Bazaar/Loot ChoicePoint(Discard) issue (commit cb67465c). Look at how the server records and replays the 'put on top of library / put into hand' decisions made by the active player when resolving Seismic Sense — the client likely never reaches the same ChoicePoint and so misses the zone update.
-
-## Test data
-
-Failure logs preserved at:
-- /tmp/qa-fail-seed2-heuristic-heuristic
-- /tmp/qa-fail-seed7-h-r
-- /tmp/qa-fail-coord-exit (seed=7 random+random)
-
-## Discovered by
-
-`bug_finding/network_fuzz_test.py --configs 45 --parallel 3` on branch `qa-fuzz-testing` at `fe820468` 2026-05-14.
+`fe820468` (integration tip when filed). Fix committed on branch `fix-seismic-sense` 2026-05-15.
