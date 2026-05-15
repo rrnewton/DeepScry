@@ -657,6 +657,55 @@ pub enum ChoiceType {
         /// Description of the permanent type (e.g., "creatures", "lands")
         card_type_description: String,
     },
+    /// Look at the top N cards of your library and choose top/bottom partition (CR 701.18)
+    ///
+    /// The server sends the actual top-N CardIds that were revealed
+    /// (`revealed_card_ids`) so the client can render them in the
+    /// scry UI. CR 701.18 says only the scrying player sees these
+    /// cards — by construction the server only ever sends this
+    /// `ChoiceType::Scry` to the scrying player's controller, so the
+    /// embedded CardIds never leak to the opponent.
+    ///
+    /// ## Wire encoding (response)
+    ///
+    /// The client returns `indices` listing the positions (into
+    /// `revealed_card_ids`) of the cards that should be put on the
+    /// **bottom** of the library. Cards whose positions are not in
+    /// `indices` stay on top, in the order they were revealed
+    /// (`revealed_card_ids[0]` remains the new top card if not moved).
+    ///
+    /// Reordering on the bottom is implied by the order of `indices`:
+    /// the first index in the response becomes the deepest bottom
+    /// card; the last becomes the card just above the bottom.
+    Scry {
+        /// Number of cards being scried (always equals `revealed_card_ids.len()`,
+        /// duplicated for protocol clarity)
+        count: usize,
+        /// Top-N CardIds of the scrying player's library, top-down.
+        /// `revealed_card_ids[0]` is the current top of the library.
+        revealed_card_ids: Vec<CardId>,
+    },
+    /// Look at the top N cards of your library and choose top/graveyard partition (CR 701.42)
+    ///
+    /// Same visibility rules as [`ChoiceType::Scry`] (only the
+    /// surveiling player receives this request).
+    ///
+    /// ## Wire encoding (response)
+    ///
+    /// The client returns `indices` listing the positions (into
+    /// `revealed_card_ids`) of the cards that should be put into the
+    /// **graveyard**. Cards whose positions are not in `indices` stay
+    /// on top in revealed order. The order of `indices` is the order
+    /// in which the cards are moved to the graveyard (first index in
+    /// the response ends up deepest in the graveyard pile).
+    Surveil {
+        /// Number of cards being surveiled (always equals
+        /// `revealed_card_ids.len()`, duplicated for protocol clarity)
+        count: usize,
+        /// Top-N CardIds of the surveiling player's library, top-down.
+        /// `revealed_card_ids[0]` is the current top of the library.
+        revealed_card_ids: Vec<CardId>,
+    },
     /// Choose modes for a modal spell (e.g., "Choose one —")
     ///
     /// Modal spells like Heartless Act, Cryptic Command, or charms require
@@ -1401,6 +1450,14 @@ mod tests {
                 min_modes: 1,
                 can_repeat: false,
                 available_modes: 2,
+            },
+            ChoiceType::Scry {
+                count: 2,
+                revealed_card_ids: vec![CardId::new(101), CardId::new(102)],
+            },
+            ChoiceType::Surveil {
+                count: 3,
+                revealed_card_ids: vec![CardId::new(201), CardId::new(202), CardId::new(203)],
             },
         ];
 

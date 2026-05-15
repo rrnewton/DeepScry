@@ -1040,6 +1040,129 @@ impl PlayerController for NetworkController {
         }
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::ScryDecision> {
+        // Build display options for each revealed card.
+        let options: Vec<String> = revealed
+            .iter()
+            .map(|&card_id| format!("Scry: {}", self.format_card(view, card_id)))
+            .collect();
+
+        let state_hash = self.compute_view_hash(view);
+        let choice_type = ChoiceType::Scry {
+            count: revealed.len(),
+            revealed_card_ids: revealed.to_vec(),
+        };
+
+        // Wire encoding: client returns indices of cards to put on BOTTOM.
+        // The order of returned indices is the order the cards are placed
+        // (first index → deepest bottom).
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                let bottom_positions: SmallVec<[usize; 4]> = result.indices.iter().copied().collect();
+                // Validate every index is in range and unique.
+                let mut seen = SmallVec::<[usize; 4]>::new();
+                for &idx in &bottom_positions {
+                    if idx >= revealed.len() {
+                        return ChoiceResult::Error(format!(
+                            "Invalid scry index {} (only {} revealed)",
+                            idx,
+                            revealed.len()
+                        ));
+                    }
+                    if seen.contains(&idx) {
+                        return ChoiceResult::Error(format!("Duplicate scry index {}", idx));
+                    }
+                    seen.push(idx);
+                }
+
+                // Build bottom pile in the order the client sent (first → deepest).
+                let mut bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+                for &idx in &bottom_positions {
+                    bottom.push(revealed[idx]);
+                }
+
+                // Build top pile: every revealed card NOT in bottom_positions,
+                // preserving revealed (top-down) order, then converted to
+                // bottom-up so library.cards.push() restores top-of-library.
+                let mut top_top_down: SmallVec<[CardId; 4]> = SmallVec::new();
+                for (i, &card_id) in revealed.iter().enumerate() {
+                    if !bottom_positions.contains(&i) {
+                        top_top_down.push(card_id);
+                    }
+                }
+                let top: SmallVec<[CardId; 4]> = top_top_down.into_iter().rev().collect();
+
+                ChoiceResult::Ok(crate::game::controller::ScryDecision { top, bottom })
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::SurveilDecision> {
+        // Build display options for each revealed card.
+        let options: Vec<String> = revealed
+            .iter()
+            .map(|&card_id| format!("Surveil: {}", self.format_card(view, card_id)))
+            .collect();
+
+        let state_hash = self.compute_view_hash(view);
+        let choice_type = ChoiceType::Surveil {
+            count: revealed.len(),
+            revealed_card_ids: revealed.to_vec(),
+        };
+
+        // Wire encoding: client returns indices of cards to put into the GRAVEYARD.
+        // The order of returned indices is the order they are moved (first index
+        // → deepest in graveyard pile).
+        match self.request_choice(view, choice_type, options, state_hash, None, None) {
+            Ok(result) => {
+                self.increment_choice_seq();
+                let mill_positions: SmallVec<[usize; 4]> = result.indices.iter().copied().collect();
+                let mut seen = SmallVec::<[usize; 4]>::new();
+                for &idx in &mill_positions {
+                    if idx >= revealed.len() {
+                        return ChoiceResult::Error(format!(
+                            "Invalid surveil index {} (only {} revealed)",
+                            idx,
+                            revealed.len()
+                        ));
+                    }
+                    if seen.contains(&idx) {
+                        return ChoiceResult::Error(format!("Duplicate surveil index {}", idx));
+                    }
+                    seen.push(idx);
+                }
+
+                let mut graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
+                for &idx in &mill_positions {
+                    graveyard.push(revealed[idx]);
+                }
+
+                let mut top_top_down: SmallVec<[CardId; 4]> = SmallVec::new();
+                for (i, &card_id) in revealed.iter().enumerate() {
+                    if !mill_positions.contains(&i) {
+                        top_top_down.push(card_id);
+                    }
+                }
+                let top: SmallVec<[CardId; 4]> = top_top_down.into_iter().rev().collect();
+
+                ChoiceResult::Ok(crate::game::controller::SurveilDecision { top, graveyard })
+            }
+            Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
+            Err(e) => ChoiceResult::Error(e.to_string()),
+        }
+    }
+
     fn set_pending_library_search_card_ids(&mut self, card_ids: &[CardId]) {
         self.pending_library_search_card_ids = Some(card_ids.to_vec());
     }

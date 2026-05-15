@@ -431,6 +431,87 @@ impl PlayerController for WasmRemoteController {
         }
     }
 
+    fn choose_scry_order(
+        &mut self,
+        _view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::ScryDecision> {
+        // Server sends indices of cards to put on BOTTOM (in placement order).
+        // Cards not in indices stay on top in revealed order.
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                let mut bottom = SmallVec::<[CardId; 4]>::new();
+                let mut bottom_positions = SmallVec::<[usize; 4]>::new();
+                for idx in indices {
+                    if idx < revealed.len() {
+                        bottom.push(revealed[idx]);
+                        bottom_positions.push(idx);
+                    } else {
+                        let msg = format!(
+                            "FATAL DESYNC: WasmRemoteController received invalid scry index {} (only {} revealed)",
+                            idx,
+                            revealed.len()
+                        );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
+                    }
+                }
+                let mut top_top_down = SmallVec::<[CardId; 4]>::new();
+                for (i, &card_id) in revealed.iter().enumerate() {
+                    if !bottom_positions.contains(&i) {
+                        top_top_down.push(card_id);
+                    }
+                }
+                let top: SmallVec<[CardId; 4]> = top_top_down.into_iter().rev().collect();
+                ChoiceResult::Ok(crate::game::controller::ScryDecision { top, bottom })
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
+    }
+
+    fn choose_surveil(
+        &mut self,
+        _view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::controller::SurveilDecision> {
+        // Server sends indices of cards to mill to GRAVEYARD (in placement order).
+        match self.try_get_choice() {
+            ChoiceResult::Ok(indices) => {
+                let mut graveyard = SmallVec::<[CardId; 4]>::new();
+                let mut mill_positions = SmallVec::<[usize; 4]>::new();
+                for idx in indices {
+                    if idx < revealed.len() {
+                        graveyard.push(revealed[idx]);
+                        mill_positions.push(idx);
+                    } else {
+                        let msg = format!(
+                            "FATAL DESYNC: WasmRemoteController received invalid surveil index {} (only {} revealed)",
+                            idx,
+                            revealed.len()
+                        );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
+                    }
+                }
+                let mut top_top_down = SmallVec::<[CardId; 4]>::new();
+                for (i, &card_id) in revealed.iter().enumerate() {
+                    if !mill_positions.contains(&i) {
+                        top_top_down.push(card_id);
+                    }
+                }
+                let top: SmallVec<[CardId; 4]> = top_top_down.into_iter().rev().collect();
+                ChoiceResult::Ok(crate::game::controller::SurveilDecision { top, graveyard })
+            }
+            ChoiceResult::NeedInput(ctx) => ChoiceResult::NeedInput(ctx),
+            ChoiceResult::ExitGame => ChoiceResult::ExitGame,
+            ChoiceResult::Error(e) => ChoiceResult::Error(e),
+            ChoiceResult::UndoRequest(_) => ChoiceResult::Error("Undo not supported in network games".to_string()),
+        }
+    }
+
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,

@@ -855,6 +855,8 @@ pub fn pending_choice_context_name(ctx: Option<&crate::game::controller::ChoiceC
         C::Discard { .. } => "Discard",
         C::LibrarySearch { .. } => "LibrarySearch",
         C::SacrificePermanents { .. } => "SacrificePermanents",
+        C::ScryOrder { .. } => "ScryOrder",
+        C::Surveil { .. } => "Surveil",
         C::Modes { .. } => "Modes",
     }
 }
