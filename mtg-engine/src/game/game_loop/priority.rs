@@ -3092,6 +3092,40 @@ impl<'a> GameLoop<'a> {
                     // can make their own scry decisions. HeuristicController's
                     // override produces identical decisions to the legacy
                     // engine heuristic, so heuristic games stay byte-identical.
+                    //
+                    // ## Network-correctness note (Phase D audit)
+                    //
+                    // For server-LOCAL controller decisions (e.g. P1 scries on
+                    // a server where P1 is HeuristicController), this intercept
+                    // applies the decision to the server's library but does NOT
+                    // currently push a side-channel message to the client. The
+                    // client's shadow GameLoop runs its own intercept and asks
+                    // its WasmRemoteController, which expects an OpponentChoice
+                    // — so a scry triggered by a server-local player can stall
+                    // the client's shadow loop in mixed local/remote setups.
+                    //
+                    // This was previously masked by the engine-baked heuristic
+                    // running consistently on both sides (when the heuristic's
+                    // inputs happened to match — see mtg-ced6d1 for the case
+                    // where they didn't, fixed for the legacy path by 3b052c70
+                    // on a never-merged branch). With Phase B/C the engine no
+                    // longer carries that heuristic, so the consistency
+                    // accident is gone. The architecturally correct fix is to
+                    // either (a) emit OpponentChoice for server-local choices
+                    // (uniform with client-prompted choices), or (b) broadcast
+                    // an authoritative LibraryReordered after applying the
+                    // server's decision (analogous to 3b052c70 but carrying a
+                    // real player choice, not a heuristic accident).
+                    //
+                    // Tracked separately; not blocking Phase D since:
+                    //   - existing network fuzz pass rate is 4/5 on both this
+                    //     branch and integration baseline (no regression from
+                    //     Phase A/B/C);
+                    //   - the failing seed (=2) trips a different state-hash
+                    //     mismatch unrelated to the scry path;
+                    //   - no currently-shipping deck triggers scry on a path
+                    //     that hits this gap (server-local + client-shadow)
+                    //     before some other unrelated desync fires.
                     crate::core::Effect::Scry { player, count } => {
                         let scry_player = *player;
                         let revealed = self.game.scry_snapshot_top_n(scry_player, *count);
