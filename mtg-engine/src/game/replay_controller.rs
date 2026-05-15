@@ -33,6 +33,20 @@ pub enum ReplayChoice {
     Modes(SmallVec<[usize; 4]>),
     /// Choice of X value for X-cost spells
     XValue(u8),
+    /// Choice for a Scry effect — full partition of the revealed cards
+    /// (top + bottom), stored bottom-up exactly like
+    /// [`crate::game::ScryDecision`].
+    Scry {
+        top: SmallVec<[CardId; 4]>,
+        bottom: SmallVec<[CardId; 4]>,
+    },
+    /// Choice for a Surveil effect — full partition of the revealed cards
+    /// (top + graveyard), stored bottom-up exactly like
+    /// [`crate::game::SurveilDecision`].
+    Surveil {
+        top: SmallVec<[CardId; 4]>,
+        graveyard: SmallVec<[CardId; 4]>,
+    },
 }
 
 /// Controller that replays a sequence of choices then delegates to another controller
@@ -260,6 +274,46 @@ impl PlayerController for ReplayController {
 
         // No replay choice available, delegate to inner controller
         self.inner.choose_cards_to_discard(view, hand, count)
+    }
+
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::ScryDecision> {
+        if let Some(decision) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::Scry { top, bottom } = c {
+                Some(crate::game::ScryDecision {
+                    top: top.clone(),
+                    bottom: bottom.clone(),
+                })
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(decision);
+        }
+        self.inner.choose_scry_order(view, revealed)
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::SurveilDecision> {
+        if let Some(decision) = self.consume_replay_choice(|c| {
+            if let ReplayChoice::Surveil { top, graveyard } = c {
+                Some(crate::game::SurveilDecision {
+                    top: top.clone(),
+                    graveyard: graveyard.clone(),
+                })
+            } else {
+                None
+            }
+        }) {
+            return ChoiceResult::Ok(decision);
+        }
+        self.inner.choose_surveil(view, revealed)
     }
 
     fn choose_from_library(

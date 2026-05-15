@@ -1462,67 +1462,77 @@ impl GameState {
     ///
     /// Returns Ok(()) even if library has fewer than N cards.
     pub fn scry_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
-        // Get the top N cards from library (without removing them yet)
-        // Gracefully handle missing zones (can happen if player has lost the game
-        // but triggered effects are still resolving)
-        let top_cards: SmallVec<[CardId; 4]> = {
-            let Some(zones) = self.get_player_zones(player_id) else {
-                return Ok(());
-            };
+        // Wrapper for legacy callers (and the trigger-resolution / `execute_effect`
+        // fallback path) that don't have controller access. Keeps the original
+        // engine-baked heuristic so observable behaviour is unchanged for paths
+        // that don't yet route through the controller.
+        let revealed = self.scry_snapshot_top_n(player_id, count);
+        if revealed.is_empty() {
+            return Ok(());
+        }
+        let decision = self.scry_default_heuristic_decision(player_id, &revealed);
+        self.scry_apply_decision(player_id, &revealed, &decision)
+    }
 
-            zones
-                .library
-                .cards
-                .iter()
-                .rev() // Top of library is last in vec
-                .take(count as usize)
-                .copied()
-                .collect()
+    /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
+    /// anything. Returns the cards top-down (`result[0]` is the current top
+    /// of the library). Returns an empty vec if the player has no zones or
+    /// an empty library.
+    ///
+    /// This is the "look at the top N cards" half of scry/surveil; the
+    /// caller then asks the controller for a decision and feeds the result
+    /// to [`scry_apply_decision`] (or [`surveil_apply_decision`]).
+    pub fn scry_snapshot_top_n(&self, player_id: PlayerId, count: u8) -> SmallVec<[CardId; 4]> {
+        let Some(zones) = self.get_player_zones(player_id) else {
+            return SmallVec::new();
         };
+        zones
+            .library
+            .cards
+            .iter()
+            .rev() // Top of library is last in vec
+            .take(count as usize)
+            .copied()
+            .collect()
+    }
 
-        if top_cards.is_empty() {
-            // Nothing to scry
+    /// Apply a scry decision to the library, after the controller has chosen
+    /// how to partition the revealed cards.
+    ///
+    /// `revealed` MUST be the same slice produced by
+    /// [`scry_snapshot_top_n`]; together they describe the cards the
+    /// controller saw. `decision.top` and `decision.bottom` together must
+    /// be a partition of `revealed`. Both decision vectors are stored
+    /// **bottom-up** so they can be applied directly via `library.cards.push()`
+    /// (see [`crate::game::ScryDecision`] for the convention).
+    ///
+    /// Emits the same logger messages the previous engine-baked
+    /// implementation did so existing snapshots / e2e logs are unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok(())` even when `revealed` is empty (nothing to do) or
+    /// when `player_id`'s zones are missing (player has lost the game but
+    /// triggered effects are still resolving). The result type is
+    /// reserved for future failure modes (e.g. structured logging /
+    /// undo-log allocation) so all callers thread `?` uniformly.
+    pub fn scry_apply_decision(
+        &mut self,
+        player_id: PlayerId,
+        revealed: &[CardId],
+        decision: &crate::game::ScryDecision,
+    ) -> Result<()> {
+        if revealed.is_empty() {
             return Ok(());
         }
 
-        // AI heuristic: Decide which cards to keep on top vs put on bottom
-        // Simple heuristic: keep spells (non-lands) on top, put lands on bottom
-        // unless we're short on lands
-        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
-        let mut put_on_bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+        // Log the scry action FIRST so message ordering matches the
+        // pre-refactor implementation exactly.
+        let card_name = self.cards.try_get(revealed[0]).map(|c| c.name.clone());
 
-        // Count lands in hand to decide if we want more lands
-        let lands_in_hand = self
-            .get_player_zones(player_id)
-            .map(|z| {
-                z.hand
-                    .cards
-                    .iter()
-                    .filter(|&cid| self.cards.try_get(*cid).is_some_and(|c| c.is_land()))
-                    .count()
-            })
-            .unwrap_or(0);
-
-        // If we have 3+ lands in hand, we probably don't need more
-        let want_lands = lands_in_hand < 3;
-
-        for card_id in &top_cards {
-            let is_land = self.cards.try_get(*card_id).is_some_and(|c| c.is_land());
-            if is_land && !want_lands {
-                // Put excess lands on bottom
-                put_on_bottom.push(*card_id);
-            } else {
-                // Keep spells and needed lands on top
-                keep_on_top.push(*card_id);
-            }
-        }
-
-        // Log the scry action
-        let card_name = self.cards.try_get(top_cards[0]).map(|c| c.name.clone());
-
-        if top_cards.len() == 1 {
+        if revealed.len() == 1 {
             let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
-            if put_on_bottom.is_empty() {
+            if decision.bottom.is_empty() {
                 self.logger
                     .normal(&format!("P{} scries 1, keeps {} on top", player_id.as_u32() + 1, name));
             } else {
@@ -1536,36 +1546,95 @@ impl GameState {
             self.logger.normal(&format!(
                 "P{} scries {}, keeps {} on top, puts {} on bottom",
                 player_id.as_u32() + 1,
-                top_cards.len(),
-                keep_on_top.len(),
-                put_on_bottom.len()
+                revealed.len(),
+                decision.top.len(),
+                decision.bottom.len()
             ));
         }
 
-        // Now rearrange the library:
-        // 1. Remove all scried cards from their positions
-        // 2. Put "bottom" cards at the actual bottom of library
-        // 3. Put "top" cards back at the top
-
         if let Some(zones) = self.get_player_zones_mut(player_id) {
-            // Remove all scried cards from library
-            for card_id in &top_cards {
+            // Remove all revealed cards from library (they were on top).
+            for card_id in revealed {
                 zones.library.remove(*card_id);
             }
 
-            // Put "bottom" cards at the beginning (bottom of library)
-            // Insert at position 0 to put at bottom
-            for card_id in put_on_bottom.iter().rev() {
+            // Put "bottom" cards at the absolute bottom. `decision.bottom`
+            // is bottom-up, so iterating in reverse and inserting at index
+            // 0 leaves the first element at the deepest position.
+            for card_id in decision.bottom.iter().rev() {
                 zones.library.cards.insert(0, *card_id);
             }
 
-            // Put "top" cards at the end (top of library)
-            for card_id in keep_on_top {
+            // Put "top" cards back. `decision.top` is bottom-up, so the
+            // last element of `decision.top` ends up on top of the library
+            // (matching the meaning documented on ScryDecision).
+            for &card_id in decision.top.iter() {
                 zones.library.cards.push(card_id);
             }
         }
 
         Ok(())
+    }
+
+    /// Compute the default ("engine heuristic") scry decision for a set of
+    /// revealed cards. This is the same logic that was previously baked
+    /// into `scry_cards` directly:
+    ///   - count lands in hand;
+    ///   - if we have 3 or more lands, push excess revealed lands to the
+    ///     bottom; otherwise keep them on top;
+    ///   - everything that isn't an "excess land" stays on top in
+    ///     revealed (top-down) order.
+    ///
+    /// Used by:
+    ///  - the `scry_cards` legacy wrapper above, and
+    ///  - the [`crate::game::HeuristicController`] override, so heuristic
+    ///    games produce byte-identical decisions whether the dispatch
+    ///    happens via the wrapper or through the controller pipeline.
+    pub fn scry_default_heuristic_decision(
+        &self,
+        player_id: PlayerId,
+        revealed: &[CardId],
+    ) -> crate::game::ScryDecision {
+        let lands_in_hand = self
+            .get_player_zones(player_id)
+            .map(|z| {
+                z.hand
+                    .cards
+                    .iter()
+                    .filter(|&cid| self.cards.try_get(*cid).is_some_and(|c| c.is_land()))
+                    .count()
+            })
+            .unwrap_or(0);
+        let want_lands = lands_in_hand < 3;
+
+        // Walk revealed cards top-down, partitioning them into "keep" /
+        // "bottom" piles in the order they were seen.
+        //
+        // The pre-refactor implementation then did:
+        //   for &c in keep_on_top.iter() { library.cards.push(c); }
+        //   for &c in put_on_bottom.iter().rev() { library.cards.insert(0, c); }
+        // After applying [`scry_apply_decision`] (which mirrors that code
+        // exactly), the resulting library is byte-identical iff:
+        //   decision.top    == keep   (interpreted bottom-up: last element
+        //                              becomes the new top of library)
+        //   decision.bottom == bottom (interpreted bottom-up: first element
+        //                              becomes the new absolute bottom)
+        // i.e. we DO NOT reverse here. This intentionally reproduces the
+        // old engine's quirk where revealing [A, B, C] (A=top) and keeping
+        // all on top moves C to the new top of library — that's what the
+        // pre-refactor heuristic did and Phase B preserves it for parity.
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut bottom: SmallVec<[CardId; 4]> = SmallVec::new();
+        for card_id in revealed {
+            let is_land = self.cards.try_get(*card_id).is_some_and(|c| c.is_land());
+            if is_land && !want_lands {
+                bottom.push(*card_id);
+            } else {
+                top.push(*card_id);
+            }
+        }
+
+        crate::game::ScryDecision { top, bottom }
     }
 
     /// Surveil N cards (CR 701.42)
@@ -1580,52 +1649,67 @@ impl GameState {
     ///
     /// Returns an error if player zones cannot be found.
     pub fn surveil_cards(&mut self, player_id: PlayerId, count: u8) -> Result<()> {
-        // Get the top N cards from library
-        // Gracefully handle missing zones (can happen if player has lost the game
-        // but triggered effects are still resolving)
-        let top_cards: SmallVec<[CardId; 4]> = {
-            let Some(zones) = self.get_player_zones(player_id) else {
-                return Ok(());
-            };
+        // Wrapper for legacy callers (and the trigger-resolution / `execute_effect`
+        // fallback path) that don't have controller access. Keeps the original
+        // engine-baked heuristic so observable behaviour is unchanged for paths
+        // that don't yet route through the controller.
+        let revealed = self.surveil_snapshot_top_n(player_id, count);
+        if revealed.is_empty() {
+            return Ok(());
+        }
+        let decision = self.surveil_default_heuristic_decision(player_id, &revealed);
+        self.surveil_apply_decision(player_id, &revealed, &decision)
+    }
 
-            zones.library.cards.iter().rev().take(count as usize).copied().collect()
+    /// Snapshot the top N cards of `player_id`'s library WITHOUT mutating
+    /// anything. Returns the cards top-down (`result[0]` is the current
+    /// top of the library). Returns an empty vec if the player has no
+    /// zones or an empty library.
+    pub fn surveil_snapshot_top_n(&self, player_id: PlayerId, count: u8) -> SmallVec<[CardId; 4]> {
+        let Some(zones) = self.get_player_zones(player_id) else {
+            return SmallVec::new();
         };
+        zones.library.cards.iter().rev().take(count as usize).copied().collect()
+    }
 
-        if top_cards.is_empty() {
+    /// Apply a surveil decision to the library and graveyard, after the
+    /// controller has chosen how to partition the revealed cards.
+    ///
+    /// `revealed` MUST be the same slice produced by
+    /// [`surveil_snapshot_top_n`]. `decision.top` and `decision.graveyard`
+    /// together must be a partition of `revealed`. `decision.top` is
+    /// stored bottom-up (last element ends up on top of library);
+    /// `decision.graveyard` is stored in placement order (first element
+    /// ends up deepest in the graveyard pile).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Ok(())` even when `revealed` is empty (nothing to do) or
+    /// when `player_id`'s zones are missing. The result type is reserved
+    /// for future failure modes so all callers thread `?` uniformly.
+    pub fn surveil_apply_decision(
+        &mut self,
+        player_id: PlayerId,
+        revealed: &[CardId],
+        decision: &crate::game::SurveilDecision,
+    ) -> Result<()> {
+        if revealed.is_empty() {
             return Ok(());
         }
 
-        // AI heuristic: decide which cards to keep on top vs put into graveyard
-        // Keep creatures and lands on top; put instants/sorceries/other into graveyard
-        // (fuels graveyard strategies like Flashback, Escape, etc.)
-        let mut keep_on_top: SmallVec<[CardId; 4]> = SmallVec::new();
-        let mut put_in_graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
-
-        for &card_id in &top_cards {
-            let dominated_by_creature_or_land = self
-                .cards
-                .try_get(card_id)
-                .is_some_and(|c| c.is_creature() || c.is_land());
-
-            if dominated_by_creature_or_land {
-                keep_on_top.push(card_id);
-            } else {
-                put_in_graveyard.push(card_id);
-            }
-        }
-
-        // Log the surveil action
+        // Log the surveil action FIRST so message ordering matches the
+        // pre-refactor implementation exactly.
         self.logger.gamelog(&format!(
             "P{} surveils {}, keeps {} on top, puts {} into graveyard",
             player_id.as_u32() + 1,
-            top_cards.len(),
-            keep_on_top.len(),
-            put_in_graveyard.len()
+            revealed.len(),
+            decision.top.len(),
+            decision.graveyard.len()
         ));
 
-        // Move cards to graveyard first
-        for card_id in &put_in_graveyard {
-            // Remove from library and move to graveyard
+        // Move graveyard cards first (in the order chosen — first element
+        // ends up deepest in the graveyard pile, matching push semantics).
+        for card_id in &decision.graveyard {
             if let Some(zones) = self.get_player_zones_mut(player_id) {
                 zones.library.remove(*card_id);
             }
@@ -1634,18 +1718,56 @@ impl GameState {
             }
         }
 
-        // Rearrange remaining cards: remove from current positions, put back on top
+        // Rearrange remaining cards: remove from current positions, put
+        // back on top in the order chosen. `decision.top` is bottom-up
+        // (last element ends up on top of library).
         if let Some(zones) = self.get_player_zones_mut(player_id) {
-            for card_id in &keep_on_top {
+            for card_id in &decision.top {
                 zones.library.remove(*card_id);
             }
-            // Put kept cards back on top of library
-            for card_id in keep_on_top {
+            for &card_id in &decision.top {
                 zones.library.cards.push(card_id);
             }
         }
 
         Ok(())
+    }
+
+    /// Compute the default ("engine heuristic") surveil decision: keep
+    /// creatures and lands on top; put instants / sorceries / everything
+    /// else into the graveyard (fuels graveyard strategies like Flashback
+    /// and Escape). This is the same logic that was previously baked
+    /// into `surveil_cards` directly.
+    ///
+    /// Used by:
+    ///  - the `surveil_cards` legacy wrapper above, and
+    ///  - the [`crate::game::HeuristicController`] override, so heuristic
+    ///    games produce byte-identical decisions whether the dispatch
+    ///    happens via the wrapper or through the controller pipeline.
+    pub fn surveil_default_heuristic_decision(
+        &self,
+        _player_id: PlayerId,
+        revealed: &[CardId],
+    ) -> crate::game::SurveilDecision {
+        // Walk revealed cards top-down. As with scry, the pre-refactor
+        // implementation pushed `keep_on_top` directly into
+        // `library.cards`, so we DO NOT reverse — `decision.top` is
+        // simply the keep pile in revealed (top-down) order, interpreted
+        // bottom-up by [`surveil_apply_decision`].
+        let mut top: SmallVec<[CardId; 4]> = SmallVec::new();
+        let mut graveyard: SmallVec<[CardId; 4]> = SmallVec::new();
+        for &card_id in revealed {
+            let dominated_by_creature_or_land = self
+                .cards
+                .try_get(card_id)
+                .is_some_and(|c| c.is_creature() || c.is_land());
+            if dominated_by_creature_or_land {
+                top.push(card_id);
+            } else {
+                graveyard.push(card_id);
+            }
+        }
+        crate::game::SurveilDecision { top, graveyard }
     }
 
     /// Counter a spell on the stack

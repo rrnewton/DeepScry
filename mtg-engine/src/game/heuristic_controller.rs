@@ -5849,6 +5849,49 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(worst_blocker)
     }
 
+    fn choose_scry_order(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::ScryDecision> {
+        // Mirror the legacy GameState heuristic exactly so games driven by
+        // HeuristicController are byte-identical to the pre-refactor behavior.
+        // All the relevant state (hand, card types) is read-only and lives
+        // on the GameState — delegating keeps the heuristic in one place.
+        let player_id = view.player_id();
+        let decision = view.game().scry_default_heuristic_decision(player_id, revealed);
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Scry {}: keep {} on top, {} on bottom",
+                revealed.len(),
+                decision.top.len(),
+                decision.bottom.len(),
+            ),
+        );
+        ChoiceResult::Ok(decision)
+    }
+
+    fn choose_surveil(
+        &mut self,
+        view: &GameStateView,
+        revealed: &[CardId],
+    ) -> ChoiceResult<crate::game::SurveilDecision> {
+        // Mirror the legacy GameState heuristic exactly.
+        let player_id = view.player_id();
+        let decision = view.game().surveil_default_heuristic_decision(player_id, revealed);
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Surveil {}: keep {} on top, mill {} to graveyard",
+                revealed.len(),
+                decision.top.len(),
+                decision.graveyard.len(),
+            ),
+        );
+        ChoiceResult::Ok(decision)
+    }
+
     fn choose_cards_to_discard(
         &mut self,
         view: &GameStateView,
