@@ -312,13 +312,17 @@ pub enum ServerMessage {
     /// `ListGames` is fine. We deliberately reuse `Error { fatal: true }`
     /// semantics here — the connection closes after this message so the
     /// client can retry with a fresh socket later.
+    ///
+    /// SECURITY: The wire-visible payload is intentionally generic — host
+    /// memory percentages and the configured ceiling are NOT exposed to the
+    /// client (they would leak server infrastructure detail). The server
+    /// logs the precise values at `warn` level for operators. See
+    /// `build_server_full_message` in `network::lobby`.
     ServerFull {
-        /// Human-readable reason (includes used/ceiling % if known).
+        /// Generic, opaque reason intended for end users (e.g. "Server is
+        /// full, try again later"). Must not include host memory metrics or
+        /// any other operational telemetry.
         reason: String,
-        /// Host memory used as a percentage of total (None on non-Linux).
-        system_memory_used_percent: Option<u32>,
-        /// Configured ceiling as a percentage.
-        max_memory_percent: u32,
     },
 
     /// `JoinGame` rejected for a non-capacity reason.

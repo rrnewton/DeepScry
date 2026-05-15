@@ -636,7 +636,16 @@ async fn server_full_when_memory_ceiling_is_one_percent() {
     )
     .await;
     match recv(&mut creator).await {
-        ServerMessage::ServerFull { max_memory_percent, .. } => assert_eq!(max_memory_percent, 1),
+        ServerMessage::ServerFull { reason } => {
+            // Wire payload must be the fixed generic string — host memory %
+            // and the configured ceiling must NOT be exposed to the client.
+            assert!(
+                reason.eq_ignore_ascii_case("Server is full, try again later."),
+                "ServerFull.reason was {reason:?} (must be the fixed generic string)"
+            );
+            assert!(!reason.contains('%'), "ServerFull leaks a percent: {reason}");
+            assert!(!reason.contains('1'), "ServerFull leaks the ceiling value: {reason}");
+        }
         other => {
             // Non-Linux returns Admit, so the create succeeds. Only assert the
             // ServerFull case on Linux.

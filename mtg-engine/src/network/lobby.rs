@@ -204,19 +204,25 @@ pub fn hash_game_password(plain: &str) -> u64 {
 ///
 /// Centralised so the legacy `Authenticate` path and the new
 /// `CreateGame`/`JoinGame` paths produce identical wire output.
+///
+/// SECURITY: The client-visible `reason` is intentionally generic. Detailed
+/// memory metrics (`used_percent`, `ceiling_percent`) are logged server-side
+/// at `warn` level only — they are never put on the wire. Leaking host
+/// memory percentages to anonymous WebSocket peers would help attackers
+/// fingerprint the host and time DoS pressure. See `protocol::ServerMessage::ServerFull`.
 pub fn build_server_full_message(used_percent: Option<u32>, ceiling_percent: u32) -> ServerMessage {
-    let reason = match used_percent {
+    // Operator-visible diagnostic — stays in server logs only.
+    match used_percent {
         Some(used) => {
-            format!("Server full: host memory at {used}% used (ceiling {ceiling_percent}%). Try again shortly.",)
+            log::warn!("Rejecting connection: host memory at {used}% used (ceiling {ceiling_percent}%)");
         }
         None => {
-            format!("Server full: host memory cannot be measured but ceiling is {ceiling_percent}%. Try again shortly.",)
+            log::warn!("Rejecting connection: host memory cannot be measured (ceiling {ceiling_percent}%)");
         }
-    };
+    }
+
     ServerMessage::ServerFull {
-        reason,
-        system_memory_used_percent: used_percent,
-        max_memory_percent: ceiling_percent,
+        reason: "Server is full, try again later.".to_string(),
     }
 }
 
@@ -284,38 +290,43 @@ mod tests {
         assert_ne!(hash_game_password("hunter2"), hash_game_password("hunter3"));
     }
 
+    /// SECURITY: the wire payload must be a fixed, generic string. Memory
+    /// percentages and the configured ceiling must NOT appear in the
+    /// client-visible `reason` — they are logged server-side only.
     #[test]
-    fn build_server_full_message_includes_known_percent() {
-        let msg = build_server_full_message(Some(85), 80);
-        match msg {
-            ServerMessage::ServerFull {
-                reason,
-                system_memory_used_percent,
-                max_memory_percent,
-            } => {
-                assert!(reason.contains("85%"), "reason was {reason}");
-                assert!(reason.contains("80%"));
-                assert_eq!(system_memory_used_percent, Some(85));
-                assert_eq!(max_memory_percent, 80);
+    fn build_server_full_message_does_not_leak_host_memory() {
+        for (used, ceiling) in [(Some(85u32), 80u32), (None, 90u32), (Some(99), 1)] {
+            let msg = build_server_full_message(used, ceiling);
+            match msg {
+                ServerMessage::ServerFull { reason } => {
+                    // Generic, operator-free message.
+                    assert!(
+                        reason.eq_ignore_ascii_case("Server is full, try again later."),
+                        "reason was {reason:?} (must be the fixed generic string)"
+                    );
+                    // Defence-in-depth: explicitly forbid leaking metrics.
+                    assert!(!reason.contains('%'), "reason leaks a percent sign: {reason}");
+                    if let Some(u) = used {
+                        assert!(
+                            !reason.contains(&u.to_string()),
+                            "reason leaks used_percent={u}: {reason}"
+                        );
+                    }
+                    assert!(
+                        !reason.contains(&ceiling.to_string()),
+                        "reason leaks ceiling_percent={ceiling}: {reason}"
+                    );
+                    assert!(
+                        !reason.to_lowercase().contains("memory"),
+                        "reason leaks the word 'memory': {reason}"
+                    );
+                    assert!(
+                        !reason.to_lowercase().contains("ceiling"),
+                        "reason leaks the word 'ceiling': {reason}"
+                    );
+                }
+                other => panic!("expected ServerFull, got {other:?}"),
             }
-            other => panic!("expected ServerFull, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn build_server_full_message_handles_unknown_percent() {
-        let msg = build_server_full_message(None, 90);
-        match msg {
-            ServerMessage::ServerFull {
-                reason,
-                system_memory_used_percent,
-                max_memory_percent,
-            } => {
-                assert!(reason.contains("cannot be measured"), "reason was {reason}");
-                assert_eq!(system_memory_used_percent, None);
-                assert_eq!(max_memory_percent, 90);
-            }
-            other => panic!("expected ServerFull, got {other:?}"),
         }
     }
 
