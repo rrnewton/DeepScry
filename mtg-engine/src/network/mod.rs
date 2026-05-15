@@ -34,7 +34,11 @@ mod client;
 #[cfg(feature = "network")]
 mod controller;
 #[cfg(feature = "network")]
+pub mod lobby;
+#[cfg(feature = "network")]
 mod local_controller;
+#[cfg(feature = "network")]
+pub mod memory;
 #[cfg(feature = "network")]
 mod mvar;
 #[cfg(feature = "network")]

@@ -169,11 +169,18 @@ impl NetworkMessage {
             ServerMessage::LibraryReordered { player, new_order } => {
                 Some(NetworkMessage::LibraryReordered { player, new_order })
             }
-            // Ignore connection/setup messages - handled during connection setup, not gameplay
+            // Ignore connection/setup messages - handled during connection setup, not gameplay.
+            // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed) are also
+            // pre-gameplay: the lobby flow consumes them before the in-game
+            // NetworkMessage stream begins, so they are never expected here.
             ServerMessage::AuthResult { .. }
             | ServerMessage::BugReportResult { .. }
             | ServerMessage::WaitingForOpponent
             | ServerMessage::GameStarted { .. }
+            | ServerMessage::GameList { .. }
+            | ServerMessage::GameCreated { .. }
+            | ServerMessage::ServerFull { .. }
+            | ServerMessage::JoinFailed { .. }
             | ServerMessage::SyncError { .. }
             | ServerMessage::Pong { .. } => None,
             // DebugStateDump only exists in debug builds

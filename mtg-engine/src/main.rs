@@ -659,9 +659,22 @@ enum Commands {
         no_color_logs: bool,
 
         /// Loop mode: keep running after each game, accepting new clients.
-        /// Without this flag, the server exits after the first game completes.
+        ///
+        /// **Note**: as of the lobby refactor (server-lobby-multiplexing) the
+        /// server is always long-lived and accepts multiple concurrent games.
+        /// This flag is kept for backwards compatibility with existing
+        /// scripts but no longer changes behaviour.
         #[arg(long, alias = "loop-mode")]
         r#loop: bool,
+
+        /// Maximum host memory utilisation as a percentage (0..=100).
+        ///
+        /// New `CreateGame`/`JoinGame` requests are denied with `ServerFull`
+        /// when `(MemTotal-MemAvailable)/MemTotal*100` exceeds this value.
+        /// `0` disables the gate. In-flight games are never killed by the
+        /// gate; only new admissions are refused. Default: 80.
+        #[arg(long, default_value = "80")]
+        max_memory_percent: u32,
     },
 
     /// Connect to a multiplayer game server
@@ -988,6 +1001,7 @@ async fn async_main() -> Result<()> {
             network_debug,
             no_color_logs,
             r#loop: loop_mode,
+            max_memory_percent,
         } => {
             run_server(
                 port,
@@ -1002,6 +1016,7 @@ async fn async_main() -> Result<()> {
                 network_debug,
                 no_color_logs,
                 loop_mode,
+                max_memory_percent,
             )
             .await?
         }
@@ -1123,6 +1138,7 @@ async fn run_server(
     network_debug: bool,
     no_color_logs: bool,
     loop_mode: bool,
+    max_memory_percent: u32,
 ) -> Result<()> {
     use mtg_forge_rs::network::{GameServer, ServerConfig};
 
@@ -1141,6 +1157,7 @@ async fn run_server(
         network_debug,
         no_color_logs,
         loop_mode,
+        max_memory_percent,
         ..Default::default()
     };
 
