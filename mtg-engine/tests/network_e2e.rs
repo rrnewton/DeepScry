@@ -339,7 +339,11 @@ mod websocket_integration {
         };
         send_message(&mut ws1, &auth_msg).await.expect("Failed to send auth");
 
-        // Should receive AuthResult
+        // Post-server-lobby (PR #9): legacy `Authenticate` now creates a
+        // lobby slot, so the first authenticator (creator) receives
+        // `GameCreated` instead of `AuthResult`. The legacy `AuthResult`
+        // is only sent to the JOINER (second authenticator). Accept either
+        // here, since this test only authenticates one client.
         let response = timeout(Duration::from_secs(2), receive_message(&mut ws1))
             .await
             .expect("Timeout waiting for auth result")
@@ -349,7 +353,10 @@ mod websocket_integration {
             ServerMessage::AuthResult { success, .. } => {
                 assert!(success, "Authentication should succeed");
             }
-            other => panic!("Expected AuthResult, got {:?}", other),
+            ServerMessage::GameCreated { .. } => {
+                // Lobby creator path — equivalent to a successful auth.
+            }
+            other => panic!("Expected AuthResult or GameCreated, got {:?}", other),
         }
 
         // Should then receive WaitingForOpponent

@@ -1136,7 +1136,13 @@ impl NetworkClient {
         };
         self.send_message(&auth_msg).await?;
 
-        // Wait for auth result
+        // Wait for auth result.
+        //
+        // Post-server-lobby (PR #9): the legacy `Authenticate` request now
+        // routes through the lobby. The CREATOR (first authenticator for a
+        // given default-lobby slot) gets `GameCreated`; the JOINER (second
+        // authenticator) gets the legacy `AuthResult { success: true }`.
+        // We accept either as a successful authentication.
         let response = self.receive_message().await?;
         match response {
             ServerMessage::AuthResult {
@@ -1163,8 +1169,31 @@ impl NetworkClient {
                     );
                 }
             }
+            ServerMessage::GameCreated {
+                game_name,
+                your_player_id,
+                your_name,
+            } => {
+                // Lobby creator path. Treat as a successful auth: update our
+                // player name from the server assignment if applicable.
+                if let Some(assigned_name) = your_name {
+                    self.config.player_name = Some(assigned_name.clone());
+                    log::info!(
+                        "Authenticated as '{}' (player {:?}) — created lobby game '{}'",
+                        assigned_name,
+                        your_player_id,
+                        game_name
+                    );
+                } else {
+                    log::info!(
+                        "Authenticated as player {:?} — created lobby game '{}'",
+                        your_player_id,
+                        game_name
+                    );
+                }
+            }
             _ => {
-                return Err(anyhow!("Unexpected response: expected AuthResult"));
+                return Err(anyhow!("Unexpected response: expected AuthResult or GameCreated"));
             }
         }
 
