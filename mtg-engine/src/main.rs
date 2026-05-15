@@ -9,8 +9,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use clap::{Parser, Subcommand, ValueEnum};
 use mtg_forge_rs::{
     game::{
-        random_controller::RandomController, zero_controller::ZeroController, FancyTuiController, GameLoop,
-        GameSnapshot, HeuristicController, InteractiveController, RichInputController, StopCondition, VerbosityLevel,
+        derive_player_seed, random_controller::RandomController, zero_controller::ZeroController, FancyTuiController,
+        GameLoop, GameSnapshot, HeuristicController, InteractiveController, PlayerSlot, RichInputController,
+        StopCondition, VerbosityLevel,
     },
     loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
@@ -1246,8 +1247,14 @@ async fn run_connect(
                 client.run_game(ctrl).await
             }
             ControllerType::Random => {
+                // The user-supplied --seed-player is the master seed for THIS client.
+                // We derive a per-slot seed using our actual player slot so that two
+                // clients started with the same --seed-player produce identical
+                // controller decisions for whichever slot the server assigned them.
+                // (See `crate::game::seed_derivation` for why salt-add over slot.)
+                let our_slot = PlayerSlot::from_index(our_player_id.as_u32() as usize).unwrap_or(PlayerSlot::P1);
                 let ctrl = if let Some(seed) = seed_resolved {
-                    RandomController::with_seed(our_player_id, seed)
+                    RandomController::with_seed(our_player_id, derive_player_seed(seed, our_slot))
                 } else {
                     let entropy_seed = SeedArg::FromEntropy.resolve();
                     log::warn!(
@@ -1263,7 +1270,13 @@ async fn run_connect(
                 client.run_game(ctrl).await
             }
             ControllerType::Heuristic => {
-                let ctrl = HeuristicController::new(our_player_id);
+                // Same per-slot derivation as the Random branch — heuristic controllers
+                // also have RNG state (`is_safe_to_hold_land_for_main2`), and a `--seed-player`
+                // that is silently dropped here would mean two clients on the same master seed
+                // produce different heuristic streams.
+                let our_slot = PlayerSlot::from_index(our_player_id.as_u32() as usize).unwrap_or(PlayerSlot::P1);
+                let seed = seed_resolved.map(|s| derive_player_seed(s, our_slot)).unwrap_or(0);
+                let ctrl = HeuristicController::with_seed(our_player_id, seed);
                 client.run_game(ctrl).await
             }
             ControllerType::Fixed => {
@@ -1546,7 +1559,7 @@ async fn run_tui(
         } else if let Some(seed_value) = seed_resolved {
             log::info!(
                 "Using derived P1 controller seed: {} (from master seed)",
-                seed_value.wrapping_add(0x1234_5678_9ABC_DEF0)
+                derive_player_seed(seed_value, PlayerSlot::P1)
             );
         }
 
@@ -1555,7 +1568,7 @@ async fn run_tui(
         } else if let Some(seed_value) = seed_resolved {
             log::info!(
                 "Using derived P2 controller seed: {} (from master seed)",
-                seed_value.wrapping_add(0xFEDC_BA98_7654_3210)
+                derive_player_seed(seed_value, PlayerSlot::P2)
             );
         }
     }
@@ -1607,11 +1620,14 @@ async fn run_tui(
         (p1.id, p2.id)
     };
 
-    // Derive controller seeds from master seed using salt constants
-    // Priority: explicit --seed-p1/--seed-p2 > derived from --seed > from_entropy (with warning)
-    // This ensures P1 and P2 get independent random streams from the same master seed
-    let p1_controller_seed = seed_p1_resolved.or_else(|| seed_resolved.map(|s| s.wrapping_add(0x1234_5678_9ABC_DEF0)));
-    let p2_controller_seed = seed_p2_resolved.or_else(|| seed_resolved.map(|s| s.wrapping_add(0xFEDC_BA98_7654_3210)));
+    // Derive controller seeds from master seed via the centralized
+    // `derive_player_seed` helper (see `crate::game::seed_derivation`).
+    // Priority: explicit --seed-p1/--seed-p2 > derived from --seed > from_entropy (with warning).
+    // This ensures P1 and P2 get independent random streams from the same master seed,
+    // and that every execution mode (native CLI, network, snapshot/resume, WASM) derives
+    // identical per-player seeds from the same master seed.
+    let p1_controller_seed = seed_p1_resolved.or_else(|| seed_resolved.map(|s| derive_player_seed(s, PlayerSlot::P1)));
+    let p2_controller_seed = seed_p2_resolved.or_else(|| seed_resolved.map(|s| derive_player_seed(s, PlayerSlot::P2)));
 
     // Create base controllers
     let base_controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> = match p1_type {
@@ -1670,7 +1686,28 @@ async fn run_tui(
             FancyTuiController::new(p1_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
-        ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
+        ControllerType::Heuristic => {
+            // First check whether we're resuming from a snapshot that captured
+            // heuristic RNG state — restore it byte-for-byte if so. Otherwise
+            // construct a fresh controller seeded from the master --seed via the
+            // canonical derivation (NOT `HeuristicController::new`, which would
+            // silently use seed 0 and produce identical heuristic decisions for
+            // every game regardless of --seed).
+            if let Some(ref snapshot) = loaded_snapshot {
+                if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                    &snapshot.p1_controller_state
+                {
+                    if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                        log::info!("Player 1 Heuristic controller restored from snapshot");
+                    }
+                    Box::new(heuristic_controller.clone())
+                } else {
+                    Box::new(HeuristicController::with_seed(p1_id, p1_controller_seed.unwrap_or(0)))
+                }
+            } else {
+                Box::new(HeuristicController::with_seed(p1_id, p1_controller_seed.unwrap_or(0)))
+            }
+        }
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
@@ -1797,7 +1834,25 @@ async fn run_tui(
             }
             Box::new(ctrl)
         }
-        ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
+        ControllerType::Heuristic => {
+            // Mirror P1's heuristic-restore logic — see the P1 branch above for
+            // the rationale (snapshot state takes precedence; otherwise seed
+            // from the canonical derive_player_seed(master, P2)).
+            if let Some(ref snapshot) = loaded_snapshot {
+                if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                    &snapshot.p2_controller_state
+                {
+                    if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                        log::info!("Player 2 Heuristic controller restored from snapshot");
+                    }
+                    Box::new(heuristic_controller.clone())
+                } else {
+                    Box::new(HeuristicController::with_seed(p2_id, p2_controller_seed.unwrap_or(0)))
+                }
+            } else {
+                Box::new(HeuristicController::with_seed(p2_id, p2_controller_seed.unwrap_or(0)))
+            }
+        }
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {
@@ -2226,9 +2281,9 @@ async fn run_profile(iterations: usize, seed: u64, deck_path: PathBuf) -> Result
         let p1_id = players[0];
         let p2_id = players[1];
 
-        // Use same salt constants as main game for consistency
-        let p1_seed = seed.wrapping_add(0x1234_5678_9ABC_DEF0);
-        let p2_seed = seed.wrapping_add(0xFEDC_BA98_7654_3210);
+        // Use the canonical seed-derivation helper for consistency with the main game path
+        let p1_seed = derive_player_seed(seed, PlayerSlot::P1);
+        let p2_seed = derive_player_seed(seed, PlayerSlot::P2);
 
         let mut controller1 = RandomController::with_seed(p1_id, p1_seed);
         let mut controller2 = RandomController::with_seed(p2_id, p2_seed);
@@ -2442,11 +2497,13 @@ async fn run_resume(
         log::info!("  Player 2: {} ({p2_type:?})\n", p2_name);
     }
 
-    // Derive controller seeds (override takes precedence, otherwise restore from snapshot)
-    // If overriding with no explicit seed and controller needs one, use master seed derivation
+    // Derive controller seeds (override takes precedence, otherwise restore from snapshot).
+    // If overriding with no explicit seed and controller needs one, use the centralized
+    // `derive_player_seed` helper so the resume command produces the same per-player seeds
+    // a fresh `mtg tui --seed=N` would.
     let p1_controller_seed = if override_p1.is_some() {
         // We're overriding P1 controller - use explicit override seed or derive from master seed
-        override_seed_p1_resolved.or_else(|| override_seed_resolved.map(|s| s.wrapping_add(0x1234_5678_9ABC_DEF0)))
+        override_seed_p1_resolved.or_else(|| override_seed_resolved.map(|s| derive_player_seed(s, PlayerSlot::P1)))
     } else {
         // Restoring P1 controller - override seed takes precedence, otherwise None (use snapshot state)
         override_seed_p1_resolved
@@ -2454,7 +2511,7 @@ async fn run_resume(
 
     let p2_controller_seed = if override_p2.is_some() {
         // We're overriding P2 controller - use explicit override seed or derive from master seed
-        override_seed_p2_resolved.or_else(|| override_seed_resolved.map(|s| s.wrapping_add(0xFEDC_BA98_7654_3210)))
+        override_seed_p2_resolved.or_else(|| override_seed_resolved.map(|s| derive_player_seed(s, PlayerSlot::P2)))
     } else {
         // Restoring P2 controller - override seed takes precedence, otherwise None (use snapshot state)
         override_seed_p2_resolved
@@ -2504,7 +2561,29 @@ async fn run_resume(
             FancyTuiController::new(p1_id, visual_stacks)
                 .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
-        ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
+        ControllerType::Heuristic => {
+            // On resume, prefer the snapshotted heuristic state (so the RNG
+            // stream continues exactly where the original run left off). If no
+            // heuristic state was captured (e.g. snapshot from before the
+            // Heuristic ControllerState variant existed), fall back to a fresh
+            // controller seeded via the canonical derive_player_seed.
+            if override_p1.is_some() || p1_controller_seed.is_some() {
+                let p1_seed = p1_controller_seed.unwrap_or(0);
+                if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                    log::info!("Player 1 Heuristic controller: fresh with seed {}", p1_seed);
+                }
+                Box::new(HeuristicController::with_seed(p1_id, p1_seed))
+            } else if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                &snapshot.p1_controller_state
+            {
+                if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                    log::info!("Player 1 Heuristic controller: restored from snapshot");
+                }
+                Box::new(heuristic_controller.clone())
+            } else {
+                Box::new(HeuristicController::with_seed(p1_id, 0))
+            }
+        }
         ControllerType::Fixed => {
             // Priority: CLI --p1-fixed-inputs > snapshot state > error
             if let Some(input) = &p1_fixed_inputs {
@@ -2601,7 +2680,26 @@ async fn run_resume(
             }
             Box::new(InteractiveController::with_numeric_choices(p2_id, numeric_choices))
         }
-        ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
+        ControllerType::Heuristic => {
+            // Mirror P1 resume logic — see the P1 Heuristic branch in `run_resume`
+            // for the snapshot-vs-fresh decision rationale.
+            if override_p2.is_some() || p2_controller_seed.is_some() {
+                let p2_seed = p2_controller_seed.unwrap_or(0);
+                if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                    log::info!("Player 2 Heuristic controller: fresh with seed {}", p2_seed);
+                }
+                Box::new(HeuristicController::with_seed(p2_id, p2_seed))
+            } else if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                &snapshot.p2_controller_state
+            {
+                if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
+                    log::info!("Player 2 Heuristic controller: restored from snapshot");
+                }
+                Box::new(heuristic_controller.clone())
+            } else {
+                Box::new(HeuristicController::with_seed(p2_id, 0))
+            }
+        }
         ControllerType::Fixed => {
             // Priority: CLI --p2-fixed-inputs > snapshot state > error
             if let Some(input) = &p2_fixed_inputs {

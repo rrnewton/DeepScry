@@ -38,6 +38,7 @@ pub mod random_controller;
 pub mod replay_controller;
 #[cfg(feature = "native-tui")]
 pub mod rich_input_controller;
+pub mod seed_derivation;
 pub mod snapshot;
 pub mod state;
 pub mod state_hash;
@@ -83,6 +84,7 @@ pub use random_controller::RandomController;
 pub use replay_controller::{ReplayChoice, ReplayController};
 #[cfg(feature = "native-tui")]
 pub use rich_input_controller::RichInputController;
+pub use seed_derivation::{derive_player_seed, PlayerSlot};
 pub use snapshot::{ControllerState, ControllerType, GameSnapshot, SnapshotError};
 pub use state::GameState;
 #[cfg(feature = "network")]

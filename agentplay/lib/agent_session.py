@@ -410,14 +410,25 @@ class ClaudeResumeSession:
 
 
 class MockSession:
-    """Deterministic mock session — picks a random valid choice each turn.
+    """DEPRECATED stub kept only for backwards-compatible imports.
 
-    Used by `agent_game.py --mock` and the unit tests so persistent mode can be
-    exercised end-to-end without burning API tokens.
+    Historically `agent_game.py --mock` plumbed a Python-side
+    `random.Random(seed)` through this class to make zero-token "fake agent"
+    decisions. That added a third independent RNG to the system (alongside
+    the engine RNG and the per-controller RNG), which silently caused the
+    same `--seed --mock` invocation to produce three DIFFERENT games across
+    the stop-and-go / persistent / WASM drivers.
+
+    The Python RNG path has been removed: `--mock` now collapses to the
+    engine-side `RandomController` (seeded via the centralized
+    `derive_player_seed`), and the three drivers are byte-identical for the
+    same seed. This stub remains so older imports don't break, but `ask()`
+    refuses to run — any caller that gets here is on a code path that needs
+    to be migrated to the engine-side controller.
     """
 
     def __init__(self, *, seed: int = 42, label: str = "mock") -> None:
-        self.rng = random.Random(seed)
+        del seed  # intentionally unused — see class docstring
         self.label = label
 
     def ask(
@@ -427,11 +438,14 @@ class MockSession:
         *,
         bug_detection: bool,
     ) -> AgentDecision:
-        del prompt_text, bug_detection
-        choice = self.rng.randint(0, valid_choice_count)
-        return AgentDecision(
-            choice_number=choice,
-            raw_response=f"{self.label} mock choice\n{choice}",
+        del prompt_text, valid_choice_count, bug_detection
+        raise NotImplementedError(
+            "MockSession.ask() was removed: --mock now uses engine-side "
+            "RandomController instead of a Python random.Random. If you "
+            "reach this method, your driver is still trying to feed mock "
+            "decisions through Python — switch to the engine-side path so "
+            "all three drivers (stop-and-go / persistent / WASM) stay "
+            "byte-identical for the same seed."
         )
 
     def close(self) -> None:

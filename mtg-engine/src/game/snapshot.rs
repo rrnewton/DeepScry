@@ -52,6 +52,13 @@ fn default_controller_type() -> ControllerType {
 ///
 /// This enum allows us to serialize and restore the state of different controller types.
 /// Each variant contains the full state needed to reconstruct the controller.
+///
+/// Stateless controllers (`Zero`, `Interactive`, `Replay` wrappers) don't appear
+/// here because they have nothing to preserve. Note that `Heuristic` IS stateful
+/// (it carries an RNG seeded from the master `--seed` and consumes it in
+/// `is_safe_to_hold_land_for_main2`); a previous version of this comment claimed
+/// otherwise and snapshots silently dropped the heuristic RNG state, causing
+/// stop-and-go runs to diverge from single-process runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "controller_type")]
 pub enum ControllerState {
@@ -60,8 +67,15 @@ pub enum ControllerState {
 
     /// Random controller with its own RNG state
     Random(crate::game::RandomController),
-    // Other controller types don't need state preservation:
-    // - Heuristic: Deterministic, no state needed
+
+    /// Heuristic AI controller with its own RNG state
+    ///
+    /// Preserving this is required for stop-and-go determinism: without it,
+    /// every snapshot reload would re-seed the heuristic RNG and the
+    /// `is_safe_to_hold_land_for_main2` coin flip would diverge from the
+    /// single-process run.
+    Heuristic(crate::game::HeuristicController),
+    // Remaining controller types don't need state preservation:
     // - Zero: Deterministic, no state needed
     // - Interactive: Human input, no state to preserve
     // - Replay: Wrapper around another controller (state handled separately)

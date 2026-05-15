@@ -409,6 +409,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             repo_root=repo_root,
         )
 
+    # Fast-path: if no player needs Python-driven decisions (i.e. no "agent"
+    # controllers), bypass the iterative replay loop and let the engine play
+    # itself to completion in a single subprocess. Without this, even a
+    # `--mock` / `--mode=random-vs-random` run would route every choice through
+    # Python's `random.Random(seed)`, which (a) burns no API tokens but
+    # (b) produces a different game from a vanilla
+    # `mtg tui --p1=random --p2=random --seed=N` run, breaking cross-driver
+    # equivalence. See `agentplay/test_mode_equivalence.py`.
+    p1_kind_initial = _controller_for_player(args.mode, "p1", mock=args.mock)
+    p2_kind_initial = _controller_for_player(args.mode, "p2", mock=args.mock)
+    if p1_kind_initial != "agent" and p2_kind_initial != "agent":
+        return _run_stop_and_go_engine_only(
+            args=args,
+            mtg_args=mtg_args,
+            engine=engine,
+            p1_kind=p1_kind_initial,
+            p2_kind=p2_kind_initial,
+        )
+
     try:
         snapshot = engine.start_game()
     except RuntimeError as exc:
@@ -701,15 +720,15 @@ def _run_persistent(
     # ------------------------------------------------------------------
     # Build per-player AgentSession objects (only the ones we need)
     # ------------------------------------------------------------------
+    # `--mock` no longer needs MockSession: `_controller_for_player(mock=True)`
+    # now returns "random", so the engine spawns its own RandomController for
+    # both players and Python is never asked to make a choice. We only build
+    # AgentSessions for actual `agent` controllers.
     sessions: dict[str, AgentSession] = {}
-    if args.mock:
-        sessions["p1"] = MockSession(seed=args.seed, label="p1-mock")
-        sessions["p2"] = MockSession(seed=args.seed + 1, label="p2-mock")
-    else:
-        if p1_kind == "agent":
-            sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
-        if p2_kind == "agent":
-            sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
+    if p1_kind == "agent":
+        sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
+    if p2_kind == "agent":
+        sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
 
     # ------------------------------------------------------------------
     # Run the loop
@@ -944,15 +963,146 @@ def _engine_controller_for_kind(kind: str) -> str:
 
     The persistent driver only knows two engine-side identities for a
     player: `tui` (Python pipes choices over stdin) or one of the engine's
-    built-in controllers (heuristic/random/zero/etc.). `agent` and `mock`
-    are Python-side concepts implemented as an InteractiveController.
+    built-in controllers (heuristic/random/zero/etc.). `agent` is a
+    Python-side concept implemented as an InteractiveController; `mock`
+    no longer reaches this function (it now collapses to `random` in
+    `_controller_for_player`).
     """
 
-    if kind in ("agent", "mock"):
+    if kind == "agent":
         return "tui"
     if kind in ("heuristic", "random", "zero"):
         return kind
     raise ValueError(f"unsupported controller kind for persistent driver: {kind!r}")
+
+
+def _run_stop_and_go_engine_only(
+    *,
+    args: argparse.Namespace,
+    mtg_args: Sequence[str],
+    engine: GameEngine,
+    p1_kind: str,
+    p2_kind: str,
+) -> int:
+    """Run the engine to completion in ONE subprocess for the stop-and-go driver.
+
+    Used when neither player needs a Python-driven decision (i.e. neither is
+    "agent"). The legacy iterative loop would still spawn the engine with
+    `--p1=fixed --p2=fixed` and feed each choice from a Python-side
+    `random.Random(seed)`, which produced a different game from what a vanilla
+    `mtg tui --p1=random --p2=random --seed=N` invocation produces. By going
+    direct here we guarantee that `--mock` / `--mode=random-vs-random` runs
+    are byte-identical across all three drivers.
+
+    Writes the same artefacts the iterative path would have left behind so
+    downstream tooling (and the equivalence tests) keep working: an empty
+    `pN_choices.txt` (no Python-driven decisions were made), `initial_args.txt`,
+    `game.log`, and a `snapshot.json` corresponding to the final engine state.
+    """
+
+    engine.game_dir.mkdir(parents=True, exist_ok=True)
+    engine.p1_choices_path.touch()
+    engine.p2_choices_path.touch()
+    if not engine.initial_args_path.exists():
+        engine.initial_args_path.write_text(
+            "\n".join(str(a) for a in mtg_args) + "\n", encoding="utf-8"
+        )
+    game_log_path = engine.game_dir / "game.log"
+    game_log_path.touch()
+
+    # Resolve cardsfolder the same way GameEngine._run_game does — including
+    # honouring the CARDSFOLDER env var (used by the equivalence tests when
+    # the worktree-local symlink is broken).
+    import os as _os_resolve
+
+    cardsfolder: Path | None = None
+    env_path = _os_resolve.environ.get("CARDSFOLDER")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.exists() and all((candidate / letter).is_dir() for letter in ("a", "b", "c")):
+            cardsfolder = candidate
+    if cardsfolder is None:
+        for candidate in (engine.cardsfolder_path, engine.forge_cardsfolder_path):
+            if candidate.exists() and all((candidate / letter).is_dir() for letter in ("a", "b", "c")):
+                cardsfolder = candidate
+                break
+    if cardsfolder is None:
+        print(
+            "Error: cardsfolder unavailable (forge-java submodule not initialized)",
+            file=sys.stderr,
+        )
+        return 1
+    if not engine.binary_path.exists():
+        print(
+            f"Error: MTG engine binary not found at {engine.binary_path}\n"
+            "Build it with: cargo build --release",
+            file=sys.stderr,
+        )
+        return 1
+
+    p1_engine = _engine_controller_for_kind(p1_kind)
+    p2_engine = _engine_controller_for_kind(p2_kind)
+    # We don't pass --max-turns because the engine doesn't currently expose
+    # one; the random-vs-random simple_bolt baseline games complete in a
+    # bounded number of choices (deck mills out / life goes to 0). If the
+    # engine ever gains a turn cap, threading args.max_turns here would be
+    # the place.
+    # No `--json` and no `--snapshot-output` here: the persistent driver runs
+    # the engine the same way, and matching its arg shape is what gives us
+    # byte-identical engine logs (the cross-mode equivalence test compares
+    # the engine's auto-saved /tmp/mtg_game_*.log files).
+    cmd = [
+        str(engine.binary_path),
+        "tui",
+        *mtg_args,
+        f"--p1={p1_engine}",
+        f"--p2={p2_engine}",
+        f"--seed={args.seed}",
+        "--verbosity=verbose",
+    ]
+    if args.verbose:
+        print(f"$ {' '.join(cmd)}", file=sys.stderr)
+
+    import os as _os
+
+    env = dict(_os.environ)
+    env["CARDSFOLDER"] = str(cardsfolder)
+    env.setdefault("RUST_LOG", "warn")
+    completed = subprocess.run(
+        cmd,
+        cwd=engine.repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    # The engine auto-saves its full structured game log to /tmp/mtg_game_*.log
+    # and announces the path on stderr ("Log saved to <path>"). Copy that file
+    # into the game directory as our `game.log` artefact so it's the same shape
+    # the iterative paths produce.
+    import re as _re_log
+
+    saved_path: Path | None = None
+    if completed.stderr:
+        match = _re_log.search(r"Log saved to (\S+)", completed.stderr)
+        if match:
+            saved_path = Path(match.group(1))
+        if args.verbose:
+            print(completed.stderr, file=sys.stderr, end="")
+    if saved_path is not None and saved_path.exists():
+        game_log_path.write_text(saved_path.read_text(encoding="utf-8"), encoding="utf-8")
+    elif completed.stderr:
+        # Fallback: at least preserve the engine's stderr so the user can see
+        # what happened.
+        game_log_path.write_text(completed.stderr, encoding="utf-8")
+    if completed.returncode != 0:
+        print(
+            f"engine exited with code {completed.returncode}",
+            file=sys.stderr,
+        )
+        return completed.returncode
+    print("Game over.", file=sys.stderr)
+    return 0
 
 
 def _build_agent_session(
@@ -986,13 +1136,14 @@ def _persistent_choose(
 ) -> AgentDecision:
     """Resolve a single decision in persistent mode.
 
-    For `agent`/`mock`, defer to the per-player AgentSession. For
-    `heuristic`/`random`, the engine itself is making the decision and the
-    Python harness should never get a ChoicePoint for that player — we
-    raise loudly if we do.
+    For `agent`, defer to the per-player AgentSession. For
+    `heuristic`/`random` (which now also covers `--mock`, since `--mock`
+    routes through the engine's RandomController), the engine itself is
+    making the decision and the Python harness should never get a
+    ChoicePoint for that player — we raise loudly if we do.
     """
 
-    if controller_kind in ("agent", "mock"):
+    if controller_kind == "agent":
         sess = sessions.get(player)
         if sess is None:
             raise RuntimeError(
@@ -1139,15 +1290,12 @@ def _run_wasm(
     # ------------------------------------------------------------------
     # Per-player AgentSession objects
     # ------------------------------------------------------------------
+    # `--mock` is now engine-side (see `_run_persistent` for the rationale).
     sessions: dict[str, AgentSession] = {}
-    if args.mock:
-        sessions["p1"] = MockSession(seed=args.seed, label="p1-mock")
-        sessions["p2"] = MockSession(seed=args.seed + 1, label="p2-mock")
-    else:
-        if p1_kind == "agent":
-            sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
-        if p2_kind == "agent":
-            sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
+    if p1_kind == "agent":
+        sessions["p1"] = _build_agent_session(args, intro_text, label="p1")
+    if p2_kind == "agent":
+        sessions["p2"] = _build_agent_session(args, intro_text, label="p2")
 
     # ------------------------------------------------------------------
     # Run the loop (mirrors `_run_persistent`)
@@ -1474,8 +1622,24 @@ def _choose_for_player(
 
 
 def _controller_for_player(mode: str, player: str, mock: bool = False) -> str:
+    """Resolve the per-player controller kind ("agent" / "random" / etc).
+
+    `--mock` historically returned `"mock"` here so the Python harness would
+    feed deterministic-but-Python-RNG-driven choices into the engine via
+    fixed/TUI controllers. That path put a Python `random.Random(seed)` in
+    front of the engine, and each driver (stop-and-go / persistent / WASM)
+    plumbed that RNG differently — so the same `--seed --mock` produced
+    three different games across the three drivers.
+
+    `--mock` now collapses to `"random"`, which routes every driver through
+    the engine's `RandomController` (seeded via the canonical
+    `derive_player_seed`). Net effect: `--mock --seed=N` reproduces the same
+    game across all three drivers, identical to a vanilla
+    `mtg tui --p1=random --p2=random --seed=N` run.
+    """
+
     if mock:
-        return "mock"
+        return "random"
     if mode == MODE_AGENT_VS_AGENT:
         return "agent"
     if mode == MODE_RANDOM_VS_RANDOM:

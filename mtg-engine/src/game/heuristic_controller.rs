@@ -81,36 +81,57 @@ enum ActivatedAbilityType {
 
 /// Heuristic AI controller that makes decisions using evaluation functions
 /// rather than simulation. Aims to faithfully reproduce Java Forge AI behavior.
+///
+/// `Clone`/`Serialize`/`Deserialize` are derived so that snapshot save/restore
+/// (see `crate::game::snapshot::ControllerState::Heuristic`) preserves the
+/// internal RNG state across stop-and-resume — without this, a heuristic
+/// player would "re-roll" its bluffing/land-hold coin flips after every
+/// snapshot reload, breaking determinism across execution modes.
+///
+/// Uses `Xoshiro256PlusPlus` (rather than `StdRng`) because it has serde
+/// support that survives JSON serialization without u128 fields, matching
+/// the choice already made for `RandomController`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HeuristicController {
     player_id: PlayerId,
     /// Aggression level for combat decisions (0 = defensive, 6 = all-in)
     /// Default is 3 (balanced). Matches Java's AiAttackController aggression.
     aggression_level: i32,
     /// RNG for probabilistic decisions (land drop timing, bluffing, etc.)
-    /// Seeded for deterministic behavior across runs
-    rng: rand::rngs::StdRng,
+    ///
+    /// Seeded via [`derive_player_seed`](crate::game::derive_player_seed) so
+    /// all execution modes (native CLI, network, snapshot/restore, WASM)
+    /// produce the same heuristic choice stream from the same master seed.
+    rng: rand_xoshiro::Xoshiro256PlusPlus,
 }
 
 impl HeuristicController {
-    /// Create a new heuristic controller with default settings
+    /// Create a heuristic controller with the default (zero) seed.
     ///
-    /// Uses a seeded RNG for deterministic behavior.
+    /// **Production callsites must NOT use this constructor.** It exists for
+    /// tests and evaluator scaffolding that don't exercise the probabilistic
+    /// heuristic branches (the lone `rng.gen_bool(0.5)` in
+    /// `is_safe_to_hold_land_for_main2`). Production callers should derive
+    /// a seed via [`crate::game::derive_player_seed`] and pass it to
+    /// [`with_seed`](Self::with_seed) — otherwise every heuristic game uses
+    /// seed 0 regardless of `--seed`, which silently breaks cross-mode
+    /// determinism (see `docs/NETWORK_ARCHITECTURE.md`).
     pub fn new(player_id: PlayerId) -> Self {
-        use rand::SeedableRng;
-        HeuristicController {
-            player_id,
-            aggression_level: 3,                       // Balanced aggression
-            rng: rand::rngs::StdRng::seed_from_u64(0), // Default seed
-        }
+        Self::with_seed(player_id, 0)
     }
 
-    /// Create a heuristic controller with a specific seed for deterministic behavior
+    /// Create a heuristic controller with a specific seed for deterministic behavior.
+    ///
+    /// This is the production constructor. Pass a seed derived from the master
+    /// `--seed` via [`crate::game::derive_player_seed`] so every execution mode
+    /// (single-process, network, snapshot/resume, WASM) makes the same
+    /// heuristic decisions for the same master seed.
     pub fn with_seed(player_id: PlayerId, seed: u64) -> Self {
         use rand::SeedableRng;
         HeuristicController {
             player_id,
             aggression_level: 3,
-            rng: rand::rngs::StdRng::seed_from_u64(seed),
+            rng: rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed),
         }
     }
 
@@ -6095,6 +6116,16 @@ impl PlayerController for HeuristicController {
 
     fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
         crate::game::snapshot::ControllerType::Heuristic
+    }
+
+    fn get_snapshot_state(&self) -> Option<serde_json::Value> {
+        // Wrap in ControllerState::Heuristic so the snapshot's JSON has the
+        // correct `"controller_type": "heuristic"` tag. Preserving the RNG
+        // state across snapshot/resume is required for stop-and-go runs to
+        // produce the same heuristic decisions as the equivalent
+        // single-process run.
+        let state = crate::game::ControllerState::Heuristic(self.clone());
+        serde_json::to_value(state).ok()
     }
 }
 

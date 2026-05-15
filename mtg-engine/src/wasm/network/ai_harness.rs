@@ -31,7 +31,8 @@ use super::game_init::{init_game_reserve_only_wasm, process_card_reveal_wasm};
 use super::{WasmNetworkLocalController, WasmRemoteController};
 use crate::core::PlayerId;
 use crate::game::{
-    GameLoop, GameLoopState, GameState, HeuristicController, RandomController, VerbosityLevel, ZeroController,
+    derive_player_seed, GameLoop, GameLoopState, GameState, HeuristicController, PlayerSlot, RandomController,
+    VerbosityLevel, ZeroController,
 };
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -137,14 +138,27 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
         game.players[0].id
     };
 
+    // Treat the JS-supplied `seed` as the MASTER seed (not a per-player seed)
+    // and derive our per-slot controller seed via the canonical helper. This
+    // keeps the WASM network harness in lockstep with the native CLI: two
+    // headless harnesses joining the same server with the same `--seed` will
+    // produce identical controller decisions for whichever slot the server
+    // assigns each one. Without this, the harness used to pass `seed as u64`
+    // verbatim, which silently disagreed with the native salt scheme and was
+    // a desync risk (see `docs/NETWORK_ARCHITECTURE.md`).
+    let our_slot = PlayerSlot::from_index(if we_are_p1 { 0 } else { 1 }).unwrap_or(PlayerSlot::P1);
+    let derived_seed = derive_player_seed(seed as u64, our_slot);
+
     // Create the controller for our player
     let controller = match controller_type {
         "random" | "rand" => {
-            let inner = RandomController::with_seed(our_player_id, seed as u64);
+            let inner = RandomController::with_seed(our_player_id, derived_seed);
             WasmAiControllerEnum::Random(WasmNetworkLocalController::new(inner, client.clone()))
         }
         "heuristic" | "heur" => {
-            let inner = HeuristicController::new(our_player_id);
+            // HeuristicController is stateful (see `is_safe_to_hold_land_for_main2`),
+            // so seed it with the same derived value so cross-mode determinism holds.
+            let inner = HeuristicController::with_seed(our_player_id, derived_seed);
             WasmAiControllerEnum::Heuristic(WasmNetworkLocalController::new(inner, client.clone()))
         }
         "zero" | _ => {

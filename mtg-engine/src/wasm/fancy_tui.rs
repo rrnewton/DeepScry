@@ -2147,8 +2147,11 @@ impl WasmFancyTuiState {
                 self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }
             WasmControllerType::Heuristic => {
-                // Heuristic controller
-                let inner = HeuristicController::new(our_player_id);
+                // Heuristic controller — same seeding rule as the Random branch above:
+                // seed from `self.controller_seed` so two clients with the same master
+                // seed produce identical heuristic decisions for whichever slot they're
+                // assigned. (HeuristicController::new would silently use seed 0.)
+                let inner = HeuristicController::with_seed(our_player_id, self.controller_seed);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
                 self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
             }

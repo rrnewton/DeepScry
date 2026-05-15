@@ -81,7 +81,8 @@ use wasm_bindgen::prelude::*;
 use crate::core::PlayerId;
 use crate::game::logger::OutputMode;
 use crate::game::{
-    GameLoop, GameState, HeuristicController, PlayerController, RandomController, VerbosityLevel, ZeroController,
+    derive_player_seed, GameLoop, GameState, HeuristicController, PlayerController, PlayerSlot, RandomController,
+    VerbosityLevel, ZeroController,
 };
 use crate::loader::{CardDefinition, DeckEntry, DeckList};
 
@@ -467,7 +468,11 @@ pub enum WasmControllerType {
 /// # Arguments
 /// * `controller_type` - The type of controller to create
 /// * `player_id` - The player ID this controller manages
-/// * `seed` - Random seed for RandomController
+/// * `seed` - Per-player seed (already derived from the master via
+///   [`crate::game::derive_player_seed`]). Both `Random` and `Heuristic`
+///   receive this seed; passing `0` means the controller's RNG starts from
+///   the same fixed point as a `--seed=0` native run, which is what callers
+///   want when they have no explicit seed configured.
 pub fn create_ai_controller(
     controller_type: WasmControllerType,
     player_id: crate::core::PlayerId,
@@ -476,7 +481,7 @@ pub fn create_ai_controller(
     match controller_type {
         WasmControllerType::Zero => Box::new(ZeroController::new(player_id)),
         WasmControllerType::Random => Box::new(RandomController::with_seed(player_id, seed)),
-        WasmControllerType::Heuristic => Box::new(HeuristicController::new(player_id)),
+        WasmControllerType::Heuristic => Box::new(HeuristicController::with_seed(player_id, seed)),
         WasmControllerType::Human
         | WasmControllerType::Fixed
         | WasmControllerType::Network
@@ -702,8 +707,15 @@ impl WasmGame {
         let p1_id = self.game.players[0].id;
         let p2_id = self.game.players[1].id;
 
-        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, self.game_seed);
-        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, self.game_seed.wrapping_add(1));
+        // Treat `self.game_seed` as the MASTER seed (not a P1 seed) and derive
+        // per-player seeds via the canonical helper. Replaces an earlier
+        // seed/seed+1 hack that was inconsistent with the native CLI's salt
+        // scheme and silently caused identical --seed runs in WASM and native
+        // to produce completely different choice streams.
+        let p1_seed = derive_player_seed(self.game_seed, PlayerSlot::P1);
+        let p2_seed = derive_player_seed(self.game_seed, PlayerSlot::P2);
+        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, p1_seed);
+        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, p2_seed);
 
         // Scope game_loop tightly so self.game can be accessed in match arms
         let result = {
@@ -735,8 +747,11 @@ impl WasmGame {
         let p1_id = self.game.players[0].id;
         let p2_id = self.game.players[1].id;
 
-        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, self.game_seed);
-        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, self.game_seed.wrapping_add(1));
+        // Same per-slot derivation as `run_ai_game` — see that method's comment.
+        let p1_seed = derive_player_seed(self.game_seed, PlayerSlot::P1);
+        let p2_seed = derive_player_seed(self.game_seed, PlayerSlot::P2);
+        let mut controller1 = create_ai_controller(self.p1_controller_type, p1_id, p1_seed);
+        let mut controller2 = create_ai_controller(self.p2_controller_type, p2_id, p2_seed);
 
         let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
 

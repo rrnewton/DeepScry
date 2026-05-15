@@ -5,8 +5,8 @@
 
 use crate::{
     game::{
-        random_controller::RandomController, zero_controller::ZeroController, GameLoop, HeuristicController,
-        VerbosityLevel,
+        derive_player_seed, random_controller::RandomController, zero_controller::ZeroController, GameLoop,
+        HeuristicController, PlayerSlot, VerbosityLevel,
     },
     loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
@@ -232,21 +232,24 @@ pub async fn run_tourney(
                     let p1_id = game.get_player_by_idx(0).expect("Should have player 1").id;
                     let p2_id = game.get_player_by_idx(1).expect("Should have player 2").id;
 
-                    // Derive controller seeds
-                    let p1_seed = game_seed.wrapping_add(0x1234_5678_9ABC_DEF0);
-                    let p2_seed = game_seed.wrapping_add(0xFEDC_BA98_7654_3210);
+                    // Derive per-player seeds via the centralized helper
+                    let p1_seed = derive_player_seed(game_seed, PlayerSlot::P1);
+                    let p2_seed = derive_player_seed(game_seed, PlayerSlot::P2);
 
-                    // Create controllers
+                    // Create controllers — note that Heuristic now also takes a seed
+                    // (its `is_safe_to_hold_land_for_main2` check uses RNG); without
+                    // an explicit seed, every tournament game would silently use the
+                    // same seed-0 heuristic stream regardless of `--seed`.
                     let mut controller1: Box<dyn crate::game::controller::PlayerController> = match p1_type {
                         ControllerType::Zero => Box::new(ZeroController::new(p1_id)),
                         ControllerType::Random => Box::new(RandomController::with_seed(p1_id, p1_seed)),
-                        ControllerType::Heuristic => Box::new(HeuristicController::new(p1_id)),
+                        ControllerType::Heuristic => Box::new(HeuristicController::with_seed(p1_id, p1_seed)),
                     };
 
                     let mut controller2: Box<dyn crate::game::controller::PlayerController> = match p2_type {
                         ControllerType::Zero => Box::new(ZeroController::new(p2_id)),
                         ControllerType::Random => Box::new(RandomController::with_seed(p2_id, p2_seed)),
-                        ControllerType::Heuristic => Box::new(HeuristicController::new(p2_id)),
+                        ControllerType::Heuristic => Box::new(HeuristicController::with_seed(p2_id, p2_seed)),
                     };
 
                     // Run game silently
@@ -260,8 +263,8 @@ pub async fn run_tourney(
             let game_seed = seed_resolved
                 .unwrap_or(42)
                 .wrapping_add((game_idx as u64).wrapping_mul(0x9E3779B97F4A7C15));
-            let p1_seed = game_seed.wrapping_add(0x1234_5678_9ABC_DEF0);
-            let p2_seed = game_seed.wrapping_add(0xFEDC_BA98_7654_3210);
+            let p1_seed = derive_player_seed(game_seed, PlayerSlot::P1);
+            let p2_seed = derive_player_seed(game_seed, PlayerSlot::P2);
 
             // Update statistics
             match game_result {
