@@ -3356,8 +3356,8 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
             factory.subtypes.iter().any(|s| s.as_str() == "Assembly-Worker"),
             "Factory must have Assembly-Worker subtype after animate"
         );
-        assert_eq!(factory.current_power() as i32, 2);
-        assert_eq!(factory.current_toughness() as i32, 2);
+        assert_eq!(i32::from(factory.current_power()), 2);
+        assert_eq!(i32::from(factory.current_toughness()), 2);
         assert!(!factory.tapped, "Factory must remain untapped after animate");
     }
 
@@ -3491,7 +3491,8 @@ async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
 
     // Replace the Lotus with a City of Brass (`PayLife(1)`) and a 1-mana
     // spell needing pain. Verify "1 damage from City of Brass" hint.
-    drop(view);
+    // (`view` borrows from `game`; just let it go out of scope by shadowing.)
+    let _ = view;
     game.battlefield.cards.retain(|&id| id != lotus_id);
     let cob_id = game.next_card_id();
     let mut cob = Card::new(cob_id, "City of Brass".to_string(), p0);

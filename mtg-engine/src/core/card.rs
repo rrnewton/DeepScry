@@ -499,9 +499,11 @@ impl CardCache {
         // If the card's mana ability is itself free (no sacrifice / pay-life)
         // but the card has *other* activated abilities, treat it as Utility so
         // the resolver prefers plain lands first.
-        let side_cost = match min_side_cost.unwrap_or_default() {
-            ManaSideCost::None if has_other_abilities => ManaSideCost::Utility,
-            other => other,
+        let base_side_cost = min_side_cost.unwrap_or_default();
+        let side_cost = if matches!(base_side_cost, ManaSideCost::None) && has_other_abilities {
+            ManaSideCost::Utility
+        } else {
+            base_side_cost
         };
 
         // Build ManaProduction from accumulated colors
