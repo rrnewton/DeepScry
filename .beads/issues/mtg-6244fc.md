@@ -1,0 +1,17 @@
+---
+title: 'Card: Heroes in a Half Shell'
+status: open
+priority: 3
+issue_type: task
+labels:
+- tmnt
+- single-card
+created_at: 2026-05-15T17:08:03.407270001+00:00
+updated_at: 2026-05-15T17:08:03.407270001+00:00
+---
+
+# Description
+
+Single-card tracking: Heroes in a Half Shell (TMC set)
+
+_Imported from tg task `tmnt-card-heroes-half-shell` (status was BACKLOG); priority preserved._

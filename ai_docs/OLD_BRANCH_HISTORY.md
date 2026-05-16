@@ -11,7 +11,7 @@ Conventions:
 - "Tagged X.vN" means the branch was archived as a Git tag (`git tag X.vN`)
   and the branch ref was deleted, per the `ARCHIVE` policy in CLAUDE.md.
 
-Last refreshed: 2026-05-13.
+Last refreshed: 2026-05-15.
 
 ---
 
@@ -170,6 +170,56 @@ preserve the tip commit so the branch can always be resurrected.
 
 ### `layout-engine`
 - Merged into integration. Branch deleted.
+
+### `fix-rng-determinism`, `fix-twin-blades-cycling`
+- ~1 day old (May 2026). RNG seed centralization and the Twin Blades
+  cycling/triggers/attach-source crash fix, respectively. Both
+  landed on integration before this cleanup pass; their `v1` tags
+  preserve the tips.
+
+### `fix-cycle-desync` (mtg-ced6d1)
+- ~1 day old (May 2026). Broadcasts `LibraryReordered` from the server
+  to clients after scry/surveil so the cycling/Mountaincycling network
+  desync (mtg-ced6d1) doesn't recur. Merged into integration in
+  `61f28fd9`. Tag `fix-cycle-desync.v1` preserves the tip.
+
+### `fix-seismic-sense` (mtg-c54e90)
+- ~1 day old (May 2026). Routes `Dig{target_self}` (e.g. Seismic
+  Sense) through `choose_from_library` so the network shadow client
+  has matching CardId visibility, fixing the FATAL state-hash
+  mismatch. Merged into integration in `5ff18f66`. Tag
+  `fix-seismic-sense.v1` preserves the tip.
+
+### `fix-scry-choice-pipeline`
+- ~1 day old (May 2026). Phase A-E refactor moving scry/surveil
+  decisions out of the engine-baked heuristic and into the
+  `PlayerController` choice pipeline. Adds 11 regression tests.
+  Merged into integration in `290fc29f`. Tag
+  `fix-scry-choice-pipeline.v1` preserves the tip. Merge required
+  resolving 6 conflicts against the cycle-desync fix; resolution
+  preserves the LibraryReordered broadcast (now triggered by the
+  caller-supplied decision instead of the heuristic).
+
+### `server-lobby` (PR #9)
+- Multi-game lobby with system-memory admission gate. Adds
+  `network/lobby.rs`, `network/memory.rs`, and `lobby_protocol.rs`
+  test suite. Server now accepts `CreateGame` / `JoinGame` /
+  `ListGames` in addition to legacy `Authenticate` (which is now
+  routed through the lobby creator path). Merged into integration in
+  `4e1a7f3d`. Tag `server-lobby.v1` preserves the tip. The merge
+  shipped a downstream native-client compatibility fix (`be58d80d`):
+  `NetworkClient::connect()` now accepts both `AuthResult` and
+  `GameCreated` because the legacy auth-as-creator path returns the
+  latter.
+
+### `build-test`
+- Short-lived experimental branch used for the deterministic-builds
+  research (cargo `trim-paths` + sccache cross-worktree caching).
+  Findings were preserved in beads issue `mtg-3cc232`; experimental
+  config files (`.cargo/config.toml` + `Cargo.toml` `cargo-features`
+  prelude) were captured verbatim there. Branch deleted without a
+  tag — no code value, just the research notes which now live in
+  beads.
 
 ---
 

@@ -1,0 +1,17 @@
+---
+title: 'Card: Donatello, the Brains'
+status: open
+priority: 3
+issue_type: task
+labels:
+- tmnt
+- single-card
+created_at: 2026-05-15T17:07:55.284503087+00:00
+updated_at: 2026-05-15T17:07:55.284503087+00:00
+---
+
+# Description
+
+Single-card tracking: Donatello, the Brains
+
+_Imported from tg task `tmnt-card-donatello-brains` (status was BACKLOG); priority preserved._

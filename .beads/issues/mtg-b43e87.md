@@ -1,0 +1,19 @@
+---
+title: 'BUG: game.html pane focus keys (H, etc.) don''t work — generates connection error'
+status: open
+priority: 2
+issue_type: task
+labels:
+- bug
+- game-html
+- ui
+created_at: 2026-05-15T17:07:15.843440562+00:00
+updated_at: 2026-05-15T17:07:15.843440562+00:00
+---
+
+# Description
+
+The ? help screen shows keys for pane focus like "H" but pressing H does nothing and generates:
+"Uncaught (in promise) Error: Could not establish connection. Receiving end does not exist."
+
+_Imported from tg task `bug-gamehtml-pane-focus` (status was BACKLOG); priority preserved._
