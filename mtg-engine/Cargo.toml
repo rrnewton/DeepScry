@@ -12,6 +12,17 @@ path = "src/main.rs"
 # Binary only built for native targets (not WASM)
 required-features = ["native"]
 
+# `lobby_probe` is a hand-runnable smoke test for the lobby protocol —
+# it links `tokio-tungstenite` and `futures-util` directly, both of
+# which are gated behind the `network` feature. Without a
+# `required-features` declaration, cargo would try to build it under
+# default features (CI's `Test` job runs without `--features network`)
+# and fail at `use futures_util::...` / `use tokio_tungstenite::...`.
+[[example]]
+name = "lobby_probe"
+path = "examples/lobby_probe.rs"
+required-features = ["network"]
+
 [lib]
 name = "mtg_forge_rs"
 path = "src/lib.rs"

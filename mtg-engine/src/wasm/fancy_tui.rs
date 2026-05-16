@@ -1402,6 +1402,14 @@ fn valid_choice_cards(context: &ChoiceContext) -> Vec<crate::core::CardId> {
         ChoiceContext::Discard { hand, .. } => hand.clone(),
         ChoiceContext::LibrarySearch { valid_cards, .. } => valid_cards.clone(),
         ChoiceContext::SacrificePermanents { valid_permanents, .. } => valid_permanents.clone(),
+        // Scry / Surveil reveal the top N cards and the user partitions them
+        // (CR 701.18, 701.42). Highlight every revealed card so the GUI's
+        // dim-non-valid pass leaves them visible while the user reorders
+        // them. The WASM human-input pipeline does not yet emit these
+        // contexts (the default `keep_all_on_top` impl is used), but
+        // mirroring the other "all options are valid" prompts keeps the
+        // helper future-proof.
+        ChoiceContext::ScryOrder { revealed, .. } | ChoiceContext::Surveil { revealed, .. } => revealed.clone(),
         ChoiceContext::Modes { .. } => Vec::new(),
     }
 }
@@ -1427,6 +1435,8 @@ fn renderer_choice_category(context: &ChoiceContext) -> crate::game::fancy_tui_r
         | ChoiceContext::Discard { .. }
         | ChoiceContext::LibrarySearch { .. }
         | ChoiceContext::SacrificePermanents { .. }
+        | ChoiceContext::ScryOrder { .. }
+        | ChoiceContext::Surveil { .. }
         | ChoiceContext::Modes { .. } => Cat::TargetSelection,
     }
 }
@@ -2563,6 +2573,8 @@ impl WasmFancyTuiState {
                     ChoiceContext::Discard { .. } => "Discard".to_string(),
                     ChoiceContext::LibrarySearch { .. } => "LibrarySearch".to_string(),
                     ChoiceContext::SacrificePermanents { .. } => "SacrificePermanents".to_string(),
+                    ChoiceContext::ScryOrder { revealed, .. } => format!("ScryOrder({})", revealed.len()),
+                    ChoiceContext::Surveil { revealed, .. } => format!("Surveil({})", revealed.len()),
                     ChoiceContext::Modes { mode_count, .. } => format!("Modes({})", mode_count),
                 };
                 log::debug!(
@@ -2719,6 +2731,14 @@ impl WasmFancyTuiState {
                 choices.extend(formatted_permanents.clone());
                 choices
             }
+            // Scry / Surveil: WASM's pending-input path does not yet drive the
+            // partition UI (the engine falls back to the default
+            // `keep_all_on_top` decision via the WASM controller's stub
+            // impls). Surface the revealed cards as the choice list so the
+            // prompt is at least informative if this ever does fire.
+            ChoiceContext::ScryOrder { formatted_revealed, .. } | ChoiceContext::Surveil { formatted_revealed, .. } => {
+                formatted_revealed.clone()
+            }
             ChoiceContext::Modes { formatted_modes, .. } => formatted_modes.clone(),
         };
 
@@ -2801,6 +2821,12 @@ impl WasmFancyTuiState {
                 ..
             } => {
                 format!("Choose {} {} to sacrifice:", count, card_type_description)
+            }
+            ChoiceContext::ScryOrder { revealed, .. } => {
+                format!("Scry {} (choose top/bottom):", revealed.len())
+            }
+            ChoiceContext::Surveil { revealed, .. } => {
+                format!("Surveil {} (choose top/graveyard):", revealed.len())
             }
             ChoiceContext::Modes {
                 mode_count, spell_id, ..
@@ -2965,6 +2991,22 @@ impl WasmFancyTuiState {
                 ChoiceContext::Modes { .. } => {
                     // idx directly maps to mode index (0-based)
                     PendingChoice::Modes(vec![idx])
+                }
+                ChoiceContext::ScryOrder { .. } | ChoiceContext::Surveil { .. } => {
+                    // Scry / Surveil reveal the top N cards and the user
+                    // partitions them (CR 701.18, 701.42). The WASM
+                    // `PendingChoice` enum does not yet have a variant for
+                    // the partition payload, and the WASM human controller
+                    // never emits `NeedInput(ChoiceContext::ScryOrder | Surveil)`
+                    // (it returns the default `keep_all_on_top` decision
+                    // directly). If this arm ever fires it means a future
+                    // change started emitting these contexts without
+                    // teaching `PendingChoice` how to carry the answer —
+                    // surface that loudly rather than silently submitting
+                    // a wrong (or no-op) choice that would desync.
+                    // TODO(mtg-scry-wasm-ui): add a real `PendingChoice`
+                    // variant + GUI flow for Scry/Surveil partitioning.
+                    unreachable!("Scry/Surveil pending input is not wired through the WASM fancy_tui UI yet");
                 }
             }
         };

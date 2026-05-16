@@ -1,4 +1,14 @@
 #![cfg(feature = "network")]
+// Wildcard `other =>` arms in these tests intentionally accept "any future
+// variant" so they panic with a helpful message instead of failing to compile
+// when a new ChoiceType / ChoiceResult variant is added. Enumerating every
+// variant inline would defeat that purpose. Similarly, `revealed.clone()` is
+// used for assertion readability after the value is moved into a helper —
+// the clone is cheap (small Vec<CardId>) and removing it forces awkward
+// argument ordering. Pre-existing on `integration` from the scry/surveil
+// merge; allow at module scope so `cargo clippy --all-features --tests
+// -- -D warnings` (CI) stays green.
+#![allow(clippy::wildcard_enum_match_arm, clippy::redundant_clone)]
 //! Phase E regression tests for the scry / surveil choice pipeline.
 //!
 //! These tests pin down behaviours that should NOT regress to the
