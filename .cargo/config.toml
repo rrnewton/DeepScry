@@ -17,8 +17,8 @@ trim-paths = "all"
 # NOTE: rustc-wrapper = "sccache" was tried in Phase 2 and removed. It yielded
 # only ~1.4% cross-worktree hit rate and added 15-18 s of overhead because
 # trim-paths injects a per-worktree --remap-path-prefix into every rustc
-# invocation that sccache cannot canonicalize. See tg note 'phase2-sccache'
-# for the full diagnosis. Re-enable only if/when sccache learns to strip
+# invocation that sccache cannot canonicalize. See the 'phase2-sccache'
+# experiment write-up for the full diagnosis. Re-enable only if/when sccache learns to strip
 # SCCACHE_BASEDIR from --remap-path-prefix args, or trim-paths is replaced
 # with a path-canonicalizing alternative.
 

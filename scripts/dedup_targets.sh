@@ -7,18 +7,19 @@
 # `trim-paths = "all"` (see .cargo/config.toml) plus the optional CFLAGS
 # prefix-map trick (see release_build.sh), 99%+ of dep artifacts are byte-
 # identical across worktrees and can be deduplicated. The buildopt Phase 3
-# experiment (tg note phase3-fclones-dedup) measured ~30% / 1.8 GB savings
-# on a 2-worktree setup.
+# experiment (phase3-fclones-dedup) measured ~30% / 1.8 GB savings on a
+# 2-worktree setup.
 #
 # IMPORTANT GOTCHA: fclones default invocation respects .gitignore, and the
 # unpacked tikv-jemalloc-sys source ships its own .gitignore matching *.o.
 # We pass `-A` (--no-ignore) so dep build artifacts are actually considered.
 #
-# IMPORTANT FILESYSTEM NOTE: on btrfs/xfs/zfs, `cp --reflink=auto` (see
-# clone_worktree.sh) is a strictly better choice than fclones hardlinks for
-# new worktrees, because reflink survives `cargo build` overwrites whereas
-# hardlinks get unlinked by the first incremental rebuild that touches a
-# deduped file. Use this script for periodic maintenance only.
+# IMPORTANT FILESYSTEM NOTE: on btrfs/xfs/zfs, `cp --reflink=auto` (as used
+# by multiagent_workspace/scripts/new_worktree.sh) is a strictly better
+# choice than fclones hardlinks for new worktrees, because reflink survives
+# `cargo build` overwrites whereas hardlinks get unlinked by the first
+# incremental rebuild that touches a deduped file. Use this script for
+# periodic maintenance only.
 #
 # Usage:
 #   scripts/dedup_targets.sh                # dedup all sibling worktree target/ dirs
