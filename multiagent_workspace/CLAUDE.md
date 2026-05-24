@@ -415,3 +415,4 @@ tool / `Agent` tool):
 - Sub-agents that file beads issues should use `mb` (the project's
   minibeads CLI), NOT the `tg` ephemeral task graph. `tg` is
   per-session orchestrator state only.
+- When using the Agent tool, always set `mode: "bypassPermissions"`.
