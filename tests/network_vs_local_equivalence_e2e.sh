@@ -98,6 +98,27 @@ CONTROLLER_P1="${2:-zero}"
 CONTROLLER_P2="${3:-$CONTROLLER_P1}"  # Default P2 to same as P1
 CONTROLLER_SEED=3
 
+# Compute per-player controller seeds via the SAME derivation that production
+# code uses (`game::seed_derivation::derive_player_seed`):
+#   P1_SEED = master + 0x1234_5678_9ABC_DEF0  (P1_SALT)
+#   P2_SEED = master + 0xFEDC_BA98_7654_3210  (P2_SALT)
+# wrapped at 2^64. Network clients invoke `--seed-player=$CONTROLLER_SEED` and
+# the client derives per-slot internally (see main.rs / ControllerType::Random
+# in the `connect` command). Local TUI is given `--seed-p1`/`--seed-p2` which
+# bypass derivation, so we MUST pre-derive here to match the network stream.
+# Without this match, the LOCAL RandomController RNG diverges from the NETWORK
+# RandomController RNG and the gamelog comparison fails — see mtg-nufig.
+#
+# bash arithmetic is signed 64-bit; the SALTs wrap into signed-negative values
+# whose unsigned (u64) reinterpretation is what Rust's seed parser accepts.
+# `printf '%u'` performs the signed→unsigned 64-bit reinterpretation we need
+# (it converts negative bash integers back into their u64 bit-pattern as a
+# decimal string), giving the exact value `derive_player_seed` produces.
+P1_SALT=$((0x123456789ABCDEF0))
+P2_SALT=$((0xFEDCBA9876543210))
+P1_DERIVED_SEED="$(printf '%u' $((CONTROLLER_SEED + P1_SALT)))"
+P2_DERIVED_SEED="$(printf '%u' $((CONTROLLER_SEED + P2_SALT)))"
+
 # Validate controller types
 for ctrl in "$CONTROLLER_P1" "$CONTROLLER_P2"; do
     if [[ "$ctrl" != "heuristic" && "$ctrl" != "random" && "$ctrl" != "zero" ]]; then
@@ -157,8 +178,8 @@ echo -e "${BLUE}Starting LOCAL game...${NC}"
     --p1-name "$P1_NAME" \
     --p2-name "$P2_NAME" \
     --seed "$SEED" \
-    --seed-p1 "$CONTROLLER_SEED" \
-    --seed-p2 "$CONTROLLER_SEED" \
+    --seed-p1 "$P1_DERIVED_SEED" \
+    --seed-p2 "$P2_DERIVED_SEED" \
     --tag-gamelogs \
     --verbosity normal \
     > "$LOCAL_OUTPUT/game.log" 2>&1 &
