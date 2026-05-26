@@ -1,10 +1,10 @@
 ---
 title: 'cycle_ability_network_sync_e2e seed=315 random/random: gamelog desync re-emerges'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-26T20:48:34.490491527+00:00
-updated_at: 2026-05-26T20:48:34.490491527+00:00
+updated_at: 2026-05-26T22:36:58.090703241+00:00
 ---
 
 # Description
@@ -13,57 +13,45 @@ updated_at: 2026-05-26T20:48:34.490491527+00:00
 
 After fixing the test-harness wait-loop hang (mtg-ivrqv), the `cycle_ability_network_sync_e2e.sh` regression test now runs to completion (no more 180s timeout) but FAILS its core assertion: LOCAL and SERVER gamelogs diverge by ~232 lines for seed=315 random/random.
 
-Discovered 2026-05-26 on branch `fix-mtg-ivrqv` (based on integration `6db45ef1`).
+## RESOLUTION (2026-05-26)
 
-## Symptom
+**Root cause**: test-harness seed mismatch. NOT an engine bug.
 
-Excerpt from divergence:
+Commit `61e06688` ("fix(rng): centralize seed derivation") changed the network `connect` command so that `--seed-player=N` is now treated as a **master seed**, with per-slot derivation `derive_player_seed(N, slot)` applied internally (P1 gets `N+0x1234_5678_9ABC_DEF0`, P2 gets `N+0xFEDC_BA98_7654_3210`). The local `tui` command's `--seed-p1=N`/`--seed-p2=N` flags continue to take per-controller seeds *directly* (no derivation).
+
+`tests/network_vs_local_equivalence_e2e.sh` was unchanged and kept passing `--seed-p1 3 --seed-p2 3` to local TUI while passing `--seed-player 3` to each network client. After 61e06688 the two modes silently got different per-controller seeds:
+- LOCAL:   P1=3,                   P2=3                    (raw, identical streams)
+- NETWORK: P1=1311768467463790323, P2=18364758544493064723 (derived, distinct streams)
+
+This caused the RandomController RNG streams to diverge from the very first choice → different action selection in identical game states → the observed 232-line gamelog diff (and the spurious "Barrels of Blasting Jelly" cast that appears only server-side).
+
+The wait-loop fix (mtg-ivrqv) exposed this because before it, the test was timing out at 180s before reaching the gamelog comparison, so nobody noticed the seed mismatch the centralization commit introduced.
+
+**Fix**: pre-derive the per-player seeds in the test harness so LOCAL `--seed-p1`/`--seed-p2` get the SAME values the network client computes from `--seed-player` via `derive_player_seed`. The harness now computes:
+
 ```
-3c3
-<   [GAMELOG Turn2 M2] Gabriel plays Thriving Grove (79)
----
->   [GAMELOG Turn2 M1] Gabriel plays Thriving Grove (79)
-9,10c9,11
-<   [GAMELOG Turn4 M1] Gabriel plays Forest (76)
-<   [GAMELOG Turn4 DA] Gabriel uses Plainscycling on Rabaroo Troop (cost: 2)
----
->   [GAMELOG Turn4 M1] Gabriel casts Barrels of Blasting Jelly (72) (putting on stack)
->   [GAMELOG Turn4 M1] Gabriel plays Forest (74)
->   [GAMELOG Turn4 M1] Gabriel uses Plainscycling on Rabaroo Troop (cost: 2)
-```
-
-Phase tag drift (`M2` vs `M1`) and the appearance of `casts Barrels of Blasting Jelly` in network mode that is absent in local mode indicate a state divergence between the two runs, not just a re-ordering artifact.
-
-The test does NOT report any `ABILITY SYNC BUG` or `FATAL DESYNC` markers in client logs — clients exit with matching `winner=Some(1)`. So this is a *gamelog-level* desync visible only via the strict line-for-line equivalence assertion, not a fatal in-game desync.
-
-## Context / suspected cause
-
-This may be a regression introduced between when mtg-ced6d1 (cycle/Mountaincycling fix) was originally validated and HEAD `6db45ef1`. The harness timeout introduced by `67f046f0` (multi-game lobby) masked this for some unknown number of commits — `cycle_ability_network_sync_e2e` was hitting the 180s timeout, not actually comparing gamelogs.
-
-Candidate culprits to investigate (commits between mtg-ced6d1 landing and 6db45ef1):
-- `61f28fd9` Merge branch 'fix-cycle-desync' into integration (the fix itself)
-- `290fc29f` Merge branch 'fix-scry-choice-pipeline' into integration
-- `a22c05f9` fix(ci): add missing ScryOrder/Surveil match arms to ChoiceContext
-- `67f046f0` (multi-game lobby) — unlikely to affect engine determinism
-
-## Reproducer
-
-```sh
-git checkout 6db45ef1   # or any commit with the fix-mtg-ivrqv wait-loop fix
-git submodule update --init forge-java
-cargo build --release --features network
-bash tests/cycle_ability_network_sync_e2e.sh
-## -> "LOCAL and SERVER gamelogs differ by 232 lines"
+P1_DERIVED_SEED = printf '%u' $((CONTROLLER_SEED + 0x123456789ABCDEF0))
+P2_DERIVED_SEED = printf '%u' $((CONTROLLER_SEED + 0xFEDCBA9876543210))
 ```
 
-Logs preserved at `/tmp/network_vs_local_e2e_<pid>/` (see test output for exact path).
+and passes them to the local TUI invocation. Network mode is unchanged.
 
-## NOT blocking mtg-ivrqv
+## Validation
 
-The wait-loop fix in mtg-ivrqv is correct and complete on its own. This separate desync regression was previously hidden by the timeout and is now exposed. Filing as a distinct bug.
+- `bash tests/cycle_ability_network_sync_e2e.sh` → PASS (LOCAL and SERVER gamelogs IDENTICAL)
+- `bash tests/network_vs_local_equivalence_e2e.sh` (default seed=3, zero/zero) → PASS
+- Seed sweep seed ∈ {100, 200, 315, 400, 500} × controller=random/random → all PASS
+- Controller sweep seed=315 × controller ∈ {zero, heuristic} → all PASS
+- `cargo fmt --all -- --check` clean
+- `make validate` test suite: 1215/1215 PASS (only `lobby_probe` example fails — pre-existing, unrelated to this issue, requires network feature flag in Makefile)
+
+## Files changed
+
+- `tests/network_vs_local_equivalence_e2e.sh` (test harness only; no engine changes)
 
 ## Related
 
 - mtg-ivrqv (lobby-lifecycle wait-loop fix that exposed this)
-- mtg-ced6d1 (original cycle/Mountaincycling desync fix being regressed)
+- mtg-ced6d1 (original cycle/Mountaincycling desync fix; still valid, just was being tested with mismatched seeds)
 - mtg-c232f4 (separate snapshot bincode regression on same HEAD)
+- commit 61e06688 (the root cause: introduced seed-derivation asymmetry between `tui` and `connect`)
