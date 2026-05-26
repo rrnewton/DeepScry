@@ -43,13 +43,13 @@
 #
 # OPERATIONS
 #   Start (re-deploy):  ./scripts/deploy-cloud.sh
-#   Stop the server:    ssh newton@forge-rs.duckdns.org 'tmux kill-session -t mtg-server'
-#   View server log:    ssh newton@forge-rs.duckdns.org 'tmux capture-pane -p -t mtg-server'
-#   Attach interactive: ssh -t newton@forge-rs.duckdns.org 'tmux attach -t mtg-server'
+#   Stop the server:    ssh newton@deepscry.net 'tmux kill-session -t mtg-server'
+#   View server log:    ssh newton@deepscry.net 'tmux capture-pane -p -t mtg-server'
+#   Attach interactive: ssh -t newton@deepscry.net 'tmux attach -t mtg-server'
 
 set -euo pipefail
 
-REMOTE="${REMOTE:-newton@forge-rs.duckdns.org}"
+REMOTE="${REMOTE:-newton@deepscry.net}"
 REMOTE_DIR="${REMOTE_DIR:-mtg-forge-rs}"
 REMOTE_PORT="${REMOTE_PORT:-8080}"
 TMUX_SESSION="${TMUX_SESSION:-mtg-server}"
@@ -165,6 +165,6 @@ ssh "$REMOTE" "
 
 echo
 echo "=== Deploy complete ==="
-echo "URL:   http://forge-rs.duckdns.org:$REMOTE_PORT/"
+echo "URL:   http://deepscry.net:$REMOTE_PORT/"
 echo "Stop:  ssh $REMOTE 'tmux kill-session -t $TMUX_SESSION'"
 echo "Log:   ssh $REMOTE 'tail -f ~/$REMOTE_DIR/server.log'"
