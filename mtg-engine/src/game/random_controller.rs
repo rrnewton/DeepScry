@@ -579,8 +579,10 @@ impl PlayerController for RandomController {
     }
 
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {
-        // Wrap in ControllerState::Random to match the expected format
-        // This ensures the JSON has the correct "controller_type": "Random" tag
+        // Wrap in ControllerState::Random so the JSON has the externally-tagged
+        // form expected by snapshot deserialization, i.e. `{"Random": {...}}`.
+        // (Internally-tagged `#[serde(tag = "controller_type")]` would break
+        // bincode snapshots — see mtg-c232f4.)
         let state = crate::game::ControllerState::Random(self.clone());
         serde_json::to_value(state).ok()
     }

@@ -59,8 +59,13 @@ fn default_controller_type() -> ControllerType {
 /// `is_safe_to_hold_land_for_main2`); a previous version of this comment claimed
 /// otherwise and snapshots silently dropped the heuristic RNG state, causing
 /// stop-and-go runs to diverge from single-process runs.
+/// NOTE: This enum intentionally uses the default *externally-tagged* serde
+/// representation (e.g. JSON `{"Random": {...}}`). It must NOT use
+/// `#[serde(tag = "...")]` (internally-tagged), `#[serde(untagged)]`, or
+/// `#[serde(flatten)]` on any field, because those representations invoke
+/// `Deserializer::deserialize_any`, which **bincode does not support**
+/// (snapshots in the `.bincode` format would fail to load — see mtg-c232f4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "controller_type")]
 pub enum ControllerState {
     /// Fixed script controller with predetermined choices
     Fixed(crate::game::FixedScriptController),
