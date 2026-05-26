@@ -236,7 +236,15 @@ TIMEOUT=180
 ELAPSED=0
 LOCAL_DONE=0
 NETWORK_DONE=0
+CLIENT1_DONE=0
+CLIENT2_DONE=0
 
+# Network-game completion: both CLIENTS must exit. Since commit 67f046f0
+# (multi-game lobby), the server process is long-lived and intentionally
+# outlives any single game, so `kill -0 $SERVER_PID` is no longer a valid
+# "game done" signal. Clients have authoritative end-of-game knowledge:
+# they exit cleanly once they receive GameEnded. We poll both client PIDs
+# and then shut the server down ourselves (we started it).
 while [ $ELAPSED -lt $TIMEOUT ]; do
     # Check local game
     if [ $LOCAL_DONE -eq 0 ] && ! kill -0 $LOCAL_PID 2>/dev/null; then
@@ -246,15 +254,27 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         echo -e "  ${GREEN}Local game finished (exit $LOCAL_EXIT)${NC}"
     fi
 
-    # Check network game (server exit means game over)
-    if [ $NETWORK_DONE -eq 0 ] && ! kill -0 $SERVER_PID 2>/dev/null; then
-        wait $SERVER_PID 2>/dev/null
-        SERVER_EXIT=$?
-        # Also wait for clients
-        wait $CLIENT1_PID 2>/dev/null || true
-        wait $CLIENT2_PID 2>/dev/null || true
-        NETWORK_DONE=1
-        echo -e "  ${GREEN}Network game finished (server exit $SERVER_EXIT)${NC}"
+    # Check network game: both clients exiting == game over.
+    if [ $NETWORK_DONE -eq 0 ]; then
+        if [ $CLIENT1_DONE -eq 0 ] && ! kill -0 $CLIENT1_PID 2>/dev/null; then
+            wait $CLIENT1_PID 2>/dev/null
+            CLIENT1_EXIT=$?
+            CLIENT1_DONE=1
+            echo -e "  ${GREEN}Network client 1 finished (exit $CLIENT1_EXIT)${NC}"
+        fi
+        if [ $CLIENT2_DONE -eq 0 ] && ! kill -0 $CLIENT2_PID 2>/dev/null; then
+            wait $CLIENT2_PID 2>/dev/null
+            CLIENT2_EXIT=$?
+            CLIENT2_DONE=1
+            echo -e "  ${GREEN}Network client 2 finished (exit $CLIENT2_EXIT)${NC}"
+        fi
+        if [ $CLIENT1_DONE -eq 1 ] && [ $CLIENT2_DONE -eq 1 ]; then
+            # Both clients have GameEnded. Shut down the lobby server we spawned.
+            kill $SERVER_PID 2>/dev/null || true
+            wait $SERVER_PID 2>/dev/null || true
+            NETWORK_DONE=1
+            echo -e "  ${GREEN}Network game finished (clients done; server shut down)${NC}"
+        fi
     fi
 
     # Both done?
@@ -274,7 +294,7 @@ if [ $LOCAL_DONE -eq 0 ]; then
 fi
 
 if [ $NETWORK_DONE -eq 0 ]; then
-    echo -e "${RED}Error: Network game timed out after ${TIMEOUT}s${NC}"
+    echo -e "${RED}Error: Network game timed out after ${TIMEOUT}s (client1_done=$CLIENT1_DONE, client2_done=$CLIENT2_DONE)${NC}"
     kill $SERVER_PID $CLIENT1_PID $CLIENT2_PID 2>/dev/null || true
     exit 1
 fi
