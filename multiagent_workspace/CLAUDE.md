@@ -104,6 +104,24 @@ Branch rules:
 - Bug-fix branches require an MTG rules review before merging into
   `integration`; see `mtg-forge-rs/.claude/skills/mtg-rules-review.md`.
 
+Push policy:
+
+- **Pushing is allowed without per-push user confirmation** in two
+  cases:
+  1. From the primary checkout (`parent/mtg-forge-rs/`), push
+     `integration` (and `main`, when promoted) after a green
+     `cargo build --release --features network` and `make validate`.
+  2. From an agent worktree (`parent/worktrees/<branch>/`), push its
+     own feature branch to `origin/<branch>` once the work is
+     **completed** — i.e. the worktree is clean, validation passes,
+     and the branch is ready to be merged (or reviewed). Do not push
+     mid-task WIP without explicit user approval.
+- `main` is protected; never push directly to `main`. Promotion to
+  `main` goes through the integration ceremony described in
+  `mtg-forge-rs/CLAUDE.md` → "Branches and pushing".
+- `--force` / `--force-with-lease` pushes always require explicit user
+  approval, regardless of branch.
+
 Worktree registry:
 
 - Maintain `worktrees/ACTIVE.md` with every live worktree and branch
