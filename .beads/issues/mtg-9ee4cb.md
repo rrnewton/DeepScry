@@ -42,7 +42,7 @@ The undo log entry for a hand mutation needs to record the SOURCE INDEX so undo 
 ## Repro
 
 1. `make wasm-dev`
-2. Open `web/fancy.html`, check "Debug Mode (TRACE logs)", launch a Human-vs-Heuristic game with a rogue_rogerbrand deck
+2. Open `web/tui_game.html`, check "Debug Mode (TRACE logs)", launch a Human-vs-Heuristic game with a rogue_rogerbrand deck
 3. Press a mix of '0' and '1' / '2' to advance through a few turns
 4. After ~20–50 input events, the verifier fires the FATAL message above
 

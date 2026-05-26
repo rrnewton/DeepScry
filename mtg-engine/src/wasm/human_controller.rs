@@ -208,7 +208,7 @@ pub fn stage_discard_pick(
 ///
 /// The engine's `choose_attackers` is a single call that expects ALL chosen
 /// attackers in one response (e.g. attacking with both Triskelion and Sengir
-/// Vampire in the same combat). The fancy.html UI naturally collects clicks
+/// Vampire in the same combat). The tui_game.html UI naturally collects clicks
 /// one creature at a time, so we accumulate `staged` indices client-side and
 /// only commit when the user picks "Done".
 ///
@@ -216,7 +216,7 @@ pub fn stage_discard_pick(
 /// If the creature is not yet staged, it is added; if it was already staged, it
 /// is removed (toggle semantics so the user can correct mis-clicks before
 /// submitting). Native TUI's `choose_attackers` also displays an `[X]` marker
-/// for staged creatures, but is add-only — fancy.html improves on that by
+/// for staged creatures, but is add-only — tui_game.html improves on that by
 /// allowing un-staging.
 ///
 /// Returns `true` if `creature_idx` is now staged, `false` if it was un-staged.
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_toggle_staged_attacker_multiple_attackers_regression() {
-        // Regression for bug-multi-attacker-selection: in fancy.html, picking
+        // Regression for bug-multi-attacker-selection: in tui_game.html, picking
         // Triskelion then Sengir Vampire used to overwrite the first selection
         // because the UI committed `vec![idx]` immediately on each click.
         // After the fix, both stay staged until the user picks "Done".

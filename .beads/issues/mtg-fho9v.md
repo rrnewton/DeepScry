@@ -29,7 +29,7 @@ We currently use DomBackend exclusively (created in launch_fancy_tui).
 
 ### Proposed Changes
 
-1. Add backend selector dropdown in web/fancy.html
+1. Add backend selector dropdown in web/tui_game.html
 2. Update launch_fancy_tui WASM function to accept backend type
 3. Add WasmBackendType enum exported via wasm_bindgen
 4. Consider using MultiBackendBuilder for fallback support

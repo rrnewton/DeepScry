@@ -118,7 +118,7 @@ pub fn cleanup_tui_state() {
 /// turn-start hash is checked against any prior cached value for the same
 /// turn. Any divergence is surfaced as a fatal error.
 ///
-/// Off by default — `web/fancy.html` calls this with `true` whenever the
+/// Off by default — `web/tui_game.html` calls this with `true` whenever the
 /// "Debug Mode" checkbox is checked, so production play pays no cost.
 #[wasm_bindgen]
 pub fn tui_set_verify_rewind_replay(enabled: bool) {
@@ -292,7 +292,7 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
 /// game.html measures each pane after layout, calls this function, and
 /// applies the resulting size as a CSS variable on the pane container so
 /// every card scales uniformly within the available space (matching the
-/// fancy.html / native TUI behaviour where cards visibly shrink when
+/// tui_game.html / native TUI behaviour where cards visibly shrink when
 /// many permanents are in play).
 ///
 /// [`battlefield_layout`]: crate::game::battlefield_layout
@@ -812,7 +812,7 @@ pub fn tui_get_gui_view_model_json() -> String {
 /// - Recent log entries
 ///
 /// This is the primary data source for the native web GUI (game.html).
-/// The TUI version (fancy.html) uses the terminal renderer instead.
+/// The TUI version (tui_game.html) uses the terminal renderer instead.
 ///
 /// **DEPRECATED**: Prefer `tui_get_gui_view_model_json` which provides a
 /// schema-versioned, semantically structured view model that uses the SAME
@@ -1343,7 +1343,7 @@ struct WasmFancyTuiState {
     /// committed to the engine until the user selects "Done" (idx 0). Mirrors
     /// the loop accumulator in the native TUI's `choose_attackers` so a single
     /// engine `choose_attackers` call can collect multiple creatures from the
-    /// fancy.html UI (which only delivers one click at a time).
+    /// tui_game.html UI (which only delivers one click at a time).
     staged_attacker_indices: Vec<usize>,
     /// Mapping from the current Discard prompt's displayed choice index to
     /// the underlying hand index in `ChoiceContext::Discard::hand`. Recomputed
@@ -1351,7 +1351,7 @@ struct WasmFancyTuiState {
     discard_choice_indices: Vec<usize>,
     /// Enable proactive verification of the rewind/replay loop. Off by
     /// default; toggled on by JS when the "Debug Mode" checkbox in
-    /// `web/fancy.html` is checked. When off, every verification field is
+    /// `web/tui_game.html` is checked. When off, every verification field is
     /// untouched and the hot path costs nothing beyond a bool read.
     verify_rewind_replay: bool,
     /// Verification snapshot captured at the most recent rewind, ready to be
@@ -3384,7 +3384,7 @@ fn draw_tui_frame(f: &mut Frame, state: &mut WasmFancyTuiState) {
 /// - `entity_positions` is populated as a side-effect of the ratatui draw, so
 ///   when this is invoked from a pure-logic mutator the positions reflect the
 ///   *previous* drawn frame. game.html does not consume positions for
-///   click-handling (it uses `tui_select_card` directly), and fancy.html still
+///   click-handling (it uses `tui_select_card` directly), and tui_game.html still
 ///   gets a follow-up call from `run_post_render_js_callbacks()` after the
 ///   next ratzilla draw, so the slight staleness self-corrects.
 /// - The handlers in JS (`window.onRenderComplete`, `window.updateTurnInfo`)
@@ -3574,7 +3574,7 @@ fn attach_ratzilla_renderer() -> Result<(), JsValue> {
 /// - `web/game.html` (decouple-step4 onwards) drives via JS:
 ///   `requestAnimationFrame(tui_tick)` + DOM event listeners that call the
 ///   pure-logic exports directly.
-/// - `web/fancy.html` keeps using `launch_fancy_tui`, which is now a thin
+/// - `web/tui_game.html` keeps using `launch_fancy_tui`, which is now a thin
 ///   wrapper around `launch_game_session() + attach_ratzilla_renderer()`.
 ///
 /// The struct is still called `WasmFancyTuiState` because step 5 of the
@@ -3619,7 +3619,7 @@ pub fn launch_game_session(
 ///      `#ratzilla-terminal` `DomBackend` for visible canvas rendering and
 ///      legacy keyboard/mouse routing.
 ///
-/// `web/fancy.html` keeps calling this entry point unchanged. `web/game.html`
+/// `web/tui_game.html` keeps calling this entry point unchanged. `web/game.html`
 /// calls `launch_game_session` directly (step 4) and skips the ratzilla
 /// attachment — the hidden `<div id="ratzilla-terminal">` and the entire
 /// ratzilla draw_web tick are no-ops there once the page stops requesting

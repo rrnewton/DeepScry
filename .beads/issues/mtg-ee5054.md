@@ -9,11 +9,11 @@ updated_at: 2026-05-12T20:50:27.105818739+00:00
 
 # Description
 
-The WASM rewind/replay verifier (replay_verifier.rs, fancy_tui.rs::tui_set_verify_rewind_replay) is wired ONLY to fancy.html. The game.html backend (mtg-engine/src/wasm/gui_view_model.rs) has NO equivalent verification, so any rewind-induced state divergence in the GUI mode silently corrupts state.
+The WASM rewind/replay verifier (replay_verifier.rs, fancy_tui.rs::tui_set_verify_rewind_replay) is wired ONLY to tui_game.html. The game.html backend (mtg-engine/src/wasm/gui_view_model.rs) has NO equivalent verification, so any rewind-induced state divergence in the GUI mode silently corrupts state.
 
 ## Background
 
-Discovered while enabling the verifier in Playwright e2e tests (commit on native-web-gui branch, 2026-05-12). For fancy.html, every rewind captures pre-rewind state hash + log tail and verifies it matches post-replay; any divergence surfaces as 'REWIND/REPLAY FATAL'. For game.html: nothing.
+Discovered while enabling the verifier in Playwright e2e tests (commit on native-web-gui branch, 2026-05-12). For tui_game.html, every rewind captures pre-rewind state hash + log tail and verifies it matches post-replay; any divergence surfaces as 'REWIND/REPLAY FATAL'. For game.html: nothing.
 
 Per CLAUDE.md (NETWORK_ARCHITECTURE.md): 'desync is ALWAYS fatal'. The verifier is the early-detection mechanism — game.html should have it too.
 

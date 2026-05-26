@@ -249,7 +249,7 @@ async function runTest() {
 
         // Navigate to fancy TUI
         log('Loading fancy TUI page...');
-        await page.goto('http://localhost:8767/fancy.html', {
+        await page.goto('http://localhost:8767/tui_game.html', {
             waitUntil: 'networkidle',
             timeout: 60000
         });

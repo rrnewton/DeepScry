@@ -425,7 +425,7 @@ async function runTest() {
 
         // Navigate to fancy TUI
         log('Loading page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/fancy.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
             waitUntil: 'networkidle',
             timeout: 60000
         });
@@ -439,7 +439,7 @@ async function runTest() {
         // tight choice loop is exactly the scenario the verifier was designed
         // for: every choice triggers a rewind/replay round-trip with a
         // network handshake in the middle. Belt-and-braces with the
-        // #debug-mode checkbox below — fancy.html only flips the flag inside
+        // #debug-mode checkbox below — tui_game.html only flips the flag inside
         // its launch handler when debug mode is on.
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);

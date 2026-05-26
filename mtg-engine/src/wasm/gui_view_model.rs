@@ -1008,7 +1008,7 @@ mod tests {
 
     /// Regression for bug-draw-reveals-opponent-hand:
     /// the GUI view model — the JSON shape consumed by
-    /// `web/game.html` and `web/fancy.html` — must hide opponent
+    /// `web/game.html` and `web/tui_game.html` — must hide opponent
     /// per-card draw lines, replacing them with the masked
     /// "P draws a card" form.
     ///

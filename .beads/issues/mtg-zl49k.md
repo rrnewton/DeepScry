@@ -75,4 +75,4 @@ This would allow automated Playwright e2e tests to catch these regressions.
 
 # Notes
 
-[2026-05-12 audit] Active investigation lives in tg task 'bug-missing-turn-headers' (P0) — see notes there. Latest scaffolding for rewind/replay debug loop landed in commit f0a0f954 ('debug scaffolding for the rewind/replay loop'). Bug 1 (every other turn) was fixed by f0af0604 but a NEW Turn-11-missing variant has reappeared in fancy.html with rewind+human controller path; native CLI verified clean.
+[2026-05-12 audit] Active investigation lives in tg task 'bug-missing-turn-headers' (P0) — see notes there. Latest scaffolding for rewind/replay debug loop landed in commit f0a0f954 ('debug scaffolding for the rewind/replay loop'). Bug 1 (every other turn) was fixed by f0af0604 but a NEW Turn-11-missing variant has reappeared in tui_game.html with rewind+human controller path; native CLI verified clean.

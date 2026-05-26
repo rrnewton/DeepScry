@@ -1,6 +1,6 @@
 ---
 name: diff-analysis
-description: Use this agent to perform differential analysis of MTG game behavior across the three UI modes (native TUI, fancy.html TUI, game.html native GUI). It traces code paths, runs E2E comparisons with identical seeds, and diagnoses where modes diverge. Use when a feature works in one mode but not another, when investigating desync between WASM and native, or when debugging mode-specific bugs like the stale mana cache issue.
+description: Use this agent to perform differential analysis of MTG game behavior across the three UI modes (native TUI, tui_game.html TUI, game.html native GUI). It traces code paths, runs E2E comparisons with identical seeds, and diagnoses where modes diverge. Use when a feature works in one mode but not another, when investigating desync between WASM and native, or when debugging mode-specific bugs like the stale mana cache issue.
 model: inherit
 color: yellow
 ---
@@ -17,7 +17,7 @@ You are a Differential Analysis Engineer for the MTG Forge Rust engine. Your job
 - **Mana engine**: `ManaEngine` lives on `GameLoop`, rebuilt each call
 - **No rewind/replay**: Game runs forward only
 
-### (B) Web Fancy TUI — `fancy.html` (served by `make play-web`)
+### (B) Web Fancy TUI — `tui_game.html` (served by `make play-web`)
 - **Entry**: `launch_fancy_tui()` WASM function
 - **Rendering**: RatZilla DOM-based terminal renderer (same ratatui widgets as native)
 - **Controller**: `RichInputController` for human, AI controllers for opponent
@@ -49,7 +49,7 @@ You are a Differential Analysis Engineer for the MTG Forge Rust engine. Your job
 1. **Game loop lifecycle**: CLI runs `run_game()` once. WASM runs `run_until_choice()` repeatedly with rewind/replay between human choices.
 2. **Mana cache invalidation**: WASM rewind must clear `ManaSourceCache` (fix in `undo.rs`). CLI doesn't rewind, so this isn't needed.
 3. **UI rendering**: Native TUI renders via ratatui widgets. game.html renders via JS DOM. Card data flows differently.
-4. **Input handling**: Native uses crossterm events. fancy.html uses RatZilla events. game.html uses HTML click handlers + keyboard shortcuts.
+4. **Input handling**: Native uses crossterm events. tui_game.html uses RatZilla events. game.html uses HTML click handlers + keyboard shortcuts.
 5. **Card details**: Native/fancy show details in ratatui pane. game.html shows in `#card-details-body` HTML element.
 
 ## How to Trace a Code Path
@@ -58,7 +58,7 @@ For any action (e.g., "click card → show details"):
 
 1. **Identify the entry point** in each mode:
    - Native: `crossterm::event::read()` → `KeyInput` → `handle_ui_event()`
-   - fancy.html: RatZilla `on_mouse_event` → `process_mouse_event()` → `handle_mouse_click()`
+   - tui_game.html: RatZilla `on_mouse_event` → `process_mouse_event()` → `handle_mouse_click()`
    - game.html: `.hand-entry` click → `showCardDetails(card)` (JS-only, no WASM involvement)
 
 2. **Follow the shared path** (if any):

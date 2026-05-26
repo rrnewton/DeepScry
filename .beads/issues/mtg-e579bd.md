@@ -10,7 +10,7 @@ closed_at: 2026-05-12T13:57:57.515117938+00:00
 
 # Description
 
-Files: mtg-forge-rs/web/fancy.html
+Files: mtg-forge-rs/web/tui_game.html
 
 Action: Wire up the bug report form submission:
 1. Send bug report data over the existing WebSocket connection as a structured message (matching the server's expected format from server-bug-report-infra)

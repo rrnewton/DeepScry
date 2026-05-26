@@ -7,7 +7,7 @@
 //! original forward pass and the replay can corrupt game state, drop log
 //! entries, or duplicate choice points — all without surfacing a clear error.
 //!
-//! When the "Debug Mode" checkbox in `web/fancy.html` is enabled, the
+//! When the "Debug Mode" checkbox in `web/tui_game.html` is enabled, the
 //! `WasmFancyTuiState` wires this module up to:
 //!
 //! 1. **Capture** the game-state hash, action count, log count, and the slice

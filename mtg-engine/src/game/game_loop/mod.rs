@@ -1639,7 +1639,7 @@ mod tests {
     /// and direct `run_one_turn` calls both bypass `setup_game`, so the
     /// `>>> Turn 1 - ... <<<<` header must be emitted from `run_turn` as a
     /// fallback. Without this, the game log shows Turn 2+ headers but no
-    /// Turn 1 header (bug in fancy.html, game.html, native TUI logs).
+    /// Turn 1 header (bug in tui_game.html, game.html, native TUI logs).
     #[test]
     fn test_turn_one_header_emitted_via_run_turns() {
         use crate::game::ZeroController;

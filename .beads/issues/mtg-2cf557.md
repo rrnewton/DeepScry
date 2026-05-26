@@ -14,7 +14,7 @@ updated_at: 2026-05-13T04:06:22.489701324+00:00
 ## Original report
 
 `web/game.html` showed tapped cards with `transform: rotate(8deg)` — a
-faint visual "tilt" hint. `web/fancy.html` and the native ratatui TUI
+faint visual "tilt" hint. `web/tui_game.html` and the native ratatui TUI
 both show full 90° rotation (matching the `battlefield_layout` engine,
 which already swaps width/height for tapped cards via
 `entity_size`: 1.5× wider, 0.6× shorter).
@@ -66,4 +66,4 @@ Pre-fix: 2/4 FAIL (rotation=8° + width=--card-w).
 Post-fix: 4/4 PASS (rotation=90°, width=--card-h=80px from --card-h).
 Visual confirmation: `web/screenshots/playtest_game1_seed42_final.png`
 (refreshed) shows opponent's 5 attacking creatures rotated 90° with
-text reading bottom-to-top, matching fancy.html's tapped visual.
+text reading bottom-to-top, matching tui_game.html's tapped visual.

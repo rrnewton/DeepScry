@@ -21,7 +21,7 @@ The existing abort/replay pattern for human input in WASM is orthogonal to netwo
 
 1. **Shared GameLoop**: Use ONE common GameLoop for all modes (local, network, WASM, native)
 2. **Avoid Duplication**: Share logic between native and WASM network controllers
-3. **Single HTML Entry**: Use existing fancy.html - add "Network" as controller option
+3. **Single HTML Entry**: Use existing tui_game.html - add "Network" as controller option
 
 ## Implementation Phases
 

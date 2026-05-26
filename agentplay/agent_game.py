@@ -100,7 +100,7 @@ else:
 #   * `persistent`   (default, native): one `mtg tui --p1=tui` subprocess.
 #   * `stop-and-go`  (legacy):          re-run `mtg tui` per decision.
 #   * `wasm`:                           one headless Chromium tab driving
-#                                       fancy.html / game.html via Playwright.
+#                                       tui_game.html / game.html via Playwright.
 DRIVER_PERSISTENT = "persistent"
 DRIVER_STOP_AND_GO = "stop-and-go"
 DRIVER_WASM = "wasm"
@@ -243,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
             "alive and pipes choices via stdin; `stop-and-go` re-runs the engine "
             "from scratch on every decision (legacy default before persistent "
             "mode existed); `wasm` drives a headless Chromium tab against "
-            "fancy.html / game.html via Playwright. All three produce identical "
+            "tui_game.html / game.html via Playwright. All three produce identical "
             "on-disk artefacts."
         ),
     )

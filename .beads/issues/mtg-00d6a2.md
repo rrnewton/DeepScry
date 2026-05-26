@@ -26,7 +26,7 @@ ONLY DUPLICATION: InteractiveController display methods (~200 lines) duplicate d
 RECOMMENDATIONS:
 1. Extract InteractiveController display into shared display.rs
 2. Split fancy_tui_renderer.rs (4449 lines) into layout/battlefield/panes modules
-3. Split fancy.html (4023 lines) into separate JS modules
+3. Split tui_game.html (4023 lines) into separate JS modules
 4. Log scroll in web: need JS event handler wiring
 5. Card details in TUI: shared draw_card_details() exists, just needs click routing
 

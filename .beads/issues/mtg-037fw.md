@@ -36,7 +36,7 @@ Added Playwright-based e2e test for browser network games:
 - web/test_network_random_e2e.js - NEW: Playwright e2e test
 - scripts/launch_network_game.sh - Fixed MTG_BIN, added WASM network check
 - mtg-engine/src/wasm/fancy_tui.rs - Auto-run for network AI controllers
-- web/fancy.html - Variable renaming, removed conflicting handler code
+- web/tui_game.html - Variable renaming, removed conflicting handler code
 
 ---
 
@@ -46,7 +46,7 @@ Added `scripts/launch_network_game.sh` to easily test browser-based multiplayer:
 - Builds WASM with `wasm-network` feature via `make wasm-network`
 - Builds native binary with network features
 - Starts web server, game server, and native AI client
-- User connects from browser at http://localhost:8000/fancy.html
+- User connects from browser at http://localhost:8000/tui_game.html
 
 **Bugs Fixed:**
 1. ✅ `SystemTime::now()` panic in WASM - Used `js_sys::Date::now()` with conditional compilation

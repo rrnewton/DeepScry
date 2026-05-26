@@ -80,7 +80,7 @@ async function runTest() {
         // Navigate to the fancy TUI page
         log('Loading fancy TUI page...');
         const loadStart = Date.now();
-        await page.goto('http://localhost:8766/fancy.html', {
+        await page.goto('http://localhost:8766/tui_game.html', {
             waitUntil: 'networkidle',
             timeout: 60000
         });

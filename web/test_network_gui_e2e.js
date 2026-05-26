@@ -1,4 +1,4 @@
-// Network GUI E2E Test - plays a full networked game through fancy.html
+// Network GUI E2E Test - plays a full networked game through tui_game.html
 //
 // Tests that the fancy TUI GUI correctly handles a networked game with
 // either a random or human controller, verifying no DESYNC errors.
@@ -184,8 +184,8 @@ async function runTest() {
         });
 
         // Navigate to fancy TUI
-        log('Loading fancy.html...');
-        await page.goto(`http://localhost:${HTTP_PORT}/fancy.html`, {
+        log('Loading tui_game.html...');
+        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
             waitUntil: 'networkidle',
             timeout: 60000
         });
@@ -195,7 +195,7 @@ async function runTest() {
         log('WASM loaded');
 
         // Belt-and-braces: enableReplayVerifier here in addition to ticking
-        // the #debug-mode checkbox below. fancy.html only flips the verifier
+        // the #debug-mode checkbox below. tui_game.html only flips the verifier
         // on inside its launch handler when debug mode is checked; calling
         // the export directly works even if the launch path or checkbox
         // changes. checkForFatalErrors now matches REWIND/REPLAY FATAL too.

@@ -12,7 +12,7 @@ closed_at: 2026-05-12T22:33:18.209921233+00:00
 
 ## Bug
 
-Detected by replay_verifier in fancy.html (rogue_rogerbrand mirror, seed 41).
+Detected by replay_verifier in tui_game.html (rogue_rogerbrand mirror, seed 41).
 After a user makes any second choice on turn 1 (e.g. play Mox, then play Bayou)
 the verifier surfaces:
 

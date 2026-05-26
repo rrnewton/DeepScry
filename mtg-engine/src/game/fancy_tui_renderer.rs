@@ -751,7 +751,7 @@ impl RenderConfig {
 }
 
 /// Shared game-UI session state used by every renderer (native ratatui TUI,
-/// `web/fancy.html` ratzilla TUI, `web/game.html` native HTML GUI).
+/// `web/tui_game.html` ratzilla TUI, `web/game.html` native HTML GUI).
 ///
 /// **Contains NO ratatui types.** This is the chunk of state that is safe
 /// for non-ratatui clients (game.html and any future renderer) to read /

@@ -68,7 +68,7 @@ another (the recorded `pN_choices.txt` uses text commands like
 # Force the legacy stop-and-go driver (one mtg tui invocation per choice)
 ./agentplay/agent_game.py --driver=stop-and-go -- decks/simple_bolt.dck decks/simple_bolt.dck
 
-# WASM driver via headless Chromium against fancy.html (default page)
+# WASM driver via headless Chromium against tui_game.html (default page)
 ./agentplay/agent_game.py --driver=wasm -- decks/old_school2/ur_burn.dck
 
 # WASM driver against game.html (native HTML GUI), with screenshots dir

@@ -52,7 +52,7 @@ async function waitForHttp(port, maxAttempts = 30) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
             await new Promise((resolve, reject) => {
-                const req = http.get(`http://localhost:${port}/fancy.html`, res => {
+                const req = http.get(`http://localhost:${port}/tui_game.html`, res => {
                     if (res.statusCode === 200) resolve();
                     else reject(new Error(`HTTP ${res.statusCode}`));
                 });
@@ -166,7 +166,7 @@ async function runTest() {
 
         // Navigate to fancy TUI page
         log('Loading fancy TUI page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/fancy.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
             waitUntil: 'networkidle',
             timeout: 60000
         });

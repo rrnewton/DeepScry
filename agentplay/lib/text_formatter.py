@@ -11,7 +11,7 @@ LLM sees structurally-identical "Current game state:" content across all
 drivers.
 
 The WASM `GuiViewModel` is the authoritative source for everything game.html
-and fancy.html render — using it here means the agent's textual view is
+and tui_game.html render — using it here means the agent's textual view is
 guaranteed to stay in sync with the visual GUI a human would see.
 
 This module also exposes helpers for converting log entries (`LogEntryView`)
@@ -122,7 +122,7 @@ def view_model_log_lines(view_model: dict[str, Any]) -> list[str]:
     The view model carries `logs: [LogEntryView, ...]` — same content the GUI
     renders in its log pane. We drop `<Choice>` tracker entries (matching
     game.html's `renderLog` filter) so the agent sees the same log content a
-    human watching fancy.html / game.html would see.
+    human watching tui_game.html / game.html would see.
     """
 
     logs = view_model.get("logs") if isinstance(view_model, dict) else None

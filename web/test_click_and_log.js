@@ -57,7 +57,7 @@ function log(msg) {
         });
 
         // Navigate and wait for WASM
-        await page.goto(`http://localhost:${HTTP_PORT}/fancy.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
             waitUntil: 'networkidle', timeout: 30000
         });
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });

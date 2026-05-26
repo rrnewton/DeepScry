@@ -2,7 +2,7 @@
 /**
  * E2E test for decouple-step6: WASM `WasmHumanController` populates
  * `GameUiSessionState::valid_choices` so `is_valid_choice` highlighting
- * works in both `web/game.html` (HTML GUI) and `web/fancy.html` (ratzilla
+ * works in both `web/game.html` (HTML GUI) and `web/tui_game.html` (ratzilla
  * canvas).
  *
  * Pre-step-6 the field was only ever written by the *native*

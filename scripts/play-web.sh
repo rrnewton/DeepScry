@@ -219,7 +219,7 @@ WEB_PID=$!
 sleep 0.5  # Wait for web server to be ready
 
 # 4. Print instructions
-URL="http://localhost:${WEB_PORT}/fancy.html"
+URL="http://localhost:${WEB_PORT}/tui_game.html"
 WS_URL="ws://localhost:${SERVER_PORT}"
 
 echo ""

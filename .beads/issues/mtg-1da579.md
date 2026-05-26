@@ -15,7 +15,7 @@ updated_at: 2026-05-13T02:41:52.442649729+00:00
 
 Multiple issues with game.html card sizing on layout-engine branch:
 1. BOTTOM BATTLEFIELD: Cards small, didn't fill the space
-2. TOP BATTLEFIELD: Cards bigger but didn't spread out like fancy.html
+2. TOP BATTLEFIELD: Cards bigger but didn't spread out like tui_game.html
 3. STAGES BUG: Cards resized incrementally on each click/keypress
 4. WRONG RESOLUTION: Low-res images upscaled, looked blurry
 
@@ -40,7 +40,7 @@ URL — even for battlefield cards 250+ px tall.
 
 **Bug 1/2 (spread):** `.bf-section-cards` had no `justify-content`,
 so cards left-aligned within each section instead of spreading
-across the available width like fancy.html.
+across the available width like tui_game.html.
 
 ## Fix (web/game.html)
 

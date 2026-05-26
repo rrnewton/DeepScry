@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * E2E test for bug-gamehtml-tapped-rotation: tapped cards in
- * `web/game.html` rotate a full 90°, matching `web/fancy.html`'s
+ * `web/game.html` rotate a full 90°, matching `web/tui_game.html`'s
  * `TUICoordinateSystem.getCardBox(isTapped=true)` and the native
  * ratatui TUI's `battlefield_layout::entity_size` (1.5× wider, 0.6×
  * shorter — landscape orientation).

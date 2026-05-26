@@ -1,5 +1,5 @@
 // Deep-dive E2E test for game.html Native GUI
-// Tests: deck combos, human-vs-AI, edge cases, fancy.html comparison
+// Tests: deck combos, human-vs-AI, edge cases, tui_game.html comparison
 // Run with: node18 test_game_gui_deep.js
 
 const { chromium } = require('playwright');
@@ -237,9 +237,9 @@ async function runTest() {
         }
 
         // ================================================================
-        // SECTION 3: fancy.html vs game.html comparison (same seed)
+        // SECTION 3: tui_game.html vs game.html comparison (same seed)
         // ================================================================
-        log('\n========== SECTION 3: fancy.html vs game.html Comparison ==========');
+        log('\n========== SECTION 3: tui_game.html vs game.html Comparison ==========');
         {
             // Close and reopen browser to avoid connection pool issues
             await browser.close();
@@ -290,9 +290,9 @@ async function runTest() {
             await gamePage.screenshot({ path: path.join(ssDir, 'deep_compare_game.png') });
             await gamePage.close();
 
-            // Now run fancy.html with same seed
+            // Now run tui_game.html with same seed
             const fancyPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-            await fancyPage.goto(`http://localhost:${PORT}/fancy.html`, { waitUntil: 'load', timeout: 30000 });
+            await fancyPage.goto(`http://localhost:${PORT}/tui_game.html`, { waitUntil: 'load', timeout: 30000 });
             await fancyPage.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
             await fancyPage.selectOption('#p1-controller', 'heuristic');
@@ -325,7 +325,7 @@ async function runTest() {
             finding('OK', `game.html opp field: [${gameState.oppField.join(', ')}]`);
             finding('OK', `game.html hand count: ${gameState.handCount}`);
             finding('OK', `game.html log entries: ${gameState.logs.length}`);
-            finding('OK', `fancy.html turn info: "${fancyTurnInfo}"`);
+            finding('OK', `tui_game.html turn info: "${fancyTurnInfo}"`);
 
             // Check that logs don't contain <Choice> entries
             const choiceLeaks = gameState.logs.filter(l => l.startsWith('<Choice>'));

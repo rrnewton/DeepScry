@@ -37,10 +37,10 @@ selected commits from, or archive + delete.
   we can flip it on for `cargo bench` runs.
 
 ### `fontsize-research`
-- **Last commit:** `be53f646` — `prototype(web): scalable TUI font for fancy.html via innerWidth shim` (2026-05-09)
+- **Last commit:** `be53f646` — `prototype(web): scalable TUI font for tui_game.html via innerWidth shim` (2026-05-09)
 - **Status:** 1 commit ahead of integration. Open as **PR #8**.
 - **What it does:** Research prototype for a scalable TUI font in
-  `fancy.html`. Uses an `innerWidth` shim to drive font sizing so the
+  `tui_game.html`. Uses an `innerWidth` shim to drive font sizing so the
   ratatui-rendered TUI can scale to large screens / Retina without the
   characters becoming a postage-stamp-sized grid.
 - **Why unmerged:** Still under PR review; we wanted to see if there

@@ -119,8 +119,8 @@ function log(msg) {
             await dialog.accept();
         });
 
-        // Navigate to fancy.html
-        await page.goto(`http://localhost:${HTTP_PORT}/fancy.html`, {
+        // Navigate to tui_game.html
+        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
             waitUntil: 'networkidle', timeout: 30000
         });
         await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });

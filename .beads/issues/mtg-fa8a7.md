@@ -11,7 +11,7 @@ updated_at: 2025-12-07T22:28:06.138714844+00:00
 
 ## Issue
 
-When playing in the browser TUI (fancy.html) with the Human controller, the player
+When playing in the browser TUI (tui_game.html) with the Human controller, the player
 eventually gets stuck in a state where the only available option is "Pass (do nothing)".
 
 ## Symptoms

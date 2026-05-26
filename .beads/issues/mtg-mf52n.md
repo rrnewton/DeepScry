@@ -55,4 +55,4 @@ All priority items implemented in commits 297f304 and 9a26984:
 - `mtg-engine/src/game/mod.rs` (module exports)
 - `mtg-engine/src/game/fancy_tui_renderer.rs` (Entity::HandCard, draw_hand)
 - `mtg-engine/src/wasm/fancy_tui.rs` (keyboard + mouse handlers)
-- `web/fancy.html` (14px font, collapsible controls)
+- `web/tui_game.html` (14px font, collapsible controls)

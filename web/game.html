@@ -337,7 +337,7 @@
             z-index: 1;
         }
         .card.tapped {
-            /* Full 90° rotation matches `web/fancy.html`'s
+            /* Full 90° rotation matches `web/tui_game.html`'s
                TUICoordinateSystem.getCardBox(isTapped=true) (rotate 90deg
                around center) AND the native ratatui TUI's tapped layout
                from `battlefield_layout::entity_size` (1.5× wider, 0.6×
@@ -430,7 +430,7 @@
             box-sizing: border-box;
         }
         /* Each section row inside the grid spreads its cards horizontally
-           across the available width — matches fancy.html's behaviour
+           across the available width — matches tui_game.html's behaviour
            where cards "spread out" instead of clumping at the left edge.
            `justify-content: center` keeps them visually balanced; switch
            to `space-around` if a denser look is preferred. */
@@ -706,7 +706,7 @@
 <body>
     <div class="header" id="header-bar">
         <h1>MTG Forge - Native GUI</h1>
-        <a href="fancy.html">TUI View</a>
+        <a href="tui_game.html">TUI View</a>
         <a href="index.html">Simple View</a>
         <span id="status">Loading...</span>
     </div>
@@ -873,7 +873,7 @@
         (decouple-step3) which never touches ratzilla, so the div — and
         the entire hidden ratatui draw_web tick — is gone.
 
-        web/fancy.html still uses ratzilla and keeps its own visible
+        web/tui_game.html still uses ratzilla and keeps its own visible
         `#ratzilla-terminal` element; this comment intentionally does
         not declare the id here so any leftover ratzilla code path
         attempting `DomBackend::new_by_id("ratzilla-terminal")` fails

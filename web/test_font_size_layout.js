@@ -1,4 +1,4 @@
-// Diagnostic test for font-size regression on fancy.html
+// Diagnostic test for font-size regression on tui_game.html
 // Measures: terminal-rendered-bounds vs viewport, and grid utilization
 // Run with: node test_font_size_layout.js
 
@@ -47,7 +47,7 @@ async function checkViewport(browser, w, h) {
     const page = await ctx.newPage();
     page.on('pageerror', e => log(`Page ERROR @${w}x${h}: ${e.message}`));
     try {
-        await page.goto('http://localhost:8767/fancy.html', { waitUntil: 'networkidle', timeout: 60000 });
+        await page.goto('http://localhost:8767/tui_game.html', { waitUntil: 'networkidle', timeout: 60000 });
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         const firstDeck = await page.evaluate(() => document.getElementById('p1-deck')?.options[0]?.value || '');
         if (firstDeck) {

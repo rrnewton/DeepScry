@@ -281,7 +281,7 @@ The architecture supports adding new backends:
 
 ## Action Items
 
-1. **Remove** 2-second `setInterval` polling from fancy.html
+1. **Remove** 2-second `setInterval` polling from tui_game.html
 2. **Add** `window.onRenderComplete` callback mechanism
 3. **Call** callback from WASM render loop after `draw_ui()`
 4. **Document** post-render hook API for future extensions

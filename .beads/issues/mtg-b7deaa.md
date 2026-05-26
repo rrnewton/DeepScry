@@ -1,5 +1,5 @@
 ---
-title: 'Client: Bug report button, form, and log capture in fancy.html'
+title: 'Client: Bug report button, form, and log capture in tui_game.html'
 status: closed
 priority: 0
 issue_type: task
@@ -10,7 +10,7 @@ closed_at: 2026-05-12T13:57:57.512713746+00:00
 
 # Description
 
-Files: mtg-forge-rs/web/fancy.html
+Files: mtg-forge-rs/web/tui_game.html
 
 Action: Add bug report UI to the floating controls widget (the one toggled by #btn-toggle-controls):
 1. Add a "Report Bug" button to the controls panel

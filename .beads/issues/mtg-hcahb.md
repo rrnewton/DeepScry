@@ -51,7 +51,7 @@ during gameplay with proper positioning within TUI battlefield sections.
   - Cell-to-pixel conversion (10px x 20px cells)
   - DOM image element management
 - [x] Add web-sys features: HtmlImageElement, CssStyleDeclaration, NodeList
-- [x] Implement JavaScript CardImageOverlay manager (web/fancy.html)
+- [x] Implement JavaScript CardImageOverlay manager (web/tui_game.html)
   - enable/disable, toggle, setCardImage, removeOverlay, clearAll
   - scryfallNamedUrl for name-based image fetching
   - displayBattlefieldCards with proper positioning
@@ -90,7 +90,7 @@ during gameplay with proper positioning within TUI battlefield sections.
 
 - `mtg-engine/src/wasm/image_overlay.rs` - Rust image overlay utilities
 - `mtg-engine/src/wasm/fancy_tui.rs` - WASM TUI with tui_get_battlefield_cards()
-- `web/fancy.html` - JavaScript CardImageOverlay manager (UPDATED)
+- `web/tui_game.html` - JavaScript CardImageOverlay manager (UPDATED)
 - `mtg-engine/src/game/fancy_tui_renderer.rs` - Shared TUI rendering (~2045 lines)
 - `ai_docs/WEB_GUI_DESIGN_PLAN.md` - Full design document
 

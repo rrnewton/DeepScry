@@ -716,7 +716,7 @@ wasm-network: wasm-export
 play-web-local: wasm-network
 	@echo ""
 	@echo "=== Starting web server (network build) ==="
-	@echo "Open http://localhost:$(PORT)/fancy.html in your browser"
+	@echo "Open http://localhost:$(PORT)/tui_game.html in your browser"
 	@echo "Press Ctrl+C to stop"
 	@echo ""
 	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log

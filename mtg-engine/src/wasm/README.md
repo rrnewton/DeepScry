@@ -92,5 +92,5 @@ wasm-tui = ["ratzilla", "web-sys", ...]  # Browser TUI support
 ## Related Files
 
 - `web/` directory: HTML/JS files for browser deployment
-- `web/fancy.html`: TUI gameplay in browser
+- `web/tui_game.html`: TUI gameplay in browser
 - CI workflow: `.github/workflows/ci.yml` includes WASM build/test steps

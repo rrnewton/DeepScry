@@ -647,7 +647,7 @@ mod tests {
         assert_ne!(HashMode::Network, HashMode::Replay);
     }
 
-    /// Regression test for `bug-desync-seed41` (rogue_rogerbrand mirror, fancy.html).
+    /// Regression test for `bug-desync-seed41` (rogue_rogerbrand mirror, tui_game.html).
     ///
     /// `UndoLog::rewind_to_turn_start` unconditionally bumps `mana_state_version`
     /// to invalidate the `ManaEngine` memoization cache. Before the fix, the
