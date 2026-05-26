@@ -1,0 +1,34 @@
+---
+title: 'CI was red on integration for 12 days unnoticed: add CI-status policy'
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-05-26T22:28:39.828569473+00:00
+updated_at: 2026-05-26T22:28:39.828569473+00:00
+---
+
+# Description
+
+## Summary
+
+CI on `integration` has been failing since `61e066882b` (2026-05-15) and nobody noticed for ~12 days. The `Test` job was correctly surfacing both `snapshot_resume_e2e` (mtg-c232f4) and `cycle_ability_network_sync_e2e` (mtg-nufig / mtg-ivrqv) failures the entire time via the auto-discovered `shell_script_tests.rs` harness.
+
+This is a **process failure, not a coverage failure**. Our existing CI was catching the regressions; we just stopped reading it.
+
+## Context
+
+Discovered during the validate-vs-CI audit on branch `audit-validate-ci-gap` (2026-05-26_#2291(a13b311f)). See `ai_docs/validate_ci_gap_audit_20260526.md` for the full audit.
+
+## Proposed actions
+
+1. Adopt the "Clean Start" rule from `CLAUDE.md` strictly: every agent that begins work on `integration` MUST check `gh run list --branch integration --limit 1` and refuse to proceed if the latest run is failure. The orchestrator should enforce this at spawn time.
+2. Split the monolithic `Test` job in `.github/workflows/ci.yml` so individual e2e shell-test failures get named CI steps instead of being buried inside a 300s `cargo test` log. (Audit PR adds dedicated steps for `snapshot_resume_e2e` and `commander_e2e` and a `clippy-wasm` step; further splits along Rust-unit vs shell-script vs agentplay boundaries are worth considering.)
+3. Update `actions/*@v4` to v5 before the GitHub-enforced Node 24 cutover on 2026-06-02.
+4. Consider a beads-integration that auto-files an issue whenever an `integration` CI run goes from green to red. Today it's manual and demonstrably fragile.
+
+## Related
+
+- mtg-c232f4 (snapshot bincode bug — fixed `cfe4f256`)
+- mtg-ivrqv (network e2e wait-loop — fixed `9101ba6f`)
+- mtg-nufig (cycle desync regression — currently blocking CI green)
+- Audit doc: `ai_docs/validate_ci_gap_audit_20260526.md`

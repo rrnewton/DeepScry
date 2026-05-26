@@ -38,14 +38,46 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+      # Free additional runner disk so the network/shell tests that build a
+      # release `mtg --features network` binary mid-test have headroom.
+      # Observed at 6db45ef1: "No space left on device" on a runner that had
+      # only the default ~14 GB free. This drops ~30 GB of unused toolchains.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      # Pre-build the release binary with the network feature so shell-script
+      # tests (auto-discovered by mtg-engine/tests/shell_script_tests.rs) can
+      # reuse it instead of each rebuilding inside `cargo test`. This also
+      # ensures the network feature compiles cleanly before the long test run.
+      - name: Build release binary (network feature)
+        run: cargo build --release --bin mtg --features network
+
+      # `--features network` matches what `make validate` runs locally via
+      # `cargo nextest run --features network`. Without this flag any
+      # `#[cfg(feature = "network")]` Rust integration test is silently
+      # skipped in CI and only the shell-script tests cover network code.
       - name: Run tests
-        run: cargo test --verbose --workspace
+        run: cargo test --verbose --workspace --features network
 
       - name: Run examples
         run: ./scripts/run_examples.sh
 
+      # Note: tests/commander_e2e.sh is *also* auto-discovered by
+      # shell_script_tests.rs and runs inside the previous cargo-test step.
+      # We keep this explicit invocation so a failure here gets its own
+      # named CI step instead of being buried inside the omnibus cargo-test
+      # log.
       - name: Run commander E2E test
         run: bash tests/commander_e2e.sh
+
+      # Same rationale: snapshot/resume regressed unnoticed for ~12 days
+      # because failures were buried in cargo test output. Give it a
+      # dedicated step so the next regression is obvious from the CI badge.
+      - name: Run snapshot/resume E2E test
+        run: bash tests/snapshot_resume_e2e.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,12 +90,19 @@ jobs:
       - name: Run agentplay tests
         run: |
           python3 -m pytest agentplay/ -v
-          cargo build --release --bin mtg
           # Use --max-turns 100 so the mock self-play game has time to
           # reach a winner; agent_game.py returns exit code 2 if the turn
           # limit is hit before either side wins, which would fail the CI
           # step.
           python3 agentplay/agent_game.py --mock --seed 42 --max-turns 100 -- decks/simple_bolt.dck decks/simple_bolt.dck
+
+      # Parity with `make validate-agentplay-step`. The mode-equivalence
+      # script asserts that native and WASM controller drivers produce
+      # identical action streams + game logs, which is the line-of-defense
+      # against the kind of information-leakage bug described in
+      # docs/NETWORK_ARCHITECTURE.md.
+      - name: Run mode-equivalence orchestrator
+        run: ./scripts/test_mode_equivalence.sh
 
   wasm:
     name: WASM Build and E2E Tests
@@ -112,11 +151,23 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
+      # Mirror the full local `validate-wasm-e2e-step` test list. Previously
+      # only 2 of 9 tests ran here; the remaining 7 cover the rebuilt
+      # thin-DOM game GUI, click+log paths, font/card-size layout, and
+      # tapped-creature/graveyard rendering — all of which have shipped
+      # real regressions in the past.
       - name: Run WASM e2e tests
         run: |
           cd web
           node test_fancy_tui.js
           node test_human_input.js
+          node test_click_and_log.js
+          node test_font_size_layout.js
+          node test_decouple_step3_launch_game_session.js
+          node test_card_size_stability.js
+          node test_decouple_step6_valid_choices.js
+          node test_tapped_rotation.js
+          node test_graveyard_overlay.js
 
       - name: Upload screenshots on failure
         if: failure()
@@ -214,8 +265,20 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
 
+      # Three invocations match `make clippy` + `make clippy-wasm`:
+      # 1. native + all-features + network (catches default + most-coverage code paths)
+      # 2. wasm,network feature combo (WASM+server, used by browser multiplayer)
+      # 3. mtg-benchmarks crate (mutually-exclusive features, run alone)
+      # 4. WASM target (catches #[cfg(target_arch = "wasm32")] paths the
+      #    native clippy can't see — previously a real source of CI surprises
+      #    when local validate caught lints that the native CI clippy missed)
       - name: Run clippy
         run: |
-          cargo clippy -p mtg-forge-rs --all-targets --all-features -- -D warnings
+          cargo clippy -p mtg-forge-rs --all-targets --all-features --features network -- -D warnings
+          cargo clippy -p mtg-forge-rs --all-targets --features wasm,network -- -D warnings
           cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
+
+      - name: Run clippy (WASM target)
+        run: cargo clippy -p mtg-forge-rs --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
