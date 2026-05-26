@@ -1,55 +1,64 @@
 ---
 title: Snapshot resume fails on bincode with deserialize_any error
-status: open
+status: closed
 priority: 2
 issue_type: bug
 labels:
 - snapshot
 - network
 created_at: 2026-05-15T17:01:22.520265380+00:00
-updated_at: 2026-05-15T17:01:22.520265380+00:00
+updated_at: 2026-05-26T20:57:08.365263647+00:00
 ---
 
 # Description
 
 ## Summary
 
-`tests/snapshot_resume_e2e.sh` fails with:
+`tests/snapshot_resume_e2e.sh` failed with:
 
 ```
 Error: InvalidAction("Failed to load snapshot: Failed to deserialize snapshot: Bincode does not support the serde::Deserializer::deserialize_any method")
 ```
 
-on stops at choice 3, 8, and 25 in the `bincode/stop` mode. The `json/stop`
-and `override` phases pass.
+on stops at choice 3, 8, and 25 in the `bincode/stop` mode.
 
-## Status
+## Root cause
 
-PRE-EXISTING on `origin/integration` baseline (ff1817f7) — verified by
-running the test in a clean worktree at that commit. NOT caused by the
-recent merges (fix-seismic-sense, fix-cycle-desync, fix-scry-choice-pipeline,
-server-lobby) — those are all green for this test on their own.
+The `ControllerState` enum in `mtg-engine/src/game/snapshot.rs` was
+declared with `#[serde(tag = "controller_type")]` (internally-tagged
+representation). Internally-tagged enums require the deserializer to
+read the tag field out of an arbitrarily-ordered map, which serde
+implements by calling `Deserializer::deserialize_any`. Bincode is a
+non-self-describing binary format and explicitly rejects
+`deserialize_any`, so any snapshot containing a non-None
+`p1_controller_state` / `p2_controller_state` failed to round-trip
+through bincode.
 
-## Root cause hypothesis
+## Fix
 
-`deserialize_any` is invoked when serde encounters a self-describing
-format requirement, typically from:
-- `#[serde(untagged)]` enum variants
-- `#[serde(flatten)]` on structs containing untagged enums
-- `serde_json::Value` / generic `Value` types in the snapshot
-- Internally-tagged enums (`#[serde(tag = "...")]`) with struct variants
-  in some serde-bincode interactions
+Removed the `#[serde(tag = "controller_type")]` attribute from
+`ControllerState`, reverting to the default *externally-tagged*
+representation (JSON: `{"Random": {...}}` instead of
+`{"controller_type": "Random", ...}`). Externally-tagged enums are
+fully supported by bincode. Added a doc comment on `ControllerState`
+warning future maintainers not to reintroduce `tag`, `untagged`, or
+`flatten` attributes. Updated the matching comments in
+`random_controller.rs` and `heuristic_controller.rs` that referenced
+the old tag form.
 
-## Repro
+Semantics-preserving: the wire format for snapshots changed, but
+write+read happen with the same code, so a single run round-trips
+identically. JSON snapshots from older commits will no longer load,
+but no production data depends on them.
 
-```sh
-git checkout ff1817f7  # or any later integration commit
-cargo build --release --features network
-CARDSFOLDER=$PWD/cardsfolder bash tests/snapshot_resume_e2e.sh
-```
+## Verification
 
-Failures in `[Phase 2] Replay matches: bincode/stop@{3,8,25}`.
+`bash tests/snapshot_resume_e2e.sh` now reports 7/7 passing
+(previously 4/7, with bincode/stop@{3,8,25} failing).
 
-## Related
+`make validate` still has 2 failures, both in unrelated network e2e
+tests (`network_vs_local_equivalence_e2e`,
+`cycle_ability_network_sync_e2e`) — these are the lobby-lifecycle
+hang tracked separately in mtg-ivrqv and are not in scope here.
 
-- mtg-cc4837 (FIXED earlier resume-cache bug)
+Fixed on branch fix-mtg-c232f4.

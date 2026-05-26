@@ -6202,10 +6202,12 @@ impl PlayerController for HeuristicController {
 
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {
         // Wrap in ControllerState::Heuristic so the snapshot's JSON has the
-        // correct `"controller_type": "heuristic"` tag. Preserving the RNG
-        // state across snapshot/resume is required for stop-and-go runs to
-        // produce the same heuristic decisions as the equivalent
-        // single-process run.
+        // externally-tagged form expected by snapshot deserialization, i.e.
+        // `{"Heuristic": {...}}`. Preserving the RNG state across
+        // snapshot/resume is required for stop-and-go runs to produce the
+        // same heuristic decisions as the equivalent single-process run.
+        // (Internally-tagged `#[serde(tag = "controller_type")]` would break
+        // bincode snapshots — see mtg-c232f4.)
         let state = crate::game::ControllerState::Heuristic(self.clone());
         serde_json::to_value(state).ok()
     }
