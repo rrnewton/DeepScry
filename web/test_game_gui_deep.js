@@ -1,4 +1,4 @@
-// Deep-dive E2E test for game.html Native GUI
+// Deep-dive E2E test for native_game.html Native GUI
 // Tests: deck combos, human-vs-AI, edge cases, tui_game.html comparison
 // Run with: node18 test_game_gui_deep.js
 
@@ -45,7 +45,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'load', timeout: 30000 });
+            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
             await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
             // Select collection
@@ -133,7 +133,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'load', timeout: 30000 });
+            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
             await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
             await page.selectOption('#p1-controller', 'human');
@@ -237,9 +237,9 @@ async function runTest() {
         }
 
         // ================================================================
-        // SECTION 3: tui_game.html vs game.html comparison (same seed)
+        // SECTION 3: tui_game.html vs native_game.html comparison (same seed)
         // ================================================================
-        log('\n========== SECTION 3: tui_game.html vs game.html Comparison ==========');
+        log('\n========== SECTION 3: tui_game.html vs native_game.html Comparison ==========');
         {
             // Close and reopen browser to avoid connection pool issues
             await browser.close();
@@ -255,9 +255,9 @@ async function runTest() {
                 args: ['--no-sandbox', '--enable-unsafe-swiftshader']
             });
 
-            // Run game.html with seed 77, AI vs AI, 5 turns
+            // Run native_game.html with seed 77, AI vs AI, 5 turns
             const gamePage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-            await gamePage.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'load', timeout: 30000 });
+            await gamePage.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
             await gamePage.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
             await gamePage.selectOption('#p1-controller', 'heuristic');
@@ -320,11 +320,11 @@ async function runTest() {
             await fancyPage.close();
 
             // Compare
-            finding('OK', `game.html at Turn ${gameState.turn}: life P1=${gameState.playerLife} P2=${gameState.oppLife}`);
-            finding('OK', `game.html player field: [${gameState.playerField.join(', ')}]`);
-            finding('OK', `game.html opp field: [${gameState.oppField.join(', ')}]`);
-            finding('OK', `game.html hand count: ${gameState.handCount}`);
-            finding('OK', `game.html log entries: ${gameState.logs.length}`);
+            finding('OK', `native_game.html at Turn ${gameState.turn}: life P1=${gameState.playerLife} P2=${gameState.oppLife}`);
+            finding('OK', `native_game.html player field: [${gameState.playerField.join(', ')}]`);
+            finding('OK', `native_game.html opp field: [${gameState.oppField.join(', ')}]`);
+            finding('OK', `native_game.html hand count: ${gameState.handCount}`);
+            finding('OK', `native_game.html log entries: ${gameState.logs.length}`);
             finding('OK', `tui_game.html turn info: "${fancyTurnInfo}"`);
 
             // Check that logs don't contain <Choice> entries
@@ -341,7 +341,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'load', timeout: 30000 });
+            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
             await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
             // Use heuristic AI for both, auto-run to game over

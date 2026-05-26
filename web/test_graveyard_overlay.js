@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * E2E test for gamehtml-graveyard-display: each player's battlefield
- * pane in `web/game.html` shows a clickable graveyard overlay in the
+ * pane in `web/native_game.html` shows a clickable graveyard overlay in the
  * bottom-right corner — mirroring the native ratatui TUI's
  * `render_graveyard_overlay`
  * (mtg-engine/src/game/fancy_tui_renderer.rs:3304).
  *
- * Pre-fix: no graveyard widget existed in `web/game.html`. The data
+ * Pre-fix: no graveyard widget existed in `web/native_game.html`. The data
  * was always available in the GuiViewModel (`PlayerView.graveyard`)
  * but never rendered.
  *
@@ -55,7 +55,7 @@ function log(msg) {
         const browserErrors = [];
         page.on('pageerror', err => browserErrors.push(err.message));
 
-        await page.goto(`http://localhost:${HTTP_PORT}/game.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });
@@ -177,7 +177,7 @@ function log(msg) {
         // PlayerView.graveyard.length for both players.
         if (afterPlay.vmGyCounts && afterPlay.vmGyCounts.length === 2) {
             // Players[0] is conventionally P1 (the local "us"), [1] is P2.
-            // game.html flips ours/opp via our_player_idx, but for this
+            // native_game.html flips ours/opp via our_player_idx, but for this
             // seed-42 setup our_player_idx=0 so player overlay = P1, opp
             // overlay = P2.
             const expectedPlayer = afterPlay.vmGyCounts[0].gySize;

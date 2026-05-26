@@ -50,4 +50,4 @@ stability) was confirmed to FAIL on the unfixed code: hash mismatch
 ## Related
 
 - mtg-zl49k: Web GUI undo/rewind architecture bugs
-- mtg-ee5054: Replay verifier missing from game.html (gui_view_model)
+- mtg-ee5054: Replay verifier missing from native_game.html (gui_view_model)

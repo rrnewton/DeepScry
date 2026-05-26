@@ -45,7 +45,7 @@ pub mod fancy_tui;
 #[cfg(all(feature = "wasm-tui", target_arch = "wasm32"))]
 pub mod deck_builder;
 
-/// Structured view model for the native HTML GUI (`web/game.html`).
+/// Structured view model for the native HTML GUI (`web/native_game.html`).
 ///
 /// Built independently of `target_arch` so unit tests can validate the model
 /// even without a wasm32 toolchain. The `tui_get_gui_view_model_json` WASM

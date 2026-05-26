@@ -118,7 +118,7 @@ Ran `bug_finding/network_fuzz_test.py` across 130+ configurations (native↔nati
 - **mtg-ced6d1** (P2): ABILITY SYNC BUG — Cycle (Mountaincycling) ability missing on client; FATAL DESYNC on choice index.
 - **mtg-a5e7f1** (P2): Twin Blades crashes client with 'Only Equipment or Auras can be attached'.
 - **mtg-6b510d** (P3): Heuristic AI infinite-loop after Plainscycling discard ('Insufficient mana' retried until timeout).
-- **mtg-65073f** (P4): Fuzz infrastructure missing for tui_game.html / game.html clients.
+- **mtg-65073f** (P4): Fuzz infrastructure missing for tui_game.html / native_game.html clients.
 - **mtg-df3fb6** (P4): deck_submission.json.tmp race when --client wasm/mixed runs in parallel.
 
 Pass-rate breakdown observed:

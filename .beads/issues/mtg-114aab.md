@@ -1,5 +1,5 @@
 ---
-title: Add G key for full graveyard popup in game.html (like ? help popup)
+title: Add G key for full graveyard popup in native_game.html (like ? help popup)
 status: open
 priority: 2
 issue_type: task

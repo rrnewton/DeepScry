@@ -2,7 +2,7 @@
 /**
  * E2E test for decouple-step6: WASM `WasmHumanController` populates
  * `GameUiSessionState::valid_choices` so `is_valid_choice` highlighting
- * works in both `web/game.html` (HTML GUI) and `web/tui_game.html` (ratzilla
+ * works in both `web/native_game.html` (HTML GUI) and `web/tui_game.html` (ratzilla
  * canvas).
  *
  * Pre-step-6 the field was only ever written by the *native*
@@ -12,7 +12,7 @@
  * the GUI view model JSON was silently `false` for the entire game —
  * none of the cards the human could pick lit up as such.
  *
- * Test setup: human-vs-heuristic on game.html with seed 42, drive into
+ * Test setup: human-vs-heuristic on native_game.html with seed 42, drive into
  * a state where the human has a real spell-ability prompt with multiple
  * options, then read the GUI view model JSON and assert that:
  *   1. `state.choices` is non-empty (controller is asking for input).
@@ -65,7 +65,7 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/game.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });

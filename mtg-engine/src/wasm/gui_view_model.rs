@@ -1,7 +1,7 @@
-//! View model for the native HTML GUI (`web/game.html`).
+//! View model for the native HTML GUI (`web/native_game.html`).
 //!
 //! This module exports a structured, semantic snapshot of the game state for
-//! the HTML GUI to render. The goal is to keep `game.html` a *thin* DOM
+//! the HTML GUI to render. The goal is to keep `native_game.html` a *thin* DOM
 //! renderer: every display decision (sort order, section grouping, log color
 //! classification, formatted card details, status text, …) is made here in
 //! Rust, mirroring the choices the TUI renderer makes.
@@ -631,7 +631,7 @@ pub const VIEW_MODEL_SCHEMA_VERSION: u32 = 1;
 
 /// Build the GUI view model from a game state and UI inputs.
 ///
-/// This is the SINGLE source of truth for what `game.html` sees.
+/// This is the SINGLE source of truth for what `native_game.html` sees.
 pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiViewModel {
     let perspective = inputs.perspective_player_id;
 
@@ -918,7 +918,7 @@ mod tests {
     /// End-to-end: build the view model from a minimal real `GameState` and
     /// verify the top-level shape, status text, and player labelling. This
     /// catches regressions where field renames or category enum changes break
-    /// the JSON shape that `game.html` consumes.
+    /// the JSON shape that `native_game.html` consumes.
     #[test]
     fn build_view_model_on_minimal_game() {
         use crate::game::GameState;
@@ -975,7 +975,7 @@ mod tests {
     }
 
     /// Verify that the JSON output uses raw `u32` for card/player IDs (so
-    /// `game.html` can use them as DOM keys) rather than Rust's `Debug`
+    /// `native_game.html` can use them as DOM keys) rather than Rust's `Debug`
     /// format like `"CardId(35)"`.
     #[test]
     fn ids_serialize_as_raw_u32() {
@@ -1008,7 +1008,7 @@ mod tests {
 
     /// Regression for bug-draw-reveals-opponent-hand:
     /// the GUI view model — the JSON shape consumed by
-    /// `web/game.html` and `web/tui_game.html` — must hide opponent
+    /// `web/native_game.html` and `web/tui_game.html` — must hide opponent
     /// per-card draw lines, replacing them with the masked
     /// "P draws a card" form.
     ///

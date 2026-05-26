@@ -61,7 +61,7 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/game.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });

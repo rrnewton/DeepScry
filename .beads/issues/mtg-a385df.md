@@ -19,7 +19,7 @@ Sandbenders' Storm with Earthbend 3 mode resolves without targeting a land — n
 
 ## Reproduction
 
-Observed in game.html human play, gabriel_avatar_draft vs eric_avatar_draft decks.
+Observed in native_game.html human play, gabriel_avatar_draft vs eric_avatar_draft decks.
 
 ## Root Cause
 

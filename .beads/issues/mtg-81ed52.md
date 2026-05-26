@@ -1,5 +1,5 @@
 ---
-title: Decouple game.html from ratzilla — incremental migration to ratzilla-free renderer
+title: Decouple native_game.html from ratzilla — incremental migration to ratzilla-free renderer
 status: open
 priority: 1
 issue_type: task
@@ -9,7 +9,7 @@ updated_at: 2026-05-13T03:47:13.197437852+00:00
 
 # Description
 
-Track the 6-step plan to decouple `web/game.html` from the hidden ratzilla
+Track the 6-step plan to decouple `web/native_game.html` from the hidden ratzilla
 terminal it currently launches. **ALL 6 STEPS COMPLETE.**
 
 ## 6-Step Migration Plan
@@ -19,7 +19,7 @@ terminal it currently launches. **ALL 6 STEPS COMPLETE.**
   mutators notify JS without the ratzilla draw_web tick.
 
 - **Step 2 — DONE** (commit 199c7dfd → rebased ...): Bound
-  ArrowUp/ArrowDown/Enter in web/game.html with
+  ArrowUp/ArrowDown/Enter in web/native_game.html with
   `e.stopImmediatePropagation()`.
 
 - **Step 3 — DONE** (commit 193f9c35 → rebased ...): Extracted
@@ -27,7 +27,7 @@ terminal it currently launches. **ALL 6 STEPS COMPLETE.**
   export `launch_game_session(...)` creates session WITHOUT ratzilla.
 
 - **Step 4 — DONE** (commit d4e028fd → rebased ...): Switched
-  web/game.html to `launch_game_session`, removed hidden
+  web/native_game.html to `launch_game_session`, removed hidden
   ratzilla-terminal div. Fixed Space-handler regression.
 
 - **Step 5 — DONE** (commit 2c250e72 → rebased ...): Split
@@ -78,7 +78,7 @@ terminal it currently launches. **ALL 6 STEPS COMPLETE.**
 - `mtg-engine/src/game/fancy_tui_controller.rs` — step 5 access updates
 - `mtg-engine/src/game/fancy_fixed_controller.rs` — step 5 access updates
 - `mtg-engine/src/wasm/human_controller.rs` — step 1 clippy fix
-- `web/game.html` — steps 2 + 4 keyboard + launch + (step 5 layout fix)
+- `web/native_game.html` — steps 2 + 4 keyboard + launch + (step 5 layout fix)
 - `Makefile` — wired all new e2e tests into validate-wasm-e2e-step
 - `web/test_decouple_step3_launch_game_session.js` — new e2e
 - `web/test_card_size_stability.js` — new e2e
@@ -91,6 +91,6 @@ terminal it currently launches. **ALL 6 STEPS COMPLETE.**
   `effect_converter.rs` field-reassign rewrite,
   `state.rs` # Errors doc.
 
-The decoupling is complete — game.html is fully ratzilla-free, runs
+The decoupling is complete — native_game.html is fully ratzilla-free, runs
 on a clean shared `GameUiSessionState`, and shows the same valid-choice
 highlights the native TUI shows.

@@ -494,7 +494,7 @@
         /* Graveyard in card details (legacy detail-pane list — kept for
            the card details renderer if it ever surfaces a graveyard
            preview). The new battlefield overlay below is what
-           game.html actually uses for the per-player graveyard view. */
+           native_game.html actually uses for the per-player graveyard view. */
         .graveyard-list {
             font-size: 11px;
             color: #888;
@@ -869,7 +869,7 @@
         decouple-step4 (mtg-81ed52): the hidden `<div id="ratzilla-terminal">`
         used to live here. It hosted a RatZilla `DomBackend` that the WASM
         TUI rendered into off-screen so the JS-driven HTML overlay could
-        sit on top. After step 4, game.html uses `launch_game_session()`
+        sit on top. After step 4, native_game.html uses `launch_game_session()`
         (decouple-step3) which never touches ratzilla, so the div — and
         the entire hidden ratatui draw_web tick — is gone.
 
@@ -877,7 +877,7 @@
         `#ratzilla-terminal` element; this comment intentionally does
         not declare the id here so any leftover ratzilla code path
         attempting `DomBackend::new_by_id("ratzilla-terminal")` fails
-        loudly on game.html instead of silently rendering to nothing.
+        loudly on native_game.html instead of silently rendering to nothing.
     -->
 
     <!-- Game controls overlay -->
@@ -950,7 +950,7 @@
             tui_next_choice,
             tui_set_choice_idx,
             // The new view model is the SINGLE source of truth for everything
-            // game.html renders. tui_get_full_state_json() is the legacy entry
+            // native_game.html renders. tui_get_full_state_json() is the legacy entry
             // point and is intentionally NOT imported anymore — keeps us from
             // accidentally regressing to the JS-derives-display-decisions path.
             tui_get_gui_view_model_json,
@@ -1322,7 +1322,7 @@
         // ==================== SHARED LAYOUT ====================
         // Apply pane layout computed by the shared Rust layout engine.
         // This replaces the hardcoded CSS grid-template-columns with
-        // percentages from compute_pane_layout(), ensuring game.html
+        // percentages from compute_pane_layout(), ensuring native_game.html
         // uses the exact same proportions as the TUI renderer.
         function applySharedLayout() {
             if (typeof tui_get_layout_json !== 'function') return;
@@ -1468,7 +1468,7 @@
 
         // ==================== UI RENDERING ====================
         //
-        // game.html is a THIN DOM RENDERER over the Rust GuiViewModel exported
+        // native_game.html is a THIN DOM RENDERER over the Rust GuiViewModel exported
         // by `tui_get_gui_view_model_json()`. Every display decision (hand
         // sort order, battlefield section grouping, log color classification,
         // status text, formatted card details, valid-choice highlighting,
@@ -1923,7 +1923,7 @@
 
         // ==================== KEYBOARD HANDLING ====================
         //
-        // After decouple-step4 (mtg-81ed52), game.html owns the keyboard
+        // After decouple-step4 (mtg-81ed52), native_game.html owns the keyboard
         // outright — there is no hidden ratzilla `terminal.on_key_event`
         // listener to compete with. Each branch below dispatches to a
         // ratzilla-free WASM export that mutates `GLOBAL_TUI_STATE` and

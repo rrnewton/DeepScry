@@ -2493,7 +2493,7 @@ mod tests {
     ///
     /// Closes bug-draw-reveals-opponent-hand. Before the fix, the per-card
     /// draw line emitted by `GameState::draw_card_inner` was a plain
-    /// `gamelog(...)` — the WASM exporter for `web/game.html` re-served the
+    /// `gamelog(...)` — the WASM exporter for `web/native_game.html` re-served the
     /// raw message, so P1 could see "P2 draws Disenchant (88)" in the game
     /// log and effectively read P2's hand.
     ///

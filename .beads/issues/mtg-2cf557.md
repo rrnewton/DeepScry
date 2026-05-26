@@ -1,5 +1,5 @@
 ---
-title: 'BUG: game.html tapped cards show 8° tilt instead of 90° rotation (FIXED)'
+title: 'BUG: native_game.html tapped cards show 8° tilt instead of 90° rotation (FIXED)'
 status: closed
 priority: 2
 issue_type: bug
@@ -13,13 +13,13 @@ updated_at: 2026-05-13T04:06:22.489701324+00:00
 
 ## Original report
 
-`web/game.html` showed tapped cards with `transform: rotate(8deg)` — a
+`web/native_game.html` showed tapped cards with `transform: rotate(8deg)` — a
 faint visual "tilt" hint. `web/tui_game.html` and the native ratatui TUI
 both show full 90° rotation (matching the `battlefield_layout` engine,
 which already swaps width/height for tapped cards via
 `entity_size`: 1.5× wider, 0.6× shorter).
 
-## Fix (web/game.html)
+## Fix (web/native_game.html)
 
 Updated `.card.tapped` from:
 

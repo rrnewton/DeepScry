@@ -1,4 +1,4 @@
-// Comprehensive Playwright E2E test for the rebuilt thin-DOM game.html.
+// Comprehensive Playwright E2E test for the rebuilt thin-DOM native_game.html.
 //
 // Validates the migration to the structured GuiViewModel exported by
 // `tui_get_gui_view_model_json()` and the shared selection state exposed by
@@ -65,7 +65,7 @@ function step(results, name, fn, opts = {}) {
 /// Pull the live `GuiViewModel` from the running page. We re-parse it on
 /// every assertion so race-y intermediate frames are visible to the test.
 ///
-/// Reaches into `window.__mtg` which `game.html` populates after WASM init
+/// Reaches into `window.__mtg` which `native_game.html` populates after WASM init
 /// specifically so headless tests like this one can probe the view model
 /// without re-importing the module.
 async function readViewModel(page) {
@@ -151,15 +151,15 @@ async function runTest() {
             results.screenshots.push(name);
         };
 
-        // ---- 1. Load game.html, wait for WASM init ----------------------
+        // ---- 1. Load native_game.html, wait for WASM init ----------------------
         await step(results, 'page_load', async () => {
-            await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'networkidle', timeout: 60000 });
+            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'networkidle', timeout: 60000 });
             await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         }, { fatal: true });
         await screenshot('rebuild_01_launcher.png');
 
         // The new exports must be reachable through `window.__mtg` (the
-        // game.html test bridge installed right after `await init()`).
+        // native_game.html test bridge installed right after `await init()`).
         await step(results, 'new_wasm_exports_present', async () => {
             const present = await page.evaluate(() => {
                 if (!window.__mtg) return { __mtg: 'missing' };
@@ -455,7 +455,7 @@ async function runTest() {
         });
 
         // ---- 14b. Battlefield card sizes come from the layout engine ----
-        // Regression for the bug "game.html cards are fixed size" — the
+        // Regression for the bug "native_game.html cards are fixed size" — the
         // shared Rust battlefield_layout engine should drive --card-w /
         // --card-h CSS variables on each battlefield grid, AND a board with
         // many permanents must select a smaller card width than a board with
@@ -574,7 +574,7 @@ async function runTest() {
 }
 
 runTest().then(ok => {
-    log(ok ? '=== game.html rebuild E2E PASSED ===' : '=== game.html rebuild E2E FAILED ===');
+    log(ok ? '=== native_game.html rebuild E2E PASSED ===' : '=== native_game.html rebuild E2E FAILED ===');
     process.exit(ok ? 0 : 1);
 }).catch(err => {
     console.error('Unhandled error:', err);

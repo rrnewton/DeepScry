@@ -1,4 +1,4 @@
-// Agent-driven playtest verification of the rebuilt game.html.
+// Agent-driven playtest verification of the rebuilt native_game.html.
 //
 // This is the "long-form" companion to `test_game_gui_rebuild.js` (which is
 // the structured per-step pass/fail suite). The playtest plays ≥10 full
@@ -54,7 +54,7 @@ const WARMUP_TURNS = 6;
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 function ensureScreenDir() { if (!fs.existsSync(SCREEN_DIR)) fs.mkdirSync(SCREEN_DIR, { recursive: true }); }
 
-/// Read the live view model from the test bridge installed by game.html.
+/// Read the live view model from the test bridge installed by native_game.html.
 async function readViewModel(page) {
     return page.evaluate(() => {
         if (!window.__mtg) return null;
@@ -188,7 +188,7 @@ async function playOneGame(browser, server, cfg) {
 
     try {
         // Boot the launcher and configure the game.
-        await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'networkidle', timeout: 60000 });
+        await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'networkidle', timeout: 60000 });
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
 
         await page.selectOption('#p1-controller', 'heuristic');

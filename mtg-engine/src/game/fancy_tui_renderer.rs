@@ -751,10 +751,10 @@ impl RenderConfig {
 }
 
 /// Shared game-UI session state used by every renderer (native ratatui TUI,
-/// `web/tui_game.html` ratzilla TUI, `web/game.html` native HTML GUI).
+/// `web/tui_game.html` ratzilla TUI, `web/native_game.html` native HTML GUI).
 ///
 /// **Contains NO ratatui types.** This is the chunk of state that is safe
-/// for non-ratatui clients (game.html and any future renderer) to read /
+/// for non-ratatui clients (native_game.html and any future renderer) to read /
 /// mutate via the WASM `tui_*` exports without dragging in `Rect`,
 /// `FocusedPane`, ratatui `EntityPosition`, etc. See decouple-step5
 /// (mtg-81ed52) for the architectural motivation.
@@ -794,7 +794,7 @@ impl GameUiSessionState {
 
 /// Ratatui-specific view state — focused pane, hit-test rectangles,
 /// per-pane card-selection indices, log scroll position, and the wrap
-/// cache. Lives only in the ratatui-flavoured renderer; game.html does
+/// cache. Lives only in the ratatui-flavoured renderer; native_game.html does
 /// not touch any of these fields.
 pub struct RatatuiViewState {
     /// Whether logger was configured for memory-only mode

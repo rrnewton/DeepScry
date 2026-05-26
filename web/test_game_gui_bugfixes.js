@@ -1,4 +1,4 @@
-// Targeted verification test for game.html rearchitect bug fixes
+// Targeted verification test for native_game.html rearchitect bug fixes
 // Run with: node18 test_game_gui_bugfixes.js
 //
 // Tests these specific bugs that were fixed:
@@ -51,7 +51,7 @@ async function runTest() {
         if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir);
 
         // Load and init
-        await page.goto(`http://localhost:${PORT}/game.html`, { waitUntil: 'networkidle', timeout: 60000 });
+        await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'networkidle', timeout: 60000 });
         await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
         log('WASM loaded');
 
@@ -263,7 +263,7 @@ async function runTest() {
         log('\n=== BUG #4: Log Display ===');
 
         // Run several Space presses to populate the log. Bumped from 3 → 10
-        // after decouple-step4 (mtg-81ed52): pre-step-4 game.html had a
+        // after decouple-step4 (mtg-81ed52): pre-step-4 native_game.html had a
         // hidden ratzilla terminal that ALSO processed Space (calling
         // run_until_choice on top of the JS-side tui_run_turn), so 3 Space
         // presses gave 6 effective game advances. Post-step-4 there's no

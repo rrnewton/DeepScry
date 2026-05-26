@@ -7,7 +7,7 @@ This is the third backend behind the `GameProcess` interface used by
   * `--driver=persistent`   (default, native)     → one `mtg tui` subprocess
   * `--driver=wasm`         (THIS FILE)           → one headless Chromium tab
 
-The WASM driver loads `web/tui_game.html` (or `web/game.html`) in a headless
+The WASM driver loads `web/tui_game.html` (or `web/native_game.html`) in a headless
 Chromium, lets the page launch a game session via `launch_game_session(...)`,
 and then reads/writes game state via `tui_get_gui_view_model_json()` /
 `tui_set_choice_idx()` + `tui_select_choice()` + `tui_run_turn()`.
@@ -181,7 +181,7 @@ class WasmPlaywrightProcess:
 
         # Drive the choice through the WASM exports. Same JS the GUI runs
         # when a human clicks an action: tui_set_choice_idx + tui_select_choice
-        # + tui_run_turn (game.html:1882).
+        # + tui_run_turn (native_game.html:1882).
         self._page.evaluate(
             """
             async (idx) => {
@@ -298,7 +298,7 @@ class WasmPlaywrightProcess:
 
         # Install a tiny shim on `window` that exposes (or lazily imports)
         # the WASM module bindings every page.evaluate call needs. This
-        # avoids requiring tui_game.html / game.html to have specific
+        # avoids requiring tui_game.html / native_game.html to have specific
         # `window.__mtg` exports — we go straight to the JS module.
         #
         # We cache the imported module on `window.__mtgBridge` so subsequent

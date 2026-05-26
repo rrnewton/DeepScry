@@ -751,7 +751,7 @@ impl GameLogger {
     /// **stdout is unaffected** — the full message is still printed for the
     /// CLI/server log (which is the canonical, full-information replay log).
     /// Filtering happens only at the structured-view boundary used by
-    /// `web/game.html` and `web/tui_game.html`.
+    /// `web/native_game.html` and `web/tui_game.html`.
     ///
     /// Closes bug-draw-reveals-opponent-hand.
     #[inline]

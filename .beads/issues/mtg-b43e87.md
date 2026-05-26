@@ -1,5 +1,5 @@
 ---
-title: 'BUG: game.html pane focus keys (H, etc.) don''t work — generates connection error'
+title: 'BUG: native_game.html pane focus keys (H, etc.) don''t work — generates connection error'
 status: open
 priority: 2
 issue_type: task

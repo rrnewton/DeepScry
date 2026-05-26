@@ -2,7 +2,7 @@
 /**
  * E2E test for decouple-step3: `launch_game_session` works WITHOUT ratzilla.
  *
- * Loads `game.html` (so wasm-bindgen initializes the card database) and then
+ * Loads `native_game.html` (so wasm-bindgen initializes the card database) and then
  * deliberately:
  *   1. REMOVES the `<div id="ratzilla-terminal">` element from the DOM, so any
  *      hidden ratzilla launcher would fail.
@@ -63,7 +63,7 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/game.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });
@@ -75,14 +75,14 @@ function log(msg) {
 
         // ===== Step 1: Confirm there is no #ratzilla-terminal in the DOM =====
         //
-        // Pre decouple-step4 (mtg-81ed52), `web/game.html` shipped with a
+        // Pre decouple-step4 (mtg-81ed52), `web/native_game.html` shipped with a
         // hidden `<div id="ratzilla-terminal" style="display:none">` that
         // `launch_fancy_tui` populated with a ratzilla `DomBackend`. This
         // test deliberately asserted the div *was* there and removed it,
         // so any leftover `launch_fancy_tui` call would error out at
         // `DomBackend::new_by_id`.
         //
-        // Post step 4, `web/game.html` no longer contains the div at all
+        // Post step 4, `web/native_game.html` no longer contains the div at all
         // (verified here) AND no longer calls `launch_fancy_tui` — it
         // uses `launch_game_session` directly. As a defence-in-depth
         // measure we ALSO try to remove the element if some future
@@ -95,11 +95,11 @@ function log(msg) {
             }
             return false;
         });
-        check('ratzilla-terminal element absent from game.html (decouple-step4)',
+        check('ratzilla-terminal element absent from native_game.html (decouple-step4)',
               !initiallyPresent,
               initiallyPresent
                 ? 'div was present (and was just removed for the test)'
-                : 'div was already absent — game.html ships without it');
+                : 'div was already absent — native_game.html ships without it');
 
         // Sanity: confirm there's no #ratzilla-terminal anywhere now.
         const stillThere = await page.evaluate(() => !!document.getElementById('ratzilla-terminal'));
@@ -109,12 +109,12 @@ function log(msg) {
 
         // ===== Step 2: Call launch_game_session via the JS export =====
         // The page exposes the WASM binding via the same `window.__wasm`
-        // namespace as the existing tests use? Looking at game.html, it doesn't
+        // namespace as the existing tests use? Looking at native_game.html, it doesn't
         // explicitly hang exports on window, so we have to reach into the
         // ESM module via dynamic import. Easiest: just import directly.
         const launchResult = await page.evaluate(async () => {
             try {
-                // Use the same module path game.html itself imports from
+                // Use the same module path native_game.html itself imports from
                 // (`./pkg/mtg_forge_rs.js` — relative to the served root,
                 // which is `web/`, so the absolute URL is `/pkg/...`).
                 const mod = await import('/pkg/mtg_forge_rs.js');
@@ -128,7 +128,7 @@ function log(msg) {
                     return { ok: false, error: `tui_tick not exported` };
                 }
 
-                // Init wasm (idempotent — game.html already initialised).
+                // Init wasm (idempotent — native_game.html already initialised).
                 if (!mod.__inited) {
                     await mod.default();
                     mod.__inited = true;
@@ -144,7 +144,7 @@ function log(msg) {
                 cardDb.load_decks(new Uint8Array(await decksResp.arrayBuffer()));
 
                 // Load full card definitions so any deck works.
-                // (game.html lazily loads per-deck packs, but for this isolated
+                // (native_game.html lazily loads per-deck packs, but for this isolated
                 // smoke test it's simpler to grab the whole cards.bin once.)
                 const cardsResp = await fetch('./data/cards.bin');
                 if (!cardsResp.ok) {

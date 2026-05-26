@@ -260,7 +260,7 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
     serde_json::json!(urls).to_string()
 }
 
-/// Compute per-battlefield card sizes for the native HTML GUI (`game.html`).
+/// Compute per-battlefield card sizes for the native HTML GUI (`native_game.html`).
 ///
 /// Uses the shared backend-neutral [`battlefield_layout`] engine in pixel
 /// mode so the same sizing decisions drive both the ratatui TUI and the
@@ -289,7 +289,7 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
 /// }
 /// ```
 ///
-/// game.html measures each pane after layout, calls this function, and
+/// native_game.html measures each pane after layout, calls this function, and
 /// applies the resulting size as a CSS variable on the pane container so
 /// every card scales uniformly within the available space (matching the
 /// tui_game.html / native TUI behaviour where cards visibly shrink when
@@ -379,7 +379,7 @@ pub fn tui_get_card_layout_json(
             };
 
             // If the JS hasn't measured the pane yet (zero), fall back to
-            // the min card size — game.html will retry on the next frame
+            // the min card size — native_game.html will retry on the next frame
             // once the DOM has settled.
             let card_size = if *pane_w > 0.0 && *pane_h > 0.0 && !bf_cards.is_empty() {
                 let rect = LayoutRect::from_xywh(0.0, 0.0, *pane_w, *pane_h);
@@ -407,7 +407,7 @@ pub fn tui_get_card_layout_json(
 ///
 /// Returns JSON with pane positions as percentages of the viewport,
 /// matching the same layout the TUI renderer uses. This allows
-/// game.html to position HTML elements using the shared layout engine
+/// native_game.html to position HTML elements using the shared layout engine
 /// instead of hardcoding its own CSS grid proportions.
 ///
 /// Returns JSON: `{ "columns": [left_pct, middle_pct, right_pct], "info_bar_rows": N }`
@@ -475,7 +475,7 @@ pub fn tui_get_layout_json(viewport_width: u16, viewport_height: u16) -> String 
 /// Run one turn or continue game - called from JavaScript button.
 ///
 /// Ratzilla-free: notifies JS via `window.onRenderComplete` directly so
-/// game.html does not have to wait for the hidden ratzilla render tick.
+/// native_game.html does not have to wait for the hidden ratzilla render tick.
 #[wasm_bindgen]
 pub fn tui_run_turn() {
     with_state_mut_notify(|s| {
@@ -499,7 +499,7 @@ pub fn tui_select_choice() {
 ///
 /// Ratzilla-free: choice navigation is pure data manipulation
 /// (`select_previous_choice`) and does not need a ratzilla terminal to be
-/// attached. This export is what the upcoming game.html keydown handler will
+/// attached. This export is what the upcoming native_game.html keydown handler will
 /// call directly for the Up arrow, replacing the legacy
 /// `terminal.on_key_event` route through the hidden ratzilla div.
 #[wasm_bindgen]
@@ -550,7 +550,7 @@ pub fn tui_toggle_auto() {
 ///
 /// **Ratzilla-free counterpart to the auto-run logic baked into the ratzilla
 /// `draw_web` closure** (see `setup_terminal_and_render`). Intended for
-/// game.html to call from `requestAnimationFrame` (or a `setTimeout` loop)
+/// native_game.html to call from `requestAnimationFrame` (or a `setTimeout` loop)
 /// once it stops launching the hidden ratzilla terminal — at that point this
 /// is the only thing driving forward progress between human inputs.
 ///
@@ -750,7 +750,7 @@ pub fn tui_clear_logs() {
 
 /// Get the structured GUI view model as JSON.
 ///
-/// This is the new entry point for `web/game.html`'s thin DOM renderer:
+/// This is the new entry point for `web/native_game.html`'s thin DOM renderer:
 /// instead of dumping raw card lists and re-deriving display decisions in
 /// JavaScript, we build a fully-formatted view model in Rust using the same
 /// shared helpers as the ratatui TUI (`FancyTuiRenderer::get_sorted_hand`,
@@ -811,14 +811,14 @@ pub fn tui_get_gui_view_model_json() -> String {
 /// - Current prompt and available choices
 /// - Recent log entries
 ///
-/// This is the primary data source for the native web GUI (game.html).
+/// This is the primary data source for the native web GUI (native_game.html).
 /// The TUI version (tui_game.html) uses the terminal renderer instead.
 ///
 /// **DEPRECATED**: Prefer `tui_get_gui_view_model_json` which provides a
 /// schema-versioned, semantically structured view model that uses the SAME
 /// display decisions as the ratatui TUI (sorted hand order, battlefield
 /// section grouping, log color classification, etc.). This function is
-/// retained for backward compatibility while game.html migrates.
+/// retained for backward compatibility while native_game.html migrates.
 #[wasm_bindgen]
 pub fn tui_get_full_state_json() -> String {
     GLOBAL_TUI_STATE.with(|state| {
@@ -3383,7 +3383,7 @@ fn draw_tui_frame(f: &mut Frame, state: &mut WasmFancyTuiState) {
 /// Notes:
 /// - `entity_positions` is populated as a side-effect of the ratatui draw, so
 ///   when this is invoked from a pure-logic mutator the positions reflect the
-///   *previous* drawn frame. game.html does not consume positions for
+///   *previous* drawn frame. native_game.html does not consume positions for
 ///   click-handling (it uses `tui_select_card` directly), and tui_game.html still
 ///   gets a follow-up call from `run_post_render_js_callbacks()` after the
 ///   next ratzilla draw, so the slight staleness self-corrects.
@@ -3452,7 +3452,7 @@ fn run_post_render_js_callbacks(state: &mut WasmFancyTuiState) {
 ///
 /// This is the canonical wrapper for ratzilla-free WASM mutator exports
 /// (`tui_run_turn`, `tui_select_choice`, `tui_toggle_auto`, …). It guarantees
-/// that game.html receives a `window.onRenderComplete` callback for every
+/// that native_game.html receives a `window.onRenderComplete` callback for every
 /// state-changing action without depending on the hidden ratzilla draw_web
 /// tick. The `needs_redraw` flag is intentionally **not** cleared here so
 /// that any active ratzilla terminal still sees it on the next animation
@@ -3493,7 +3493,7 @@ fn install_global_session(state: Rc<RefCell<WasmFancyTuiState>>) {
 ///
 /// Does NOT touch `GLOBAL_TUI_STATE` — the caller (`attach_ratzilla_renderer`)
 /// has already run `install_global_session`. Keeping the global write out of
-/// here lets `launch_game_session` (game.html) skip the ratzilla path entirely
+/// here lets `launch_game_session` (native_game.html) skip the ratzilla path entirely
 /// while still having a session that the pure-logic exports can drive.
 fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<WasmFancyTuiState>>) {
     terminal.on_key_event({
@@ -3534,7 +3534,7 @@ fn setup_terminal_and_render(terminal: Terminal<DomBackend>, state: Rc<RefCell<W
 /// keyboard / mouse / draw_web closures via `setup_terminal_and_render`.
 ///
 /// This is the OPT-IN ratzilla half of the launcher, separated from session
-/// creation so `web/game.html` (decouple-step4) can call
+/// creation so `web/native_game.html` (decouple-step4) can call
 /// `launch_game_session` and skip this — it has no `#ratzilla-terminal` div
 /// and drives the UI from JS via `tui_tick()` instead.
 ///
@@ -3571,7 +3571,7 @@ fn attach_ratzilla_renderer() -> Result<(), JsValue> {
 ///
 /// **Does NOT touch ratzilla** — the caller is responsible for driving the
 /// UI:
-/// - `web/game.html` (decouple-step4 onwards) drives via JS:
+/// - `web/native_game.html` (decouple-step4 onwards) drives via JS:
 ///   `requestAnimationFrame(tui_tick)` + DOM event listeners that call the
 ///   pure-logic exports directly.
 /// - `web/tui_game.html` keeps using `launch_fancy_tui`, which is now a thin
@@ -3619,7 +3619,7 @@ pub fn launch_game_session(
 ///      `#ratzilla-terminal` `DomBackend` for visible canvas rendering and
 ///      legacy keyboard/mouse routing.
 ///
-/// `web/tui_game.html` keeps calling this entry point unchanged. `web/game.html`
+/// `web/tui_game.html` keeps calling this entry point unchanged. `web/native_game.html`
 /// calls `launch_game_session` directly (step 4) and skips the ratzilla
 /// attachment — the hidden `<div id="ratzilla-terminal">` and the entire
 /// ratzilla draw_web tick are no-ops there once the page stops requesting
@@ -3846,7 +3846,7 @@ pub fn launch_network_game(
 
     // Install + attach using the same two-step pattern as `launch_fancy_tui`
     // (decouple-step3). Network mode currently always wants the ratzilla
-    // canvas; if a ratzilla-free network UI is ever needed (e.g. game.html
+    // canvas; if a ratzilla-free network UI is ever needed (e.g. native_game.html
     // for network games), split this into install + optional attach the same
     // way `launch_game_session` does.
     install_global_session(state);

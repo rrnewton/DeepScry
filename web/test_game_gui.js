@@ -1,8 +1,8 @@
-// Native Web GUI (game.html) Browser Test using Playwright
+// Native Web GUI (native_game.html) Browser Test using Playwright
 // Run with: node18 test_game_gui.js
 //
 // This test:
-// 1. Loads game.html (native web GUI, NOT the TUI-in-browser)
+// 1. Loads native_game.html (native web GUI, NOT the TUI-in-browser)
 // 2. Verifies launcher UI elements render correctly
 // 3. Launches a game with AI vs AI
 // 4. Verifies the 3-column game layout renders
@@ -84,10 +84,10 @@ async function runTest() {
             fs.mkdirSync(screenshotDir);
         }
 
-        // ========== STEP 1: Load game.html ==========
-        log('Loading game.html...');
+        // ========== STEP 1: Load native_game.html ==========
+        log('Loading native_game.html...');
         const loadStart = Date.now();
-        await page.goto(`http://localhost:${PORT}/game.html`, {
+        await page.goto(`http://localhost:${PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 60000
         });
@@ -462,7 +462,7 @@ async function runTest() {
         );
         if (hasPanic) {
             finding('FAIL', 'WASM panic detected!');
-            throw new Error('WASM panicked during game.html test');
+            throw new Error('WASM panicked during native_game.html test');
         } else {
             finding('OK', 'No WASM panics');
         }
@@ -505,11 +505,11 @@ async function runTest() {
         log(`  OK: ${counts.OK}  WARN: ${counts.WARN}  FAIL: ${counts.FAIL}`);
 
         if (counts.FAIL > 0) {
-            log('\n=== game.html GUI Test FAILED ===');
+            log('\n=== native_game.html GUI Test FAILED ===');
             return false;
         }
 
-        log('\n=== game.html GUI Test PASSED ===');
+        log('\n=== native_game.html GUI Test PASSED ===');
         log('Screenshots saved in web/screenshots/game_*.png');
         return true;
     } catch (error) {

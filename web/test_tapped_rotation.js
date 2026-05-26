@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * E2E test for bug-gamehtml-tapped-rotation: tapped cards in
- * `web/game.html` rotate a full 90°, matching `web/tui_game.html`'s
+ * `web/native_game.html` rotate a full 90°, matching `web/tui_game.html`'s
  * `TUICoordinateSystem.getCardBox(isTapped=true)` and the native
  * ratatui TUI's `battlefield_layout::entity_size` (1.5× wider, 0.6×
  * shorter — landscape orientation).
@@ -57,7 +57,7 @@ function log(msg) {
         const browserErrors = [];
         page.on('pageerror', err => browserErrors.push(err.message));
 
-        await page.goto(`http://localhost:${HTTP_PORT}/game.html`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });

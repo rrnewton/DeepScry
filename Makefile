@@ -752,13 +752,13 @@ wasm-test-human: wasm-dev
 	@echo "Screenshots saved in web/screenshots/"
 	@echo "Test results: web/screenshots/human_test_results.json"
 
-# Test the rebuilt thin-DOM game.html in the browser (Playwright e2e).
+# Test the rebuilt thin-DOM native_game.html in the browser (Playwright e2e).
 # Validates the GuiViewModel migration: view-model shape, status bar text,
 # player info bars, turn header logging, hand-sort consistency, sequential
 # distinct card selection (the original same-name-collision bug),
 # image-first card details, battlefield section labels, auto-run, and exit.
 wasm-test-game-gui-rebuild: wasm-dev
-	@echo "=== Testing rebuilt game.html (Playwright e2e) ==="
+	@echo "=== Testing rebuilt native_game.html (Playwright e2e) ==="
 	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_game_gui_rebuild.js
 	@echo ""
@@ -770,7 +770,7 @@ wasm-test-game-gui-rebuild: wasm-dev
 # web/screenshots/game_gui_playtest_results.json. Companion long-form
 # verification for `wasm-test-game-gui-rebuild`.
 wasm-test-game-gui-playtest: wasm-dev
-	@echo "=== Playtesting rebuilt game.html (multi-game Playwright) ==="
+	@echo "=== Playtesting rebuilt native_game.html (multi-game Playwright) ==="
 	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_game_gui_playtest.js
 	@echo ""

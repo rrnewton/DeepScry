@@ -3,7 +3,7 @@
 //! Bug: bug-vinebender-triple-activation
 #![allow(clippy::wildcard_enum_match_arm)]
 //!
-//! Reported behaviour (game.html, eric vs gabriel avatar decks, seed 42):
+//! Reported behaviour (native_game.html, eric vs gabriel avatar decks, seed 42):
 //!   - P2 cast Foggy Swamp Vinebender (4/3) and was reported to immediately
 //!     activate its "Waterbend 5: put a +1/+1 counter on this creature"
 //!     ability three times in a row WITHOUT actually paying the cost.

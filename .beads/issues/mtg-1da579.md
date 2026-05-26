@@ -1,5 +1,5 @@
 ---
-title: 'BUG: game.html card sizing — feedback loop, wrong resolution, no spread (FIXED)'
+title: 'BUG: native_game.html card sizing — feedback loop, wrong resolution, no spread (FIXED)'
 status: closed
 priority: 2
 issue_type: bug
@@ -13,7 +13,7 @@ updated_at: 2026-05-13T02:41:52.442649729+00:00
 
 ## Original report
 
-Multiple issues with game.html card sizing on layout-engine branch:
+Multiple issues with native_game.html card sizing on layout-engine branch:
 1. BOTTOM BATTLEFIELD: Cards small, didn't fill the space
 2. TOP BATTLEFIELD: Cards bigger but didn't spread out like tui_game.html
 3. STAGES BUG: Cards resized incrementally on each click/keypress
@@ -42,7 +42,7 @@ URL — even for battlefield cards 250+ px tall.
 so cards left-aligned within each section instead of spreading
 across the available width like tui_game.html.
 
-## Fix (web/game.html)
+## Fix (web/native_game.html)
 
 - New `computeBattlefieldCardSizes()` that measures `.pane-body`
   (stable) instead of `.card-grid` (content-driven). Caches result

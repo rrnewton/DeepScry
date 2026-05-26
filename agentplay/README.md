@@ -71,7 +71,7 @@ another (the recorded `pN_choices.txt` uses text commands like
 # WASM driver via headless Chromium against tui_game.html (default page)
 ./agentplay/agent_game.py --driver=wasm -- decks/old_school2/ur_burn.dck
 
-# WASM driver against game.html (native HTML GUI), with screenshots dir
+# WASM driver against native_game.html (native HTML GUI), with screenshots dir
 ./agentplay/agent_game.py --driver=wasm --wasm-page=game \
     --screenshot-dir=/tmp/agent_screens \
     -- decks/old_school2/ur_burn.dck

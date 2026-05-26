@@ -1546,7 +1546,7 @@ mod tests {
         );
     }
 
-    /// Pixel-mode regression: the WASM bridge used by `game.html`
+    /// Pixel-mode regression: the WASM bridge used by `native_game.html`
     /// (`tui_get_card_layout_json`) calls `pick_card_size_for_battlefield`
     /// with `CellSize::PIXEL`, which exercises a different snapping path
     /// from the terminal cell-size used by the TUI tests above. This
