@@ -1,0 +1,34 @@
+---
+title: scripts/validate.sh flags its own caller's shell as conflicting process
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-05-27T13:42:53.145620540+00:00
+updated_at: 2026-05-27T13:42:53.145620540+00:00
+---
+
+# Description
+
+scripts/validate.sh runs scripts/check_clean_environment.py which fails because it detects the validate.sh process itself (or its parent shell whose cmdline contains 'validate.sh' + cwd) as a conflicting process. This breaks 'make validate' from inside automated agent harnesses (Claude Code, CI runners with parent-shell wrappers, etc).
+
+## Symptom
+```
+ERROR: Found conflicting processes!
+  - validate.sh (PID NNNN): /bin/bash /path/to/scripts/validate.sh --no-wip-commit
+```
+The PID is validate.sh's own PID.
+
+## Root cause
+check_clean_environment.py walks ps aux looking for any process whose cmdline contains both 'validate.sh' and the current working directory. It skips itself only via the 'check_clean_environment.py' substring (line 52), not via the PID/PPID of its caller. Validate.sh's own bash process matches, and any wrapper shell that exec'd validate.sh also matches.
+
+## Recommended fix
+Skip the caller process tree: use os.getppid() / walk /proc/PID/stat to identify the calling validate.sh and its parent shell, and exclude those from the conflict scan. Alternatively: pass validate.sh's own PID as an argument to check_clean_environment.py and skip it explicitly.
+
+## Workaround
+Use 'make -k validate-parallel-steps' directly to bypass the wrapper.
+
+## Discovery
+Found during integration-branch triage 2026-05-27_#2297(b5cbdc85). See ai_docs/integration_triage_20260527.md (Methodology and Process red flags sections). Affects every agent that follows CLAUDE.md's instruction to 'run make validate'.
+
+## Related
+- mtg-99og6 (CI status policy / process-discipline)
