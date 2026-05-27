@@ -173,6 +173,11 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     match (&config.tls_cert, &config.tls_key) {
         (Some(cert_path), Some(key_path)) => {
             log::info!("[web-server] starting HTTPS on {bind} (cert={cert_path:?})");
+            // rustls 0.23 requires explicit CryptoProvider selection before
+            // any TLS work. Install ring as the process-wide default.
+            // `install_default` returns Err if one is already installed; we
+            // ignore that since the only way it happens is duplicate calls.
+            let _ = rustls::crypto::ring::default_provider().install_default();
             let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
                 .await
                 .with_context(|| format!("loading TLS cert/key from {cert_path:?} / {key_path:?}"))?;
