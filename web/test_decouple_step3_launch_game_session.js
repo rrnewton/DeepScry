@@ -144,13 +144,25 @@ function log(msg) {
                 cardDb.load_decks(new Uint8Array(await decksResp.arrayBuffer()));
 
                 // Load full card definitions so any deck works.
-                // (native_game.html lazily loads per-deck packs, but for this isolated
-                // smoke test it's simpler to grab the whole cards.bin once.)
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    return { ok: false, error: `cards.bin fetch failed: ${cardsResp.status}` };
+                // mtg-6fsjb split the monolithic cards.bin into per-set bins
+                // at `./data/sets/<YYYY>-<CODE>.bin`. For this isolated smoke
+                // test we eagerly fetch every set bin in parallel — the wire
+                // size is the same as the old single fetch.
+                const idxResp = await fetch('./data/sets/index.json');
+                if (!idxResp.ok) {
+                    return { ok: false, error: `sets/index.json fetch failed: ${idxResp.status}` };
                 }
-                cardDb.load_cards(new Uint8Array(await cardsResp.arrayBuffer()));
+                const setIndex = await idxResp.json();
+                const setLoads = setIndex.sets.map(async s => {
+                    const r = await fetch(`./data/sets/${s.file}`);
+                    if (!r.ok) throw new Error(`set ${s.file} fetch failed: ${r.status}`);
+                    cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+                });
+                try {
+                    await Promise.all(setLoads);
+                } catch (e) {
+                    return { ok: false, error: `set bin fetch failed: ${e}` };
+                }
 
                 // Tokens too — some decks (avatar set) create clue/food
                 // tokens at run-time and the game crashes without these.
@@ -166,7 +178,7 @@ function log(msg) {
                     return { ok: false, error: 'no decks loaded' };
                 }
                 // Pick the first deck whose cards are all in the database, in
-                // case load_cards.bin doesn't actually cover everything.
+                // case the per-set bins don't actually cover every deck.
                 let deck = names[0];
                 for (const candidate of names) {
                     if (cardDb.get_missing_cards_for_deck(candidate).length === 0) {
