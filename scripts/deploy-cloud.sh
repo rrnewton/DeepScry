@@ -1,58 +1,76 @@
 #!/usr/bin/env bash
-# deploy-cloud.sh - Minimal idempotent deploy of the mtg-forge-rs web UI to
-# a cloud VM reachable via passwordless SSH.
+# deploy-cloud.sh - Idempotent deploy of the mtg-forge-rs web UI AND the
+# native Rust lobby server to a cloud VM reachable via passwordless SSH.
 #
 # WHAT IT DOES
 #   1. Locally ensures the WASM data export and wasm-pack bundle exist
 #      (runs `make wasm-export wasm-network` only if `web/data/` or
 #      `web/pkg/` are missing).
-#   2. Rsyncs the `web/` directory to the remote, EXCLUDING `images/`
+#   2. Locally ensures a release `mtg` binary with --features network is
+#      built (unless SKIP_NATIVE_BUILD=1).
+#   3. Generates `web/server-config.js` so the landing page knows the
+#      public WebSocket URL of the Rust server.
+#   4. Rsyncs the `web/` directory to the remote, EXCLUDING `images/`
 #      (a separate one-time rsync handles those — 4 GB), node_modules,
 #      logs, screenshots, and test artefacts.
-#   3. Rsyncs the `cardsfolder/` (≈130 MB) to the remote as a reference
-#      copy. NOTE: `make wasm-serve` does NOT read cards/ at runtime
-#      because the card DB is baked into web/data/cards.bin by
-#      wasm-export. The folder is shipped because the task brief asks
-#      for it and so a future server-side `make wasm-export` would work.
-#   4. Restarts the static web server on the VM inside a detached tmux
-#      session named `mtg-server`, serving on $REMOTE_PORT (default
-#      8080) via `python3 -m http.server`.
+#   5. Rsyncs the `cardsfolder/` (≈130 MB) to the remote.
+#   6. Rsyncs the release `mtg` binary to the remote.
+#   7. (Re)starts the static web server in tmux session `mtg-server` on
+#      $REMOTE_PORT (default 8080).
+#   8. (Re)starts the native Rust lobby server in tmux session
+#      `mtg-rust-server` on $RUST_SERVER_PORT (default 17810), listening
+#      on 0.0.0.0 with cardsfolder as its card database.
 #
 # WHAT IT DOES NOT DO
-#   - No toolchain install on the VM (no cargo, no wasm-pack).
-#   - No remote compilation. All WASM/data artefacts are built locally.
-#   - No copy of `web/images/` (an in-flight rsync is/was handling that;
-#     re-running this script will leave the remote images/ untouched).
-#   - No firewall changes. Port $REMOTE_PORT must already be reachable
-#     (the VM currently listens on 22/80/443 only; if external access on
-#     8080 is required, open it manually).
-#   - No "release binary" copy. `make wasm-serve` is just
-#     `python3 -m http.server`; there is no Rust server binary.
+#   - No toolchain install on the VM (no cargo, no wasm-pack). The Rust
+#     binary is built LOCALLY and rsync'd.
+#   - No firewall changes. Ports $REMOTE_PORT and $RUST_SERVER_PORT must
+#     already be reachable. The VM currently listens on 22/80/443 only;
+#     if external access on 8080 / 17810 is required, open them manually:
+#       sudo ufw allow $REMOTE_PORT/tcp
+#       sudo ufw allow $RUST_SERVER_PORT/tcp
+#   - No copy of `web/images/` (in-flight rsync handles that separately).
 #
 # REMOTE ASSUMPTIONS
 #   - Passwordless SSH to ${REMOTE} works.
-#   - `python3` and `tmux` are installed on the VM (Ubuntu 24.04 default
-#     has python3; tmux is installed by this script if missing).
+#   - `python3` and `tmux` are installed on the VM. tmux is installed by
+#     this script if missing.
+#   - The remote architecture matches the local build target (both are
+#     assumed x86_64 Linux). If you build on macOS/ARM, set
+#     SKIP_NATIVE_BUILD=1 and provide the binary manually.
 #   - Remote home contains writeable `~/mtg-forge-rs/`.
 #
 # IDEMPOTENCY
 #   - Uses rsync, not scp. Re-running only transfers deltas.
-#   - The tmux session is killed and restarted on every run so the
-#     server picks up new artefacts. Static files are served directly
-#     from disk, so the restart is for cleanliness only.
+#   - tmux sessions are killed and restarted on every run so the servers
+#     pick up new artefacts.
 #
 # OPERATIONS
-#   Start (re-deploy):  ./scripts/deploy-cloud.sh
-#   Stop the server:    ssh newton@deepscry.net 'tmux kill-session -t mtg-server'
-#   View server log:    ssh newton@deepscry.net 'tmux capture-pane -p -t mtg-server'
-#   Attach interactive: ssh -t newton@deepscry.net 'tmux attach -t mtg-server'
+#   Start (re-deploy):      ./scripts/deploy-cloud.sh
+#   Stop web server:        ssh newton@deepscry.net 'tmux kill-session -t mtg-server'
+#   Stop Rust server:       ssh newton@deepscry.net 'tmux kill-session -t mtg-rust-server'
+#   View Rust server log:   ssh newton@deepscry.net 'tail -f ~/mtg-forge-rs/rust-server.log'
+#   Attach interactive:     ssh -t newton@deepscry.net 'tmux attach -t mtg-rust-server'
+#
+# ENVIRONMENT
+#   REMOTE              SSH target (default: newton@deepscry.net)
+#   REMOTE_DIR          Remote install dir (default: mtg-forge-rs)
+#   REMOTE_PORT         Static web HTTP port  (default: 8080)
+#   RUST_SERVER_PORT    Native Rust lobby port (default: 17810)
+#   TMUX_SESSION        Web tmux session name  (default: mtg-server)
+#   RUST_TMUX_SESSION   Rust tmux session name (default: mtg-rust-server)
+#   REBUILD=1           Force `make wasm-export wasm-network` even if outputs exist
+#   SKIP_NATIVE_BUILD=1 Skip local `cargo build` of `mtg` binary
+#   CARDSFOLDER         Override cards source path
 
 set -euo pipefail
 
 REMOTE="${REMOTE:-newton@deepscry.net}"
 REMOTE_DIR="${REMOTE_DIR:-mtg-forge-rs}"
 REMOTE_PORT="${REMOTE_PORT:-8080}"
+RUST_SERVER_PORT="${RUST_SERVER_PORT:-17810}"
 TMUX_SESSION="${TMUX_SESSION:-mtg-server}"
+RUST_TMUX_SESSION="${RUST_TMUX_SESSION:-mtg-rust-server}"
 
 # Resolve repo root from this script's location (works from any CWD).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,18 +78,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "=== mtg-forge-rs cloud deploy ==="
-echo "Remote:    $REMOTE:~/$REMOTE_DIR"
-echo "Port:      $REMOTE_PORT"
-echo "Session:   $TMUX_SESSION"
-echo "Repo root: $REPO_ROOT"
+echo "Remote:       $REMOTE:~/$REMOTE_DIR"
+echo "Web port:     $REMOTE_PORT  (tmux: $TMUX_SESSION)"
+echo "Rust port:    $RUST_SERVER_PORT  (tmux: $RUST_TMUX_SESSION)"
+echo "Repo root:    $REPO_ROOT"
 echo
 
+# Derive the public host from REMOTE (strip user@). Used for server-config.js.
+PUBLIC_HOST="${REMOTE##*@}"
+
 # --- 1. Build WASM artefacts locally if missing -----------------------------
-#
-# `make wasm-export` needs cardsfolder. The in-repo `cardsfolder` is a
-# symlink into the `forge-java` git submodule, which may not be
-# initialised in an agent worktree. As a fallback we let the user (or
-# the script) point CARDSFOLDER at the primary checkout's copy.
 if [[ -z "${CARDSFOLDER:-}" && ! -d cardsfolder/. ]]; then
     PRIMARY_CARDS="$(cd "$REPO_ROOT/.." 2>/dev/null && pwd)/../mtg-forge-rs/forge-java/forge-gui/res/cardsfolder"
     if [[ -d "$PRIMARY_CARDS" ]]; then
@@ -92,18 +108,48 @@ if (( need_build )); then
     echo "--- running make wasm-export wasm-network ---"
     make wasm-export wasm-network
 else
-    echo "--- web/data and web/pkg present; skipping local build (set REBUILD=1 to force) ---"
+    echo "--- web/data and web/pkg present; skipping local WASM build (set REBUILD=1 to force) ---"
 fi
 
-# Sanity check: must have at least the WASM bundle and the card DB.
 for f in web/pkg/mtg_forge_rs_bg.wasm web/data/cards.bin web/data/decks.bin; do
     [[ -f "$f" ]] || { echo "ERROR: missing required artefact: $f" >&2; exit 1; }
 done
 
-# --- 2. Ensure remote layout and tmux exist ---------------------------------
+# --- 2. Build the native release binary -------------------------------------
+NATIVE_BIN="target/release/mtg"
+if [[ "${SKIP_NATIVE_BUILD:-0}" != "1" ]]; then
+    if [[ ! -x "$NATIVE_BIN" || "${REBUILD:-0}" = "1" ]]; then
+        echo "--- building release mtg binary (--features network) ---"
+        cargo build --release --bin mtg --features network
+    else
+        echo "--- $NATIVE_BIN present; skipping local native build (set REBUILD=1 to force) ---"
+    fi
+fi
+[[ -x "$NATIVE_BIN" ]] || {
+    echo "ERROR: $NATIVE_BIN missing. Build with: cargo build --release --bin mtg --features network" >&2
+    exit 1
+}
+
+# --- 3. Generate server-config.js for the landing page ----------------------
+# This file is consumed by web/index.html to know where the Rust lobby is.
+cat > web/server-config.js <<EOF
+// AUTO-GENERATED by scripts/deploy-cloud.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ).
+// Points the landing-page lobby at the deployed native Rust server.
+//
+// Override at runtime with ?ws=ws://host:port in the page URL, or by
+// setting window.MTG_WS_URL before this script tag loads.
+(function () {
+    if (!window.MTG_WS_URL) {
+        window.MTG_WS_URL = "ws://$PUBLIC_HOST:$RUST_SERVER_PORT";
+    }
+})();
+EOF
+echo "--- generated web/server-config.js pointing at ws://$PUBLIC_HOST:$RUST_SERVER_PORT ---"
+
+# --- 4. Ensure remote layout and tmux exist ---------------------------------
 ssh "$REMOTE" "
     set -e
-    mkdir -p ~/$REMOTE_DIR/web ~/$REMOTE_DIR/cardsfolder
+    mkdir -p ~/$REMOTE_DIR/web ~/$REMOTE_DIR/cardsfolder ~/$REMOTE_DIR/bin ~/$REMOTE_DIR/bug_reports
     if ! command -v tmux >/dev/null 2>&1; then
         echo 'Installing tmux on remote...'
         sudo -n apt-get install -y tmux || {
@@ -113,7 +159,7 @@ ssh "$REMOTE" "
     fi
 "
 
-# --- 3. Rsync web/ (excluding images and transient state) -------------------
+# --- 5. Rsync web/ ----------------------------------------------------------
 echo "--- rsyncing web/ to $REMOTE:~/$REMOTE_DIR/web/ ---"
 rsync -avh --delete \
     --exclude='images/' \
@@ -127,11 +173,7 @@ rsync -avh --delete \
     --exclude='network_*_test_results.json' \
     web/ "$REMOTE:$REMOTE_DIR/web/"
 
-# --- 4. Rsync cardsfolder/ (≈130 MB, follow symlink) ------------------------
-# `cardsfolder` is a symlink to forge-java/forge-gui/res/cardsfolder/.
-# Use --copy-links so the remote gets a plain directory. If the symlink
-# is dangling (forge-java submodule not initialised in this worktree),
-# fall back to $CARDSFOLDER if set, else skip.
+# --- 6. Rsync cardsfolder/ (≈130 MB, follow symlink) ------------------------
 CARDS_SRC=""
 if [[ -d cardsfolder/. ]]; then
     CARDS_SRC="cardsfolder/"
@@ -143,11 +185,16 @@ if [[ -n "$CARDS_SRC" ]]; then
     rsync -avh --delete --copy-links \
         "$CARDS_SRC" "$REMOTE:$REMOTE_DIR/cardsfolder/"
 else
-    echo "--- cardsfolder/ unavailable; skipping (web/data/cards.bin already contains the baked card DB) ---"
+    echo "--- cardsfolder/ unavailable; web/data/cards.bin still works for the WASM demo but the Rust server requires cardsfolder; aborting." >&2
+    exit 1
 fi
 
-# --- 5. (Re)start the web server in a detached tmux session -----------------
-echo "--- (re)starting web server on $REMOTE port $REMOTE_PORT ---"
+# --- 7. Rsync the native release binary -------------------------------------
+echo "--- rsyncing $NATIVE_BIN to $REMOTE:~/$REMOTE_DIR/bin/mtg ---"
+rsync -avh "$NATIVE_BIN" "$REMOTE:$REMOTE_DIR/bin/mtg"
+
+# --- 8. (Re)start the web server in a detached tmux session -----------------
+echo "--- (re)starting static web server on $REMOTE port $REMOTE_PORT ---"
 ssh "$REMOTE" "
     set -e
     tmux kill-session -t $TMUX_SESSION 2>/dev/null || true
@@ -156,15 +203,35 @@ ssh "$REMOTE" "
         \"python3 -m http.server $REMOTE_PORT 2>&1 | tee ~/$REMOTE_DIR/server.log\"
     sleep 1
     if ! tmux has-session -t $TMUX_SESSION 2>/dev/null; then
-        echo 'ERROR: tmux session failed to start' >&2
+        echo 'ERROR: web tmux session failed to start' >&2
         exit 1
     fi
-    echo 'Server tmux session is up. Listening sockets on port $REMOTE_PORT:'
-    ss -tlnp 2>/dev/null | grep ':$REMOTE_PORT' || echo '  (none — check ~/$REMOTE_DIR/server.log)'
+"
+
+# --- 9. (Re)start the native Rust lobby server ------------------------------
+echo "--- (re)starting native Rust lobby on $REMOTE port $RUST_SERVER_PORT ---"
+ssh "$REMOTE" "
+    set -e
+    tmux kill-session -t $RUST_TMUX_SESSION 2>/dev/null || true
+    cd ~/$REMOTE_DIR
+    chmod +x ~/$REMOTE_DIR/bin/mtg
+    tmux new-session -d -s $RUST_TMUX_SESSION \
+        \"./bin/mtg server --port $RUST_SERVER_PORT --cardsfolder ./cardsfolder 2>&1 | tee ~/$REMOTE_DIR/rust-server.log\"
+    sleep 2
+    if ! tmux has-session -t $RUST_TMUX_SESSION 2>/dev/null; then
+        echo 'ERROR: Rust server tmux session failed to start' >&2
+        tail -50 ~/$REMOTE_DIR/rust-server.log 2>/dev/null || true
+        exit 1
+    fi
+    echo 'Listening sockets:'
+    ss -tlnp 2>/dev/null | grep -E ':($REMOTE_PORT|$RUST_SERVER_PORT)' || echo '  (none — check the logs)'
 "
 
 echo
 echo "=== Deploy complete ==="
-echo "URL:   http://deepscry.net:$REMOTE_PORT/"
-echo "Stop:  ssh $REMOTE 'tmux kill-session -t $TMUX_SESSION'"
-echo "Log:   ssh $REMOTE 'tail -f ~/$REMOTE_DIR/server.log'"
+echo "Landing page:   http://$PUBLIC_HOST:$REMOTE_PORT/"
+echo "Lobby WS URL:   ws://$PUBLIC_HOST:$RUST_SERVER_PORT"
+echo "Web logs:       ssh $REMOTE 'tail -f ~/$REMOTE_DIR/server.log'"
+echo "Rust logs:      ssh $REMOTE 'tail -f ~/$REMOTE_DIR/rust-server.log'"
+echo "Stop web:       ssh $REMOTE 'tmux kill-session -t $TMUX_SESSION'"
+echo "Stop Rust:      ssh $REMOTE 'tmux kill-session -t $RUST_TMUX_SESSION'"
