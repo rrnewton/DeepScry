@@ -118,9 +118,19 @@ pub enum ClientMessage {
     /// `CreateGame` or `JoinGame`. Sending `Authenticate`/`CreateGame`/
     /// `JoinGame` after `ListGames` is the normal flow for a UI client that
     /// shows a lobby browser.
+    ///
+    /// `query` is optional. When omitted (or fully default) the server returns
+    /// every waiting game (legacy behavior). When provided, the server applies
+    /// the case-insensitive substring `filter` against game name OR creator
+    /// name, then paginates with `limit`/`offset`. The reply's `total_count`
+    /// reflects the post-filter total so the client can render
+    /// "Showing N of M".
     ListGames {
         /// Server password (must match server config if non-empty)
         password: String,
+        /// Optional filter + pagination. `None` ⇒ legacy "return all" behavior.
+        #[serde(default)]
+        query: Option<ListGamesQuery>,
     },
 
     /// Create a new pre-game lobby slot and become its creator.
@@ -282,9 +292,17 @@ pub enum ServerMessage {
     /// Reply to `ClientMessage::ListGames`. Lists waiting (pre-game) lobby
     /// slots only — games already in progress are NOT advertised here.
     GameList {
-        /// One entry per waiting game. Order is server-defined (currently
-        /// insertion order); clients should not rely on it.
+        /// One entry per waiting game (post-filter, post-pagination). Order is
+        /// server-defined (currently creation-time ascending); clients should
+        /// not rely on it beyond stability across consecutive list calls.
         games: Vec<LobbyGameEntry>,
+        /// Total number of games matching the filter BEFORE pagination was
+        /// applied. Clients render "Showing games.len() of total_count".
+        /// Defaults to `games.len()` for legacy decoders via `#[serde(default)]`
+        /// on the client side — older servers that omit this field still
+        /// deserialize fine.
+        #[serde(default)]
+        total_count: u32,
         /// Host system memory used as a percentage of total, if the server
         /// can read it (Linux only). Lets a UI show a "Server Full" warning
         /// before the user even tries to `CreateGame`.
@@ -585,6 +603,33 @@ pub enum ServerMessage {
 /// joins it. New clients should prefer explicit `CreateGame`/`JoinGame` with
 /// their own `game_name` so multiple legacy-style sessions can coexist.
 pub const DEFAULT_LOBBY_GAME: &str = "default";
+
+/// Filter + pagination parameters for `ClientMessage::ListGames`.
+///
+/// Strong-typed alternative to a triple of loose fields. All fields are
+/// optional on the wire (`#[serde(default)]`) so a client that just wants
+/// "page 0 of 20 with no filter" can send `{}`. To return ALL games (the
+/// legacy behavior) the client should omit `query` entirely on the parent
+/// `ListGames` message — that signals "no pagination at all" to the server.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ListGamesQuery {
+    /// Case-insensitive substring matched against `name` OR `creator_name`.
+    /// `None` or empty string ⇒ no filter (return all matches for the page).
+    #[serde(default)]
+    pub filter: Option<String>,
+    /// Maximum entries to return. Server clamps to `MAX_LIST_GAMES_LIMIT`
+    /// (currently 100). `0` is treated as `DEFAULT_LIST_GAMES_LIMIT` (20).
+    #[serde(default)]
+    pub limit: u32,
+    /// Number of entries to skip (after filtering). Defaults to 0.
+    #[serde(default)]
+    pub offset: u32,
+}
+
+/// Default `limit` when a `ListGamesQuery` arrives with `limit == 0`.
+pub const DEFAULT_LIST_GAMES_LIMIT: u32 = 20;
+/// Hard ceiling on the server-side `limit` regardless of what the client asks.
+pub const MAX_LIST_GAMES_LIMIT: u32 = 100;
 
 /// One entry in the lobby browser response.
 #[derive(Debug, Clone, Serialize, Deserialize)]

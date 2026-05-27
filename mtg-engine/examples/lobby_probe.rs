@@ -38,6 +38,7 @@ async fn main() -> Result<()> {
     eprintln!("[probe] sending ListGames");
     let msg = ClientMessage::ListGames {
         password: String::new(),
+        query: None,
     };
     ws.send(Message::Text(serde_json::to_string(&msg)?.into())).await?;
 
@@ -52,12 +53,14 @@ async fn main() -> Result<()> {
     match reply {
         ServerMessage::GameList {
             games,
+            total_count,
             system_memory_used_percent,
             max_memory_percent,
         } => {
             println!(
-                "OK: GameList with {} games (host {:?}% used, ceiling {}%)",
+                "OK: GameList with {} games (of {} total, host {:?}% used, ceiling {}%)",
                 games.len(),
+                total_count,
                 system_memory_used_percent,
                 max_memory_percent
             );

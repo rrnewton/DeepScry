@@ -28,7 +28,9 @@
 //! resident forever, eventually starving the memory ceiling. On timeout the
 //! game task aborts and removes itself from the registry.
 
-use crate::network::protocol::{DeckSubmission, LobbyGameEntry, ServerMessage};
+use crate::network::protocol::{
+    DeckSubmission, ListGamesQuery, LobbyGameEntry, ServerMessage, DEFAULT_LIST_GAMES_LIMIT, MAX_LIST_GAMES_LIMIT,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -162,9 +164,24 @@ impl LobbyState {
         format!("game-{}", self.next_game_id)
     }
 
-    /// Snapshot of `waiting_games` for the `ListGames` reply.
+    /// Snapshot of `waiting_games` for the legacy `ListGames` reply
+    /// (no filter, no pagination). Equivalent to
+    /// [`Self::list_waiting_paged`] with `query = None`.
     pub fn list_waiting(&self) -> Vec<LobbyGameEntry> {
-        let mut out: Vec<LobbyGameEntry> = self
+        let (out, _total) = self.list_waiting_paged(None);
+        out
+    }
+
+    /// Snapshot of `waiting_games` with optional case-insensitive substring
+    /// filter (against game name OR creator name) and pagination.
+    ///
+    /// Returns `(page, total_matching)` where `page.len() <= limit` and
+    /// `total_matching` is the count after filtering but before paging.
+    ///
+    /// When `query` is `None` the legacy behavior applies: every waiting game
+    /// is returned with no clamp.
+    pub fn list_waiting_paged(&self, query: Option<&ListGamesQuery>) -> (Vec<LobbyGameEntry>, u32) {
+        let mut all: Vec<LobbyGameEntry> = self
             .waiting_games
             .values()
             .map(|pg| LobbyGameEntry {
@@ -175,8 +192,38 @@ impl LobbyState {
             })
             .collect();
         // Stable order for tests / clients: by creation time ascending.
-        out.sort_by_key(|e| e.created_at_ms);
-        out
+        all.sort_by_key(|e| e.created_at_ms);
+
+        let Some(q) = query else {
+            let total = all.len() as u32;
+            return (all, total);
+        };
+
+        // Filter (case-insensitive substring on game name OR creator name).
+        // Note: this is straight substring matching on free-text user input,
+        // which is the right tool — NOT structured-data parsing.
+        if let Some(needle) = q.filter.as_deref().filter(|s| !s.is_empty()) {
+            let needle_lc = needle.to_lowercase();
+            all.retain(|e| {
+                e.name.to_lowercase().contains(&needle_lc) || e.creator_name.to_lowercase().contains(&needle_lc)
+            });
+        }
+        let total = all.len() as u32;
+
+        // Paginate.
+        let limit = if q.limit == 0 {
+            DEFAULT_LIST_GAMES_LIMIT
+        } else {
+            q.limit.min(MAX_LIST_GAMES_LIMIT)
+        };
+        let offset = q.offset as usize;
+        let end = (offset + limit as usize).min(all.len());
+        let page = if offset >= all.len() {
+            Vec::new()
+        } else {
+            all[offset..end].to_vec()
+        };
+        (page, total)
     }
 
     /// Number of games currently being played.
@@ -286,6 +333,96 @@ mod tests {
         );
         assert!(list[0].has_password);
         assert!(!list[1].has_password);
+    }
+
+    #[test]
+    fn list_waiting_paged_filters_case_insensitive_on_name_or_creator() {
+        let mut s = LobbyState::new();
+        // Names: alpha-game, bravo-game, charlie-game
+        // Creators: Creator1, Creator2, Creator3 (from `pending` helper)
+        s.waiting_games
+            .insert("alpha-game".into(), pending(1, "alpha-game", 100, false));
+        s.waiting_games
+            .insert("BRAVO-game".into(), pending(2, "BRAVO-game", 200, false));
+        s.waiting_games
+            .insert("charlie-game".into(), pending(3, "charlie-game", 300, false));
+
+        // Filter on name substring, case-insensitive.
+        let q = ListGamesQuery {
+            filter: Some("BRAVO".into()),
+            limit: 0,
+            offset: 0,
+        };
+        let (page, total) = s.list_waiting_paged(Some(&q));
+        assert_eq!(total, 1);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].name, "BRAVO-game");
+
+        // Filter on creator name (Creator2).
+        let q = ListGamesQuery {
+            filter: Some("creator2".into()),
+            limit: 0,
+            offset: 0,
+        };
+        let (page, total) = s.list_waiting_paged(Some(&q));
+        assert_eq!(total, 1);
+        assert_eq!(page[0].creator_name, "Creator2");
+
+        // Empty filter = no filter (matches all).
+        let q = ListGamesQuery {
+            filter: Some(String::new()),
+            limit: 0,
+            offset: 0,
+        };
+        let (_, total) = s.list_waiting_paged(Some(&q));
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn list_waiting_paged_respects_limit_and_offset() {
+        let mut s = LobbyState::new();
+        for i in 0..5 {
+            let name = format!("g{i}");
+            s.waiting_games
+                .insert(name.clone(), pending(i + 1, &name, 100 + i, false));
+        }
+        let q = ListGamesQuery {
+            filter: None,
+            limit: 2,
+            offset: 1,
+        };
+        let (page, total) = s.list_waiting_paged(Some(&q));
+        assert_eq!(total, 5);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].name, "g1");
+        assert_eq!(page[1].name, "g2");
+    }
+
+    #[test]
+    fn list_waiting_paged_clamps_limit_to_max() {
+        let mut s = LobbyState::new();
+        s.waiting_games.insert("x".into(), pending(1, "x", 100, false));
+        let q = ListGamesQuery {
+            filter: None,
+            limit: 9999, // far above MAX_LIST_GAMES_LIMIT
+            offset: 0,
+        };
+        let (page, total) = s.list_waiting_paged(Some(&q));
+        assert_eq!(page.len(), 1);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn list_waiting_paged_none_query_returns_all() {
+        let mut s = LobbyState::new();
+        for i in 0..3 {
+            let name = format!("g{i}");
+            s.waiting_games
+                .insert(name.clone(), pending(i + 1, &name, 100 + i, false));
+        }
+        let (page, total) = s.list_waiting_paged(None);
+        assert_eq!(page.len(), 3);
+        assert_eq!(total, 3);
     }
 
     #[test]

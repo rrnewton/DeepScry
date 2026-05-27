@@ -734,12 +734,14 @@ impl WasmNetworkClient {
             // the browser UI once the lobby front-end lands.
             ServerMessage::GameList {
                 games,
+                total_count,
                 system_memory_used_percent,
                 max_memory_percent,
             } => {
                 log::info!(
-                    "WasmNetworkClient: GameList ({} waiting games, host_mem={:?}%, ceiling={}%)",
+                    "WasmNetworkClient: GameList ({}/{} waiting games, host_mem={:?}%, ceiling={}%)",
                     games.len(),
+                    total_count,
                     system_memory_used_percent,
                     max_memory_percent
                 );

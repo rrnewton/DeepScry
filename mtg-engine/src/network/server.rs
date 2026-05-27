@@ -610,7 +610,7 @@ async fn handle_lobby_connection(
     loop {
         let msg = read_one_lobby_message(&mut ws_stream).await?;
         match msg {
-            ClientMessage::ListGames { password } => {
+            ClientMessage::ListGames { password, query } => {
                 if !check_server_password(&config, &password) {
                     // We send AuthResult { success: false, .. } so legacy
                     // clients can decode it; ListGames is intentionally a
@@ -627,15 +627,16 @@ async fn handle_lobby_connection(
                     .await?;
                     return Ok(());
                 }
-                let games = {
+                let (games, total_count) = {
                     let l = lobby.lock().await;
-                    l.list_waiting()
+                    l.list_waiting_paged(query.as_ref())
                 };
                 let mem = current_system_memory();
                 send_message(
                     &mut ws_stream,
                     &ServerMessage::GameList {
                         games,
+                        total_count,
                         system_memory_used_percent: mem.map(|m| m.used_percent()),
                         max_memory_percent: config.max_memory_percent,
                     },

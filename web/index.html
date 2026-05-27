@@ -113,6 +113,52 @@
         td .pw { width: 110px; padding: 5px 7px; font-size: 12px; }
         td button { padding: 5px 12px; font-size: 12px; }
 
+        /* Scrollable games container + filter/pagination controls. */
+        .games-scroll {
+            max-height: 280px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-top: 6px;
+        }
+        .games-scroll table { margin-top: 0; }
+        .games-scroll thead th {
+            position: sticky; top: 0; background: var(--surface);
+            z-index: 1;
+        }
+        .games-filter { display: flex; gap: 8px; margin-top: 4px; }
+        .games-filter input { font-size: 12px; padding: 6px 8px; }
+        .games-pager {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted);
+        }
+        .games-pager button {
+            padding: 4px 10px; font-size: 12px;
+            background: transparent; border: 1px solid var(--accent);
+            color: var(--accent);
+        }
+        .games-pager button:disabled {
+            border-color: var(--border); color: #555; background: transparent;
+        }
+
+        /* Passcode show/hide eyeball: wrap input + button in a relative box. */
+        .pw-wrap { position: relative; }
+        .pw-wrap input { padding-right: 36px; }
+        .pw-wrap .pw-toggle {
+            position: absolute;
+            right: 4px; top: 50%; transform: translateY(-50%);
+            background: transparent; border: none; padding: 4px 6px;
+            color: var(--muted); cursor: pointer; display: inline-flex;
+            align-items: center; justify-content: center;
+            border-radius: 4px;
+        }
+        .pw-wrap .pw-toggle:hover { color: var(--accent); background: rgba(76, 201, 240, 0.10); }
+        .pw-wrap .pw-toggle:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .pw-wrap .pw-toggle svg { width: 18px; height: 18px; display: block; }
+        /* In-table (per-row) passcode toggle is a hair smaller. */
+        td .pw-wrap .pw-toggle svg { width: 16px; height: 16px; }
+        td .pw-wrap .pw-toggle { right: 2px; padding: 2px 4px; }
+
         /* Launch links */
         .launchers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 6px; }
         @media (max-width: 600px) { .launchers { grid-template-columns: 1fr; } }
@@ -217,7 +263,13 @@
                         <input type="text" id="create-game" maxlength="40" placeholder="e.g. friday-night-magic" required>
                         <div style="height: 8px;"></div>
                         <label for="create-pass">Passcode (optional, share with friend)</label>
-                        <input type="password" id="create-pass" maxlength="40" placeholder="leave blank for open game">
+                        <div class="pw-wrap">
+                            <input type="password" id="create-pass" maxlength="40" placeholder="leave blank for open game">
+                            <button type="button" class="pw-toggle" data-target="create-pass"
+                                    aria-label="Show passcode" aria-pressed="false" title="Show passcode">
+                                <!-- eye icon (filled in by JS based on state) -->
+                            </button>
+                        </div>
                         <div style="height: 12px;"></div>
                         <div class="row">
                             <button type="submit" id="btn-create">Create &amp; Wait</button>
@@ -230,14 +282,28 @@
                 <!-- Open games -->
                 <div>
                     <h3>Open Games</h3>
-                    <table id="games-table">
-                        <thead>
-                            <tr><th>Game</th><th>Host</th><th>Passcode</th><th></th></tr>
-                        </thead>
-                        <tbody id="games-tbody">
-                            <tr class="empty"><td colspan="4">No open games. Create one to start.</td></tr>
-                        </tbody>
-                    </table>
+                    <div class="games-filter">
+                        <input type="text" id="games-filter" maxlength="40"
+                               placeholder="Filter by game or host name…"
+                               aria-label="Filter games">
+                    </div>
+                    <div class="games-scroll">
+                        <table id="games-table">
+                            <thead>
+                                <tr><th>Game</th><th>Host</th><th>Passcode</th><th></th></tr>
+                            </thead>
+                            <tbody id="games-tbody">
+                                <tr class="empty"><td colspan="4">No open games. Create one to start.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="games-pager">
+                        <span id="games-count">Showing 0 of 0</span>
+                        <span>
+                            <button type="button" id="games-prev" disabled>&lt; prev</button>
+                            <button type="button" id="games-next" disabled>next &gt;</button>
+                        </span>
+                    </div>
                 </div>
 
             </div>
@@ -338,9 +404,49 @@
 
     var ws = null;
     var listPending = false;
-    var lastListGames = [];   // most recent list (creator_name, name, has_password)
+    var lastListGames = [];   // most recent page (creator_name, name, has_password)
+    var lastTotalCount = 0;   // server-reported total matches (pre-pagination)
     var refreshTimer = null;
     var currentUsername = sessionStorage.getItem('mtg.username') || '';
+
+    // Pagination / filter state for the games-list browser.
+    var GAMES_PAGE_SIZE = 20;
+    var gamesFilter = '';
+    var gamesOffset = 0;
+    var filterDebounceTimer = null;
+
+    // --- SVG icons for passcode show/hide toggle ----------------------------
+    // Material-style eye / eye-with-slash. Inline so we have no icon-font dep.
+    var ICON_EYE =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/>' +
+        '<circle cx="12" cy="12" r="3"/></svg>';
+    var ICON_EYE_OFF =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.6 19.6 0 0 1 5.06-5.94"/>' +
+        '<path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a19.6 19.6 0 0 1-3.17 4.19"/>' +
+        '<path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/>' +
+        '<line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+    // Initialize a passcode-toggle button: wires click + keyboard, sets icon.
+    // The button must already have `data-target="<input id>"`.
+    function installPwToggle(btn) {
+        if (btn.dataset.pwInstalled === '1') return;
+        btn.dataset.pwInstalled = '1';
+        btn.innerHTML = ICON_EYE;
+        btn.addEventListener('click', function () {
+            var target = document.getElementById(btn.dataset.target);
+            if (!target) return;
+            var nowText = target.type === 'password';
+            target.type = nowText ? 'text' : 'password';
+            btn.setAttribute('aria-pressed', nowText ? 'true' : 'false');
+            btn.setAttribute('aria-label', nowText ? 'Hide passcode' : 'Show passcode');
+            btn.title = nowText ? 'Hide passcode' : 'Show passcode';
+            btn.innerHTML = nowText ? ICON_EYE_OFF : ICON_EYE;
+        });
+    }
 
     function setConnState(state, text) {
         var dot = document.getElementById('ws-dot');
@@ -383,7 +489,17 @@
 
     function requestGameList() {
         if (listPending) return;
-        listPending = send({ type: 'list_games', password: '' });
+        // Always send a `query` once the user is in the lobby so we get the
+        // new total_count + pagination. The server treats `query: null` as
+        // the legacy "return everything" mode; tests that pre-date this
+        // feature still work because the server supports both.
+        var msg = { type: 'list_games', password: '' };
+        msg.query = {
+            filter: gamesFilter || null,
+            limit: GAMES_PAGE_SIZE,
+            offset: gamesOffset,
+        };
+        listPending = send(msg);
     }
 
     // Lifecycle state used while a CreateGame / JoinGame is in flight or
@@ -395,6 +511,11 @@
         if (msg.type === 'game_list') {
             listPending = false;
             lastListGames = msg.games || [];
+            // Older servers omit total_count; fall back to page length so the
+            // "Showing N of M" footer still makes sense.
+            lastTotalCount = (typeof msg.total_count === 'number')
+                ? msg.total_count
+                : lastListGames.length;
             renderGames();
             // Re-validate name (a freshly-registered host name may now clash).
             // Skip auto-enter while the waiting pane is showing so we don't
@@ -451,41 +572,78 @@
         var tbody = document.getElementById('games-tbody');
         tbody.innerHTML = '';
         if (lastListGames.length === 0) {
-            tbody.innerHTML = '<tr class="empty"><td colspan="4">No open games. Create one to start.</td></tr>';
-            return;
+            var emptyMsg = (gamesFilter || gamesOffset > 0)
+                ? 'No games match the current filter.'
+                : 'No open games. Create one to start.';
+            tbody.innerHTML = '<tr class="empty"><td colspan="4">' + emptyMsg + '</td></tr>';
+        } else {
+            lastListGames.forEach(function (g) {
+                var tr = document.createElement('tr');
+                var nameTd = document.createElement('td');
+                nameTd.textContent = g.name;
+                nameTd.className = 'mono';
+                var hostTd = document.createElement('td');
+                hostTd.textContent = g.creator_name;
+                var passTd = document.createElement('td');
+                if (g.has_password) {
+                    // Wrap the passcode input + eyeball toggle so the user
+                    // can verify what they typed (typo prevention beats
+                    // hiding for friend-share passcodes).
+                    var wrap = document.createElement('span');
+                    wrap.className = 'pw-wrap';
+                    var inpId = 'pw-' + g.name;
+                    var inp = document.createElement('input');
+                    inp.type = 'password';
+                    inp.placeholder = 'required';
+                    inp.className = 'pw mono';
+                    inp.id = inpId;
+                    wrap.appendChild(inp);
+                    var tog = document.createElement('button');
+                    tog.type = 'button';
+                    tog.className = 'pw-toggle';
+                    tog.dataset.target = inpId;
+                    tog.setAttribute('aria-label', 'Show passcode');
+                    tog.setAttribute('aria-pressed', 'false');
+                    tog.title = 'Show passcode';
+                    wrap.appendChild(tog);
+                    passTd.appendChild(wrap);
+                    installPwToggle(tog);
+                } else {
+                    passTd.innerHTML = '<span style="color: var(--muted);">none</span>';
+                }
+                var btnTd = document.createElement('td');
+                btnTd.style.textAlign = 'right';
+                var btn = document.createElement('button');
+                btn.textContent = 'Join';
+                btn.disabled = !isInLobby();
+                btn.title = isInLobby() ? '' : 'Pick a username first';
+                btn.onclick = function () { joinGame(g); };
+                btnTd.appendChild(btn);
+                tr.appendChild(nameTd);
+                tr.appendChild(hostTd);
+                tr.appendChild(passTd);
+                tr.appendChild(btnTd);
+                tbody.appendChild(tr);
+            });
         }
-        lastListGames.forEach(function (g) {
-            var tr = document.createElement('tr');
-            var nameTd = document.createElement('td');
-            nameTd.textContent = g.name;
-            nameTd.className = 'mono';
-            var hostTd = document.createElement('td');
-            hostTd.textContent = g.creator_name;
-            var passTd = document.createElement('td');
-            if (g.has_password) {
-                var inp = document.createElement('input');
-                inp.type = 'password';
-                inp.placeholder = 'required';
-                inp.className = 'pw mono';
-                inp.id = 'pw-' + g.name;
-                passTd.appendChild(inp);
-            } else {
-                passTd.innerHTML = '<span style="color: var(--muted);">none</span>';
-            }
-            var btnTd = document.createElement('td');
-            btnTd.style.textAlign = 'right';
-            var btn = document.createElement('button');
-            btn.textContent = 'Join';
-            btn.disabled = !isInLobby();
-            btn.title = isInLobby() ? '' : 'Pick a username first';
-            btn.onclick = function () { joinGame(g); };
-            btnTd.appendChild(btn);
-            tr.appendChild(nameTd);
-            tr.appendChild(hostTd);
-            tr.appendChild(passTd);
-            tr.appendChild(btnTd);
-            tbody.appendChild(tr);
-        });
+        renderGamesPager();
+    }
+
+    function renderGamesPager() {
+        var countEl = document.getElementById('games-count');
+        var prevBtn = document.getElementById('games-prev');
+        var nextBtn = document.getElementById('games-next');
+        if (!countEl || !prevBtn || !nextBtn) return;
+        var shownStart = lastListGames.length === 0 ? 0 : gamesOffset + 1;
+        var shownEnd = gamesOffset + lastListGames.length;
+        if (lastTotalCount === 0) {
+            countEl.textContent = 'Showing 0 of 0';
+        } else {
+            countEl.textContent =
+                'Showing ' + shownStart + '–' + shownEnd + ' of ' + lastTotalCount;
+        }
+        prevBtn.disabled = gamesOffset === 0;
+        nextBtn.disabled = (gamesOffset + lastListGames.length) >= lastTotalCount;
     }
 
     function isInLobby() {
@@ -719,6 +877,32 @@
     document.getElementById('btn-cancel-waiting').addEventListener('click', function (ev) {
         ev.preventDefault();
         cancelPendingFlow();
+    });
+
+    // Passcode show/hide toggle on the create-game form (the per-row join
+    // toggles are wired by renderGames as rows are built).
+    document.querySelectorAll('.pw-toggle').forEach(installPwToggle);
+
+    // Filter input: debounce 200ms, reset offset, re-fetch.
+    document.getElementById('games-filter').addEventListener('input', function (ev) {
+        var val = ev.target.value || '';
+        if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+        filterDebounceTimer = setTimeout(function () {
+            gamesFilter = val.trim();
+            gamesOffset = 0;
+            requestGameList();
+        }, 200);
+    });
+    // Pagination buttons.
+    document.getElementById('games-prev').addEventListener('click', function () {
+        if (gamesOffset === 0) return;
+        gamesOffset = Math.max(0, gamesOffset - GAMES_PAGE_SIZE);
+        requestGameList();
+    });
+    document.getElementById('games-next').addEventListener('click', function () {
+        if ((gamesOffset + lastListGames.length) >= lastTotalCount) return;
+        gamesOffset += GAMES_PAGE_SIZE;
+        requestGameList();
     });
 
     // Re-hydrate username from sessionStorage (in case the user navigated back).

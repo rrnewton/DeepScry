@@ -360,6 +360,171 @@ async function scenarioLaunchPagesSmoke() {
     await browser.close();
 }
 
+async function scenarioPasscodeEyeballToggle() {
+    console.log('\n=== Scenario: passcode show/hide eyeball ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => record('major', 'pw-toggle pageerror', e.message));
+    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.waitForLoadState('domcontentloaded');
+    try { await waitForLobbyConnected(page); } catch (e) {
+        record('blocking', 'pw-toggle ws', e.message);
+    }
+    await page.fill('#username', 'eyeballer');
+    await page.click('#btn-name');
+    await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 });
+
+    // Type into the create-pass field.
+    await page.fill('#create-pass', 'hunter2');
+    let typeBefore = await page.getAttribute('#create-pass', 'type');
+    if (typeBefore !== 'password') {
+        record('major', 'pw-toggle initial type', 'expected type=password, got ' + typeBefore);
+    }
+    // Toggle to visible.
+    const toggleSel = '.pw-wrap .pw-toggle[data-target="create-pass"]';
+    await page.click(toggleSel);
+    let typeAfter = await page.getAttribute('#create-pass', 'type');
+    if (typeAfter !== 'text') {
+        record('major', 'pw-toggle on', 'expected type=text after toggle, got ' + typeAfter);
+    }
+    const aria1 = await page.getAttribute(toggleSel, 'aria-pressed');
+    if (aria1 !== 'true') {
+        record('minor', 'pw-toggle aria', 'aria-pressed not "true" after toggle, got ' + aria1);
+    }
+    // Toggle back to hidden.
+    await page.click(toggleSel);
+    let typeBack = await page.getAttribute('#create-pass', 'type');
+    if (typeBack !== 'password') {
+        record('major', 'pw-toggle off', 'expected type=password after second toggle, got ' + typeBack);
+    }
+    await shot(page, 'landing_12_pw_eyeball.png');
+    await ctx.close();
+    await browser.close();
+}
+
+async function scenarioGameListFilterAndPager() {
+    console.log('\n=== Scenario: game list filter + pagination ===');
+    const browser = await chromium.launch();
+
+    // Spawn enough "host" connections via raw WebSocket to populate the list
+    // with > GAMES_PAGE_SIZE (20) games. We keep the WS sockets open for the
+    // duration of the test so the games stay in waiting_games.
+    const WebSocket = require('ws');
+    const hosts = [];
+    const wsUrl = WS_OVERRIDE || 'ws://localhost:17810';
+    const NUM_GAMES = 25;
+    const deck = {
+        main_deck: [['Forest', 22], ['Grizzly Bears', 14], ['Plains', 12], ['Serra Angel', 12]],
+        sideboard: [],
+    };
+    for (let i = 0; i < NUM_GAMES; i++) {
+        const sock = new WebSocket(wsUrl);
+        await new Promise((res, rej) => {
+            sock.once('open', res);
+            sock.once('error', rej);
+        });
+        const gameName = (i < 5 ? 'filter-target-' : 'bulk-game-') + i;
+        const creatorName = (i < 5 ? 'targethost' : 'bulkhost') + i;
+        sock.send(JSON.stringify({
+            type: 'create_game',
+            password: '',
+            game_name: gameName,
+            game_password: null,
+            player_name: creatorName,
+            deck,
+        }));
+        hosts.push(sock);
+    }
+    // Give the server a moment to register all the slots.
+    await new Promise((r) => setTimeout(r, 800));
+
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => record('major', 'filter pageerror', e.message));
+    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.waitForLoadState('domcontentloaded');
+    try { await waitForLobbyConnected(page); } catch (e) {
+        record('blocking', 'filter ws', e.message);
+    }
+    await page.fill('#username', 'browser');
+    await page.click('#btn-name');
+    await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 });
+    // First page should have 20 rows; total >= NUM_GAMES.
+    await page.click('#btn-refresh');
+    await page.waitForTimeout(800);
+    const firstPageRows = await page.$$eval('#games-tbody tr:not(.empty)', (rs) => rs.length);
+    const countText = await page.textContent('#games-count');
+    console.log('  first page rows:', firstPageRows, '/ countText:', countText);
+    if (firstPageRows !== 20) {
+        record('major', 'pager first page', 'expected 20 rows on first page, got ' + firstPageRows);
+    }
+    if (!/of\s+\d+/.test(countText) || !/of\s+(2[5-9]|[3-9]\d)/.test(countText)) {
+        record('major', 'pager count', 'expected "of >=25", got: ' + countText);
+    }
+    await shot(page, 'landing_13_list_page1.png');
+
+    // Click next; expect remaining rows.
+    const nextDisabled = await page.getAttribute('#games-next', 'disabled');
+    if (nextDisabled !== null) {
+        record('major', 'pager next disabled', 'next button should be enabled when total > page size');
+    }
+    await page.click('#games-next');
+    await page.waitForTimeout(500);
+    const secondPageRows = await page.$$eval('#games-tbody tr:not(.empty)', (rs) => rs.length);
+    console.log('  second page rows:', secondPageRows);
+    if (secondPageRows < 1) {
+        record('major', 'pager second page', 'expected >=1 row on second page, got ' + secondPageRows);
+    }
+    await shot(page, 'landing_14_list_page2.png');
+
+    // Go back via prev.
+    await page.click('#games-prev');
+    await page.waitForTimeout(500);
+    const backRows = await page.$$eval('#games-tbody tr:not(.empty)', (rs) => rs.length);
+    if (backRows !== 20) {
+        record('minor', 'pager prev', 'expected 20 rows back on page 1, got ' + backRows);
+    }
+
+    // Apply filter "filter-target" → should narrow to 5.
+    await page.fill('#games-filter', 'filter-target');
+    await page.waitForTimeout(450); // debounce 200ms + roundtrip
+    const filteredText = await page.textContent('#games-count');
+    const filteredRows = await page.$$eval('#games-tbody tr:not(.empty)', (rs) => rs.length);
+    console.log('  filter rows:', filteredRows, '/ countText:', filteredText);
+    if (filteredRows !== 5 || !/of\s+5/.test(filteredText)) {
+        record('major', 'filter narrow',
+            'expected 5 rows / "of 5", got rows=' + filteredRows + ' text=' + filteredText);
+    }
+    await shot(page, 'landing_15_list_filtered.png');
+
+    // Filter by host name ("bulkhost") → should narrow to NUM_GAMES-5 = 20.
+    await page.fill('#games-filter', 'bulkhost');
+    await page.waitForTimeout(450);
+    const hostText = await page.textContent('#games-count');
+    if (!/of\s+20/.test(hostText)) {
+        record('major', 'filter host',
+            'expected "of 20" filtering by host, got: ' + hostText);
+    }
+
+    // Clear filter → back to >=25.
+    await page.fill('#games-filter', '');
+    await page.waitForTimeout(450);
+    const clearText = await page.textContent('#games-count');
+    if (!/of\s+(2[5-9]|[3-9]\d)/.test(clearText)) {
+        record('minor', 'filter clear', 'expected "of >=25" after clear, got: ' + clearText);
+    }
+
+    await ctx.close();
+    await browser.close();
+    // Close host sockets — server removes them from waiting_games on drop.
+    for (const s of hosts) {
+        try { s.close(); } catch (e) {}
+    }
+    // Brief delay so the server processes the closes before later scenarios poll.
+    await new Promise((r) => setTimeout(r, 300));
+}
+
 async function scenarioAccessibility() {
     console.log('\n=== Scenario: accessibility / form labels ===');
     const browser = await chromium.launch();
@@ -460,6 +625,8 @@ async function startSelfManagedServers() {
         await scenarioMobileViewport();
         await scenarioOfflineLobby();
         await scenarioLaunchPagesSmoke();
+        await scenarioPasscodeEyeballToggle();
+        await scenarioGameListFilterAndPager();
         await scenarioAccessibility();
     } catch (e) {
         console.error('UNCAUGHT', e);

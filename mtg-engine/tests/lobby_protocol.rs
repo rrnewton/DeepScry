@@ -180,7 +180,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                     }
 
                     match msg {
-                        ClientMessage::ListGames { password } => {
+                        ClientMessage::ListGames { password, query } => {
                             if !auth_pw_ok(&password, &server_password) {
                                 let r = ServerMessage::AuthResult {
                                     success: false,
@@ -191,10 +191,11 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                                 let _ = ws.send(Message::Text(serde_json::to_string(&r).unwrap().into())).await;
                                 return;
                             }
-                            let games = lobby.lock().await.list_waiting();
+                            let (games, total_count) = lobby.lock().await.list_waiting_paged(query.as_ref());
                             let mem = current_system_memory();
                             let r = ServerMessage::GameList {
                                 games,
+                                total_count,
                                 system_memory_used_percent: mem.map(|m| m.used_percent()),
                                 max_memory_percent,
                             };
@@ -422,6 +423,7 @@ async fn list_games_returns_empty_lobby() {
         &mut ws,
         &ClientMessage::ListGames {
             password: String::new(),
+            query: None,
         },
     )
     .await;
@@ -468,6 +470,7 @@ async fn create_game_then_list_shows_it() {
         &mut lister,
         &ClientMessage::ListGames {
             password: String::new(),
+            query: None,
         },
     )
     .await;
@@ -533,6 +536,7 @@ async fn join_succeeds_and_promotes_to_active() {
         &mut lister,
         &ClientMessage::ListGames {
             password: String::new(),
+            query: None,
         },
     )
     .await;
@@ -737,6 +741,7 @@ async fn list_games_orders_entries_by_creation_time() {
         &mut lister,
         &ClientMessage::ListGames {
             password: String::new(),
+            query: None,
         },
     )
     .await;
