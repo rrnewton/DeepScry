@@ -773,9 +773,13 @@
                         <label for="show-card-images">Show Card Images</label>
                     </div>
                     <div class="image-sources" id="image-source-options">
-                        <label><input type="checkbox" id="img-src-local" checked> Local (fastest, offline)</label>
+                        <label id="img-src-local-label"><input type="checkbox" id="img-src-local" checked> Local (fastest, offline)</label>
                         <label><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
                         <label><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
+                        <div id="img-src-local-gate-note" style="display:none; font-size:10px; color:#666; margin-top:4px;">
+                            Local images hidden pending licensing clarity around card images.
+                            Append <code>?allow_local_img_load=true</code> to the URL to enable.
+                        </div>
                     </div>
                 </div>
 
@@ -1225,6 +1229,11 @@ Name=My Deck
                 window.allDeckNames = JSON.parse(cardDb.get_deck_names_json());
                 window.allDeckNames.sort();
 
+                // Apply local-image source gate before restoring settings, so that
+                // stale localStorage entries for `imgSrcLocal=true` can't override
+                // the gate (see applyLocalImageGate for rationale).
+                applyLocalImageGate();
+
                 // Restore saved settings from localStorage
                 restoreSettings();
 
@@ -1501,6 +1510,23 @@ Name=My Deck
         // Settings persistence using localStorage
         const SETTINGS_KEY = 'mtg-forge-fancy-settings';
 
+        // Gate the "Local" card-image source behind ?allow_local_img_load=true.
+        // Rationale: licensing posture for serving card images from our VM is
+        // unsettled; default UX must offer only Scryfall/Gatherer until clarified.
+        // Pure URL-param check (no localStorage/sessionStorage persistence) keeps
+        // the unlock explicit and reproducible per page load.
+        function applyLocalImageGate() {
+            const allowed = new URLSearchParams(window.location.search).get('allow_local_img_load') === 'true';
+            window.__allowLocalImgLoad = allowed;
+            if (allowed) return;
+            const localCb = document.getElementById('img-src-local');
+            if (localCb) localCb.checked = false;
+            const localLabel = document.getElementById('img-src-local-label');
+            if (localLabel) localLabel.remove();
+            const note = document.getElementById('img-src-local-gate-note');
+            if (note) note.style.display = 'block';
+        }
+
         function saveSettings() {
             const settings = {
                 // Game mode (local vs network)
@@ -1516,7 +1542,7 @@ Name=My Deck
                 gameSeed: document.getElementById('game-seed').value,
                 showCardImages: document.getElementById('show-card-images').checked,
                 // Image source checkboxes (enabled sources)
-                imgSrcLocal: document.getElementById('img-src-local').checked,
+                imgSrcLocal: document.getElementById('img-src-local')?.checked ?? false,
                 imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
                 imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
                 debugMode: document.getElementById('debug-mode').checked,
@@ -1564,7 +1590,9 @@ Name=My Deck
                 }
                 // Restore image source checkboxes (default to all enabled if not saved)
                 if (settings.imgSrcLocal !== undefined) {
-                    document.getElementById('img-src-local').checked = settings.imgSrcLocal;
+                    const localEl = document.getElementById('img-src-local');
+                    // Gate may have removed the local checkbox; ignore stale localStorage in that case.
+                    if (localEl) localEl.checked = settings.imgSrcLocal;
                 }
                 if (settings.imgSrcScryfall !== undefined) {
                     document.getElementById('img-src-scryfall').checked = settings.imgSrcScryfall;
