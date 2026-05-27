@@ -172,7 +172,8 @@
     <div id="pane-name" class="card">
         <h2>Pick a Username</h2>
         <p style="color: var(--muted); margin: 4px 0 12px;">
-            No accounts, no passwords. Pick any name not currently in use on this server.
+            No accounts, no passwords. Pick any name &mdash; uniqueness is advisory until you create or
+            join a game (server-side enforcement is tracked in mtg-6uuto).
         </p>
         <form id="name-form" class="row" autocomplete="off">
             <div style="flex: 2 1 220px;">
@@ -233,10 +234,11 @@
 
         <!-- 3. Launch / standalone demo pane -->
         <div class="card">
-            <h2>Launch a Game</h2>
+            <h2>Standalone / Solo Launchers</h2>
             <p style="color: var(--muted); margin: 0 0 10px;">
-                Pick a UI to play in. The lobby above will hand your username, game name, and passcode through to the
-                game page. Or open any of these standalone (no lobby required) to try the engine offline.
+                These are <strong>solo / spectate</strong> entry points, separate from the multiplayer lobby above.
+                Open any of them to drive the engine directly (local AI vs AI, manual play, or the standalone
+                network-game UI). The lobby's Create/Join above is the multiplayer path.
             </p>
             <div class="launchers">
                 <a id="launch-native" class="launcher-link" href="native_game.html">
@@ -255,6 +257,18 @@
         </div>
     </div>
 
+    <!-- 4. Waiting / paired pane (hidden until CreateGame or JoinGame succeeds). -->
+    <div id="pane-waiting" class="hidden">
+        <div class="card">
+            <h2 id="waiting-title">Waiting for opponent&hellip;</h2>
+            <p id="waiting-body" style="color: var(--muted); margin: 4px 0 12px;"></p>
+            <div class="row">
+                <button type="button" class="ghost" id="btn-cancel-waiting">Cancel &amp; return to lobby</button>
+            </div>
+            <p id="waiting-status" class="status-line"></p>
+        </div>
+    </div>
+
 </div>
 
 <footer>
@@ -270,15 +284,39 @@
     // Lobby client (talks to the native Rust `mtg server` over WebSocket).
     //
     // Protocol: serde-tagged JSON. Each ClientMessage is `{type: "snake_case",
-    // ...fields}`. We only use a small subset here: ListGames, CreateGame,
-    // JoinGame (the last two via redirect — the actual deck submission happens
-    // on the game page, so this lobby just NEGOTIATES the slot).
+    // ...fields}`. We use: ListGames, CreateGame, JoinGame — all sent over
+    // the lobby's already-open WebSocket. The server validates server password
+    // (empty by default), per-game password, and deck shape (>=40 cards) and
+    // replies with GameCreated / WaitingForOpponent / GameStarted / JoinFailed /
+    // ServerFull / Error.
     //
-    // NOTE: The current lobby does NOT pre-register usernames server-side
-    // (that would require a protocol extension beyond CreateGame/JoinGame).
-    // Username uniqueness is checked best-effort against waiting-game host
-    // names returned by ListGames.
+    // NOTE on username uniqueness (mtg-6uuto): The protocol does not yet have a
+    // ClaimName / RegisterUsername message. We display an advisory disclaimer
+    // and keep the best-effort `nameIsTaken` check against waiting-game host
+    // names; true uniqueness needs a server-side protocol extension.
+    //
+    // NOTE on post-pairing playflow: When `game_started` arrives, the lobby
+    // page currently holds the open WebSocket. Playing the actual game
+    // (rendering the TUI / native UI on top of that WS) is not implemented
+    // here yet — see mtg-i1ye3 follow-up. For now we surface a clear status
+    // message; the server-side game still starts (this fixes BLOCKING-1 by
+    // making the create/join flow ACTUALLY register on the server, so a
+    // second browser sees the game in its Open Games list).
     // ---------------------------------------------------------------------
+
+    // Tiny mono-color 60-card placeholder deck. Server requires >= 40 cards.
+    // (Real deck-picker UI is out of scope for this fix — track in mtg-i1ye3.)
+    // Mirrors decks/combat_test_4ed.dck (a known-good 60-card list used by
+    // existing tests).
+    var DEFAULT_DECK = {
+        main_deck: [
+            ['Forest', 22],
+            ['Grizzly Bears', 14],
+            ['Plains', 12],
+            ['Serra Angel', 12],
+        ],
+        sideboard: [],
+    };
 
     // Allow `?ws=ws://host:port` to override the configured URL.
     var qs = new URLSearchParams(window.location.search);
@@ -335,25 +373,65 @@
         listPending = send({ type: 'list_games', password: '' });
     }
 
+    // Lifecycle state used while a CreateGame / JoinGame is in flight or
+    // already matched. Null = lobby browsing; non-null = waiting/paired.
+    //   { role: 'create'|'join', game_name: str, ... }
+    var pendingFlow = null;
+
     function handleServer(msg) {
-        // Only LIST replies are interesting here; CreateGame/JoinGame happen
-        // on the game page, not from the lobby.
         if (msg.type === 'game_list') {
             listPending = false;
             lastListGames = msg.games || [];
             renderGames();
             // Re-validate name (a freshly-registered host name may now clash).
-            if (currentUsername && !isInLobby()) {
+            // Skip auto-enter while the waiting pane is showing so we don't
+            // yank the user out of an in-flight create/join.
+            if (currentUsername && !isInLobby() && !isWaiting()) {
                 tryEnterLobby(currentUsername, /*silent*/ true);
             }
-        } else if (msg.type === 'auth_result' && msg.success === false) {
-            // The server rejected our ListGames (likely a non-empty server password).
-            // Surface to the user once.
-            setConnState('err', 'Lobby refused list: ' + (msg.error || 'unknown'));
+        } else if (msg.type === 'game_created') {
+            // CreateGame ACK: the slot is now visible to other lobby clients.
+            if (pendingFlow && pendingFlow.role === 'create') {
+                setWaitingStatus('Game "' + msg.game_name + '" registered on server. Waiting for an opponent to join…', '');
+            }
+        } else if (msg.type === 'waiting_for_opponent') {
+            if (pendingFlow) {
+                setWaitingStatus('Server is holding the slot — waiting for opponent…', '');
+            }
+        } else if (msg.type === 'auth_result') {
+            // Sent to the joiner once the slot is matched (and to the legacy
+            // Authenticate path). Treat success as "paired".
+            if (msg.success === false) {
+                if (pendingFlow) {
+                    failPendingFlow('Server rejected request: ' + (msg.error || 'unknown'));
+                } else {
+                    setConnState('err', 'Lobby refused list: ' + (msg.error || 'unknown'));
+                }
+            } else if (pendingFlow && pendingFlow.role === 'join') {
+                setWaitingStatus('Joined! Waiting for the game to start…', 'ok');
+            }
+        } else if (msg.type === 'game_started') {
+            // Both sides paired; per-game task has started. The lobby page
+            // does NOT yet render the actual game (see mtg-i1ye3); surface
+            // a clear "game is live on the server" state.
+            if (pendingFlow) {
+                showGameLivePlaceholder(pendingFlow);
+            }
+        } else if (msg.type === 'join_failed') {
+            if (pendingFlow) {
+                var reason = msg.reason && (msg.reason.type || JSON.stringify(msg.reason));
+                failPendingFlow('Join failed (' + reason + ')');
+            }
         } else if (msg.type === 'server_full') {
+            if (pendingFlow) failPendingFlow('Server is at capacity — try again shortly');
             setConnState('warn', 'Server is at capacity — try again shortly');
+        } else if (msg.type === 'error') {
+            if (pendingFlow) {
+                failPendingFlow(msg.message || 'Server reported an error');
+            }
         }
-        // Other message types (game-flow stuff) belong to a real game page.
+        // Other message types (gameplay choice_request etc.) belong to a real
+        // game-rendering page; intentionally ignored in the lobby.
     }
 
     function renderGames() {
@@ -399,6 +477,14 @@
 
     function isInLobby() {
         return !document.getElementById('pane-lobby').classList.contains('hidden');
+    }
+
+    function hasUsername() {
+        return !!currentUsername;
+    }
+
+    function isWaiting() {
+        return !document.getElementById('pane-waiting').classList.contains('hidden');
     }
 
     function nameIsTaken(candidate) {
@@ -448,9 +534,10 @@
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
     }
 
-    // Build query-string redirects for launch buttons. The game pages will
-    // pick these up when their network flow is wired through the lobby; in
-    // the meantime they ignore them and run their standalone setup.
+    // Build query-string redirects for launch buttons. These are STANDALONE
+    // launchers (separate from the lobby flow above) — they pre-fill the
+    // game page's player-name/server-url fields where applicable. The
+    // multiplayer create/join flow is handled in the lobby pane, NOT here.
     function applyLaunchLinks() {
         var p = new URLSearchParams();
         if (currentUsername) p.set('name', currentUsername);
@@ -465,6 +552,61 @@
         if (refreshTimer) return;
         refreshTimer = setInterval(requestGameList, 5000);
     }
+
+    // ----- waiting/paired-pane state helpers --------------------------------
+
+    function showWaitingPane(title, body) {
+        document.getElementById('waiting-title').textContent = title;
+        document.getElementById('waiting-body').textContent = body || '';
+        document.getElementById('waiting-status').textContent = '';
+        document.getElementById('waiting-status').className = 'status-line';
+        document.getElementById('btn-cancel-waiting').disabled = false;
+        document.getElementById('btn-cancel-waiting').textContent = 'Cancel & return to lobby';
+        document.getElementById('pane-lobby').classList.add('hidden');
+        document.getElementById('pane-waiting').classList.remove('hidden');
+    }
+
+    function setWaitingStatus(text, kind) {
+        var el = document.getElementById('waiting-status');
+        el.textContent = text || '';
+        el.className = 'status-line' + (kind ? ' ' + kind : '');
+    }
+
+    function failPendingFlow(message) {
+        pendingFlow = null;
+        setWaitingStatus(message, 'err');
+        var btn = document.getElementById('btn-cancel-waiting');
+        btn.disabled = false;
+        btn.textContent = 'Return to lobby';
+    }
+
+    function showGameLivePlaceholder(flow) {
+        document.getElementById('waiting-title').textContent =
+            'Game started: ' + flow.game_name;
+        document.getElementById('waiting-body').textContent =
+            'Both players are paired and the game is running on the server. ' +
+            'Playing the game from this lobby page is not yet wired up ' +
+            '(tracked in mtg-i1ye3); for now, closing this tab will end the ' +
+            'server-side game.';
+        setWaitingStatus('Game is LIVE on server.', 'ok');
+        var btn = document.getElementById('btn-cancel-waiting');
+        btn.textContent = 'End game and return to lobby';
+        btn.disabled = false;
+    }
+
+    function cancelPendingFlow() {
+        // The server treats a WS drop as "creator left" / "joiner left".
+        // We reset the lobby UI and re-open the WS to get a fresh slot.
+        pendingFlow = null;
+        document.getElementById('pane-waiting').classList.add('hidden');
+        document.getElementById('pane-lobby').classList.remove('hidden');
+        if (ws) {
+            try { ws.close(1000, 'cancel'); } catch (e) { /* ignore */ }
+        }
+        // connect() will be invoked by ws.onclose handler.
+    }
+
+    // ----- create / join over WebSocket -------------------------------------
 
     function createGame() {
         var name = document.getElementById('create-game').value.trim();
@@ -481,20 +623,33 @@
             status.classList.add('err');
             return;
         }
-        // Redirect into the chosen game page with lobby parameters; the
-        // game page is responsible for submitting the deck and issuing the
-        // actual `create_game` over WebSocket.
-        var p = new URLSearchParams();
-        p.set('lobby', 'create');
-        p.set('game', name);
-        if (pass) p.set('pass', pass);
-        if (currentUsername) p.set('name', currentUsername);
-        if (wsUrl) p.set('ws', wsUrl);
-        status.textContent = 'Redirecting to game page…';
-        status.classList.add('ok');
-        // Default to the Native Web GUI for create-and-wait; user can pick
-        // a different launcher beforehand by editing the link panel.
-        window.location.href = 'native_game.html?' + p.toString();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            status.textContent = 'Not connected to the lobby server. Wait for the connection indicator to go green.';
+            status.classList.add('err');
+            return;
+        }
+
+        var ok = send({
+            type: 'create_game',
+            password: '',
+            game_name: name,
+            game_password: pass ? pass : null,
+            player_name: currentUsername || null,
+            deck: DEFAULT_DECK,
+        });
+        if (!ok) {
+            status.textContent = 'Failed to send create_game (WebSocket dropped).';
+            status.classList.add('err');
+            return;
+        }
+        pendingFlow = { role: 'create', game_name: name, has_password: !!pass };
+        showWaitingPane(
+            'Creating "' + name + '"…',
+            pass
+                ? 'Share the passcode with your friend so they can join this game.'
+                : 'Anyone can join this open game from their lobby.',
+        );
+        setWaitingStatus('Sent create_game — waiting for server ack…', '');
     }
 
     function joinGame(g) {
@@ -507,13 +662,24 @@
                 return;
             }
         }
-        var p = new URLSearchParams();
-        p.set('lobby', 'join');
-        p.set('game', g.name);
-        if (pw) p.set('pass', pw);
-        if (currentUsername) p.set('name', currentUsername);
-        if (wsUrl) p.set('ws', wsUrl);
-        window.location.href = 'native_game.html?' + p.toString();
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            alert('Not connected to the lobby server.');
+            return;
+        }
+        var ok = send({
+            type: 'join_game',
+            password: '',
+            game_name: g.name,
+            game_password: pw ? pw : null,
+            player_name: currentUsername || null,
+            deck: DEFAULT_DECK,
+        });
+        if (!ok) {
+            alert('Failed to send join_game (WebSocket dropped).');
+            return;
+        }
+        pendingFlow = { role: 'join', game_name: g.name, has_password: g.has_password };
+        showWaitingPane('Joining "' + g.name + '"…', 'Submitting deck and waiting for the server to pair us with the host.');
     }
 
     // ---------- wire up DOM ----------
@@ -533,6 +699,10 @@
     document.getElementById('btn-logout').addEventListener('click', function (ev) {
         ev.preventDefault();
         logout();
+    });
+    document.getElementById('btn-cancel-waiting').addEventListener('click', function (ev) {
+        ev.preventDefault();
+        cancelPendingFlow();
     });
 
     // Re-hydrate username from sessionStorage (in case the user navigated back).

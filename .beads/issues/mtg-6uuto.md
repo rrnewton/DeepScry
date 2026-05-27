@@ -7,13 +7,28 @@ labels:
 - web
 - landing-page
 created_at: 2026-05-27T18:33:46.478631388+00:00
-updated_at: 2026-05-27T18:33:46.478631388+00:00
+updated_at: 2026-05-27T19:03:42.820488539+00:00
 ---
 
 # Description
 
-MAJOR finding from Playwright QA on commit d8b2448f.
+MAJOR finding (status unchanged: still open as a follow-up).
 
-nameIsTaken() in web/index.html only checks creator_name fields of games currently returned by ListGames. Two browsers can simultaneously claim the same username (verified). The commit body acknowledges that proper server-side enforcement requires a protocol extension.
+Best-effort client-side nameIsTaken() in web/index.html still only checks
+creator_name of currently-waiting lobby games. With the BLOCKING create/join
+fix landed (mtg-i1ye3), this check now actually fires for "alice" once she
+holds a waiting game — verified by web/test_landing_page_ux.js (charlie
+trying to enter as "alice" is rejected while alice's qa-test-game is in the
+lobby).
 
-Recommended: add ClientMessage::RegisterUsername (and ServerMessage::UsernameAccepted / Rejected) so the server tracks claimed names independently of game creation, and have the lobby send it on 'Enter Lobby'.
+UI now carries an explicit advisory disclaimer below the username field
+("uniqueness is advisory until you create or join a game"), so the lobby no
+longer over-promises.
+
+True fix (still TODO):
+ - Extend ClientMessage with `ClaimName { name }` and ServerMessage with
+   `NameClaimed { name } / NameRejected { reason }`. Server-side LobbyState
+   gains a `claimed_names: HashSet<String>` keyed by lowercase, populated on
+   ClaimName and freed on disconnect.
+ - Lobby UI sends ClaimName on "Enter Lobby" (replacing the local check) and
+   blocks pane-name → pane-lobby transition until NameClaimed arrives.

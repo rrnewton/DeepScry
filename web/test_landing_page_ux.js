@@ -1,22 +1,24 @@
-// Playwright-driven QA exercise for the new landing page + lobby UI
-// (commit d8b2448f, branch playwright-qa-landing-page).
+// Playwright-driven QA exercise for the landing page + lobby UI.
 //
-// Preconditions:
-//   - Static file server at http://localhost:8080/ serving web/
-//   - Native Rust lobby server at ws://localhost:17810 (`mtg server --port 17810`)
+// Self-managed: this script spawns its own http.server and `mtg server` on
+// random ports unless MTG_QA_BASE is set, so it can be invoked directly from
+// `make validate-network-e2e-step`.
 //
-// Run from repo root:
-//   node web/test_landing_page_ux.js
+// Override with:
+//   MTG_QA_BASE=http://localhost:8080 MTG_QA_WS=ws://localhost:17810 \
+//     node web/test_landing_page_ux.js
 //
 // Screenshots are written to web/screenshots/landing_page_qa/.
-// Findings are appended to the QA report (the report itself is written by hand
-// based on what this harness logs to stdout).
+// Findings (if any) are written to web/screenshots/landing_page_qa_findings.json.
+// Process exits non-zero when any BLOCKING or MAJOR finding is recorded.
 
 const { chromium } = require('playwright');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const BASE = process.env.MTG_QA_BASE || 'http://localhost:8080';
+let BASE = process.env.MTG_QA_BASE || null;
+let WS_OVERRIDE = process.env.MTG_QA_WS || null;
 const SHOTS = path.join(__dirname, 'screenshots', 'landing_page_qa');
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -53,7 +55,7 @@ async function scenarioFullFlow() {
         if (m.type() === 'error') record('minor', 'alice console.error', m.text());
     });
 
-    await alice.goto(BASE + '/');
+    await alice.goto(global.__landingRoot || (BASE + '/'));
     await alice.waitForLoadState('domcontentloaded');
     await shot(alice, 'landing_01_initial.png');
 
@@ -84,39 +86,36 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // The create button triggers window.location.href = native_game.html?...
-    // We intercept by listening for navigation.
-    const [aliceNav] = await Promise.all([
-        alice.waitForEvent('framenavigated', { timeout: 4000 }).catch(() => null),
-        alice.click('#btn-create'),
-    ]);
-    await alice.waitForLoadState('domcontentloaded').catch(() => {});
+    // NEW (mtg-i1ye3 fix): Create no longer redirects. It sends a
+    // ClientMessage::CreateGame over the open lobby WebSocket and switches
+    // the page to a "Waiting for opponent…" pane in-place.
+    await alice.click('#btn-create');
+    await alice.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'create flow', 'waiting pane never appeared after create'),
+    );
+    await alice.waitForFunction(
+        () => /waiting for opponent|registered on server/i.test(
+            document.getElementById('waiting-status').textContent,
+        ),
+        null,
+        { timeout: 4000 },
+    ).catch(() => record('major', 'create flow', 'server never acked game_created / waiting_for_opponent'));
     await shot(alice, 'landing_03_game_created.png');
 
     const aliceUrl = alice.url();
-    console.log('  alice navigated to:', aliceUrl);
-    if (!aliceUrl.includes('native_game.html')) {
-        record('major', 'create redirect', `expected native_game.html, got ${aliceUrl}`);
+    console.log('  alice now at:', aliceUrl);
+    // Alice should NOT have navigated away — the lobby connection is what
+    // holds her game slot on the server.
+    if (aliceUrl.includes('native_game.html')) {
+        record('major', 'create flow', 'alice was redirected away — that would drop the WS slot');
     }
-    if (!aliceUrl.includes('lobby=create') || !aliceUrl.includes('game=qa-test-game')) {
-        record('major', 'create redirect query', `lobby params missing: ${aliceUrl}`);
-    }
-    if (!aliceUrl.includes('pass=secret')) {
-        record('major', 'create redirect query', `pass param missing: ${aliceUrl}`);
-    }
-
-    // CRITICAL CHECK: native_game.html does it actually do anything with the lobby params?
-    // From grep, native_game.html has zero references to "lobby" / "searchParams" / "URLSearchParams".
-    // So the create-game flow lands on a page that ignores the create intent entirely.
-    // Verify: poll the WebSocket connections on the server (out-of-band) is hard from here,
-    // but we can verify by going back to the lobby as bob and confirming NO game appears.
 
     // --- Bob ---
     const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const bob = await bobCtx.newPage();
     bob.on('pageerror', (e) => record('major', 'bob page error', e.message));
 
-    await bob.goto(BASE + '/');
+    await bob.goto(global.__landingRoot || (BASE + '/'));
     await bob.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(bob); } catch (e) {
         record('blocking', 'bob lobby connect', e.message);
@@ -149,19 +148,20 @@ async function scenarioFullFlow() {
     // --- Test username uniqueness check by trying to take "alice" as a third user ---
     const charlieCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const charlie = await charlieCtx.newPage();
-    await charlie.goto(BASE + '/');
+    await charlie.goto(global.__landingRoot || (BASE + '/'));
     try { await waitForLobbyConnected(charlie); } catch (e) {}
     await charlie.fill('#username', 'alice');
     await charlie.click('#btn-name');
-    await charlie.waitForTimeout(500);
+    await charlie.waitForTimeout(800);
     const charlieInLobby = await charlie.isVisible('#pane-lobby:not(.hidden)');
-    // Without a real waiting game, the uniqueness check (against creator_name of waiting games)
-    // will not flag this — so charlie WILL enter the lobby as "alice".
+    // Now that alice has a real waiting game, the best-effort uniqueness
+    // check fires against `creator_name`. Charlie's lobby SHOULD reject.
+    // (True server-side uniqueness is still tracked in mtg-6uuto.)
     if (charlieInLobby) {
         record(
             'major',
             'username uniqueness',
-            'Two browsers can simultaneously hold "alice" — uniqueness check only fires against waiting-game host names, not currently-connected users.',
+            'charlie entered as "alice" even though alice hosts a waiting game — best-effort nameIsTaken failed',
         );
     }
 
@@ -170,26 +170,24 @@ async function scenarioFullFlow() {
     await bob.fill('#create-pass', '');
     await bob.click('#btn-create');
     await bob.waitForTimeout(300);
-    const stillOnLobby = bob.url().endsWith('/') || bob.url().endsWith('/index.html');
+    const stillOnLobby = !bob.url().includes('native_game.html') && !bob.url().includes('tui_game.html');
     if (!stillOnLobby) {
         record('major', 'create empty name', 'empty game name allowed (should be blocked)');
     }
 
     // --- Try create with valid name but NO passcode ---
+    // (bob's lobby pane should still be active here — empty-name attempt above
+    // does nothing and leaves him in lobby.)
     await bob.fill('#create-game', 'open-game');
     await bob.fill('#create-pass', '');
-    const [bobNav] = await Promise.all([
-        bob.waitForEvent('framenavigated', { timeout: 4000 }).catch(() => null),
-        bob.click('#btn-create'),
-    ]);
-    await bob.waitForLoadState('domcontentloaded').catch(() => {});
+    await bob.click('#btn-create');
+    await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'create no-pass', 'waiting pane never appeared'),
+    );
     const bobAfterCreate = bob.url();
     console.log('  bob after create (no pass):', bobAfterCreate);
-    if (!bobAfterCreate.includes('native_game.html')) {
-        record('major', 'create no-pass', `expected native_game.html, got ${bobAfterCreate}`);
-    }
-    if (bobAfterCreate.includes('pass=')) {
-        record('minor', 'create no-pass', 'pass param leaked into URL with empty value');
+    if (bobAfterCreate.includes('native_game.html')) {
+        record('major', 'create no-pass', 'bob redirected away — slot would drop');
     }
 
     await shot(bob, 'landing_05_joined.png');
@@ -205,7 +203,7 @@ async function scenarioMobileViewport() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 375, height: 667 } });
     const page = await ctx.newPage();
-    await page.goto(BASE + '/');
+    await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {}
     await shot(page, 'landing_06_mobile_initial.png');
@@ -268,7 +266,7 @@ async function scenarioAccessibility() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
-    await page.goto(BASE + '/');
+    await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
 
     // Username input should have an associated label.
@@ -284,7 +282,78 @@ async function scenarioAccessibility() {
     await browser.close();
 }
 
+function pickPort() {
+    return new Promise((resolve, reject) => {
+        const net = require('net');
+        const srv = net.createServer();
+        srv.unref();
+        srv.on('error', reject);
+        srv.listen(0, () => {
+            const p = srv.address().port;
+            srv.close(() => resolve(p));
+        });
+    });
+}
+
+async function waitForTcp(port, host, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    const net = require('net');
+    while (Date.now() < deadline) {
+        const ok = await new Promise((res) => {
+            const s = net.createConnection({ port, host });
+            s.once('connect', () => { s.end(); res(true); });
+            s.once('error', () => res(false));
+            setTimeout(() => { s.destroy(); res(false); }, 500);
+        });
+        if (ok) return true;
+        await new Promise((r) => setTimeout(r, 250));
+    }
+    return false;
+}
+
+async function startSelfManagedServers() {
+    const projectRoot = path.join(__dirname, '..');
+    const mtgBinary = path.join(projectRoot, 'target', 'release', 'mtg');
+    if (!fs.existsSync(mtgBinary)) {
+        throw new Error('mtg binary not found at ' + mtgBinary + '. Run: make build-network');
+    }
+    const httpPort = await pickPort();
+    const mtgPort = await pickPort();
+    const httpProc = spawn('python3', ['-m', 'http.server', String(httpPort)], {
+        cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const mtgProc = spawn(mtgBinary, ['server', '--port', String(mtgPort)], {
+        cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // Surface server stderr in case of crash; quiet on normal info logs.
+    mtgProc.stderr.on('data', (d) => { /* swallow info */ });
+    const httpOk = await waitForTcp(httpPort, '127.0.0.1', 10000);
+    const mtgOk = await waitForTcp(mtgPort, '127.0.0.1', 10000);
+    if (!httpOk) throw new Error('http.server failed to start on port ' + httpPort);
+    if (!mtgOk) throw new Error('mtg server failed to start on port ' + mtgPort);
+    BASE = 'http://localhost:' + httpPort;
+    WS_OVERRIDE = 'ws://localhost:' + mtgPort;
+    console.log('  spawned http on ' + httpPort + ', mtg on ' + mtgPort);
+    return { httpProc, mtgProc };
+}
+
 (async () => {
+    let spawned = null;
+    if (!BASE) {
+        spawned = await startSelfManagedServers();
+    }
+    // If we own the ws URL, pass it via query string so the page connects to
+    // our random port instead of the default 17810.
+    const baseWithWs = WS_OVERRIDE
+        ? BASE + '/?ws=' + encodeURIComponent(WS_OVERRIDE)
+        : BASE + '/';
+    // Patch BASE so all scenarios append ?ws automatically when navigating to
+    // the root. Scenarios that navigate to subpages (native_game.html etc.)
+    // don't need the ws override.
+    const origBase = BASE;
+    BASE = origBase;  // keep subpage navigations clean
+    // Override scenarioFullFlow / mobile / offline goto-root to include ws.
+    global.__landingRoot = baseWithWs;
     try {
         await scenarioFullFlow();
         await scenarioMobileViewport();
@@ -294,6 +363,11 @@ async function scenarioAccessibility() {
     } catch (e) {
         console.error('UNCAUGHT', e);
         record('blocking', 'harness', e.message);
+    } finally {
+        if (spawned) {
+            try { spawned.httpProc.kill('SIGTERM'); } catch (e) {}
+            try { spawned.mtgProc.kill('SIGTERM'); } catch (e) {}
+        }
     }
 
     console.log('\n=== FINDINGS ===');
@@ -305,4 +379,9 @@ async function scenarioAccessibility() {
         JSON.stringify(findings, null, 2),
     );
     console.log(`\nTotal findings: ${findings.length}`);
+    const fatal = findings.filter((f) => f.severity === 'blocking' || f.severity === 'major').length;
+    if (fatal > 0) {
+        console.error(`FAIL: ${fatal} blocking/major finding(s)`);
+        process.exit(1);
+    }
 })();

@@ -286,6 +286,7 @@ validate-network-e2e-step:
 	@cd web && node test_network_gui_e2e.js
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
+	@cd web && node test_landing_page_ux.js
 	@echo "✓ network-e2e tests completed"
 
 # Generate documentation and open in browser
