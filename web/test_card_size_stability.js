@@ -61,7 +61,12 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
+        // Explicitly gate OFF local images: they are optional / not
+        // version-controlled / absent on CI, and the default UX hides them
+        // anyway (see applyLocalImageGate in native_game.html). Passing
+        // ?allow_local_img_load=false documents that this test exercises the
+        // Scryfall/Gatherer cascade only and pins the gated-default code path.
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html?allow_local_img_load=false`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });
