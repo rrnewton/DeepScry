@@ -1,10 +1,11 @@
 ---
 title: 'feat(web): passcode show/hide eyeball + scalable filterable game list'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-27T22:14:27.082186335+00:00
-updated_at: 2026-05-27T22:14:27.082186335+00:00
+updated_at: 2026-05-27T23:24:56.119086572+00:00
+closed_at: 2026-05-27T23:24:56.119085854+00:00
 ---
 
 # Description
