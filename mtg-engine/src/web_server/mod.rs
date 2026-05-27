@@ -1,13 +1,13 @@
 //! Unified web server: static files + lobby WebSocket proxy + optional TLS.
 //!
 //! Replaces the old dual-process deploy (Python `http.server` for `web/`
-//! + a separate `mtg server` for the lobby). One axum process now binds
-//! a single public port (default 8080) and serves:
+//! plus a separate `mtg server` for the lobby). One axum process now
+//! binds a single public port (default 8080) and serves:
 //!
-//! - `GET /…`     → static files out of `--static-dir` (default `./web`).
+//! - `GET /…` → static files out of `--static-dir` (default `./web`).
 //! - `GET /lobby` → WebSocket upgrade, proxied bidirectionally to the
-//!                  in-process [`crate::network::GameServer`] running on
-//!                  a private loopback port.
+//!   in-process [`crate::network::GameServer`] running on a private
+//!   loopback port.
 //!
 //! ## Why a proxy instead of plugging axum directly into the lobby code
 //!
@@ -264,7 +264,7 @@ async fn lobby_ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -
 
 /// Drive one client ↔ upstream WebSocket pair until either side closes.
 async fn proxy_connection(client_ws: WebSocket, state: AppState) {
-    let upstream_url = state.upstream_ws_url.clone();
+    let upstream_url = std::sync::Arc::clone(&state.upstream_ws_url);
     let upstream_ws = match connect_async(upstream_url.as_str()).await {
         Ok((s, _)) => s,
         Err(e) => {
