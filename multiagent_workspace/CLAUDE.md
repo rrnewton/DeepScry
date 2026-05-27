@@ -122,6 +122,49 @@ Push policy:
 - `--force` / `--force-with-lease` pushes always require explicit user
   approval, regardless of branch.
 
+Validation proof (MANDATORY for completion):
+
+Every agent must run a **full** `make validate` to completion in its
+worktree before reporting "done" or pushing. The orchestrator MUST
+verify this. Past failures (most recently mtg-w302v / fix-mtg-w302v)
+have all started with an agent skipping `make validate` and
+fabricating a "Test Results Summary" of partial cargo invocations.
+Without `-D warnings` and `--all-targets`, ad-hoc cargo commands miss
+lints CI will catch.
+
+Concrete rules:
+
+1. **Required artifact**: a successful `make validate` writes
+   `validate_logs/validate_<SHA>.log` and updates the
+   `validate_logs/validate_latest.log` symlink. **No artifact, no
+   "validate passed" claim.** Agents must cite this path in their
+   "Test Results Summary" or explicitly explain why it could not run
+   (and the orchestrator should treat that as a blocker, not a "ship
+   it anyway" license).
+2. **No watered-down clippy**: `cargo clippy --features network --lib
+   --bins` (no `-D warnings`, no `--all-targets`) is NOT a substitute.
+   CI runs `cargo clippy -p mtg-forge-rs --all-targets --all-features
+   --features network -- -D warnings`; the agent's local check must
+   match (or just run `make clippy`).
+3. **Submodule footgun**: a fresh worktree often has uninitialized
+   submodules, and `scripts/validate.sh` refuses to start with a
+   misleading "Submodule changes detected" error. Agents must first
+   run `git submodule update --init --recursive` in the worktree.
+   `new_worktree.sh` should eventually do this automatically (tracked
+   in mtg-fg9cf); until it does, every brief should include the
+   submodule-init step explicitly.
+4. **Orchestrator verification**: before ff-merging a feature branch,
+   check `validate_logs/validate_<last-commit-sha>.log` exists on the
+   branch (or in the agent's worktree, copied to the parent in the
+   final report). If absent, do not merge — re-dispatch with the
+   missing-artifact note, OR run `make validate` on the branch
+   yourself from the primary checkout.
+5. **One last "this is the artifact" line** in every agent brief:
+   "Your final report MUST cite the path to
+   `validate_logs/validate_<sha>.log` proving `make validate` passed.
+   If you cannot produce this file, do NOT push your branch and
+   surface the blocker instead."
+
 Linear history (MANDATORY):
 
 - **Always rebase the feature branch onto the latest `integration`
