@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-05-27T13:42:29.609824718+00:00
-updated_at: 2026-05-27T13:42:29.609824718+00:00
+updated_at: 2026-05-27T13:50:25.371693873+00:00
 ---
 
 # Description
@@ -21,13 +21,14 @@ error: could not compile cfg-if (lib) due to 1 previous error
 ```
 
 ## Root cause
-.github/workflows/ci.yml uses dtolnay/rust-toolchain@nightly with targets: wasm32-unknown-unknown, which installs wasm rust-std onto the **latest** nightly. But rust-toolchain.toml pins nightly-2025-11-28, so when cargo clippy runs, rustup auto-switches to the pinned toolchain. The CI log explicitly says: 'note that the toolchain nightly-2025-11-28-x86_64-unknown-linux-gnu is currently in use (overridden by ... rust-toolchain.toml)'. wasm rust-std was installed only for the latest nightly, not the pinned one.
+.github/workflows/ci.yml uses dtolnay/rust-toolchain@nightly with targets: wasm32-unknown-unknown, which installs wasm rust-std onto the latest nightly. But rust-toolchain.toml pins nightly-2025-11-28, so when cargo clippy runs, rustup auto-switches to the pinned toolchain. The CI log explicitly says: 'note that the toolchain nightly-2025-11-28-x86_64-unknown-linux-gnu is currently in use (overridden by ... rust-toolchain.toml)'. wasm rust-std was installed only for the latest nightly, not the pinned one.
 
-## Recommended fix (one-line)
-Add targets = ["wasm32-unknown-unknown"] to rust-toolchain.toml. The pin will then pull wasm rust-std on every rustup install, both in CI and in fresh local clones.
+## Resolution (2026-05-27)
+Fixed in branch fix-mtg-vy7rv by adding `targets = ["wasm32-unknown-unknown"]` to rust-toolchain.toml. The pin now pulls wasm rust-std on every rustup install of nightly-2025-11-28, both in CI (dtolnay/rust-toolchain reads the toolchain file) and on fresh local clones.
 
-## Alternative
-Add a CI step before clippy: 'rustup target add wasm32-unknown-unknown' (targets the active/pinned toolchain).
+Local verification:
+- `rustup show` triggered toolchain init; `rustup target list --installed --toolchain nightly-2025-11-28-x86_64-unknown-linux-gnu` now lists wasm32-unknown-unknown.
+- `cargo clippy -p mtg-forge-rs --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings` -> clean (Finished dev profile in 10.92s; zero warnings/errors).
 
 ## Discovery
 Found during integration-branch triage 2026-05-27_#2297(b5cbdc85). See ai_docs/integration_triage_20260527.md (F2). Reproduces on CI runs 26482076564 and 26514285939.
