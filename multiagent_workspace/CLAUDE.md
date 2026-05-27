@@ -587,6 +587,14 @@ TWO phases:
   rsyncs `web/`, `cardsfolder/`, and the binary, then restarts the
   systemd service. Does NOT require root.
 
+  The deploy build uses the **`release-deploy` cargo profile** (defined
+  in the workspace `Cargo.toml`): strip + `lto = "fat"` + `panic =
+  "abort"` produce a ~25 MB binary suitable for rsync to a VM. Local
+  profiling work continues to use `cargo build --release`, which keeps
+  full debug symbols (~430 MB) for flamegraphs / `perf` / `samply`.
+  Cargo profiles cannot enable features, so the deploy script passes
+  `--features network` explicitly on the build invocation.
+
 **No hardcoded site values.** Username, hostname, ports, TLS paths,
 and the systemd unit name all come from one of:
 

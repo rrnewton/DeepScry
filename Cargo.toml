@@ -17,6 +17,29 @@ edition = "2021"
 [profile.release]
 debug = true
 
+# Slim profile used by `scripts/deploy-cloud.sh` for the deployed `mtg`
+# server binary. Design:
+#   - The default `release` profile intentionally keeps `debug = true` so
+#     local engineers can run flamegraphs / `perf` / `samply` against the
+#     same binary they ship-test. That produces a ~430 MB artifact, which
+#     is fine on a workstation but wasteful to rsync to a VM.
+#   - This profile strips symbols and tightens codegen so the deployed
+#     binary lands around ~25 MB. It does NOT touch `[profile.release]`,
+#     so `cargo build --release` keeps its debug symbols.
+#   - `panic = "abort"` is a meaningful size win and acceptable for the
+#     server: it runs under systemd and shuts down via SIGTERM, so it
+#     never relies on unwinding for cleanup. The tradeoff is that any
+#     panic terminates the process immediately (no `catch_unwind`).
+#   - Cargo profiles cannot enable features, so the deploy script must
+#     pass `--features network` on the build invocation explicitly.
+[profile.release-deploy]
+inherits = "release"
+debug = false
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
 # Workspace-wide lint configuration
 [workspace.lints.clippy]
 # DENY wildcard enum match arms - these can silently fail when new variants are added

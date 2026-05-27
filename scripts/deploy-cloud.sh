@@ -363,17 +363,21 @@ cmd_deploy() {
     done
 
     # --- 2. Local native release binary ---
-    local native_bin="target/release/mtg"
+    # Use the slim `release-deploy` profile: strip + lto=fat + panic=abort,
+    # produces a ~25 MB binary vs ~430 MB from `release` (which keeps debug
+    # symbols for local profiling). Profiles cannot enable features, so we
+    # always pass `--features network` explicitly on the build invocation.
+    local native_bin="target/release-deploy/mtg"
     if [[ "$SKIP_BUILD" != "1" ]]; then
         if [[ ! -x "$native_bin" || "$REBUILD" == "1" ]]; then
-            echo "→ building release mtg binary (--features network)"
-            cargo build --release --bin mtg --features network
+            echo "→ building release-deploy mtg binary (--features network)"
+            cargo build --profile release-deploy --bin mtg --features network
         else
             echo "→ $native_bin present; skipping native build (--rebuild to force)"
         fi
     fi
     [[ -x "$native_bin" ]] || {
-        echo "error: $native_bin missing. Build with: cargo build --release --bin mtg --features network" >&2
+        echo "error: $native_bin missing. Build with: cargo build --profile release-deploy --bin mtg --features network" >&2
         exit 1
     }
 
