@@ -3,489 +3,547 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTG Forge - WebAssembly Demo</title>
+    <title>mtg-forge-rs - Magic: the Gathering engine in Rust</title>
+    <!-- Server URL configuration (overridable; defaults to ws://<host>:17810). -->
+    <script src="server-config.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
+        :root {
+            --bg: #0a0a14;
+            --surface: #16213e;
+            --surface-2: #0f3460;
+            --border: #1a2a50;
+            --accent: #4cc9f0;
+            --accent-2: #ffd700;
+            --accent-3: #4361ee;
+            --danger: #ff6b6b;
+            --ok: #6bf07a;
+            --text: #e6e6f0;
+            --muted: #8a8aa0;
         }
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #1a1a2e;
-            color: #eee;
-            line-height: 1.6;
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; line-height: 1.55; }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        code, pre, .mono { font-family: 'Consolas', 'Monaco', 'Source Code Pro', monospace; }
+
+        /* Hero */
+        .hero {
+            background: linear-gradient(135deg, #0a0a14 0%, #16213e 50%, #1a1a4a 100%);
+            padding: 48px 24px 36px;
+            border-bottom: 1px solid var(--border);
         }
-        h1 {
-            color: #ffd700;
-            text-align: center;
-            margin-bottom: 10px;
+        .hero-inner { max-width: 920px; margin: 0 auto; }
+        .hero h1 {
+            margin: 0 0 8px;
+            font-size: 34px;
+            color: var(--accent-2);
+            letter-spacing: 0.5px;
         }
-        .subtitle {
-            text-align: center;
-            color: #888;
-            margin-bottom: 30px;
-        }
+        .hero .tagline { color: var(--accent); font-size: 16px; margin: 0 0 18px; }
+        .hero p { color: var(--text); margin: 0 0 12px; max-width: 760px; }
+        .hero .meta { color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+        .container { max-width: 920px; margin: 0 auto; padding: 28px 24px; }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
         .card {
-            background: #16213e;
+            background: var(--surface);
+            border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            padding: 18px 20px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
         }
         .card h2 {
-            margin-top: 0;
-            color: #4cc9f0;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
+            margin: 0 0 10px;
+            font-size: 18px;
+            color: var(--accent);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 6px;
         }
+        .card h3 { font-size: 14px; color: var(--accent-2); margin: 12px 0 6px; }
+
+        /* Forms */
+        label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+        input[type=text], input[type=password] {
+            width: 100%;
+            background: var(--surface-2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 9px 11px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input:focus { outline: none; border-color: var(--accent); }
+        .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+        .row > * { flex: 1 1 auto; }
+
         button {
-            background: #4361ee;
+            background: var(--accent-3);
             color: white;
             border: none;
-            padding: 12px 24px;
+            padding: 10px 18px;
             border-radius: 6px;
+            font-size: 14px;
             cursor: pointer;
-            font-size: 16px;
-            margin: 5px;
-            transition: background 0.2s;
+            font-family: inherit;
+            transition: background 0.15s;
         }
-        button:hover {
-            background: #3a0ca3;
+        button:hover:not(:disabled) { background: #5a78ff; }
+        button:disabled { background: #2a2a40; color: #555; cursor: not-allowed; }
+        button.ghost {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
         }
-        button:disabled {
-            background: #333;
-            cursor: not-allowed;
-        }
-        .controls {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 15px;
-        }
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        .control-group label {
-            color: #888;
-            font-size: 12px;
-        }
-        select {
-            background: #0f3460;
-            color: white;
-            border: 1px solid #444;
-            padding: 10px;
+        button.ghost:hover:not(:disabled) { background: rgba(76, 201, 240, 0.12); }
+
+        .status-line { font-size: 12px; color: var(--muted); margin: 6px 0 0; min-height: 16px; }
+        .status-line.err { color: var(--danger); }
+        .status-line.ok { color: var(--ok); }
+
+        /* Games table */
+        table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+        th, td { padding: 8px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+        th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 11px; }
+        tr.empty td { color: var(--muted); text-align: center; padding: 16px; }
+        td .pw { width: 110px; padding: 5px 7px; font-size: 12px; }
+        td button { padding: 5px 12px; font-size: 12px; }
+
+        /* Launch links */
+        .launchers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 6px; }
+        @media (max-width: 600px) { .launchers { grid-template-columns: 1fr; } }
+        .launcher-link {
+            display: block;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
             border-radius: 6px;
-            font-size: 14px;
-            min-width: 200px;
-        }
-        .game-state {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-        }
-        .player {
-            background: #0f3460;
-            padding: 15px;
-            border-radius: 8px;
-        }
-        .player h3 {
-            margin: 0 0 10px 0;
-            color: #ffd700;
-        }
-        .life {
-            font-size: 32px;
-            font-weight: bold;
-            color: #4cc9f0;
-        }
-        .stats {
-            color: #888;
-            font-size: 14px;
-        }
-        .deck-name {
-            color: #4cc9f0;
-            font-size: 12px;
-            margin-top: 5px;
-        }
-        #logs {
-            background: #0a0a1a;
-            padding: 15px;
-            border-radius: 8px;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 12px;
-            min-height: 400px;
-            max-height: 1200px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-        }
-        .log-entry {
-            margin: 2px 0;
-            padding: 2px 5px;
-        }
-        .turn-info {
+            padding: 10px 12px;
+            color: var(--text);
             text-align: center;
-            font-size: 18px;
-            color: #ffd700;
-            margin-bottom: 15px;
+            transition: border-color 0.15s, background 0.15s;
         }
-        .result {
-            text-align: center;
-            padding: 20px;
-            font-size: 24px;
-            color: #4cc9f0;
-        }
-        .loading {
-            text-align: center;
-            padding: 50px;
-            color: #888;
-        }
-        .loading-progress {
-            margin-top: 10px;
-            font-size: 14px;
-        }
-        .error {
-            background: #4a1010;
-            color: #ff6b6b;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        .db-stats {
-            color: #888;
-            font-size: 12px;
-            margin-top: 10px;
-        }
+        .launcher-link:hover { border-color: var(--accent); background: #163055; text-decoration: none; }
+        .launcher-link strong { display: block; color: var(--accent-2); }
+        .launcher-link small { color: var(--muted); }
+
+        .hidden { display: none !important; }
+
+        /* Conn indicator */
+        .conn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+        .dot { width: 9px; height: 9px; border-radius: 50%; background: #555; display: inline-block; }
+        .dot.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+        .dot.err { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+        .dot.warn { background: var(--accent-2); }
+
+        footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
+        footer a { color: var(--muted); }
     </style>
 </head>
 <body>
-    <h1>MTG Forge - WebAssembly Demo</h1>
-    <p class="subtitle">Game engine running in your browser via Rust + WASM</p>
-    <p class="subtitle"><a href="tui_game.html" style="color: #4cc9f0;">Fancy TUI (terminal rendering)</a> | <a href="native_game.html" style="color: #4cc9f0;">Native GUI</a></p>
 
-    <div id="loading" class="loading">
-        <div>Loading WebAssembly module...</div>
-        <div id="loading-progress" class="loading-progress"></div>
-    </div>
-
-    <div id="app" style="display: none;">
-        <div class="card">
-            <h2>Game Setup</h2>
-            <div class="controls">
-                <div class="control-group">
-                    <label>Player 1 Deck</label>
-                    <select id="p1-deck">
-                        <option value="">Loading decks...</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label>Player 2 Deck</label>
-                    <select id="p2-deck">
-                        <option value="">Loading decks...</option>
-                    </select>
-                </div>
-            </div>
-            <div class="controls">
-                <div class="control-group">
-                    <label>P1 Controller</label>
-                    <select id="p1-controller">
-                        <option value="heuristic">Heuristic AI</option>
-                        <option value="random">Random</option>
-                        <option value="zero">Zero (Pass)</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label>P2 Controller</label>
-                    <select id="p2-controller">
-                        <option value="heuristic">Heuristic AI</option>
-                        <option value="random">Random</option>
-                        <option value="zero">Zero (Pass)</option>
-                    </select>
-                </div>
-            </div>
-            <div class="controls">
-                <button id="btn-new-game" disabled>New Game</button>
-                <button id="btn-run-turn" disabled>Run 1 Turn</button>
-                <button id="btn-run-game" disabled>Run Full Game</button>
-            </div>
-            <div id="db-stats" class="db-stats"></div>
-        </div>
-
-        <div class="card">
-            <h2>Game State</h2>
-            <div id="turn-info" class="turn-info">No game started</div>
-            <div class="game-state">
-                <div class="player">
-                    <h3>Player 1</h3>
-                    <div class="life" id="p1-life">20</div>
-                    <div class="stats" id="p1-stats">-</div>
-                    <div class="deck-name" id="p1-deck-name"></div>
-                </div>
-                <div class="player">
-                    <h3>Player 2</h3>
-                    <div class="life" id="p2-life">20</div>
-                    <div class="stats" id="p2-stats">-</div>
-                    <div class="deck-name" id="p2-deck-name"></div>
-                </div>
-            </div>
-            <div id="result" class="result" style="display: none;"></div>
-        </div>
-
-        <div class="card">
-            <h2>Game Logs</h2>
-            <button id="btn-clear-logs">Clear Logs</button>
-            <div id="logs">Waiting for game to start...</div>
-        </div>
-
-        <div class="card">
-            <h2>Debug Info</h2>
-            <div id="debug">
-                <p>WASM Version: <span id="wasm-version">-</span></p>
-                <p>Module Status: <span id="wasm-status">-</span></p>
-            </div>
+<section class="hero">
+    <div class="hero-inner">
+        <h1>mtg-forge-rs</h1>
+        <p class="tagline">An experiment in porting <em>Magic: the Gathering</em> to Rust &mdash; with tree-search AI in mind.</p>
+        <p>
+            Built on the open-source <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a>
+            card library and rules engine, this project re-implements the core game in safe Rust with deterministic
+            simulation, undo-log rewind, and a focus on AI research throughput.
+            The engine runs natively on the server and as <strong>WebAssembly</strong> in the browser.
+        </p>
+        <p>
+            Play head-to-head against a friend over WebSocket, watch heuristic AI battle itself in your browser, or
+            launch a fancy terminal-style UI &mdash; all from the same engine.
+        </p>
+        <div class="meta">
+            <span class="conn"><span id="ws-dot" class="dot"></span><span id="ws-state">Connecting to lobby&hellip;</span></span>
+            &nbsp;|&nbsp;
+            <span class="mono" id="ws-url-display">&mdash;</span>
         </div>
     </div>
+</section>
 
-    <script type="module">
-        import init, {
-            version,
-            is_ready,
-            WasmGame,
-            WasmCardDatabase,
-            WasmControllerType
-        } from './pkg/mtg_forge_rs.js';
+<div class="container">
 
-        let game = null;
-        let cardDb = null;
-        let deckNames = [];
+    <!-- 1. Username pane -->
+    <div id="pane-name" class="card">
+        <h2>Pick a Username</h2>
+        <p style="color: var(--muted); margin: 4px 0 12px;">
+            No accounts, no passwords. Pick any name not currently in use on this server.
+        </p>
+        <form id="name-form" class="row" autocomplete="off">
+            <div style="flex: 2 1 220px;">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required maxlength="32" placeholder="e.g. planeswalker42">
+            </div>
+            <div>
+                <button type="submit" id="btn-name">Enter Lobby</button>
+            </div>
+        </form>
+        <p id="name-status" class="status-line"></p>
+    </div>
 
-        async function main() {
-            try {
-                const progress = document.getElementById('loading-progress');
+    <!-- 2. Lobby pane (hidden until username acquired) -->
+    <div id="pane-lobby" class="hidden">
 
-                // Initialize WASM
-                progress.textContent = 'Initializing WASM module...';
-                await init();
+        <div class="card" style="margin-bottom: 18px;">
+            <h2>Lobby <span style="float: right; font-weight: normal; font-size: 13px; color: var(--muted);">
+                Welcome, <strong id="welcome-name" style="color: var(--accent-2);"></strong>
+                &middot; <a href="#" id="btn-logout">change name</a>
+            </span></h2>
 
-                // Update status
-                document.getElementById('wasm-version').textContent = version();
-                document.getElementById('wasm-status').textContent = is_ready() ? 'Ready' : 'Error';
+            <div class="grid-2" style="margin-top: 8px;">
 
-                // Create card database
-                progress.textContent = 'Loading card database...';
-                cardDb = new WasmCardDatabase();
+                <!-- Create -->
+                <div>
+                    <h3>Create a Game</h3>
+                    <form id="create-form" autocomplete="off">
+                        <label for="create-game">Game Name (required)</label>
+                        <input type="text" id="create-game" maxlength="40" placeholder="e.g. friday-night-magic" required>
+                        <div style="height: 8px;"></div>
+                        <label for="create-pass">Passcode (optional, share with friend)</label>
+                        <input type="password" id="create-pass" maxlength="40" placeholder="leave blank for open game">
+                        <div style="height: 12px;"></div>
+                        <div class="row">
+                            <button type="submit" id="btn-create">Create &amp; Wait</button>
+                            <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
+                        </div>
+                    </form>
+                    <p id="create-status" class="status-line"></p>
+                </div>
 
-                // Load cards
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}. Run 'mtg export-wasm' first.`);
-                }
-                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                const cardCount = cardDb.load_cards(cardsData);
-                progress.textContent = `Loaded ${cardCount} cards. Loading decks...`;
+                <!-- Open games -->
+                <div>
+                    <h3>Open Games</h3>
+                    <table id="games-table">
+                        <thead>
+                            <tr><th>Game</th><th>Host</th><th>Passcode</th><th></th></tr>
+                        </thead>
+                        <tbody id="games-tbody">
+                            <tr class="empty"><td colspan="4">No open games. Create one to start.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
 
-                // Load decks
-                const decksResp = await fetch('./data/decks.bin');
-                if (!decksResp.ok) {
-                    throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
-                }
-                const decksData = new Uint8Array(await decksResp.arrayBuffer());
-                const deckCount = cardDb.load_decks(decksData);
+            </div>
+        </div>
 
-                // Get deck names
-                deckNames = JSON.parse(cardDb.get_deck_names_json());
-                deckNames.sort();
+        <!-- 3. Launch / standalone demo pane -->
+        <div class="card">
+            <h2>Launch a Game</h2>
+            <p style="color: var(--muted); margin: 0 0 10px;">
+                Pick a UI to play in. The lobby above will hand your username, game name, and passcode through to the
+                game page. Or open any of these standalone (no lobby required) to try the engine offline.
+            </p>
+            <div class="launchers">
+                <a id="launch-native" class="launcher-link" href="native_game.html">
+                    <strong>Native Web GUI</strong>
+                    <small>Card-style interface in the browser</small>
+                </a>
+                <a id="launch-tui" class="launcher-link" href="tui_game.html">
+                    <strong>Fancy TUI</strong>
+                    <small>Terminal-style rendering, dense info</small>
+                </a>
+                <a id="launch-demo" class="launcher-link" href="demo.html">
+                    <strong>AI vs AI Demo</strong>
+                    <small>Watch two AIs play a game (WASM)</small>
+                </a>
+            </div>
+        </div>
+    </div>
 
-                // Populate deck selectors
-                const p1DeckSelect = document.getElementById('p1-deck');
-                const p2DeckSelect = document.getElementById('p2-deck');
-                p1DeckSelect.innerHTML = '';
-                p2DeckSelect.innerHTML = '';
+</div>
 
-                for (const name of deckNames) {
-                    const info = JSON.parse(cardDb.get_deck_info_json(name));
-                    const optionText = `${name} (${info.main_deck_count} cards)`;
+<footer>
+    <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge (Java upstream)</a>
+    &middot; mtg-forge-rs &middot; engine in safe Rust + WebAssembly
+</footer>
 
-                    const opt1 = document.createElement('option');
-                    opt1.value = name;
-                    opt1.textContent = optionText;
-                    p1DeckSelect.appendChild(opt1);
+<script>
+(function () {
+    'use strict';
 
-                    const opt2 = document.createElement('option');
-                    opt2.value = name;
-                    opt2.textContent = optionText;
-                    p2DeckSelect.appendChild(opt2);
-                }
+    // ---------------------------------------------------------------------
+    // Lobby client (talks to the native Rust `mtg server` over WebSocket).
+    //
+    // Protocol: serde-tagged JSON. Each ClientMessage is `{type: "snake_case",
+    // ...fields}`. We only use a small subset here: ListGames, CreateGame,
+    // JoinGame (the last two via redirect — the actual deck submission happens
+    // on the game page, so this lobby just NEGOTIATES the slot).
+    //
+    // NOTE: The current lobby does NOT pre-register usernames server-side
+    // (that would require a protocol extension beyond CreateGame/JoinGame).
+    // Username uniqueness is checked best-effort against waiting-game host
+    // names returned by ListGames.
+    // ---------------------------------------------------------------------
 
-                // Select different decks by default if we have at least 2
-                if (deckNames.length >= 2) {
-                    p2DeckSelect.selectedIndex = 1;
-                }
+    // Allow `?ws=ws://host:port` to override the configured URL.
+    var qs = new URLSearchParams(window.location.search);
+    var wsUrl = qs.get('ws') || window.MTG_WS_URL;
+    document.getElementById('ws-url-display').textContent = wsUrl;
 
-                // Update DB stats
-                document.getElementById('db-stats').textContent =
-                    `Database: ${cardCount} cards, ${deckCount} decks`;
+    var ws = null;
+    var listPending = false;
+    var lastListGames = [];   // most recent list (creator_name, name, has_password)
+    var refreshTimer = null;
+    var currentUsername = sessionStorage.getItem('mtg.username') || '';
 
-                // Hide loading, show app
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('app').style.display = 'block';
+    function setConnState(state, text) {
+        var dot = document.getElementById('ws-dot');
+        dot.className = 'dot ' + state;
+        document.getElementById('ws-state').textContent = text;
+    }
 
-                // Enable new game button
-                document.getElementById('btn-new-game').disabled = false;
-
-                // Set up event handlers
-                document.getElementById('btn-new-game').addEventListener('click', newGame);
-                document.getElementById('btn-run-turn').addEventListener('click', runOneTurn);
-                document.getElementById('btn-run-game').addEventListener('click', runFullGame);
-                document.getElementById('btn-clear-logs').addEventListener('click', clearLogs);
-
-                console.log(`MTG Forge WASM initialized: ${cardCount} cards, ${deckCount} decks`);
-            } catch (error) {
-                document.getElementById('loading').innerHTML = `
-                    <div class="error">
-                        <strong>Failed to load:</strong><br>
-                        ${error.message}<br><br>
-                        Make sure you've:<br>
-                        1. Built the WASM module: <code>wasm-pack build ...</code><br>
-                        2. Exported card data: <code>cargo run --bin mtg -- export-wasm</code><br>
-                        3. Started a web server: <code>python -m http.server 8765</code>
-                    </div>
-                `;
-                console.error('Failed to initialize:', error);
-            }
+    function connect() {
+        setConnState('warn', 'Connecting to lobby…');
+        try {
+            ws = new WebSocket(wsUrl);
+        } catch (e) {
+            setConnState('err', 'Cannot open WebSocket: ' + e.message);
+            return;
         }
+        ws.onopen = function () {
+            setConnState('ok', 'Connected');
+            requestGameList();
+        };
+        ws.onerror = function () {
+            setConnState('err', 'Connection error');
+        };
+        ws.onclose = function () {
+            setConnState('err', 'Disconnected — retrying in 5s');
+            ws = null;
+            setTimeout(connect, 5000);
+        };
+        ws.onmessage = function (ev) {
+            var msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            handleServer(msg);
+        };
+    }
 
-        function getControllerType(value) {
-            switch (value) {
-                case 'zero': return WasmControllerType.Zero;
-                case 'random': return WasmControllerType.Random;
-                case 'heuristic': return WasmControllerType.Heuristic;
-                default: return WasmControllerType.Heuristic;
+    function send(obj) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        ws.send(JSON.stringify(obj));
+        return true;
+    }
+
+    function requestGameList() {
+        if (listPending) return;
+        listPending = send({ type: 'list_games', password: '' });
+    }
+
+    function handleServer(msg) {
+        // Only LIST replies are interesting here; CreateGame/JoinGame happen
+        // on the game page, not from the lobby.
+        if (msg.type === 'game_list') {
+            listPending = false;
+            lastListGames = msg.games || [];
+            renderGames();
+            // Re-validate name (a freshly-registered host name may now clash).
+            if (currentUsername && !isInLobby()) {
+                tryEnterLobby(currentUsername, /*silent*/ true);
             }
+        } else if (msg.type === 'auth_result' && msg.success === false) {
+            // The server rejected our ListGames (likely a non-empty server password).
+            // Surface to the user once.
+            setConnState('err', 'Lobby refused list: ' + (msg.error || 'unknown'));
+        } else if (msg.type === 'server_full') {
+            setConnState('warn', 'Server is at capacity — try again shortly');
         }
+        // Other message types (game-flow stuff) belong to a real game page.
+    }
 
-        function newGame() {
-            const p1Deck = document.getElementById('p1-deck').value;
-            const p2Deck = document.getElementById('p2-deck').value;
-            const p1Controller = document.getElementById('p1-controller').value;
-            const p2Controller = document.getElementById('p2-controller').value;
+    function renderGames() {
+        var tbody = document.getElementById('games-tbody');
+        tbody.innerHTML = '';
+        if (lastListGames.length === 0) {
+            tbody.innerHTML = '<tr class="empty"><td colspan="4">No open games. Create one to start.</td></tr>';
+            return;
+        }
+        lastListGames.forEach(function (g) {
+            var tr = document.createElement('tr');
+            var nameTd = document.createElement('td');
+            nameTd.textContent = g.name;
+            nameTd.className = 'mono';
+            var hostTd = document.createElement('td');
+            hostTd.textContent = g.creator_name;
+            var passTd = document.createElement('td');
+            if (g.has_password) {
+                var inp = document.createElement('input');
+                inp.type = 'password';
+                inp.placeholder = 'required';
+                inp.className = 'pw mono';
+                inp.id = 'pw-' + g.name;
+                passTd.appendChild(inp);
+            } else {
+                passTd.innerHTML = '<span style="color: var(--muted);">none</span>';
+            }
+            var btnTd = document.createElement('td');
+            btnTd.style.textAlign = 'right';
+            var btn = document.createElement('button');
+            btn.textContent = 'Join';
+            btn.disabled = !isInLobby();
+            btn.title = isInLobby() ? '' : 'Pick a username first';
+            btn.onclick = function () { joinGame(g); };
+            btnTd.appendChild(btn);
+            tr.appendChild(nameTd);
+            tr.appendChild(hostTd);
+            tr.appendChild(passTd);
+            tr.appendChild(btnTd);
+            tbody.appendChild(tr);
+        });
+    }
 
-            if (!p1Deck || !p2Deck) {
-                alert('Please select decks for both players');
+    function isInLobby() {
+        return !document.getElementById('pane-lobby').classList.contains('hidden');
+    }
+
+    function nameIsTaken(candidate) {
+        var lc = candidate.toLowerCase();
+        return lastListGames.some(function (g) { return (g.creator_name || '').toLowerCase() === lc; });
+    }
+
+    function nameIsValid(candidate) {
+        // Allow letters, digits, dash, underscore. No spaces (URL/log clarity).
+        return /^[A-Za-z0-9_\-]{1,32}$/.test(candidate);
+    }
+
+    function setNameStatus(text, kind) {
+        var el = document.getElementById('name-status');
+        el.textContent = text || '';
+        el.className = 'status-line' + (kind ? ' ' + kind : '');
+    }
+
+    function tryEnterLobby(name, silent) {
+        if (!nameIsValid(name)) {
+            if (!silent) setNameStatus('Names must be 1–32 chars: letters, digits, "_" or "-".', 'err');
+            return false;
+        }
+        if (nameIsTaken(name)) {
+            if (!silent) setNameStatus('That name is currently used by a host in the lobby.', 'err');
+            return false;
+        }
+        currentUsername = name;
+        sessionStorage.setItem('mtg.username', name);
+        document.getElementById('welcome-name').textContent = name;
+        document.getElementById('pane-name').classList.add('hidden');
+        document.getElementById('pane-lobby').classList.remove('hidden');
+        if (!silent) setNameStatus('');
+        renderGames();
+        applyLaunchLinks();
+        startRefreshTimer();
+        return true;
+    }
+
+    function logout() {
+        currentUsername = '';
+        sessionStorage.removeItem('mtg.username');
+        document.getElementById('pane-lobby').classList.add('hidden');
+        document.getElementById('pane-name').classList.remove('hidden');
+        document.getElementById('username').focus();
+        applyLaunchLinks();
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    }
+
+    // Build query-string redirects for launch buttons. The game pages will
+    // pick these up when their network flow is wired through the lobby; in
+    // the meantime they ignore them and run their standalone setup.
+    function applyLaunchLinks() {
+        var p = new URLSearchParams();
+        if (currentUsername) p.set('name', currentUsername);
+        if (wsUrl) p.set('ws', wsUrl);
+        var suffix = p.toString() ? '?' + p.toString() : '';
+        document.getElementById('launch-native').href = 'native_game.html' + suffix;
+        document.getElementById('launch-tui').href = 'tui_game.html' + suffix;
+        document.getElementById('launch-demo').href = 'demo.html';
+    }
+
+    function startRefreshTimer() {
+        if (refreshTimer) return;
+        refreshTimer = setInterval(requestGameList, 5000);
+    }
+
+    function createGame() {
+        var name = document.getElementById('create-game').value.trim();
+        var pass = document.getElementById('create-pass').value;
+        var status = document.getElementById('create-status');
+        status.className = 'status-line';
+        if (!/^[A-Za-z0-9_\-]{1,40}$/.test(name)) {
+            status.textContent = 'Game name: 1–40 chars, letters/digits/_/- only.';
+            status.classList.add('err');
+            return;
+        }
+        if (lastListGames.some(function (g) { return g.name.toLowerCase() === name.toLowerCase(); })) {
+            status.textContent = 'A game with that name is already waiting. Pick another.';
+            status.classList.add('err');
+            return;
+        }
+        // Redirect into the chosen game page with lobby parameters; the
+        // game page is responsible for submitting the deck and issuing the
+        // actual `create_game` over WebSocket.
+        var p = new URLSearchParams();
+        p.set('lobby', 'create');
+        p.set('game', name);
+        if (pass) p.set('pass', pass);
+        if (currentUsername) p.set('name', currentUsername);
+        if (wsUrl) p.set('ws', wsUrl);
+        status.textContent = 'Redirecting to game page…';
+        status.classList.add('ok');
+        // Default to the Native Web GUI for create-and-wait; user can pick
+        // a different launcher beforehand by editing the link panel.
+        window.location.href = 'native_game.html?' + p.toString();
+    }
+
+    function joinGame(g) {
+        var pw = '';
+        if (g.has_password) {
+            var inp = document.getElementById('pw-' + g.name);
+            pw = inp ? inp.value : '';
+            if (!pw) {
+                if (inp) { inp.focus(); inp.style.borderColor = 'var(--danger)'; }
                 return;
             }
-
-            try {
-                // Create game with decks from database
-                const seed = BigInt(Date.now());
-                game = WasmGame.from_database(cardDb, p1Deck, p2Deck, 20, seed);
-
-                game.set_p1_controller(getControllerType(p1Controller));
-                game.set_p2_controller(getControllerType(p2Controller));
-
-                document.getElementById('btn-run-turn').disabled = false;
-                document.getElementById('btn-run-game').disabled = false;
-                document.getElementById('result').style.display = 'none';
-
-                // Show deck names
-                document.getElementById('p1-deck-name').textContent = `Deck: ${p1Deck}`;
-                document.getElementById('p2-deck-name').textContent = `Deck: ${p2Deck}`;
-
-                updateGameState();
-                document.getElementById('logs').textContent = `Game started!\n${p1Deck} vs ${p2Deck}\n\n`;
-
-                console.log(`New game: ${p1Deck} vs ${p2Deck}`);
-            } catch (error) {
-                alert(`Failed to create game: ${error}`);
-                console.error('Failed to create game:', error);
-            }
         }
+        var p = new URLSearchParams();
+        p.set('lobby', 'join');
+        p.set('game', g.name);
+        if (pw) p.set('pass', pw);
+        if (currentUsername) p.set('name', currentUsername);
+        if (wsUrl) p.set('ws', wsUrl);
+        window.location.href = 'native_game.html?' + p.toString();
+    }
 
-        function updateGameState() {
-            if (!game) return;
+    // ---------- wire up DOM ----------
+    document.getElementById('name-form').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var n = document.getElementById('username').value.trim();
+        tryEnterLobby(n, false);
+    });
+    document.getElementById('create-form').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        createGame();
+    });
+    document.getElementById('btn-refresh').addEventListener('click', function (ev) {
+        ev.preventDefault();
+        requestGameList();
+    });
+    document.getElementById('btn-logout').addEventListener('click', function (ev) {
+        ev.preventDefault();
+        logout();
+    });
 
-            const state = JSON.parse(game.get_state_json());
-
-            document.getElementById('turn-info').textContent =
-                `Turn ${state.turn_number} - ${state.current_step} (Player ${state.active_player_idx + 1} active)`;
-
-            document.getElementById('p1-life').textContent = state.players[0].life;
-            document.getElementById('p1-stats').textContent =
-                `Lands played: ${state.players[0].lands_played} | Battlefield: ${state.battlefield_count}`;
-
-            document.getElementById('p2-life').textContent = state.players[1].life;
-            document.getElementById('p2-stats').textContent =
-                `Lands played: ${state.players[1].lands_played} | Stack: ${state.stack_count}`;
-
-            // Update logs
-            const logs = JSON.parse(game.get_logs_json());
-            if (logs.length > 0) {
-                const logDiv = document.getElementById('logs');
-                logDiv.textContent = logs.join('\n');
-                logDiv.scrollTop = logDiv.scrollHeight;
-            }
-        }
-
-        function runOneTurn() {
-            if (!game) return;
-
-            const ongoing = game.run_one_turn();
-            updateGameState();
-
-            if (!ongoing) {
-                showResult();
-            }
-        }
-
-        function runFullGame() {
-            if (!game) return;
-
-            const resultJson = game.run_ai_game(100);
-            const result = JSON.parse(resultJson);
-
-            updateGameState();
-            showResult(result);
-        }
-
-        function showResult(result) {
-            document.getElementById('btn-run-turn').disabled = true;
-            document.getElementById('btn-run-game').disabled = true;
-
-            const resultDiv = document.getElementById('result');
-            resultDiv.style.display = 'block';
-
-            if (result && result.error) {
-                resultDiv.textContent = `Error: ${result.error}`;
-            } else if (result && result.winner !== null) {
-                const p1Deck = document.getElementById('p1-deck').value;
-                const p2Deck = document.getElementById('p2-deck').value;
-                const winnerDeck = result.winner === 0 ? p1Deck : p2Deck;
-                resultDiv.textContent = `${winnerDeck} wins! (${result.end_reason} after ${result.turns_played} turns)`;
-            } else if (game.is_game_over()) {
-                const p1Life = game.get_player_life(0);
-                const p2Life = game.get_player_life(1);
-                if (p1Life <= 0) {
-                    resultDiv.textContent = 'Player 2 wins!';
-                } else if (p2Life <= 0) {
-                    resultDiv.textContent = 'Player 1 wins!';
-                } else {
-                    resultDiv.textContent = 'Game Over';
-                }
-            } else {
-                resultDiv.textContent = 'Game ended';
-            }
-        }
-
-        function clearLogs() {
-            if (game) {
-                game.clear_logs();
-            }
-            document.getElementById('logs').textContent = '';
-        }
-
-        main();
-    </script>
+    // Re-hydrate username from sessionStorage (in case the user navigated back).
+    if (currentUsername) {
+        document.getElementById('username').value = currentUsername;
+    } else {
+        document.getElementById('username').focus();
+    }
+    applyLaunchLinks();
+    connect();
+})();
+</script>
 </body>
 </html>

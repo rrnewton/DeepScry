@@ -465,3 +465,34 @@ tool / `Agent` tool):
   minibeads CLI), NOT the `tg` ephemeral task graph. `tg` is
   per-session orchestrator state only.
 - When using the Agent tool, always set `mode: "bypassPermissions"`.
+
+## Web Frontend Layout (landing page + lobby)
+
+The deployed web frontend at `parent/mtg-forge-rs/web/` is structured as:
+
+- `web/index.html` — public **landing page + lobby**. Explains the
+  project, collects a username, connects to the native Rust `mtg
+  server` over WebSocket (`ListGames` / `CreateGame` / `JoinGame` from
+  `mtg-engine/src/network/protocol.rs`), and offers launch buttons that
+  redirect into a game-page UI with
+  `?lobby=...&game=...&pass=...&name=...&ws=...` query params for the
+  downstream game page to consume.
+- `web/demo.html` — the original WASM AI-vs-AI engine demo (was
+  previously `index.html`). Still linked from the landing page.
+- `web/tui_game.html` — fancy terminal-style WASM game page (formerly
+  `fancy.html`).
+- `web/native_game.html` — card-style native web GUI page (formerly
+  `game.html`).
+- `web/server-config.js` — small JS shim exporting
+  `window.MTG_WS_URL`. **Generated at deploy time** by
+  `scripts/deploy-cloud.sh`; the committed default points at the same
+  host the page was served from on port 17810.
+
+`scripts/deploy-cloud.sh` deploys BOTH a static `python3 -m http.server`
+(default port 8080) AND the native release `mtg server` binary (default
+port 17810, override with `RUST_SERVER_PORT`). It rsyncs the release
+binary built locally with `--features network`, runs it in a tmux
+session `mtg-rust-server`, and writes the WebSocket URL into the
+freshly-generated `web/server-config.js`. Inbound firewall rules for
+the Rust port are NOT managed by the script — operators must
+`sudo ufw allow $RUST_SERVER_PORT/tcp` (or equivalent) by hand.
