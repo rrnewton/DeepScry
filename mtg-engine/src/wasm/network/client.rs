@@ -150,6 +150,43 @@ pub struct WasmNetworkClient {
     player_name: Option<String>,
     /// Deck JSON for submission
     deck_json: Option<String>,
+    /// Lobby action to dispatch on WebSocket open (mtg-njdwy).
+    ///
+    /// `None` (default) → preserve legacy behaviour: auto-send `Authenticate`
+    /// against the well-known `DEFAULT_LOBBY_GAME` slot. The first authenticator
+    /// becomes its creator, the second joins.
+    ///
+    /// `Some(LobbyAction::Create { .. })` → on open, send `CreateGame` for the
+    /// named slot. Used by the landing-page lobby (web/index.html) when the
+    /// user clicks "Create" and the page redirects to tui_game.html with
+    /// `?lobby_create=...` query params.
+    ///
+    /// `Some(LobbyAction::Join { .. })` → on open, send `JoinGame` for the
+    /// named slot. Used by the redirect from the lobby's "Join" button.
+    lobby_action: Option<LobbyAction>,
+}
+
+/// Per-connection lobby action queued for the WebSocket-open callback.
+///
+/// Encapsulates the choice between `CreateGame` and `JoinGame` so the WASM
+/// client can be driven from a `?lobby_create=` / `?lobby_join=` redirect
+/// without growing a new wasm-bindgen flag per field.
+#[derive(Debug, Clone)]
+pub enum LobbyAction {
+    /// Send `ClientMessage::CreateGame` on WS open.
+    Create {
+        /// Game slot name (must be unique among waiting games).
+        game_name: String,
+        /// Optional per-game password.
+        game_password: Option<String>,
+    },
+    /// Send `ClientMessage::JoinGame` on WS open.
+    Join {
+        /// Existing slot to join (case-insensitive on the server).
+        game_name: String,
+        /// Per-game password if the creator set one.
+        game_password: Option<String>,
+    },
 }
 
 impl WasmNetworkClient {
@@ -181,7 +218,16 @@ impl WasmNetworkClient {
             password: None,
             player_name: None,
             deck_json: None,
+            lobby_action: None,
         }
+    }
+
+    /// Configure the lobby action to dispatch on the next WebSocket `on_open`.
+    ///
+    /// Call this BEFORE the WebSocket opens. `None` reverts to the legacy
+    /// `Authenticate` behaviour. See [`LobbyAction`] for variants.
+    pub fn set_lobby_action(&mut self, action: Option<LobbyAction>) {
+        self.lobby_action = action;
     }
 
     /// Get current connection state
@@ -290,20 +336,41 @@ impl WasmNetworkClient {
         log::info!("WasmNetworkClient: WebSocket connected");
         self.state = NetworkState::Connecting;
 
-        // Auto-authenticate if we have stored params
-        if let (Some(password), Some(player_name), Some(deck_json)) =
+        // Auto-dispatch the appropriate first message if we have stored params.
+        // `lobby_action` (mtg-njdwy) selects between legacy Authenticate vs the
+        // explicit CreateGame / JoinGame paths used by the post-lobby redirect.
+        let (Some(password), Some(player_name), Some(deck_json)) =
             (self.password.clone(), self.player_name.clone(), self.deck_json.clone())
-        {
-            match serde_json::from_str::<DeckSubmission>(&deck_json) {
-                Ok(deck) => {
-                    self.authenticate(&password, &player_name, deck);
-                    log::info!("WasmNetworkClient: Auto-authenticated as {}", player_name);
-                }
-                Err(e) => {
-                    log::error!("WasmNetworkClient: Failed to parse deck JSON: {}", e);
-                    self.last_error = Some(format!("Invalid deck JSON: {}", e));
-                    self.state = NetworkState::Error;
-                }
+        else {
+            return;
+        };
+        let deck = match serde_json::from_str::<DeckSubmission>(&deck_json) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("WasmNetworkClient: Failed to parse deck JSON: {}", e);
+                self.last_error = Some(format!("Invalid deck JSON: {}", e));
+                self.state = NetworkState::Error;
+                return;
+            }
+        };
+        match self.lobby_action.clone() {
+            None => {
+                self.authenticate(&password, &player_name, deck);
+                log::info!("WasmNetworkClient: Auto-authenticated as {}", player_name);
+            }
+            Some(LobbyAction::Create {
+                game_name,
+                game_password,
+            }) => {
+                self.create_game(&password, &game_name, game_password, &player_name, deck);
+                log::info!("WasmNetworkClient: Sent CreateGame '{}' as {}", game_name, player_name);
+            }
+            Some(LobbyAction::Join {
+                game_name,
+                game_password,
+            }) => {
+                self.join_game(&password, &game_name, game_password, &player_name, deck);
+                log::info!("WasmNetworkClient: Sent JoinGame '{}' as {}", game_name, player_name);
             }
         }
     }
@@ -330,6 +397,66 @@ impl WasmNetworkClient {
     pub fn authenticate(&mut self, password: &str, player_name: &str, deck: DeckSubmission) {
         let msg = ClientMessage::Authenticate {
             password: password.to_string(),
+            player_name: if player_name.is_empty() {
+                None
+            } else {
+                Some(player_name.to_string())
+            },
+            deck,
+        };
+        self.queue_outbound(msg);
+    }
+
+    /// Queue a `CreateGame` message — register a named pre-game slot on the
+    /// server and wait for an opponent to `JoinGame` it.
+    ///
+    /// Used by the post-lobby redirect path (mtg-njdwy): the landing-page
+    /// lobby (web/index.html) closes its own browsing WS and redirects to
+    /// `tui_game.html?lobby_create=NAME&...`. The TUI page then opens a fresh
+    /// WS, calls `network_create_game`, and runs the per-game flow from there.
+    /// This avoids re-using a lobby-mode WS for in-game traffic, which is
+    /// what triggered the "Already authenticated / in a game" Error reply
+    /// from `handle_player_websocket` in the previous design.
+    pub fn create_game(
+        &mut self,
+        password: &str,
+        game_name: &str,
+        game_password: Option<String>,
+        player_name: &str,
+        deck: DeckSubmission,
+    ) {
+        let msg = ClientMessage::CreateGame {
+            password: password.to_string(),
+            game_name: if game_name.is_empty() {
+                None
+            } else {
+                Some(game_name.to_string())
+            },
+            game_password,
+            player_name: if player_name.is_empty() {
+                None
+            } else {
+                Some(player_name.to_string())
+            },
+            deck,
+        };
+        self.queue_outbound(msg);
+    }
+
+    /// Queue a `JoinGame` message — attach to an existing pre-game slot the
+    /// lobby already advertised via `GameList`.
+    pub fn join_game(
+        &mut self,
+        password: &str,
+        game_name: &str,
+        game_password: Option<String>,
+        player_name: &str,
+        deck: DeckSubmission,
+    ) {
+        let msg = ClientMessage::JoinGame {
+            password: password.to_string(),
+            game_name: game_name.to_string(),
+            game_password,
             player_name: if player_name.is_empty() {
                 None
             } else {

@@ -28,13 +28,24 @@ export class MTGNetworkClient {
     }
 
     /**
-     * Connect to game server
+     * Connect to game server.
+     *
+     * The optional `lobbyAction` argument (mtg-njdwy) selects the first
+     * message sent on WS open:
+     *   - omitted / null  → legacy `Authenticate` against DEFAULT_LOBBY_GAME
+     *   - { kind: 'create', gameName, gamePassword } → `CreateGame`
+     *   - { kind: 'join',   gameName, gamePassword } → `JoinGame`
+     *
+     * Used by the landing-page-lobby (web/index.html) redirect that lands on
+     * tui_game.html with `?lobby_create=...` / `?lobby_join=...` query params.
+     *
      * @param {string} serverUrl - WebSocket URL (e.g., "ws://localhost:17771")
      * @param {string} password - Server password
      * @param {string} playerName - Player's display name
      * @param {string} deckJson - Deck submission as JSON
+     * @param {object} [lobbyAction] - Optional create/join descriptor
      */
-    connect(serverUrl, password, playerName, deckJson) {
+    connect(serverUrl, password, playerName, deckJson, lobbyAction) {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
             console.warn('[Network] Already connected, disconnecting first');
             this.disconnect();
@@ -45,6 +56,17 @@ export class MTGNetworkClient {
 
         // Initialize WASM network state
         this.wasm.network_init(serverUrl, password, playerName, deckJson);
+
+        // Configure the WS-open dispatch (Authenticate vs CreateGame vs JoinGame).
+        // The WASM client exposes setters for the CreateGame/JoinGame paths
+        // (mtg-njdwy); absence reverts to the legacy Authenticate behaviour.
+        if (lobbyAction && lobbyAction.kind === 'create' && typeof this.wasm.network_set_lobby_create === 'function') {
+            this.wasm.network_set_lobby_create(lobbyAction.gameName || '', lobbyAction.gamePassword || '');
+        } else if (lobbyAction && lobbyAction.kind === 'join' && typeof this.wasm.network_set_lobby_join === 'function') {
+            this.wasm.network_set_lobby_join(lobbyAction.gameName || '', lobbyAction.gamePassword || '');
+        } else if (typeof this.wasm.network_clear_lobby_action === 'function') {
+            this.wasm.network_clear_lobby_action();
+        }
 
         try {
             this.ws = new WebSocket(serverUrl);

@@ -563,7 +563,20 @@
 
     function startRefreshTimer() {
         if (refreshTimer) return;
-        refreshTimer = setInterval(requestGameList, 5000);
+        refreshTimer = setInterval(function () {
+            // CRITICAL (mtg-njdwy): Only poll while we are truly browsing the
+            // lobby. If a Create/Join is in flight (or the WS has already been
+            // taken over by a started game), sending ListGames over that WS
+            // would trigger the server's `handle_player_websocket` "Already
+            // authenticated / in a game" Error reply, which the lobby's error
+            // handler would render as a red status on the waiting pane.
+            if (pendingFlow) return;
+            requestGameList();
+        }, 5000);
+    }
+
+    function stopRefreshTimer() {
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
     }
 
     // ----- waiting/paired-pane state helpers --------------------------------
@@ -621,6 +634,39 @@
 
     // ----- create / join over WebSocket -------------------------------------
 
+    // mtg-njdwy: Create/Join redirect to tui_game.html.
+    //
+    // Earlier design (mtg-i1ye3 fix) sent CreateGame/JoinGame over the lobby's
+    // WS, then surfaced a stub "game is live on server, in-page play is not
+    // wired" message. The follow-up (THIS issue) wires actual play. We chose
+    // Option B (redirect to tui_game.html) over Option A (inline WASM into
+    // the lobby + adopt the WS post-pairing): Option B reuses the existing
+    // tui_game.html network code path verbatim. To avoid the "Already
+    // authenticated / in a game" Error reply from `handle_player_websocket`
+    // when a lobby-mode WS gets reused for game traffic, we close the lobby
+    // WS BEFORE redirecting — the game page opens its own fresh WS and
+    // dispatches CreateGame / JoinGame via the new WASM lobby-action exports.
+
+    function redirectToGamePage(action, gameName, gamePass) {
+        var qp = new URLSearchParams();
+        qp.set(action === 'create' ? 'lobby_create' : 'lobby_join', gameName);
+        if (gamePass) qp.set('lobby_pass', gamePass);
+        if (currentUsername) qp.set('name', currentUsername);
+        if (wsUrl) qp.set('ws', wsUrl);
+        // Close our own browse-WS so the server cleanly drops the lobby task
+        // and we never accidentally race the new tab's CreateGame against a
+        // stale lobby-mode connection from this tab.
+        stopRefreshTimer();
+        if (ws) {
+            try { ws.close(1000, 'redirect-to-game'); } catch (e) { /* ignore */ }
+            ws = null;
+        }
+        // Same-tab navigation (full reload of tui_game.html). We do NOT use
+        // window.open() — operators may have popup blockers, and the user's
+        // intent on clicking Create/Join is "play this game now".
+        window.location.href = 'tui_game.html?' + qp.toString();
+    }
+
     function createGame() {
         var name = document.getElementById('create-game').value.trim();
         var pass = document.getElementById('create-pass').value;
@@ -636,33 +682,7 @@
             status.classList.add('err');
             return;
         }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            status.textContent = 'Not connected to the lobby server. Wait for the connection indicator to go green.';
-            status.classList.add('err');
-            return;
-        }
-
-        var ok = send({
-            type: 'create_game',
-            password: '',
-            game_name: name,
-            game_password: pass ? pass : null,
-            player_name: currentUsername || null,
-            deck: DEFAULT_DECK,
-        });
-        if (!ok) {
-            status.textContent = 'Failed to send create_game (WebSocket dropped).';
-            status.classList.add('err');
-            return;
-        }
-        pendingFlow = { role: 'create', game_name: name, has_password: !!pass };
-        showWaitingPane(
-            'Creating "' + name + '"…',
-            pass
-                ? 'Share the passcode with your friend so they can join this game.'
-                : 'Anyone can join this open game from their lobby.',
-        );
-        setWaitingStatus('Sent create_game — waiting for server ack…', '');
+        redirectToGamePage('create', name, pass || '');
     }
 
     function joinGame(g) {
@@ -675,24 +695,7 @@
                 return;
             }
         }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-            alert('Not connected to the lobby server.');
-            return;
-        }
-        var ok = send({
-            type: 'join_game',
-            password: '',
-            game_name: g.name,
-            game_password: pw ? pw : null,
-            player_name: currentUsername || null,
-            deck: DEFAULT_DECK,
-        });
-        if (!ok) {
-            alert('Failed to send join_game (WebSocket dropped).');
-            return;
-        }
-        pendingFlow = { role: 'join', game_name: g.name, has_password: g.has_password };
-        showWaitingPane('Joining "' + g.name + '"…', 'Submitting deck and waiting for the server to pair us with the host.');
+        redirectToGamePage('join', g.name, pw);
     }
 
     // ---------- wire up DOM ----------

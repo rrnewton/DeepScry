@@ -4,7 +4,7 @@
 //! JavaScript manages the WebSocket connection and calls these functions
 //! to pass messages into the WASM module.
 
-use super::client::{new_shared_client, NetworkState, SharedNetworkClient, WasmNetworkClient};
+use super::client::{new_shared_client, LobbyAction, NetworkState, SharedNetworkClient, WasmNetworkClient};
 use crate::network::DeckSubmission;
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -96,6 +96,101 @@ pub fn network_authenticate(password: &str, player_name: &str, deck_json: &str) 
         serde_json::from_str(deck_json).map_err(|e| JsValue::from_str(&format!("Invalid deck JSON: {}", e)))?;
 
     with_client(|client| client.authenticate(password, player_name, deck));
+    Ok(())
+}
+
+/// Configure the WS-open handler to send `CreateGame` (mtg-njdwy).
+///
+/// Call BEFORE `network_init` (or at least before the WebSocket opens). On
+/// the next `on_open` the client will dispatch `ClientMessage::CreateGame`
+/// for `game_name`. Used by the landing-page lobby's redirect to
+/// `tui_game.html?lobby_create=NAME&...`. Pass an empty `game_password` to
+/// create an open (no-password) slot.
+#[wasm_bindgen]
+pub fn network_set_lobby_create(game_name: &str, game_password: &str) {
+    let pass = if game_password.is_empty() {
+        None
+    } else {
+        Some(game_password.to_string())
+    };
+    with_client(|client| {
+        client.set_lobby_action(Some(LobbyAction::Create {
+            game_name: game_name.to_string(),
+            game_password: pass,
+        }));
+    });
+}
+
+/// Configure the WS-open handler to send `JoinGame` (mtg-njdwy).
+///
+/// Mirror of [`network_set_lobby_create`] for the joiner side.
+#[wasm_bindgen]
+pub fn network_set_lobby_join(game_name: &str, game_password: &str) {
+    let pass = if game_password.is_empty() {
+        None
+    } else {
+        Some(game_password.to_string())
+    };
+    with_client(|client| {
+        client.set_lobby_action(Some(LobbyAction::Join {
+            game_name: game_name.to_string(),
+            game_password: pass,
+        }));
+    });
+}
+
+/// Clear any previously-configured lobby action — revert to legacy
+/// `Authenticate`-on-open behaviour.
+#[wasm_bindgen]
+pub fn network_clear_lobby_action() {
+    with_client(|client| client.set_lobby_action(None));
+}
+
+/// Imperatively send `CreateGame` over an already-open WebSocket.
+///
+/// Use this instead of `network_set_lobby_create` if the JS layer has already
+/// dispatched `network_on_open` (e.g., a UI flow that opens the socket first,
+/// then decides which lobby action to take).
+#[wasm_bindgen]
+pub fn network_create_game(
+    server_password: &str,
+    game_name: &str,
+    game_password: &str,
+    player_name: &str,
+    deck_json: &str,
+) -> Result<(), JsValue> {
+    let deck: DeckSubmission =
+        serde_json::from_str(deck_json).map_err(|e| JsValue::from_str(&format!("Invalid deck JSON: {}", e)))?;
+    let pass = if game_password.is_empty() {
+        None
+    } else {
+        Some(game_password.to_string())
+    };
+    with_client(|client| {
+        client.create_game(server_password, game_name, pass, player_name, deck);
+    });
+    Ok(())
+}
+
+/// Imperatively send `JoinGame` over an already-open WebSocket.
+#[wasm_bindgen]
+pub fn network_join_game(
+    server_password: &str,
+    game_name: &str,
+    game_password: &str,
+    player_name: &str,
+    deck_json: &str,
+) -> Result<(), JsValue> {
+    let deck: DeckSubmission =
+        serde_json::from_str(deck_json).map_err(|e| JsValue::from_str(&format!("Invalid deck JSON: {}", e)))?;
+    let pass = if game_password.is_empty() {
+        None
+    } else {
+        Some(game_password.to_string())
+    };
+    with_client(|client| {
+        client.join_game(server_password, game_name, pass, player_name, deck);
+    });
     Ok(())
 }
 

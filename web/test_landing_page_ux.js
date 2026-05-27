@@ -86,29 +86,28 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // NEW (mtg-i1ye3 fix): Create no longer redirects. It sends a
-    // ClientMessage::CreateGame over the open lobby WebSocket and switches
-    // the page to a "Waiting for opponent…" pane in-place.
+    // NEW (mtg-njdwy): Create no longer pairs in-place. It closes the
+    // browse-WS and REDIRECTS to tui_game.html?lobby_create=NAME so the game
+    // page can open its own fresh WS, dispatch CreateGame via the new WASM
+    // lobby-action exports, and run the real network-mode game. We verify
+    // the redirect happened and the WASM page is loading.
     await alice.click('#btn-create');
-    await alice.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'create flow', 'waiting pane never appeared after create'),
-    );
     await alice.waitForFunction(
-        () => /waiting for opponent|registered on server/i.test(
-            document.getElementById('waiting-status').textContent,
-        ),
+        () => /tui_game\.html/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('major', 'create flow', 'server never acked game_created / waiting_for_opponent'));
-    await shot(alice, 'landing_03_game_created.png');
-
+    ).catch(() => record('blocking', 'create flow', 'alice never redirected to tui_game.html'));
     const aliceUrl = alice.url();
-    console.log('  alice now at:', aliceUrl);
-    // Alice should NOT have navigated away — the lobby connection is what
-    // holds her game slot on the server.
-    if (aliceUrl.includes('native_game.html')) {
-        record('major', 'create flow', 'alice was redirected away — that would drop the WS slot');
+    console.log('  alice redirected to:', aliceUrl);
+    if (!aliceUrl.includes('lobby_create=qa-test-game')) {
+        record('major', 'create flow', 'alice URL missing lobby_create param: ' + aliceUrl);
     }
+    if (!aliceUrl.includes('lobby_pass=secret')) {
+        record('major', 'create flow', 'alice URL missing lobby_pass param: ' + aliceUrl);
+    }
+    // Give the tui page a moment to load WASM + send CreateGame.
+    await alice.waitForTimeout(2500);
+    await shot(alice, 'landing_03_game_created.png');
 
     // --- Bob ---
     const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -175,26 +174,126 @@ async function scenarioFullFlow() {
         record('major', 'create empty name', 'empty game name allowed (should be blocked)');
     }
 
-    // --- Try create with valid name but NO passcode ---
-    // (bob's lobby pane should still be active here — empty-name attempt above
-    // does nothing and leaves him in lobby.)
+    // --- Try create with valid name but NO passcode (this redirects) ---
     await bob.fill('#create-game', 'open-game');
     await bob.fill('#create-pass', '');
     await bob.click('#btn-create');
-    await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'create no-pass', 'waiting pane never appeared'),
-    );
+    await bob.waitForFunction(
+        () => /tui_game\.html/.test(window.location.href) &&
+              /lobby_create=open-game/.test(window.location.href),
+        null,
+        { timeout: 4000 },
+    ).catch(() => record('blocking', 'create no-pass', 'bob never redirected to tui_game.html with lobby_create=open-game'));
     const bobAfterCreate = bob.url();
     console.log('  bob after create (no pass):', bobAfterCreate);
-    if (bobAfterCreate.includes('native_game.html')) {
-        record('major', 'create no-pass', 'bob redirected away — slot would drop');
+    if (bobAfterCreate.includes('lobby_pass=')) {
+        record('major', 'create no-pass', 'empty passcode leaked into URL: ' + bobAfterCreate);
     }
-
+    await bob.waitForTimeout(2000);
     await shot(bob, 'landing_05_joined.png');
 
     await aliceCtx.close();
     await bobCtx.close();
     await charlieCtx.close();
+    await browser.close();
+}
+
+// mtg-njdwy: After a Create/Join redirect the user lands on tui_game.html
+// with `?lobby_create=...`. The page should:
+//   (a) auto-fire the launch (no manual click required),
+//   (b) reach a "Waiting" / "WaitingForOpponent" network state.
+// And re-opening the lobby in a fresh tab must NOT show the lingering
+// "Already authenticated / in a game" red-status error that the periodic
+// 5s refreshTimer caused previously (the timer now skips when pendingFlow
+// is non-null AND we never even enter pendingFlow now that Create redirects).
+async function scenarioPostRedirectAutoLaunch() {
+    console.log('\n=== Scenario: post-redirect auto-launch on tui_game.html (mtg-njdwy) ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => record('major', 'tui auto-launch page error', e.message));
+    page.on('console', (m) => {
+        if (m.type() === 'error') {
+            const t = m.text();
+            // Surface only true errors (filter out 404-on-missing-data which
+            // is a separate concern). We're checking specifically that the
+            // "Already authenticated" reply does NOT show up.
+            if (/already authenticated/i.test(t)) {
+                record('blocking', 'tui auto-launch', 'server replied "Already authenticated" during auto-launch');
+            }
+        }
+    });
+
+    // Build URL = BASE + '/tui_game.html?...'. Don't reuse __landingRoot
+    // here since it may contain a leftover ?ws=... query string.
+    const url = BASE + '/tui_game.html?lobby_create=autolaunch-test&lobby_pass=&name=autolaunch&ws=' +
+        encodeURIComponent(WS_OVERRIDE || 'ws://localhost:17810');
+    console.log('  navigating to:', url);
+    await page.goto(url);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(4000); // give WASM init + auto-launch a chance
+    await shot(page, 'landing_12_post_redirect_autolaunch.png');
+
+    // Look for the network-status hint we injected.
+    const networkStatusText = await page.evaluate(() => {
+        const el = document.getElementById('network-status');
+        return el ? el.textContent : '';
+    });
+    console.log('  network status:', JSON.stringify(networkStatusText));
+    if (!/auto-creating|status|waiting|connecting/i.test(networkStatusText)) {
+        // Minor (not major) because the auto-launch can legitimately fail in
+        // a stub environment (missing data/decks.bin, etc.). The redirect
+        // wiring itself is verified by scenarioFullFlow. We surface this so
+        // a real regression surfaces, but don't fail the suite.
+        record('minor', 'tui auto-launch', 'no auto-launch status hint visible: ' + JSON.stringify(networkStatusText));
+    }
+
+    await ctx.close();
+    await browser.close();
+}
+
+// mtg-njdwy: scenario covering the "Already authenticated" regression. We
+// open the lobby, let the periodic refreshTimer fire several times (10+ s),
+// and verify no red status appears. The previous bug was: even from the
+// browse state, the timer would fire ListGames over a WS that was no longer
+// in lobby mode, producing the Error reply that turned the UI red. The fix
+// is twofold: (a) Create/Join no longer reuses the lobby WS, and (b) the
+// refreshTimer is paused whenever pendingFlow is non-null.
+async function scenarioRefreshTimerNoError() {
+    console.log('\n=== Scenario: lobby refresh timer never triggers "Already authenticated" (mtg-njdwy) ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    let sawAlreadyAuth = false;
+    page.on('console', (m) => {
+        if (/already authenticated/i.test(m.text())) {
+            sawAlreadyAuth = true;
+        }
+    });
+
+    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.waitForLoadState('domcontentloaded');
+    await waitForLobbyConnected(page).catch(() => {});
+
+    await page.fill('#username', 'refresh-test');
+    await page.click('#btn-name');
+    await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 });
+
+    // Sit in the lobby for ~12 seconds so the 5-second refreshTimer fires
+    // at least twice. Verify no red ws-state or red create-status appears.
+    await page.waitForTimeout(12000);
+
+    const wsStateText = await page.textContent('#ws-state');
+    console.log('  ws-state after 12s of polling:', wsStateText);
+    if (/error|disconnected/i.test(wsStateText)) {
+        record('blocking', 'refresh timer', 'ws-state showed "' + wsStateText + '" after idle polling');
+    }
+    if (sawAlreadyAuth) {
+        record('blocking', 'refresh timer', '"Already authenticated" appeared in console during idle polling');
+    }
+
+    await shot(page, 'landing_13_refresh_timer_idle.png');
+    await ctx.close();
     await browser.close();
 }
 
@@ -356,6 +455,8 @@ async function startSelfManagedServers() {
     global.__landingRoot = baseWithWs;
     try {
         await scenarioFullFlow();
+        await scenarioPostRedirectAutoLaunch();
+        await scenarioRefreshTimerNoError();
         await scenarioMobileViewport();
         await scenarioOfflineLobby();
         await scenarioLaunchPagesSmoke();
