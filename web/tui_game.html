@@ -1178,7 +1178,16 @@ Name=My Deck
         window.tui_set_verify_rewind_replay = tui_set_verify_rewind_replay;
 
         let cardDb = null;
-        let deckIndex = null;  // Deck metadata from deck_index.json
+        // Per-set card-data index loaded from data/sets/index.json (mtg-6fsjb).
+        // Schema: { version, sets: [{file, bytes, card_count}, ...],
+        //           cards: { "<Card Name>": "YYYY-CODE.bin", ... } }
+        // The lobby/launch path consults this to know which set bins to
+        // fetch for the chosen decks; previously we shipped one monolithic
+        // ~24 MB cards.bin plus per-deck packs.
+        let setIndex = null;
+        // Set of set-file basenames already loaded into the WASM card DB
+        // (so back-to-back games on overlapping decks don't re-fetch).
+        const loadedSetFiles = new Set();
 
         async function main() {
             const progress = document.getElementById('loading-progress');
@@ -1203,16 +1212,14 @@ Name=My Deck
                 const decksData = new Uint8Array(await decksResp.arrayBuffer());
                 const deckCount = cardDb.load_decks(decksData);
 
-                // Load deck index for card pack size info
-                try {
-                    const indexResp = await fetch('./data/deck_index.json');
-                    if (indexResp.ok) {
-                        deckIndex = await indexResp.json();
-                        console.log('Loaded deck index with card pack sizes');
-                    }
-                } catch (e) {
-                    console.warn('deck_index.json not found, will use fallback cards.bin');
+                // Load the per-set card index (mtg-6fsjb). Required: without
+                // it we cannot map deck card names -> the right set bin.
+                const indexResp = await fetch('./data/sets/index.json');
+                if (!indexResp.ok) {
+                    throw new Error(`Failed to load sets/index.json: ${indexResp.status}. Run 'mtg export-wasm' first.`);
                 }
+                setIndex = await indexResp.json();
+                console.log(`Loaded per-set index: ${setIndex.sets.length} sets, ${Object.keys(setIndex.cards).length} cards`);
 
                 // Store deck names for filtering by collection
                 window.allDeckNames = JSON.parse(cardDb.get_deck_names_json());
@@ -1320,151 +1327,141 @@ Name=My Deck
         }
 
         /**
-         * Load all cards from the full cards.bin database
-         * Called when user clicks "Load All Cards" button
+         * Fetch + load the named per-set bins in parallel (idempotent).
+         * Skips files already present in `loadedSetFiles`. Returns the
+         * number of files actually fetched this call.
          */
-        async function loadAllCards() {
-            const loadAllBtn = document.getElementById('btn-load-all-cards');
-            const cardStatus = document.getElementById('card-status');
-            const originalText = loadAllBtn.textContent;
-
-            try {
-                loadAllBtn.disabled = true;
-                loadAllBtn.textContent = 'Loading...';
-                cardStatus.textContent = '| Loading full database...';
-                cardStatus.style.color = '#ffd700';  // Yellow while loading
-
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-                }
-                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                cardDb.load_cards(cardsData);
-                fullCardsLoaded = true;
-
-                console.log(`Loaded all ${cardDb.card_count()} cards`);
-                updateCardStatus();
-            } catch (e) {
-                console.error('Failed to load all cards:', e);
-                cardStatus.textContent = '| Load failed';
-                cardStatus.style.color = '#ff6b6b';
-                loadAllBtn.textContent = originalText;
-                loadAllBtn.disabled = false;
-            }
+        async function loadSetFiles(setFiles) {
+            const toFetch = [...setFiles].filter(f => !loadedSetFiles.has(f));
+            if (toFetch.length === 0) return 0;
+            await Promise.all(toFetch.map(async f => {
+                const r = await fetch(`./data/sets/${f}`);
+                if (!r.ok) throw new Error(`Failed to fetch set ${f}: ${r.status}`);
+                cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+                loadedSetFiles.add(f);
+            }));
+            return toFetch.length;
         }
 
         /**
-         * Load cards needed for selected decks (called at game launch time)
-         *
-         * Strategy:
-         * 1. Register any custom decks (from localStorage) with the card database
-         * 2. Try to load per-deck card packs (fast path, ~20KB each)
-         * 3. Fall back to full cards.bin if deck packs not available (~24MB)
-         *
-         * Custom decks always trigger the fallback since they don't have pre-built .bin packs.
+         * Ensure the tokens.bin global is loaded (small, ~270 KB).
          */
-        async function loadFullCardDatabaseWithTokens(status) {
-            if (fullCardsLoaded) {
-                console.log(`Full database already loaded (${cardDb.card_count()} cards), skipping reload`);
-            } else {
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-                }
-                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                cardDb.load_cards(cardsData);
-                fullCardsLoaded = true;
-                console.log('Loaded full card database');
-            }
-
-            if (fullTokensLoaded) {
-                return;
-            }
-
-            status.textContent = 'Loading token definitions...';
+        async function ensureTokensLoaded(status) {
+            if (fullTokensLoaded) return;
+            if (status) status.textContent = 'Loading token definitions...';
             const tokensResp = await fetch('./data/tokens.bin');
             if (!tokensResp.ok) {
                 console.warn(`tokens.bin not available (${tokensResp.status}); token creation may fail`);
                 return;
             }
-            const tokensData = new Uint8Array(await tokensResp.arrayBuffer());
-            const tokenCount = cardDb.load_tokens(tokensData);
+            const tokenCount = cardDb.load_tokens(new Uint8Array(await tokensResp.arrayBuffer()));
             fullTokensLoaded = true;
             console.log(`Loaded ${tokenCount} token definitions`);
         }
 
+        /**
+         * Load every per-set bin (used by deck builder + "Load All Cards" button).
+         * After this completes the WASM card DB holds all 32k+ definitions.
+         */
+        async function loadAllCards() {
+            const loadAllBtn = document.getElementById('btn-load-all-cards');
+            const cardStatus = document.getElementById('card-status');
+            const originalText = loadAllBtn ? loadAllBtn.textContent : null;
+
+            try {
+                if (loadAllBtn) {
+                    loadAllBtn.disabled = true;
+                    loadAllBtn.textContent = 'Loading...';
+                }
+                if (cardStatus) {
+                    cardStatus.textContent = '| Loading all sets...';
+                    cardStatus.style.color = '#ffd700';
+                }
+
+                if (!setIndex) throw new Error('Per-set index not loaded');
+                const allFiles = setIndex.sets.map(s => s.file);
+                const fetched = await loadSetFiles(allFiles);
+                fullCardsLoaded = true;
+                await ensureTokensLoaded(cardStatus);
+
+                console.log(`Loaded all ${cardDb.card_count()} cards (${fetched} set fetches)`);
+                updateCardStatus();
+            } catch (e) {
+                console.error('Failed to load all cards:', e);
+                if (cardStatus) {
+                    cardStatus.textContent = '| Load failed';
+                    cardStatus.style.color = '#ff6b6b';
+                }
+                if (loadAllBtn) {
+                    loadAllBtn.textContent = originalText;
+                    loadAllBtn.disabled = false;
+                }
+            }
+        }
+
+        /**
+         * Load cards needed for the selected decks (called at game launch).
+         *
+         * Per mtg-6fsjb:
+         * 1. Register any custom decks (from localStorage) with the WASM card DB.
+         * 2. Walk every deck's unique card names, look each up in setIndex.cards
+         *    to find its owning per-set bin, and Promise.all-fetch the union.
+         * 3. Always load tokens.bin (small).
+         *
+         * Custom decks no longer need to trigger a full-database fallback —
+         * their card names get looked up in the same per-set index.
+         */
         async function loadCardsForDecks(p1Deck, p2Deck) {
             const status = document.getElementById('status');
-            const uniqueDecks = [...new Set([p1Deck, p2Deck])];  // Dedupe if same deck
+            const uniqueDecks = [...new Set([p1Deck, p2Deck])];
             const customDecks = getCustomDecks();
 
-            let loadedFromPacks = 0;
-            let needFallback = false;
-            let hasCustomDeck = false;
+            if (!setIndex) throw new Error('Per-set card index not loaded');
 
-            // First, register any custom decks with the WASM card database
+            // Register any custom decks first so get_deck_card_names_json knows them.
             for (const deckName of uniqueDecks) {
                 if (customDecks[deckName]) {
-                    hasCustomDeck = true;
                     status.textContent = `Registering custom deck: ${deckName}...`;
-                    const deckJson = JSON.stringify(customDecks[deckName]);
-                    cardDb.register_custom_deck(deckName, deckJson);
+                    cardDb.register_custom_deck(deckName, JSON.stringify(customDecks[deckName]));
                     console.log(`Registered custom deck: ${deckName}`);
                 }
             }
 
-            // For custom decks, always use the full card database
-            // (we already loaded it for the deck builder, and there's no pre-built pack)
-            if (hasCustomDeck) {
-                needFallback = true;
-            }
-
-            // Try per-deck packs for built-in decks (fast path)
-            // Each pack contains both cards and tokens needed for that deck
+            // Collect the union of set files needed for both decks.
+            const setFiles = new Set();
+            const missingFromIndex = [];
             for (const deckName of uniqueDecks) {
-                // Skip custom decks - they don't have .bin packs
-                if (customDecks[deckName]) {
-                    continue;
-                }
-
-                try {
-                    status.textContent = `Loading cards for ${deckName}...`;
-                    const packResp = await fetch(`./data/deck_cards/${encodeURIComponent(deckName)}.bin`);
-                    if (packResp.ok) {
-                        const packData = new Uint8Array(await packResp.arrayBuffer());
-                        const count = cardDb.load_deck_pack(packData);
-                        console.log(`Loaded ${count} cards from deck pack: ${deckName}`);
-                        loadedFromPacks++;
+                const names = JSON.parse(cardDb.get_deck_card_names_json(deckName));
+                for (const name of names) {
+                    const f = setIndex.cards[name];
+                    if (!f) {
+                        missingFromIndex.push(`${deckName}: ${name}`);
                     } else {
-                        console.warn(`Deck pack not found for ${deckName}, will use fallback`);
-                        needFallback = true;
+                        setFiles.add(f);
                     }
-                } catch (e) {
-                    console.warn(`Failed to load deck pack for ${deckName}:`, e);
-                    needFallback = true;
                 }
             }
-
-            // Fall back to full cards.bin if any deck pack failed or we have custom decks
-            if (needFallback) {
-                status.textContent = 'Loading full card database...';
-                console.log('Loading full cards.bin...');
-                await loadFullCardDatabaseWithTokens(status);
+            if (missingFromIndex.length > 0) {
+                throw new Error(`Cards not in per-set index: ${missingFromIndex.slice(0, 5).join(', ')}${missingFromIndex.length > 5 ? ` (+${missingFromIndex.length - 5} more)` : ''}`);
             }
 
-            // Verify all needed cards are loaded
+            status.textContent = `Fetching ${setFiles.size} set bins for ${uniqueDecks.join(' vs ')}...`;
+            const fetched = await loadSetFiles(setFiles);
+            console.log(`loadCardsForDecks: ${fetched} new set bins fetched (cumulative ${loadedSetFiles.size}/${setIndex.sets.length})`);
+
+            await ensureTokensLoaded(status);
+
+            // Verify all needed cards are loaded.
             for (const deckName of uniqueDecks) {
                 const missing = cardDb.get_missing_cards_for_deck(deckName);
                 if (missing.length > 0) {
-                    throw new Error(`Missing cards for ${deckName}: ${missing.join(', ')}`);
+                    throw new Error(`Missing cards for ${deckName} after per-set load: ${missing.join(', ')}`);
                 }
             }
 
-            // Update card status display
             updateCardStatus();
-
             status.textContent = `Cards loaded for ${uniqueDecks.join(' vs ')}`;
-            return loadedFromPacks === uniqueDecks.length && !hasCustomDeck;  // true if all from packs
+            return true;
         }
 
         function getControllerType(value) {
@@ -3992,28 +3989,19 @@ Name=My Deck
         }
 
         /**
-         * Load all cards for deck builder (needs full card database)
+         * Load all per-set bins for the deck builder (it needs every card
+         * available for browse/search). After mtg-6fsjb this is implemented
+         * as N parallel small fetches via loadAllCards().
          */
         async function loadAllCardsForDeckBuilder() {
             const status = document.getElementById('status');
-            status.textContent = 'Loading full card database for deck builder...';
-
-            // Check if cards are already loaded
             if (fullCardsLoaded) {
                 console.log('[DeckBuilder] Card database already loaded');
                 return;
             }
-
-            // Load full cards.bin for deck builder (it needs all cards for search)
-            const cardsResp = await fetch('./data/cards.bin');
-            if (!cardsResp.ok) {
-                throw new Error(`Failed to load cards.bin: ${cardsResp.status}`);
-            }
-            const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-            cardDb.load_cards(cardsData);
-            fullCardsLoaded = true;
-            updateCardStatus();
-            console.log('[DeckBuilder] Loaded full card database');
+            status.textContent = 'Loading every set for deck builder...';
+            await loadAllCards();
+            console.log('[DeckBuilder] All per-set bins loaded');
         }
 
         /**

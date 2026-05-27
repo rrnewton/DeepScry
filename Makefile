@@ -614,11 +614,16 @@ full_deck_list.txt:
 # WebAssembly
 # ==============================================================================
 
-# Export card database and decks for WASM
-# Set MTG_SKIP_WASM_EXPORT=1 to skip this step (useful when data already exists)
+# Export card database and decks for WASM (mtg-6fsjb per-set layout):
+#   web/data/sets/<YYYY>-<CODE>.bin   per-set card bins (~315 files, ~32 MB total)
+#   web/data/sets/index.json          card-name -> set-file lookup
+#   web/data/tokens.bin               token definitions (monolithic)
+#   web/data/decks.bin                pre-shipped deck lists
+#
+# Set MTG_SKIP_WASM_EXPORT=1 to skip this step (useful when data already exists).
 # Always run the current source tree's exporter. Reusing an existing release
-# binary can silently generate stale decks.bin/cards.bin data that no longer
-# matches the freshly built WASM loader.
+# binary can silently generate stale data that no longer matches the freshly
+# built WASM loader.
 wasm-export:
 	@if [ "$$MTG_SKIP_WASM_EXPORT" = "1" ]; then \
 		echo "=== Skipping WASM export (MTG_SKIP_WASM_EXPORT=1) ==="; \

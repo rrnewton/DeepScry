@@ -23,11 +23,11 @@ pub use card::{CardDefinition, CardLoader};
 pub use cardsfolder::{find_cardsfolder, require_cardsfolder};
 #[cfg(feature = "native")]
 pub use database_async::CardDatabase as AsyncCardDatabase;
-pub use deck::{DeckEntry, DeckList, DeckLoader, DeckPack, DeckParseResult, ImportProblem, ImportProblemKind};
+pub use deck::{DeckEntry, DeckList, DeckLoader, DeckParseResult, ImportProblem, ImportProblemKind};
 #[cfg(feature = "native")]
 pub use deck_async::prefetch_deck_cards;
 #[cfg(feature = "native")]
-pub use edition::{CardEditionIndex, CardPrinting};
+pub use edition::{CardEditionIndex, CardPrinting, PrimarySetAssignment};
 #[cfg(feature = "native")]
 pub use game_init::GameInitializer;
 pub use svar_parser::{

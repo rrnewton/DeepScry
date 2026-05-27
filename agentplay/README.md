@@ -89,8 +89,9 @@ choices that stop-and-go mode reads from `--snapshot-output`. If
 
 The WASM driver requires:
 * `web/pkg/mtg_forge_rs.js` (built via `make wasm-dev` or `make wasm`).
-* `web/data/{decks.bin,cards.bin,deck_index.json}` (built via `mtg
-  export-wasm`).
+* `web/data/{decks.bin,tokens.bin}` plus `web/data/sets/index.json` and
+  `web/data/sets/<YYYY>-<CODE>.bin` per-set bins (built via `mtg
+  export-wasm`; see mtg-6fsjb).
 * `web/node_modules/playwright` (built via `cd web && npm install`).
 * The Python `playwright` package + Chromium browser (`pip install
   playwright && python3 -m playwright install chromium`).

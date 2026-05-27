@@ -3747,20 +3747,113 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         load_errors
     );
 
-    // Serialize cards to bincode
-    let cards_path = output.join("cards.bin");
-    let cards_data = bincode::serialize(&card_definitions)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize cards: {}", e)))?;
-    fs::write(&cards_path, &cards_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+    // Partition cards into per-set bins (replaces the legacy single cards.bin
+    // write — see mtg-6fsjb). Each card is stored ONCE, at its earliest
+    // printing's `<YYYY>-<CODE>.bin`; cards with no edition entry land in
+    // `0000-MISC.bin`. The browser fetches only the sets a deck needs.
+    let sets_dir = output.join("sets");
+    if sets_dir.exists() {
+        fs::remove_dir_all(&sets_dir).map_err(|e| {
+            mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!("Failed to clean sets directory: {}", e)))
+        })?;
+    }
+    fs::create_dir_all(&sets_dir).map_err(|e| {
+        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!("Failed to create sets directory: {}", e)))
+    })?;
+
+    println!("\nScanning editions/ for per-set primary assignments...");
+    let primary = mtg_forge_rs::loader::PrimarySetAssignment::scan(std::path::Path::new("editions"))
+        .map_err(mtg_forge_rs::MtgError::IoError)?;
     println!(
-        "\nExported {} cards to {} ({} bytes)",
-        card_definitions.len(),
-        cards_path.display(),
-        cards_data.len()
+        "  Editions: {} sets, {} card names indexed",
+        primary.set_count(),
+        primary.card_count()
     );
 
-    // Export full token definitions for fallback paths that load cards.bin instead
-    // of per-deck packs.
+    // Bucket card definitions by their primary set file basename.
+    // Uses references into `card_definitions` (no clone) per CLAUDE.md rules.
+    const FALLBACK_BUCKET: &str = "0000-MISC";
+    let mut buckets: std::collections::BTreeMap<String, Vec<(&str, &mtg_forge_rs::loader::CardDefinition)>> =
+        std::collections::BTreeMap::new();
+    let mut orphan_count = 0usize;
+    for (name, def) in &card_definitions {
+        let bucket_key = match primary.primary.get(name) {
+            Some((year, code)) => format!("{:04}-{}", year, code.to_ascii_uppercase()),
+            None => {
+                orphan_count += 1;
+                FALLBACK_BUCKET.to_string()
+            }
+        };
+        buckets.entry(bucket_key).or_default().push((name.as_str(), def));
+    }
+    println!(
+        "  {} cards bucketed into {} per-set files ({} orphans -> {}.bin)",
+        card_definitions.len(),
+        buckets.len(),
+        orphan_count,
+        FALLBACK_BUCKET
+    );
+
+    // Write each per-set bin. Serialization shape: HashMap<String, CardDefinition>
+    // so the WASM loader (which already knows that shape from the old
+    // `load_cards`) can deserialize without a new schema.
+    #[derive(serde::Serialize)]
+    struct SetManifestEntry {
+        file: String,
+        bytes: usize,
+        card_count: usize,
+    }
+
+    #[derive(serde::Serialize)]
+    struct SetIndex<'a> {
+        version: u32,
+        sets: Vec<SetManifestEntry>,
+        /// canonical card name -> "<YYYY>-<CODE>.bin"
+        cards: std::collections::BTreeMap<&'a str, String>,
+    }
+
+    let mut sets_manifest: Vec<SetManifestEntry> = Vec::with_capacity(buckets.len());
+    let mut cards_to_file: std::collections::BTreeMap<&str, String> = std::collections::BTreeMap::new();
+    let mut total_sets_bytes = 0usize;
+    for (bucket, entries) in &buckets {
+        // bincode HashMap<String, CardDefinition> wire format matches
+        // HashMap<&str, &CardDefinition> (length-prefixed pairs).
+        let map: std::collections::HashMap<&str, &mtg_forge_rs::loader::CardDefinition> =
+            entries.iter().copied().collect();
+        let bytes = bincode::serialize(&map).map_err(|e| {
+            mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
+        })?;
+        let file_name = format!("{}.bin", bucket);
+        let path = sets_dir.join(&file_name);
+        fs::write(&path, &bytes).map_err(mtg_forge_rs::MtgError::IoError)?;
+        total_sets_bytes += bytes.len();
+        sets_manifest.push(SetManifestEntry {
+            file: file_name.clone(),
+            bytes: bytes.len(),
+            card_count: entries.len(),
+        });
+        for (name, _) in entries {
+            cards_to_file.insert(*name, file_name.clone());
+        }
+    }
+
+    let index = SetIndex {
+        version: 1,
+        sets: sets_manifest,
+        cards: cards_to_file,
+    };
+    let index_path = sets_dir.join("index.json");
+    let index_json = serde_json::to_string(&index)
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize sets index: {}", e)))?;
+    fs::write(&index_path, &index_json).map_err(mtg_forge_rs::MtgError::IoError)?;
+    println!(
+        "\nWrote {} per-set bins ({} bytes total) + index.json ({} bytes)",
+        buckets.len(),
+        total_sets_bytes,
+        index_json.len()
+    );
+
+    // Export tokens (single file, partitioning out of scope — see mtg-6fsjb Q10).
     let cardsfolder_canonical = std::fs::canonicalize(&cardsfolder).map_err(|e| {
         mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
             "Failed to resolve cardsfolder path: {}",
@@ -3879,124 +3972,40 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks_data.len()
     );
 
-    // Generate per-deck card packs (optimization for fast loading)
-    // Each deck gets a mini cards.bin containing only the cards it needs
-    let deck_cards_dir = output.join("deck_cards");
-
-    // Clean up old deck_cards directory to remove stale files
-    if deck_cards_dir.exists() {
-        fs::remove_dir_all(&deck_cards_dir).map_err(|e| {
-            mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
-                "Failed to clean deck_cards directory: {}",
-                e
-            )))
-        })?;
-    }
-    fs::create_dir_all(&deck_cards_dir).map_err(|e| {
-        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
-            "Failed to create deck_cards directory: {}",
-            e
-        )))
-    })?;
-
-    println!("\nGenerating per-deck card packs (with tokens)...");
-    let mut deck_pack_sizes: HashMap<String, usize> = HashMap::new();
-    let mut deck_token_counts: HashMap<String, usize> = HashMap::new();
-
+    // Sanity check: every card referenced by a deck must be reachable through
+    // the per-set index (otherwise the browser would 404 trying to load it).
+    let mut missing_deck_cards = 0usize;
     for (deck_name, deck) in &decks {
-        let unique_names = deck.unique_card_names();
-        let mut deck_pack = mtg_forge_rs::loader::DeckPack::new();
-        let mut token_scripts_needed: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        for card_name in &unique_names {
-            if let Some(card_def) = card_definitions.get(card_name) {
-                deck_pack.cards.insert(card_name.clone(), card_def.clone());
-
-                // Extract token scripts this card can create
-                for token_script in card_def.extract_token_scripts() {
-                    token_scripts_needed.insert(token_script);
-                }
-            } else {
-                eprintln!("  Warning: Card '{}' not found for deck '{}'", card_name, deck_name);
-            }
-        }
-
-        // Load token definitions for this deck
-        for token_script in &token_scripts_needed {
-            if let Some(token_def) = token_definitions.get(token_script) {
-                deck_pack.tokens.insert(token_script.clone(), token_def.clone());
-            } else {
-                let token_path = tokenscripts_dir.join(format!("{}.txt", token_script));
+        for card_name in deck.unique_card_names() {
+            if !card_definitions.contains_key(&card_name) {
                 eprintln!(
-                    "  Warning: Token script '{}' not found at {} for deck '{}'",
-                    token_script,
-                    token_path.display(),
-                    deck_name
+                    "  Warning: Card '{}' not found in card_definitions for deck '{}'",
+                    card_name, deck_name
                 );
+                missing_deck_cards += 1;
             }
         }
-
-        // Serialize this deck's pack (cards + tokens together)
-        let deck_pack_path = deck_cards_dir.join(format!("{}.bin", deck_name));
-        let deck_pack_data = bincode::serialize(&deck_pack)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize deck pack: {}", e)))?;
-        fs::write(&deck_pack_path, &deck_pack_data).map_err(mtg_forge_rs::MtgError::IoError)?;
-        deck_pack_sizes.insert(deck_name.clone(), deck_pack_data.len());
-        deck_token_counts.insert(deck_name.clone(), deck_pack.token_count());
-
-        let token_info = if deck_pack.tokens.is_empty() {
-            String::new()
-        } else {
-            format!(", {} tokens", deck_pack.tokens.len())
-        };
-        println!(
-            "  {} - {} unique cards{} ({} bytes)",
-            deck_name,
-            deck_pack.cards.len(),
-            token_info,
-            deck_pack_data.len()
+    }
+    if missing_deck_cards > 0 {
+        eprintln!(
+            "  {} deck-referenced card names missing from cardsfolder (deck will fail to load in browser)",
+            missing_deck_cards
         );
     }
 
-    // Generate deck index (names, sizes, and pack info for UI)
-    #[derive(serde::Serialize)]
-    struct DeckIndexEntry {
-        name: String,
-        card_count: usize,
-        unique_cards: usize,
-        /// Size of the deck pack file (cards + tokens combined)
-        pack_bytes: usize,
-        /// Number of token definitions in the pack
-        token_count: usize,
-    }
-
-    let deck_index: Vec<DeckIndexEntry> = decks
-        .iter()
-        .map(|(name, deck)| DeckIndexEntry {
-            name: name.clone(),
-            card_count: deck.total_cards(),
-            unique_cards: deck.unique_card_names().len(),
-            pack_bytes: deck_pack_sizes.get(name).copied().unwrap_or(0),
-            token_count: deck_token_counts.get(name).copied().unwrap_or(0),
-        })
-        .collect();
-    let index_path = output.join("deck_index.json");
-    let index_json = serde_json::to_string_pretty(&deck_index)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Failed to serialize deck index: {}", e)))?;
-    fs::write(&index_path, &index_json).map_err(mtg_forge_rs::MtgError::IoError)?;
-    println!("\nExported deck index to {}", index_path.display());
-
-    let total_deck_pack_size: usize = deck_pack_sizes.values().sum();
-    let total_token_count: usize = deck_token_counts.values().sum();
     println!("\n=== Export Complete ===");
     println!("Files created in {}:", output.display());
     println!(
-        "  cards.bin        - {} card definitions ({} bytes) [fallback]",
-        card_definitions.len(),
-        cards_data.len()
+        "  sets/*.bin       - {} per-set bins ({} bytes total)",
+        buckets.len(),
+        total_sets_bytes
     );
     println!(
-        "  tokens.bin       - {} token definitions ({} bytes) [fallback]",
+        "  sets/index.json  - card name -> set file map ({} bytes)",
+        index_json.len()
+    );
+    println!(
+        "  tokens.bin       - {} token definitions ({} bytes)",
         token_definitions.len(),
         tokens_data.len()
     );
@@ -4005,13 +4014,6 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks.len(),
         decks_data.len()
     );
-    println!(
-        "  deck_cards/*.bin - {} deck packs with {} tokens ({} bytes total)",
-        decks.len(),
-        total_token_count,
-        total_deck_pack_size
-    );
-    println!("  deck_index.json  - deck metadata");
 
     Ok(())
 }

@@ -85,7 +85,7 @@ impl CardEditionIndex {
     }
 
     /// Parse edition metadata from a file
-    fn parse_edition_file(path: &Path) -> std::io::Result<EditionInfo> {
+    pub(crate) fn parse_edition_file(path: &Path) -> std::io::Result<EditionInfo> {
         let content = fs::read_to_string(path)?;
 
         let mut code = String::new();
@@ -114,7 +114,7 @@ impl CardEditionIndex {
     }
 
     /// Extract card names from an edition file's [cards] section
-    fn extract_cards_from_file(path: &Path) -> std::io::Result<Vec<String>> {
+    pub(crate) fn extract_cards_from_file(path: &Path) -> std::io::Result<Vec<String>> {
         let content = fs::read_to_string(path)?;
         let mut cards = Vec::new();
         let mut in_cards_section = false;
@@ -247,6 +247,91 @@ impl CardEditionIndex {
     /// Number of unique sets loaded
     pub fn set_count(&self) -> usize {
         self.set_codes.len()
+    }
+}
+
+/// Result of scanning all edition files for the per-set WASM exporter.
+///
+/// Each entry maps a card name (as it appears in the edition file's `[cards]`
+/// section, NOT normalized) to its "primary printing": the earliest
+/// `(year, set_code)` printing, with ties broken by lexicographic set code.
+///
+/// This is kept separate from [`CardEditionIndex`] because that index
+/// normalizes card names to lowercase and is keyed off the normalized name;
+/// the WASM card map is keyed by the canonical (original-case) card name that
+/// comes out of `CardLoader::load_from_file`, and conflating the two would
+/// silently break lookups for cards like "Serra's Emissary" whose canonical
+/// names contain uppercase letters.
+#[derive(Debug, Default)]
+pub struct PrimarySetAssignment {
+    /// (year, set_code) for each set we observed at least one card in,
+    /// keyed by the original set code from the edition file.
+    pub sets: HashMap<String, u16>,
+    /// Map from original-case card name -> primary (year, set_code).
+    pub primary: HashMap<String, (u16, String)>,
+}
+
+impl PrimarySetAssignment {
+    /// Walk every `.txt` file in `editions_dir` and assign each printed card
+    /// to its earliest printing (ties broken by lexicographic set code).
+    ///
+    /// `year == 0` entries are still considered, but only if no other set
+    /// also lists the card (so a real release always wins over an unparseable
+    /// date). All edition files in the repo today have a valid four-digit
+    /// year — see the manual scan in mtg-6fsjb — so this fallback path is
+    /// dormant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if `editions_dir` cannot be read.
+    pub fn scan(editions_dir: &Path) -> std::io::Result<Self> {
+        let mut out = Self::default();
+
+        if !editions_dir.exists() {
+            return Ok(out);
+        }
+
+        for entry in fs::read_dir(editions_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "txt") {
+                continue;
+            }
+            let Ok(edition) = CardEditionIndex::parse_edition_file(&path) else {
+                continue;
+            };
+            if edition.code.is_empty() {
+                continue;
+            }
+            let Ok(cards) = CardEditionIndex::extract_cards_from_file(&path) else {
+                continue;
+            };
+            out.sets.insert(edition.code.clone(), edition.year);
+            for card_name in cards {
+                let candidate = (edition.year, edition.code.clone());
+                out.primary
+                    .entry(card_name)
+                    .and_modify(|existing| {
+                        // Earlier year wins; tie-break on lexicographic set code.
+                        if candidate.0 < existing.0 || (candidate.0 == existing.0 && candidate.1 < existing.1) {
+                            *existing = candidate.clone();
+                        }
+                    })
+                    .or_insert(candidate);
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Number of distinct set codes seen across all edition files.
+    pub fn set_count(&self) -> usize {
+        self.sets.len()
+    }
+
+    /// Number of distinct card names that have at least one printing.
+    pub fn card_count(&self) -> usize {
+        self.primary.len()
     }
 }
 

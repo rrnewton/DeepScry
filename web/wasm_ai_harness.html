@@ -76,30 +76,35 @@ if (typeof wasm.network_init !== 'function') {
     throw new Error(msg);
 }
 
-// --- Load card database ---
-// deck_index.json is a flat list of {name, card_count, ...} objects.
-// Pack files live at /data/deck_cards/<name>.bin
+// --- Load card database (mtg-6fsjb per-set bins) ---
+// sets/index.json maps every card name to its primary per-set bin file.
+// For the AI test harness we eagerly load EVERY set bin in parallel so any
+// late-bound deck-submission card name resolves immediately. The total
+// wire size is comparable to the old single cards.bin.
 let deckIndexList = [];
 try {
-    log('[WASM_HARNESS] Loading card database...');
-    const [decksData, deckIndexData] = await Promise.all([
+    log('[WASM_HARNESS] Loading card database (per-set bins)...');
+    const [decksData, setIndex] = await Promise.all([
         fetch('/data/decks.bin').then(r => r.arrayBuffer()),
-        fetch('/data/deck_index.json').then(r => r.json()),
+        fetch('/data/sets/index.json').then(r => r.json()),
     ]);
     const cardDb = new wasm.WasmCardDatabase();
     cardDb.load_decks(new Uint8Array(decksData));
 
-    // deck_index.json is a list of deck objects; pack filename = name + ".bin"
-    deckIndexList = Array.isArray(deckIndexData) ? deckIndexData : (deckIndexData.decks ?? []);
-    for (const deckEntry of deckIndexList) {
-        const packName = `${deckEntry.name}.bin`;
-        const packData = await fetch(`/data/deck_cards/${packName}`).then(r => r.arrayBuffer());
-        cardDb.load_deck_pack(new Uint8Array(packData));
-    }
+    await Promise.all(setIndex.sets.map(async s => {
+        const r = await fetch(`/data/sets/${s.file}`);
+        if (!r.ok) throw new Error(`Failed to fetch set ${s.file}: ${r.status}`);
+        cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+    }));
+
+    // deckIndexList kept as a list of {name} so the rest of this harness
+    // (and the fallback deck-submission builder) can iterate deck names.
+    const deckNames = JSON.parse(cardDb.get_deck_names_json());
+    deckIndexList = deckNames.map(name => ({ name }));
 
     // Store globally for fancy_tui to use
     window._wasmCardDb = cardDb;
-    log(`[WASM_HARNESS] Card database loaded (${deckIndexList.length} packs)`);
+    log(`[WASM_HARNESS] Card database loaded (${cardDb.card_count()} cards across ${setIndex.sets.length} set bins)`);
 } catch (e) {
     log(`[WASM_HARNESS] ERROR loading card database: ${e}`);
     gameResult = { error: `card_db_load_failed: ${e}` };

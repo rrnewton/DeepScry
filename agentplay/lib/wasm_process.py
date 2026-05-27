@@ -359,17 +359,18 @@ class WasmPlaywrightProcess:
                     };
                 }
 
-                // Load the cards needed for both decks. The WASM card DB
-                // requires cards.bin to be loaded before launching a game
-                // (so card definitions are resolvable).
-                const cardsResp = await fetch('/data/cards.bin');
-                if (cardsResp.ok) {
-                    const cardsBytes = new Uint8Array(await cardsResp.arrayBuffer());
-                    if (typeof cardDb.load_cards === 'function') {
-                        cardDb.load_cards(cardsBytes);
-                    } else if (typeof cardDb.load_cards_bin === 'function') {
-                        cardDb.load_cards_bin(cardsBytes);
-                    }
+                // Load the cards needed for both decks via the per-set bins
+                // (mtg-6fsjb). The WASM card DB requires every referenced
+                // card definition to be loaded before launching a game; the
+                // simplest deterministic approach for the agentplay harness
+                // is to fetch every set bin in parallel.
+                const idxResp = await fetch('/data/sets/index.json');
+                if (idxResp.ok) {
+                    const idx = await idxResp.json();
+                    await Promise.all(idx.sets.map(async s => {
+                        const r = await fetch(`/data/sets/${s.file}`);
+                        if (r.ok) cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+                    }));
                 }
 
                 // Map controller names to the WASM enum.

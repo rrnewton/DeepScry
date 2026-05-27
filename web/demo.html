@@ -278,13 +278,22 @@
                 progress.textContent = 'Loading card database...';
                 cardDb = new WasmCardDatabase();
 
-                // Load cards
-                const cardsResp = await fetch('./data/cards.bin');
-                if (!cardsResp.ok) {
-                    throw new Error(`Failed to load cards.bin: ${cardsResp.status}. Run 'mtg export-wasm' first.`);
+                // Load every per-set card bin in parallel (mtg-6fsjb).
+                // The AI-vs-AI demo needs the full card database because the
+                // deck dropdown lets the user pick ANY pair of decks.
+                progress.textContent = 'Loading per-set card index...';
+                const indexResp = await fetch('./data/sets/index.json');
+                if (!indexResp.ok) {
+                    throw new Error(`Failed to load sets/index.json: ${indexResp.status}. Run 'mtg export-wasm' first.`);
                 }
-                const cardsData = new Uint8Array(await cardsResp.arrayBuffer());
-                const cardCount = cardDb.load_cards(cardsData);
+                const setIndex = await indexResp.json();
+                progress.textContent = `Fetching ${setIndex.sets.length} per-set bins...`;
+                await Promise.all(setIndex.sets.map(async s => {
+                    const r = await fetch(`./data/sets/${s.file}`);
+                    if (!r.ok) throw new Error(`Failed to fetch set ${s.file}: ${r.status}`);
+                    cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+                }));
+                const cardCount = cardDb.card_count();
                 progress.textContent = `Loaded ${cardCount} cards. Loading decks...`;
 
                 // Load decks
