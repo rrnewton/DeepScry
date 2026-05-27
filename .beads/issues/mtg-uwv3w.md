@@ -1,0 +1,93 @@
+---
+title: 'feat(server): unify web + WS lobby into one axum process'
+status: open
+priority: 2
+issue_type: feature
+labels:
+- deploy
+- web
+created_at: 2026-05-27T20:39:40.458416910+00:00
+updated_at: 2026-05-27T20:41:41.520228520+00:00
+---
+
+# Description
+
+## Problem
+
+Today the deepscry.net deploy runs TWO separate processes (see `scripts/deploy-cloud.sh`):
+
+1. `python3 -m http.server 8080` in tmux session `mtg-server` — serves the `web/` static tree (landing page, WASM bundles, card data).
+2. `mtg server --port 17810 --bind 0.0.0.0 ...` in tmux session `mtg-rust-server` — the native Rust WebSocket lobby (see `mtg-engine/src/network/server.rs`).
+
+Cloudflare sits in front (Origin Rule → VM:8080 for HTTPS; the WS port 17810 is hardcoded in `web/server-config.js` as `ws://${host}:17810`).
+
+Operational pain:
+- Two log streams (`rust-server.log` + tmux scrollback), two restart points, two ports to keep firewalled correctly.
+- Cross-origin / cross-protocol WS URL hardcoded in `server-config.js` — fragile.
+- python http.server is not production-grade (no gzip, no cache headers, no tracing).
+
+## New architecture
+
+Single axum process bound on 8080, serving both static files and the WS lobby on the same origin. Routes:
+
+- `GET /` → `web/index.html` (no-cache)
+- `GET /*path` → `web/` via `tower_http::services::ServeDir` (long-cache for `/pkg/*`, `/data/*`, `/images/*`)
+- `GET /lobby` (WebSocket upgrade) → existing lobby handler, refactored from `tokio_tungstenite::WebSocketStream<TcpStream>` to `axum::extract::ws::WebSocket`
+
+Same-origin WS lets `web/server-config.js` become:
+```js
+window.MTG_WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/lobby";
+```
+No hardcoded host or port.
+
+## Code reuse — important
+
+The existing protocol/lobby logic in `mtg-engine/src/network/` is the source of truth and must be reused, NOT forked. The WS transport is the only piece changing. Concrete touch points (current `WebSocketStream<TcpStream>` users):
+
+- `mtg-engine/src/network/server.rs` lines 168, 454, 546, 599, 761, 793, 814, 1018, 2121, 3100, 3107 — every `WebSocketStream<TcpStream>` reference. Most should become generic over a `Sink<Message> + Stream<Item = Result<Message>>` trait so the same code drives either `tokio-tungstenite` (CLI `mtg server` for tests) or `axum::extract::ws::WebSocket` (new web process).
+- `mtg-engine/src/network/lobby.rs:71` — `SharedLobby::ws_stream: WebSocketStream<TcpStream>` likewise.
+- `mtg-engine/src/network/server.rs:599` (`accept_async(stream)`) and `:546` (`TcpListener::bind`) — the raw TCP accept loop is the part axum replaces; the per-connection logic from `handle_lobby_connection` (line 593) onward should be preserved verbatim once the stream type is abstracted.
+
+Likely cleanest approach: introduce a `trait LobbyTransport: Sink<Message, Error = E> + Stream<Item = Result<Message, E>>` impl'd for both `WebSocketStream<TcpStream>` and `axum::extract::ws::WebSocket` (the axum message type maps 1:1 to `tungstenite::Message`). Then `handle_lobby_connection` / `read_one_lobby_message` / `send_message` / `send_error` become generic.
+
+## New deps in `mtg-engine/Cargo.toml`
+
+Currently NONE of these are in tree (verified via `grep -E "axum|hyper|tower"`):
+- `axum` (with `ws` feature)
+- `axum-server` or `axum::serve` (rustls handled in issue #2)
+- `tower-http` (features: `fs`, `compression-gzip`, `compression-zstd`, `trace`, `set-header`)
+- `tower` (middleware composition)
+
+`tokio-tungstenite` stays for the CLI `mtg server` path (tests use it).
+
+## CLI surface
+
+Add a new subcommand `mtg server-web` (or extend `mtg server` with `--web-static <DIR>`) that:
+- Loads the card DB exactly like `run_server` does (`mtg-engine/src/main.rs:1160`).
+- Binds the unified axum app on `--port` (default 8080).
+- Reuses the same `SharedLobby` / `card_db` / `ServerConfig` types.
+
+Keep `mtg server` (TCP-only WS) intact — `tests/network_*_e2e.sh`, `tests/cycle_ability_network_sync_e2e.sh`, and `tests/network_vs_local_equivalence_e2e.sh` all shell out to it.
+
+## Deploy script changes
+
+`scripts/deploy-cloud.sh`:
+- Drop the `python3 -m http.server` block and the `mtg-server` tmux session.
+- Drop the separate `mtg-rust-server` tmux session (systemd takes over — see mtg-pm0lz).
+- Run a single `mtg server-web --port 8080 --web-root /home/newton/mtg-forge-rs/web --cards /home/newton/mtg-forge-rs/cardsfolder`.
+- `RUST_SERVER_PORT` env var goes away.
+
+## Acceptance criteria
+
+- `make validate` green.
+- `curl http://localhost:8080/` returns the landing page HTML.
+- `curl http://localhost:8080/pkg/mtg_wasm.js` returns the WASM JS bundle with `cache-control: public, max-age=...`.
+- `wscat -c ws://localhost:8080/lobby` connects, accepts `{"type":"ListGames"}`, returns the existing `GameList` reply.
+- Existing shell e2e tests (`tests/network_game_e2e.sh` etc.) still pass against `mtg server` (TCP path unchanged).
+- Deploy script provisions ONE process; no python http.server, no `mtg-rust-server` tmux session.
+
+## Dependencies
+
+- Blocks mtg-dbypv (TLS) — TLS termination needs the axum process to exist first.
+- Blocks mtg-pm0lz (systemd) — systemd unit supervises this one binary.
+- Blocks mtg-non7p (concurrent-games bench) — bench targets the unified port.
