@@ -61,10 +61,7 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        // Pass ?allow_local_img_load=true so the local image cascade is active
-        // (default UX gates local images behind this URL param — see
-        // applyLocalImageGate in native_game.html / tui_game.html).
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html?allow_local_img_load=true`, {
+        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });
