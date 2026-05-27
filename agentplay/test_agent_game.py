@@ -236,6 +236,12 @@ def test_query_agent_fails_after_three_invalid_attempts() -> None:
 
 
 def test_mock_mode_selects_randomly_without_subprocess() -> None:
+    # `--mock` collapses to controller_kind="random" (see _controller_for_player
+    # docstring): the Python-side MockSession.ask() path was removed in
+    # 61e06688 in favor of the engine-side RandomController. The Python
+    # harness still picks the choice locally (no agent subprocess), so this
+    # test asserts the no-subprocess + in-range contract, and that the raw
+    # response reflects the new "random" controller label.
     rng = random.Random(42)
     decision = _choose_for_player(
         mode="agent-vs-heuristic",
@@ -248,7 +254,7 @@ def test_mock_mode_selects_randomly_without_subprocess() -> None:
     )
     assert decision.choice_number is not None
     assert 0 <= decision.choice_number <= 5
-    assert "mock" in decision.raw_response.lower()
+    assert "random" in decision.raw_response.lower()
 
 
 def test_mock_mode_is_deterministic_with_same_seed() -> None:

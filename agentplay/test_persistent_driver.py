@@ -15,7 +15,6 @@ import pytest
 from agentplay.lib.agent_session import (
     ClaudeOneShotSession,
     ClaudeResumeSession,
-    MockSession,
     _parse_with_validation,
     _retry_warning,
 )
@@ -175,24 +174,17 @@ def test_parse_with_validation_bug_report() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MockSession: deterministic per seed
+# MockSession-based tests removed in commit fixing mtg-kvikk.
+#
+# Historically these tests exercised `MockSession.ask()` (a Python-side
+# `random.Random(seed)` path). That code path was removed in 61e06688
+# (2026-05-15) in favor of the engine-side `RandomController` so all three
+# agentplay drivers (stop-and-go / persistent / WASM) produce byte-identical
+# games for the same seed. `MockSession.ask()` now raises NotImplementedError
+# as a deprecation marker, so there is nothing left to unit-test here — the
+# equivalent coverage now lives in the Rust `RandomController` tests and the
+# driver-equivalence integration tests.
 # ---------------------------------------------------------------------------
-
-
-def test_mock_session_deterministic() -> None:
-    sess1 = MockSession(seed=42)
-    sess2 = MockSession(seed=42)
-    decisions1 = [sess1.ask("prompt", 5, bug_detection=False).choice_number for _ in range(5)]
-    decisions2 = [sess2.ask("prompt", 5, bug_detection=False).choice_number for _ in range(5)]
-    assert decisions1 == decisions2
-
-
-def test_mock_session_returns_in_range() -> None:
-    sess = MockSession(seed=1)
-    for _ in range(50):
-        decision = sess.ask("prompt", 4, bug_detection=False)
-        assert decision.choice_number is not None
-        assert 0 <= decision.choice_number <= 4
 
 
 # ---------------------------------------------------------------------------
