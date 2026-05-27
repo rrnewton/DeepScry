@@ -89,6 +89,14 @@ pub struct ServerConfig {
     pub loop_mode: bool,
     /// Directory where submitted bug reports are stored
     pub bug_reports_dir: PathBuf,
+    /// Host portion of the listen socket.
+    ///
+    /// Default is `0.0.0.0`, which preserves the historical behaviour of
+    /// `mtg server`. The unified `mtg server-web` flow overrides this to
+    /// `127.0.0.1` so the embedded lobby is reachable only via the axum
+    /// proxy on the public bind. Changing the default would break
+    /// existing deploy scripts and the e2e network tests.
+    pub bind_host: String,
 }
 
 impl Default for ServerConfig {
@@ -109,6 +117,7 @@ impl Default for ServerConfig {
             no_color_logs: false,
             loop_mode: false,
             bug_reports_dir: PathBuf::from("bug_reports"),
+            bind_host: "0.0.0.0".to_string(),
         }
     }
 }
@@ -542,7 +551,7 @@ impl GameServer {
         self.card_db = Some(Arc::new(card_db));
 
         // Start listening
-        let addr = format!("0.0.0.0:{}", self.config.port);
+        let addr = format!("{}:{}", self.config.bind_host, self.config.port);
         let listener = TcpListener::bind(&addr).await?;
         log::info!("MTG Server listening on {}", addr);
         log::info!("Password required: {}", !self.config.password.is_empty());

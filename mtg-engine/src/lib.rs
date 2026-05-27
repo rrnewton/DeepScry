@@ -32,4 +32,9 @@ pub mod wasm;
 // Protocol types are always available; client/server require "network" feature
 pub mod network;
 
+// Unified web server (static files + lobby WebSocket proxy + optional TLS).
+// Replaces the old dual-process deploy (python http.server + `mtg server`).
+#[cfg(feature = "web-server")]
+pub mod web_server;
+
 pub use error::{MtgError, Result};

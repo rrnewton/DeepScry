@@ -1,0 +1,26 @@
+[Unit]
+Description=DeepScry web + lobby (mtg-forge-rs unified axum server)
+After=network.target
+
+[Service]
+Type=simple
+User=newton
+WorkingDirectory=/home/newton/mtg-forge-rs
+# Optional environment file with MTG_TLS_CERT / MTG_TLS_KEY (and any
+# other deploy-specific overrides). The leading `-` makes systemd ignore
+# absence — plain HTTP is the default when no TLS env vars are set.
+EnvironmentFile=-/etc/default/deepscry
+ExecStart=/home/newton/mtg-forge-rs/bin/mtg server-web \
+    --bind 0.0.0.0:8080 \
+    --static-dir /home/newton/mtg-forge-rs/web \
+    --cardsfolder /home/newton/mtg-forge-rs/cardsfolder
+Restart=on-failure
+RestartSec=3s
+LimitNOFILE=65536
+MemoryMax=8G
+# Default to info-level structured logs; override with `Environment=` or
+# the env file.
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

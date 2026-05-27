@@ -678,6 +678,80 @@ enum Commands {
         max_memory_percent: u32,
     },
 
+    /// Unified web server: serves `web/` over HTTP(S) AND proxies the lobby
+    /// WebSocket on `/lobby` to an embedded `mtg server`. Replaces the old
+    /// dual-process deploy (Python http.server + standalone `mtg server`).
+    ///
+    /// TLS is enabled iff both `--tls-cert` and `--tls-key` (or the
+    /// `MTG_TLS_CERT` / `MTG_TLS_KEY` env vars) are set.
+    #[cfg(feature = "web-server")]
+    ServerWeb {
+        /// Public bind address.
+        #[arg(long, default_value = "0.0.0.0:8080")]
+        bind: std::net::SocketAddr,
+
+        /// Directory served as static assets at `/`.
+        #[arg(long, default_value = "./web")]
+        static_dir: PathBuf,
+
+        /// Path that triggers the WebSocket upgrade + proxy.
+        #[arg(long, default_value = "/lobby")]
+        lobby_path: String,
+
+        /// TLS certificate PEM (also reads env `MTG_TLS_CERT`).
+        #[arg(long, env = "MTG_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+
+        /// TLS private key PEM (also reads env `MTG_TLS_KEY`).
+        #[arg(long, env = "MTG_TLS_KEY")]
+        tls_key: Option<PathBuf>,
+
+        // ─── Embedded lobby (`mtg server`) options ──────────────────
+        /// Password required to join the lobby (empty = no password).
+        #[arg(long)]
+        password: Option<String>,
+
+        /// Optional password that marks bug report submissions as trusted.
+        #[arg(long)]
+        trusted_bug_report_password: Option<String>,
+
+        /// Path to cardsfolder for the embedded lobby.
+        #[arg(long, default_value = "cardsfolder")]
+        cardsfolder: PathBuf,
+
+        /// Starting life total.
+        #[arg(long, default_value = "20")]
+        starting_life: i32,
+
+        /// Share deck lists between players (tournament mode).
+        #[arg(long)]
+        deck_visibility: bool,
+
+        /// Fixed seed for game RNG (deterministic games).
+        #[arg(long)]
+        seed: Option<u64>,
+
+        /// Tag official game action logs with [GAMELOG TurnN STEP] prefix.
+        #[arg(long)]
+        tag_gamelogs: bool,
+
+        /// Verbosity level for game output.
+        #[arg(long, default_value = "normal", short = 'v')]
+        verbosity: VerbosityArg,
+
+        /// Enable network debug mode for synchronization validation.
+        #[arg(long)]
+        network_debug: bool,
+
+        /// Disable ANSI colored log output.
+        #[arg(long)]
+        no_color_logs: bool,
+
+        /// Maximum host memory utilisation as a percentage (0..=100).
+        #[arg(long, default_value = "80")]
+        max_memory_percent: u32,
+    },
+
     /// Connect to a multiplayer game server
     #[cfg(feature = "network")]
     Connect {
@@ -1052,6 +1126,45 @@ async fn async_main() -> Result<()> {
             )
             .await?
         }
+        #[cfg(feature = "web-server")]
+        Commands::ServerWeb {
+            bind,
+            static_dir,
+            lobby_path,
+            tls_cert,
+            tls_key,
+            password,
+            trusted_bug_report_password,
+            cardsfolder,
+            starting_life,
+            deck_visibility,
+            seed,
+            tag_gamelogs,
+            verbosity,
+            network_debug,
+            no_color_logs,
+            max_memory_percent,
+        } => {
+            run_server_web(
+                bind,
+                static_dir,
+                lobby_path,
+                tls_cert,
+                tls_key,
+                password,
+                trusted_bug_report_password,
+                cardsfolder,
+                starting_life,
+                deck_visibility,
+                seed,
+                tag_gamelogs,
+                verbosity,
+                network_debug,
+                no_color_logs,
+                max_memory_percent,
+            )
+            .await?
+        }
         #[cfg(feature = "network")]
         Commands::Connect {
             deck,
@@ -1198,6 +1311,68 @@ async fn run_server(
         .run()
         .await
         .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+    Ok(())
+}
+
+/// Run the unified axum web server (`mtg server-web`).
+///
+/// Boots an embedded [`mtg_forge_rs::network::GameServer`] on a private
+/// loopback port and serves static files + lobby WS proxy on the public
+/// bind address.
+#[cfg(feature = "web-server")]
+#[allow(clippy::too_many_arguments)]
+async fn run_server_web(
+    bind: std::net::SocketAddr,
+    static_dir: PathBuf,
+    lobby_path: String,
+    tls_cert: Option<PathBuf>,
+    tls_key: Option<PathBuf>,
+    password: Option<String>,
+    trusted_bug_report_password: Option<String>,
+    cardsfolder: PathBuf,
+    starting_life: i32,
+    deck_visibility: bool,
+    seed: Option<u64>,
+    tag_gamelogs: bool,
+    verbosity: VerbosityArg,
+    network_debug: bool,
+    no_color_logs: bool,
+    max_memory_percent: u32,
+) -> Result<()> {
+    use mtg_forge_rs::network::ServerConfig;
+    use mtg_forge_rs::web_server::{run_web_server, WebServerConfig};
+
+    let verbosity_level: VerbosityLevel = verbosity.into();
+
+    let lobby_config = ServerConfig {
+        // `port` is overridden by run_web_server to the loopback port it
+        // chose. We leave the default here as documentation.
+        password: password.unwrap_or_default(),
+        trusted_bug_report_password: trusted_bug_report_password.unwrap_or_default(),
+        cardsfolder,
+        starting_life,
+        deck_visibility,
+        seed,
+        tag_gamelogs,
+        verbosity: verbosity_level,
+        network_debug,
+        no_color_logs,
+        max_memory_percent,
+        ..Default::default()
+    };
+
+    let cfg = WebServerConfig {
+        bind,
+        static_dir,
+        lobby_path,
+        tls_cert,
+        tls_key,
+        lobby_config,
+    };
+
+    run_web_server(cfg)
+        .await
+        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("web-server error: {e}")))?;
     Ok(())
 }
 
