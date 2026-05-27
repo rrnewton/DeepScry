@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MTG Forge - Fancy TUI (WASM)</title>
+    <title>DeepScry &mdash; Web TUI (WASM)</title>
     <style>
         * {
             box-sizing: border-box;
@@ -665,9 +665,9 @@
 </head>
 <body>
     <div class="header" id="header-bar">
-        <h1>MTG Forge - Fancy TUI</h1>
-        <a href="index.html">Back to simple view</a>
-        <a href="native_game.html">Native GUI</a>
+        <h1>DeepScry &mdash; Web TUI</h1>
+        <a href="index.html">Back to lobby</a>
+        <a href="native_game.html">Web GUI</a>
         <span id="status">Loading...</span>
         <span id="card-status" style="color: #888; font-size: 12px;"></span>
         <button id="btn-load-all-cards" style="display: none; background: #4361ee; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;">Load All Cards</button>
@@ -2908,7 +2908,7 @@ Name=My Deck
             } catch (error) {
                 // Re-enable launch button on error
                 launchBtn.disabled = false;
-                launchBtn.textContent = 'Launch Fancy TUI';
+                launchBtn.textContent = 'Launch Web TUI';
                 alert(`Failed to launch TUI: ${error}`);
                 console.error('Failed to launch TUI:', error);
             }

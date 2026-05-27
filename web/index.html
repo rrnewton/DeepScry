@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mtg-forge-rs - Magic: the Gathering engine in Rust</title>
+    <title>DeepScry &mdash; Magic: the Gathering engine in Rust</title>
     <!-- Server URL configuration (overridable; defaults to ws://<host>:17810). -->
     <script src="server-config.js"></script>
     <style>
@@ -146,17 +146,27 @@
 
 <section class="hero">
     <div class="hero-inner">
-        <h1>mtg-forge-rs</h1>
+        <h1>DeepScry</h1>
         <p class="tagline">An experiment in porting <em>Magic: the Gathering</em> to Rust &mdash; with tree-search AI in mind.</p>
         <p>
-            Built on the open-source <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a>
-            card library and rules engine, this project re-implements the core game in safe Rust with deterministic
-            simulation, undo-log rewind, and a focus on AI research throughput.
-            The engine runs natively on the server and as <strong>WebAssembly</strong> in the browser.
+            Card data is sourced from the open-source
+            <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a> project
+            (the <code>cardsfolder/</code> tree). The MTG rules engine and game simulation are an independent
+            Rust reimplementation &mdash; not a port of Forge's Java rules code &mdash; built for deterministic
+            simulation, undo-log rewind, and AI search. See
+            <a href="https://github.com/rrnewton/mtg-forge-rs/blob/main/PROJECT_VISION.md" target="_blank" rel="noopener">PROJECT_VISION.md</a>
+            for the design rationale. The engine runs natively on the server and as <strong>WebAssembly</strong>
+            in the browser.
         </p>
         <p>
-            Play head-to-head against a friend over WebSocket, watch heuristic AI battle itself in your browser, or
-            launch a fancy terminal-style UI &mdash; all from the same engine.
+            The single-thread engine simulates roughly <strong>55K simple-deck games/sec</strong>
+            (~165K turns/sec) on a modern desktop CPU (AMD Threadripper PRO 7975WX), and on the order of
+            <strong>tens of thousands of turns/sec</strong> even on complex multi-color decks &mdash;
+            reproducible with <code>./scripts/run_benchmark.sh</code>.
+        </p>
+        <p>
+            Play head-to-head against a friend over WebSocket, watch heuristic AI battle itself in your browser,
+            or launch a terminal-style Web TUI &mdash; all from the same engine.
         </p>
         <div class="meta">
             <span class="conn"><span id="ws-dot" class="dot"></span><span id="ws-state">Connecting to lobby&hellip;</span></span>
@@ -246,7 +256,7 @@
                     <small>Card-style interface in the browser</small>
                 </a>
                 <a id="launch-tui" class="launcher-link" href="tui_game.html">
-                    <strong>Fancy TUI</strong>
+                    <strong>Web TUI</strong>
                     <small>Terminal-style rendering, dense info</small>
                 </a>
                 <a id="launch-demo" class="launcher-link" href="demo.html">
@@ -272,8 +282,10 @@
 </div>
 
 <footer>
-    <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge (Java upstream)</a>
-    &middot; mtg-forge-rs &middot; engine in safe Rust + WebAssembly
+    DeepScry &middot; the
+    <a href="https://github.com/rrnewton/mtg-forge-rs" target="_blank" rel="noopener">mtg-forge-rs</a>
+    engine in safe Rust + WebAssembly &middot; card data from
+    <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a>
 </footer>
 
 <script>
