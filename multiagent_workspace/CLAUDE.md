@@ -146,13 +146,14 @@ Concrete rules:
    CI runs `cargo clippy -p mtg-forge-rs --all-targets --all-features
    --features network -- -D warnings`; the agent's local check must
    match (or just run `make clippy`).
-3. **Submodule footgun**: a fresh worktree often has uninitialized
-   submodules, and `scripts/validate.sh` refuses to start with a
-   misleading "Submodule changes detected" error. Agents must first
-   run `git submodule update --init --recursive` in the worktree.
-   `new_worktree.sh` should eventually do this automatically (tracked
-   in mtg-fg9cf); until it does, every brief should include the
-   submodule-init step explicitly.
+3. **Submodule init**: `new_worktree.sh` now initialises both
+   submodules automatically (`.claude_template` via plain
+   `git submodule update --init`, and `forge-java` via reflink-clone +
+   shared-modules-dir gitdir rewrite). A fresh worktree from
+   `new_worktree.sh` starts with `git submodule status` clean. If you
+   create a worktree by other means, run
+   `git submodule update --init --recursive` yourself — otherwise
+   `scripts/validate.sh` bails with "Submodule changes detected".
 4. **Orchestrator verification**: before ff-merging a feature branch,
    check `validate_logs/validate_<last-commit-sha>.log` exists on the
    branch (or in the agent's worktree, copied to the parent in the
@@ -346,11 +347,51 @@ Archive process:
 2. Move the entry from `worktrees/ACTIVE.md` to `worktrees/ARCHIVED.md`,
    keeping the description and adding the archive date and final SHA.
 3. Remove the git worktree:
-   `git -C mtg-forge-rs worktree remove worktrees/<branch>`.
+   `git -C mtg-forge-rs worktree remove --force worktrees/<branch>`.
+   The `--force` flag is REQUIRED because the worktree contains
+   submodules; without it git refuses with "contains a .git directory".
 4. Delete the local branch only if it has merged into a tracked branch
    or the user explicitly approves deletion.
 5. Confirm no data was lost. Reachable commits must remain available
    from refs, or be explicitly covered by the rollback/recovery plan.
+
+### Worktree cleanup — DO NOT deinit submodules
+
+**CRITICAL FOOTGUN:** never run `git submodule deinit -f --all` (or
+`git submodule deinit -f <name>`) inside a worktree before removing
+it. The deinit command nukes `.git/modules/<name>/...`, but that path
+is **shared across every worktree and the primary checkout**
+(`new_worktree.sh` deliberately reflinks `forge-java`'s working tree
+and points its `.git` file at the shared modules dir to save ~543 MB
+per worktree). Deinit in one worktree breaks `forge-java` in the
+primary checkout and every other live worktree simultaneously —
+recovery requires `git submodule update --init --force forge-java` in
+each affected checkout.
+
+Correct teardown sequence for a worktree:
+
+```sh
+# From the primary checkout (or any other worktree):
+git -C mtg-forge-rs worktree remove --force worktrees/<branch>
+# That's it. No deinit. git worktree remove handles per-worktree
+# submodule gitdirs under .git/worktrees/<branch>/modules/ (for
+# .claude_template) automatically, and leaves the SHARED
+# .git/modules/forge-java untouched (which is what we want).
+```
+
+If you ever genuinely need to recover from a corrupted shared
+forge-java modules dir:
+
+```sh
+cd mtg-forge-rs
+rm -rf forge-java
+git submodule update --init --force forge-java
+# Then re-point every worktree's forge-java/.git file:
+for wt in ../worktrees/*; do
+    [ -d "$wt/forge-java" ] || continue
+    echo "gitdir: $(pwd)/.git/modules/forge-java" > "$wt/forge-java/.git"
+done
+```
 
 ## CWD Protocol
 
@@ -528,14 +569,40 @@ The deployed web frontend at `parent/mtg-forge-rs/web/` is structured as:
   `game.html`).
 - `web/server-config.js` — small JS shim exporting
   `window.MTG_WS_URL`. **Generated at deploy time** by
-  `scripts/deploy-cloud.sh`; the committed default points at the same
-  host the page was served from on port 17810.
+  `scripts/deploy-cloud.sh deploy` from the values in the local config
+  file (`<parent>/.deepscry-deploy.env`).
 
-`scripts/deploy-cloud.sh` deploys BOTH a static `python3 -m http.server`
-(default port 8080) AND the native release `mtg server` binary (default
-port 17810, override with `RUST_SERVER_PORT`). It rsyncs the release
-binary built locally with `--features network`, runs it in a tmux
-session `mtg-rust-server`, and writes the WebSocket URL into the
-freshly-generated `web/server-config.js`. Inbound firewall rules for
-the Rust port are NOT managed by the script — operators must
-`sudo ufw allow $RUST_SERVER_PORT/tcp` (or equivalent) by hand.
+## Deploy script
+
+`scripts/deploy-cloud.sh` is the canonical deploy entry point. It has
+TWO phases:
+
+- `scripts/deploy-cloud.sh config` — bootstraps a VM. Run once per
+  VM (or whenever infra changes). Idempotent. Installs the systemd
+  unit (defaults to `--mode user` so no root is needed for the
+  deploy phase), writes the env file, opens the firewall port, and
+  cleans up legacy tmux sessions / systemd units from older deploys.
+- `scripts/deploy-cloud.sh deploy` — runs on every code change.
+  Rebuilds WASM artefacts and the release `mtg` binary locally,
+  rsyncs `web/`, `cardsfolder/`, and the binary, then restarts the
+  systemd service. Does NOT require root.
+
+**No hardcoded site values.** Username, hostname, ports, TLS paths,
+and the systemd unit name all come from one of:
+
+1. Local config file `<parent>/.deepscry-deploy.env` (gitignored —
+   see `scripts/deepscry-deploy.env.example` for the template).
+2. CLI flags (`--user`, `--host`, `--port`, `--service`, ...).
+3. Environment variables (`REMOTE_USER`, `REMOTE_HOST`, ...).
+
+CLI > env > config file > built-in defaults.
+
+Typical first-time setup:
+
+```sh
+# In the parent workspace:
+cp mtg-forge-rs/scripts/deepscry-deploy.env.example .deepscry-deploy.env
+$EDITOR .deepscry-deploy.env                     # fill in REMOTE_USER + REMOTE_HOST
+mtg-forge-rs/scripts/deploy-cloud.sh config      # bootstrap the VM (once)
+mtg-forge-rs/scripts/deploy-cloud.sh deploy      # ship the code (repeat as needed)
+```

@@ -30,6 +30,23 @@
 #      copy-on-write clone in milliseconds, costing zero new disk space
 #      until cargo overwrites individual artifacts.
 #
+#   5. Initialise submodules in the new worktree so `make validate` does
+#      not bail with "Submodule changes detected". Two submodules:
+#        - forge-java (~589 MB, 58k files): reflink-cloned from the
+#          source's working tree, then its `.git` pointer is rewritten
+#          to absolute path of the SHARED .git/modules/forge-java under
+#          the primary repo. Footgun acknowledged: the shared modules
+#          dir means HEAD/index for forge-java is SHARED across every
+#          worktree. This is acceptable because forge-java is a frozen
+#          reference of the Java upstream pinned to one SHA — all
+#          worktrees normally pin the same SHA. If you intentionally
+#          bump the forge-java pin in a worktree, ALL other worktrees
+#          will see the new HEAD. If that becomes a problem, fall back
+#          to `git submodule update --init forge-java` (a fresh per-
+#          worktree clone, ~10s slower, ~543 MB more disk).
+#        - .claude_template (~224 KB): plain
+#          `git submodule update --init` (fast, per-worktree gitdir).
+#
 # Usage:
 #   ./scripts/new_worktree.sh <branch-name>
 #   ./scripts/new_worktree.sh <branch-name> --base origin/integration
@@ -164,7 +181,7 @@ echo ""
 # Step 1: refresh source
 # ---------------------------------------------------------------------------
 
-echo "→ [1/5] git fetch origin (in source)"
+echo "→ [1/6] git fetch origin (in source)"
 git -C "$SOURCE" fetch origin
 
 # Verify the requested base actually resolves now that we've fetched.
@@ -179,7 +196,7 @@ fi
 
 if [ $DO_BUILD -eq 1 ]; then
     echo ""
-    echo "→ [2/5] cargo build --release --features network (in source)"
+    echo "→ [2/6] cargo build --release --features network (in source)"
     echo "       (this populates the donor target/ that the new worktree will reflink)"
     BUILD_START=$(date +%s)
     if ! ( cd "$SOURCE" && cargo build --release --features network ); then
@@ -192,7 +209,7 @@ if [ $DO_BUILD -eq 1 ]; then
     echo "       source release build OK in $((BUILD_END - BUILD_START))s"
 else
     echo ""
-    echo "→ [2/5] SKIPPED (--no-build) — donor target/ may be stale or broken"
+    echo "→ [2/6] SKIPPED (--no-build) — donor target/ may be stale or broken"
 fi
 
 # ---------------------------------------------------------------------------
@@ -201,12 +218,12 @@ fi
 
 if [ $DO_SWEEP -eq 1 ]; then
     echo ""
-    echo "→ [3/5] cargo sweep --time 14 (drop artifacts >14 days old)"
+    echo "→ [3/6] cargo sweep --time 14 (drop artifacts >14 days old)"
     if command -v cargo-sweep >/dev/null 2>&1; then
         ( cd "$SOURCE" && cargo sweep --time 14 ) || \
             echo "       warning: cargo sweep --time 14 returned non-zero, continuing"
         echo ""
-        echo "→ [3b/5] cargo sweep --installed (drop artifacts from uninstalled toolchains)"
+        echo "→ [3b/6] cargo sweep --installed (drop artifacts from uninstalled toolchains)"
         ( cd "$SOURCE" && cargo sweep --installed ) || \
             echo "       warning: cargo sweep --installed returned non-zero, continuing"
     else
@@ -215,7 +232,7 @@ if [ $DO_SWEEP -eq 1 ]; then
     fi
 else
     echo ""
-    echo "→ [3/5] SKIPPED (--no-sweep) — donor target/ not GC'd"
+    echo "→ [3/6] SKIPPED (--no-sweep) — donor target/ not GC'd"
 fi
 
 # ---------------------------------------------------------------------------
@@ -223,7 +240,7 @@ fi
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "→ [4/5] git worktree add $NEW_WORKTREE -b $SAFE_BRANCH $BASE"
+echo "→ [4/6] git worktree add $NEW_WORKTREE -b $SAFE_BRANCH $BASE"
 git -C "$SOURCE" worktree add "$NEW_WORKTREE" -b "$SAFE_BRANCH" "$BASE"
 
 # ---------------------------------------------------------------------------
@@ -231,7 +248,7 @@ git -C "$SOURCE" worktree add "$NEW_WORKTREE" -b "$SAFE_BRANCH" "$BASE"
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "→ [5/5] cp -a --reflink=auto $SOURCE/target $NEW_WORKTREE/target"
+echo "→ [5/6] cp -a --reflink=auto $SOURCE/target $NEW_WORKTREE/target"
 if [ -d "$SOURCE/target" ]; then
     FSTYPE=$(stat -fc '%T' "$SOURCE/target" 2>/dev/null || echo "unknown")
     case "$FSTYPE" in
@@ -252,6 +269,80 @@ else
     REFLINK_STATUS="n/a"
     TARGET_SIZE="0"
     COPY_ELAPSED=0
+fi
+
+# ---------------------------------------------------------------------------
+# Step 6: initialise submodules
+# ---------------------------------------------------------------------------
+#
+# Without this, `make validate` aborts immediately with "Submodule
+# changes detected" because validate.sh treats uninitialised submodules
+# as a dirty working copy.
+
+echo ""
+echo "→ [6/6] initialise submodules in new worktree"
+
+# 6a. .claude_template — small, just init normally.
+if [ -f "$NEW_WORKTREE/.gitmodules" ]; then
+    if grep -q '\.devcontainer\|\.claude_template' "$NEW_WORKTREE/.gitmodules" 2>/dev/null; then
+        echo "       initialising .claude_template (plain submodule update)"
+        ( cd "$NEW_WORKTREE" && git submodule update --init .claude_template ) || \
+            echo "       warning: .claude_template init returned non-zero, continuing"
+    fi
+fi
+
+# 6b. forge-java — heavy, reflink the working tree from source and
+#     point its .git file at the SHARED .git/modules/forge-java under
+#     the primary repo. See header for the footgun discussion.
+if [ -d "$SOURCE/forge-java" ] && [ -e "$SOURCE/forge-java/.git" ]; then
+    echo "       reflink-cloning forge-java from $SOURCE/forge-java"
+    FJ_COPY_START=$(date +%s)
+    # Remove the empty placeholder dir that `git worktree add` created
+    # for the submodule path (cp -a refuses to merge into a non-empty
+    # destination cleanly if the placeholder has any contents).
+    rm -rf "$NEW_WORKTREE/forge-java"
+    cp -a --reflink=auto "$SOURCE/forge-java" "$NEW_WORKTREE/forge-java"
+    FJ_COPY_END=$(date +%s)
+
+    # Resolve the SHARED git-common-dir of the source (this is the
+    # primary repo's real `.git` dir even when SOURCE is itself a
+    # worktree; git-common-dir always returns the main repo's gitdir).
+    SHARED_GIT_DIR="$(cd "$SOURCE" && git rev-parse --git-common-dir)"
+    # Make it absolute. `git rev-parse --git-common-dir` returns a path
+    # relative to PWD when possible; resolve from $SOURCE.
+    if [[ "$SHARED_GIT_DIR" != /* ]]; then
+        SHARED_GIT_DIR="$(cd "$SOURCE" && cd "$SHARED_GIT_DIR" && pwd)"
+    fi
+    SHARED_MODULES_DIR="$SHARED_GIT_DIR/modules/forge-java"
+    if [ -d "$SHARED_MODULES_DIR" ]; then
+        echo "       rewriting forge-java/.git → $SHARED_MODULES_DIR"
+        echo "gitdir: $SHARED_MODULES_DIR" > "$NEW_WORKTREE/forge-java/.git"
+        # Verify it works.
+        if ! ( cd "$NEW_WORKTREE/forge-java" && git status >/dev/null 2>&1 ); then
+            echo "       warning: forge-java git pointer rewrite did not produce a working repo;"
+            echo "                falling back to fresh git submodule update --init forge-java"
+            rm -rf "$NEW_WORKTREE/forge-java"
+            ( cd "$NEW_WORKTREE" && git submodule update --init forge-java ) || \
+                echo "       warning: forge-java fresh init also failed; continuing"
+        else
+            FJ_SIZE=$(du -sh "$NEW_WORKTREE/forge-java" 2>/dev/null | awk '{print $1}')
+            echo "       forge-java ready (${FJ_SIZE}, reflink in $((FJ_COPY_END - FJ_COPY_START))s, shared modules)"
+        fi
+    else
+        echo "       warning: shared modules dir not found at $SHARED_MODULES_DIR"
+        echo "                falling back to fresh git submodule update --init forge-java"
+        rm -rf "$NEW_WORKTREE/forge-java"
+        ( cd "$NEW_WORKTREE" && git submodule update --init forge-java ) || \
+            echo "       warning: forge-java fresh init failed; continuing"
+    fi
+fi
+
+# Confirm submodule status is clean (no +/-/U prefixes).
+if ! ( cd "$NEW_WORKTREE" && git submodule status | grep -q '^[+-U]' ); then
+    echo "       submodule status clean — make validate will not bail on submodules"
+else
+    echo "       WARNING: submodule status still shows changes:"
+    ( cd "$NEW_WORKTREE" && git submodule status | grep '^[+-U]' || true )
 fi
 
 # ---------------------------------------------------------------------------

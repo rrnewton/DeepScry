@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Pre-push hook: run the full clippy lint that CI runs.
+#
+# CI's clippy job runs:
+#   cargo clippy --all-targets --all-features --features network -- -D warnings
+# A push that fails this lint will turn CI red. This hook blocks the
+# push locally so we never publish lint-failing code.
+#
+# Install with: make install-hooks
+# Bypass once:  git push --no-verify   (DO NOT make a habit of this)
+
+set -euo pipefail
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-push: cargo not on PATH; skipping clippy check" >&2
+    exit 0
+fi
+
+# Heuristic: skip if no .rs files have changed compared to upstream.
+# Falls back to "always run" when upstream cannot be determined.
+remote_ref=""
+if read -r local_ref local_sha remote_ref remote_sha; then :; fi
+if [[ -n "${remote_sha:-}" && "$remote_sha" != "0000000000000000000000000000000000000000" ]]; then
+    if git diff --name-only "$remote_sha..$local_sha" -- '*.rs' Cargo.toml Cargo.lock 2>/dev/null | grep -q .; then
+        :
+    else
+        echo "pre-push: no .rs / Cargo changes since remote; skipping clippy"
+        exit 0
+    fi
+fi
+
+echo "pre-push: running cargo clippy --all-targets --all-features --features network -- -D warnings"
+if ! cargo clippy --all-targets --all-features --features network -- -D warnings; then
+    cat >&2 <<'EOF'
+
+✗ pre-push: clippy check failed.
+
+  CI's clippy job runs the same command and will reject this push.
+  Fix the warnings (or use `make clippy` to iterate locally), then
+  push again. To bypass once for an emergency push:
+      git push --no-verify
+  Do NOT make this a habit; bypassed commits surface as CI failures.
+EOF
+    exit 1
+fi

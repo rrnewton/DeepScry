@@ -119,3 +119,7 @@ console_logs.txt
 sanity_test_console.txt
 output.dck
 # dhat-heap covered by **/dhat-heap*.json above
+
+# Local, non-version-controlled deploy config (scripts/deploy-cloud.sh).
+# See scripts/deepscry-deploy.env.example for the template.
+.deepscry-deploy.env

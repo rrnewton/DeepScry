@@ -202,9 +202,13 @@ If your toolchain has nightly available (`rustup toolchain list`), prefer
 `cargo +nightly fmt --all -- --check` to exactly match what CI runs.
 
 A tracked git pre-commit hook lives at `scripts/git-hooks/pre-commit` and runs
-the same fmt check on staged `.rs` files. Install it once per clone with
-`make install-hooks` (also part of `make setup`); this gives a final automatic
-guard so an `git commit` invocation cannot land unformatted code.
+the same fmt check on staged `.rs` files. A tracked pre-push hook at
+`scripts/git-hooks/pre-push` runs the full
+`cargo clippy --all-targets --all-features --features network -- -D warnings`
+that CI runs, so a push that would fail CI's clippy job is blocked locally
+first. Install both once per clone with `make install-hooks` (also part of
+`make setup`); the bypass for either is `--no-verify` (do not make a habit
+of it).
 
 Then run `make validate` and ensure that it passes or fix any problems before
 committing.
