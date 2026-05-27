@@ -3616,11 +3616,13 @@ Name=My Deck
                 if (matchingDecks.length === 0) {
                     deckSelect.appendChild(new Option('(No decks in this collection)', ''));
                 } else {
+                    // Per-deck pack-size annotation (~KB) was removed when
+                    // we switched from per-deck packs to per-set bins
+                    // (mtg-6fsjb); on-demand fetch sizes are now a function
+                    // of the deck's set-union and aren't pre-computed.
                     for (const name of matchingDecks) {
                         const info = JSON.parse(cardDb.get_deck_info_json(name));
-                        const packInfo = deckIndex?.find(d => d.name === name);
-                        const sizeKB = packInfo ? ` ~${Math.round(packInfo.card_pack_bytes / 1024)}KB` : '';
-                        deckSelect.appendChild(new Option(`${name} (${info.main_deck_count} cards${sizeKB})`, name));
+                        deckSelect.appendChild(new Option(`${name} (${info.main_deck_count} cards)`, name));
                     }
                 }
             }

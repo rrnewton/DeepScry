@@ -81,7 +81,7 @@ _DEFAULT_TIMEOUT_S = 60.0
 class WasmLaunchConfig:
     """Configuration for one Playwright/WASM `agent_play` session.
 
-    Decks are referenced by NAME (matching `web/data/deck_index.json`), not
+    Decks are referenced by NAME (the keys of `web/data/decks.bin`), not
     by `.dck` path — the WASM build only ships the curated set produced by
     `mtg export-wasm`. The agent_game.py wrapper performs the path → name
     mapping (and surfaces a clear error if the requested deck wasn't
