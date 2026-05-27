@@ -122,6 +122,37 @@ Push policy:
 - `--force` / `--force-with-lease` pushes always require explicit user
   approval, regardless of branch.
 
+Linear history (MANDATORY):
+
+- **Always rebase the feature branch onto the latest `integration`
+  before merging, then fast-forward merge.** Never use `git merge
+  --no-ff`. Merge commits clutter `git log --oneline` and make
+  bisecting harder.
+- Mechanical sequence for landing any agent feature branch:
+  ```sh
+  # In the agent worktree
+  git fetch origin
+  git rebase origin/integration
+  # Resolve any conflicts, re-run validate, push the rebased branch
+  git push --force-with-lease origin <branch>   # explicit user OK ahead of time for this case
+  # In the primary checkout
+  git fetch origin
+  git merge --ff-only origin/<branch>
+  git push origin integration
+  ```
+- The `--ff-only` flag will REFUSE to create a merge commit. If the
+  ff-only merge fails, it means the feature branch wasn't rebased
+  onto the latest `integration` — rebase, don't fall back to
+  `--no-ff`.
+- The single exception is the rare case where you genuinely want to
+  preserve a "this is one logical feature" boundary in the history
+  (e.g. promoting `integration` → `main`). For that case, use
+  `--no-ff` *with explicit user approval per merge*, not by default.
+- Force-with-lease on the feature branch after rebase is fine
+  (covered by the standing "push your own feature branch on
+  completion" allowance above). Force-push to `integration` or
+  `main` is never allowed without explicit user approval.
+
 Worktree registry:
 
 - Maintain `worktrees/ACTIVE.md` with every live worktree and branch
