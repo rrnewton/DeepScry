@@ -1,48 +1,43 @@
 ---
 title: 'Network desync: rogerbrand seed=3 P2 state-hash mismatch at choice_seq=216 (Demonic Tutor / library-search shadow sync)'
-status: open
+status: in_progress
 priority: 2
 issue_type: bug
 created_at: 2026-05-28T16:39:35.293229311+00:00
-updated_at: 2026-05-28T16:39:35.293229311+00:00
+updated_at: 2026-05-28T20:12:31.537667530+00:00
 ---
 
 # Description
 
 ## Summary
 
-Deterministic network desync reproducible with the old_school rogerbrand decks at seed=3, random/random controllers. PRE-EXISTING on integration (confirmed by stashing the fix-network-desync changes and re-running the baseline binary: identical fail point). NOT fixed by the fix-network-desync mana-cache/winner-race work — distinct class (library-search / hidden-info shadow sync, mtg-212 / mtg-259 family).
+validate-network-e2e-step (web/test_network_multideck.js --quick: monored s13, rogerbrand s3) P2 state-hash DESYNCS. PRE-EXISTING. Hidden-info shadow-sync class (mtg-212 / mtg-259 family).
 
-## Repro (deterministic, fails 2/2)
+## CRITICAL FINDING: the GATE tests the WASM browser client, not native
 
-```bash
-cd mtg-forge-rs
-PORT=26123
-./target/release/mtg server --port $PORT --seed 3 --network-debug --no-color-logs &
-sleep 2
-./target/release/mtg connect decks/old_school/01_rogue_rogerbrand.dck --server localhost:$PORT --controller random --seed-player 3 -n Roger &
-sleep 1
-./target/release/mtg connect decks/old_school/05_mono_black_rogerbrand.dck --server localhost:$PORT --controller random --seed-player 3 -n Brand &
-wait
-```
+test_network_gui_e2e.js = native server + ONE native client (P1) + ONE BROWSER WASM client (P2). The desync is ALWAYS "P2" = the WASM client. The mtg-vk4b7 native repro (two `mtg connect` clients) exercises a DIFFERENT code path and desyncs at a DIFFERENT point than the gate. Also: `--deck X` only sets the NATIVE P1 deck; the browser P2 uses its dropdown DEFAULT (an old-school Moxen/Scrubland deck), so the gate matchup is monored-vs-default, NOT a mirror, and is not fully deterministic across runs.
 
-## Fail point
+## PARTIAL FIXES (branch fix-desync-vk4b7)
 
-FATAL: P2 state hash mismatch! server=faacb39002b9b14b client=5b8cf425286d9a72 at choice_seq=216 action_count=938.
+### Commit a78c7b9e — core engine (fixes the NATIVE-path desyncs; native 40/40 clean)
+1. SearchLibrary tutors (Demonic Tutor) routed through choose_from_library_with_hook (was execute_effect picking library_cards[0] / None on shadow). + placeholder player resolution.
+2. Forced fixed-count DiscardCards select by LOWEST CardId (information-independent) instead of CMC heuristic (which needs hidden card identity).
+NATIVE repro (two `mtg connect` random clients): monored s13 20/20 CLEAN, rogerbrand s3 20/20 CLEAN. Pre-fix both DESYNC'd (rogerbrand at choice_seq=220).
 
-## Divergence context (server + P2 client gamelog right before fatal)
+### Uncommitted/next — WASM client LibraryReordered (real WASM-only bug)
+The WASM client's ServerMessage::LibraryReordered handler was a NO-OP (client.rs ~712) while the NATIVE client APPLIES it (sync_callback: `zones.library.cards = new_order.into_iter().rev().collect()`). Fixed by queuing reorders in WasmNetworkClient and applying them BEFORE reveals in all 3 WASM sync_callbacks (ai_harness.rs + fancy_tui.rs replay & normal paths). This is correct but NOT sufficient for the gate.
 
-- Brand activates Library of Alexandria (draw a card)
-- Brand casts Demonic Tutor -> 'Demonic Tutor searches Brand's library for a Card card and puts it into Hand'
-- Brand casts Royal Assassin -> then immediately the P2 state-hash mismatch fires.
-- Earlier in the game: Chaos Orb (flip-destroy), All Hallow's Eve, Sinkhole (destroy land) all resolved without an earlier mismatch.
+## REMAINING DESYNC (gate still RED) — precise divergence for next pass
 
-Hash diverges right around the Demonic Tutor library search + subsequent cast. Strongly suggests the searched CardId / library order in the P2 shadow state diverges from the server (the same class as mtg-212 reveal-ordering and mtg-259 mid-game shadow divergence), NOT a mana-cache or winner issue.
+`node web/test_network_gui_e2e.js --deck decks/monored.dck --seed 13` (P2=browser default old-school deck) still desyncs:
+  FATAL P2 state hash mismatch at choice_seq=40 action_count=227, Turn 4 "Upkeep".
+  SERVER: Life [20,19] Hands [5,3] Libs [52,52] Battlefield 7 Graveyards [0,0] (P2 hand CardIds [116,118,119]).
+  COUNTS MATCH between server and client — the divergence is a CARD-PROPERTY or zone-ORDER difference (e.g. Mox tapped state, land/permanent order, or a draw-reveal-timing issue) NOT a count mismatch. The client-side (browser console) state dump is needed to pinpoint — capture WasmNetworkClient debug logs.
+  Likely class: WASM shadow reveal-timing (mtg-263) or permanent-order/tap-state divergence with the Moxen/dual-land old-school deck. NOT the library-search or forced-discard class already fixed.
 
 ## Next steps
+1. Capture the WASM client's shadow state at the divergence (browser console / WasmNetworkClient debug) to identify the exact diverging card/property.
+2. Compare native-vs-WASM shadow handling for the failing matchup (the native client of the SAME decks does NOT desync at turn 4 — diff the two client implementations' reveal/sync paths).
+3. Consider making the gate deterministic: have the browser P2 load the `--deck` arg too (harness fix, sibling-agent territory).
 
-1. Add RUST_LOG=debug capture of the undo_log around action 938 on both server and P2 client; find the first diverging GameAction (likely a MoveCard with a different CardId for the tutor result, or a reveal not propagated to the P2 shadow).
-2. Compare with the LibraryReordered / library_search_result sync path (ChoiceAccepted carries library_search_result; verify Demonic Tutor's NamedCard/Any search routes through it for the shadow).
-3. Regression: once fixed, add an old_school rogerbrand seed=3 e2e (and consider a minimal puzzle reproducer).
-
-Related: mtg-212, mtg-259, mtg-429 (fuzz tracker). Found during fix-network-desync stability sweep 2026-05-28.
+Related: mtg-212, mtg-259, mtg-229, mtg-263 (WASM reveal timing), mtg-429, mtg-jqkm3 (Hypnotic Specter discard rules gap).

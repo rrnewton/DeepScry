@@ -204,6 +204,23 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
     // This is the WASM equivalent of the native client's blocking sync mechanism
     let client_for_sync = client.clone();
     let sync_callback = move |game: &mut GameState, _target_action: u64| {
+        // mtg-vk4b7: apply library reorders BEFORE reveals so the shadow's
+        // library is in the server-authoritative order before any draw.
+        // Mirrors the native client's sync_callback. Protocol sends the order
+        // top-to-bottom; the library Vec is bottom-to-top (draw_top pops the
+        // last element), so reverse.
+        let reorders = client_for_sync.borrow_mut().drain_library_reorders();
+        for (player, new_order) in reorders {
+            log::debug!(
+                "ai_harness sync_callback: applying library reorder for {:?} ({} cards)",
+                player,
+                new_order.len()
+            );
+            if let Some(zones) = game.get_player_zones_mut(player) {
+                zones.library.cards = new_order.into_iter().rev().collect();
+            }
+        }
+
         let reveals = client_for_sync.borrow_mut().drain_reveals();
         if !reveals.is_empty() {
             log::debug!("ai_harness sync_callback: processing {} reveals", reveals.len());

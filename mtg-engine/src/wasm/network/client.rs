@@ -98,6 +98,15 @@ pub struct WasmNetworkClient {
     /// Queued CardRevealed messages (processed before draws)
     pending_reveals: VecDeque<(PlayerId, CardReveal, RevealReason)>,
 
+    /// Queued LibraryReordered messages. mtg-vk4b7: the server shuffles a
+    /// player's library (initial shuffle, post-search shuffle, scry/surveil)
+    /// and broadcasts the authoritative new order. The shadow MUST apply this
+    /// or its library order diverges from the server -> FATAL state-hash
+    /// mismatch. The native client already applies these via its sync_callback;
+    /// the WASM client previously ignored them (no-op), causing P2 desyncs.
+    /// Applied BEFORE reveals at each sync point, matching the native order.
+    pending_library_reorders: VecDeque<(PlayerId, Vec<crate::core::CardId>)>,
+
     /// Queued OpponentChoice messages (consumed by WasmRemoteController)
     opponent_choices: VecDeque<OpponentChoiceData>,
 
@@ -199,6 +208,7 @@ impl WasmNetworkClient {
             opponent_name: None,
             network_debug: false,
             pending_reveals: VecDeque::new(),
+            pending_library_reorders: VecDeque::new(),
             opponent_choices: VecDeque::new(),
             current_choice_request: None,
             choice_acknowledged: true, // Start acknowledged (no pending)
@@ -710,13 +720,18 @@ impl WasmNetworkClient {
             }
 
             ServerMessage::LibraryReordered { player, new_order } => {
-                // Library shuffle notification - for now just log it
-                // The client doesn't track library order since cards are revealed individually
+                // mtg-vk4b7: Queue the authoritative library order so the shadow
+                // GameState can be re-ordered at the next sync point (BEFORE
+                // reveals/draws). Previously this was a no-op, which let the
+                // shadow's library order drift from the server after any shuffle
+                // -> FATAL P2 state-hash mismatch. The native client applies the
+                // identical reorder in its sync_callback.
                 log::debug!(
-                    "WasmNetworkClient: Library reordered for {:?} ({} cards)",
+                    "WasmNetworkClient: Library reordered for {:?} ({} cards) - queued",
                     player,
                     new_order.len()
                 );
+                self.pending_library_reorders.push_back((player, new_order));
             }
 
             #[cfg(debug_assertions)]
@@ -838,6 +853,13 @@ impl WasmNetworkClient {
         self.pending_reveals.drain(..).collect()
     }
 
+    /// Drain queued library reorders (mtg-vk4b7). The caller MUST apply these to
+    /// the shadow GameState BEFORE processing drained reveals, so libraries are
+    /// in the server-authoritative order before any card is drawn from them.
+    pub fn drain_library_reorders(&mut self) -> Vec<(PlayerId, Vec<crate::core::CardId>)> {
+        self.pending_library_reorders.drain(..).collect()
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // OUTBOUND MESSAGE QUEUE
     // ═══════════════════════════════════════════════════════════════════════════
@@ -937,6 +959,7 @@ impl WasmNetworkClient {
         self.opponent_name = None;
         self.network_debug = false;
         self.pending_reveals.clear();
+        self.pending_library_reorders.clear();
         self.opponent_choices.clear();
         self.current_choice_request = None;
         self.choice_acknowledged = true;
