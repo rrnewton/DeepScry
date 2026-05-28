@@ -230,6 +230,48 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             amount: *amount,
         },
 
+        // `Defined$ Self` RemoveCounter (All Hallow's Eve TrigRemoveCounter):
+        // remove a counter from the trigger source itself.
+        Effect::RemoveCounter {
+            target,
+            counter_type,
+            amount,
+        } if target.is_self_target() || target.is_placeholder() => Effect::RemoveCounter {
+            target: ctx.trigger_source,
+            counter_type: *counter_type,
+            amount: *amount,
+        },
+
+        // `DB$ ChangeZone | Defined$ Self | Origin$ Exile | Destination$ Graveyard`
+        // fired from a trigger (All Hallow's Eve moves itself to the graveyard
+        // once its last scream counter is removed).
+        Effect::MoveSelfBetweenZones {
+            source,
+            origin,
+            destination,
+        } if source.is_self_target() || source.is_placeholder() => Effect::MoveSelfBetweenZones {
+            source: ctx.trigger_source,
+            origin: *origin,
+            destination: *destination,
+        },
+
+        // ConditionalSelfCounter fired from a trigger: patch the condition source
+        // and recurse into the inner effect so its `Defined$ Self` placeholders
+        // also resolve to the trigger source.
+        Effect::ConditionalSelfCounter {
+            source,
+            condition,
+            inner,
+        } => Effect::ConditionalSelfCounter {
+            source: if source.is_self_target() || source.is_placeholder() {
+                ctx.trigger_source
+            } else {
+                *source
+            },
+            condition: condition.clone(),
+            inner: Box::new(resolve_effect_placeholder(inner, ctx)),
+        },
+
         // Note: PumpCreature with CardId::new(0) is NOT handled here because it's ambiguous:
         // - CardDrawn triggers: "this creature gets +X/+Y" → target is self
         // - ETB triggers: "target creature gets +X/+Y" → need to find a target

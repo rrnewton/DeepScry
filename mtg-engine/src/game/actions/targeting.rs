@@ -560,7 +560,9 @@ impl GameState {
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. }
-                            | Effect::SelfExileFromStack { .. } => {
+                            | Effect::SelfExileFromStack { .. }
+                            | Effect::MoveSelfBetweenZones { .. }
+                            | Effect::ConditionalSelfCounter { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
                             }
@@ -608,7 +610,9 @@ impl GameState {
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::Proliferate
-                | Effect::SelfExileFromStack { .. } => {
+                | Effect::SelfExileFromStack { .. }
+                | Effect::MoveSelfBetweenZones { .. }
+                | Effect::ConditionalSelfCounter { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
@@ -1067,6 +1071,8 @@ impl GameState {
                 | Effect::Clone { .. }
                 | Effect::Proliferate
                 | Effect::SelfExileFromStack { .. }
+                | Effect::MoveSelfBetweenZones { .. }
+                | Effect::ConditionalSelfCounter { .. }
                 | Effect::UnlessCostWrapper { .. } => {
                     // These effects target players or have no targeting requirements
                     // CreateDelayedTrigger targets creatures - handled via ValidTgts$ Creature
@@ -1363,6 +1369,8 @@ impl GameState {
             | Effect::Clone { .. }
             | Effect::Proliferate
             | Effect::SelfExileFromStack { .. }
+            | Effect::MoveSelfBetweenZones { .. }
+            | Effect::ConditionalSelfCounter { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====

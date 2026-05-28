@@ -385,8 +385,14 @@ impl<'a> GameLoop<'a> {
                 // the real card instead of "Unknown (4294967291)".
                 if target.is_remembered_card() {
                     if self.game.remembered_cards.is_empty() {
+                        // This logging pass runs after the spell fully resolves,
+                        // which for a `RememberChanged$ True` self-exile chain
+                        // (All Hallow's Eve) means the trailing DBCleanup already
+                        // cleared remembered_cards. The counters actually landed
+                        // on the source card itself (now in exile), so name it
+                        // rather than emitting a misleading "(none)".
                         let message = format!(
-                            "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on remembered card (none)"
+                            "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on {source_name} ({source_id})"
                         );
                         self.game.logger.gamelog(&message);
                     } else {
@@ -981,6 +987,18 @@ impl<'a> GameLoop<'a> {
                     format!("{source_name} ({source_id}) is exiled")
                 };
                 self.game.logger.gamelog(&message);
+            }
+            Effect::MoveSelfBetweenZones {
+                origin, destination, ..
+            } => {
+                // e.g. All Hallow's Eve moving itself exile→graveyard once its
+                // final scream counter is removed.
+                let message = format!("{source_name} ({source_id}) moves from {origin:?} to {destination:?}");
+                self.game.logger.gamelog(&message);
+            }
+            Effect::ConditionalSelfCounter { .. } => {
+                // The wrapper itself produces no log; the inner effect logs when
+                // (and if) it executes. Nothing to surface here.
             }
         }
     }

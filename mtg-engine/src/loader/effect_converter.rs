@@ -367,6 +367,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     remember_changed,
                 })
             }
+            // Self zone-move outside the stack:
+            //   DB$ ChangeZone | Defined$ Self | Origin$ <zone> | Destination$ <zone>
+            // (e.g. All Hallow's Eve's exile→graveyard move once the last scream
+            // counter is removed). Distinct from SelfExileFromStack (Origin$ Stack)
+            // and from the battlefield→exile ExilePermanent special-case above.
+            else if params.get("Defined") == Some("Self")
+                && params.get("Origin") != Some("Stack")
+                && params.get("Origin").is_some()
+                && params.get("Destination").is_some()
+            {
+                let origin = params.get("Origin").and_then(crate::zones::Zone::from_str_lenient);
+                let destination = params.get("Destination").and_then(crate::zones::Zone::from_str_lenient);
+                match (origin, destination) {
+                    (Some(origin), Some(destination)) => Some(Effect::MoveSelfBetweenZones {
+                        source: CardId::self_target(),
+                        origin,
+                        destination,
+                    }),
+                    _ => None,
+                }
+            }
             // Check for library search effects: Origin$ Library
             else if params.get("Origin") == Some("Library") {
                 let destination = params

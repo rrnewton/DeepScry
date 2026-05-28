@@ -1692,6 +1692,45 @@ impl CardDefinition {
         self.follow_sub_ability_chain(&sub_params, effects);
     }
 
+    /// Wrap an effect in `Effect::ConditionalSelfCounter` when the SVar carries a
+    /// `ConditionDefined$ Self | ConditionPresent$ Card.counters_<CMP><N>_<TYPE>`
+    /// clause; otherwise return the effect unchanged.
+    ///
+    /// Used for chains like All Hallow's Eve's `DBMoveToGraveyard` /
+    /// `DBResurrection`, which only fire when the source has zero scream
+    /// counters left (`Card.counters_EQ0_SCREAM`).
+    fn wrap_self_counter_condition(
+        svar_params: &super::ability_parser::AbilityParams,
+        effect: crate::core::Effect,
+    ) -> crate::core::Effect {
+        use crate::core::{CardId, Effect, SelfCounterCondition};
+
+        if svar_params.get("ConditionDefined") != Some("Self") {
+            return effect;
+        }
+        // ConditionPresent$ Card.counters_<CMP><N>_<TYPE> — extract the
+        // counters_… clause (a `+`-joined Card filter; we only support the
+        // counter sub-clause here, which is all the gated chains need).
+        let Some(present) = svar_params.get("ConditionPresent") else {
+            return effect;
+        };
+        // The filter is dotted/plus-joined, e.g. `Card.counters_EQ0_SCREAM` or
+        // `Card.Self+counters_GE1_SCREAM`. Locate the `counters_` sub-clause by
+        // splitting on both `.` and `+`.
+        let Some(condition) = present
+            .split(['.', '+'])
+            .find_map(|clause| clause.strip_prefix("counters_"))
+            .and_then(SelfCounterCondition::parse_clause)
+        else {
+            return effect;
+        };
+        Effect::ConditionalSelfCounter {
+            source: CardId::self_target(),
+            condition,
+            inner: Box::new(effect),
+        }
+    }
+
     /// Extract effects from a parsed SVar (DRY helper for trigger parsing)
     ///
     /// This consolidates the duplicated ApiType->Effect conversion logic that was
@@ -1713,7 +1752,12 @@ impl CardDefinition {
 
         // First, try the standard params_to_effect conversion
         if let Some(effect) = params_to_effect(svar_params) {
-            effects.push(effect);
+            // Wrap in a counter-gated conditional when the SVar carries
+            //   ConditionDefined$ Self | ConditionPresent$ Card.counters_<CMP><N>_<TYPE>
+            // (e.g. All Hallow's Eve's exile→graveyard move + mass resurrection,
+            // which only fire on the upkeep where the final scream counter was
+            // removed, counters_EQ0_SCREAM).
+            effects.push(Self::wrap_self_counter_condition(svar_params, effect));
         } else {
             // Handle special cases not covered by params_to_effect
 
@@ -2157,8 +2201,50 @@ impl CardDefinition {
                                     effects.push(destroy_effect);
                                 }
                             }
+
+                            // Fallback for counter-driven self-relocation chains
+                            // (All Hallow's Eve's TrigRemoveCounter →
+                            // DBMoveToGraveyard → DBResurrection). We deliberately
+                            // restrict this to the RemoveCounter / ChangeZone /
+                            // ChangeZoneAll head SVars rather than every unhandled
+                            // ApiType: the generic SVar extractor can emit effects
+                            // with `Defined$` placeholders that the phase-trigger
+                            // execution path does not resolve (e.g. Paralyze's
+                            // `DB$ Untap | Defined$ Enchanted`), which would crash
+                            // at execution. Those broader triggers stay no-ops
+                            // until their own support lands.
+                            if effects.is_empty()
+                                && matches!(
+                                    svar_params.api_type,
+                                    ApiType::RemoveCounter | ApiType::ChangeZone | ApiType::ChangeZoneAll
+                                )
+                            {
+                                effects.extend(self.extract_effects_from_svar(svar_params));
+                            }
                         }
                     }
+
+                    // Parse TriggerZones$ (zones the source must be in to fire).
+                    // Defaults to [Battlefield]; All Hallow's Eve uses Exile.
+                    let trigger_zones: smallvec::SmallVec<[crate::zones::Zone; 2]> = params
+                        .get("TriggerZones")
+                        .map(|s| {
+                            s.split(',')
+                                .filter_map(|z| crate::zones::Zone::from_str_lenient(z.trim()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Parse the intervening-if condition:
+                    //   IsPresent$ Card.Self+counters_<CMP><N>_<TYPE> | PresentZone$ <zone>
+                    // We only model the `counters_…` self-condition here (which is
+                    // what zone-resident upkeep triggers like All Hallow's Eve need).
+                    let present_self_condition = params.get("IsPresent").and_then(|present| {
+                        present
+                            .split(['.', '+'])
+                            .find_map(|clause| clause.strip_prefix("counters_"))
+                            .and_then(crate::core::SelfCounterCondition::parse_clause)
+                    });
 
                     // Create trigger with parsed effects
                     // Set structured filter flag for controller-only triggers
@@ -2172,6 +2258,8 @@ impl CardDefinition {
                     if is_controller_only {
                         trigger.controller_turn_only = true;
                     }
+                    trigger.trigger_zones = trigger_zones;
+                    trigger.present_self_condition = present_self_condition;
                     triggers.push(trigger);
                 }
             }

@@ -3454,6 +3454,8 @@ impl GameState {
                     | crate::core::Effect::Fight { .. }
                     | crate::core::Effect::Proliferate
                     | crate::core::Effect::SelfExileFromStack { .. }
+                    | crate::core::Effect::MoveSelfBetweenZones { .. }
+                    | crate::core::Effect::ConditionalSelfCounter { .. }
                     | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }

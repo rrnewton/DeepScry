@@ -1596,4 +1596,129 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
             game.remembered_cards
         );
     }
+
+    /// Parser-shape regression for All Hallow's Eve's exile-resident upkeep
+    /// trigger (mtg-464870 / mtg-2b3951). Exercises:
+    ///   - `TriggerZones$ Exile` → Trigger::trigger_zones contains Exile.
+    ///   - `IsPresent$ Card.Self+counters_GE1_SCREAM` →
+    ///     Trigger::present_self_condition is GE1 SCREAM.
+    ///   - The `Execute$ TrigRemoveCounter` chain expands (via the generic
+    ///     SVar extractor) into RemoveCounter, then a ConditionalSelfCounter
+    ///     (EQ0 SCREAM) wrapping the exile→graveyard MoveSelfBetweenZones, then
+    ///     a ConditionalSelfCounter wrapping the ChangeZoneAll resurrection.
+    #[test]
+    fn test_all_hallows_eve_upkeep_trigger_parse_shape() {
+        use crate::core::effects::CompareCondition;
+        use crate::core::{CounterType, Effect, SelfCounterCondition, TriggerEvent};
+        use crate::loader::card::CardLoader;
+
+        // Full printed script (cardsfolder/a/all_hallows_eve.txt).
+        let content = r#"
+Name:All Hallow's Eve
+ManaCost:2 B B
+Types:Sorcery
+A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile | RememberChanged$ True | SubAbility$ DBPutCounter | SpellDescription$ Exile CARDNAME with two scream counters on it.
+SVar:DBPutCounter:DB$ PutCounter | Defined$ Remembered | CounterType$ SCREAM | CounterNum$ 2 | SubAbility$ DBCleanup
+SVar:DBCleanup:DB$ Cleanup | ClearRemembered$ True
+T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | IsPresent$ Card.Self+counters_GE1_SCREAM | PresentZone$ Exile | Execute$ TrigRemoveCounter | TriggerZones$ Exile | TriggerDescription$ At the beginning of your upkeep, remove a scream counter.
+SVar:TrigRemoveCounter:DB$ RemoveCounter | Defined$ Self | CounterType$ SCREAM | CounterNum$ 1 | SubAbility$ DBMoveToGraveyard
+SVar:DBMoveToGraveyard:DB$ ChangeZone | Origin$ Exile | Destination$ Graveyard | Defined$ Self | SubAbility$ DBResurrection | ConditionDefined$ Self | ConditionPresent$ Card.counters_EQ0_SCREAM
+SVar:DBResurrection:DB$ ChangeZoneAll | Origin$ Graveyard | Destination$ Battlefield | ChangeType$ Creature | ConditionDefined$ Self | ConditionPresent$ Card.counters_EQ0_SCREAM
+Oracle:Exile All Hallow's Eve with two scream counters on it.
+"#;
+        let def = CardLoader::parse(content).expect("All Hallow's Eve should parse");
+
+        // Instantiate so we inspect the same trigger pipeline production uses.
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card_id = game.next_card_id();
+        let card = def.instantiate(card_id, p1_id);
+
+        let trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("AHE must have an upkeep trigger");
+
+        // TriggerZones$ Exile
+        assert!(
+            trigger.trigger_zones.contains(&crate::zones::Zone::Exile),
+            "Upkeep trigger must declare TriggerZones$ Exile so it fires from exile. \
+             Got trigger_zones: {:?}",
+            trigger.trigger_zones
+        );
+
+        // IsPresent$ ...counters_GE1_SCREAM intervening-if
+        assert_eq!(
+            trigger.present_self_condition,
+            Some(SelfCounterCondition {
+                counter_type: CounterType::Scream,
+                compare: CompareCondition::GreaterOrEqual(1),
+            }),
+            "Upkeep trigger must carry the GE1 SCREAM intervening-if condition. \
+             Got: {:?}",
+            trigger.present_self_condition
+        );
+
+        // The effect chain: RemoveCounter, then two EQ0-gated conditionals.
+        let effects = &trigger.effects;
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::RemoveCounter {
+                    counter_type: Some(CounterType::Scream),
+                    amount: 1,
+                    ..
+                }
+            )),
+            "Trigger must remove 1 SCREAM counter. Got: {:?}",
+            effects
+        );
+        let eq0 = SelfCounterCondition {
+            counter_type: CounterType::Scream,
+            compare: CompareCondition::Equal(0),
+        };
+        let has_move_to_grave = effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::ConditionalSelfCounter { condition, inner, .. }
+                    if condition == &eq0
+                    && matches!(
+                        inner.as_ref(),
+                        Effect::MoveSelfBetweenZones {
+                            origin: crate::zones::Zone::Exile,
+                            destination: crate::zones::Zone::Graveyard,
+                            ..
+                        }
+                    )
+            )
+        });
+        assert!(
+            has_move_to_grave,
+            "Trigger must gate the exile→graveyard self-move on counters_EQ0_SCREAM. \
+             Got: {:?}",
+            effects
+        );
+        let has_resurrection = effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::ConditionalSelfCounter { condition, inner, .. }
+                    if condition == &eq0
+                    && matches!(
+                        inner.as_ref(),
+                        Effect::ChangeZoneAll {
+                            origin: crate::zones::Zone::Graveyard,
+                            destination: crate::zones::Zone::Battlefield,
+                            ..
+                        }
+                    )
+            )
+        });
+        assert!(
+            has_resurrection,
+            "Trigger must gate the graveyard→battlefield mass resurrection on \
+             counters_EQ0_SCREAM. Got: {:?}",
+            effects
+        );
+    }
 }

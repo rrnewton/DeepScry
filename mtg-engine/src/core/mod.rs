@@ -22,7 +22,8 @@ pub use delayed_trigger::{
 pub use effects::{
     AbilityCache, ActivatedAbility, AffectedSelector, ControllerRestriction, CostReductionCondition,
     CostReductionTarget, CountExpression, DigFilter, Effect, ImmediateTriggerCondition, ModalMode, RaisedCost,
-    RaisedCostAmount, StaticAbility, StaticCondition, TargetRef, TargetRestriction, TargetType, Trigger, TriggerEvent,
+    RaisedCostAmount, SelfCounterCondition, StaticAbility, StaticCondition, TargetRef, TargetRestriction, TargetType,
+    Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

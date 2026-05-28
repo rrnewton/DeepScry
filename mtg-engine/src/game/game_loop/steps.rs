@@ -112,31 +112,76 @@ impl<'a> GameLoop<'a> {
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
         let active_player = self.game.turn.active_player;
 
-        // Collect card IDs with matching triggers (avoid String allocation in hot path)
-        // OPTIMIZATION: Only format trigger descriptions when verbose logging is enabled.
-        // Previously, Vec<String> + format!() was allocated for every trigger even in silent mode.
-        let triggered_cards: SmallVec<[CardId; 4]> = self
+        // A phase trigger fires from the battlefield (the overwhelmingly common
+        // case) or, for a card whose trigger declares a non-battlefield
+        // `TriggerZones$` (e.g. All Hallow's Eve's `TriggerZones$ Exile`), from
+        // that zone (CR 603.6e). To keep the battlefield path byte-for-byte
+        // identical to its long-standing behaviour — and so the network
+        // state-hash determinism is untouched for games without exile-resident
+        // triggers — we scan the battlefield exactly as before, then ADD only
+        // the specific exile cards whose triggers explicitly opt into Exile.
+        let matches_trigger = |card: &crate::core::Card, in_zone: crate::zones::Zone| {
+            card.triggers.iter().any(|t| {
+                if t.event != trigger_event {
+                    return false;
+                }
+                // Trigger-zone gate: empty `trigger_zones` means battlefield (the
+                // historical default); otherwise the current zone must be listed.
+                let zone_ok = if t.trigger_zones.is_empty() {
+                    in_zone == crate::zones::Zone::Battlefield
+                } else {
+                    t.trigger_zones.contains(&in_zone)
+                };
+                if !zone_ok {
+                    return false;
+                }
+                // Check controller_turn_only flag - if set, only fire on controller's turn
+                // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
+                if t.controller_turn_only && card.controller != active_player {
+                    return false;
+                }
+                // Intervening-if condition (CR 603.4): the source must satisfy the
+                // counter condition right now (All Hallow's Eve: >= 1 scream).
+                if let Some(cond) = &t.present_self_condition {
+                    if !cond.evaluate(card.get_counter(cond.counter_type)) {
+                        return false;
+                    }
+                }
+                true
+            })
+        };
+
+        // Collect card IDs with matching triggers (avoid String allocation in hot path).
+        // Battlefield scan — unchanged from the original implementation.
+        let mut triggered_cards: SmallVec<[CardId; 4]> = self
             .game
             .battlefield
             .cards
             .iter()
-            .filter(|&&card_id| {
-                self.game.cards.try_get(card_id).is_some_and(|card| {
-                    card.triggers.iter().any(|t| {
-                        if t.event != trigger_event {
-                            return false;
-                        }
-                        // Check controller_turn_only flag - if set, only fire on controller's turn
-                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime string check
-                        if t.controller_turn_only {
-                            return card.controller == active_player;
-                        }
-                        true
-                    })
-                })
-            })
             .copied()
+            .filter(|&card_id| {
+                self.game
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|card| matches_trigger(card, crate::zones::Zone::Battlefield))
+            })
             .collect();
+
+        // Exile-resident triggers (rare). Only cards whose trigger explicitly
+        // opts into Exile via `TriggerZones$` can match here, so games without
+        // such cards add nothing and behave exactly as before.
+        for (_, zones) in &self.game.player_zones {
+            for &card_id in &zones.exile.cards {
+                if self
+                    .game
+                    .cards
+                    .try_get(card_id)
+                    .is_some_and(|card| matches_trigger(card, crate::zones::Zone::Exile))
+                {
+                    triggered_cards.push(card_id);
+                }
+            }
+        }
 
         // For each card with a matching trigger, log and execute
         for card_id in triggered_cards {

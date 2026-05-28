@@ -79,6 +79,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ChooseColor { .. }
         | Effect::Clone { .. }
         | Effect::SelfExileFromStack { .. }
+        | Effect::MoveSelfBetweenZones { .. }
+        | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
@@ -189,6 +191,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ChooseColor { .. }
             | Effect::Clone { .. }
             | Effect::SelfExileFromStack { .. }
+            | Effect::MoveSelfBetweenZones { .. }
+            | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
@@ -488,6 +492,39 @@ impl GameState {
                 target: source_card_id,
                 counter_type,
                 amount,
+            },
+            Effect::RemoveCounter {
+                target,
+                counter_type,
+                amount,
+            } if target.is_self_target() => Effect::RemoveCounter {
+                target: source_card_id,
+                counter_type,
+                amount,
+            },
+            Effect::MoveSelfBetweenZones {
+                source,
+                origin,
+                destination,
+            } if source.is_self_target() => Effect::MoveSelfBetweenZones {
+                source: source_card_id,
+                origin,
+                destination,
+            },
+            Effect::ConditionalSelfCounter {
+                source,
+                condition,
+                inner,
+            } => Effect::ConditionalSelfCounter {
+                source: if source.is_self_target() {
+                    source_card_id
+                } else {
+                    source
+                },
+                condition,
+                // Recurse so a `Defined$ Self` inner effect (MoveSelfBetweenZones,
+                // RemoveCounter, …) is also patched to the source CardId.
+                inner: Box::new(Self::resolve_self_target(*inner, source_card_id)),
             },
             other => other,
         }
@@ -3746,6 +3783,64 @@ impl GameState {
                     // SubAbilities with `Defined$ Remembered` (e.g. the
                     // PutCounter that places two scream counters on it).
                     self.remembered_cards.push(*source);
+                }
+            }
+            Effect::MoveSelfBetweenZones {
+                source,
+                origin,
+                destination,
+            } => {
+                // `DB$ ChangeZone | Defined$ Self | Origin$ <zone> | Destination$ <zone>`
+                // executed by a triggered ability whose source lives outside the
+                // battlefield (e.g. All Hallow's Eve moving itself exile→graveyard
+                // once its last scream counter is removed).
+                if source.is_placeholder() || source.is_self_target() {
+                    log::debug!(
+                        target: "self_exile",
+                        "MoveSelfBetweenZones: source still placeholder/sentinel, skipping"
+                    );
+                    return Ok(());
+                }
+                // Verify the card is actually in the origin zone before moving so
+                // we never double-move (CR 400.7 / 608.2g object-no-longer-there).
+                let in_origin = self.find_card_zone(*source) == Some(*origin);
+                if !in_origin {
+                    log::debug!(
+                        target: "self_exile",
+                        "MoveSelfBetweenZones: card {} not in {:?}, skipping",
+                        source.as_u32(),
+                        origin
+                    );
+                    return Ok(());
+                }
+                let owner = self.cards.get(*source)?.owner;
+                self.move_card(*source, *origin, *destination, owner)?;
+            }
+            Effect::ConditionalSelfCounter {
+                source,
+                condition,
+                inner,
+            } => {
+                // Run the inner effect only if `source` currently satisfies the
+                // counter condition (CR 603.4 intervening-if style gating for a
+                // mid-chain sub-ability). For All Hallow's Eve the source is the
+                // AHE card and the inner effects (exile→graveyard move, then mass
+                // resurrection) only fire on the upkeep where the final scream
+                // counter was removed (counters_EQ0_SCREAM).
+                if source.is_placeholder() || source.is_self_target() {
+                    log::debug!(
+                        target: "self_exile",
+                        "ConditionalSelfCounter: source still placeholder/sentinel, skipping"
+                    );
+                    return Ok(());
+                }
+                let satisfied = self
+                    .cards
+                    .try_get(*source)
+                    .map(|c| condition.evaluate(c.get_counter(condition.counter_type)))
+                    .unwrap_or(false);
+                if satisfied {
+                    self.execute_effect(inner)?;
                 }
             }
             Effect::SetBasePowerToughness {

@@ -86,11 +86,25 @@ workflow, row format, and update rules.
 | ValidTgts$ Creature.nonArtifact (excl. artifact)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | ValidTgts$ ...+ActivePlayerCtrl (active player) | WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | DB$ Destroy NoRegen$ True (can't be regenerated)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
+| ChangeZone Origin$ Stack Destination$ Exile     | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| RememberChanged$ True + Defined$ Remembered      | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| TriggerZones$ Exile (exile-resident phase trig) | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| IsPresent$ ...counters_GE/EQ_<TYPE> (interv.-if)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| ChangeZone Defined$ Self (non-stack self-move)  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| ConditionDefined$ Self + ConditionPresent$ ctr  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| ChangeZoneAll Graveyard→Battlefield (mass reanim)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 
 ---
 
 History footnotes (most recent first):
 
+- 2026-05-28_#2362(f454dccb) — All Hallow's Eve brought to WORKING
+  (mtg-464870 / mtg-2b3951). Added general exile-resident phase
+  triggers (`Trigger::trigger_zones` + `present_self_condition`,
+  scanned in `check_phase_triggers`), the `MoveSelfBetweenZones` and
+  `ConditionalSelfCounter` effects, and counter-gated mass
+  resurrection via `ChangeZoneAll` Graveyard→Battlefield. The
+  ChangeZone Stack→Exile + RememberChanged path was already present.
 - 2026-05-12_#2226(928ec99f) — Initial population by
   `compatibility_tracking` skill rollout. Seeded from the
   15-card session covering Bazaar of Baghdad, Chaos Orb,

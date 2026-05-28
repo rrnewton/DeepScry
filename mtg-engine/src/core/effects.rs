@@ -904,6 +904,44 @@ pub enum Effect {
         destination: crate::zones::Zone,
     },
 
+    /// Move the source card itself between two named zones (neither of which is
+    /// the stack — that case is `SelfExileFromStack`).
+    ///
+    /// Corresponds to `DB$ ChangeZone | Defined$ Self | Origin$ <zone> |
+    /// Destination$ <zone>` executed by a triggered ability whose source lives
+    /// outside the battlefield. All Hallow's Eve uses
+    /// `DB$ ChangeZone | Origin$ Exile | Destination$ Graveyard | Defined$ Self`
+    /// to put itself into the graveyard once its last scream counter is removed.
+    ///
+    /// `source` starts as `CardId::self_target()` from the converter and is
+    /// patched to the resolving card by `resolve_self_target` (spells) or by the
+    /// trigger placeholder resolution (triggered abilities).
+    MoveSelfBetweenZones {
+        /// The source card. `self_target()` until patched to the real CardId.
+        source: CardId,
+        /// Zone the card must currently be in to move.
+        origin: crate::zones::Zone,
+        /// Destination zone.
+        destination: crate::zones::Zone,
+    },
+
+    /// Execute an inner effect only if the source card currently satisfies a
+    /// counter-count condition (e.g. `ConditionPresent$ Card.counters_EQ0_SCREAM`).
+    ///
+    /// Corresponds to `DB$ ... | ConditionDefined$ Self |
+    /// ConditionPresent$ Card.counters_<CMP>_<TYPE>` chains. All Hallow's Eve
+    /// uses this so the move-to-graveyard and mass-resurrection only fire on the
+    /// upkeep where the final scream counter was removed (counters == 0).
+    ConditionalSelfCounter {
+        /// The card whose counters are inspected. `self_target()` until patched
+        /// to the real source CardId by the trigger/spell resolver.
+        source: CardId,
+        /// Counter condition evaluated against `source`.
+        condition: SelfCounterCondition,
+        /// Effect to run when the condition holds.
+        inner: Box<Effect>,
+    },
+
     /// Search library for a card and put it into a zone
     /// Example: "Search your library for a basic land card, put it onto the battlefield tapped, then shuffle"
     /// Corresponds to: AB$ ChangeZone | Origin$ Library | Destination$ Battlefield | ChangeType$ Land.Basic
@@ -1400,6 +1438,43 @@ pub enum ImmediateTriggerCondition {
     AnyRemembered,
 }
 
+/// A counter-count condition evaluated against a single card (usually the
+/// source card via `Defined$ Self`).
+///
+/// Encodes filters of the shape `counters_<CMP><N>_<TYPE>`, e.g.
+/// `counters_GE1_SCREAM` (>= 1 scream counter) or `counters_EQ0_SCREAM`
+/// (no scream counters). Used both by triggered-ability intervening-if
+/// conditions (`IsPresent$ Card.Self+counters_GE1_SCREAM`) and by
+/// `Effect::ConditionalSelfCounter` (`ConditionPresent$ Card.counters_EQ0_SCREAM`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SelfCounterCondition {
+    /// The counter type being counted.
+    pub counter_type: crate::core::CounterType,
+    /// Comparison applied to the count of that counter type on the card.
+    pub compare: CompareCondition,
+}
+
+impl SelfCounterCondition {
+    /// Parse a `counters_<CMP><N>_<TYPE>` clause (the part after `counters_`).
+    ///
+    /// Examples of the full clause: `counters_GE1_SCREAM`, `counters_EQ0_SCREAM`.
+    /// `clause` here is the substring after the leading `counters_`, e.g.
+    /// `GE1_SCREAM`.
+    pub fn parse_clause(clause: &str) -> Option<Self> {
+        // Split off the trailing _<TYPE>; the compare token is everything before
+        // the last underscore (compare tokens never contain underscores).
+        let (cmp_str, type_str) = clause.rsplit_once('_')?;
+        let compare = CompareCondition::parse(cmp_str)?;
+        let counter_type = crate::core::CounterType::parse(type_str)?;
+        Some(SelfCounterCondition { counter_type, compare })
+    }
+
+    /// Evaluate this condition against a card's current counter count.
+    pub fn evaluate(&self, count: u8) -> bool {
+        self.compare.evaluate(i32::from(count))
+    }
+}
+
 /// Source of the spell to copy for CopySpellAbility
 ///
 /// Corresponds to the `Defined$` parameter in DB$ CopySpellAbility
@@ -1472,6 +1547,10 @@ impl Effect {
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
             | Effect::SelfExileFromStack { .. }
+            // Self-zone-move and conditional-self wrappers operate on the source
+            // card (Defined$ Self) — no cast-time target collection needed.
+            | Effect::MoveSelfBetweenZones { .. }
+            | Effect::ConditionalSelfCounter { .. }
             // Clone chooses which permanent to copy at resolution time (ETB
             // replacement), routed through the controller — there is no
             // cast-time target on the Copy Artifact spell itself.
@@ -1689,6 +1768,25 @@ pub struct Trigger {
     /// None means any attacking creature triggers it
     #[serde(default)]
     pub valid_attackers_keyword: Option<crate::core::Keyword>,
+
+    /// Zones in which the trigger source must reside for the trigger to fire.
+    ///
+    /// Corresponds to `TriggerZones$`. Defaults to `[Battlefield]` (the usual
+    /// case). All Hallow's Eve uses `TriggerZones$ Exile` so its upkeep trigger
+    /// fires while the card sits in exile (CR 603.6e — abilities that function
+    /// in a zone other than the battlefield). Empty means "any zone".
+    #[serde(default)]
+    pub trigger_zones: smallvec::SmallVec<[crate::zones::Zone; 2]>,
+
+    /// Intervening-if condition: the source card must satisfy this counter
+    /// condition (in `present_zone`) for the trigger to fire (CR 603.4).
+    ///
+    /// Corresponds to `IsPresent$ Card.Self+counters_<CMP><N>_<TYPE>` combined
+    /// with `PresentZone$`. All Hallow's Eve: `IsPresent$
+    /// Card.Self+counters_GE1_SCREAM | PresentZone$ Exile`. None means no
+    /// intervening-if check.
+    #[serde(default)]
+    pub present_self_condition: Option<SelfCounterCondition>,
 }
 
 impl Trigger {
@@ -1709,6 +1807,8 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             valid_attackers_keyword: None,
+            trigger_zones: smallvec::SmallVec::new(),
+            present_self_condition: None,
         }
     }
 
@@ -1728,6 +1828,8 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             valid_attackers_keyword: None,
+            trigger_zones: smallvec::SmallVec::new(),
+            present_self_condition: None,
         }
     }
 
@@ -1753,6 +1855,8 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             valid_attackers_keyword: None,
+            trigger_zones: smallvec::SmallVec::new(),
+            present_self_condition: None,
         }
     }
 
@@ -1773,6 +1877,8 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             valid_attackers_keyword: None,
+            trigger_zones: smallvec::SmallVec::new(),
+            present_self_condition: None,
         }
     }
 }
