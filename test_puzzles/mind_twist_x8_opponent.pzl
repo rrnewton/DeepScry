@@ -1,0 +1,24 @@
+[metadata]
+Name:Mind Twist X=8 hits opponent
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Mind Twist with X=8 (sufficient mana). Opponent has 8 cards in hand. All 8 should be discarded (mtg-6c0qe).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Mind Twist
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

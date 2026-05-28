@@ -80,6 +80,13 @@ pub const REMEMBERED_CARD_ID: u32 = u32::MAX - 4;
 /// Used for targets/players that need runtime resolution (e.g., "you", "target creature").
 pub const PLACEHOLDER_ID: u32 = 0;
 
+/// Sentinel value indicating "target opponent" — the chosen opponent of the
+/// resolving spell/ability. Distinct from `PLACEHOLDER_ID` so the resolver
+/// can tell apart "ValidTgts$ Player" (Mind Twist — picks an opponent) from
+/// "Defined$ You" (controller). In 2-player games we currently auto-pick the
+/// sole opponent without going through the targeting UI; tracked in mtg-6c0qe.
+pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
+
 impl<T> EntityId<T> {
     #[inline]
     pub fn new(id: u32) -> Self {
@@ -172,6 +179,19 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn reuse_previous() -> Self {
         EntityId::new(REUSE_PREVIOUS_TARGET)
+    }
+
+    /// Check if this ID is the "target opponent" sentinel
+    /// (Mind Twist-style `ValidTgts$ Player`; tracked in mtg-6c0qe).
+    #[inline]
+    pub fn is_target_opponent(&self) -> bool {
+        self.id == TARGET_OPPONENT_ID
+    }
+
+    /// Create the "target opponent" sentinel.
+    #[inline]
+    pub fn target_opponent() -> Self {
+        EntityId::new(TARGET_OPPONENT_ID)
     }
 }
 

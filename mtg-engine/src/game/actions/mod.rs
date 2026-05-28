@@ -2323,11 +2323,32 @@ impl GameState {
                 optional: *optional,
                 remember_discarding_players: *remember_discarding_players,
             },
+            // ValidTgts$ Player (Mind Twist): target the opponent. See mtg-6c0qe.
+            Effect::DiscardCards {
+                player,
+                count,
+                remember_discarded,
+                optional,
+                remember_discarding_players,
+            } if player.is_target_opponent() => Effect::DiscardCards {
+                player: opponent_id.unwrap_or(card_owner),
+                count: *count,
+                remember_discarded: *remember_discarded,
+                optional: *optional,
+                remember_discarding_players: *remember_discarding_players,
+            },
             Effect::DiscardCardsXPaid {
                 player,
                 remember_discarded,
             } if player.is_placeholder() => Effect::DiscardCardsXPaid {
                 player: card_owner,
+                remember_discarded: *remember_discarded,
+            },
+            Effect::DiscardCardsXPaid {
+                player,
+                remember_discarded,
+            } if player.is_target_opponent() => Effect::DiscardCardsXPaid {
+                player: opponent_id.unwrap_or(card_owner),
                 remember_discarded: *remember_discarded,
             },
             Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {

@@ -2938,4 +2938,52 @@ mod tests {
             card.keywords
         );
     }
+
+    /// Card compat: Mind Twist (mtg-6c0qe; cardsfolder/m/mind_twist.txt)
+    ///
+    /// Script:
+    ///   ManaCost:X B
+    ///   Types:Sorcery
+    ///   A:SP$ Discard | ValidTgts$ Player | NumCards$ X | Mode$ Random
+    ///   SVar:X:Count$xPaid
+    ///
+    /// Asserts the converter produces `Effect::DiscardCardsXPaid` with the
+    /// `target_opponent` PlayerId sentinel (not the bare placeholder), so the
+    /// effect resolver hits the opponent-default branch instead of the
+    /// controller-default branch. Before the fix the discard landed on the
+    /// caster (whose hand was usually empty), and the user reported
+    /// "Mind Twist did nothing" when the opponent cast X=8 against them.
+    #[test]
+    fn test_card_compat_mind_twist() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/m/mind_twist.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Mind Twist should load");
+
+        assert_eq!(def.name.as_str(), "Mind Twist");
+        assert!(def.types.contains(&CardType::Sorcery));
+        assert_eq!(def.mana_cost.black, 1, "Cost should include {{B}}");
+
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        // Spell ability is SP$ Discard with XPaid + target_opponent player sentinel.
+        let found = card.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::DiscardCardsXPaid { player, .. } if player.is_target_opponent()
+            )
+        });
+        assert!(
+            found,
+            "Mind Twist must produce DiscardCardsXPaid with PlayerId::target_opponent() \
+             sentinel so ValidTgts$ Player resolves to the opponent (mtg-6c0qe). \
+             Got effects: {:?}",
+            card.effects
+        );
+    }
 }

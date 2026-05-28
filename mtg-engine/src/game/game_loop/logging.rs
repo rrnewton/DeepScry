@@ -21,6 +21,9 @@ impl<'a> GameLoop<'a> {
         if player_id.is_remembered_players() {
             return "remembered players".to_string();
         }
+        if player_id.is_target_opponent() {
+            return "target opponent".to_string();
+        }
         self.game
             .get_player(player_id)
             .map(|p| p.name.to_string())

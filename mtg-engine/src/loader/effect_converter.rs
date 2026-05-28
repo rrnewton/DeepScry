@@ -105,11 +105,24 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let remember_discarded = params.get("RememberDiscarded") == Some("True");
             let optional = params.get("Optional") == Some("True");
             let remember_discarding_players = params.get("RememberDiscardingPlayers") == Some("True");
-            // Defined$ Player = each player; otherwise controller placeholder
-            let player = if params.get("Defined") == Some("Player") {
-                PlayerId::all_players()
-            } else {
-                PlayerId::placeholder()
+            // Player resolution semantics for Discard (mtg-6c0qe):
+            //   Defined$ Player        -> each player (Mindslicer, Magus of the Wheel)
+            //   Defined$ You           -> the controller (You Find the Villains' Lair);
+            //                             resolved later from placeholder→card_owner
+            //   ValidTgts$ Player      -> the OPPONENT (Mind Twist — "Target player
+            //                             discards X cards"; we auto-pick the sole
+            //                             opponent in 2-player games until a real
+            //                             player-targeting UI lands)
+            //   otherwise              -> placeholder, resolved to controller
+            //
+            // CR 116.2c / CR 601.2c: targeted spells require a chosen target; we
+            // approximate the choice as "opponent" in the absence of a player-
+            // targeting UI. See mtg-6c0qe for the long-term fix.
+            let player = match (params.get("Defined"), params.get("ValidTgts")) {
+                (Some("Player"), _) => PlayerId::all_players(),
+                (Some("You"), _) => PlayerId::placeholder(),
+                (_, Some(vt)) if vt.contains("Player") => PlayerId::target_opponent(),
+                _ => PlayerId::placeholder(),
             };
             // If NumCards$ is "X" referencing SVar X = Count$xPaid, use XPaid variant
             if params.get("NumCards") == Some("X") {
