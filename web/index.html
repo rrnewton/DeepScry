@@ -402,6 +402,28 @@
     var wsUrl = qs.get('ws') || window.MTG_WS_URL;
     document.getElementById('ws-url-display').textContent = wsUrl;
 
+    // Local-card-image gate stickiness (mtg-p5tyf). The lobby page itself never
+    // loads local card images, but it is the entry point that the user typically
+    // first hits with ?allow_local_img_load=true. We resolve the same sticky flag
+    // the game pages use so that (a) the unlock persists across same-tab
+    // navigation and (b) we can propagate it onto the launcher links.
+    //
+    // sessionStorage, NOT localStorage: survives same-tab navigation for the
+    // current session, resets on tab close. localStorage would let a stale flag
+    // silently re-enable local images weeks later, defeating the gate. The URL
+    // param is authoritative when present (so ?allow_local_img_load=false can
+    // explicitly re-lock). We never read localStorage, so old localStorage from
+    // prior builds cannot bypass the gate.
+    var allowLocalImgLoad;
+    if (qs.has('allow_local_img_load')) {
+        allowLocalImgLoad = qs.get('allow_local_img_load') === 'true';
+        try { sessionStorage.setItem('allowLocalImgLoad', allowLocalImgLoad ? 'true' : 'false'); } catch (e) { /* ignore */ }
+    } else {
+        var storedAllow = null;
+        try { storedAllow = sessionStorage.getItem('allowLocalImgLoad'); } catch (e) { /* ignore */ }
+        allowLocalImgLoad = storedAllow === 'true';
+    }
+
     var ws = null;
     var listPending = false;
     var lastListGames = [];   // most recent page (creator_name, name, has_password)
@@ -713,10 +735,15 @@
         var p = new URLSearchParams();
         if (currentUsername) p.set('name', currentUsername);
         if (wsUrl) p.set('ws', wsUrl);
+        // Propagate the sticky local-image unlock onto the launcher hrefs
+        // (mtg-p5tyf). The game pages also inherit it from sessionStorage, but
+        // keeping the param in the URL makes the unlock visible in the address
+        // bar and survives bookmarking/sharing of the launched page.
+        if (allowLocalImgLoad) p.set('allow_local_img_load', 'true');
         var suffix = p.toString() ? '?' + p.toString() : '';
         document.getElementById('launch-native').href = 'native_game.html' + suffix;
         document.getElementById('launch-tui').href = 'tui_game.html' + suffix;
-        document.getElementById('launch-demo').href = 'demo.html';
+        document.getElementById('launch-demo').href = 'demo.html' + suffix;
     }
 
     function startRefreshTimer() {
@@ -811,6 +838,8 @@
         if (gamePass) qp.set('lobby_pass', gamePass);
         if (currentUsername) qp.set('name', currentUsername);
         if (wsUrl) qp.set('ws', wsUrl);
+        // Carry the sticky local-image unlock into the game page (mtg-p5tyf).
+        if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
         // Close our own browse-WS so the server cleanly drops the lobby task
         // and we never accidentally race the new tab's CreateGame against a
         // stale lobby-mode connection from this tab.

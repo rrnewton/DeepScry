@@ -360,6 +360,87 @@ async function scenarioLaunchPagesSmoke() {
     await browser.close();
 }
 
+// mtg-p5tyf: the ?allow_local_img_load=true unlock must be "sticky" across
+// same-tab navigation (index -> game page) via sessionStorage + launcher-link
+// propagation, WITHOUT becoming bypassable by stale localStorage. This scenario
+// covers: (1) index with the param propagates it onto launcher hrefs, (2) the
+// launched game page reports window.__allowLocalImgLoad === true, (3) a fresh
+// game-page visit with NO param and NO session flag stays locked (anti-bypass),
+// and (4) sessionStorage (not localStorage) is the persistence layer.
+async function scenarioStickyLocalImageUnlock() {
+    console.log('\n=== Scenario: sticky allow_local_img_load unlock (mtg-p5tyf) ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+
+    // (1) Load the lobby WITH the unlock param.
+    const root = global.__landingRoot || (BASE + '/');
+    const sep = root.indexOf('?') === -1 ? '?' : '&';
+    await page.goto(root + sep + 'allow_local_img_load=true');
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(500);
+
+    // The launcher hrefs must carry the param forward.
+    const nativeHref = await page.getAttribute('#launch-native', 'href');
+    const tuiHref = await page.getAttribute('#launch-tui', 'href');
+    console.log('  launch-native href:', nativeHref);
+    console.log('  launch-tui href:', tuiHref);
+    if (!/allow_local_img_load=true/.test(nativeHref || '')) {
+        record('major', 'sticky unlock', 'native launcher href missing allow_local_img_load=true: ' + nativeHref);
+    }
+    if (!/allow_local_img_load=true/.test(tuiHref || '')) {
+        record('major', 'sticky unlock', 'tui launcher href missing allow_local_img_load=true: ' + tuiHref);
+    }
+
+    // The lobby page itself must persist the flag to sessionStorage (NOT
+    // localStorage) so later same-tab navigations stay unlocked.
+    const storage = await page.evaluate(() => ({
+        session: sessionStorage.getItem('allowLocalImgLoad'),
+        local: localStorage.getItem('allowLocalImgLoad'),
+    }));
+    console.log('  storage after index w/ param:', JSON.stringify(storage));
+    if (storage.session !== 'true') {
+        record('major', 'sticky unlock', 'expected sessionStorage allowLocalImgLoad="true", got ' + JSON.stringify(storage.session));
+    }
+    if (storage.local !== null) {
+        record('major', 'sticky unlock', 'localStorage must NOT be written (would over-persist); got ' + JSON.stringify(storage.local));
+    }
+
+    // (2) Navigate to the game page WITHOUT the param but in the SAME tab/session.
+    // The gate must inherit the unlock from sessionStorage.
+    await page.goto(BASE + '/native_game.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(1500);
+    const allowedSticky = await page.evaluate(() => window.__allowLocalImgLoad === true);
+    console.log('  native_game.html __allowLocalImgLoad (sticky, no param):', allowedSticky);
+    if (!allowedSticky) {
+        record('major', 'sticky unlock', 'same-tab navigation to native_game.html lost the unlock (expected sticky via sessionStorage)');
+    }
+    await shot(page, 'landing_13_sticky_unlock_game.png');
+
+    await ctx.close();
+
+    // (3) Anti-bypass: a brand-new context (fresh session, no param) must stay
+    // LOCKED. We only read sessionStorage, never localStorage, so even a stale
+    // localStorage value cannot re-enable local images.
+    const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page2 = await ctx2.newPage();
+    await page2.goto(BASE + '/native_game.html');
+    // Seed a stale localStorage value to prove it is ignored, then reload.
+    await page2.evaluate(() => { try { localStorage.setItem('allowLocalImgLoad', 'true'); } catch (e) {} });
+    await page2.reload();
+    await page2.waitForLoadState('domcontentloaded');
+    await page2.waitForTimeout(1500);
+    const allowedFresh = await page2.evaluate(() => window.__allowLocalImgLoad === true);
+    console.log('  fresh-session native_game.html __allowLocalImgLoad (stale localStorage seeded):', allowedFresh);
+    if (allowedFresh) {
+        record('blocking', 'sticky unlock', 'GATE BYPASS: fresh session with stale localStorage re-enabled local images');
+    }
+    await ctx2.close();
+
+    await browser.close();
+}
+
 async function scenarioPasscodeEyeballToggle() {
     console.log('\n=== Scenario: passcode show/hide eyeball ===');
     const browser = await chromium.launch();
@@ -625,6 +706,7 @@ async function startSelfManagedServers() {
         await scenarioMobileViewport();
         await scenarioOfflineLobby();
         await scenarioLaunchPagesSmoke();
+        await scenarioStickyLocalImageUnlock();
         await scenarioPasscodeEyeballToggle();
         await scenarioGameListFilterAndPager();
         await scenarioAccessibility();

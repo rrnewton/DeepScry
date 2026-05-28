@@ -1235,12 +1235,35 @@
         }
 
         // Gate the "Local" card-image source behind ?allow_local_img_load=true.
-        // Rationale: licensing posture for serving card images from our VM is
-        // unsettled; default UX must offer only Scryfall/Gatherer until clarified.
-        // Pure URL-param check (no localStorage/sessionStorage persistence) keeps
-        // the unlock explicit and reproducible per page load.
+        // Rationale (mtg-p5tyf): licensing posture for serving card images from
+        // our VM is unsettled; default UX must offer only Scryfall/Gatherer until
+        // clarified.
+        //
+        // Stickiness model: the URL param is authoritative WHEN PRESENT (so you
+        // can explicitly turn the unlock OFF with ?allow_local_img_load=false),
+        // otherwise we inherit from sessionStorage. We deliberately use
+        // sessionStorage, NOT localStorage: the unlock survives same-tab
+        // navigation (index -> game page) for "unlock myself for this session",
+        // but resets when the tab closes. localStorage would let a stale flag
+        // silently re-enable local images weeks later, bypassing the gate — the
+        // exact failure mode this gate was built to prevent. We never read
+        // localStorage here, so old localStorage from prior builds cannot bypass.
+        function resolveLocalImageAllowed() {
+            const params = new URLSearchParams(window.location.search);
+            let allowed;
+            if (params.has('allow_local_img_load')) {
+                allowed = params.get('allow_local_img_load') === 'true';
+                try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
+            } else {
+                let stored = null;
+                try { stored = sessionStorage.getItem('allowLocalImgLoad'); } catch (e) { /* ignore */ }
+                allowed = stored === 'true';
+            }
+            return allowed;
+        }
+
         function applyLocalImageGate() {
-            const allowed = new URLSearchParams(window.location.search).get('allow_local_img_load') === 'true';
+            const allowed = resolveLocalImageAllowed();
             window.__allowLocalImgLoad = allowed;
             if (allowed) return;
             const localCb = document.getElementById('img-src-local');
