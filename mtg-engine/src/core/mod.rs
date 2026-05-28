@@ -68,3 +68,18 @@ pub fn player_target_from_sentinel(c: CardId) -> Option<PlayerId> {
         None
     }
 }
+
+/// Decode a chosen target `CardId` (as stored in `chosen_targets`) into a
+/// `TargetRef`. Player-target sentinels (e.g. Lightning Bolt aimed at a
+/// player) decode to `TargetRef::Player`; everything else is a permanent.
+///
+/// This centralizes the sentinel-vs-permanent branch that effect resolution
+/// would otherwise repeat at every "any target" damage site. See
+/// `player_as_target_sentinel`.
+#[inline]
+pub fn target_ref_from_chosen_target(c: CardId) -> TargetRef {
+    match player_target_from_sentinel(c) {
+        Some(pid) => TargetRef::Player(pid),
+        None => TargetRef::Permanent(c),
+    }
+}

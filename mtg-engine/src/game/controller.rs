@@ -736,12 +736,7 @@ impl<'a> GameStateView<'a> {
     /// Lightning Bolt (mtg-bolt-player-tgt).
     pub fn card_name(&self, card_id: CardId) -> Option<String> {
         if let Some(pid) = crate::core::player_target_from_sentinel(card_id) {
-            return self
-                .game
-                .get_player(pid)
-                .ok()
-                .map(|p| p.name.to_string())
-                .or_else(|| Some(format!("Player {}", pid.as_u32() + 1)));
+            return Some(self.game.player_display_name(pid));
         }
         self.game.cards.try_get(card_id).map(|c| c.name.to_string())
     }

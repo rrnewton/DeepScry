@@ -1,0 +1,27 @@
+---
+title: Replace player-target CardId sentinel with a typed Target enum
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T05:35:28.104250974+00:00
+updated_at: 2026-05-28T05:35:28.104250974+00:00
+---
+
+# Description
+
+Follow-up to mtg-lxrqz (Lightning Bolt targeting players).
+
+CURRENT STATE: A PlayerId is offered as a target inside Controller::choose_targets(&[CardId]) by encoding it as a sentinel CardId (PLAYER_TARGET_BASE = u32::MAX-1000, encode = BASE+pid, decode = player_target_from_sentinel). This is a STRONG-TYPES violation per CLAUDE.md: a CardId is overloaded to sometimes mean 'a player'. Any code that receives a chosen-target CardId must remember to call player_target_from_sentinel or it silently mistreats a player as a (nonexistent) card.
+
+LEAK SURFACE (sites that must be sentinel-aware today):
+- core/mod.rs: player_as_target_sentinel / player_target_from_sentinel / target_ref_from_chosen_target (the centralizing helpers)
+- game/actions/targeting.rs:~139 (encode when building valid_targets)
+- game/actions/mod.rs:~362,~631 (fizzle/legality check must skip sentinels), ~1988,~2018 (decode to TargetRef on resolution)
+- game/game_loop/priority.rs:~99 (decode for logging), ~1129 (display name)
+- game/controller.rs:~738 (display name)
+
+PARTIAL CLEANUP DONE (code-elegance-review-gameplay, off integration 6c5f9dbd): introduced core::target_ref_from_chosen_target() and GameState::player_display_name() to collapse the 3 duplicated decode-to-DealDamage branches and the 2 duplicated sentinel->display-name branches. The sentinel still exists; only the duplication was removed.
+
+PROPOSED REFACTOR: introduce a first-class enum Target { Card(CardId), Player(PlayerId) } and thread it through valid_targets / Controller::choose_targets / chosen_targets storage instead of the CardId sentinel. TargetRef::{Player,Permanent} already exists at effect level; this aligns the targeting/choice layer with it.
+
+RISK / SIZE: LARGE. Touches the Controller trait signature, every controller impl (heuristic/random/zero/fixed-script), snapshot/resume serialization of chosen_targets, and the network protocol (chosen targets cross the wire). Must preserve controller information-independence and network determinism (CLAUDE.md). Defer until scheduled as its own task; not a drive-by.

@@ -1985,16 +1985,9 @@ impl GameState {
                     // so Lightning Bolt-style "any target" spells aimed at a
                     // player route through the player-damage path. See
                     // `player_as_target_sentinel` (mtg-bolt-player-tgt).
-                    if let Some(pid) = crate::core::player_target_from_sentinel(target) {
-                        Effect::DealDamage {
-                            target: TargetRef::Player(pid),
-                            amount: *amount,
-                        }
-                    } else {
-                        Effect::DealDamage {
-                            target: TargetRef::Permanent(target),
-                            amount: *amount,
-                        }
+                    Effect::DealDamage {
+                        target: crate::core::target_ref_from_chosen_target(target),
+                        amount: *amount,
                     }
                 } else if let Some(opp) = opponent_id {
                     // Default to opponent for untargeted damage
@@ -2015,14 +2008,8 @@ impl GameState {
                     let target = chosen_targets[*target_index];
                     *target_index += 1;
                     *last_resolved_target = Some(target);
-                    if let Some(pid) = crate::core::player_target_from_sentinel(target) {
-                        Effect::DealDamageXPaid {
-                            target: TargetRef::Player(pid),
-                        }
-                    } else {
-                        Effect::DealDamageXPaid {
-                            target: TargetRef::Permanent(target),
-                        }
+                    Effect::DealDamageXPaid {
+                        target: crate::core::target_ref_from_chosen_target(target),
                     }
                 } else if let Some(opp) = opponent_id {
                     Effect::DealDamageXPaid {

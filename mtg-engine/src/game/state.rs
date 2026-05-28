@@ -769,6 +769,17 @@ impl GameState {
             .ok_or(crate::MtgError::EntityNotFound(id.as_u32()))
     }
 
+    /// Human-readable display name for a player, falling back to
+    /// `"Player N"` (1-based) when the player can't be looked up. Centralizes
+    /// the name-or-fallback formatting used by target logging and the
+    /// player-target sentinel display path.
+    pub fn player_display_name(&self, id: PlayerId) -> String {
+        self.get_player(id)
+            .ok()
+            .map(|p| p.name.to_string())
+            .unwrap_or_else(|| format!("Player {}", id.as_u32() + 1))
+    }
+
     /// Get a player by ID (returns Option, no error allocation)
     ///
     /// OPTIMIZATION: This returns `Option<&Player>` instead of `Result<&Player, MtgError>`.

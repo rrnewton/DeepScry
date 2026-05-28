@@ -96,16 +96,9 @@ impl<'a> GameLoop<'a> {
                         // become TargetRef::Player; everything else is a
                         // permanent CardId.
                         let raw = targets[target_index];
-                        let replaced = if let Some(pid) = crate::core::player_target_from_sentinel(raw) {
-                            Effect::DealDamage {
-                                target: TargetRef::Player(pid),
-                                amount: *amount,
-                            }
-                        } else {
-                            Effect::DealDamage {
-                                target: TargetRef::Permanent(raw),
-                                amount: *amount,
-                            }
+                        let replaced = Effect::DealDamage {
+                            target: crate::core::target_ref_from_chosen_target(raw),
+                            amount: *amount,
                         };
                         target_index += 1;
                         replaced
@@ -1127,11 +1120,7 @@ impl<'a> GameLoop<'a> {
                                         .iter()
                                         .filter_map(|&tid| {
                                             if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
-                                                self.game
-                                                    .get_player(pid)
-                                                    .ok()
-                                                    .map(|p| p.name.to_string())
-                                                    .or_else(|| Some(format!("Player {}", pid.as_u32() + 1)))
+                                                Some(self.game.player_display_name(pid))
                                             } else {
                                                 self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
                                             }
