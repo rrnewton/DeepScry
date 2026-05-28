@@ -9,8 +9,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test
+  # ---------------------------------------------------------------------------
+  # The old monolithic `Test` job ran `cargo test --verbose --workspace
+  # --features network` SERIALLY on a single 2-vCPU runner (~125 min, mtg-578).
+  # Profiling showed two test binaries dominated wall time:
+  #   - determinism_e2e  (66 tests, each runs a full game TWICE; subprocess-heavy)
+  #   - shell_script_tests (28 tests/*.sh full games; several rebuilt the binary)
+  # We split the single job into THREE parallel jobs so wall-time = max() not
+  # sum(): test-unit, test-determinism, test-shell. The 1230 total tests
+  # partition with NO gaps/overlap:
+  #   - test-determinism: binary(determinism_e2e)         -> 66
+  #   - test-shell:       binary(shell_script_tests)      -> 28
+  #   - test-unit:        everything else (the exclusion) -> 1136
+  # (66 + 28 + 1136 = 1230, verified via `cargo nextest list -E ...`.)
+  #
+  # All three run on the STANDARD ubuntu-latest 2-vCPU runner. To further speed
+  # up test-determinism/test-shell, switch their `runs-on:` to a LARGER runner
+  # (4-8 vCPU) once such a runner is enabled on the GitHub account/billing
+  # (org runner-group or `runs-on: ubuntu-latest-4-cores`). Tracked in
+  # mtg-578's larger-runner follow-up. The bottleneck for these two jobs is
+  # core oversubscription from per-test full-game subprocesses, so more cores
+  # is the highest-leverage next step.
+
+  # Fast unit + remaining integration tests. Also carries the non-cargo
+  # validation steps (examples, agentplay/pytest, mode-equivalence) since they
+  # are quick and were part of the old Test job.
+  test-unit:
+    name: Test (unit + integration)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,46 +63,32 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-      # Free additional runner disk so the network/shell tests that build a
-      # release `mtg --features network` binary mid-test have headroom.
-      # Observed at 6db45ef1: "No space left on device" on a runner that had
-      # only the default ~14 GB free. This drops ~30 GB of unused toolchains.
+      # Free additional runner disk so the release `mtg --features network`
+      # build + the example/agentplay runs have headroom. Observed at 6db45ef1:
+      # "No space left on device" on a runner with only the default ~14 GB
+      # free. This drops ~30 GB of unused toolchains.
       - name: Free runner disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
           df -h
 
-      # Pre-build the release binary with the network feature so shell-script
-      # tests (auto-discovered by mtg-engine/tests/shell_script_tests.rs) can
-      # reuse it instead of each rebuilding inside `cargo test`. This also
-      # ensures the network feature compiles cleanly before the long test run.
+      # Pre-build the release binary with the network feature: examples and the
+      # mode-equivalence orchestrator below exercise it, and the network feature
+      # must compile cleanly before the test run.
       - name: Build release binary (network feature)
         run: cargo build --release --bin mtg --features network
 
-      # `--features network` matches what `make validate` runs locally via
-      # `cargo nextest run --features network`. Without this flag any
-      # `#[cfg(feature = "network")]` Rust integration test is silently
-      # skipped in CI and only the shell-script tests cover network code.
-      - name: Run tests
-        run: cargo test --verbose --workspace --features network
+      # Everything EXCEPT the two heavy binaries (which run in their own jobs).
+      # `--features network` matches `make validate` (cargo nextest run
+      # --features network). Without it, `#[cfg(feature = "network")]` tests are
+      # silently skipped. The filterset is the exact complement of the
+      # determinism/shell jobs, so the three jobs cover all tests with no gaps.
+      - name: Run unit + integration tests (nextest)
+        run: cargo nextest run -p mtg-forge-rs --features network -E 'not binary(determinism_e2e) and not binary(shell_script_tests)'
 
       - name: Run examples
         run: ./scripts/run_examples.sh
-
-      # Note: tests/commander_e2e.sh is *also* auto-discovered by
-      # shell_script_tests.rs and runs inside the previous cargo-test step.
-      # We keep this explicit invocation so a failure here gets its own
-      # named CI step instead of being buried inside the omnibus cargo-test
-      # log.
-      - name: Run commander E2E test
-        run: bash tests/commander_e2e.sh
-
-      # Same rationale: snapshot/resume regressed unnoticed for ~12 days
-      # because failures were buried in cargo test output. Give it a
-      # dedicated step so the next regression is obvious from the CI badge.
-      - name: Run snapshot/resume E2E test
-        run: bash tests/snapshot_resume_e2e.sh
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -103,6 +114,129 @@ jobs:
       # docs/NETWORK_ARCHITECTURE.md.
       - name: Run mode-equivalence orchestrator
         run: ./scripts/test_mode_equivalence.sh
+
+  # Determinism harness: 66 tests, each plays a full game twice and asserts
+  # byte-identical gamelogs. The single heaviest binary; isolated so its
+  # subprocess churn no longer thrashes the rest of the suite. nextest runs it
+  # across the 2 cores. The dedicated commander_e2e + snapshot_resume steps
+  # (full-game determinism scripts) live here so all determinism coverage is in
+  # one job/badge.
+  test-determinism:
+    name: Test (determinism_e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      # commander_e2e.sh + snapshot_resume_e2e.sh reuse this prebuilt binary
+      # (MTG_REUSE_PREBUILT below), so build it once up front.
+      - name: Build release binary (network feature)
+        run: cargo build --release --bin mtg --features network
+
+      - name: Run determinism_e2e (nextest)
+        run: cargo nextest run -p mtg-forge-rs --features network -E 'binary(determinism_e2e)'
+
+      # Dedicated steps for the two full-game determinism scripts (also
+      # auto-discovered by shell_script_tests, but run explicitly here so a
+      # regression gets its own named step instead of being buried). They reuse
+      # the binary built above instead of rebuilding it (mtg-578 tent-pole).
+      - name: Run commander E2E test
+        env:
+          MTG_REUSE_PREBUILT: "1"
+        run: bash tests/commander_e2e.sh
+
+      - name: Run snapshot/resume E2E test
+        env:
+          MTG_REUSE_PREBUILT: "1"
+        run: bash tests/snapshot_resume_e2e.sh
+
+  # Shell-script tests: 28 tests/*.sh full games. Previously the single biggest
+  # serial cost (~1046s) because each script's ensure_mtg_binary() ran a fresh
+  # `cargo build --release`. TENT-POLE FIX (mtg-578): build the binary ONCE in
+  # the step below, then set MTG_REUSE_PREBUILT=1 so tests/lib/test_helpers.sh
+  # reuses target/release/mtg instead of rebuilding per script.
+  #
+  # We deliberately run this binary SERIALLY (--test-threads=1). nextest's
+  # cross-binary/cross-test parallelism oversubscribes the 2 cores for these
+  # subprocess-heavy full-game scripts (each spawns server + clients), which
+  # *inflates* wall time rather than helping. Serial is faster + more stable
+  # here; the parallelism win comes from this job running concurrently with
+  # test-unit and test-determinism on a separate runner.
+  test-shell:
+    name: Test (shell_script_tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h
+
+      # Build the release+network binary ONCE. The shell scripts reuse it via
+      # MTG_REUSE_PREBUILT=1 (see tests/lib/test_helpers.sh::ensure_mtg_binary)
+      # instead of each running their own `cargo build`.
+      - name: Build release binary (network feature)
+        run: cargo build --release --bin mtg --features network
+
+      # Run the shell binary serially (--test-threads=1) and reuse the prebuilt
+      # mtg binary. nextest still discovers the 28 scripts as test cases.
+      - name: Run shell_script_tests (nextest, serial + binary reuse)
+        env:
+          MTG_REUSE_PREBUILT: "1"
+        run: cargo nextest run -p mtg-forge-rs --features network -E 'binary(shell_script_tests)' --test-threads=1
 
   wasm:
     name: WASM Build and E2E Tests

@@ -42,15 +42,29 @@ fi
 ensure_mtg_binary() {
     cd "$WORKSPACE_ROOT"
 
+    # Default binary location for the release+network build.
+    export MTG_BIN="${MTG_BIN:-$WORKSPACE_ROOT/target/release/mtg}"
+
+    # Fast path: reuse a binary that was already built by the caller. CI builds
+    # `mtg --release --features network` ONCE in the "Build release binary"
+    # step, then runs the whole shell-script test binary; having each of the 26
+    # scripts re-invoke `cargo build` was the single biggest contributor to the
+    # ~1046s serial shell-test time (mtg-578). When MTG_REUSE_PREBUILT=1 is set
+    # (CI does this) and the binary exists, skip the rebuild entirely. Local
+    # `make validate` runs do NOT set the flag, so they keep the always-fresh
+    # behaviour below.
+    if [ "${MTG_REUSE_PREBUILT:-}" = "1" ] && [ -x "$MTG_BIN" ]; then
+        echo "Reusing pre-built release binary (MTG_REUSE_PREBUILT=1): $MTG_BIN"
+        echo ""
+        return 0
+    fi
+
     # Always build release binary at start of each test
     # This ensures tests use latest code and provides consistent timing
     # Include network feature for client/server functionality
     echo "Building release binary..."
     cargo build --release --bin mtg --features network
     echo ""
-
-    # Set MTG_BIN for use in run_mtg_prebuilt
-    export MTG_BIN="$WORKSPACE_ROOT/target/release/mtg"
 
     # Verify binary exists
     if [ ! -f "$MTG_BIN" ]; then
