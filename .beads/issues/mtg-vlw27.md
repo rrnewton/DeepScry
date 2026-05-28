@@ -1,0 +1,21 @@
+---
+title: Native GUI deck editor + Custom Decks (Local) + trie prefix search
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T20:18:41.170304125+00:00
+updated_at: 2026-05-28T20:18:41.170304125+00:00
+---
+
+# Description
+
+[human-requested, 2026-05-28] Native GUI deck editor + custom decks for native_game.html (the flagship-trending UI).
+
+Context: we are trending toward the web NATIVE GUI (native_game.html, card-style) as the flagship over the TUI. The deck-editing experience there is missing.
+
+Scope:
+1. CUSTOM DECKS: the Deck Collection dropdown in native_game.html has no "Custom Decks (Local)" option (the TUI side has local-deck support). Add it.
+2. NATIVE-GUI DECK EDITOR: build a deck editor for the native GUI. It need NOT share as much code with the web TUI editor as the game ENGINE does, but it should share the same DESIGN/UX. Prefer the dynamic logic in Rust->wasm; TypeScript is acceptable if there's a real barrier to wasm.
+3. RESPONSIVE-AS-YOU-TYPE search: card names should be loaded in memory. The current deck editor appears to always do FULL FUZZY matching (slow). Implement TRIE PREFIX search (much faster), make PREFIX the default, and add a TOGGLE to turn on fuzzy matching.
+
+Relates to: native_game.html, the existing (TUI) deck editor, the per-set card index (mtg-6fsjb), and the card-name-in-memory loading (see mtg-i9na8 lazy-load work). Web/UI stream; not engine-critical; do after the reliability sequence + flagship work is unblocked.
