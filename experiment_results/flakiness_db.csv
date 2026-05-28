@@ -1,6 +1,1 @@
-timestamp,git_commit,git_depth,canonical_name,kind,runs,fails,timeouts,flakiness_pct,classification,issue,concurrency,notes
-2026-05-28T00:00:00Z,a7e0a196,2385,validate.network_e2e.01_rogue_rogerbrand.3,network_e2e,0,0,0,0.0,known-desync,mtg-vk4b7,1,seed: rogerbrand3/monored network desync (real engine bug); not yet stress-measured
-2026-05-28T00:00:00Z,a7e0a196,2385,validate.network_e2e.monored.13,network_e2e,0,0,0,0.0,known-desync,mtg-vk4b7,1,seed: monored seed13 paired with rogerbrand3 desync (mtg-vk4b7)
-2026-05-28T00:00:00Z,a7e0a196,2385,validate.network_e2e.white_weenie.7,network_e2e,0,0,0,0.0,known-desync,mtg-273,1,seed: white_weenie seed7 desync; excluded from multideck quick set (also tracked as mtg-nkd71)
-2026-05-28T00:00:00Z,a7e0a196,2385,validate.wasm_e2e.wasm_pack_install,wasm_e2e,0,0,0,0.0,true-nondeterministic,mtg-577,1,seed: wasm-pack install race during wasm build step (infra non-determinism, not engine)
-2026-05-28T00:00:00Z,a7e0a196,2385,validate.mtg-engine--determinism_e2e.all,cargo,0,0,0,0.0,timeout-under-load,,1,seed: determinism_e2e SIGTERM timeouts under contention -- ENV not a real flake; do not count as failures
+timestamp,git_commit,git_depth,cpu,canonical_name,kind,runs,fails,timeouts,flakiness_pct,classification,issue,concurrency,notes

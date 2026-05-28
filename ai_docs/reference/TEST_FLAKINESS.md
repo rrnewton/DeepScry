@@ -124,6 +124,7 @@ Columns:
 | `timestamp` | ISO-8601 UTC of the measurement |
 | `git_commit` | short SHA under test |
 | `git_depth` | `git rev-list --count HEAD` |
+| `cpu` | host CPU id, same convention as the benchmark dirs (`scripts/run_benchmark.sh get_cpu_name`, e.g. `AMD_Ryzen_7_9800X3D_8-Core_Processor`). Flakiness (esp. `timeout-under-load`) is core-count sensitive, so every row records its host. |
 | `canonical_name` | the `validate.*` name |
 | `kind` | one of `cargo`/`shell_script_tests`/`wasm_e2e`/`network_e2e`/`examples` |
 | `runs` | N repetitions |
@@ -156,15 +157,27 @@ redness real?" -- a run that is all `timeout-under-load` + `known-desync`
 
 ---
 
-## Seeded classifications (initial DB rows)
+## Known-flaker registry (NOT measurement rows)
 
-The DB ships pre-seeded with the currently-known flakers so the model is
-populated from day one (these rows are measurements/knowledge as of the seed
-commit, not fresh stress runs):
+This is the curated list of tests we *already know* are flaky and why. It is
+documentation, **not** DB data: the DB ships empty (header only) and only gets
+rows from actual stress runs (`flakiness_stress.py ... --record`). Seeding the
+CSV with `runs=0,fails=0,timeouts=0` rows was a bad idea — a zero-run row is
+not a measurement, it just pollutes `flakiness_report.py`'s
+latest-measurement-per-test logic with fake "0% flaky" data. Keep the knowledge
+here; let the CSV hold only real numbers.
+
+To turn a registry entry into real DB data, stress it and record with the
+matching `--classify`/`--issue`, e.g.:
+
+```
+scripts/flakiness_stress.py one validate.network_e2e.01_rogue_rogerbrand.3 \
+    --runs 20 --concurrency 1 --classify known-desync --issue mtg-vk4b7 --record
+```
 
 | canonical_name | class | issue | why |
 |---|---|---|---|
-| `validate.network_e2e.rogerbrand3.3` + `validate.network_e2e.monored.13` | `known-desync` | mtg-vk4b7 | rogerbrand3 / monored network desync (real engine bug) |
+| `validate.network_e2e.01_rogue_rogerbrand.3` + `validate.network_e2e.monored.13` | `known-desync` | mtg-vk4b7 | rogerbrand3 / monored network desync (real engine bug) |
 | `validate.network_e2e.white_weenie.7` | `known-desync` | mtg-273 | white_weenie seed 7 desync; excluded from multideck quick set |
 | `validate.wasm_e2e.<wasm-pack-install>` (infra) | `true-nondeterministic` | mtg-577 | wasm-pack install race during the wasm build step |
 | `validate.mtg-engine--determinism_e2e.*` | `timeout-under-load` | (none) | SIGTERM timeouts under contention -- NOT a real flake |

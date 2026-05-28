@@ -28,7 +28,9 @@ import argparse
 import concurrent.futures
 import csv
 import datetime
+import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -41,7 +43,7 @@ NC = "\033[0m"
 
 DB_PATH_REL = "experiment_results/flakiness_db.csv"
 DB_HEADER = [
-    "timestamp", "git_commit", "git_depth", "canonical_name", "kind",
+    "timestamp", "git_commit", "git_depth", "cpu", "canonical_name", "kind",
     "runs", "fails", "timeouts", "flakiness_pct", "classification",
     "issue", "concurrency", "notes",
 ]
@@ -81,6 +83,22 @@ def git_depth():
                               capture_output=True, text=True, check=True).stdout.strip()
     except Exception:
         return "0"
+
+
+def cpu_name():
+    """CPU identifier matching the benchmark dir convention (see
+    scripts/run_benchmark.sh get_cpu_name): /proc/cpuinfo model name, spaces
+    -> '_', strip anything but [A-Za-z0-9_-]. Flakiness is CPU-/core-count-
+    sensitive (timeout-under-load), so every measurement records its host."""
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    raw = line.split(":", 1)[1].strip()
+                    return re.sub(r"[^A-Za-z0-9_-]", "", raw.replace(" ", "_"))
+    except Exception:
+        pass
+    return "unknown_cpu"
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +209,48 @@ NETWORK_SCENARIOS = [
 ]
 
 
-def discover_names():
+def discover_cargo_names():
+    """Enumerate unit + integration test names via
+    `cargo nextest list --message-format json`.
+
+    NOTE: this COMPILES the test binaries (can take minutes cold). Returns []
+    if nextest is unavailable or the build fails — callers degrade gracefully.
+    Maps each nextest suite to the canonical cargo name
+    `validate.<pkg>--<binary>.<module::test>` (binary == "lib" for unit tests),
+    which round-trips through decode() -> `cargo test -p <pkg> --test <bin>`.
+    """
+    try:
+        r = subprocess.run(
+            ["cargo", "nextest", "list", "--workspace", "--features", "network",
+             "--message-format", "json"],
+            cwd=ROOT, capture_output=True, text=True, timeout=1200)
+        if r.returncode != 0 or not r.stdout.strip():
+            return []
+        data = json.loads(r.stdout)
+    except Exception:
+        return []
     names = []
+    for suite in data.get("rust-suites", {}).values():
+        pkg = suite.get("package-name", "")
+        kind = suite.get("kind", "")
+        if kind == "lib":
+            binary = "lib"
+        elif kind in ("test", "integration"):
+            binary = suite.get("binary-name", "")
+        else:
+            continue  # skip bins/benches (the decoder targets lib + --test)
+        if not pkg or not binary:
+            continue
+        for test in suite.get("testcases", {}):
+            names.append(f"validate.{pkg}--{binary}.{test}")
+    return names
+
+
+def discover_names(include_cargo=True):
+    names = []
+    # unit + integration tests (compiles; skipped with --quick)
+    if include_cargo:
+        names += sorted(discover_cargo_names())
     # shell scripts
     for sh in sorted((ROOT / "tests").glob("*.sh")):
         names.append(f"validate.shell_script_tests.{sh.stem}")
@@ -295,8 +353,8 @@ def record(name, res, issue="", notes=""):
     ensure_db()
     row = [
         datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        git_sha(), git_depth(), name, res["kind"], res["runs"], res["fails"],
-        res["timeouts"], res["pct"], res["classification"], issue,
+        git_sha(), git_depth(), cpu_name(), name, res["kind"], res["runs"],
+        res["fails"], res["timeouts"], res["pct"], res["classification"], issue,
         res["concurrency"], notes,
     ]
     with db_path().open("a", newline="") as f:
@@ -333,12 +391,17 @@ def main():
     sa.add_argument("--timeout", type=int, default=300)
     sa.add_argument("--record", action="store_true")
 
-    sub.add_parser("list", help="list known canonical names")
+    ls = sub.add_parser("list", help="list known canonical names")
+    ls.add_argument("--quick", action="store_true",
+                    help="skip cargo unit/integration tests (no compile)")
 
     args = ap.parse_args()
 
     if args.cmd == "list":
-        for n in discover_names():
+        if not args.quick:
+            cprint(CYAN, "# enumerating cargo unit/integration tests "
+                         "(compiles test binaries; use --quick to skip)...")
+        for n in discover_names(include_cargo=not args.quick):
             print(n)
         return
 
