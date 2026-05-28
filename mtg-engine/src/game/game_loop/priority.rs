@@ -2924,6 +2924,17 @@ impl<'a> GameLoop<'a> {
                     // all). Route through the controller protocol for
                     // network-safe operation.
                         || matches!(e, crate::core::Effect::Clone { .. })
+                    // mtg-vk4b7: SearchLibrary tutors (Demonic Tutor, etc.) let
+                    // the searcher pick a card from their own library. The naive
+                    // execute_effect path picks `library_cards[0]` by iterating
+                    // and calling `cards.try_get()` — which works on the server
+                    // (all cards materialized) but returns the WRONG card (or
+                    // None → no move) on the shadow client, whose own library
+                    // cards are reserved-but-unrevealed. Route through
+                    // choose_from_library_with_hook so the server picks the
+                    // CardId and the client uses the server-authoritative
+                    // library_search_result.
+                        || matches!(e, crate::core::Effect::SearchLibrary { .. })
                 });
                 (balances, needs_interactive, card.svars.clone())
             } else {
@@ -3617,6 +3628,126 @@ impl<'a> GameLoop<'a> {
                                 .gamelog(&format!("{} enters the battlefield without copying", src_name));
                         }
                     }
+                    // mtg-vk4b7: SearchLibrary tutor (Demonic Tutor, etc.).
+                    //
+                    // The searcher picks a card matching `card_type_filter` from
+                    // their OWN library and moves it to `destination`, then
+                    // (optionally) shuffles. The legacy execute_effect path picks
+                    // `library_cards[0]` by iterating with `cards.try_get()`.
+                    // That works on the server (every library card is
+                    // materialized) but on the shadow client the searcher's own
+                    // library is reserved-but-unrevealed, so `try_get` returns
+                    // None for every card → `found_card = None` → no move. The
+                    // server moves a card (library -1, hand +1) while the client
+                    // moves nothing → FATAL state-hash mismatch on the next
+                    // choice (hand/library sizes differ by one).
+                    //
+                    // Fix: route the pick through `choose_from_library_with_hook`
+                    // (the same mechanism cycling/Dig/tutoring use). On the
+                    // server the controller picks the CardId; the network handler
+                    // sends `library_search_result` + a `CardRevealed(Searched)`
+                    // so the client materializes and moves the exact same CardId.
+                    // Both sides then run identical move_card + shuffle_library.
+                    crate::core::Effect::SearchLibrary {
+                        player,
+                        card_type_filter,
+                        destination,
+                        enters_tapped,
+                        shuffle,
+                    } => {
+                        use crate::zones::Zone;
+                        // The parsed effect's `player` is a placeholder (PlayerId
+                        // 0) when the card script has no explicit Defined$ — it
+                        // means "the controller of this spell" (e.g. Demonic
+                        // Tutor searches the CASTER's own library). The regular
+                        // resolve path resolves this in its log_effect_execution
+                        // mapping; we must do the same here, or the search would
+                        // wrongly target player 0's library.
+                        let search_player = if player.is_placeholder() { spell_owner } else { *player };
+
+                        // Build the set of matching library CardIds. On the
+                        // server this is the real, filtered library; on the
+                        // shadow client the searcher's library cards are
+                        // unrevealed (`try_get` → None), so this is empty and
+                        // choose_from_library_with_hook falls back to the
+                        // server-authoritative library_search_result.
+                        let library_cards: SmallVec<[CardId; 8]> = self
+                            .game
+                            .get_player_zones(search_player)
+                            .map(|z| z.library.cards.iter().copied().collect())
+                            .unwrap_or_default();
+                        let valid_cards: SmallVec<[CardId; 8]> = library_cards
+                            .iter()
+                            .copied()
+                            .filter(|&card_id| {
+                                self.game.cards.try_get(card_id).is_some_and(|card| {
+                                    crate::game::state::GameState::card_matches_search_filter(card, card_type_filter)
+                                })
+                            })
+                            .collect();
+
+                        // Note: the "searches ... library for a ... card" gamelog
+                        // is emitted by the trailing display-logging loop at the
+                        // end of this method (log_effect_execution), which now
+                        // resolves the SearchLibrary `player` placeholder.
+
+                        // Sync reveals so the shadow client has up-to-date zones
+                        // before the choice is requested.
+                        self.push_reveals(search_player);
+                        if let Some(opp) = self.game.get_other_player_id(search_player) {
+                            self.push_reveals(opp);
+                        }
+                        self.sync_to_action();
+
+                        let prior_log_size = self.game.logger.log_count();
+                        let controller: &mut dyn PlayerController = if search_player == controller1.player_id() {
+                            controller1
+                        } else {
+                            controller2
+                        };
+                        let pick = self.choose_from_library_with_hook(controller, search_player, &valid_cards);
+                        let chosen_card_opt = match pick {
+                            crate::game::controller::ChoiceResult::Ok(v) => v,
+                            crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                            }
+                            crate::game::controller::ChoiceResult::ExitGame => {
+                                return Err(crate::MtgError::InvalidAction(
+                                    "Game exit requested during library search".into(),
+                                ));
+                            }
+                            crate::game::controller::ChoiceResult::Error(e) => {
+                                return Err(crate::MtgError::InvalidAction(format!(
+                                    "Controller error during library search: {e}"
+                                )));
+                            }
+                            crate::game::controller::ChoiceResult::UndoRequest(_) => None,
+                        };
+
+                        // Log the choice for snapshot/replay determinism. Index
+                        // is into the local valid_cards (None == declined / not
+                        // found, which is legal in MTG for non-mandatory and even
+                        // mandatory searches per CR 701.19c "may fail to find").
+                        let chosen_index = chosen_card_opt.and_then(|c| valid_cards.iter().position(|&v| v == c));
+                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                        self.log_choice_point(search_player, Some(replay_choice), prior_log_size);
+
+                        // Move the chosen card from library to destination. The
+                        // CardRevealed(Searched) the server sends for this CardId
+                        // materializes it in the client shadow before move_card.
+                        if let Some(chosen_card) = chosen_card_opt {
+                            self.game
+                                .move_card(chosen_card, Zone::Library, *destination, search_player)?;
+                            if *destination == Zone::Battlefield && *enters_tapped {
+                                let _ = self.game.tap_permanent(chosen_card);
+                            }
+                        }
+
+                        // Shuffle the library if required (MTG CR 701.19b).
+                        if *shuffle {
+                            self.game.shuffle_library(search_player);
+                        }
+                    }
                     // All other effects: execute normally
                     _ => {
                         if let Err(e) = self.game.execute_effect(effect) {
@@ -3690,6 +3821,23 @@ impl<'a> GameLoop<'a> {
                         remember_discarded: *remember_discarded,
                         optional: false,
                         remember_discarding_players: false,
+                    },
+                    // mtg-vk4b7: resolve the SearchLibrary `player` placeholder
+                    // for display, mirroring the regular resolve path's mapping
+                    // (otherwise the log would name player 0 instead of the
+                    // actual searcher).
+                    Effect::SearchLibrary {
+                        player,
+                        card_type_filter,
+                        destination,
+                        enters_tapped,
+                        shuffle,
+                    } if player.is_placeholder() => Effect::SearchLibrary {
+                        player: card_owner,
+                        card_type_filter: card_type_filter.clone(),
+                        destination: *destination,
+                        enters_tapped: *enters_tapped,
+                        shuffle: *shuffle,
                     },
                     Effect::CreateToken {
                         controller,

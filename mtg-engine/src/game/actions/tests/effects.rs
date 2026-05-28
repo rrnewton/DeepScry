@@ -1475,6 +1475,86 @@ mod tests {
         );
     }
 
+    /// mtg-vk4b7 regression (parser shape): Demonic Tutor's
+    /// `A:SP$ ChangeZone | Origin$ Library | Destination$ Hand | ChangeType$ Card`
+    /// must parse into a single `Effect::SearchLibrary` so the game loop routes
+    /// it through `choose_from_library_with_hook` (network-safe), instead of the
+    /// naive `execute_effect` path that picks `library_cards[0]` and desyncs the
+    /// shadow client (whose own library is reserved-but-unrevealed).
+    #[test]
+    fn test_demonic_tutor_parses_to_search_library() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        let tutor_id = load_test_card(&mut game, "Demonic Tutor", p1_id).expect("load Demonic Tutor");
+        let tutor = game.cards.get(tutor_id).unwrap();
+
+        let search_effects: Vec<&Effect> = tutor
+            .effects
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Effect::SearchLibrary {
+                        destination: crate::zones::Zone::Hand,
+                        ..
+                    }
+                )
+            })
+            .collect();
+        assert_eq!(
+            search_effects.len(),
+            1,
+            "Demonic Tutor should parse to exactly one SearchLibrary(->Hand) effect, got: {:?}",
+            tutor.effects
+        );
+    }
+
+    /// mtg-vk4b7 regression (network determinism): a forced (engine-chosen)
+    /// `DiscardCards` of a fixed count must select cards by CardId, NOT by card
+    /// properties (CMC / land), so the choice is information-independent across
+    /// the server (full state) and a client's shadow state (opponent hand cards
+    /// reserved-but-unrevealed). Without this, the shadow's property-based
+    /// heuristic saw an empty candidate set and discarded nothing while the
+    /// server discarded a card → FATAL hand/graveyard desync (Hypnotic Specter
+    /// "discards a card at random" trigger). We assert the LOWEST-CardId card is
+    /// the one discarded, since that is the deterministic rule both sides apply.
+    #[test]
+    fn test_forced_discard_picks_lowest_card_id_deterministically() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Put three cards into P1's hand with known, out-of-order CardIds so the
+        // "lowest CardId" rule is distinguishable from "first inserted" / "last".
+        let c_hi = load_test_card(&mut game, "Mountain", p1_id).expect("load Mountain");
+        let c_lo = load_test_card(&mut game, "Swamp", p1_id).expect("load Swamp");
+        let c_mid = load_test_card(&mut game, "Forest", p1_id).expect("load Forest");
+        for cid in [c_hi, c_lo, c_mid] {
+            game.get_player_zones_mut(p1_id).unwrap().hand.add(cid);
+        }
+        let expected = [c_hi, c_lo, c_mid].into_iter().min_by_key(|id| id.as_u32()).unwrap();
+
+        game.execute_effect(&Effect::DiscardCards {
+            player: p1_id,
+            count: 1,
+            remember_discarded: false,
+            optional: false,
+            remember_discarding_players: false,
+        })
+        .expect("discard executes");
+
+        let gy = &game.get_player_zones(p1_id).unwrap().graveyard;
+        assert_eq!(gy.cards.len(), 1, "exactly one card discarded");
+        assert!(
+            gy.contains(expected),
+            "forced discard must remove the lowest-CardId card ({:?}) for network determinism; graveyard={:?}",
+            expected,
+            gy.cards
+        );
+        // And the lowest-CardId card must no longer be in hand.
+        assert!(!game.get_player_zones(p1_id).unwrap().hand.contains(expected));
+    }
+
     /// Test Balance spell effect - equalizes creatures across all players
     ///
     /// Balance is a classic white sorcery that equalizes lands, creatures, and hands.

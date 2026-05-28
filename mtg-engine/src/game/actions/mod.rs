@@ -2928,10 +2928,33 @@ impl GameState {
                         self.remembered_players.push(*player);
                     }
                 } else {
-                    // Fixed count: AI chooses which cards to discard
+                    // Fixed count: forced discard chosen by the engine (e.g.
+                    // Hypnotic Specter's "discards a card at random" trigger, or
+                    // any non-interactive "discards a card" effect).
+                    //
+                    // mtg-vk4b7: This MUST be information-independent for network
+                    // determinism. The previous heuristic (`choose_card_to_discard`)
+                    // scored cards by card properties (lands / CMC), which requires
+                    // the card identity to be materialized. On the server every
+                    // hand card is materialized, but on a client's shadow state the
+                    // OPPONENT's hand cards are reserved-but-unrevealed
+                    // (`cards.get` → Err), so the heuristic saw an empty candidate
+                    // set and discarded nothing — while the server discarded a
+                    // card. Result: hand/graveyard counts diverged → FATAL desync
+                    // (same hidden-info class as the library-search bug).
+                    //
+                    // Fix: select deterministically by CardId, which is synced
+                    // across server + both clients (the hand zone's CardId list is
+                    // identical even when identities are hidden). Lowest CardId is
+                    // an arbitrary-but-stable rule; both views pick the same card,
+                    // and move_card's Hand→Graveyard auto-reveal materializes it on
+                    // the shadow. This applies to all forced discards (local and
+                    // network) so behaviour stays identical across modes.
                     let mut did_discard = false;
                     for _ in 0..*count {
-                        let card_to_discard = self.choose_card_to_discard(*player)?;
+                        let card_to_discard = self
+                            .get_player_zones(*player)
+                            .and_then(|zones| zones.hand.cards.iter().copied().min_by_key(|id| id.as_u32()));
                         if let Some(card_id) = card_to_discard {
                             did_discard = true;
                             if *remember_discarded {
