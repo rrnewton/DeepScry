@@ -102,7 +102,7 @@ Branch rules:
   build green with `cargo build --release --features network`. The
   `new_worktree.sh` script enforces this on every invocation.
 - Bug-fix branches require an MTG rules review before merging into
-  `integration`; see `mtg-forge-rs/.claude/skills/mtg-rules-review.md`.
+  `integration`; see `mtg-forge-rs/.claude/skills/mtg-rules-review/SKILL.md`.
 
 Push policy:
 
