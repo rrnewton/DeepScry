@@ -7,7 +7,7 @@ gameplay research by having a strong foundation for rapid game tree exploration.
 Features:
 
  - A mostly automatic mana-engine, and engine sanity checks on valid actions, reduce the game to a tree of 0..N choices among valid actions.
- - The high-performance engine allows realistic decks to run 50K turn/sec on one core (>3M choices/sec), when playing random choices. This is designed to allow many MCTS roll-outs per second. 
+ - The high-performance engine allows realistic decks to run 50K turn/sec on one core on an AMD 9800X3D (>3M choices/sec), when playing random choices. This is designed to allow many MCTS roll-outs per second. 
  - Networked play is a replicated state-machine deterministic simulation. Clients and server all compute the same engine state, modulo information hiding.  Hacked clients cannot see hidden information, such as the opponents hand.
  - Games can be snapshot/restored in the middle, and any game can be undo-rewound to the beginning.
  - Randomized testing ensures that all the different game modes (native machine code, WASM, networked, local) all compute the same game-transcript from the same starting conditions and PRNG seeds, as well as deterministic intermediate states.
@@ -107,6 +107,6 @@ scripts/              # Build and benchmark scripts
 ## Related Documentation
 
 - `CLAUDE.md` - Development guidelines, coding conventions, workflow
-- `PROJECT_VISION.md` - Architecture goals and design principles
+- `PROJECT_VISION.md` - Original project vision (historical; see OPTIMIZATION.md for current performance design)
 - `OPTIMIZATION.md` - Performance optimization strategies
 - `docs/HOWTO_AGENTPLAY+REPRODUCERS.md` - Running AI games for testing

@@ -315,4 +315,4 @@ This module closely follows Java Forge's architecture:
 - `src/loader/` - Loading card definitions
 - `ai_docs/CONTROLLER_DESIGN.md` - Controller architecture
 - `OPTIMIZATION.md` - Performance optimization guide
-- `PROJECT_VISION.md` - Overall project design
+- `PROJECT_VISION.md` - Original project vision (historical)

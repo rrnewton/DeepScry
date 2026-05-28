@@ -7,7 +7,7 @@ This document contains the development guidelines and instructions for the proje
 **CRITICAL**: DRY: do not duplicate code. Always test changes and present evidence.
 NEVER run `git clean -fxd` in this repo or any submodule, that would destroy valuable container configuration.
 
-Read the PROJECT_VISION.md document.
+See PROJECT_VISION.md for the *original* project vision (historical — it carries an out-of-date warning; OPTIMIZATION.md and README.md are the current authority for perf + design).
 
 For build instructions, feature flags, and binary entry points, see **README.md**.
 
@@ -36,7 +36,7 @@ Delete trailing spaces. Don't leave empty lines that consist only of whitespace.
 
 Add README.md files for every major subdirectory/subsystem.  For example `src/core`, `src/game`, etc.
 
-Read the PROJECT_VISION description of coding conventions we should follow for high-performance Rust (unboxing, minimizing allocation, etc). In particular, adhere to the below programming patterns / avoid anti-patterns, which generally fall under the principle of "zero copy":
+Follow the high-performance Rust coding conventions in **OPTIMIZATION.md** (unboxing, minimizing allocation, etc). In particular, adhere to the below programming patterns / avoid anti-patterns, which generally fall under the principle of "zero copy":
 
 - Avoid clone: instead take a temporary reference to the object and manage lifetimes appropriately.
 - Avoid collect: instead take an iterator with references to the original collection without copying.
@@ -206,7 +206,7 @@ require a serialization point to assign without conflict. We use BOTH, with the
 Workflow: Commits and Version Control
 ================================================================================
 
-Commit to git as described in the PROJECT_VISION.
+Commit to git in small, coherent units (see the Pre-Commit and Branches sections below).
 Our submodules in this directory should stay pinned to the latest upstream branch:
  - forge-java: master branch
  - .claude_template: mtg-rs branch

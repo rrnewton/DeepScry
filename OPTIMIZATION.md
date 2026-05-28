@@ -164,7 +164,7 @@ use smallvec::SmallVec;
 type CounterList = SmallVec<[Counter; 4]>;
 ```
 
-**Already in use**: The project already uses `SmallVec` for counters (see PROJECT_VISION.md).
+**Already in use**: The project already uses `SmallVec` for counters (originally noted in PROJECT_VISION.md).
 
 ### 9. Prefer Unboxed Enums Over `Vec<Box<dyn Trait>>`
 
@@ -477,7 +477,7 @@ cargo bench --no-default-features
 
 ### Rewind/Undo System
 
-The PROJECT_VISION.md describes plans for an undo log system to enable efficient game tree search. This will be critical for AI development and should be designed with zero-copy principles:
+The original PROJECT_VISION.md described plans for an undo log system to enable efficient game tree search. This will be critical for AI development and should be designed with zero-copy principles:
 
 - Use unboxed enum for `GameAction` variants
 - Store in contiguous `Vec` or arena
