@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T15:17:36.307852161+00:00
+updated_at: 2026-05-28T13:30:46.309000659+00:00
 ---
 
 # Description
@@ -33,7 +33,7 @@ Track architectural improvements, API design, and testing infrastructure.
 
 **Game format support:**
 - Standard 60-card constructed: fully supported
-- Commander (EDH): fully supported (mtg-4s1lq FEATURE COMPLETE 2026-04-01)
+- Commander (EDH): fully supported (mtg-274 FEATURE COMPLETE 2026-04-01)
   - Command zone, commander tax, zone replacement, commander damage tracking
   - Planeswalker loyalty system: costs, counters, 0-loyalty death SBA, once-per-turn rule
 

@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-04T12:24:25.740557762+00:00
+updated_at: 2026-05-28T13:30:42.789461168+00:00
 ---
 
 # Description
@@ -19,13 +19,13 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - mtg-147: Unhandled Affected$ selectors tracking (270 Unknown Affected$ remaining)
 
 **ETB & Replacement Effects:**
-- mtg-zeuy0: Thriving Grove doesn't enter tapped or prompt for color choice (affects all Thriving lands)
+- mtg-206: Thriving Grove doesn't enter tapped or prompt for color choice (affects all Thriving lands)
 
 **Effect Bugfixes (incoming):**
-- mtg-e78d1f: Bazaar of Baghdad SubAbility chain fix in parse_activated_abilities()
-- mtg-fd5bf7: ExtraTurn effect (Time Walk) - AddTurn ApiType + extra_turns queue
-- mtg-9915fe: DestroyAll effect (Nevinyrral's Disk) - filter-based mass destroy
-- mtg-66e8cd: Replace silent no-ops with Effect::Unimplemented for visible warnings
+- mtg-363: Bazaar of Baghdad SubAbility chain fix in parse_activated_abilities()
+- mtg-364: ExtraTurn effect (Time Walk) - AddTurn ApiType + extra_turns queue
+- mtg-365: DestroyAll effect (Nevinyrral's Disk) - filter-based mass destroy
+- mtg-366: Replace silent no-ops with Effect::Unimplemented for visible warnings
 - ApiType::Attach now handled in params_to_effect() (was special-cased only in extract_effects_from_svar)
 
 **Keywords:**
@@ -43,7 +43,7 @@ Track implementation of MTG game features including keywords, abilities, card ef
 - SubAbility chaining enables color change, protection, discard filtering
 - Examples: Caldera Kavu, Spiritmonger, Crosis the Purger, Skrelv
 - Tests: 4 new tests (unit + integration)
-- Issue: mtg-dxjtq (CLOSED)
+- Issue: mtg-275 (CLOSED)
 
 **Variable P/T:**
 - ✅ Parsing implemented (X, Y, Z, AffectedX, Count$ references)
@@ -140,7 +140,7 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 
 ## AB$ Proliferate Effect (2026-04-03_#2067(pending))
 
-**Full Proliferate implementation (89 card files, mtg-mr0v1 CLOSED):**
+**Full Proliferate implementation (89 card files, mtg-276 CLOSED):**
 - ✅ AB$ Proliferate: choose any number of permanents with counters, give each one additional counter of each kind (CR 701.34a)
 - No parameters needed - pure effect (simplest AB$ type)
 - AI heuristic: classified as always-beneficial (like PutCounter, MultiplyCounter)
@@ -162,7 +162,7 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 
 ## AB$ AnimateAll Effect (2026-04-03_#2069(f772a07a))
 
-**Mass animation implementation (26 card files, mtg-tquvf CLOSED):**
+**Mass animation implementation (26 card files, mtg-277 CLOSED):**
 - ✅ AB$ AnimateAll: set base P/T and/or grant keywords to all matching permanents
 - ValidCards$ filter: Creature.YouCtrl, Planeswalker.YouCtrl, Permanent.OppCtrl, etc.
 - Optional Power$/Toughness$ base P/T setting + Keywords$ granting
@@ -172,7 +172,7 @@ Checked up-to-date as of 2026-03-26_#1997(bba0fbb0) - 942 tests passing
 
 ## AB$ PreventDamage Effect (2026-04-03_#2071(pending))
 
-**Damage prevention shield implementation (81 card files, mtg-rhqes CLOSED):**
+**Damage prevention shield implementation (81 card files, mtg-278 CLOSED):**
 - ✅ AB$ PreventDamage: create damage prevention shield on target (CR 615.1)
 - damage_prevention field on Card and Player, cleared at cleanup step
 - Prevention checked in deal_damage() and deal_damage_to_creature()

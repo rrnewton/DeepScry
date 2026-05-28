@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T15:18:13.625816317+00:00
+updated_at: 2026-05-28T13:30:40.008725832+00:00
 ---
 
 # Description
@@ -23,13 +23,13 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-121: Fancy TUI enhancements and polish
 - mtg-143: Missing player choice opportunities tracking
 - mtg-147: Affected$ selector parsing improvements
-- mtg-hcahb: Web GUI implementation with shared TUI/GUI architecture
-- mtg-m7v83: Upstream Java Forge card script issues (PRs to upstream)
-- mtg-6n8rl: Avatar set mechanics (Waterbend, Airbend) support
-- mtg-0iad2: Ryan Avatar Deck compatibility testing
-- mtg-5hvly: Gabriel Avatar Deck compatibility testing
-- mtg-4s1lq: Commander format support (FEATURE COMPLETE 2026-04-01)
-- mtg-fmm68: Julian Avatar Deck Compatibility
+- mtg-187: Web GUI implementation with shared TUI/GUI architecture
+- mtg-194: Upstream Java Forge card script issues (PRs to upstream)
+- mtg-200: Avatar set mechanics (Waterbend, Airbend) support
+- mtg-213: Ryan Avatar Deck compatibility testing
+- mtg-230: Gabriel Avatar Deck compatibility testing
+- mtg-274: Commander format support (FEATURE COMPLETE 2026-04-01)
+- mtg-235: Julian Avatar Deck Compatibility
 
 **Current status as of 2026-04-03_#2060(79616d6b):**
 - Tests: 924 unit/integration tests passing
@@ -42,7 +42,7 @@ This is the main tracking issue for MTG Forge Rust development.
 - mtg-159 (Spiderman draft decks) CLOSED - 20/20 games flawless
 - Commander format: fully supported with command zone, tax, planeswalker loyalty
 - X-cost spell casting implemented (mtg-113)
-- AB$ ChooseColor effect (30 cards, mtg-dxjtq CLOSED)
+- AB$ ChooseColor effect (30 cards, mtg-275 CLOSED)
 
 **Recent accomplishments (2026-04-01 to 2026-04-03):**
 - feat: AB$ ChooseColor effect type (30 cards) - AI picks prominent color

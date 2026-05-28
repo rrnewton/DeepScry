@@ -4,7 +4,7 @@ status: open
 priority: 0
 issue_type: task
 created_at: 2025-10-27T09:12:20+00:00
-updated_at: 2026-05-14T14:16:46.778693579+00:00
+updated_at: 2026-05-28T13:30:38.424296577+00:00
 closed_at: 2025-10-28T00:55:30+00:00
 ---
 
@@ -181,7 +181,7 @@ harness. Coverage:
 - Phase 3: 3 stop points x bincode snapshot, smoke (turn-count match vs baseline)
 - Phase 4: resume with --override-p2 random, smoke
 
-Also fixed a pre-existing crash in mtg resume: see new bug mtg-cc4837.
+Also fixed a pre-existing crash in mtg resume: see new bug mtg-414.
 The bug (Cache exists after rebuild panic) had been hiding because the old
 disabled stress test (tests/disabled/run_stress_tests.sh) used the
 --stop-every CLI flag which has since been renamed to --stop-on-choice, so

@@ -6,7 +6,7 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-01-02T20:06:08.227468534+00:00
+updated_at: 2026-05-28T13:30:46.363865215+00:00
 ---
 
 # Description
@@ -19,8 +19,8 @@ Track user-facing gameplay features and interaction improvements.
 - ✅ mtg-27: Show available actions (numbered list, rich text input) (CLOSED)
 - ✅ mtg-28: Better formatting and colors (Fancy TUI, 4369-line renderer) (CLOSED)
 - ✅ mtg-29: Game state visualization (battlefield layout, combat, stack) (CLOSED)
-- mtg-p9svf: Agentplay CLI turn sequence and display bugs
-- mtg-el58f: Combat attack action not available during Declare Attackers phase
+- mtg-204: Agentplay CLI turn sequence and display bugs
+- mtg-205: Combat attack action not available during Declare Attackers phase
 
 **Advanced gameplay mechanics - ALL COMPLETE:**
 - ✅ mtg-30: Stack interaction (instants, counterspells, priority) (CLOSED)
