@@ -77,6 +77,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::AddTurn { .. }
         | Effect::AddPhase { .. }
         | Effect::ChooseColor { .. }
+        | Effect::Clone { .. }
         | Effect::SelfExileFromStack { .. }
         | Effect::Unimplemented { .. }
         | Effect::UnlessCostWrapper { .. } => false,
@@ -186,6 +187,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
+            | Effect::Clone { .. }
             | Effect::SelfExileFromStack { .. }
             | Effect::Unimplemented { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
@@ -2638,6 +2640,96 @@ impl GameState {
             // No resolution needed - return clone of original
             _ => effect.clone(),
         }
+    }
+
+    /// Apply a Clone effect (CR 707): rewrite the copiable values of `source`
+    /// so it becomes a copy of `copy_target`, then layer the `add_types` card
+    /// types on top (e.g. Copy Artifact stays an Enchantment in addition to the
+    /// copied artifact's types).
+    ///
+    /// Per CR 707.2 the *copiable values* of an object are its printed values
+    /// (name, mana cost, color, card types, subtypes, supertypes, P/T, and
+    /// abilities) as modified by other copy effects — but NOT counters, status
+    /// (tapped/flipped), control, attachments, or other non-copy effects. We
+    /// obtain those copiable values by re-instantiating the target's
+    /// `CardDefinition`, which yields a fresh Card with the printed
+    /// characteristics and abilities and none of the per-instance state. We
+    /// then transplant the copiable fields onto `source`, preserving its
+    /// identity (id / owner / controller) and per-instance state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either card is not found.
+    pub fn apply_clone(&mut self, source: CardId, copy_target: CardId, add_types: &[CardType]) -> Result<()> {
+        // Build a fresh instance from the target's definition to get the
+        // copiable values (CR 707.2). Using the definition (rather than the
+        // live Card) deliberately drops counters/damage/tapped/attachments and
+        // any non-copy continuous effects on the original.
+        let (copy_template, target_name) = {
+            let target = self.cards.get(copy_target)?;
+            (target.definition.clone(), target.name.clone())
+        };
+        let source_owner = self.cards.get(source)?.owner;
+        // Instantiate under the source's owner so controller-dependent
+        // placeholders resolve sensibly; identity is overwritten below.
+        let template = copy_template.instantiate(source, source_owner);
+
+        let source_name = self.cards.get(source)?.name.clone();
+
+        let source_card = self.cards.get_mut(source)?;
+
+        // --- Transplant copiable characteristics (CR 707.2) ---
+        source_card.name = template.name.clone();
+        source_card.mana_cost = template.mana_cost;
+        source_card.types = template.types.clone();
+        source_card.subtypes = template.subtypes.clone();
+        source_card.colors = template.colors.clone();
+        source_card.set_base_power(template.base_power());
+        source_card.set_base_toughness(template.base_toughness());
+        source_card.text = template.text.clone();
+        source_card.is_legendary = template.is_legendary;
+        source_card.keywords = template.keywords.clone();
+        source_card.activated_abilities = template.activated_abilities.clone();
+        source_card.static_abilities = template.static_abilities.clone();
+        source_card.svars = template.svars.clone();
+        // Replace the printed definition so future re-instantiation / display /
+        // mana-production all reflect the copied card (and any copy-of-a-copy
+        // chains use the copied definition as their base).
+        source_card.definition = template.definition.clone();
+        // Triggers are copiable too, but the cloning card's *own* ETB-replacement
+        // (the Clone trigger) has already fired; the copied permanent should run
+        // the target's triggers going forward.
+        source_card.triggers = template.triggers;
+
+        // --- Layer the AddTypes$ card types on top (CR 707.2 + 613) ---
+        // Copy Artifact: `AddTypes$ Enchantment` — the copy is an Enchantment in
+        // addition to the copied artifact's types.
+        for &added in add_types {
+            if !source_card.types.contains(&added) {
+                source_card.types.push(added);
+            }
+        }
+
+        // Refresh the type-flag cache so is_artifact()/is_enchantment()/etc.
+        // reflect the new (copied + added) type line.
+        source_card.definition.cache.update_from_types(&source_card.types);
+        source_card
+            .definition
+            .cache
+            .update_from_subtypes(&source_card.subtypes, source_card.name.as_str());
+
+        let added_desc = if add_types.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<&str> = add_types.iter().map(|t| t.as_str()).collect();
+            format!(" (also {})", names.join(" "))
+        };
+        self.logger.gamelog(&format!(
+            "{} enters the battlefield as a copy of {}{}",
+            source_name, target_name, added_desc
+        ));
+
+        Ok(())
     }
 
     /// Execute a single effect
@@ -5210,6 +5302,20 @@ impl GameState {
                 }
                 self.logger
                     .gamelog(&format!("AddPhase: {} additional combat phase(s) this turn", count));
+            }
+            Effect::Clone { .. } => {
+                // Clone (Copy Artifact, etc.) requires a controller decision
+                // ("you may" + which permanent to copy), so it is resolved by
+                // the interactive path in priority.rs::resolve_clone_effect.
+                // Reaching execute_effect means that interception was bypassed
+                // (e.g. a non-interactive resolution path) — log rather than
+                // silently entering as a vanilla permanent so the gap is visible.
+                log::warn!(
+                    target: "actions",
+                    "Effect::Clone reached execute_effect without controller interception; \
+                     permanent will not copy. This is a routing bug — Clone must go through \
+                     the interactive spell-resolution hook."
+                );
             }
             Effect::Unimplemented { api_type } => {
                 // Log a warning instead of silently doing nothing

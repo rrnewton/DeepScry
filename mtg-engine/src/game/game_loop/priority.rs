@@ -2909,6 +2909,11 @@ impl<'a> GameLoop<'a> {
                             e,
                             crate::core::Effect::Dig { target_self: true, .. }
                         )
+                    // Clone (Copy Artifact, etc.): the controller chooses which
+                    // permanent to copy (and, if Optional, whether to copy at
+                    // all). Route through the controller protocol for
+                    // network-safe operation.
+                        || matches!(e, crate::core::Effect::Clone { .. })
                 });
                 (balances, needs_interactive, card.svars.clone())
             } else {
@@ -3497,6 +3502,109 @@ impl<'a> GameLoop<'a> {
                                     eprintln!("    Failed to apply surveil decision: {e}");
                                 }
                             }
+                        }
+                    }
+                    // Clone (Copy Artifact, etc.): the SOURCE spell enters the
+                    // battlefield as a copy of a permanent the controller
+                    // chooses (CR 707). The choice (and the optional "you may")
+                    // is routed through the controller via choose_targets so it
+                    // is network-safe and information-independent.
+                    crate::core::Effect::Clone {
+                        choices_filter,
+                        add_types,
+                        optional,
+                        ..
+                    } => {
+                        // Enumerate legal copy targets on the battlefield,
+                        // excluding the cloning permanent itself (CR 707 — you
+                        // copy *another* object; Choices$ Artifact.Other).
+                        let valid_targets: SmallVec<[CardId; 4]> = self
+                            .game
+                            .battlefield
+                            .cards
+                            .iter()
+                            .copied()
+                            .filter(|&cid| cid != spell_id)
+                            .filter(|&cid| self.game.cards.try_get(cid).is_some_and(|c| choices_filter.matches(c)))
+                            .collect();
+
+                        // Sync reveals so the shadow client sees the battlefield
+                        // identities before the choice is requested.
+                        self.push_reveals(spell_owner);
+                        if let Some(opp) = self.game.get_other_player_id(spell_owner) {
+                            self.push_reveals(opp);
+                        }
+                        self.sync_to_action();
+
+                        let chosen: Option<CardId> = if valid_targets.is_empty() {
+                            None
+                        } else {
+                            let controller: &mut dyn PlayerController = if spell_owner == controller1.player_id() {
+                                controller1
+                            } else {
+                                controller2
+                            };
+                            let prior_log_size = self.game.logger.log_count();
+                            let choice =
+                                self.choose_targets_with_hook(controller, spell_owner, spell_id, &valid_targets);
+                            let picked = match choice {
+                                crate::game::controller::ChoiceResult::Ok(v) => v.first().copied(),
+                                crate::game::controller::ChoiceResult::NeedInput(ctx) => {
+                                    return Err(crate::MtgError::NeedInput(Box::new(ctx)));
+                                }
+                                crate::game::controller::ChoiceResult::ExitGame => {
+                                    return Err(crate::MtgError::InvalidAction(
+                                        "Game exit requested during Clone".into(),
+                                    ));
+                                }
+                                crate::game::controller::ChoiceResult::Error(e) => {
+                                    return Err(crate::MtgError::InvalidAction(format!(
+                                        "Controller error during Clone: {e}"
+                                    )));
+                                }
+                                crate::game::controller::ChoiceResult::UndoRequest(_) => None,
+                            };
+
+                            // Log exactly what the controller returned, using the
+                            // standard Targets choice point (this branch routes
+                            // through choose_targets_with_hook, identical to the
+                            // cast-time targeting path). Replay reproduces the
+                            // controller's pick verbatim; the deterministic
+                            // !optional fallback below is a pure function of the
+                            // already-synced valid_targets, so it reproduces
+                            // identically on every side without extra logging.
+                            let replay_targets: SmallVec<[CardId; 4]> = picked.into_iter().collect();
+                            let replay_choice = crate::game::ReplayChoice::Targets(replay_targets);
+                            self.log_choice_point(spell_owner, Some(replay_choice), prior_log_size);
+
+                            // For non-optional Clone (e.g. a plain "enters as a
+                            // copy"), a controller that declines still must copy
+                            // *something* if a legal choice exists (CR 707 — the
+                            // copy is not optional). Optional Clone (Copy
+                            // Artifact's "You may ...") honours the decline.
+                            if picked.is_none() && !*optional {
+                                valid_targets.first().copied()
+                            } else {
+                                picked
+                            }
+                        };
+
+                        if let Some(copy_target) = chosen {
+                            if let Err(e) = self.game.apply_clone(spell_id, copy_target, add_types) {
+                                if should_log {
+                                    eprintln!("    Failed to apply Clone: {e}");
+                                }
+                            }
+                        } else if should_log {
+                            let src_name = self
+                                .game
+                                .cards
+                                .try_get(spell_id)
+                                .map(|c| c.name.to_string())
+                                .unwrap_or_default();
+                            self.game
+                                .logger
+                                .gamelog(&format!("{} enters the battlefield without copying", src_name));
                         }
                     }
                     // All other effects: execute normally

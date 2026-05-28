@@ -34,6 +34,7 @@ workflow, row format, and update rules.
 | Protection from <color>      | WORKING  | 2026-05-12_#2226(928ec99f)     | (none)      | Black Knight          |
 | Regenerate                   | WORKING  | 2026-05-12_#2226(928ec99f)     | (none)      | Sedge Troll           |
 | Swampwalk                    | WORKING  | 2026-05-12_#2226(928ec99f)     | (none)      | Sedge Troll           |
+| ETBReplacement:Copy (Clone)  | WORKING  | 2026-05-27_#2354(dbf857a7)     | (none)      | Copy Artifact         |
 
 ## Triggers (T:)
 
@@ -65,7 +66,7 @@ workflow, row format, and update rules.
 
 | Construct                | Status   | Last verified              | Bug issue | Sample cards |
 |--------------------------|----------|----------------------------|-----------|--------------|
-| (none recorded yet)      |          |                            |           |              |
+| DB$ Clone (CR 707 copy)  | WORKING  | 2026-05-27_#2354(dbf857a7) | (none)    | Copy Artifact |
 
 ## Mana production
 

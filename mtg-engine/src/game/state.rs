@@ -3445,6 +3445,7 @@ impl GameState {
                     | crate::core::Effect::AddTurn { .. }
                     | crate::core::Effect::AddPhase { .. }
                     | crate::core::Effect::ChooseColor { .. }
+                    | crate::core::Effect::Clone { .. }
                     | crate::core::Effect::UnlessCostWrapper { .. }
                     | crate::core::Effect::GainControl { .. }
                     | crate::core::Effect::Fight { .. }

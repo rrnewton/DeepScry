@@ -842,6 +842,11 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) {player_name} chooses a color");
                 self.game.logger.gamelog(&message);
             }
+            Effect::Clone { .. } => {
+                // The detailed "enters as a copy of X" line is logged by the
+                // interactive resolution path (priority.rs) once the controller
+                // has chosen which permanent to copy. Nothing to pre-log here.
+            }
             Effect::EachDamage { damagers, receiver, .. } => {
                 let damager_count = damagers.len();
                 let receiver_name = self

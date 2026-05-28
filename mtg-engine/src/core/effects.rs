@@ -938,6 +938,37 @@ pub enum Effect {
         restriction: TargetRestriction,
     },
 
+    /// Clone effect: the SOURCE permanent enters the battlefield as a copy of
+    /// another permanent on the battlefield (CR 707).
+    ///
+    /// Example: Copy Artifact — `DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment`.
+    /// Unlike `CopyPermanent` (which creates a token copy of a *target*), this
+    /// rewrites the copiable values (CR 707.2) of the source object itself,
+    /// then layers the `add_types` card types on top (Copy Artifact stays an
+    /// Enchantment in addition to the copied artifact's types).
+    ///
+    /// The controller of `source` chooses which permanent to copy from those
+    /// matching `choices_filter`. If `optional` is set the controller is first
+    /// asked whether to copy at all (Copy Artifact's "You may ..."). The choice
+    /// is routed through the PlayerController at resolution time (network-safe);
+    /// the placeholder `chosen` is filled in there.
+    Clone {
+        /// The permanent that becomes the copy (the Copy Artifact itself).
+        /// Placeholder `CardId::new(0)` at parse; resolved to the source card.
+        source: CardId,
+        /// The permanent whose copiable values are copied. Placeholder
+        /// `CardId::new(0)` at parse; chosen by the controller at resolution.
+        chosen: CardId,
+        /// Filter restricting which permanents may be copied (Choices$).
+        choices_filter: TargetRestriction,
+        /// Card types to add on top of the copied values (AddTypes$),
+        /// e.g. [CardType::Enchantment] for Copy Artifact.
+        add_types: smallvec::SmallVec<[crate::core::CardType; 1]>,
+        /// If true, the controller may decline to copy at all (ETBReplacement
+        /// `Optional` flag — "You may have CARDNAME enter as a copy ...").
+        optional: bool,
+    },
+
     /// Balance effect - equalizes a type of permanent/cards across all players
     /// Example: "Each player sacrifices creatures until all players control the same number"
     /// Corresponds to: SP$ Balance | Valid$ Creature/Land | Zone$ Battlefield/Hand
@@ -1408,6 +1439,10 @@ impl Effect {
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
             | Effect::SelfExileFromStack { .. }
+            // Clone chooses which permanent to copy at resolution time (ETB
+            // replacement), routed through the controller — there is no
+            // cast-time target on the Copy Artifact spell itself.
+            | Effect::Clone { .. }
             | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)

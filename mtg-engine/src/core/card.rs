@@ -21,6 +21,40 @@ pub enum CardType {
     Planeswalker,
 }
 
+impl CardType {
+    /// Parse a card-type word from a card script (e.g. the `AddTypes$` parameter
+    /// of `DB$ Clone`, or a token of the `Types:` line).
+    ///
+    /// Returns `None` for supertypes (Legendary, Snow) and subtypes, which are
+    /// handled by separate parsers — this keeps the strongly-typed `CardType`
+    /// enum honest about what it represents.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "Creature" => Some(Self::Creature),
+            "Instant" => Some(Self::Instant),
+            "Sorcery" => Some(Self::Sorcery),
+            "Enchantment" => Some(Self::Enchantment),
+            "Artifact" => Some(Self::Artifact),
+            "Land" => Some(Self::Land),
+            "Planeswalker" => Some(Self::Planeswalker),
+            _ => None,
+        }
+    }
+
+    /// Canonical card-script spelling of this card type.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Creature => "Creature",
+            Self::Instant => "Instant",
+            Self::Sorcery => "Sorcery",
+            Self::Enchantment => "Enchantment",
+            Self::Artifact => "Artifact",
+            Self::Land => "Land",
+            Self::Planeswalker => "Planeswalker",
+        }
+    }
+}
+
 /// Cache for precomputed properties on Card
 /// Pre-computed at card load time to avoid repeated computations during gameplay
 ///

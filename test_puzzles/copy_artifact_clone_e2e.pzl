@@ -1,0 +1,25 @@
+[metadata]
+Name:Copy Artifact Clone Test
+URL:https://github.com/rrnewton/mtg-forge-rs
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Tests the Clone mechanic via Copy Artifact (mtg-uh5gz). P0 has Copy Artifact in hand and enough mana (3 Islands) to cast it. P1 controls a Black Lotus (an artifact). When Copy Artifact resolves, its ETBReplacement:Copy/DB$ Clone effect must prompt P0 to choose an artifact to copy, then enter the battlefield as a copy of Black Lotus that is ALSO an Enchantment (AddTypes$ Enchantment, CR 707).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Copy Artifact
+p0battlefield=Island; Island; Island
+p0library=Island; Island; Island
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Black Lotus
+p1library=Forest; Forest; Forest
+p1graveyard=
+p1exile=

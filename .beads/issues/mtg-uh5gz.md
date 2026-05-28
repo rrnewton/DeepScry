@@ -1,35 +1,84 @@
 ---
 title: 'Card Compatibility: Copy Artifact'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-28T02:34:11.379257633+00:00
-updated_at: 2026-05-28T02:34:11.379257633+00:00
+updated_at: 2026-05-28T06:13:10.773597326+00:00
 ---
 
 # Description
 
-BROKEN: ETB Clone replacement not implemented; no prompt for artifact to copy.
+CARD STATUS: WORKING (core copy + AddTypes + controller prompt). Two narrow CR-707 edges deferred (mtg-gb7hv).
+
+Copy Artifact's Clone mechanic is implemented end-to-end (mtg-uh5gz).
 
 Card script: cardsfolder/c/copy_artifact.txt
-```
-K:ETBReplacement:Copy:DBCopy:Optional
-SVar:DBCopy:DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment | SpellDescription$ You may have CARDNAME enter as a copy of any artifact on the battlefield, except it's an enchantment in addition to its other types.
-```
+  K:ETBReplacement:Copy:DBCopy:Optional
+  SVar:DBCopy:DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment | ...
 
-USER BUG REPORT (fix-gameplay-bugs-4pack): "Playing rogerbrand mirror match. Copy artifact casts but doesn't ask me to select a target artifact to copy."
+## What was implemented (2026-05-27_#2354(dbf857a7))
 
-ROOT CAUSE: 
-1. `K:ETBReplacement:Copy:DBCopy:Optional` parses to KeywordArgs::ETBReplacement {effect_type, details} but loader/card.rs only WIRES this when effect_type==ChooseColor (Thriving lands). The Copy variant is silently ignored, so Copy Artifact enters as a vanilla 1U Enchantment with no choice prompt.
-2. `DB$ Clone` ApiType is not in the ApiType enum at all — no Clone variant in mtg-engine/src/loader/ability_parser.rs's ApiType. No Effect::Clone. SVar:DBCopy is parsed but produces no effect.
+- ApiType::Clone (loader/ability_parser.rs) + effect_converter handling.
+- Effect::Clone { source, chosen, choices_filter, add_types: SmallVec<[CardType;1]>, optional }
+  (core/effects.rs). Strongly typed: add_types is Vec<CardType>, not Vec<String>;
+  choices_filter is a TargetRestriction. Added CardType::parse/as_str helpers.
+- ETBReplacement:Copy wiring: CardDefinition::parse_etb_clone_effect() tokenizes the
+  K:ETBReplacement:Copy:<SVar>:Optional keyword (no hacky string contains), resolves the
+  named SVar to an Effect::Clone, and carries the `Optional` -> optional=true flag.
+- Resolution: priority.rs::resolve_top_spell_with_discard_hook intercepts Effect::Clone,
+  enumerates legal copy targets (battlefield, choices_filter, excluding self), and routes
+  the "which permanent to copy" decision through choose_targets_with_hook — the EXISTING
+  network-safe controller path (information-independent; identical local vs network).
+  Optional Clone honours a declined (empty) choice; mandatory Clone falls back to the first
+  legal target. The choice is logged as a ReplayChoice for snapshot/replay determinism.
+- Apply: GameState::apply_clone (game/actions/mod.rs) rewrites the source's copiable values
+  (CR 707.2) by re-instantiating the chosen permanent's CardDefinition (drops counters /
+  damage / tapped / attachments / control), then layers the AddTypes$ Enchantment card type
+  on top (CR 707.2 + layer 613). Identity (id/owner/controller) preserved.
 
-Implementation requires:
-- Add ApiType::Clone and effect_converter handling
-- Add Effect::Clone { source, choices_filter, add_types } variant
-- Add Controller::choose_clone_target(&[CardId]) callback (or reuse choose_targets with appropriate filter)
-- Wire ETBReplacement:Copy in card.rs / state.rs to trigger the choice on ETB
-- Handle 'Optional' ("You may...") — a yes/no prompt
-- Card needs an AsCopyOf field tracking which artifact it copies (and the AddTypes mod for the enchantment supertype)
-- Layer system: Clone copies copiable values per CR 707, then adds Enchantment supertype
+## Per-aspect status
 
-Out of scope for fix-gameplay-bugs-4pack (4-pack target was small fixes; Clone is a 200+ LOC feature). Recommend filing as priority-2 standalone for old-school playtest readiness. Affects: Copy Artifact, Clone, Vesuvan Doppelganger, Sakashima the Impostor, mirror entities.
+- [x] Parser shape: DB$ Clone -> ApiType::Clone, Choices$/AddTypes$ map onto Effect::Clone.
+      Unit test loader::effect_converter::tests::test_convert_clone_copy_artifact.
+- [x] Keyword wiring: K:ETBReplacement:Copy:DBCopy:Optional produces Effect::Clone with
+      optional=true. Unit test loader::card::tests::test_copy_artifact_etb_clone_wiring.
+- [x] ETB prompt fires: controller is asked which artifact to copy (routed via
+      choose_targets, network-safe).
+- [x] Enters as a copy + Enchantment supertype: copiable values copied, AddTypes$ Enchantment
+      applied (copy is Artifact + Enchantment). e2e + log evidence below.
+- [x] Optional "you may": Optional flag honours decline; mandatory Clone copies if able.
+- [N/A] Casting alternative/additional costs: Copy Artifact is a plain 1U Enchantment.
+
+## Verifying reproducer
+
+  ./target/release/mtg tui \
+    --start-state test_puzzles/copy_artifact_clone_e2e.pzl \
+    --p1=fixed --p2=zero \
+    --p1-fixed-inputs="cast Copy Artifact" --p2-fixed-inputs="" \
+    --stop-on-choice=4 --json --seed 42 --verbosity 3
+
+Log evidence (mtg tui --verbosity 3):
+  Player 1 casts Copy Artifact (3) (putting on stack)
+  Copy Artifact (3) resolves
+  Copy Artifact enters the battlefield as a copy of Black Lotus (also Enchantment)
+  ... Black Lotus (3)   <- the copy now reports as Black Lotus on P0's battlefield
+  ... Black Lotus (10)  <- the original on P1's battlefield
+
+Regression tests (both wired into `make validate` via cargo + the dir-test
+shell-script harness; NOT under tests/remote/):
+- Unit: test_convert_clone_copy_artifact, test_copy_artifact_etb_clone_wiring.
+- e2e:  tests/copy_artifact_clone_e2e.sh + test_puzzles/copy_artifact_clone_e2e.pzl.
+
+## Deferred CR-707 edges (filed as mtg-gb7hv)
+
+- Copying a permanent that itself has +1/+1 counters / CDAs: apply_clone copies from the
+  printed CardDefinition, so counters are intentionally NOT copied (correct per CR 707.2),
+  but CDAs and copy-of-a-copy chains beyond the printed definition are not exhaustively
+  layered yet.
+- Nested copy effects (CR 707.2): not exercised by Copy Artifact; deferred.
+These do not affect Copy Artifact (it copies a vanilla artifact in old-school decks).
+
+Generalization: the mechanic is general (Effect::Clone + apply_clone), so Clone, Vesuvan
+Doppelganger, Sakashima, etc. can reuse it; those cards still need their own scripts/keyword
+wiring and per-card verification.

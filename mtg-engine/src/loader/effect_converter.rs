@@ -844,6 +844,38 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::Clone => {
+            // Clone: the SOURCE permanent enters as a copy of a chosen permanent (CR 707).
+            // Example (Copy Artifact): DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment
+            //
+            // Parameters:
+            // - Choices$: filter restricting which permanents may be copied
+            // - AddTypes$ Type1 & Type2: CARD types to add on top of the copied
+            //   values (e.g. Enchantment). Note: these are card *types*, not
+            //   subtypes (contrast with CopyPermanent's AddTypes$).
+            //
+            // `optional` is carried by the surrounding ETBReplacement keyword
+            // (the `Optional` flag), not the SVar body, so it defaults to false
+            // here and is set when the keyword is wired up in card.rs.
+            let choices_filter = params
+                .get("Choices")
+                .map(TargetRestriction::parse)
+                .unwrap_or_else(TargetRestriction::any);
+
+            let add_types: smallvec::SmallVec<[crate::core::CardType; 1]> = params
+                .get("AddTypes")
+                .map(|s| s.split(" & ").filter_map(crate::core::CardType::parse).collect())
+                .unwrap_or_default();
+
+            Some(Effect::Clone {
+                source: CardId::new(0), // Placeholder - filled in with the source card at ETB
+                chosen: CardId::new(0), // Placeholder - chosen by the controller at resolution
+                choices_filter,
+                add_types,
+                optional: false,
+            })
+        }
+
         ApiType::Charm => {
             // Modal spell: A:SP$ Charm | Choices$ DBDestroy,DBDraw | CharmNum$ 1
             //
@@ -2530,6 +2562,49 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
                 assert!(restriction.types.is_empty() || restriction.types.contains(&crate::core::TargetType::Creature));
             }
             _ => panic!("Expected CopyPermanent effect"),
+        }
+    }
+
+    #[test]
+    fn test_convert_clone_copy_artifact() {
+        // Copy Artifact's DB$ Clone SVar body. Verifies the new ApiType::Clone
+        // parses and the Choices$/AddTypes$ params map onto Effect::Clone.
+        let params = AbilityParams::parse(
+            "A:DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment | SpellDescription$ You may have CARDNAME enter as a copy of any artifact on the battlefield, except it's an enchantment in addition to its other types."
+        ).unwrap();
+        assert_eq!(
+            params.api_type,
+            crate::loader::ability_parser::ApiType::Clone,
+            "DB$ Clone must parse to ApiType::Clone"
+        );
+
+        let effect = params_to_effect(&params).expect("Clone should convert to an Effect");
+        match effect {
+            Effect::Clone {
+                choices_filter,
+                add_types,
+                optional,
+                ..
+            } => {
+                // Choices$ Artifact.Other -> Artifact type restriction
+                assert!(
+                    choices_filter
+                        .types
+                        .iter()
+                        .any(|t| matches!(t, crate::core::TargetType::Artifact)),
+                    "Choices$ Artifact.Other should restrict to artifacts"
+                );
+                // AddTypes$ Enchantment -> [CardType::Enchantment]
+                assert_eq!(
+                    add_types.as_slice(),
+                    &[crate::core::CardType::Enchantment],
+                    "AddTypes$ Enchantment should add the Enchantment card type"
+                );
+                // The SVar body alone does not set optional; the surrounding
+                // ETBReplacement keyword's `Optional` flag does.
+                assert!(!optional, "SVar body should not set optional");
+            }
+            other => panic!("Expected Effect::Clone, got {other:?}"),
         }
     }
 

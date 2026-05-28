@@ -1571,7 +1571,68 @@ impl CardDefinition {
             // This is intentional - we don't want to spam warnings for every unsupported ability
         }
 
+        // Wire up `K:ETBReplacement:Copy:<SVar>:Optional` (Copy Artifact and other
+        // Clone permanents). The keyword names an SVar (e.g. DBCopy) whose body is
+        // `DB$ Clone | Choices$ ... | AddTypes$ ...`. We parse that SVar into an
+        // `Effect::Clone` and push it onto the card's effect list so the spell
+        // resolution path (priority.rs) can intercept it and route the
+        // "which permanent to copy" choice through the controller.
+        if let Some(clone_effect) = self.parse_etb_clone_effect() {
+            effects.push(clone_effect);
+        }
+
         effects
+    }
+
+    /// Build an `Effect::Clone` from a `K:ETBReplacement:Copy:<SVar>:Optional`
+    /// keyword line, if present.
+    ///
+    /// The keyword line is parsed in tokenized form (split on `:`), never via
+    /// substring matching, per the "No Hacky String Operations" rule. Returns
+    /// `None` when the card has no `ETBReplacement:Copy` keyword or the named
+    /// SVar does not resolve to a `DB$ Clone` effect.
+    fn parse_etb_clone_effect(&self) -> Option<crate::core::Effect> {
+        use super::ability_parser::{AbilityParams, ApiType};
+        use super::effect_converter::params_to_effect;
+
+        for keyword_str in &self.raw_keywords {
+            // Tokenize "ETBReplacement:Copy:DBCopy:Optional"
+            let mut parts = keyword_str.split(':');
+            if parts.next() != Some("ETBReplacement") {
+                continue;
+            }
+            if parts.next() != Some("Copy") {
+                continue;
+            }
+            let svar_name = parts.next()?.trim();
+            // Remaining tokens are flags; "Optional" => "you may".
+            let optional = parts.any(|flag| flag.trim() == "Optional");
+
+            let svar_body = self.svars.get(svar_name)?;
+            let ability_line = format!("A:{}", svar_body);
+            let params = AbilityParams::parse(&ability_line).ok()?;
+            if params.api_type != ApiType::Clone {
+                continue;
+            }
+
+            if let Some(crate::core::Effect::Clone {
+                source,
+                chosen,
+                choices_filter,
+                add_types,
+                optional: _,
+            }) = params_to_effect(&params)
+            {
+                return Some(crate::core::Effect::Clone {
+                    source,
+                    chosen,
+                    choices_filter,
+                    add_types,
+                    optional,
+                });
+            }
+        }
+        None
     }
 
     /// Follow SubAbility$ chain to parse additional effects
@@ -5284,6 +5345,57 @@ Oracle:Reach\nAt the beginning of combat on your turn, this creature gets +1/+1 
         assert!(
             trigger.description.contains("[controller_only]"),
             "Trigger description should have [controller_only] prefix for ValidPlayer$ You"
+        );
+    }
+
+    #[test]
+    fn test_copy_artifact_etb_clone_wiring() {
+        // Copy Artifact: the K:ETBReplacement:Copy:DBCopy:Optional keyword must
+        // wire its DBCopy SVar (DB$ Clone) into an Effect::Clone on the card,
+        // with optional=true coming from the keyword's `Optional` flag.
+        let card_data = r#"Name:Copy Artifact
+ManaCost:1 U
+Types:Enchantment
+K:ETBReplacement:Copy:DBCopy:Optional
+SVar:DBCopy:DB$ Clone | Choices$ Artifact.Other | AddTypes$ Enchantment | SpellDescription$ You may have CARDNAME enter as a copy of any artifact on the battlefield, except it's an enchantment in addition to its other types.
+Oracle:You may have Copy Artifact enter as a copy of any artifact on the battlefield, except it's an enchantment in addition to its other types."#;
+
+        let def = CardLoader::parse(card_data).expect("Should parse Copy Artifact");
+        let effects = def.parse_effects();
+
+        let clone = effects
+            .iter()
+            .find_map(|e| {
+                if let crate::core::Effect::Clone {
+                    choices_filter,
+                    add_types,
+                    optional,
+                    ..
+                } = e
+                {
+                    Some((choices_filter, add_types, *optional))
+                } else {
+                    None
+                }
+            })
+            .expect("Copy Artifact must produce an Effect::Clone");
+
+        let (choices_filter, add_types, optional) = clone;
+        assert!(
+            optional,
+            "ETBReplacement `Optional` flag must set Effect::Clone.optional = true"
+        );
+        assert_eq!(
+            add_types.as_slice(),
+            &[crate::core::CardType::Enchantment],
+            "AddTypes$ Enchantment must add the Enchantment card type"
+        );
+        assert!(
+            choices_filter
+                .types
+                .iter()
+                .any(|t| matches!(t, crate::core::TargetType::Artifact)),
+            "Choices$ Artifact.Other must restrict copy targets to artifacts"
         );
     }
 

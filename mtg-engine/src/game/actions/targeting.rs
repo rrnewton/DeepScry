@@ -550,6 +550,7 @@ impl GameState {
                             | Effect::AddTurn { .. }
                             | Effect::AddPhase { .. }
                             | Effect::ChooseColor { .. }
+                            | Effect::Clone { .. }
                             | Effect::Proliferate
                             | Effect::Unimplemented { .. }
                             | Effect::UnlessCostWrapper { .. }
@@ -600,12 +601,14 @@ impl GameState {
                 | Effect::UntapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
+                | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::Proliferate
                 | Effect::SelfExileFromStack { .. } => {
                     // These effects target players or have no targeting requirements
                     // AttachEquipment targeting is handled via Equip keyword abilities
                     // ChooseColor is a player choice effect (no permanent targets)
+                    // Clone chooses which permanent to copy during resolution (ETB)
                     // Proliferate: player chooses permanents/players during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                 }
@@ -1055,6 +1058,7 @@ impl GameState {
                 | Effect::TapAll { .. }
                 | Effect::SetLife { .. }
                 | Effect::ChooseColor { .. }
+                | Effect::Clone { .. }
                 | Effect::Proliferate
                 | Effect::SelfExileFromStack { .. }
                 | Effect::UnlessCostWrapper { .. } => {
@@ -1348,6 +1352,7 @@ impl GameState {
             | Effect::PutCounterAll { .. }
             | Effect::ChangeZoneAll { .. }
             | Effect::ChooseColor { .. }
+            | Effect::Clone { .. }
             | Effect::Proliferate
             | Effect::SelfExileFromStack { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects

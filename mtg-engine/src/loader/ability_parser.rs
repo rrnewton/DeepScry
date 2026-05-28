@@ -174,6 +174,17 @@ pub enum ApiType {
     ///   AddKeywords$ Keyword - add keywords
     ///   NumCopies$ N - create multiple copies
     CopyPermanent,
+    /// Clone: the source permanent itself enters the battlefield as a copy of
+    /// another permanent (CR 707). Unlike `CopyPermanent` (which creates a
+    /// *token* copy of a target), `Clone` rewrites the copiable values of the
+    /// SOURCE object, optionally adding card types (e.g. Copy Artifact's
+    /// `AddTypes$ Enchantment`).
+    ///
+    /// Parameters:
+    ///   Choices$ Artifact.Other - filter for the permanent to copy
+    ///   AddTypes$ Enchantment - card types to add on top of the copied values
+    ///   Optional (from the surrounding ETBReplacement) - "you may"
+    Clone,
     PutCounter,
     PutCounterAll,
     RemoveCounter,
@@ -349,6 +360,7 @@ impl ApiType {
             "Token" => Self::Token,
             "Attach" => Self::Attach,
             "CopyPermanent" => Self::CopyPermanent,
+            "Clone" => Self::Clone,
             "PutCounter" => Self::PutCounter,
             "PutCounterAll" => Self::PutCounterAll,
             "ReplaceToken" => Self::ReplaceToken,
@@ -463,6 +475,7 @@ impl ApiType {
             Self::Token => "Token",
             Self::Attach => "Attach",
             Self::CopyPermanent => "CopyPermanent",
+            Self::Clone => "Clone",
             Self::PutCounter => "PutCounter",
             Self::PutCounterAll => "PutCounterAll",
             Self::ReplaceToken => "ReplaceToken",
