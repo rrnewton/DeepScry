@@ -1,0 +1,24 @@
+[metadata]
+Name:Animate Dead Reanimates Opp Reverse
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P2 (opponent) casts Animate Dead targeting Triskelion in P1's graveyard. Verify Triskelion comes back under P2's control (CR 303.4d, GainControl$ True).
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=Triskelion
+p0battlefield=
+p0exile=
+
+p1life=20
+p1hand=Animate Dead
+p1library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=Swamp; Swamp; Swamp
+p1exile=

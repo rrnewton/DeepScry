@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-13T02:20:10.693792605+00:00
-updated_at: 2026-05-13T16:26:12.069728929+00:00
+updated_at: 2026-05-28T02:34:40.119452893+00:00
 ---
 
 # Description
@@ -37,3 +37,33 @@ Card script: cardsfolder/a/animate_dead.txt
 Verified e2e: Animate Dead reanimating Triskelion produces a 3/4 (1/1 base + 3 P1P1 - 1/-0) with both effects visibly applied; `tests/animate_dead_reanimate_triskelion_e2e.sh`.
 
 CARD STATUS: WORKING for the core reanimation use case. DBDelay sacrifice-on-leave + DBAnimate keyword rewrite remain BROKEN — see mtg-abfad9.
+
+---
+
+## UPDATE 2026-05-27 (fix-gameplay-bugs-4pack)
+
+USER BUG REPORT: "i cast animate dead on their triskelion and it went to THEIR battlefield. It should animate under my control."
+
+INVESTIGATION (fix-gameplay-bugs-4pack):
+- Built two new puzzles testing exactly the reported scenario:
+  - test_puzzles/animate_dead_opponent_creature.pzl (P0 casts AD on Triskelion in P1's graveyard)
+  - test_puzzles/animate_dead_opp_reverse.pzl (P1/zero is caster — won't actually cast)
+- Manual reproduction with the first puzzle and a fixed-input controller SHOWS THE FIX WORKING:
+  - Triskelion came back under P0's (caster's) control
+  - "Player 1 ... Triskelion (17) - 3/4" with Animate Dead attached
+  - Subsequent turn ordering shows P0 still controls the creature
+- Therefore the user-reported bug is NOT reproducible with the synthesized puzzle. Possible alternative causes:
+  1. User's game went through `cast_spell_8_step_from` (not `resolve_spell_finalize` directly) — needs replay capture.
+  2. Bug only manifests against a specific opponent setup (Triskelion came from milling a deck shuffled in a particular way?)
+  3. Bug only manifests in the network/web client path (controller info-independence — server may resolve correctly, client may show wrong controller).
+  4. Bug reported was actually a UI display bug (creature visually on wrong side) rather than a state bug.
+
+NEEDED to make progress:
+- A `.snapshot` capture from the user's actual game OR an `agentplay` script that reproduces.
+- Repro under both --p1=heuristic and the network/WASM TUI path.
+
+Files left in place for follow-up:
+- test_puzzles/animate_dead_opponent_creature.pzl
+- test_puzzles/animate_dead_opp_reverse.pzl
+
+No code change in this branch. Tracked here pending repro.
