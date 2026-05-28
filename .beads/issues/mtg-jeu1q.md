@@ -1,0 +1,24 @@
+---
+title: Rename project mtg-forge-rs/Forge-rs -> DeepScry (phased)
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-05-28T14:00:23.738949724+00:00
+updated_at: 2026-05-28T14:00:23.738949724+00:00
+---
+
+# Description
+
+User renamed the GitHub repo to rrnewton/DeepScry (2026-05-28); local git remotes (origin + legacy http) repointed. Now remove mtg-forge-rs / forge-rs / Forge-rs references everywhere and rebrand to DeepScry. Blast radius (excl target/forge-java/.git/.beads): mtg_forge_rs crate-import name = 72 files / 659 hits (53 files 'use mtg_forge_rs::'); mtg-forge-rs hyphenated = 45 files / 147 hits; forge-rs/Forge-rs prose = ~54 files / ~164 hits. Cargo package 'name = "mtg-forge-rs"' lives in mtg-engine/Cargo.toml.
+
+PHASES (different risk; sequence to protect in-flight worktree branches):
+
+PHASE A — repo/remote (DONE): GitHub repo renamed; origin + http remotes set to DeepScry. GitHub forwards old URL.
+
+PHASE B — branding/prose (medium risk, touches web/ + docs): rebrand user-facing 'MTG Forge-rs'/'Forge.rs'/'mtg-forge-rs' -> 'DeepScry' in README, CLAUDE.md/AGENTS.md/GEMINI.md headers, web/*.html UI text + <title>, CLI help/log strings, Cargo description fields, ai_docs. Do AFTER the native-GUI-layout web agent lands (it edits web/). Keep Forge-Java attribution accurate (we use Forge's CARD DATA, not its engine).
+
+PHASE C — cargo crate rename (HIGH risk, atomic): rename cargo package mtg-forge-rs -> deepscry and all 'mtg_forge_rs' import paths -> 'deepscry' across 72 files; update Cargo.toml [package] name, [[bin]]/lib, every 'use mtg_forge_rs::' / 'mtg_forge_rs::' path, CI clippy '-p mtg-forge-rs' invocations, Makefile, scripts. MUST be done as the SOLE in-flight branch (a 'rename freeze'): drain+merge all worktree branches, pause new dispatch, run the mechanical rename on integration in one shot, full make validate, commit, push, then resume. Like the beads-renumber quiescence rule but for code.
+
+PHASE D — directory + harness rename (defer/coordinate): rename local dir mtg-forge-rs/ -> deepscry/ and update parent harness (parent CLAUDE.md ~41 refs, scripts/new_worktree.sh, scripts/deploy-cloud.sh remote dir, worktrees/ACTIVE.md paths, deploy VM ~/mtg-forge-rs). Optional/cosmetic locally; can lag the repo rename. Coordinate as a harness migration.
+
+SEQUENCING: keep the current gameplay sweep + UI/infra streams going; schedule PHASE C during a deliberate drain window (no other branches), since it conflicts with everything. PHASE B can piggyback right before/with PHASE C. Do NOT start B or C while engine/web agents have open branches.
