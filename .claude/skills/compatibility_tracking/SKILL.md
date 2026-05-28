@@ -7,8 +7,11 @@ description: Standard workflow for testing, classifying, and tracking individual
 
 This skill codifies how we test, classify, and track individual card
 support in mtg-forge-rs. It is invoked by the
-`expand_MTG_compatibility` command for batch work, and should also be
-followed for any one-off card investigation.
+`expand_MTG_compatibility` command for random-discovery batch work, by
+the `targeted-compatibility` skill
+(`.claude/skills/targeted_compatibility/SKILL.md`) for work focused on
+a specific card / deck / set, and should also be followed for any
+one-off card investigation.
 
 The two artifacts every compatibility pass updates are:
 
