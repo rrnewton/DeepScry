@@ -347,7 +347,7 @@ cmd_deploy() {
     # --- 1. Local WASM build if needed ---
     local need_wasm=0
     if [[ "$SKIP_WASM" != "1" ]]; then
-        if [[ ! -d web/data || ! -f web/data/decks.bin || ! -d web/pkg ]]; then
+        if [[ ! -d web/data || ! -f web/data/decks.bin || ! -f web/data/sets/index.json || ! -d web/pkg ]]; then
             need_wasm=1
         fi
         [[ "$REBUILD" == "1" ]] && need_wasm=1
@@ -358,8 +358,8 @@ cmd_deploy() {
     else
         echo "→ WASM artefacts present (or --skip-wasm); not rebuilding"
     fi
-    for f in web/pkg/mtg_forge_rs_bg.wasm web/data/cards.bin web/data/decks.bin; do
-        [[ -f "$f" ]] || { echo "error: missing required artefact: $f" >&2; exit 1; }
+    for f in web/pkg/mtg_forge_rs_bg.wasm web/data/decks.bin web/data/sets/index.json; do
+        [[ -f "$f" ]] || { echo "error: missing required artefact: $f (run 'cargo run --bin mtg -- export-wasm' to (re)generate)" >&2; exit 1; }
     done
 
     # --- 2. Local native release binary ---
