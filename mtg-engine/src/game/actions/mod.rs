@@ -459,9 +459,14 @@ impl GameState {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_self_target(effect: Effect, source_card_id: CardId) -> Effect {
         match effect {
-            Effect::DestroyPermanent { target, restriction } if target.is_self_target() => Effect::DestroyPermanent {
+            Effect::DestroyPermanent {
+                target,
+                restriction,
+                no_regenerate,
+            } if target.is_self_target() => Effect::DestroyPermanent {
                 target: source_card_id,
                 restriction,
+                no_regenerate,
             },
             // `SP$ ChangeZone | Origin$ Stack | Destination$ Exile` — patch in
             // the resolving spell's CardId so `Effect::SelfExileFromStack` can
@@ -2115,7 +2120,11 @@ impl GameState {
                 }
             }
 
-            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
+            Effect::DestroyPermanent {
+                target,
+                restriction,
+                no_regenerate,
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
@@ -2123,6 +2132,7 @@ impl GameState {
                     Effect::DestroyPermanent {
                         target: resolved_target,
                         restriction: restriction.clone(),
+                        no_regenerate: *no_regenerate,
                     }
                 } else {
                     effect.clone()
@@ -2958,7 +2968,9 @@ impl GameState {
                     prior_log_size,
                 );
             }
-            Effect::DestroyPermanent { target, .. } => {
+            Effect::DestroyPermanent {
+                target, no_regenerate, ..
+            } => {
                 // Skip if target is still placeholder (0) or unresolved sentinel
                 if target.is_placeholder() || target.is_self_target() {
                     // Spell fizzles - no valid targets
@@ -2971,8 +2983,11 @@ impl GameState {
                 };
                 if has_indestructible {
                     // Indestructible - can't be destroyed
-                } else if has_regen_shield {
-                    // CR 701.15a: Regeneration replaces destruction
+                } else if has_regen_shield && !*no_regenerate {
+                    // CR 701.15a: Regeneration replaces destruction.
+                    // When the destroy says "can't be regenerated" (NoRegen$ True,
+                    // e.g. The Abyss / Terror), the regeneration shield does NOT
+                    // apply (CR 701.15d) and the permanent is destroyed outright.
                     self.apply_regeneration_shield(*target)?;
                 } else {
                     let dest = self.death_destination_for_card(*target);
@@ -5966,29 +5981,28 @@ impl GameState {
                         }
                         // else stays as TargetRef::None and will fizzle
                     }
-                    Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
-                        // Find a valid target (opponent's creature matching restriction),
+                    Effect::DestroyPermanent {
+                        target,
+                        restriction,
+                        no_regenerate,
+                    } if target.is_placeholder() => {
+                        // Find a valid target matching the restriction (controller
+                        // semantics included: ActivePlayerCtrl/YouCtrl/OppCtrl/Any),
                         // sorted by CardId for determinism after rewind+replay.
-                        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
-                            .battlefield
-                            .cards
-                            .iter()
-                            .filter(|&card_id| {
-                                if let Some(card) = self.cards.try_get(*card_id) {
-                                    restriction.matches(card)
-                                        && card.controller != controller
-                                        && targeting::is_legal_target(card, controller, &trigger_source_colors)
-                                } else {
-                                    false
-                                }
-                            })
-                            .copied()
-                            .collect();
-                        candidates.sort_by_key(|id| id.as_u32());
-                        if let Some(&target_id) = candidates.first() {
+                        // The active player is the trigger source controller's turn
+                        // by default here; for "each player's upkeep" triggers the
+                        // dedicated `check_triggers_for_controller` path supplies the
+                        // real active player.
+                        if let Some(target_id) = self.choose_triggered_destroy_target(
+                            restriction,
+                            controller,
+                            controller,
+                            &trigger_source_colors,
+                        ) {
                             effect = Effect::DestroyPermanent {
                                 target: target_id,
                                 restriction: restriction.clone(),
+                                no_regenerate: *no_regenerate,
                             };
                         }
                     }
@@ -6240,6 +6254,70 @@ impl GameState {
     ///
     /// Returns an error if the card cannot be found or effect execution fails.
     #[allow(clippy::wildcard_enum_match_arm)]
+    /// Choose a target for a triggered `DestroyPermanent` whose target is still a
+    /// placeholder, honoring the `TargetRestriction`'s type/controller filters.
+    ///
+    /// Triggered abilities in this engine resolve their targets via deterministic
+    /// engine selection (sorted by `CardId`) rather than going on the stack — this
+    /// keeps controllers information-independent and replays byte-identical
+    /// (see `docs/NETWORK_ARCHITECTURE.md`). This helper is the single source of
+    /// truth for that selection, shared by `check_triggers` (event-source path)
+    /// and `check_triggers_for_controller` (phase-trigger path).
+    ///
+    /// Controller semantics:
+    /// - `Any`               → any creature/permanent matching the type filter
+    /// - `YouCtrl`           → controlled by `trigger_controller`
+    /// - `OppCtrl`           → NOT controlled by `trigger_controller`
+    /// - `ActivePlayerCtrl`  → controlled by `active_player` (the player whose
+    ///   upkeep/turn it is) — used by The Abyss
+    ///
+    /// Returns the lowest-`CardId` legal target, or `None` if no legal target
+    /// exists (the trigger then does nothing, CR 603.10 / 608.2c).
+    fn choose_triggered_destroy_target(
+        &self,
+        restriction: &crate::core::effects::TargetRestriction,
+        trigger_controller: PlayerId,
+        active_player: PlayerId,
+        trigger_source_colors: &[crate::core::Color],
+    ) -> Option<CardId> {
+        use crate::core::effects::ControllerRestriction;
+        let mut candidates: smallvec::SmallVec<[CardId; 8]> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter(|&card_id| {
+                let Some(card) = self.cards.try_get(*card_id) else {
+                    return false;
+                };
+                // Type / token / power / nonartifact filters.
+                if !restriction.matches(card) {
+                    return false;
+                }
+                // Controller filter (resolved with the real active player).
+                let controller_ok = match restriction.controller {
+                    ControllerRestriction::Any => true,
+                    ControllerRestriction::YouCtrl => card.controller == trigger_controller,
+                    ControllerRestriction::OppCtrl => card.controller != trigger_controller,
+                    ControllerRestriction::ActivePlayerCtrl => card.controller == active_player,
+                };
+                controller_ok && targeting::is_legal_target(card, trigger_controller, trigger_source_colors)
+            })
+            .copied()
+            .collect();
+        candidates.sort_by_key(|id| id.as_u32());
+        candidates.first().copied()
+    }
+
+    /// Execute the triggered abilities of `card_id` for `event`, resolving
+    /// targets among the `active_player`'s permanents where the ability says so
+    /// (e.g. The Abyss's "each player's upkeep" destroy targets the active
+    /// player's nonartifact creatures).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the trigger source card lookup fails or an effect
+    /// fails to execute.
+    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers_for_controller(
         &mut self,
         event: TriggerEvent,
@@ -6272,6 +6350,9 @@ impl GameState {
         // Build trigger context for placeholder resolution
         let controller = self.cards.get(card_id)?.controller;
         let ctx = TriggerContext::new(card_id, controller);
+        // Colors of the trigger source, needed for protection / legal-target checks.
+        let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
+            self.cards.get(card_id)?.colors.clone();
 
         // Execute each effect with placeholder resolution
         for effect in effects_to_execute {
@@ -6280,6 +6361,35 @@ impl GameState {
 
             // Step 2: Handle complex targeting that requires battlefield search
             match &effect {
+                // Targeted destroy fired by an "each player's upkeep" style trigger
+                // (e.g. The Abyss: `T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player`
+                // with `DB$ Destroy | ValidTgts$ Creature.nonArtifact+ActivePlayerCtrl`).
+                // The trigger fires for whichever player's upkeep it is, so the target
+                // must be chosen among the ACTIVE player's permanents. Without this arm
+                // the placeholder target was never resolved and the destroy silently
+                // fizzled (CR 603 / CR 701.7).
+                Effect::DestroyPermanent {
+                    target,
+                    restriction,
+                    no_regenerate,
+                } if target.is_placeholder() => {
+                    if let Some(target_id) = self.choose_triggered_destroy_target(
+                        restriction,
+                        controller,
+                        active_player,
+                        &trigger_source_colors,
+                    ) {
+                        effect = Effect::DestroyPermanent {
+                            target: target_id,
+                            restriction: restriction.clone(),
+                            no_regenerate: *no_regenerate,
+                        };
+                    } else {
+                        // No legal target — the triggered ability does nothing
+                        // (CR 603.10 / 608.2c). Skip to avoid a fizzling log line.
+                        continue;
+                    }
+                }
                 Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
                     // Placeholder CardId 0 means we need to target a land the controller controls
                     let land_target = self

@@ -257,6 +257,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
@@ -449,6 +450,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0), // Placeholder
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
@@ -518,6 +520,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature".to_string(),
             svar_name: "Destroy".to_string(),
@@ -571,6 +574,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy".to_string(),
             svar_name: "Destroy".to_string(),
@@ -654,6 +658,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0), // Placeholder
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
@@ -773,6 +778,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
@@ -875,6 +881,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0), // Placeholder
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature with no counters on it.".to_string(),
             svar_name: "Destroy".to_string(),
@@ -1400,6 +1407,7 @@ mod tests {
             effect: Box::new(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction: TargetRestriction::from_types([crate::core::TargetType::Creature]),
+                no_regenerate: false,
             }),
             description: "Destroy target creature with power 4 or greater.".to_string(),
             svar_name: "DBDestroy".to_string(),

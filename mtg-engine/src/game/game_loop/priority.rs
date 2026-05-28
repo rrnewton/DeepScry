@@ -110,22 +110,28 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target, restriction }
-                        if target.is_placeholder() && target_index < targets.len() =>
-                    {
+                    Effect::DestroyPermanent {
+                        target,
+                        restriction,
+                        no_regenerate,
+                    } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::DestroyPermanent {
                             target: targets[target_index],
                             restriction: restriction.clone(),
+                            no_regenerate: *no_regenerate,
                         };
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target, restriction } if target.is_self_target() => {
-                        Effect::DestroyPermanent {
-                            target: spell_id,
-                            restriction: restriction.clone(),
-                        }
-                    }
+                    Effect::DestroyPermanent {
+                        target,
+                        restriction,
+                        no_regenerate,
+                    } if target.is_self_target() => Effect::DestroyPermanent {
+                        target: spell_id,
+                        restriction: restriction.clone(),
+                        no_regenerate: *no_regenerate,
+                    },
                     Effect::TapPermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::TapPermanent {
                             target: targets[target_index],
@@ -1490,23 +1496,27 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             // Replace placeholder targets with chosen targets
-                                            crate::core::Effect::DestroyPermanent { target, restriction }
-                                                if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
-                                            {
+                                            crate::core::Effect::DestroyPermanent {
+                                                target,
+                                                restriction,
+                                                no_regenerate,
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
                                                 crate::core::Effect::DestroyPermanent {
                                                     target: chosen_targets_vec[0],
                                                     restriction: restriction.clone(),
+                                                    no_regenerate: *no_regenerate,
                                                 }
                                             }
                                             // Defined$ Self: destroy the source card itself
-                                            crate::core::Effect::DestroyPermanent { target, restriction }
-                                                if target.is_self_target() =>
-                                            {
-                                                crate::core::Effect::DestroyPermanent {
-                                                    target: card_id,
-                                                    restriction: restriction.clone(),
-                                                }
-                                            }
+                                            crate::core::Effect::DestroyPermanent {
+                                                target,
+                                                restriction,
+                                                no_regenerate,
+                                            } if target.is_self_target() => crate::core::Effect::DestroyPermanent {
+                                                target: card_id,
+                                                restriction: restriction.clone(),
+                                                no_regenerate: *no_regenerate,
+                                            },
                                             crate::core::Effect::TapPermanent { target }
                                                 if target.is_placeholder() && !chosen_targets_vec.is_empty() =>
                                             {
@@ -3652,12 +3662,15 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::DestroyPermanent { target, restriction }
-                        if target.is_placeholder() && target_index < targets.len() =>
-                    {
+                    Effect::DestroyPermanent {
+                        target,
+                        restriction,
+                        no_regenerate,
+                    } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::DestroyPermanent {
                             target: targets[target_index],
                             restriction: restriction.clone(),
+                            no_regenerate: *no_regenerate,
                         };
                         target_index += 1;
                         replaced

@@ -1044,6 +1044,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
@@ -1203,6 +1204,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
@@ -1304,6 +1306,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: indestructible_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
 
@@ -1482,6 +1485,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
         game.stack.add(destroy_spell_id);
@@ -1639,6 +1643,7 @@ mod tests {
         destroy_spell.effects.push(Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(destroy_spell_id, destroy_spell);
         game.stack.add(destroy_spell_id);
@@ -1688,6 +1693,7 @@ mod tests {
         spell1.effects.push(Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(spell1_id, spell1);
         game.stack.add(spell1_id);
@@ -1704,6 +1710,7 @@ mod tests {
         spell2.effects.push(Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(spell2_id, spell2);
         game.stack.add(spell2_id);

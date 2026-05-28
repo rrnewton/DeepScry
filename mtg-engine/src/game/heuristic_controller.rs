@@ -6630,6 +6630,7 @@ mod tests {
             vec![Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction: crate::core::TargetRestriction::any(),
+                no_regenerate: false,
             }],
             "{T}, Sacrifice Strip Mine: Destroy target land.".to_string(),
             false, // is_mana_ability
@@ -7056,6 +7057,7 @@ mod tests {
             vec![Effect::DestroyPermanent {
                 target: CardId::new(0), // Placeholder target
                 restriction: TargetRestriction::any(),
+                no_regenerate: false,
             }],
             "Destroy target tapped creature".to_string(),
             false, // not a mana ability
@@ -7696,6 +7698,7 @@ mod tests {
         spell.effects.push(crate::core::Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(spell_id, spell);
 
@@ -7741,6 +7744,7 @@ mod tests {
         spell.effects.push(crate::core::Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(spell_id, spell);
 
@@ -8027,6 +8031,7 @@ mod tests {
         spell.effects.push(crate::core::Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(spell_id, spell);
 
@@ -9143,6 +9148,7 @@ mod tests {
                 power_le: None,
                 requires_nontoken: false,
                 requires_remembered: false,
+                requires_nonartifact: false,
             },
             counter_type: CounterType::P1P1,
             amount: 1,
@@ -9188,6 +9194,7 @@ mod tests {
                 power_le: None,
                 requires_nontoken: false,
                 requires_remembered: false,
+                requires_nonartifact: false,
             },
             counter_type: CounterType::P1P1,
             amount: 1,
@@ -9259,6 +9266,7 @@ mod tests {
                 power_le: None,
                 requires_nontoken: false,
                 requires_remembered: false,
+                requires_nonartifact: false,
             },
             origin: crate::zones::Zone::Battlefield,
             destination: crate::zones::Zone::Hand,

@@ -2224,6 +2224,7 @@ mod tests {
         let destroy = Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         };
         game.execute_effect(&destroy).unwrap();
 
@@ -2261,6 +2262,7 @@ mod tests {
         let destroy = Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         };
         game.execute_effect(&destroy).unwrap();
 
@@ -2347,6 +2349,7 @@ mod tests {
         let destroy = Effect::DestroyPermanent {
             target: creature_id,
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         };
         game.execute_effect(&destroy).unwrap();
 
@@ -3014,5 +3017,129 @@ mod tests {
                 raw
             );
         }
+    }
+
+    /// Parser-shape regression test for The Abyss (mtg-sgkjv).
+    ///
+    /// The Abyss: `3 B` World Enchantment with an "each player's upkeep" phase
+    /// trigger whose Execute$ SVar is
+    /// `DB$ Destroy | ValidTgts$ Creature.nonArtifact+ActivePlayerCtrl | NoRegen$ True`.
+    ///
+    /// Before the fix the Phase-trigger Execute$ handler had a hardcoded ApiType
+    /// allowlist (DealDamage/GainLife/Earthbend/Pump) that silently dropped the
+    /// Destroy effect, so the trigger fired but did nothing. We now reuse
+    /// `params_to_effect`, and `TargetRestriction::parse` honors `nonArtifact`
+    /// (requires_nonartifact) and `ActivePlayerCtrl`, plus `NoRegen$ True`
+    /// (no_regenerate).
+    #[test]
+    fn test_card_compat_the_abyss() {
+        use crate::core::effects::ControllerRestriction;
+        use crate::core::{CardType, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/the_abyss.txt");
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Failed to load The Abyss");
+        assert_eq!(def.name.as_str(), "The Abyss");
+
+        let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let card = def.instantiate(crate::core::CardId::new(100), p1_id);
+
+        // Static shape: 3 B World Enchantment.
+        assert_eq!(card.mana_cost.generic, 3, "The Abyss costs {{3}}{{B}}");
+        assert_eq!(card.mana_cost.black, 1, "The Abyss has one black pip");
+        assert!(
+            card.types.contains(&CardType::Enchantment),
+            "The Abyss is an Enchantment"
+        );
+
+        // Exactly one upkeep trigger, NOT controller-only (fires on each player's upkeep).
+        let upkeep: Vec<_> = card
+            .triggers
+            .iter()
+            .filter(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .collect();
+        assert_eq!(upkeep.len(), 1, "The Abyss has exactly one upkeep trigger");
+        let trigger = upkeep[0];
+        assert!(
+            !trigger.controller_turn_only,
+            "The Abyss fires on EACH player's upkeep (ValidPlayer$ Player), not controller-only"
+        );
+
+        // The trigger's effect must be a DestroyPermanent that:
+        //  - targets nonartifact creatures (requires_nonartifact)
+        //  - controlled by the active player (ActivePlayerCtrl)
+        //  - can't be regenerated (no_regenerate)
+        assert_eq!(trigger.effects.len(), 1, "upkeep trigger has exactly one effect");
+        let Effect::DestroyPermanent {
+            restriction,
+            no_regenerate,
+            ..
+        } = &trigger.effects[0]
+        else {
+            panic!("Expected DestroyPermanent, got {:?}", &trigger.effects[0]);
+        };
+        assert!(
+            restriction.requires_nonartifact,
+            "must restrict to nonartifact creatures (Creature.nonArtifact)"
+        );
+        assert_eq!(
+            restriction.controller,
+            ControllerRestriction::ActivePlayerCtrl,
+            "must restrict to the active player's creatures (ActivePlayerCtrl)"
+        );
+        assert!(
+            *no_regenerate,
+            "The Abyss's destroy can't be regenerated (NoRegen$ True)"
+        );
+    }
+
+    /// Behavioral regression: a `DestroyPermanent` with `no_regenerate: true`
+    /// destroys a permanent outright even when it has an active regeneration
+    /// shield (CR 701.15d, "can't be regenerated"). Covers The Abyss's NoRegen.
+    #[test]
+    fn test_destroy_no_regenerate_ignores_shield() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // Helper: create a 2/2 creature on the battlefield with a regeneration shield.
+        let make_shielded_bear = |game: &mut GameState| -> CardId {
+            let id = game.next_card_id();
+            let mut bear = Card::new(id, "Grizzly Bears".to_string(), p1_id);
+            bear.add_type(CardType::Creature);
+            bear.set_base_power(Some(2));
+            bear.set_base_toughness(Some(2));
+            bear.controller = p1_id;
+            bear.regeneration_shields = 1;
+            game.cards.insert(id, bear);
+            game.battlefield.add(id);
+            id
+        };
+
+        // Destroy with no_regenerate=true must NOT be replaced by the shield.
+        let creature_id = make_shielded_bear(&mut game);
+        let destroy = Effect::DestroyPermanent {
+            target: creature_id,
+            restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: true,
+        };
+        game.execute_effect(&destroy).unwrap();
+        assert!(
+            !game.battlefield.contains(creature_id),
+            "no_regenerate destroy must kill through a regeneration shield"
+        );
+
+        // Control: with no_regenerate=false the shield saves it.
+        let creature2 = make_shielded_bear(&mut game);
+        let destroy2 = Effect::DestroyPermanent {
+            target: creature2,
+            restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
+        };
+        game.execute_effect(&destroy2).unwrap();
+        assert!(
+            game.battlefield.contains(creature2),
+            "regeneration shield must save a creature from an ordinary destroy"
+        );
     }
 }

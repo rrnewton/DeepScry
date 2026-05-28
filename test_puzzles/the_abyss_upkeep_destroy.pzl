@@ -1,0 +1,21 @@
+[metadata]
+Name=The Abyss Upkeep Destroy Test
+Goal=Survive
+Turns=3
+Difficulty=Hard
+Description=P1 controls The Abyss plus a nonartifact creature (Grizzly Bears) and an artifact creature (Ornithopter). At the beginning of P1's upkeep, The Abyss must destroy one of P1's NONARTIFACT creatures of P1's choice, and it can't be regenerated. The artifact creature (Ornithopter) must NOT be eligible. P2 also controls a Grizzly Bears, which must NOT be targeted on P1's upkeep (only the active player's creatures).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=UPKEEP
+p0life=20
+p0hand=
+p0battlefield=Swamp;Swamp;Swamp;Swamp;The Abyss;Grizzly Bears;Ornithopter
+p0library=Swamp;Swamp;Swamp;Swamp;Swamp
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Forest;Forest;Grizzly Bears
+p1library=Forest;Forest;Forest;Forest;Forest
+p1graveyard=

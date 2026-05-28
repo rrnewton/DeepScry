@@ -28,6 +28,12 @@ pub enum ControllerRestriction {
     YouCtrl,
     /// Target must be controlled by an opponent
     OppCtrl,
+    /// Target must be controlled by the active player (the player whose turn it
+    /// is). Used by "each player's upkeep" triggers like The Abyss
+    /// (`ValidTgts$ Creature.nonArtifact+ActivePlayerCtrl`) where the trigger
+    /// fires on every player's upkeep and must affect a permanent controlled by
+    /// the player whose upkeep it is — i.e. the active player.
+    ActivePlayerCtrl,
 }
 
 /// Types of permanents that can be targeted
@@ -326,6 +332,10 @@ pub struct TargetRestriction {
     /// If true, target must be in the "remembered" set (unimplemented — always fails)
     #[serde(default)]
     pub requires_remembered: bool,
+    /// If true, target must NOT be an artifact (e.g. The Abyss's
+    /// `Creature.nonArtifact`). Artifact creatures are excluded.
+    #[serde(default)]
+    pub requires_nonartifact: bool,
 }
 
 impl TargetRestriction {
@@ -339,6 +349,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_nonartifact: false,
         }
     }
 
@@ -352,6 +363,7 @@ impl TargetRestriction {
             power_le: None,
             requires_nontoken: false,
             requires_remembered: false,
+            requires_nonartifact: false,
         }
     }
 
@@ -373,6 +385,11 @@ impl TargetRestriction {
 
         // Check token restriction
         if self.requires_nontoken && card.is_token {
+            return false;
+        }
+
+        // Check nonartifact restriction (e.g. The Abyss targets nonartifact creatures)
+        if self.requires_nonartifact && card.is_artifact() {
             return false;
         }
 
@@ -427,6 +444,13 @@ impl TargetRestriction {
             ControllerRestriction::Any => true,
             ControllerRestriction::YouCtrl => target_controller == spell_controller,
             ControllerRestriction::OppCtrl => target_controller != spell_controller,
+            // ActivePlayerCtrl cannot be resolved without knowing the active
+            // player. Callers that need it (the trigger auto-target site for
+            // "each player's upkeep" effects) check it explicitly against the
+            // active player; here we conservatively treat it as YouCtrl, which
+            // is correct for the common case where the trigger fires on the
+            // controller's own upkeep.
+            ControllerRestriction::ActivePlayerCtrl => target_controller == spell_controller,
         }
     }
 
@@ -437,7 +461,8 @@ impl TargetRestriction {
     /// - "Creature" -> [Creature]
     /// - "Creature.YouCtrl" -> [Creature] with YouCtrl controller restriction
     /// - "Creature.OppCtrl" -> [Creature] with OppCtrl controller restriction
-    /// - "Creature.nonArtifact+nonBlack" -> [Creature] (modifiers ignored for now)
+    /// - "Creature.nonArtifact+nonBlack" -> [Creature] with requires_nonartifact=true (nonBlack ignored)
+    /// - "Creature.nonArtifact+ActivePlayerCtrl" -> [Creature] nonartifact, ActivePlayerCtrl (The Abyss)
     /// - "Creature.!HasCounters" -> [Creature] with requires_no_counters=true
     /// - "Creature.powerGE4" -> [Creature] with power_ge=4
     /// - "Creature.powerLE2" -> [Creature] with power_le=2
@@ -446,6 +471,7 @@ impl TargetRestriction {
         let mut requires_no_counters = false;
         let mut requires_nontoken = false;
         let mut requires_remembered = false;
+        let mut requires_nonartifact = false;
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
@@ -466,6 +492,8 @@ impl TargetRestriction {
                         "IsRemembered" => requires_remembered = true,
                         "YouCtrl" => controller = ControllerRestriction::YouCtrl,
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
+                        "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
+                        "nonArtifact" => requires_nonartifact = true,
                         m if m.starts_with("powerGE") => {
                             // Parse powerGE4 -> power_ge = 4
                             if let Ok(n) = m.trim_start_matches("powerGE").parse::<i32>() {
@@ -502,6 +530,7 @@ impl TargetRestriction {
             power_le,
             requires_nontoken,
             requires_remembered,
+            requires_nonartifact,
         }
     }
 }
@@ -593,6 +622,10 @@ pub enum Effect {
         target: CardId,
         /// Restriction on what types can be targeted (e.g., [Artifact, Enchantment] for Disenchant)
         restriction: TargetRestriction,
+        /// If true, the destroyed permanent can't be regenerated (CR 701.15).
+        /// Set by `NoRegen$ True` on the script (e.g. The Abyss, Terror).
+        #[serde(default)]
+        no_regenerate: bool,
     },
 
     /// Destroy all permanents matching a filter
@@ -2943,6 +2976,7 @@ mod tests {
         let destroy_effect = Effect::DestroyPermanent {
             target: card_id,
             restriction: TargetRestriction::any(),
+            no_regenerate: false,
         };
 
         let Effect::DestroyPermanent { target, .. } = destroy_effect else {

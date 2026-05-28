@@ -43,6 +43,7 @@ workflow, row format, and update rules.
 | ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | (multiple)       |
 | ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-f0bfb8  | Sengir Vampire   |
 | DamageDoneOnce by ~ to creature/player                                           | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | Hypnotic Specter |
+| Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-9l628   | The Abyss        |
 
 ## Activated abilities (A:) and cost shapes
 
@@ -82,6 +83,9 @@ workflow, row format, and update rules.
 | Enchant <description>                           | PARTIAL  | 2026-05-12_#2226(928ec99f) | mtg-o7dqu   | Animate Dead     |
 | ValidTgts$ Creature                             | WORKING  | 2026-05-12_#2226(928ec99f) | (none)      | Triskelion       |
 | Affected$ <selector> (general)                  | PARTIAL  | 2026-05-12_#2226(928ec99f) | mtg-147     | (multiple)       |
+| ValidTgts$ Creature.nonArtifact (excl. artifact)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
+| ValidTgts$ ...+ActivePlayerCtrl (active player) | WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
+| DB$ Destroy NoRegen$ True (can't be regenerated)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 
 ---
 

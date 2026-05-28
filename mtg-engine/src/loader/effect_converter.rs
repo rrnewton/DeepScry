@@ -164,7 +164,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 CardId::placeholder()
             };
 
-            Some(Effect::DestroyPermanent { target, restriction })
+            // NoRegen$ True => the destroyed permanent can't be regenerated
+            // (CR 701.15d), e.g. The Abyss, Terror.
+            let no_regenerate = params.get("NoRegen").is_some_and(|v| v.eq_ignore_ascii_case("True"));
+
+            Some(Effect::DestroyPermanent {
+                target,
+                restriction,
+                no_regenerate,
+            })
         }
 
         ApiType::GainLife => {
@@ -1486,6 +1494,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::DestroyPermanent {
                 target: CardId::new(0),
                 restriction,
+                no_regenerate: false,
             })
         }
 
@@ -3172,7 +3181,9 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         let effect = params_to_effect(&params).expect("FlipOntoBattlefield should produce an effect");
 
         match effect {
-            Effect::DestroyPermanent { target, restriction } => {
+            Effect::DestroyPermanent {
+                target, restriction, ..
+            } => {
                 assert!(target.is_placeholder(), "target should be placeholder until resolution");
                 assert!(restriction.requires_nontoken, "must restrict to nontoken permanents");
                 assert_eq!(

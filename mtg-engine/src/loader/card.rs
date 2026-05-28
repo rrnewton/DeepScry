@@ -2143,6 +2143,20 @@ impl CardDefinition {
                                     }
                                 }
                             }
+                            // DB$ Destroy effects (e.g. The Abyss:
+                            // "DB$ Destroy | ValidTgts$ Creature.nonArtifact+ActivePlayerCtrl | NoRegen$ True").
+                            // Reuse the shared `params_to_effect` converter instead of
+                            // re-implementing Destroy parsing here (DRY) — it produces a
+                            // DestroyPermanent with the right TargetRestriction (nonArtifact,
+                            // ActivePlayerCtrl) and the no_regenerate flag. The placeholder
+                            // target is resolved per-upkeep in `check_triggers_for_controller`.
+                            if svar_params.api_type == ApiType::Destroy {
+                                if let Some(destroy_effect) =
+                                    crate::loader::effect_converter::params_to_effect(svar_params)
+                                {
+                                    effects.push(destroy_effect);
+                                }
+                            }
                         }
                     }
 

@@ -140,7 +140,9 @@ impl GameState {
                         }
                     }
                 }
-                Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
+                Effect::DestroyPermanent {
+                    target, restriction, ..
+                } if target.is_placeholder() => {
                     // Destroy effect - check targeting restrictions
                     // Priority: 1) TargetRestriction from ValidTgts, 2) CardCache from oracle text
                     for &card_id in &self.battlefield.cards {
@@ -453,7 +455,9 @@ impl GameState {
                     // For now, collect targets from ALL modes (will be filtered later).
                     for mode in modes {
                         match mode.effect.as_ref() {
-                            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
+                            Effect::DestroyPermanent {
+                                target, restriction, ..
+                            } if target.is_placeholder() => {
                                 // This mode destroys a permanent
                                 for &card_id in &self.battlefield.cards {
                                     if let Ok(target_card) = self.cards.get(card_id) {
@@ -822,7 +826,9 @@ impl GameState {
         // Check each effect to determine valid targets
         for effect in &ability.effects {
             match effect {
-                Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
+                Effect::DestroyPermanent {
+                    target, restriction, ..
+                } if target.is_placeholder() => {
                     // Destroy effect needs targets matching restriction
                     for &card_id in &self.battlefield.cards {
                         if let Ok(card) = self.cards.get(card_id) {
@@ -1211,7 +1217,9 @@ impl GameState {
         source_colors: &[crate::core::Color],
     ) -> bool {
         match effect {
-            Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
+            Effect::DestroyPermanent {
+                target, restriction, ..
+            } if target.is_placeholder() => {
                 // Check if any permanent matches the restriction
                 self.battlefield.cards.iter().any(|&card_id| {
                     if let Ok(card) = self.cards.get(card_id) {
@@ -1531,6 +1539,7 @@ mod tests {
         sinkhole_card.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(sinkhole_id, sinkhole_card);
 
@@ -1577,6 +1586,7 @@ mod tests {
         terror_card.effects.push(Effect::DestroyPermanent {
             target: CardId::new(0),
             restriction: crate::core::TargetRestriction::any(),
+            no_regenerate: false,
         });
         game.cards.insert(terror_id, terror_card);
 
