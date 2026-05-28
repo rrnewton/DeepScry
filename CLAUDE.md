@@ -168,6 +168,40 @@ Then, the commit that fixes the issue both removes the comment and closes the is
 
 When creating or updating issues with `bd`, always put ALL content in the description field. Do NOT use the --notes field, as it creates duplication and confusion between what's in description vs notes. Keep all issue information consolidated in the description field only.
 
+#### Issue IDs: hash on worktrees, numeric on integration
+
+Minibeads supports both **hash-based** IDs (`mtg-a1b2c3`, content-derived) and
+**numeric** IDs (`mtg-171`, sequential). Hash IDs let many agents file issues in
+parallel worktrees without colliding; numeric IDs are nicer to read and cite but
+require a serialization point to assign without conflict. We use BOTH, with the
+**integration branch / primary checkout as the serialization point**:
+
+- **`.beads/config-minibeads.yaml` keeps `mb-hash-ids: true`** — so every NEW
+  issue (anywhere, including worktrees) is born hash-based and parallel-safe.
+- **On a worktree:** just `bd create` (hash ID) and commit the hash-named file.
+  Do NOT run `mb mb-migrate` in a worktree — let integration renumber later.
+  Your branch will reference hash IDs; that is expected and fine.
+- **On the primary checkout, before committing a `.beads` change to
+  `integration`:** run the renumber, then restore the hash setting, then stage
+  the whole `.beads` dir:
+  ```sh
+  mb mb-migrate --dry-run --to numeric      # inspect first
+  mb mb-migrate --to numeric                # renames hash files -> numeric, rewrites cross-refs
+  # mb-migrate flips mb-hash-ids -> false; we WANT it true for future parallel filing:
+  sed -i 's/^mb-hash-ids: false/mb-hash-ids: true/' .beads/config-minibeads.yaml
+  git add .beads                            # whole dir: renamed files + ref rewrites + config
+  ```
+  This converts any hash IDs that arrived via merged feature branches into the
+  next sequential numbers and keeps `git log`/issue citations readable.
+- **Timing (orchestrator):** only renumber when **no in-flight feature branch is
+  touching `.beads`** (do it right after a wave of card/feature branches merges,
+  before dispatching the next wave). Renumbering while a branch has edits to a
+  hash-named issue file causes modify/delete rebase conflicts (integration
+  renamed `mtg-2b3951.md`→`mtg-393.md`; the branch still edits `mtg-2b3951.md`).
+- A hash ID cited in a commit message or code TODO before renumbering still
+  resolves via the renamed file's history; prefer citing issues by title when the
+  reference must survive a renumber.
+
 
 Workflow: Commits and Version Control
 ================================================================================
