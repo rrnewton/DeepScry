@@ -1,0 +1,60 @@
+---
+title: 'TRACK: 1994 Old School playtest goal — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-05-28T02:03:18.299008600+00:00
+updated_at: 2026-05-28T02:03:18.299008600+00:00
+---
+
+# Description
+
+TRACK: full play-tested support for all 1994 Old School decks.
+
+User goal (verbatim): "full play-tested support for all 1994 old-school decks."
+
+Filed by the playtest-old-school-1994-skeleton orchestrator on 2026-05-27_#2334(496405da).
+
+== Scope ==
+Six representative Old School 93/94 decks (decks/old_school/*.dck):
+
+- 01_rogue_rogerbrand — mtg-526f25
+- 02_thedeck_peterschnidrig — mtg-0f9d13
+- 03_robots_jesseisbak — mtg-6ocwz
+- 05_mono_black_rogerbrand — mtg-haj0b
+- 06_jeskai_aggro_joseantonioprieto — mtg-c86kp
+- 06_troll_disk_daniellebrunazzo — mtg-8muv6
+
+== Quantification ==
+- 6 decks
+- 92 unique cards across all 6 decks (union)
+- 79 NEW per-card tracking issues filed in this skeleton
+- 13 per-card issues PRE-EXISTING (linked, not duplicated)
+
+== Definition of done ==
+1. Every per-card tracking issue listed under each deck reaches
+   CARD STATUS: WORKING (per the compatibility_tracking skill).
+2. Each of the 6 deck tracking issues has a captured end-to-end
+   `mtg tui` log of the deck playing through against another
+   1994 Old School deck, with no unimplemented-effect / sentinel /
+   silent-drop errors.
+3. The 1994 Old School deck-pair tournament (similar to mtg-118)
+   reaches 0% failure rate.
+
+== How playtester agents should pick work off this tree ==
+- Open this umbrella → pick a deck issue → pick the highest-priority
+  not-yet-WORKING per-card issue → drive it through the
+  `targeted_compatibility` SKILL.
+- Coordinate with other agents via `mb update` on the per-card issue;
+  never duplicate.
+
+== Out of scope for the skeleton ==
+- Actual playtesting of cards (the skeleton just enumerates the work).
+- Engine code fixes (separate beads issues per discovered bug).
+
+== Status ==
+UMBRELLA STATUS: skeleton-filed — playtesting work has not yet begun
+via this umbrella. Pre-existing per-card issues retain their own
+status (open / closed) and pre-existing per-deck issues
+(mtg-526f25 rogue_rogerbrand, mtg-0f9d13 thedeck) have been
+augmented with links to the per-card issues filed here.

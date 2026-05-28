@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-13T19:18:20.391758180+00:00
-updated_at: 2026-05-13T19:18:20.391758180+00:00
+updated_at: 2026-05-28T02:03:18.292580576+00:00
 ---
 
 # Description
@@ -256,3 +256,79 @@ Regression coverage:
   pattern as the per-card Animate. Cards that mass-animate land into
   creatures (e.g. some Avatar set "all your lands become 1/1 Elementals"
   effects) still need this. Filed for future work.
+
+---
+
+[Skeleton refresh 2026-05-27_#2334(496405da) — playtest-old-school-1994-skeleton orchestrator]
+
+TRACK: full compatibility for the 1994 Old School deck '02 Thedeck Peterschnidrig'.
+
+Deck file: decks/old_school/02_thedeck_peterschnidrig.dck
+Filed as part of the 1994 Old School playtest skeleton on 2026-05-27_#2334(496405da).
+
+GOAL: every unique card in this deck reaches CARD STATUS: WORKING (per
+.claude/skills/compatibility_tracking/SKILL.md) so the deck can be played
+end-to-end through `mtg tui` against another 1994 Old School deck without
+any silent-drop, unimplemented-effect, or sentinel-log failures.
+
+This is a tracking issue. Per-card verification lives in the linked
+'Card Compatibility:' issues. Update those, not this one, when running
+playtests. When all per-card issues are WORKING, this issue can be closed
+along with a green deck-vs-deck `mtg tui` reproducer logged here.
+
+== Per-card tracking issues ==
+
+### Main deck
+- 4x **Savannah Lions** — mtg-8wa4q
+- 4x **Su-Chi** — mtg-wo7v3
+- 2x **Serra Angel** — mtg-c6dfe3
+- 1x **Chaos Orb** — mtg-ad79fd
+- 1x **Sol Ring** — mtg-1qlk9
+- 1x **Mox Jet** — mtg-fa9c28
+- 1x **Mox Sapphire** — mtg-rk9og
+- 1x **Mox Pearl** — mtg-5490k
+- 1x **Mox Emerald** — mtg-jx9m6
+- 1x **Mox Ruby** — mtg-bhnoj
+- 1x **Black Lotus** — mtg-55mcj
+- 4x **Disenchant** — mtg-2ahn3
+- 4x **Swords to Plowshares** — mtg-hoote
+- 2x **Psionic Blast** — mtg-b5aum
+- 4x **Counterspell** — mtg-3pjtj
+- 1x **Mana Drain** — mtg-xljen
+- 1x **Ancestral Recall** — mtg-w0f5s
+- 1x **Flash Counter** — mtg-iri69
+- 1x **Recall** — mtg-qf6co
+- 1x **Demonic Tutor** — mtg-w0dfs
+- 1x **Mind Twist** — mtg-nrdks
+- 1x **Braingeyser** — mtg-mylhk
+- 1x **Balance** — mtg-uztk2
+- 1x **Time Walk** — mtg-52q8u
+- 4x **Mishra's Factory** — mtg-voj6u
+- 2x **City of Brass** — mtg-ef504b
+- 1x **Library of Alexandria** — mtg-nbriu
+- 1x **Island** — mtg-0b710
+- 1x **Strip Mine** — mtg-36d76b
+- 2x **Plains** — mtg-uah5f
+- 4x **Tundra** — mtg-apqta
+- 1x **Scrubland** — mtg-vk7wb
+- 3x **Underground Sea** — mtg-qdpjb
+
+### Sideboard
+- 4x **Divine Offering** — mtg-xivz9
+- 1x **Spirit Link** — mtg-25w4a
+- 2x **City in a Bottle** — mtg-vxyac
+- 2x **Maze of Ith** — mtg-pp05u
+- 1x **Wrath of God** — mtg-omure
+- 3x **Blue Elemental Blast** — mtg-0fuxr
+- 1x **Circle of Protection: Red** — mtg-kvafc
+- 1x **Power Sink** — mtg-xyi2b
+
+
+== Recommended end-to-end reproducer (when all per-card issues are WORKING) ==
+./target/release/mtg tui \
+  decks/old_school/02_thedeck_peterschnidrig.dck \
+  decks/old_school/<opponent>.dck \
+  --p1=heuristic --p2=heuristic --seed 42 --verbosity 2
+
+== Status ==
+DECK STATUS: skeleton — see per-card issues for granular state.
