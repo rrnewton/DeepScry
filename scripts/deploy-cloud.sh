@@ -281,15 +281,27 @@ if [[ "$SYSTEMD_MODE" == "user" ]]; then
     echo "  remote: installing systemd-user unit"
     mkdir -p ~/.config/systemd/user
     mv /tmp/"$SERVICE_NAME".service.staged ~/.config/systemd/user/"$SERVICE_NAME".service
-    # Enable lingering so the unit runs even when the user is not logged in.
-    if command -v loginctl >/dev/null 2>&1; then
-        if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes$'; then
-            echo "    enabling user lingering (requires sudo, one-time)"
-            sudo -n loginctl enable-linger "$USER" 2>/dev/null \
-                || sudo loginctl enable-linger "$USER" \
-                || echo "    WARNING: could not enable-linger; service will not auto-start at boot"
-        fi
+    # Enable lingering so the user's systemd manager (and therefore the
+    # service) survives logout and reboot. WITHOUT this, the --user
+    # manager is torn down when the user's last login session ends, so
+    # the server dies the moment the deploy/admin SSH session closes
+    # and only restarts on the next login (INCIDENT 2026-05-28: ~48min
+    # outage; see mtg-584). enable-linger is idempotent, so we run it
+    # unconditionally and then ASSERT Linger=yes — failing loudly if the
+    # VM did not honour it (we must not leave a non-durable service).
+    if ! command -v loginctl >/dev/null 2>&1; then
+        echo "    ERROR: loginctl not found; cannot enable durable lingering for systemd-user mode" >&2
+        exit 1
     fi
+    echo "    enabling user lingering (idempotent)"
+    sudo -n loginctl enable-linger "$USER" 2>/dev/null \
+        || sudo loginctl enable-linger "$USER" \
+        || { echo "    ERROR: could not enable-linger for $USER; service will NOT survive logout/reboot" >&2; exit 1; }
+    if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes$'; then
+        echo "    ERROR: linger assertion failed — loginctl show-user $USER does not report Linger=yes" >&2
+        exit 1
+    fi
+    echo "    verified: Linger=yes for $USER (service is durable across logout/reboot)"
     systemctl --user daemon-reload
     systemctl --user enable "$SERVICE_NAME".service
     echo "  remote: systemd-user unit installed and enabled"
@@ -519,10 +531,16 @@ run_post_deploy_probe() {
     echo ""
     echo "→ probing live deploy: $base"
 
-    # The cert is for deepscry.net only — when probing by IP we must
-    # disable strict hostname checking. We assume HOST is the cert name
-    # and trust the deploy script user to pass the right thing.
-    local curl_opts=(-sS --max-time 15 --retry 3 --retry-delay 2 --retry-connrefused)
+    # TLS trust: we probe the ORIGIN directly (scheme://host:port), not
+    # through the Cloudflare proxy. With the CF proxy off, the origin
+    # presents the Cloudflare Origin Cert, whose CA is NOT in the system
+    # bundle, so a strict curl fails (60) "unable to get local issuer
+    # certificate" and reports HTTP 000 for EVERY endpoint — a false
+    # failure even when the service is healthy (mtg-581). Use -k to skip
+    # TLS-trust verification for the direct-origin probe; the content
+    # assertions below (byte sizes, JSON validity, /health sha) are what
+    # actually prove the deploy is good, not the cert chain.
+    local curl_opts=(-sSk --max-time 15 --retry 3 --retry-delay 2 --retry-connrefused)
 
     local probe_failed=0
     local fail_reasons=()
