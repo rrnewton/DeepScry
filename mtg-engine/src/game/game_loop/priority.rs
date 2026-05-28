@@ -2847,6 +2847,18 @@ impl<'a> GameLoop<'a> {
             if let Some(&spell_id) = self.game.stack.cards.last() {
                 self.resolve_top_spell_from_stack_interactive(spell_id, controller1, controller2)?;
                 // After resolving a spell, players get priority again
+                // (loop continues). But FIRST, state-based actions are checked
+                // (MTG CR 704.3): if a player is at 0 or less life (CR 704.5a)
+                // they lose the game immediately. This must happen between stack
+                // resolutions, not just at turn boundaries — otherwise a second
+                // damage spell on the stack could take the surviving opponent
+                // negative too, leaving the "winner" at negative life (and
+                // making a strict winner-life invariant unobservable). This is
+                // newly reachable now that Lightning Bolt can target players
+                // (mtg-lxrqz).
+                if let Some(result) = self.check_win_condition() {
+                    return Ok(Some(result));
+                }
                 // Loop continues to give priority
             } else {
                 // Stack was reported non-empty but has no cards (shouldn't happen)
