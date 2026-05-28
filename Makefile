@@ -712,8 +712,12 @@ wasm-network: wasm-export
 		echo "Installing wasm-pack..."; \
 		cargo install wasm-pack; \
 	fi
+	@# CRITICAL: nuke prior pkg/ before rebuilding. wasm-pack is incremental
+	@# and has produced stale pkg/.js + .wasm pairs in the past when source
+	@# exports change but the cache doesn't notice (mtg-2indh). The build is
+	@# ~10s either way; forced clean is much cheaper than a stale-glue deploy.
+	@rm -rf mtg-engine/pkg web/pkg
 	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
-	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""
 	@echo "=== WASM network build complete! ==="

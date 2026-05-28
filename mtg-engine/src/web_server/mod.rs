@@ -144,14 +144,45 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     };
 
     // Static-file service. `ServeDir` handles range requests, index.html,
-    // and correct MIME types automatically. We layer a permissive
-    // Cache-Control header so re-deploys take effect immediately — the
-    // WASM bundle filenames are content-hashed at build time anyway.
-    let static_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
+    // and correct MIME types automatically.
+    //
+    // We split the cache policy by route to eliminate the stale-WASM bug
+    // class (mtg-2indh): bundle filenames are NOT content-hashed (they're
+    // fixed paths like /pkg/mtg_forge_rs_bg.wasm), so the JS glue and the
+    // .wasm binary can desync if browsers cache either one across a
+    // redeploy. The symptom is the cryptic "WebAssembly.instantiate():
+    // Import #N __wbindgen_cast_<hash>: function import requires a callable"
+    // error that took several rounds to track down.
+    //
+    // Policy:
+    //  - /pkg/*  + /data/* → `no-cache, must-revalidate`. Forces browsers
+    //    to revalidate every request via If-Modified-Since/ETag. Cheap
+    //    (304 response) but eliminates stale-glue desyncs.
+    //  - Everything else (HTML, server-config.js)  → `public, max-age=60`.
+    //    Short enough that copy edits land fast, long enough that index.html
+    //    repeat visits within a minute don't re-fetch.
+    use tower::ServiceBuilder;
+    let pkg_dir = config.static_dir.join("pkg");
+    let data_dir = config.static_dir.join("data");
+    let general_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
+    let no_cache = SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, must-revalidate"),
+    );
+    let pkg_service = ServiceBuilder::new()
+        .layer(no_cache.clone())
+        .service(ServeDir::new(&pkg_dir));
+    let data_service = ServiceBuilder::new()
+        .layer(no_cache.clone())
+        .service(ServeDir::new(&data_dir));
 
     let app = Router::new()
         .route(&config.lobby_path, get(lobby_ws_handler))
-        .fallback_service(static_service)
+        .nest_service("/pkg", pkg_service)
+        .nest_service("/data", data_service)
+        .fallback_service(general_service)
+        // Default cache for HTML / server-config.js / etc. (`if_not_present`
+        // so it does not override the /pkg and /data no-cache headers).
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=60"),
