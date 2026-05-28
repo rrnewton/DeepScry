@@ -1,0 +1,20 @@
+---
+title: 'deploy: REBUILD=1 doesn''t actually rebuild WASM when web/pkg already exists'
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-05-27T23:19:38.308805581+00:00
+updated_at: 2026-05-27T23:19:49.938017383+00:00
+---
+
+# Description
+
+The deploy script's `REBUILD=1` flag is supposed to force WASM rebuild even when web/pkg/ already exists. Today (2026-05-27) `REBUILD=1 ./scripts/deploy-cloud.sh deploy` shipped a stale WASM bundle (md5 720f6e6e... from 06:56 GMT) despite the source having changed (the play-from-lobby commit d9f8f897 added new exports `network_create_game`, `network_join_game`). User got `WebAssembly.instantiate(): Import #59 "wbg" "__wbindgen_cast_..."` errors in browser because the JS glue and .wasm were from different builds.
+
+Root cause hypothesis: `make wasm-network` is incremental and cargo's wasm32 incremental cache may have been stale (or wasm-pack didn't detect the source change). Manual `make wasm-network` (without REBUILD flag) DID produce a new bundle (md5 87dfe5dc...).
+
+Fix: either (a) script should `cargo clean -p mtg-forge-rs --target wasm32-unknown-unknown` when REBUILD=1, or (b) always check md5/timestamp of generated pkg against committed source SHA, or (c) use a deterministic build cache that doesn't false-negative on real source changes.
+
+Cosmetic follow-up: the script's "Landing page" / "Lobby WS URL" final-print shows `https://deepscry.net:8080/` — the `:8080` is wrong when behind Cloudflare (which proxies :443 to origin :8080). Should print `https://deepscry.net/`.
+
+Also tracked under this issue: WASM bundle cache busting. Even with a fresh server-side bundle, browsers can hold stale pkg/*.js + pkg/*.wasm. Should add either (i) content-hash filenames (pkg/<HASH>.wasm) or (ii) explicit no-cache for pkg/* in axum's tower-http response headers, or (iii) cache-busting query string `?v=<sha>`.

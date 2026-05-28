@@ -1,0 +1,18 @@
+---
+title: 'Stacking UI: same-name lands not stacked in battlefield render'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T03:19:40.476066980+00:00
+updated_at: 2026-05-28T03:20:03.905147606+00:00
+---
+
+# Description
+
+CLUSTER: UI/infra.
+
+Battlefield render does not stack same-name permanents. Repro: ernhamgeddon_gw mirror, heuristic/heuristic, seed 2 (P1 wins turn 25). At end: P2 has 2 Forests + 2 Savannahs, P1 has 4 untapped Forests — all rendered as separate side-by-side cards instead of stacked piles.
+
+Stacking same-name (and same-tap-state) permanents into visual piles keeps the battlefield readable as permanent count grows. This is a pure rendering/layout change in the game-page UI (tui_game.html and/or native_game.html battlefield layout). No engine change.
+
+Consider: stack by (card name + tapped state); show a count badge; fan slightly so tapped vs untapped within a stack is visible.
