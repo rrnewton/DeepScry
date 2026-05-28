@@ -1,0 +1,53 @@
+# Trunk.toml — content-addressed web asset pipeline (mtg-571)
+#
+# Trunk (https://trunkrs.dev) is adopted as the declared web-asset build tool
+# for the DeepScry frontend. The end-goal is the user's stated ideal: every
+# immutable asset has a content-addressed (hashed) filename so it can be served
+# `immutable, max-age=1y`, and `index.html` is the SOLE mutable pointer — which
+# makes the stale-bundle bug class (mtg-475 / mtg-2indh: a cached JS glue
+# paired with a fresh .wasm) structurally impossible.
+#
+# ── Adoption status (staged) ───────────────────────────────────────────────
+#
+# Trunk's `rel="rust"` model OWNS the cargo+wasm-bindgen build and injects its
+# own bootstrap that exposes the module via `window.wasmBindings`. Our four
+# game pages instead `import init, { ...many named exports... } from
+# './pkg/mtg_forge_rs.js'` (static + dynamic imports), which trunk's injected
+# bootstrap cannot serve directly. Fully migrating to trunk therefore requires
+# rewriting all four pages onto `window.wasmBindings.*` — a large change gated
+# behind a separate task (see mtg-571 follow-ups) and deliberately deferred
+# while a network-desync fix is in flight.
+#
+# What IS content-addressed today (the stale-bundle bug is killed on deploy):
+#   * The wasm-bindgen pkg pair  (mtg_forge_rs.<hash>.js + _bg.<hash>.wasm) —
+#     hashed by scripts/hash_web_assets.sh on the deploy-staging copy, which
+#     rewrites the import specifier + the init({module_or_path}) arg in the
+#     HTML pages (structured, controlled-injection rewrite).
+#   * The per-set data bins  (<YYYY>-<CODE>.<hash>.bin) — hashed by the
+#     exporter (`mtg export-wasm`); the hashed name lives in sets/index.json's
+#     `file`/`cards` fields, so the client needs zero changes.
+#
+# Mutable pointers (short-TTL / no-cache), per mtg-engine/src/web_server/mod.rs:
+#   index.html, server-config.js, sets/index.json, decks.bin, tokens.bin.
+#
+# ── Settings ────────────────────────────────────────────────────────────────
+
+[build]
+# Build into web/dist when invoked as the trunk dist target. (The deploy
+# pipeline currently rsyncs a hashed staging copy of web/ rather than dist/;
+# dist/ becomes primary once the multi-page rel="rust" migration lands.)
+target = "web/index.html"
+dist = "web/dist"
+# Emit content-hashed filenames for trunk-managed assets (the whole point).
+filehash = true
+# wasm-bindgen pkg is built with the network feature; mirror the Makefile.
+# (Applies once index.html carries a `data-trunk rel="rust"` directive.)
+
+[tools]
+# Pin to match the toolchain validated for this adoption. Trunk auto-manages
+# wasm-bindgen / wasm-opt versions when it owns the rust build.
+
+# NOTE: until the multi-page migration lands, `trunk build` here only manages
+# index.html's own assets. The authoritative pkg build remains `make
+# wasm-network` (wasm-pack), and content-addressing is applied by
+# scripts/hash_web_assets.sh + the exporter. deploy-cloud.sh wires both.

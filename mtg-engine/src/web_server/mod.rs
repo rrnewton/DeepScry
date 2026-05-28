@@ -171,28 +171,50 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         lobby: lobby_for_health,
     };
 
-    // ── Tiered cache policy ───────────────────────────────────────────
+    // ── Tiered cache policy (content-addressing, mtg-571) ─────────────
     //
-    // Splitting the cache by route addresses the stale-WASM bug class
-    // (mtg-475): the JS glue and the .wasm binary use FIXED filenames
-    // (no content hashing), so an old cached glue paired with a new wasm
-    // (or vice versa) yields the cryptic "WebAssembly.instantiate():
-    // Import #N __wbindgen_cast_<hash>: function import requires a
-    // callable" error. The cache scheme below caps the freshness window
-    // per content type at the level its update cadence demands:
+    // The stale-WASM bug class (mtg-475 / mtg-2indh) is the JS-glue ↔ .wasm
+    // desync: an old cached glue paired with a new wasm (or vice versa)
+    // yields the cryptic "WebAssembly.instantiate(): Import #N
+    // __wbindgen_cast_<hash>: function import requires a callable" error.
+    // The structural fix is CONTENT-ADDRESSED filenames — a content change
+    // produces a NEW filename, so a browser can never hold a stale-but-
+    // mismatched copy under an old name, and such files are safe to mark
+    // `immutable, max-age=1y` even behind a CDN that overrides headers
+    // (because the only way to get new bytes is a new URL).
     //
-    //   /pkg/*                      → no-cache, must-revalidate
+    // Tiering (immutable iff the URL is content-addressed):
+    //
+    //   /data/**/*.bin              → public, max-age=31536000, immutable
+    //                                 NOW content-addressed: the exporter
+    //                                 writes `<YYYY>-<CODE>.<hash>.bin` and
+    //                                 the hashed name lives in index.json's
+    //                                 `file`/`cards` fields (mtg-571). The
+    //                                 client only ever fetches names it read
+    //                                 from index.json, so a content change is
+    //                                 a new URL — immutable is correct.
     //   /data/sets/index.json       → no-cache, must-revalidate
-    //   /data/**/*.bin              → public, max-age=86400, must-revalidate
+    //                                 The MUTABLE pointer to the hashed bins.
+    //                                 Small (tens of KB); cheap 304 per hit.
+    //   /pkg/*                      → no-cache, must-revalidate
+    //                                 NOT yet content-addressed: the game
+    //                                 pages still `import init, {…named…}
+    //                                 from './pkg/mtg_forge_rs.js'` with a
+    //                                 FIXED specifier (trunk's rel="rust"
+    //                                 multi-page rewrite is the deferred
+    //                                 follow-up — see mtg-571). Until those
+    //                                 pages are rewritten to a hashed glue
+    //                                 name, /pkg stays no-cache + the
+    //                                 deploy-time `?v=<sha>` query-string
+    //                                 cache-bust so glue+wasm swap together.
     //   /images/**                  → public, max-age=31536000, immutable
     //                                 (filenames embed scryfall art_id;
     //                                  they never change for a given URL)
-    //   HTML, server-config.js, etc → public, max-age=60
+    //   HTML, server-config.js, etc → public, max-age=60 (mutable pointers)
     //
-    // The /pkg layer is paired with the deploy-time `?v=<sha>` query
-    // string injection in `web/server-config.js` so a fresh deploy
-    // forces a forced revalidation that responds 200-with-body (not
-    // 304) and atomically swaps glue+wasm together.
+    // INVARIANT: a route may be marked `immutable` ONLY if its URL is
+    // content-addressed (the bytes uniquely determine the filename). Adding
+    // an immutable tier for a fixed-name asset re-opens the desync bug.
     use tower::ServiceBuilder;
     let pkg_dir = config.static_dir.join("pkg");
     let data_dir = config.static_dir.join("data");
@@ -203,10 +225,6 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, must-revalidate"),
     );
-    let daily_revalidate = SetResponseHeaderLayer::overriding(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=86400, must-revalidate"),
-    );
     let immutable_year = SetResponseHeaderLayer::overriding(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
@@ -216,21 +234,32 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         .layer(no_cache.clone())
         .service(ServeDir::new(&pkg_dir));
 
-    // /data is split: the small index.json manifest is no-cache
-    // (revalidate every hit; cheap 304 because it's a few KB) while the
-    // large per-set .bin / decks.bin / tokens.bin bundles (10-100 MB
-    // total) change rarely and use daily revalidation. The index.json
-    // case wins via a dedicated axum `.route()` (more specific than the
-    // nest_service); everything else under /data lands on the daily
-    // bundle service.
+    // /data is split: the small index.json manifest is the MUTABLE pointer
+    // (no-cache; revalidate every hit, cheap 304 because it's a few KB)
+    // while the large per-set .bin / decks.bin / tokens.bin bundles are now
+    // CONTENT-ADDRESSED (mtg-571) — `<set>.<hash>.bin` names referenced
+    // from index.json — so they are safe to mark `immutable, max-age=1y`.
+    // The index.json case wins via a dedicated axum `.route()` (more
+    // specific than the nest_service); everything else under /data lands on
+    // the immutable bundle service — which is correct ONLY for the
+    // content-addressed `<set>.<hash>.bin` files.
+    //
+    // decks.bin / tokens.bin are FIXED-NAME (referenced by a literal
+    // `fetch('./data/decks.bin')` in the pages), so per the immutable
+    // INVARIANT above they must NOT be immutable. They get dedicated
+    // no-cache routes alongside index.json (mutable pointers). Hashing them
+    // too is a tracked mtg-571 follow-up; until then no-cache keeps them
+    // honest across a card-DB re-export.
     let data_bins_service = ServiceBuilder::new()
-        .layer(daily_revalidate.clone())
+        .layer(immutable_year.clone())
         .service(ServeDir::new(&data_dir));
     let data_index_path = data_dir.join("sets").join("index.json");
+    let data_decks_path = data_dir.join("decks.bin");
+    let data_tokens_path = data_dir.join("tokens.bin");
     let index_no_cache_header = HeaderValue::from_static("no-cache, must-revalidate");
 
     let images_service = ServiceBuilder::new()
-        .layer(immutable_year)
+        .layer(immutable_year.clone())
         .service(ServeDir::new(&images_dir));
 
     let app = Router::new()
@@ -246,6 +275,24 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
                 let path = data_index_path.clone();
                 let hdr = index_no_cache_header.clone();
                 move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/json")
+            }),
+        )
+        // decks.bin / tokens.bin: fixed-name (NOT content-addressed) -> the
+        // mutable-pointer no-cache tier, NOT the immutable bin tier below.
+        .route(
+            "/data/decks.bin",
+            get({
+                let path = data_decks_path.clone();
+                let hdr = index_no_cache_header.clone();
+                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/octet-stream")
+            }),
+        )
+        .route(
+            "/data/tokens.bin",
+            get({
+                let path = data_tokens_path.clone();
+                let hdr = index_no_cache_header.clone();
+                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/octet-stream")
             }),
         )
         .nest_service("/data", data_bins_service)

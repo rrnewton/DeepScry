@@ -414,42 +414,74 @@ EOF
         exit 1
     fi
 
-    # --- 5. Rsync web/ ---
-    # Stage web/ into a temp dir first and run cache-bust sed on the HTML
-    # files there: every `./pkg/mtg_engine.js` import is rewritten to
-    # `./pkg/mtg_engine.js?v=<BUILD_SHA>`. With the no-cache header on
-    # /pkg the browser would already 304-revalidate every load, but the
-    # `?v=` makes the URL itself change across deploys so the browser
-    # treats the new bundle as a brand-new resource (no 304 roundtrip on
-    # first load AND no possibility of an interleaved old-glue + new-wasm
-    # combination during the redeploy window).
+    # --- 5. Rsync web/ (content-addressed, mtg-571) ---
+    # Stage web/ into a temp dir, then CONTENT-ADDRESS the wasm-bindgen pkg
+    # pair there via scripts/hash_web_assets.sh: mtg_forge_rs.js +
+    # mtg_forge_rs_bg.wasm are renamed to `<name>.<hash>.<ext>` and the HTML
+    # import specifier + init({module_or_path}) arg are rewritten to match.
+    # This SUPERSEDES the old `?v=<sha>` query-string cache-bust: a query
+    # string still shared one filename (so a CDN ignoring `no-cache` could
+    # still pair old glue with new wasm); a content-addressed FILENAME makes
+    # that pairing impossible (mtg-475 / mtg-2indh). The .bin data files are
+    # already content-addressed by the exporter (their hashed names live in
+    # sets/index.json), so they need no staging rewrite here.
     local BUILD_SHA
     BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
         BUILD_SHA="${BUILD_SHA}+dirty"
     fi
-    echo "→ cache-bust SHA: $BUILD_SHA"
+    echo "→ build SHA: $BUILD_SHA"
 
     local web_stage
     web_stage="$(mktemp -d)"
     trap 'rm -rf "$web_stage"' EXIT
     # Copy the whole web/ to staging (cheap; web/ ≈ a few hundred MB
-    # with images so we exclude those first).
+    # with images so we exclude those first). dist/ is trunk's output dir
+    # and must not be shipped raw.
     rsync -a \
         --exclude='images/' --exclude='images' \
         --exclude='node_modules/' --exclude='screenshots/' \
+        --exclude='dist/' --exclude='dist' \
         --exclude='server.log' --exclude='*.log' \
         --exclude='package-lock.json' --exclude='test_*.js' \
         --exclude='network_*_test_results.json' \
         web/ "$web_stage/"
-    # Cache-bust every HTML file's `./pkg/mtg_engine.js` import.
-    # The expression matches both `from './pkg/mtg_engine.js'` and
-    # `import('./pkg/mtg_engine.js')`. We replace ONLY in .html files
-    # to avoid mangling the .js file's own internal references.
-    find "$web_stage" -maxdepth 2 -name '*.html' -print0 | while IFS= read -r -d '' f; do
-        sed -i "s|\\./pkg/mtg_engine\\.js|./pkg/mtg_engine.js?v=${BUILD_SHA}|g" "$f"
-    done
-    echo "→ rsyncing web/ (cache-busted)"
+    # Content-address the pkg pair on the staging copy (NOT the source tree,
+    # so the committed HTML + `make validate` e2e tests stay on the fixed
+    # path). Renames pkg/*.{js,wasm} -> hashed names and rewrites the HTML.
+    echo "→ content-addressing pkg bundle (hash_web_assets.sh)"
+    "$SCRIPT_DIR/hash_web_assets.sh" "$web_stage"
+    # GC mark-sweep of orphaned hashed data bins: the exporter writes each
+    # bin once per content hash, but if a previous export left a stale
+    # <set>.<oldhash>.bin in web/data/sets that the CURRENT index.json no
+    # longer references, drop it from the staging copy so `rsync --delete`
+    # prunes it from the VM (and it never gets re-uploaded). index.json is
+    # the authoritative manifest of live bin names.
+    local sets_dir="$web_stage/data/sets"
+    if [[ -f "$sets_dir/index.json" ]]; then
+        echo "→ GC: sweeping orphaned hashed bins not referenced by index.json"
+        python3 - "$sets_dir" <<'PYGC'
+import json, os, sys
+sets_dir = sys.argv[1]
+with open(os.path.join(sets_dir, "index.json")) as fh:
+    idx = json.load(fh)
+live = {s["file"] for s in idx.get("sets", [])}
+live.update(idx.get("cards", {}).values())
+removed = 0
+for name in os.listdir(sets_dir):
+    if name.endswith(".bin") and name not in live:
+        os.remove(os.path.join(sets_dir, name))
+        removed += 1
+print(f"    removed {removed} orphaned bin(s); {len(live)} live")
+PYGC
+    fi
+    # rsync --delete propagates BOTH the renamed pkg files and the GC sweep
+    # to the VM: any old hashed pkg/bin name the new HTML/index.json no
+    # longer references is removed from the remote. This is the deploy-side
+    # GC story — `trunk build` (once fully adopted) rebuilds dist/ clean and
+    # rsync --delete prunes; today the staging copy + manifest sweep + delete
+    # achieve the same pruning.
+    echo "→ rsyncing web/ (content-addressed) with --delete"
     rsync -avh --delete "$web_stage/" "$REMOTE_SSH:$REMOTE_DIR/web/"
 
     # --- 6. Rsync cardsfolder/ ---
@@ -554,31 +586,60 @@ run_post_deploy_probe() {
         echo "  ✓ /                          200"
     fi
 
-    # 2. /pkg/mtg_engine.js — JS glue, expect > 50 KB.
-    local glue_size
-    glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_engine.js")" || glue_size=0
-    if (( glue_size < 50000 )); then
-        probe_failed=1; fail_reasons+=("/pkg/mtg_engine.js: $glue_size bytes (expected > 50000)")
+    # 2+3. Content-addressed pkg pair (mtg-571). The pkg filenames are now
+    # hashed (mtg_forge_rs.<hash>.js / _bg.<hash>.wasm), so we can't probe a
+    # fixed name. Derive the hashed names from a deployed game page's import
+    # specifier (the structured injection point hash_web_assets.sh rewrites),
+    # then probe those. This also implicitly verifies the HTML rewrite landed.
+    local game_html hashed_js hashed_wasm
+    game_html="$(curl "${curl_opts[@]}" "$base/tui_game.html")" || game_html=""
+    hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_forge_rs\.[0-9a-f]+\.js" | head -1)"
+    hashed_wasm="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_forge_rs_bg\.[0-9a-f]+\.wasm" | head -1)"
+    if [[ -z "$hashed_js" ]]; then
+        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg JS import found (hash_web_assets.sh did not run?)")
     else
-        echo "  ✓ /pkg/mtg_engine.js       200 ($glue_size bytes)"
+        local glue_size
+        glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/$hashed_js")" || glue_size=0
+        if (( glue_size < 50000 )); then
+            probe_failed=1; fail_reasons+=("/$hashed_js: $glue_size bytes (expected > 50000)")
+        else
+            echo "  ✓ /$hashed_js   200 ($glue_size bytes)"
+        fi
+    fi
+    if [[ -z "$hashed_wasm" ]]; then
+        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg wasm (init module_or_path) found")
+    else
+        local wasm_size
+        wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/$hashed_wasm")" || wasm_size=0
+        if (( wasm_size < 1000000 )); then
+            probe_failed=1; fail_reasons+=("/$hashed_wasm: $wasm_size bytes (expected > 1000000)")
+        else
+            echo "  ✓ /$hashed_wasm   200 ($wasm_size bytes)"
+        fi
     fi
 
-    # 3. /pkg/mtg_engine_bg.wasm — wasm bundle, expect > 1 MB.
-    local wasm_size
-    wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_engine_bg.wasm")" || wasm_size=0
-    if (( wasm_size < 1000000 )); then
-        probe_failed=1; fail_reasons+=("/pkg/mtg_engine_bg.wasm: $wasm_size bytes (expected > 1000000)")
-    else
-        echo "  ✓ /pkg/mtg_engine_bg.wasm  200 ($wasm_size bytes)"
-    fi
-
-    # 4. /data/sets/index.json — must parse as JSON.
+    # 4. /data/sets/index.json — must parse as JSON, AND its first listed
+    # content-addressed bin must be fetchable under its hashed name (verifies
+    # the manifest->bin content-addressing landed end-to-end on the VM).
     local idx_json
     idx_json="$(curl "${curl_opts[@]}" "$base/data/sets/index.json")" || idx_json=""
-    if ! echo "$idx_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
-        probe_failed=1; fail_reasons+=("/data/sets/index.json: not valid JSON")
+    local first_bin
+    first_bin="$(printf '%s' "$idx_json" | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin); print(d["sets"][0]["file"])
+except Exception:
+    pass' 2>/dev/null || echo "")"
+    if [[ -z "$first_bin" ]]; then
+        probe_failed=1; fail_reasons+=("/data/sets/index.json: not valid JSON or no sets[]")
     else
         echo "  ✓ /data/sets/index.json      200 (valid JSON)"
+        local bin_size
+        bin_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/data/sets/$first_bin")" || bin_size=0
+        if (( bin_size < 1000 )); then
+            probe_failed=1; fail_reasons+=("/data/sets/$first_bin: $bin_size bytes (expected > 1000)")
+        else
+            echo "  ✓ /data/sets/$first_bin (hashed)  200 ($bin_size bytes)"
+        fi
     fi
 
     # 5. /health — JSON sha must match.

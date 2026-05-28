@@ -2,6 +2,7 @@ pkg/
 node_modules/
 package-lock.json
 data/
+dist/
 screenshots/
 server.log
 # Also ignore the bare names so worktrees that symlink web/pkg, web/data,

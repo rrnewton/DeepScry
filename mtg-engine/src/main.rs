@@ -3795,11 +3795,41 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     // Write each per-set bin. Serialization shape: HashMap<String, CardDefinition>
     // so the WASM loader (which already knows that shape from the old
     // `load_cards`) can deserialize without a new schema.
+    //
+    // CONTENT-ADDRESSED BIN NAMES (mtg-571): each bin's on-disk name embeds a
+    // hash of its own bytes (`<YYYY>-<CODE>.<hash>.bin`). Because the client
+    // already reads the per-set filename out of `index.json`'s `file` field
+    // (and the per-card `cards` map), NO client code changes — the manifest is
+    // the single source of truth for the (now hashed) names. This lets the web
+    // server serve `/data/sets/*.bin` as `immutable, max-age=1y`: a content
+    // change yields a NEW filename, so a browser can never hold a stale-but-
+    // mismatched bin under an old name. `index.json` itself stays the mutable
+    // pointer (short-TTL). See ai_docs/transient/CONTENT_ADDRESSED_ASSETS_*.md
+    // (research) and the deploy-cloud.sh GC mark-sweep that prunes orphaned
+    // hashed bins no longer referenced by index.json.
     #[derive(serde::Serialize)]
     struct SetManifestEntry {
         file: String,
         bytes: usize,
         card_count: usize,
+        /// blake3-derived content hash (16 hex chars / 64 bits) embedded in
+        /// `file`. Recorded explicitly so the deploy GC mark-sweep and any
+        /// future integrity check can validate without re-deriving from the
+        /// filename. Collision margin is ample for a few hundred bins.
+        hash: String,
+    }
+
+    /// Short content hash for a `.bin`'s bytes. We avoid pulling a new crate
+    /// dependency (blake3) into the exporter for a non-cryptographic
+    /// cache-busting hash and reuse `std`'s `DefaultHasher` (SipHash), which
+    /// is deterministic for a given byte slice within a build. 64 bits, 16 hex
+    /// chars. The ONLY requirement here is "different bytes -> different name
+    /// with overwhelming probability", which SipHash satisfies for our scale.
+    fn content_hash_hex(bytes: &[u8]) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
     }
 
     #[derive(serde::Serialize)]
@@ -3821,7 +3851,9 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         let bytes = bincode::serialize(&map).map_err(|e| {
             mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
         })?;
-        let file_name = format!("{}.bin", bucket);
+        // Content-addressed filename: <YYYY>-<CODE>.<hash>.bin (mtg-571).
+        let hash = content_hash_hex(&bytes);
+        let file_name = format!("{}.{}.bin", bucket, hash);
         let path = sets_dir.join(&file_name);
         fs::write(&path, &bytes).map_err(mtg_engine::MtgError::IoError)?;
         total_sets_bytes += bytes.len();
@@ -3829,6 +3861,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
             file: file_name.clone(),
             bytes: bytes.len(),
             card_count: entries.len(),
+            hash,
         });
         for (name, _) in entries {
             cards_to_file.insert(*name, file_name.clone());

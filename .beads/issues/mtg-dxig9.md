@@ -1,0 +1,14 @@
+---
+title: Migrate game pages to trunk rel=rust + window.wasmBindings (full trunk adoption)
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T17:00:52.926443760+00:00
+updated_at: 2026-05-28T17:00:52.926443760+00:00
+---
+
+# Description
+
+Follow-up to mtg-571 (trunk content-addressed assets). Today the four game pages (tui_game.html, native_game.html, demo.html, wasm_ai_harness.html) do `import init, { ...named exports... } from './pkg/mtg_forge_rs.js'` (static + dynamic), so trunk's rel=rust injected bootstrap (which exposes the module only as window.wasmBindings) cannot own them. As a result content-addressing of the pkg pair is applied ONLY on the deploy-staging copy by scripts/hash_web_assets.sh, not in the committed source HTML.
+
+GOAL: rewrite all four pages to consume `window.wasmBindings.*` (or trunk's injected module), add a `data-trunk rel="rust"` directive, and let trunk hash the pkg pair directly. Then retire scripts/hash_web_assets.sh and the deploy-staging rewrite, and flip /pkg/* to `immutable, max-age=1y` in web_server (the committed HTML would then reference hashed names directly). This is the wholesale trunk adoption that the CORE deferred under the desync-fix freeze.
