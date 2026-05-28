@@ -1,0 +1,20 @@
+---
+title: 'Naming sweep: mtg-forge-rs paths -> <RepoRoot>; drop puzzle URLs; config-drive code issue_url'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T19:46:50.623080829+00:00
+updated_at: 2026-05-28T19:46:50.623080829+00:00
+---
+
+# Description
+
+After the crate rename lands, sweep remaining textual mtg-forge-rs occurrences (~259 lines / 88 files at depth 2389, mostly docs).
+
+- Path references in docs/skills (~141 .md lines like mtg-forge-rs/CLAUDE.md): rewrite to <RepoRoot>/path, or "DeepScry" where the product (not the path) is meant. Per-occurrence judgment.
+- GitHub URLs (user decision 2026-05-28: drop puzzles + make code URLs config-driven):
+  - Drop URL:https://github.com/rrnewton/mtg-forge-rs lines from .pzl puzzle files (puzzles don't need a source URL).
+  - Make the bug-report issue_url in mtg-engine/src/network/server.rs (currently hardcoded github.com/rrnewton/mtg-forge-rs/issues/...) come from deploy config instead of hardcoded -- ties into bug-report pipeline mtg-tan84. Future org move = one config change.
+  - KEEP Cargo.toml repository = ... as standard crate metadata.
+
+Motivation: avoid locking the codebase to the mtg-forge-rs repo name / rrnewton org so a future org/repo move is painless.

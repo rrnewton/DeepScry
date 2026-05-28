@@ -1,0 +1,28 @@
+---
+title: 'Player-target display: ''(theirs)'' should be ''(you)''/''(them)'', opponents first'
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-05-28T19:46:50.629727463+00:00
+updated_at: 2026-05-28T19:46:50.629727463+00:00
+---
+
+# Description
+
+[human-reported gameplay bug, 2026-05-28] Player-target choice display is wrong for Lightning Bolt (and all player-targeting spells).
+
+Observed (human play):
+  [0] No target
+  [1] P1 (theirs)   <- WRONG: P1 is the CURRENT player, labeled "theirs"
+  [2] P2 (theirs)   <- both players labeled "theirs"
+
+Wanted:
+  [0] No target
+  [1] P2 (them)     <- opponent FIRST
+  [2] P1 (you)      <- current player labeled "(you)"
+
+Two parts:
+1. LABEL bug: current player must show "(you)", opponent "(them)" -- never "theirs"/"yours" for PLAYER targets. Root cause: players are encoded as CardId sentinels (see mtg-579); format_card_choice (mtg-engine/src/game/controller.rs:472-497) cannot resolve the sentinel to a card, so get_card()->None -> ownership defaults to "(theirs)" for EVERY player including the viewer. Need a player-target-aware formatter that compares the sentinel to the viewer's PlayerId.
+2. ORDER heuristic: list opponents (them) BEFORE self (you) by default, since most spells target opponents. FUTURE (separate, not now): classify beneficial spells (gain life, regeneration, etc.) and flip the default to self-first for those, targeted.
+
+Card vs player: the existing "(yours)/(theirs)" for CARD targets is fine; this is specifically the PLAYER-target path. Relates to mtg-579 (typed Target enum would make this clean) and prior Lightning Bolt player-target work. Bug fix -> requires mtg-rules-review before merge (display + choice-ordering).

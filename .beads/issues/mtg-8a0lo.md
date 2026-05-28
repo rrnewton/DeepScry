@@ -1,0 +1,17 @@
+---
+title: 'Flakiness baseline: populate flakiness_db.csv via stress sweep'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T19:46:50.627318179+00:00
+updated_at: 2026-05-28T19:46:50.627318179+00:00
+---
+
+# Description
+
+Populate experiment_results/flakiness_db.csv with a baseline stress sweep (the DB ships header-only by design -- mtg-j010x). Establish per-test flakiness baselines so the report distinguishes real flakes from env-timeouts.
+
+- Depends on the crate rename (mtg-engine) so canonical names are validate.mtg-engine--* from day one (user: do the rename BEFORE this baseline).
+- Assign to the agent already working on deflaking (the desync/reliability stream) per user 2026-05-28.
+- Use scripts/flakiness_stress.py stress-all (bounded) + targeted one --runs N on the known flakers (network_e2e rogerbrand3 / monored13 / white_weenie7, determinism_e2e), with --record. CPU-courteous: --concurrency 1 on an idle box for the serious large-N runs (contention manufactures false timeout-flakes). Records the cpu column (e.g. AMD_Ryzen_7_9800X3D_8-Core_Processor).
+- Seed classifications per the known-flaker registry in ai_docs/reference/TEST_FLAKINESS.md (--classify/--issue).
