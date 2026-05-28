@@ -362,17 +362,27 @@ NETWORK_GAMELOG="$OUTPUT_DIR/network_gamelog.txt"
 # Extract GAMELOG entries from LOCAL (excluding noise: Tap, resolves, damage messages)
 # Damage messages are filtered because SERVER logs damage from GameLoop while clients
 # may have slight timing differences in when damage is observed
-grep '^\s*\[GAMELOG' "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
+# CRITICAL: strip ANSI color escapes FIRST, on BOTH logs, before filtering.
+# The local game.log is colorized; the server runs --no-color-logs. If you
+# grep before stripping, `^\s*\[GAMELOG` never matches a colored local line
+# (its leading bytes are ESC, not whitespace), so colored GAMELOG lines get
+# dropped from LOCAL only -> false line-count divergence -> phantom "desync"
+# for any game that emits colored damage lines (e.g. Iroh's Demonstration
+# DamageAll). Stripping both sides first makes the extraction symmetric.
+# (mtg-eufuc was a misdiagnosis of exactly this harness bug.)
+STRIP_ANSI='s/\x1b\[[0-9;]*m//g'
+sed -E "$STRIP_ANSI" "$LOCAL_OUTPUT/game.log" 2>/dev/null | \
+    grep '^\s*\[GAMELOG' | \
     grep -v 'Tap.*for {' | \
     grep -v 'resolves$' | \
     grep -v 'takes.*damage.*life:' | \
     grep -v 'deals.*damage.*life:' \
     > "$LOCAL_GAMELOG" || true
 
-# Extract SERVER gamelogs (authoritative, has full card info)
-# Same filters as LOCAL for apples-to-apples comparison
-# Note: --no-color-logs removes ANSI codes so no sed needed
-grep '\[GAMELOG' "$NETWORK_OUTPUT/server.log" 2>/dev/null | \
+# Extract SERVER gamelogs (authoritative, has full card info). Same ANSI strip
+# applied for symmetry even though the server already runs --no-color-logs.
+sed -E "$STRIP_ANSI" "$NETWORK_OUTPUT/server.log" 2>/dev/null | \
+    grep '\[GAMELOG' | \
     grep -v 'Tap.*for {' | \
     grep -v 'resolves$' | \
     grep -v 'takes.*damage.*life:' | \
