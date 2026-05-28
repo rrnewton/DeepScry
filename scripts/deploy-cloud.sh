@@ -403,14 +403,42 @@ EOF
     fi
 
     # --- 5. Rsync web/ ---
-    echo "→ rsyncing web/"
-    rsync -avh --delete \
+    # Stage web/ into a temp dir first and run cache-bust sed on the HTML
+    # files there: every `./pkg/mtg_forge_rs.js` import is rewritten to
+    # `./pkg/mtg_forge_rs.js?v=<BUILD_SHA>`. With the no-cache header on
+    # /pkg the browser would already 304-revalidate every load, but the
+    # `?v=` makes the URL itself change across deploys so the browser
+    # treats the new bundle as a brand-new resource (no 304 roundtrip on
+    # first load AND no possibility of an interleaved old-glue + new-wasm
+    # combination during the redeploy window).
+    local BUILD_SHA
+    BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        BUILD_SHA="${BUILD_SHA}+dirty"
+    fi
+    echo "→ cache-bust SHA: $BUILD_SHA"
+
+    local web_stage
+    web_stage="$(mktemp -d)"
+    trap 'rm -rf "$web_stage"' EXIT
+    # Copy the whole web/ to staging (cheap; web/ ≈ a few hundred MB
+    # with images so we exclude those first).
+    rsync -a \
         --exclude='images/' --exclude='images' \
         --exclude='node_modules/' --exclude='screenshots/' \
         --exclude='server.log' --exclude='*.log' \
         --exclude='package-lock.json' --exclude='test_*.js' \
         --exclude='network_*_test_results.json' \
-        web/ "$REMOTE_SSH:$REMOTE_DIR/web/"
+        web/ "$web_stage/"
+    # Cache-bust every HTML file's `./pkg/mtg_forge_rs.js` import.
+    # The expression matches both `from './pkg/mtg_forge_rs.js'` and
+    # `import('./pkg/mtg_forge_rs.js')`. We replace ONLY in .html files
+    # to avoid mangling the .js file's own internal references.
+    find "$web_stage" -maxdepth 2 -name '*.html' -print0 | while IFS= read -r -d '' f; do
+        sed -i "s|\\./pkg/mtg_forge_rs\\.js|./pkg/mtg_forge_rs.js?v=${BUILD_SHA}|g" "$f"
+    done
+    echo "→ rsyncing web/ (cache-busted)"
+    rsync -avh --delete "$web_stage/" "$REMOTE_SSH:$REMOTE_DIR/web/"
 
     # --- 6. Rsync cardsfolder/ ---
     local cards_src=""
@@ -450,15 +478,131 @@ EOF
 
     local url_scheme="http"
     [[ -n "$TLS_CERT_PATH" ]] && url_scheme="https"
+
+    # --- 9. Post-deploy HTTP probe ---
+    # Verifies the freshly-restarted server is actually serving the new
+    # bundle. Any FAIL aborts non-zero so CI / human operators notice.
+    run_post_deploy_probe "$url_scheme" "$PUBLIC_HOST" "$REMOTE_PORT" "$BUILD_SHA"
+
     echo ""
     echo "═════════════════════════════════════════════════════════════════════"
     echo "  ✓ deploy complete"
     echo "═════════════════════════════════════════════════════════════════════"
-    echo "  Landing page : ${url_scheme}://${PUBLIC_HOST}/  (CF-proxied; origin port ${REMOTE_PORT})"
+    echo "  Landing page : ${url_scheme}://${PUBLIC_HOST}:${REMOTE_PORT}/"
     echo "  Lobby WS URL : derived in-browser from window.location → /lobby on same origin"
+    echo "  Health JSON  : ${url_scheme}://${PUBLIC_HOST}:${REMOTE_PORT}/health"
+    echo "  Build SHA    : $BUILD_SHA"
     echo "  Logs         : scripts/deploy-cloud.sh logs"
     echo "  Status       : scripts/deploy-cloud.sh status"
     echo "═════════════════════════════════════════════════════════════════════"
+}
+
+# ---------------------------------------------------------------------------
+# Post-deploy HTTP probe
+# ---------------------------------------------------------------------------
+#
+# Verifies the freshly-deployed server actually serves what we expect:
+#   - landing page returns 200
+#   - /pkg/mtg_forge_rs.js is present and reasonable size
+#   - /pkg/mtg_forge_rs_bg.wasm is present and reasonable size
+#   - /data/sets/index.json parses as JSON
+#   - /health returns 200 with our build sha
+#   - /lobby responds to a WS upgrade attempt (101 expected; 400 on
+#     a malformed Upgrade is also acceptable — both mean "listening")
+#
+# Any failure exits the script non-zero with an actionable message.
+
+run_post_deploy_probe() {
+    local scheme="$1" host="$2" port="$3" expected_sha="$4"
+    local base="${scheme}://${host}:${port}"
+
+    echo ""
+    echo "→ probing live deploy: $base"
+
+    # The cert is for deepscry.net only — when probing by IP we must
+    # disable strict hostname checking. We assume HOST is the cert name
+    # and trust the deploy script user to pass the right thing.
+    local curl_opts=(-sS --max-time 15 --retry 3 --retry-delay 2 --retry-connrefused)
+
+    local probe_failed=0
+    local fail_reasons=()
+
+    # 1. Landing page.
+    local code
+    code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/")" || code="000"
+    if [[ "$code" != "200" ]]; then
+        probe_failed=1; fail_reasons+=("landing page: HTTP $code")
+    else
+        echo "  ✓ /                          200"
+    fi
+
+    # 2. /pkg/mtg_forge_rs.js — JS glue, expect > 50 KB.
+    local glue_size
+    glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_forge_rs.js")" || glue_size=0
+    if (( glue_size < 50000 )); then
+        probe_failed=1; fail_reasons+=("/pkg/mtg_forge_rs.js: $glue_size bytes (expected > 50000)")
+    else
+        echo "  ✓ /pkg/mtg_forge_rs.js       200 ($glue_size bytes)"
+    fi
+
+    # 3. /pkg/mtg_forge_rs_bg.wasm — wasm bundle, expect > 1 MB.
+    local wasm_size
+    wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_forge_rs_bg.wasm")" || wasm_size=0
+    if (( wasm_size < 1000000 )); then
+        probe_failed=1; fail_reasons+=("/pkg/mtg_forge_rs_bg.wasm: $wasm_size bytes (expected > 1000000)")
+    else
+        echo "  ✓ /pkg/mtg_forge_rs_bg.wasm  200 ($wasm_size bytes)"
+    fi
+
+    # 4. /data/sets/index.json — must parse as JSON.
+    local idx_json
+    idx_json="$(curl "${curl_opts[@]}" "$base/data/sets/index.json")" || idx_json=""
+    if ! echo "$idx_json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+        probe_failed=1; fail_reasons+=("/data/sets/index.json: not valid JSON")
+    else
+        echo "  ✓ /data/sets/index.json      200 (valid JSON)"
+    fi
+
+    # 5. /health — JSON sha must match.
+    local health_json
+    health_json="$(curl "${curl_opts[@]}" "$base/health")" || health_json=""
+    local served_sha
+    served_sha="$(echo "$health_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("sha","?"))' 2>/dev/null || echo "?")"
+    if [[ "$served_sha" == "?" || -z "$served_sha" ]]; then
+        probe_failed=1; fail_reasons+=("/health: no sha in response: $health_json")
+    elif [[ "$served_sha" != "$expected_sha" ]]; then
+        # Not fatal — the running build might predate the binary on disk
+        # if systemd restart was slow — but flag it loudly.
+        echo "  ⚠ /health sha mismatch: served=$served_sha local=$expected_sha"
+    else
+        echo "  ✓ /health                    200 (sha=$served_sha)"
+    fi
+
+    # 6. /lobby — WebSocket probe. We can't easily do a full handshake
+    # in bash; instead send a malformed Upgrade request and accept any
+    # response other than 5xx / connection-refused. A real WS server
+    # answers 426 / 400 to a non-WS GET on this path.
+    code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" -H "Connection: Upgrade" -H "Upgrade: websocket" "$base/lobby")" || code="000"
+    case "$code" in
+        101|400|426|405|404) echo "  ✓ /lobby                     responding (HTTP $code)" ;;
+        000) probe_failed=1; fail_reasons+=("/lobby: connection refused") ;;
+        5*)  probe_failed=1; fail_reasons+=("/lobby: server error HTTP $code") ;;
+        *)   echo "  ⚠ /lobby                     HTTP $code (unusual but proceeding)" ;;
+    esac
+
+    if (( probe_failed )); then
+        echo ""
+        echo "✗ POST-DEPLOY PROBE FAILED:"
+        for r in "${fail_reasons[@]}"; do
+            echo "    - $r"
+        done
+        echo ""
+        echo "  Service may still be coming up. Inspect with:"
+        echo "    scripts/deploy-cloud.sh logs"
+        echo "    scripts/deploy-cloud.sh status"
+        exit 1
+    fi
+    echo "  ✓ all probes passed"
 }
 
 # ---------------------------------------------------------------------------

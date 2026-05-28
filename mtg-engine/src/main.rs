@@ -814,6 +814,13 @@ enum Commands {
         /// Use with --loop on the server to play multiple games in sequence.
         #[arg(long)]
         reconnect: bool,
+
+        /// Accept invalid / unknown-issuer TLS certs for `wss://` connections.
+        /// Required to talk to a server fronted by a Cloudflare Origin Cert
+        /// when reached directly (not via CF's edge). INSECURE — for dev /
+        /// probe use only, never for production play.
+        #[arg(long)]
+        accept_invalid_certs: bool,
     },
 }
 
@@ -1180,6 +1187,7 @@ async fn async_main() -> Result<()> {
             tag_gamelogs,
             gamelog_output,
             reconnect,
+            accept_invalid_certs,
         } => {
             run_connect(
                 deck,
@@ -1195,6 +1203,7 @@ async fn async_main() -> Result<()> {
                 tag_gamelogs,
                 gamelog_output,
                 reconnect,
+                accept_invalid_certs,
             )
             .await?
         }
@@ -1393,6 +1402,7 @@ async fn run_connect(
     tag_gamelogs: bool,
     gamelog_output: Option<PathBuf>,
     reconnect: bool,
+    accept_invalid_certs: bool,
 ) -> Result<()> {
     use mtg_forge_rs::core::PlayerId;
     use mtg_forge_rs::game::FancyTuiController;
@@ -1426,6 +1436,7 @@ async fn run_connect(
             player_name: name.clone(),
             deck_path: deck.clone(),
             cardsfolder: cardsfolder.clone(),
+            accept_invalid_certs,
         };
 
         let mut client = NetworkClient::new(config);

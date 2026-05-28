@@ -517,6 +517,14 @@ impl GameServer {
         }
     }
 
+    /// Clone the shared lobby handle so observers (e.g. the `/health`
+    /// HTTP endpoint in `web_server`) can read counts without owning the
+    /// `GameServer` itself. The returned `Arc` shares state with the
+    /// running server.
+    pub fn lobby_handle(&self) -> SharedLobby {
+        std::sync::Arc::clone(&self.lobby)
+    }
+
     /// Run the server (long-lived).
     ///
     /// Each TCP accept spawns its own connection task immediately, so two

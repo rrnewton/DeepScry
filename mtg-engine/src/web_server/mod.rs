@@ -64,7 +64,22 @@ use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 
+use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
+
+/// Compile-time git short SHA (from `build.rs`). `"unknown"` if `git`
+/// was unavailable at build time (e.g. tarball release).
+pub const BUILD_SHA: &str = match option_env!("MTG_BUILD_SHA") {
+    Some(s) => s,
+    None => "unknown",
+};
+
+/// Compile-time build timestamp (Unix epoch seconds, as a string).
+/// `"0"` if unavailable.
+pub const BUILD_TIME_EPOCH: &str = match option_env!("MTG_BUILD_TIME_EPOCH") {
+    Some(s) => s,
+    None => "0",
+};
 
 /// Maximum time we wait for in-flight WebSocket clients to drain after a
 /// shutdown signal before tearing the process down anyway.
@@ -98,6 +113,13 @@ struct AppState {
     /// Watch channel: flipped to `true` when SIGTERM/Ctrl-C arrives.
     /// Proxied WS tasks poll this to drain gracefully.
     shutdown_rx: watch::Receiver<bool>,
+    /// Process start time — `/health` reports `uptime_secs` derived
+    /// from this.
+    start_time: std::time::Instant,
+    /// Shared lobby handle — `/health` reads `active_games` /
+    /// `waiting_games` counts from here. Read-only access from the
+    /// HTTP side; never mutated.
+    lobby: SharedLobby,
 }
 
 /// Entry point for `mtg server-web`. Boots the embedded GameServer on a
@@ -123,8 +145,12 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     log::info!("[web-server] embedded lobby will listen on 127.0.0.1:{internal_port} (internal)");
 
     // ---- 2. Spawn the embedded GameServer. ----
+    // Build the server FIRST (cheap; no I/O) so we can clone its
+    // `SharedLobby` handle for the `/health` endpoint, then move the
+    // server into the spawned task to run.
+    let mut server = GameServer::new(config.lobby_config.clone());
+    let lobby_for_health: SharedLobby = server.lobby_handle();
     let lobby_handle = tokio::spawn(async move {
-        let mut server = GameServer::new(config.lobby_config.clone());
         if let Err(e) = server.run().await {
             log::error!("[web-server] embedded GameServer exited: {e}");
         }
@@ -141,48 +167,92 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     let state = AppState {
         upstream_ws_url: Arc::new(upstream_ws_url),
         shutdown_rx: shutdown_rx.clone(),
+        start_time: std::time::Instant::now(),
+        lobby: lobby_for_health,
     };
 
-    // Static-file service. `ServeDir` handles range requests, index.html,
-    // and correct MIME types automatically.
+    // ── Tiered cache policy ───────────────────────────────────────────
     //
-    // We split the cache policy by route to eliminate the stale-WASM bug
-    // class (mtg-2indh): bundle filenames are NOT content-hashed (they're
-    // fixed paths like /pkg/mtg_forge_rs_bg.wasm), so the JS glue and the
-    // .wasm binary can desync if browsers cache either one across a
-    // redeploy. The symptom is the cryptic "WebAssembly.instantiate():
-    // Import #N __wbindgen_cast_<hash>: function import requires a callable"
-    // error that took several rounds to track down.
+    // Splitting the cache by route addresses the stale-WASM bug class
+    // (mtg-2indh): the JS glue and the .wasm binary use FIXED filenames
+    // (no content hashing), so an old cached glue paired with a new wasm
+    // (or vice versa) yields the cryptic "WebAssembly.instantiate():
+    // Import #N __wbindgen_cast_<hash>: function import requires a
+    // callable" error. The cache scheme below caps the freshness window
+    // per content type at the level its update cadence demands:
     //
-    // Policy:
-    //  - /pkg/*  + /data/* → `no-cache, must-revalidate`. Forces browsers
-    //    to revalidate every request via If-Modified-Since/ETag. Cheap
-    //    (304 response) but eliminates stale-glue desyncs.
-    //  - Everything else (HTML, server-config.js)  → `public, max-age=60`.
-    //    Short enough that copy edits land fast, long enough that index.html
-    //    repeat visits within a minute don't re-fetch.
+    //   /pkg/*                      → no-cache, must-revalidate
+    //   /data/sets/index.json       → no-cache, must-revalidate
+    //   /data/**/*.bin              → public, max-age=86400, must-revalidate
+    //   /images/**                  → public, max-age=31536000, immutable
+    //                                 (filenames embed scryfall art_id;
+    //                                  they never change for a given URL)
+    //   HTML, server-config.js, etc → public, max-age=60
+    //
+    // The /pkg layer is paired with the deploy-time `?v=<sha>` query
+    // string injection in `web/server-config.js` so a fresh deploy
+    // forces a forced revalidation that responds 200-with-body (not
+    // 304) and atomically swaps glue+wasm together.
     use tower::ServiceBuilder;
     let pkg_dir = config.static_dir.join("pkg");
     let data_dir = config.static_dir.join("data");
+    let images_dir = config.static_dir.join("images");
     let general_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
+
     let no_cache = SetResponseHeaderLayer::overriding(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache, must-revalidate"),
     );
+    let daily_revalidate = SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400, must-revalidate"),
+    );
+    let immutable_year = SetResponseHeaderLayer::overriding(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=31536000, immutable"),
+    );
+
     let pkg_service = ServiceBuilder::new()
         .layer(no_cache.clone())
         .service(ServeDir::new(&pkg_dir));
-    let data_service = ServiceBuilder::new()
-        .layer(no_cache.clone())
+
+    // /data is split: the small index.json manifest is no-cache
+    // (revalidate every hit; cheap 304 because it's a few KB) while the
+    // large per-set .bin / decks.bin / tokens.bin bundles (10-100 MB
+    // total) change rarely and use daily revalidation. The index.json
+    // case wins via a dedicated axum `.route()` (more specific than the
+    // nest_service); everything else under /data lands on the daily
+    // bundle service.
+    let data_bins_service = ServiceBuilder::new()
+        .layer(daily_revalidate.clone())
         .service(ServeDir::new(&data_dir));
+    let data_index_path = data_dir.join("sets").join("index.json");
+    let index_no_cache_header = HeaderValue::from_static("no-cache, must-revalidate");
+
+    let images_service = ServiceBuilder::new()
+        .layer(immutable_year)
+        .service(ServeDir::new(&images_dir));
 
     let app = Router::new()
         .route(&config.lobby_path, get(lobby_ws_handler))
+        .route("/health", get(health_handler))
         .nest_service("/pkg", pkg_service)
-        .nest_service("/data", data_service)
+        // The MORE-SPECIFIC route wins in axum's matching: a request to
+        // /data/sets/index.json gets the dedicated no-cache handler,
+        // anything else under /data goes to data_bins_service (daily).
+        .route(
+            "/data/sets/index.json",
+            get({
+                let path = data_index_path.clone();
+                let hdr = index_no_cache_header.clone();
+                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/json")
+            }),
+        )
+        .nest_service("/data", data_bins_service)
+        .nest_service("/images", images_service)
         .fallback_service(general_service)
         // Default cache for HTML / server-config.js / etc. (`if_not_present`
-        // so it does not override the /pkg and /data no-cache headers).
+        // so it does not override the per-route headers above).
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::CACHE_CONTROL,
             HeaderValue::from_static("public, max-age=60"),
@@ -424,11 +494,67 @@ async fn close_client_with_error(mut ws: WebSocket, reason: &str) -> Result<(), 
     Ok(())
 }
 
-// ─── Mini status endpoint (used by deploy smoke tests) ────────────────
+// ─── Status endpoints (ops + deploy probes) ───────────────────────────
 
-/// Trivial liveness probe. Not yet wired into the router by default; the
-/// deploy script may add `/healthz` in a future iteration.
-#[allow(dead_code)]
-async fn healthz() -> impl IntoResponse {
-    (StatusCode::OK, "ok\n")
+/// `GET /health` — JSON liveness + identity probe.
+///
+/// Returns the build SHA, build timestamp, package version, current
+/// uptime, and live lobby counts. Used by:
+///   * `scripts/deploy-cloud.sh` post-deploy probe to confirm the
+///     freshly-rsynced binary is actually the one running (sha match).
+///   * Operators eyeballing "what's deployed" without SSH.
+///   * Future external monitors.
+///
+/// Cheap — touches a single Mutex for the lobby counts and never blocks.
+async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let uptime_secs = state.start_time.elapsed().as_secs();
+    let (active, waiting) = {
+        // Hold the mutex for the minimum span needed to copy two `usize`.
+        let l = state.lobby.lock().await;
+        (l.active_count(), l.waiting_count())
+    };
+
+    let body = serde_json::json!({
+        "sha": BUILD_SHA,
+        "build_time_epoch": BUILD_TIME_EPOCH,
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_secs": uptime_secs,
+        "active_games": active,
+        "waiting_games": waiting,
+    });
+
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        axum::Json(body),
+    )
+}
+
+/// Serve a single file from disk with a fixed `Cache-Control` header
+/// and `Content-Type`. Used for the `/data/sets/index.json` carve-out
+/// where we want no-cache semantics on a single file inside an
+/// otherwise daily-cached `/data` tree.
+///
+/// Reads the file fresh per request (small JSON file, < 100 KB, OS
+/// page cache makes this near-free). Returns 500 if the read fails.
+async fn serve_static_file_with_header(
+    path: PathBuf,
+    cache_control: HeaderValue,
+    content_type: &'static str,
+) -> impl IntoResponse {
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [
+                (axum::http::header::CACHE_CONTROL, cache_control),
+                (axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => {
+            log::warn!("[web-server] failed to read {path:?}: {e}");
+            (StatusCode::NOT_FOUND, format!("not found: {path:?}\n")).into_response()
+        }
+    }
 }

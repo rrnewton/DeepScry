@@ -5,6 +5,7 @@ edition.workspace = true
 description = "A Rust reimplementation of the MTG Forge game engine"
 repository = "https://github.com/rrnewton/mtg-forge-rs"
 license = "GPL-3.0"
+build = "build.rs"
 
 [[bin]]
 name = "mtg"
@@ -91,7 +92,7 @@ mimalloc = { version = "0.1", optional = true }
 glob = { version = "0.3", optional = true }
 
 # Networking (native only)
-tokio-tungstenite = { version = "0.26", optional = true }
+tokio-tungstenite = { version = "0.26", optional = true, features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", optional = true }
 futures-executor = { version = "0.3", optional = true }
 
@@ -221,6 +222,7 @@ network = [
     "futures-executor",
     "tokio",  # Needs async runtime
     "web-server",  # Unified HTTP+WS server (axum)
+    "rustls",  # `mtg connect wss://...` against the deployed TLS WS lobby
 ]
 
 # Unified axum web server: static files + lobby WS proxy + optional TLS.

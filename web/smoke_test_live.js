@@ -12,8 +12,14 @@
 //   6. No cards.bin 404 occurs on game launch; per-set bins load instead.
 //
 // Usage:
-//   DEEPSCRY_BASE_URL=https://deepscry.net node web/smoke_test_live.js
-//   (defaults to https://deepscry.net when env unset)
+//   DEEPSCRY_BASE_URL=https://deepscry.net      node web/smoke_test_live.js  # CF-proxied (real cert)
+//   DEEPSCRY_BASE_URL=https://deepscry.net:8080 node web/smoke_test_live.js  # direct VM (CF origin cert)
+//
+// All browser contexts are created with `ignoreHTTPSErrors: true` so the
+// test passes regardless of whether the URL terminates at a public CA
+// cert (CF-proxied) or the CF Origin Cert at the VM (which browsers do
+// not normally trust because the issuer is a private CF CA). Without
+// that flag, direct :8080 hits fail with ERR_CERT_AUTHORITY_INVALID.
 //
 // Screenshots: web/screenshots/live_smoke/
 // Findings JSON: web/screenshots/live_smoke_findings.json
@@ -84,7 +90,7 @@ async function scenarioFullFlow() {
     console.log('\n=== Scenario: full lobby flow vs', BASE, '===');
     const browser = await chromium.launch();
 
-    const aliceCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const aliceCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const alice = await aliceCtx.newPage();
     const aliceNet = attachNetworkWatch(alice, 'alice');
 
@@ -127,7 +133,7 @@ async function scenarioFullFlow() {
     await shot(alice, '03_alice_game_page.png');
 
     // --- Bob joins ---
-    const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const bob = await bobCtx.newPage();
     const bobNet = attachNetworkWatch(bob, 'bob');
     await bob.goto(BASE + '/');
@@ -151,15 +157,35 @@ async function scenarioFullFlow() {
         record('blocking', 'bob lobby visibility',
             'bob did NOT see alice\'s game "' + gameName + '"; rows: ' + JSON.stringify(gameRows.slice(0, 5)));
     } else {
-        // Try to click the join button for that game row.
-        // The row layout: try filling join-pass and clicking a join button.
+        // Join flow (matches the lobby HTML in web/index.html):
+        //   * Each row has an inline <input type="password" id="pw-<gamename>">
+        //     for the passcode (if the game requires one).
+        //   * The Join button calls joinGame(g) directly via .onclick;
+        //     joinGame reads the passcode from the per-row pw input.
+        // So we MUST fill the pw input BEFORE clicking Join.
         try {
-            // Find the row and click its Join button.
+            // Fill the per-row passcode input first. (CSS.escape lives
+            // in the browser, not node — escape inside the evaluate.)
+            const filled = await bob.evaluate(
+                ({ gn, code }) => {
+                    const sel = '#pw-' + CSS.escape(gn);
+                    const el = document.querySelector(sel);
+                    if (!el) return false;
+                    el.value = code;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    return true;
+                },
+                { gn: gameName, code: passcode },
+            );
+            if (!filled) {
+                record('minor', 'bob join pass', `no #pw-${gameName} input found in matching row`);
+            }
+            // Now click the row's Join button.
             const joined = await bob.evaluate((gn) => {
                 const rows = Array.from(document.querySelectorAll('#games-tbody tr'));
                 for (const r of rows) {
                     if (r.textContent.includes(gn)) {
-                        const btn = r.querySelector('button');
+                        const btn = r.querySelector('button:not(.pw-toggle)');
                         if (btn) { btn.click(); return true; }
                     }
                 }
@@ -168,23 +194,10 @@ async function scenarioFullFlow() {
             if (!joined) {
                 record('minor', 'bob join click', 'no Join button found in matching row');
             } else {
-                // Passcode prompt may appear inline or via a dialog. Try to fill it.
-                await bob.waitForTimeout(500);
-                // Try common selectors.
-                const passSel = await bob.$('#join-pass, input[type=password][placeholder*=pass i], input[type=text][placeholder*=pass i]');
-                if (passSel) {
-                    await passSel.fill(passcode);
-                    // Find a submit/join button nearby.
-                    await bob.evaluate(() => {
-                        const btns = Array.from(document.querySelectorAll('button'));
-                        const join = btns.find((b) => /join|submit|ok/i.test(b.textContent));
-                        if (join) join.click();
-                    });
-                }
                 await bob.waitForFunction(
                     () => /tui_game\.html|native_game\.html/.test(window.location.href),
                     null,
-                    { timeout: 6000 },
+                    { timeout: 8000 },
                 ).catch(() => record('major', 'bob join redirect',
                     'bob did not redirect to game page after join click'));
                 console.log('  bob redirected to:', bob.url());
@@ -224,7 +237,7 @@ async function scenarioFullFlow() {
 async function scenarioImageGate() {
     console.log('\n=== Scenario: image-source gate (default OFF vs ?allow_local_img_load=true) ===');
     const browser = await chromium.launch();
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
 
     for (const page_name of ['tui_game.html', 'native_game.html']) {
         const page = await ctx.newPage();

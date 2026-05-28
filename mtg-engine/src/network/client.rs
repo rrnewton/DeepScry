@@ -758,6 +758,11 @@ pub struct ClientConfig {
     pub deck_path: PathBuf,
     /// Path to cardsfolder for loading cards
     pub cardsfolder: PathBuf,
+    /// Accept invalid / unknown-issuer TLS certificates when connecting to
+    /// `wss://`. Required to talk to a server fronted by a Cloudflare
+    /// Origin Cert (or any private CA) WITHOUT going through CF's edge.
+    /// **DO NOT enable for production play** — disables MITM protection.
+    pub accept_invalid_certs: bool,
 }
 
 impl ClientConfig {
@@ -769,6 +774,7 @@ impl ClientConfig {
             player_name,
             deck_path,
             cardsfolder: PathBuf::from("cardsfolder"),
+            accept_invalid_certs: false,
         }
     }
 }
@@ -1120,12 +1126,46 @@ impl NetworkClient {
         let deck = crate::loader::DeckLoader::load_from_file(&self.config.deck_path)?;
         self.our_deck = Some(deck.clone());
 
-        // Build WebSocket URL
-        let url = format!("ws://{}", self.config.server);
+        // Build WebSocket URL. Accept a bare `host:port` (legacy default
+        // — gets `ws://` prepended) OR a fully-qualified WebSocket URL
+        // starting with `ws://` / `wss://`. The TLS variant is needed
+        // to talk to the deployed `mtg server-web` behind HTTPS at
+        // `wss://deepscry.net:8080/lobby`. `tokio_tungstenite` already
+        // handles TLS via its `rustls-tls-webpki-roots` feature; we
+        // just need to pass the full URL through, plus install the
+        // rustls CryptoProvider (rustls 0.23 requires explicit selection;
+        // `install_default` errors harmlessly if already installed).
+        let server = &self.config.server;
+        let url = if server.starts_with("ws://") || server.starts_with("wss://") {
+            if server.starts_with("wss://") {
+                let _ = rustls::crypto::ring::default_provider().install_default();
+            }
+            server.clone()
+        } else {
+            format!("ws://{server}")
+        };
         log::info!("Connecting to {}...", url);
 
-        // Connect
-        let (ws, _response) = connect_async(&url).await?;
+        // Connect. For `wss://` with `accept_invalid_certs=true` we
+        // build a custom rustls connector that trusts any cert (used
+        // by the deploy probes and dev tools that hit a server fronted
+        // by a Cloudflare Origin Cert directly, where the CA is
+        // private). All other code paths take the default connector
+        // (proper webpki-roots verification).
+        let (ws, _response) = if url.starts_with("wss://") && self.config.accept_invalid_certs {
+            use tokio_tungstenite::Connector;
+            log::warn!("[client] accepting invalid TLS certificates (insecure — for dev probes only)");
+            let tls = build_insecure_rustls_config();
+            tokio_tungstenite::connect_async_tls_with_config(
+                &url,
+                None,
+                false,
+                Some(Connector::Rustls(std::sync::Arc::new(tls))),
+            )
+            .await?
+        } else {
+            connect_async(&url).await?
+        };
         self.ws = Some(ws);
 
         // Send authentication
@@ -2178,6 +2218,71 @@ fn deck_to_submission(deck: &DeckList) -> DeckSubmission {
         deck.main_deck.iter().map(|e| (e.card_name.clone(), e.count)).collect(),
         deck.sideboard.iter().map(|e| (e.card_name.clone(), e.count)).collect(),
     )
+}
+
+/// Build a rustls `ClientConfig` that accepts ANY certificate without
+/// verification. Used by `mtg connect --accept-invalid-certs wss://...`
+/// against a server using a Cloudflare Origin Cert (issued by a CF
+/// private CA that webpki-roots doesn't trust) when the server is
+/// reached directly (not via CF's edge).
+///
+/// **Security:** this disables MITM protection completely. The flag
+/// guarding the code path is intentionally verbose (`accept_invalid_certs`)
+/// and a `log::warn!` fires whenever it's used. Never enable for
+/// production game traffic.
+fn build_insecure_rustls_config() -> rustls::ClientConfig {
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::crypto::{verify_tls12_signature, verify_tls13_signature};
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use rustls::{DigitallySignedStruct, Error as RustlsError, SignatureScheme};
+
+    #[derive(Debug)]
+    struct NoVerifier(rustls::crypto::CryptoProvider);
+
+    impl ServerCertVerifier for NoVerifier {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, RustlsError> {
+            Ok(ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, RustlsError> {
+            verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        }
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, RustlsError> {
+            verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+        }
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.0.signature_verification_algorithms.supported_schemes()
+        }
+    }
+
+    // Make sure a CryptoProvider is installed (idempotent).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .expect("CryptoProvider must be installed")
+        .clone();
+
+    rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("default protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier((*provider).clone())))
+        .with_no_client_auth()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
