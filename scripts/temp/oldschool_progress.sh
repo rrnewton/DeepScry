@@ -9,7 +9,7 @@
 # Usage: scripts/oldschool_progress.sh            # run from the repo root
 # Requires: bd (minibeads) on PATH.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."   # scripts/temp/ -> repo root
 
 command -v bd >/dev/null || { echo "error: bd (minibeads) not on PATH" >&2; exit 1; }
 

@@ -214,6 +214,13 @@ indenting the body injects leading spaces into the generated file and
 breaks the parser. Use a quoted, non-indented heredoc delimiter
 (`<<'P'` … `P`) so the emitted file is byte-correct when pasted.
 
+**MECHANICAL-VERIFIABILITY RULE (mandatory): every reproducer command
+MUST be paired with a 1–3 line snippet of the expected stdout** — the
+specific log lines that prove the behavior. This turns each reproducer
+into a runnable check: *run the command, grep for these lines.* Put the
+expected lines in the adjacent fenced block below; keep them to the few
+exact lines a verifier (human or agent) should match, not a full dump.
+
 Expected log evidence (mandatory for WORKING):
 
 ```

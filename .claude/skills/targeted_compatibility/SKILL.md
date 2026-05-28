@@ -235,8 +235,12 @@ Every aspect-verification produces:
    as BROKEN even if mechanics look right (compatibility_tracking
    §2.2).
 3. A **reproducer command** that the next agent can copy-paste to
-   re-verify. Prefer puzzle + fixed-inputs over agentplay for
-   reproducibility.
+   re-verify, in a flush-left fenced ` ```sh ` block, **paired with a
+   1–3 line snippet of the expected stdout** so it is mechanically
+   verifiable (run the command, grep for those lines). Prefer puzzle +
+   fixed-inputs over agentplay for reproducibility. See
+   compatibility_tracking §"FORMATTING RULE" + "MECHANICAL-VERIFIABILITY
+   RULE".
 4. A **`docs/EFFECT_SUPPORT.md` row update** for every construct
    whose status changed in this aspect's verification
    (compatibility_tracking §6).

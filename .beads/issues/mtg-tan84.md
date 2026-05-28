@@ -1,0 +1,40 @@
+---
+title: Skeptical bug-report → triage → fix pipeline (GitHub issues, DeepScry)
+status: open
+priority: 1
+issue_type: task
+created_at: 2026-05-28T15:17:57.578916486+00:00
+updated_at: 2026-05-28T15:20:41.203355588+00:00
+---
+
+# Description
+
+UMBRELLA for the automated, SKEPTICAL bug-report workflow. Design from user 2026-05-28. DO NOT IMPLEMENT until in-flight integration is clean + validate is GREEN/STABLE (depends on the mtg-p9o5z desync fix) and the user gives the go. Builds on the existing bug-report cluster (server stores reports; gh filing was failing — now a fine-grained Issues-write PAT + `gh auth login` are set up on the VM).
+
+== Stage 0: submit -> file issue (synchronous) ==
+- On bug-report SUBMIT, the server synchronously files the issue via `gh issue create --repo rrnewton/DeepScry ...` (pass -R EXPLICITLY; do not rely on GH_REPO being in the systemd unit env). Show the user a HYPERLINK to the created issue.
+- Decided: file FROM the VM (user installed a fine-grained Issues-write PAT + did gh auth login there); minimal-scope token = small blast radius. Add a `gh auth status` preflight and graceful fallback to the local store if filing fails.
+- Public-repo caveat: bug-report logs may contain usernames / game state and DeepScry is a PUBLIC repo — scrub or accept.
+
+== trust signal ==
+- `trusted` / `trusted_password_supplied`: for NOW just a MILD signal of extra trust, NOT a hard gate. (Original intent: stop an attacker from causing arbitrary code changes via false reports; friends get the password for trusted reports.) trusted_password_supplied=true may bypass the UI-bug human-triage gate (below).
+
+== Stage 1: SKEPTIC / triage agent ==
+A watchdog on the DEV RIG: a skill/command/agent that loops with a heartbeat and periodically polls GitHub for NEW issues (`gh issue list -R rrnewton/DeepScry`). Must work standalone OR concurrently with the coordinator working the minibeads backlog. For each new issue:
+- Classify:
+  - GAMEPLAY BUG: MTG rules are our GOLDEN source of truth. (1) Is it specifically a scenario that DEVIATES from the MTG Comprehensive Rules? (2) Can the agent REPRODUCE the behavior (mtg tui / agentplay)? Comment on the issue with the result of (1) and (2), and later (3) the fix attempt.
+  - FEATURE REQUEST: NEVER auto-implement (an attacker could request e.g. opening a new network socket). Label `feature-request`, comment that it needs HUMAN triage from the maintainers list (initially just rrnewton). Stop.
+  - UI BUG: no rules golden-source (much room for opinion). Label `web-gui-bug` or `web-tui-bug` and require human triage — UNLESS trusted_password_supplied=true, in which case allow past the gate to implementation. NICE-TO-HAVE: capture a BROWSER SCREENSHOT at the moment the bug-report button was pressed and attach/inspect it (currently only text is recorded) — investigate feasibility (html2canvas client-side, or wasm canvas capture).
+- Comment each step's result on the issue.
+
+== Stage 2: IMPLEMENTATION agent (gameplay bugs only, automatic) ==
+Only for reports confirmed as legitimate MTG-rules deviations (it is ALWAYS safe to fix toward correct MTG rules). The implementation agent does (3): fixes the bug -> feature branch -> green validate -> opens a PR LINKED to the issue -> the PR can be marked auto-merge-when-green (we trust gameplay rules-fixes for now). Follows the targeted_compatibility + mtg-rules-review skills + worktree discipline.
+
+== Pieces to build ==
+1. Server submit -> synchronous gh issue create -R rrnewton/DeepScry + return issue URL to client; gh auth preflight. (server bug-report handler; web shows the link)
+2. Dev-rig watchdog loop (skill/command) polling gh issue list for new issues, dispatching the skeptic agent per issue.
+3. Skeptic/triage agent (classify gameplay-bug vs feature-request vs UI-bug; rules check (1)+(2); label + comment; gate per classification + trusted flag).
+4. Implementation-agent path (gameplay only) -> branch -> PR linked to issue -> auto-merge-when-green.
+5. (stretch) browser screenshot capture at bug-report time for UI bugs.
+
+Labels needed: feature-request, web-gui-bug, web-tui-bug, gameplay-bug, needs-human-triage. Maintainers list: rrnewton (initially).
