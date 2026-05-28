@@ -219,6 +219,8 @@ If you validate some changes with a new manual or temporary test, that test shou
 
 NEVER skip tests in CI. If a test cannot run due to missing dependencies (submodules, tools, data files), fix the CI configuration to provide those dependencies. Tests must hard-fail (`exit 1`) on missing prerequisites, never gracefully skip (`exit 0`).
 
+**CI and `make validate` MUST NOT depend on any deployed environment** (e.g. `deepscry.net` or any cloud VM). They run hermetically against the local checkout only. Tests that exercise a *live deployment* (e.g. `web/smoke_test_live.js`, `tests/remote/*.sh`) are a SEPARATE category: they are invoked manually or as a post-deploy step, never wired into `make validate`, the `validate-*-step` targets, the `tests/*.sh` auto-discovery glob, or the GitHub CI workflow. Keep remote/live-VM smoke tests under `tests/remote/` (not auto-discovered) and out of the explicit e2e file lists.
+
 NEVER add binary files or large serialized artifact to version control without explicit permission. Always carefully review what you are adding with `git add`, and update `.gitignore` as needed.
 
 If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmark.sh`
