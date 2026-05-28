@@ -199,11 +199,26 @@ Findings (YYYY-MM-DD_#<gitdepth>(<short>), <author>):
    Filed as: <bug-issue-id>
 4. [unverified] <thing we couldn't test>
 
-Reproducer: ./target/release/mtg tui --start-state ... --p1=... \
+Reproducer:
+
+```sh
+./target/release/mtg tui --start-state ... --p1=... \
   --p1-fixed-inputs='...' --seed 42 --verbosity 3 --json
+```
+
+**FORMATTING RULE (mandatory): put every reproducer in a fenced
+` ```sh ` code block, flush-left (no leading indentation).** Indented
+reproducers are not copy-pasteable, and — critically — if the
+reproducer contains a `cat <<EOF` heredoc that writes a `.pzl`/`.dck`,
+indenting the body injects leading spaces into the generated file and
+breaks the parser. Use a quoted, non-indented heredoc delimiter
+(`<<'P'` … `P`) so the emitted file is byte-correct when pasted.
 
 Expected log evidence (mandatory for WORKING):
-  <quoted log snippet showing draw/damage/counter/etc.>
+
+```
+<quoted log snippet showing draw/damage/counter/etc.>
+```
 
 Unit test:    test_card_compat_<name> in mtg-engine/src/game/actions/tests/effects.rs
 E2E test:     tests/test_card_<name>.sh   (or named #[test] fn)
