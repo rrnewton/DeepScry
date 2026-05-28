@@ -4540,9 +4540,14 @@ impl GameState {
                     .collect();
 
                 for card_id in targets {
-                    let card = self.cards.get_mut(card_id)?;
-                    card.tapped = true;
-                    let card_name = card.name.clone();
+                    // Route through tap_permanent so the undo log, ManaSourceCache
+                    // untapped counts, and mana_state_version all stay consistent.
+                    // Setting `card.tapped` directly would leave the mana cache
+                    // reporting these sources as still untapped, which can offer an
+                    // unaffordable spell as a legal play and diverge server vs client
+                    // shadow state (network desync). See docs/NETWORK_ARCHITECTURE.md.
+                    let card_name = self.cards.get(card_id)?.name.clone();
+                    self.tap_permanent(card_id)?;
                     self.logger.gamelog(&format!("{} ({}) is tapped", card_name, card_id));
                 }
             }
@@ -4567,9 +4572,11 @@ impl GameState {
                     .collect();
 
                 for card_id in targets {
-                    let card = self.cards.get_mut(card_id)?;
-                    card.tapped = false;
-                    let card_name = card.name.clone();
+                    // Route through untap_permanent so the undo log, ManaSourceCache
+                    // untapped counts, and mana_state_version stay consistent (see
+                    // the matching note in Effect::TapAll above).
+                    let card_name = self.cards.get(card_id)?.name.clone();
+                    self.untap_permanent(card_id)?;
                     self.logger.gamelog(&format!("{} ({}) is untapped", card_name, card_id));
                 }
             }
@@ -7968,13 +7975,15 @@ impl GameState {
                     remaining -= use_from_pool;
                 }
 
-                // Then tap creatures/artifacts for waterbend
+                // Then tap creatures/artifacts for waterbend. Route through
+                // tap_permanent so the undo log, ManaSourceCache untapped counts,
+                // and mana_state_version stay consistent (see TapAll note above).
                 for &perm_id in &tappable_permanents {
                     if remaining == 0 {
                         break;
                     }
-                    if let Ok(card) = self.cards.get_mut(perm_id) {
-                        card.tapped = true;
+                    if self.cards.try_get(perm_id).is_some() {
+                        self.tap_permanent(perm_id)?;
                         remaining -= 1;
                     }
                 }
@@ -7984,8 +7993,8 @@ impl GameState {
                     if remaining == 0 {
                         break;
                     }
-                    if let Ok(card) = self.cards.get_mut(land_id) {
-                        card.tapped = true;
+                    if self.cards.try_get(land_id).is_some() {
+                        self.tap_permanent(land_id)?;
                         remaining -= 1;
                         // Note: We're not adding mana to pool since we're directly counting
                         // each land tap as {1} payment for simplicity

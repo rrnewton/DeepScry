@@ -287,6 +287,11 @@ validate-network-e2e-step:
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
 	@cd web && node test_landing_page_ux.js
+	@echo "=== Running network-vs-local equivalence E2E (deterministic gamelog identity) ==="
+	@echo "    Guards the network-determinism class fixed in fix-network-desync"
+	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."
+	@bash tests/network_vs_local_equivalence_e2e.sh 3 random
+	@bash tests/network_vs_local_equivalence_e2e.sh 3 zero
 	@echo "✓ network-e2e tests completed"
 
 # Generate documentation and open in browser

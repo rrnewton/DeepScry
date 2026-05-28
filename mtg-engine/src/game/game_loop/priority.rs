@@ -619,7 +619,7 @@ impl<'a> GameLoop<'a> {
                                 continue;
                             }
                             Err(e) => {
-                                log::error!("[WASM RESUME] Failed to cast spell {:?}: {}", card_id, e);
+                                log::error!("[WASM RESUME] Failed to cast spell {:?}: {} (undo_log_len={} consec_passes->{} new_priority={:?})", card_id, e, self.game.undo_log.len(), consecutive_passes + 1, if current_priority == active_player { non_active_player } else { active_player });
                                 self.game.pending_cast = None;
                                 consecutive_passes += 1;
                                 self.game.turn.consecutive_passes = consecutive_passes;

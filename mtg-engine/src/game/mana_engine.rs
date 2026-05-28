@@ -903,6 +903,49 @@ impl ManaEngine {
         self.simple_capacity.green = cache.untapped_green() as u8;
         self.simple_capacity.colorless = cache.untapped_colorless() as u8;
 
+        // Debug invariant: the cache's precomputed `untapped_*` totals MUST agree
+        // with the live tap state of the simple Fixed-color sources just read from
+        // the cache. A mismatch means some tap/untap path mutated `card.tapped`
+        // without notifying the cache (the mana-cache-staleness class of network
+        // desync — an unaffordable spell offered as legal). We assert in debug
+        // builds so such a regression is caught immediately rather than producing
+        // a divergent server/client affordability set at runtime. Complex sources
+        // (AnyColor/Choice) and multi-mana `amount` sources are excluded — the
+        // cache intentionally does not track per-color untapped counts for them.
+        #[cfg(debug_assertions)]
+        {
+            use crate::core::mana_production::{ManaColor, ManaProductionKind};
+            let mut live = ManaCapacity::new();
+            for s in &self.mana_sources {
+                if s.is_tapped {
+                    continue;
+                }
+                // Mirror the cache's accounting: each untapped source contributes
+                // its full per-activation `amount` (Sol Ring -> 2 colorless, etc.).
+                let n = s.production.amount.max(1);
+                match s.production.kind {
+                    ManaProductionKind::Fixed(ManaColor::White) => live.white += n,
+                    ManaProductionKind::Fixed(ManaColor::Blue) => live.blue += n,
+                    ManaProductionKind::Fixed(ManaColor::Black) => live.black += n,
+                    ManaProductionKind::Fixed(ManaColor::Red) => live.red += n,
+                    ManaProductionKind::Fixed(ManaColor::Green) => live.green += n,
+                    ManaProductionKind::Colorless => live.colorless += n,
+                    ManaProductionKind::Choice(_) | ManaProductionKind::AnyColor => {}
+                }
+            }
+            debug_assert!(
+                live.white == self.simple_capacity.white
+                    && live.blue == self.simple_capacity.blue
+                    && live.black == self.simple_capacity.black
+                    && live.red == self.simple_capacity.red
+                    && live.green == self.simple_capacity.green
+                    && live.colorless == self.simple_capacity.colorless,
+                "ManaSourceCache drift for {player_id:?}: cached untapped={:?} but live single-mana sources={live:?} \
+                 (a tap/untap path mutated card.tapped without updating the cache)",
+                self.simple_capacity,
+            );
+        }
+
         // Read complex sources from cache
         let current_turn = game.turn.turn_number;
         for &card_id in cache.complex_sources() {
@@ -1674,6 +1717,97 @@ mod tests {
         assert!(
             engine.can_pay_with_pool(&cost_3, &pool),
             "3 green sources should be able to pay 3 generic (needs 3, has 3)"
+        );
+    }
+
+    /// Regression: a mass-tap / mass-untap effect (`Effect::TapAll` /
+    /// `Effect::UntapAll`) must keep the `ManaSourceCache` untapped counts and
+    /// `mana_state_version` consistent with the real battlefield tap state.
+    ///
+    /// Before the fix these effects set `card.tapped` directly, bypassing
+    /// `tap_permanent`/`untap_permanent`. The cache's precomputed `untapped_*`
+    /// totals (and `mana_state_version`) then went stale, so `ManaEngine`
+    /// over-reported available mana and could offer an UNAFFORDABLE spell as a
+    /// legal play — which in network mode diverges server full-state from client
+    /// shadow-state (a fatal desync). The cards are added via `move_card` so the
+    /// event-driven cache is populated (NOT the `scan_battlefield_fallback`
+    /// path that direct `cards.insert` would take, which would mask the bug).
+    #[test]
+    fn test_mass_tap_untap_keeps_mana_cache_consistent() {
+        use crate::core::{Effect, TargetRestriction, TargetType};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        game.ensure_mana_caches_for_all_players();
+
+        // Two Forests, added through the event path so on_card_entered populates
+        // the cache's green_sources + untapped_green counters. We must populate
+        // the EAGER cache (not the empty-cache fallback scan, which would read
+        // live tap state and mask the staleness bug).
+        let mut forest_ids = Vec::new();
+        for _ in 0..2 {
+            let id = game.next_card_id();
+            let mut forest = Card::new(id, "Forest".to_string(), p1_id);
+            forest.add_type(CardType::Land);
+            forest.controller = p1_id;
+            // Derive intrinsic basic-land mana production (Forest => {G}) so the
+            // card is recognised as a mana source by the cache event handlers.
+            forest.definition.cache.update_from_abilities_with_name(&[], "Forest");
+            game.cards.insert(id, forest);
+            game.battlefield.add(id);
+            // Fire the same cache event move_card fires on battlefield entry.
+            if let Some(card) = game.cards.try_get(id) {
+                for (_, cache) in &mut game.mana_caches {
+                    cache.on_card_entered(id, card);
+                }
+            }
+            game.increment_mana_version();
+            forest_ids.push(id);
+        }
+
+        // Helper: fresh engine update reflects current capacity for p1.
+        let green_capacity = |game: &mut GameState| -> u8 {
+            let mut engine = ManaEngine::new();
+            engine.update_mut(game, p1_id);
+            engine.simple_capacity.green
+        };
+
+        assert_eq!(green_capacity(&mut game), 2, "two untapped Forests => 2 green");
+
+        // Mass-tap all lands (e.g. an effect that taps your own lands). After
+        // this the cache MUST report zero green available.
+        let land_restriction = TargetRestriction::from_types([TargetType::Land]);
+        game.execute_effect(&Effect::TapAll {
+            restriction: land_restriction.clone(),
+        })
+        .unwrap();
+        for id in &forest_ids {
+            assert!(
+                game.cards.get(*id).unwrap().tapped,
+                "Forest should be tapped after TapAll"
+            );
+        }
+        assert_eq!(
+            green_capacity(&mut game),
+            0,
+            "after TapAll lands, mana cache must report 0 green (no unaffordable-spell over-report)"
+        );
+
+        // Mass-untap all lands restores capacity.
+        game.execute_effect(&Effect::UntapAll {
+            restriction: land_restriction,
+        })
+        .unwrap();
+        for id in &forest_ids {
+            assert!(
+                !game.cards.get(*id).unwrap().tapped,
+                "Forest should be untapped after UntapAll"
+            );
+        }
+        assert_eq!(
+            green_capacity(&mut game),
+            2,
+            "after UntapAll lands, mana cache must report 2 green again"
         );
     }
 }

@@ -1747,21 +1747,24 @@ impl GameState {
     ///
     /// Returns an error if card access fails (should not happen for normal operations).
     pub fn untap_all(&mut self, player_id: PlayerId) -> Result<()> {
-        for card_id in self.battlefield.cards.iter() {
-            if let Some(card) = self.cards.try_get_mut(*card_id) {
-                if card.controller == player_id && card.tapped {
-                    card.untap();
-                    // Log the untap action with prior log size
-                    let prior_log_size = self.logger.log_count();
-                    self.undo_log.log(
-                        crate::undo::GameAction::TapCard {
-                            card_id: *card_id,
-                            tapped: false,
-                        },
-                        prior_log_size,
-                    );
-                }
-            }
+        // Collect first so we can call untap_permanent (which borrows &mut self).
+        let to_untap: SmallVec<[CardId; 16]> = self
+            .battlefield
+            .cards
+            .iter()
+            .copied()
+            .filter(|&card_id| {
+                self.cards
+                    .try_get(card_id)
+                    .map(|c| c.controller == player_id && c.tapped)
+                    .unwrap_or(false)
+            })
+            .collect();
+        for card_id in to_untap {
+            // Route through untap_permanent so the undo log, ManaSourceCache
+            // untapped counts, and mana_state_version all stay consistent. The
+            // previous inline `card.untap()` left the mana cache stale.
+            self.untap_permanent(card_id)?;
         }
         Ok(())
     }

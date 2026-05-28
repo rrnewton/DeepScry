@@ -374,6 +374,31 @@ pub struct SharedNetworkState {
     /// Set to true when push_local_choice/push_remote_choice is called.
     /// Cleared when drain_all_reveals_if_ready returns reveals.
     choice_pending: std::sync::atomic::AtomicBool,
+
+    /// Server-authoritative game winner, captured from the `GameEnded` message.
+    ///
+    /// The server is the single source of truth about who won (see
+    /// `docs/NETWORK_ARCHITECTURE.md`: "Server has the golden copy"). Both
+    /// clients receive the SAME `GameEnded { winner }` over their socket, so
+    /// reading the winner from here guarantees both clients agree.
+    ///
+    /// Without this, `run_game` returned either its locally-derived
+    /// `GameResult::winner` (for the client whose GameLoop finished naturally)
+    /// or `None` (for the client whose controller hit `ExitGame` first when the
+    /// game-end channel closed). Those two paths disagree — producing the flaky
+    /// "Clients disagree on winner: Some(1) vs None" failure.
+    ///
+    /// `None` outer = no `GameEnded` seen yet; `Some(inner)` = server reported
+    /// the (possibly-`None`, i.e. draw) winner.
+    server_winner: std::sync::Mutex<Option<Option<PlayerId>>>,
+
+    /// Notifies any `run_game` waiter that the `GameEnded` message has been
+    /// processed (and `server_winner` populated). The client whose GameLoop
+    /// returns first (e.g. its controller hit `ExitGame` from a closed channel)
+    /// may race ahead of the reader thread that records the server's verdict.
+    /// Awaiting this `Notify` before reading `server_winner` closes that race so
+    /// both clients report the SAME server-authoritative winner.
+    game_ended_notify: tokio::sync::Notify,
 }
 
 impl SharedNetworkState {
@@ -388,7 +413,51 @@ impl SharedNetworkState {
             choice_accepted_mvar: super::mvar::MVar::new(),
             server_action_count: std::sync::atomic::AtomicU64::new(0),
             choice_pending: std::sync::atomic::AtomicBool::new(false),
+            server_winner: std::sync::Mutex::new(None),
+            game_ended_notify: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Record the server-authoritative winner from a `GameEnded` message.
+    /// First writer wins; subsequent `GameEnded`/close events do not clobber it.
+    /// Wakes any `run_game` task awaiting the server verdict via `wait_for_server_winner`.
+    pub fn set_server_winner(&self, winner: Option<PlayerId>) {
+        if let Ok(mut slot) = self.server_winner.lock() {
+            if slot.is_none() {
+                *slot = Some(winner);
+            }
+        }
+        // Wake waiters even if the slot was already set (idempotent notify).
+        self.game_ended_notify.notify_waiters();
+    }
+
+    /// Await the server-authoritative winner (the `GameEnded` message), up to a
+    /// bounded timeout. Returns the server's verdict if `GameEnded` arrives in
+    /// time, or `None` if it does not (caller then falls back to its locally
+    /// derived result). This is NOT a protocol poll loop — it waits once on a
+    /// terminal shutdown notification, with a timeout guard so a stuck/aborted
+    /// peer cannot hang the client forever.
+    pub async fn wait_for_server_winner(&self, timeout: std::time::Duration) -> Option<Option<PlayerId>> {
+        // Fast path: already recorded.
+        if let Some(w) = self.server_winner() {
+            return Some(w);
+        }
+        // Register for notification BEFORE re-checking to avoid a lost wakeup.
+        let notified = self.game_ended_notify.notified();
+        if let Some(w) = self.server_winner() {
+            return Some(w);
+        }
+        match tokio::time::timeout(timeout, notified).await {
+            Ok(()) => self.server_winner(),
+            Err(_) => self.server_winner(),
+        }
+    }
+
+    /// Get the server-authoritative winner, if a `GameEnded` was received.
+    /// Outer `None` => no `GameEnded` observed; `Some(inner)` => server's verdict
+    /// (`inner` may itself be `None` for a draw).
+    pub fn server_winner(&self) -> Option<Option<PlayerId>> {
+        self.server_winner.lock().ok().and_then(|slot| *slot)
     }
 
     /// Get the latest server action count (sync target)
@@ -1861,6 +1930,23 @@ impl NetworkClient {
         })
         .await;
 
+        // The server is authoritative about the winner (see
+        // docs/NETWORK_ARCHITECTURE.md). Both clients receive the SAME
+        // `GameEnded { winner }`, so prefer that value over any locally-derived
+        // result. This guarantees both clients agree even though their
+        // GameLoops exit via different paths (natural game-end on one client vs
+        // `ExitGame`-from-channel-close on the other).
+        //
+        // IMPORTANT: await the GameEnded message (set by the still-running
+        // reader task) BEFORE aborting the reader. The client whose GameLoop
+        // returns first can otherwise read `server_winner` as `None` and report
+        // a different winner than its peer — the flaky "Clients disagree on
+        // winner: Some(1) vs None" failure. The timeout is a safety guard only;
+        // in a correct game both clients receive GameEnded promptly.
+        let server_winner = shared_state
+            .wait_for_server_winner(std::time::Duration::from_secs(10))
+            .await;
+
         // Clean up tasks
         reader_handle.abort();
         writer_handle.abort();
@@ -1869,18 +1955,22 @@ impl NetworkClient {
         match game_result {
             Ok(Ok(result)) => {
                 log::info!(
-                    "Client GameLoop finished: winner={:?}, action_count={}",
+                    "Client GameLoop finished: local_winner={:?} server_winner={:?}, action_count={}",
                     result.winner,
+                    server_winner,
                     result.action_count
                 );
-                Ok(result.winner)
+                // Prefer the server's authoritative verdict; fall back to the
+                // locally-derived winner only if no GameEnded was observed.
+                Ok(server_winner.unwrap_or(result.winner))
             }
             Ok(Err(e)) => {
                 let error_msg = e.to_string();
                 if error_msg.contains("Game exit requested") {
-                    // Game ended normally via controller ExitGame
-                    log::info!("Game ended via ExitGame");
-                    Ok(None)
+                    // Game ended normally via controller ExitGame. The winner
+                    // comes from the server's GameEnded message.
+                    log::info!("Game ended via ExitGame, server_winner={:?}", server_winner);
+                    Ok(server_winner.flatten())
                 } else {
                     Err(anyhow!("Game error: {}", e))
                 }
@@ -2007,6 +2097,11 @@ async fn run_ws_reader_shared(
                                     winner,
                                     action_count
                                 );
+                                // Record server-authoritative winner BEFORE
+                                // signalling exit, so run_game can report the
+                                // same verdict on both clients regardless of
+                                // which controller exit path fires first.
+                                shared_state.set_server_winner(winner);
                                 // Push to ALL MVars (any controller might be waiting)
                                 shared_state.signal_exit();
                                 shared_state.push_local_choice(LocalChoiceInfo::Exit { winner });
