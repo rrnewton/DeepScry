@@ -46,10 +46,13 @@ pub type CardId = EntityId<Card>;
 /// `valid_targets` for `Controller::choose_targets`. This lets controllers
 /// offer Players as targets for `ValidTgts$ Any`-style effects (Lightning
 /// Bolt, Shock, Drain Life) without churning the trait signature.
-/// See `entity::PLAYER_TARGET_BASE`.
+/// We encode as `BASE + player_id` (not BASE - player_id) so that
+/// `valid_targets.sort()` (called for snapshot/resume determinism in
+/// `get_valid_targets_for_spell`) preserves PlayerId order. See
+/// `entity::PLAYER_TARGET_BASE`.
 #[inline]
 pub fn player_as_target_sentinel(p: PlayerId) -> CardId {
-    CardId::new(entity::PLAYER_TARGET_BASE - p.as_u32())
+    CardId::new(entity::PLAYER_TARGET_BASE + p.as_u32())
 }
 
 /// Decode a sentinel CardId back into a PlayerId, if it is one.
@@ -57,10 +60,10 @@ pub fn player_as_target_sentinel(p: PlayerId) -> CardId {
 #[inline]
 pub fn player_target_from_sentinel(c: CardId) -> Option<PlayerId> {
     let v = c.as_u32();
-    // Accept up to 64 player IDs below the base. Real CardIds grow from 0
+    // Accept up to 64 player IDs above the base. Real CardIds grow from 0
     // and never approach u32::MAX - 1000.
-    if v <= entity::PLAYER_TARGET_BASE && v + 64 >= entity::PLAYER_TARGET_BASE {
-        Some(PlayerId::new(entity::PLAYER_TARGET_BASE - v))
+    if v >= entity::PLAYER_TARGET_BASE && v < entity::PLAYER_TARGET_BASE + 64 {
+        Some(PlayerId::new(v - entity::PLAYER_TARGET_BASE))
     } else {
         None
     }
