@@ -257,6 +257,17 @@ NEVER skip tests in CI. If a test cannot run due to missing dependencies (submod
 
 NEVER add binary files or large serialized artifact to version control without explicit permission. Always carefully review what you are adding with `git add`, and update `.gitignore` as needed.
 
+**NEVER commit images** (`*.png`, `*.jpg`, `*.gif`, `*.webp`, etc.) to this
+repo. `*.png` is already globally gitignored — do NOT defeat it with `git add
+-f`. This is a hard rule with exactly two exceptions: (a) `cardsfolder/` game
+data, and (b) website assets the user has **explicitly** asked you to add.
+Everything else that produces images — Playwright/QA screenshots, profiling
+plots, debug captures, scratch renders — goes to the **gitignored** `debug/` or
+`scratch/` (or a gitignored experiment subdir), never into tracked paths. If a
+report needs to reference a screenshot, cite the gitignored path or describe it
+in text; do not commit the binary. Reviewers/orchestrators must refuse to merge
+any branch that adds tracked image files without explicit user approval.
+
 If the commit is about optimization, refresh the benchmark results as well with `./scripts/run_benchmark.sh`
 
 Post-commit: refreshing benchmark results

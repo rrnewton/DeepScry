@@ -510,9 +510,18 @@ section covers the dispatch / coordination layer.
      first source commit").
 - **Closeout every child.** When a child reports done:
   1. Verify the worktree is clean (zero modified, zero untracked).
-  2. Move the row from `ACTIVE.md` to `ARCHIVED.md`.
-  3. `git -C mtg-forge-rs worktree remove worktrees/<branch>`.
-  4. Leave the branch ref in place unless explicitly told otherwise.
+  2. **Diff-gate the branch before ff-merge.** Run `git -C mtg-forge-rs
+     diff --stat integration...<branch>` and scan the file list. REFUSE
+     to merge (send back for fixing) if the branch adds **tracked image
+     files** (`*.png/*.jpg/*.gif/*.webp/...`, outside `cardsfolder/`),
+     other binaries, or any file > the 2 MB ceiling without explicit
+     user approval. QA/screenshot output belongs in gitignored `debug/`
+     or `scratch/`, never tracked — see the "NEVER commit images" rule
+     in `mtg-forge-rs/CLAUDE.md`. A green `make validate` does NOT excuse
+     a polluting diff; the orchestrator owns this gate.
+  3. Move the row from `ACTIVE.md` to `ARCHIVED.md`.
+  4. `git -C mtg-forge-rs worktree remove worktrees/<branch>`.
+  5. Leave the branch ref in place unless explicitly told otherwise.
 
 ### Orc orchestration (when applicable)
 

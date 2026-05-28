@@ -88,6 +88,13 @@ bad_fonts_mtg_tui.png
 node_modules/
 package-lock.json
 *.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+# QA / Playwright screenshot captures are NEVER committed (see CLAUDE.md
+# "NEVER commit images"). Belt-and-suspenders dir ignore on top of *.png.
+web/screenshots/
 
 # Debug directory for one-off scripts and temporary files
 # See CLAUDE.md section "Debugging Scripts and Temporary Files"
