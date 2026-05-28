@@ -62,7 +62,7 @@ pub fn player_target_from_sentinel(c: CardId) -> Option<PlayerId> {
     let v = c.as_u32();
     // Accept up to 64 player IDs above the base. Real CardIds grow from 0
     // and never approach u32::MAX - 1000.
-    if v >= entity::PLAYER_TARGET_BASE && v < entity::PLAYER_TARGET_BASE + 64 {
+    if (entity::PLAYER_TARGET_BASE..entity::PLAYER_TARGET_BASE + 64).contains(&v) {
         Some(PlayerId::new(v - entity::PLAYER_TARGET_BASE))
     } else {
         None
