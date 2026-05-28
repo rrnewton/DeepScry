@@ -2940,6 +2940,133 @@ mod tests {
             "Sengir Vampire must have Flying. Keywords: {:?}",
             card.keywords
         );
+
+        // Regression guard for mtg-7a1f62 / mtg-d4da18: the
+        // "Whenever a creature dealt damage by CARDNAME this turn dies, put a
+        // +1/+1 counter on CARDNAME" trigger (Forge
+        // `T:Mode$ ChangesZone | ... | ValidCard$ Creature.DamagedBy`) was
+        // historically SILENTLY DROPPED by the ChangesZone parser. Assert it
+        // is parsed as a DamagedCreatureDies trigger carrying a PutCounter
+        // effect that targets Self, so the silent-drop cannot regress.
+        use crate::core::{CounterType, TriggerEvent};
+        let dmg_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::DamagedCreatureDies)
+            .expect("Sengir Vampire must register a DamagedCreatureDies trigger (Creature.DamagedBy)");
+        assert!(
+            dmg_trigger.effects.iter().any(|e| matches!(
+                e,
+                Effect::PutCounter {
+                    counter_type: CounterType::P1P1,
+                    ..
+                }
+            )),
+            "DamagedCreatureDies trigger must put a +1/+1 counter. Effects: {:?}",
+            dmg_trigger.effects
+        );
+    }
+
+    /// Card compat: Sengir Vampire — "this turn" linkage (mtg-7a1f62).
+    ///
+    /// Verifies the trigger's "dealt damage by CARDNAME *this turn*" clause is
+    /// satisfied by damage recorded EARLIER in the turn even when the creature
+    /// dies from a NON-combat source later. The engine records each combat
+    /// damage source on the victim's `damaged_by_this_turn` list BEFORE the
+    /// lethal-damage check (combat.rs), and `check_death_triggers` reads that
+    /// list regardless of *how* the creature dies (combat, destroy, sacrifice,
+    /// SBA). This isolates the linkage from the combat-death path exercised by
+    /// the e2e puzzle test (tests/sengir_vampire_flying_e2e.sh): here Sengir
+    /// deals NO lethal blow — we simulate sublethal combat damage this turn,
+    /// then the victim dies via a separate death event, and the +1/+1 counter
+    /// must still appear (CR 603.2 / 603.6 trigger timing; CR 122 counters).
+    #[test]
+    fn test_card_compat_sengir_vampire_this_turn_linkage() {
+        use crate::core::CounterType;
+
+        if !PathBuf::from("../cardsfolder/s/sengir_vampire.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // Sengir Vampire on P1's battlefield (real card script => real trigger).
+        let sengir_id = load_test_card(&mut game, "Sengir Vampire", p1_id).expect("load Sengir Vampire");
+        game.battlefield.add(sengir_id);
+
+        // A victim creature P1 did NOT deal lethal damage to in combat.
+        let victim_id = game.next_card_id();
+        let mut victim = Card::new(victim_id, "Grizzly Bears".to_string(), p2_id);
+        victim.add_type(CardType::Creature);
+        victim.set_base_power(Some(2));
+        victim.set_base_toughness(Some(2));
+        victim.controller = p2_id;
+        // Simulate "Sengir dealt this creature (sublethal) combat damage THIS
+        // TURN" — exactly the state combat.rs records at combat.rs:823-831.
+        victim.damaged_by_this_turn.push(sengir_id);
+        game.cards.insert(victim_id, victim);
+        game.battlefield.add(victim_id);
+
+        // Baseline: Sengir has no +1/+1 counter yet.
+        assert_eq!(game.cards.get(sengir_id).unwrap().get_counter(CounterType::P1P1), 0);
+
+        // The victim now dies from a NON-combat cause later in the same turn.
+        // check_death_triggers is the shared death-trigger entry point invoked
+        // by destroy/sacrifice/SBA paths just as it is by combat.
+        game.battlefield.remove(victim_id);
+        game.check_death_triggers(victim_id)
+            .expect("death triggers should resolve");
+
+        // Sengir's DamagedCreatureDies trigger must have fired: +1/+1 counter.
+        assert_eq!(
+            game.cards.get(sengir_id).unwrap().get_counter(CounterType::P1P1),
+            1,
+            "Sengir must gain a +1/+1 counter when a creature it damaged this turn dies (non-combat death)"
+        );
+    }
+
+    /// Card compat: Sengir Vampire — negative case (mtg-7a1f62).
+    ///
+    /// The trigger must NOT fire for a creature Sengir never damaged. Guards
+    /// against an over-broad `DamagedCreatureDies` firing on every death.
+    #[test]
+    fn test_card_compat_sengir_vampire_no_trigger_when_undamaged() {
+        use crate::core::CounterType;
+
+        if !PathBuf::from("../cardsfolder/s/sengir_vampire.txt").exists() {
+            eprintln!("Skipping: cardsfolder not present");
+            return;
+        }
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let sengir_id = load_test_card(&mut game, "Sengir Vampire", p1_id).expect("load Sengir Vampire");
+        game.battlefield.add(sengir_id);
+
+        // Victim with an EMPTY damaged_by_this_turn list (Sengir never hit it).
+        let victim_id = game.next_card_id();
+        let mut victim = Card::new(victim_id, "Grizzly Bears".to_string(), p2_id);
+        victim.add_type(CardType::Creature);
+        victim.set_base_power(Some(2));
+        victim.set_base_toughness(Some(2));
+        victim.controller = p2_id;
+        game.cards.insert(victim_id, victim);
+        game.battlefield.add(victim_id);
+
+        game.battlefield.remove(victim_id);
+        game.check_death_triggers(victim_id)
+            .expect("death triggers should resolve");
+
+        assert_eq!(
+            game.cards.get(sengir_id).unwrap().get_counter(CounterType::P1P1),
+            0,
+            "Sengir must NOT gain a counter for a creature it did not damage"
+        );
     }
 
     /// Card compat: Mind Twist (mtg-6c0qe; cardsfolder/m/mind_twist.txt)

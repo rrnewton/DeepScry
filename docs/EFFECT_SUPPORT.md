@@ -41,7 +41,7 @@ workflow, row format, and update rules.
 | Trigger pattern                                                                  | Status  | Last verified              | Bug issue   | Sample cards     |
 |----------------------------------------------------------------------------------|---------|----------------------------|-------------|------------------|
 | ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | (multiple)       |
-| ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-f0bfb8  | Sengir Vampire   |
+| ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | WORKING | 2026-05-28_#2360(897881c9) | (fixed)     | Sengir Vampire   |
 | DamageDoneOnce by ~ to creature/player                                           | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-9l628   | The Abyss        |
 
