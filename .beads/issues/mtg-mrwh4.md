@@ -31,9 +31,22 @@ So the cold-compile is a ONE-TIME cost (cache warms after one full run); the ser
 
 ## Fix options
 
-1. **Migrate the CI Test step to `cargo nextest run --workspace --features network`** (matches `make validate`; parallelizes tests + has a slow-test timeout that would surface a true hang fast instead of silently running 50min). This is the highest-value fix.
-2. Split the slow binaries (`determinism_e2e`, `shell_script_tests`) into their own CI jobs so they parallelize across runners.
+1. ~~Migrate the CI Test step to `cargo nextest run`~~ — **TRIED 2026-05-28, REVERTED (made it WORSE), see update below.**
+2. **Split the slow binaries (`determinism_e2e`, `shell_script_tests`) into their own CI job(s)** so they run concurrently with the fast unit tests on separate runners. THIS is now the recommended fix.
 3. Consider trimming the `decks/**/*.dck` determinism matrix or running a representative subset on PR + full set nightly.
+4. Use a larger GitHub runner (4-8 vCPU) for the Test job so parallel test execution actually has cores.
+
+## 2026-05-28 UPDATE — nextest was tried on CI and REVERTED
+
+Migrated the CI Test step to `cargo nextest run --workspace --features network` (commit 43f2fa11 on `deploy-healthcheck-and-probes`) and watched it on a real 2-vCPU `ubuntu-latest` runner (cold cache, run 26559653726):
+
+- `Install cargo-nextest` (prebuilt tarball): instant, fine.
+- `Build release binary`: 6 min.
+- `Run tests` (`cargo nextest run`): still going at **62+ min** (total job >70min) when cancelled — **LONGER than the serial `cargo test` baseline (~49min cold)**.
+
+Root cause of the regression: `shell_script_tests` each spawn a full `mtg` game SUBPROCESS. nextest runs tests across ALL binaries concurrently (up to test-threads), so on a 2-vCPU runner it oversubscribes the cores with many heavy game subprocesses → thrashing. Worse, this is *test-execution* cost (not one-time build), so nextest would make integration's Test job permanently slow even with a warm cache. **Reverted to serial `cargo test`** (the repo's proven baseline: ~6.5min warm, ~49min cold-once).
+
+Lesson: nextest's cross-binary parallelism is a win on many-core dev boxes (that's why `make validate` uses it) but a LOSS on a 2-vCPU CI runner for subprocess-heavy e2e tests. The right fix is structural (option 2: split the slow shell/determinism binaries into a separate parallel CI job, or option 4: bigger runner), not a test-runner swap.
 
 ## Note for future agents
 
