@@ -4,21 +4,42 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-28T18:39:41.006380697+00:00
-updated_at: 2026-05-28T18:39:41.006380697+00:00
+updated_at: 2026-05-28T19:02:54.037188153+00:00
 ---
 
 # Description
 
-Build a GLOBAL flakiness-tracking system for the whole validation suite. User goal (2026-05-28): "have a clear flakiness state that models the flakiness of our individual tests" — we currently have NO global naming/tracking for the bits of validation.
+Global flakiness-tracking system IMPLEMENTED on branch `flakiness-harness` (base integration a7e0a196). Tooling/scripts + doc + data file; minimal engine impact.
 
-PIECES:
-1. CANONICAL TEST IDENTITY: a stable name chaining identifiers that uniquely names every validation unit across all kinds — e.g. `validate.<binary>.<test>` for cargo/nextest tests, `validate.shell_script_tests.<script>` for tests/*.sh, `validate.wasm_e2e.<file>` for web/test_*.js, `validate.network_e2e.<deck>.<seed>` for the multi-deck network e2e. One namespace covering nextest cases, shell scripts, wasm/playwright e2e, network e2e, examples.
-2. STRESS HARNESS: given a canonical test name, run it in ISOLATION N times (controlled concurrency so we measure the test, not contention), record pass/fail each run -> flakiness rate. Support a "stress all" sweep.
-3. FLAKINESS DB: a tracked file (CSV/JSON, like experiment_results/perf_history.csv) recording per-test flakiness over time + a classification: DETERMINISTIC-PASS / TIMEOUT-UNDER-LOAD (env, not a real flake) / TRUE-NONDETERMINISTIC / KNOWN-DESYNC(bug). Stamped with commit SHA/date.
-4. GLOBAL PICTURE: a report summarizing suite flakiness (how many tests, % flaky, by class) — a dashboard like scripts/temp/oldschool_progress.py.
+## Deliverables
 
-WHY NOW: the All Hallow's validate showed "16 failed" that were actually SIGTERM timeouts (contention, NOT real flakes), alongside REAL network desyncs (mtg-vk4b7). Without a flakiness model we can't tell env-timeout-flake from true-nondeterminism from real-bug at a glance. This directly supports getting + keeping validate GREEN+STABLE.
+1. CANONICAL TEST IDENTITY — documented in `ai_docs/reference/TEST_FLAKINESS.md`. One flat `validate.` namespace:
+   - `validate.<pkg>--<binary>.<module::test>` (cargo/nextest; `--lib` for unit tests). Round-trips to `cargo test -p <pkg> --test <binary> -- --exact <path>`.
+   - `validate.shell_script_tests.<stem>` (tests/*.sh auto-discovered by shell_script_tests.rs)
+   - `validate.wasm_e2e.<stem>` (web/test_*.js)
+   - `validate.network_e2e.<deck_stem>.<seed>` (one name per deck+seed scenario — the granularity at which desyncs show up)
+   - `validate.examples.<name>` (cargo run --example)
+   The authoritative name->command decoder is `KIND_RUNNERS`/`decode()` in scripts/flakiness_stress.py.
 
-RUNS CONCURRENTLY WITH: mtg-578 (CI split + tent-pole reduction) and aggressive investigation of currently-flaking tests (mtg-vk4b7 rogerbrand/monored desync, mtg-273 white_weenie seed7, mtg-577 wasm-pack race). Existing related: mtg-89/mtg-103 (snapshot stress tests) — reuse patterns.
+2. STRESS HARNESS — `scripts/flakiness_stress.py`:
+   - `one <name> --runs N --concurrency K --timeout S [--record] [--classify CLASS --issue mtg-x]`
+   - `stress-all --runs 3 --concurrency 4 [--record]` (bounded sweep; light defaults)
+   - `list`
+   Per-run outcome pass/fail/timeout; TIMEOUT distinct from FAIL so it classifies as env, not flake. BOUNDED concurrency (default min(4, nproc/2)) by design — oversubscription manufactures the timeout-under-load false-flakes we want to distinguish. Auto-classify: deterministic-pass / timeout-under-load / true-nondeterministic; known-desync set explicitly by a human linking the bug.
 
-DELIVERABLES: canonical-name scheme doc + a `scripts/` stress-harness (run-one-N-times + stress-all) + the flakiness DB + a report script. Classify the current known flakers to seed the DB.
+3. FLAKINESS DB — `experiment_results/flakiness_db.csv` (tracked, append-only, like perf_history.csv). Columns: timestamp, git_commit, git_depth, canonical_name, kind, runs, fails, timeouts, flakiness_pct, classification, issue, concurrency, notes.
+
+4. REPORT — `scripts/flakiness_report.py`: counts by class, top flakers (latest-per-test), highlights unexplained true-nondeterministic rows. `--all` / `--class X` filters. Answers "is validate's redness real?": all-{timeout-under-load + tracked known-desync} == green-modulo-known-issues; any true-nondeterministic == needs investigation.
+
+## Seeded classifications (current known flakers)
+- validate.network_e2e.01_rogue_rogerbrand.3 + validate.network_e2e.monored.13 -> known-desync (mtg-vk4b7)
+- validate.network_e2e.white_weenie.7 -> known-desync (mtg-273)
+- validate.wasm_e2e.wasm_pack_install -> true-nondeterministic infra (mtg-577)
+- validate.mtg-engine--determinism_e2e.all -> timeout-under-load (NOT a real flake — stops SIGTERM timeouts masquerading as failures)
+
+## Verified
+report + list + decode for all 5 kinds; bounded live stress demo of a shell test. Seeded DB clean (demo runs were not --record'd).
+
+## Next / future
+- Populate real measured rows via `stress-all --record` on an idle box (bigger N, --concurrency 1 for heavy tests).
+- Optional NEW Makefile target (do not edit existing validate-* targets — owned by ci-split agent) to wire `stress-all` into a nightly job.
