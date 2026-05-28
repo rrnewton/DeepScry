@@ -1,5 +1,6 @@
+(WARNING TO AGENTS AND HUMANS -- This was useful at the start of the project but is now out-of-date.)
 
-A performant Magic The Gathering engine for AI research
+Original Project Vision: A performant Magic The Gathering engine for AI research
 ================================================================================
 
 Forge and Xmage are two open source projects that have done the hard work of implementing the rules engine for the Magic The Gathering (MTG) game, plus curating a full card library (>30,000 cards) to capture the behavior of all existing MTG cards.
@@ -7,14 +8,14 @@ Forge and Xmage are two open source projects that have done the hard work of imp
    https://github.com/Card-Forge/forge
    https://github.com/magefree/mage
 
-In this git repo, you'll find a submodule for forge. The goal of this project is to port the game engine from that Java-based Forge project, to a new implementation in Rust, while making certain improvements.
+In this git repo, you'll find a submodule for forge. The goal of this project is to reimplement a game engine with some inspiration from that Java-based Forge project. The new implementation is in Rust, and makes several improvements.
 
 The main goal of the improvements is to make this new implementation suitable for AI research which requires being able to aggressively search future subtrees of the game decision tree. As detailed below this will require some cross-cutting upgrades to the way game entities are implemented.
 
 Porting strategy
 ----------------------------------------
 
-We want to build a game engine by porting the Java code, and reuse the card library and its text-based format for representing cards, for example:
+We want to build a game engine while using the Java code and MTG rules as reference, and reuse the card library and its text-based format for representing cards, for example:
 
 ```
 $ cat ./forge-java/forge-gui/res/cardsfolder/l/lightning_bolt.txt
@@ -25,17 +26,10 @@ A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 3 | SpellDescription$ CARDNAME deals
 Oracle:Lightning Bolt deals 3 damage to any target.
 ```
 
-For brevity this `cardsfolder` is symlinked into the top of this repo as well. A
+For easy of access this `cardsfolder` is symlinked into the top of this repo as well. A
 major component of this project will be building and testing the loader/parser for these card files.  Another major input format to read are the `.dck` deck files stored throughout the repository.
 
-We should port the Forge project file-by-file, and feature-by-feature, but not necessarily line-by-line. Our port will be less direct for a couple reasons. First, we are dropping functionality and adding new functionality. Second, we want the result to be grown incrementally and testable/benchmarkable at each step.
-
-### Dropping functionality: Leave out the GUI.
-
-The goal of this project is the core game-engine and eventually AI/AI or AI/human gameplay. We are NOT concerned with implement any graphical user interface either for desktop, web, or mobile. Rename everything "GUI" to "UI": for example, the forge-gui package would probably become a forge-ui crate.
-
-In the `./forge-java` submodule, iou can see a package `forge-headless`, which is a work-in-progress TUI for playing MTG on the command line. This is a great way to test the engine and any AI under development. We will adopt the same text interface, though we will extend it as we surpass the functionality of the WIP forge-headless prototype. Note that the key design of the TUI is to reduce the game of MTG to an explicit decision tree of numerical `0-N` choices at each branch point. Therefore a complete game can be written down as a series of small integers (for both players) to navigate the decision tree.
-
+We should port the Forge project feature-by-feature, but not necessarily line-by-line. Our port will be less direct for a couple reasons. First, we are dropping functionality and adding new functionality. Second, we want the result to be grown incrementally and testable/benchmarkable at each step.
 
 ### Look for opportunities for Rust features like traits and polymorphism
 
@@ -146,8 +140,9 @@ Our ability to quickly debug and deeply test functionality should depend on how 
 
 Let's suppose that Claude wants to test that a counterspell is playable in a certain situation. The test case for this can load a game file at a certain phase, step the game forward and have P2 play a lightning bolt, then make sure P1 has the option of responding with a counterspell.
 
-And when something doesn't go as expected, we want Claude to be able to jump to these intermediate states in gameplay easily. Claude cannot actually play the game through the TUI, but excels at writing scripts on the fly. So Claude could script simple gameplay by writing scripts that drive the TUI
-(basically `echo 0 1 3 2 | run_tui_from_state gamestate.mtggame`), or by the TUI having a flag to read in choice-logs, or by writing Rust code in a cargo test that loads a game state and takes actions with the API.
+And when something doesn't go as expected, we want Claude to be able to jump to these intermediate states in gameplay easily. Claude cannot actually play the game through the TUI, but excels at writing scripts on the fly. So Claude could script simple gameplay by writing scripts that drive the TUI, or by the TUI having a flag to read in choice-logs, or by writing Rust code in a cargo test that loads a game state and takes actions with the API.
+
+(UPDATE: this is subsumed by a sophisticated `./agentplay` framework.)
 
 ### GameState text files
 
@@ -201,7 +196,7 @@ We don't need the concept of goal or turn budget or difficulty. Though we may in
 
 ### Cargo test and Github workflows
 
-As we code, we want to commit frequently every time we have completed a task, e.g. implemented a feature, and the code is compiling and passing tests. We are using Beads (see `bd quickstart` command) to track issues.
+As we code, we want to commit frequently every time we have completed a task, e.g. implemented a feature, and the code is compiling and passing tests. We are using Beads (see `bd quickstart` command or `mb quickstart` if minibeads) to track issues.
 
 We want to use idiomatic `cargo test` functionality for testing our project. The tests should in general be parallelizable.
 

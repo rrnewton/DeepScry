@@ -1,7 +1,19 @@
-# mtg-forge-rs
+# DeepScry Project
 
-An experiment in porting a subset of forge to Rust while adding tree search.
+An experimental high-performance Rust implementation of a Magic the Gathering 
+rules engine.  The purpose of this implementation is to enable more advancedd AI
+gameplay research by having a strong foundation for rapid game tree exploration.
 
+Features:
+
+ - A mostly automatic mana-engine, and engine sanity checks on valid actions, reduce the game to a tree of 0..N choices among valid actions.
+ - The high-performance engine allows realistic decks to run 50K turn/sec on one core (>3M choices/sec), when playing random choices. This is designed to allow many MCTS roll-outs per second. 
+ - Networked play is a replicated state-machine deterministic simulation. Clients and server all compute the same engine state, modulo information hiding.  Hacked clients cannot see hidden information, such as the opponents hand.
+ - Games can be snapshot/restored in the middle, and any game can be undo-rewound to the beginning.
+ - Randomized testing ensures that all the different game modes (native machine code, WASM, networked, local) all compute the same game-transcript from the same starting conditions and PRNG seeds, as well as deterministic intermediate states.
+ - Reasonably broad card mechanic support, with a setup that enables agents to 
+   mostly-autonomously push towards 100% support for nay and all sets.
+ 
 ## Build Instructions
 
 ### Prerequisites
