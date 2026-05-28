@@ -422,19 +422,34 @@
            cards' content-driven height — prevents the size-feedback loop
            that used to shrink cards on every render
            (bug-gamehtml-card-size-v2). */
+        /* Battlefield container packs SECTIONS horizontally and wraps
+           (mtg-433 / mtg-572). The previous `flex-direction: column`
+           forced every section (Creatures | Artifacts | Lands) onto its
+           own full-width row, so a board with 3 categories wasted two
+           thirds of the vertical space on 1-2 cards each. Laying the
+           sections out as wrapping flex *rows* lets them sit side by side
+           when they fit, matching how the Web TUI (tui_game.html) packs
+           the same view-model sections densely across the pane width.
+           The card sizes are still chosen by the shared Rust layout engine
+           (battlefield_layout::pick_card_size_for_battlefield) measured
+           against the STABLE .pane-body rect, so this is a pure flow
+           change — no size-feedback loop. */
         .card-grid {
             display: flex;
-            flex-direction: column;
+            flex-direction: row;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            align-items: flex-start;
             min-height: 100%;
-            gap: 2px;
+            gap: 2px 6px;
             padding: 4px;
             box-sizing: border-box;
         }
-        /* Each section row inside the grid spreads its cards horizontally
-           across the available width — matches tui_game.html's behaviour
-           where cards "spread out" instead of clumping at the left edge.
-           `justify-content: center` keeps them visually balanced; switch
-           to `space-around` if a denser look is preferred. */
+        /* Cards inside a section spread horizontally and wrap within the
+           section's own (content-sized) box — matches tui_game.html's
+           behaviour where cards "spread out" instead of clumping at the
+           left edge. `justify-content: center` keeps them visually
+           balanced. */
         .bf-section-cards {
             justify-content: center;
         }
@@ -442,7 +457,19 @@
         /* Battlefield section labels match the TUI's inline section markers
            (PWs / Creatures / Enchants / Artifacts / Lands). The Rust view
            model picks the section colors so JS just maps category → CSS. */
-        .bf-section { width: 100%; display: block; }
+        /* A section is now a flex *item* of the wrapping .card-grid row:
+           it shrinks to fit its cards (flex: 0 1 auto) so multiple
+           sections pack side by side, but it can still grow to a full
+           row's width when a single section holds many cards (the inner
+           .bf-section-cards wraps inside it). min-width keeps a 1-card
+           section from collapsing below a readable label width. */
+        .bf-section {
+            display: flex;
+            flex-direction: column;
+            flex: 0 1 auto;
+            min-width: 90px;
+            max-width: 100%;
+        }
         .bf-section-label {
             font-size: 10px;
             color: #888;
