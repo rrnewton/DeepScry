@@ -660,11 +660,12 @@ impl PlayerController for NetworkController {
         spell: CardId,
         valid_targets: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Build options list
-        let options: Vec<String> = valid_targets
-            .iter()
-            .map(|&card_id| self.format_card(view, card_id))
-            .collect();
+        // Build options list using the SHARED choice formatter so the web /
+        // network frontend shows the same ownership + player-relation labels
+        // as the native TUI: card targets "(yours)"/"(theirs)", player targets
+        // "(you)"/"(them)" (mtg-p43i3). These strings are display-only (not part
+        // of the state hash), so they do not affect network determinism.
+        let options: Vec<String> = crate::game::controller::format_card_choices(view, valid_targets, self.player_id);
 
         if options.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());

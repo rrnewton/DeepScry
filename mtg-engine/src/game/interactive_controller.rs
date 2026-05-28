@@ -635,14 +635,19 @@ impl PlayerController for InteractiveController {
 
         let mut targets = SmallVec::new();
 
+        // Use the SHARED choice formatter so the human TUI shows the same
+        // ownership / player-relation labels as every other front-end:
+        // card targets "(yours)"/"(theirs)", player targets "(you)"/"(them)"
+        // (mtg-p43i3). valid_targets is already ordered opponents-first by the
+        // engine, so [1] is the opponent and the caster's own player is last.
         if self.numeric_choices {
             // Numeric mode: 0 = No target, 1-N = targets
             println!("Valid targets:");
-            println!("  [0] No target");
-            for (idx, &card_id) in valid_targets.iter().enumerate() {
-                let name = view.card_name(card_id).unwrap_or_else(|| format!("Card {card_id:?}"));
-                let tapped = if view.is_tapped(card_id) { " (tapped)" } else { "" };
-                println!("  [{}] {}{}", idx + 1, name, tapped);
+            for (idx, label) in crate::game::controller::format_target_choices(view, valid_targets, self.player_id)
+                .iter()
+                .enumerate()
+            {
+                println!("  [{}] {}", idx, label);
             }
 
             if let Some(choice) = self.get_user_choice_with_view(
@@ -658,7 +663,12 @@ impl PlayerController for InteractiveController {
         } else {
             // Original mode: indices match array, 'p' for no targets
             println!("Valid targets:");
-            self.display_cards(view, valid_targets, "  ");
+            for (idx, label) in crate::game::controller::format_card_choices(view, valid_targets, self.player_id)
+                .iter()
+                .enumerate()
+            {
+                println!("  [{}] {}", idx, label);
+            }
 
             if let Some(choice) = self.get_user_choice_with_view(
                 &format!(

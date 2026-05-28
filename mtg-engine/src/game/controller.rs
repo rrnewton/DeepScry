@@ -477,6 +477,15 @@ pub fn format_card_choice(
 ) -> String {
     let name = view.card_name(card_id).unwrap_or_default();
 
+    // Player targets (Lightning Bolt et al.) are encoded as sentinel CardIds.
+    // They have no `controller`, so the card-ownership branch below would
+    // mislabel even the viewer's own player as "(theirs)" (mtg-p43i3). Format
+    // them as "(you)"/"(them)" and skip the [T]/#ID card decorations.
+    if let Some(pid) = crate::core::player_target_from_sentinel(card_id) {
+        let relation = if pid == viewer_id { "(you)" } else { "(them)" };
+        return format!("{} {}", name, relation);
+    }
+
     // Determine ownership
     let controller = view.get_card(card_id).map(|c| c.controller);
     let ownership = if controller == Some(viewer_id) {

@@ -8,7 +8,7 @@
 //! interactive terminal input.
 
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
-use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
+use crate::game::controller::{format_card_choices, ChoiceResult, GameStateView, PlayerController};
 use crate::game::fancy_tui_renderer::{ChoiceContext, FancyTuiRenderer};
 use crate::game::snapshot::ControllerType;
 use crate::game::RichInputController;
@@ -268,10 +268,9 @@ impl PlayerController for FancyFixedController {
         let spell_name = view.card_name(spell).unwrap_or_else(|| format!("Card {:?}", spell));
         let prompt = format!("Choose target for {}", spell_name);
 
-        let choices: Vec<String> = valid_targets
-            .iter()
-            .map(|&card_id| view.card_name(card_id).unwrap_or_else(|| format!("Card {:?}", card_id)))
-            .collect();
+        // Use the shared choice formatter so the captured screenshot shows the
+        // same ownership / player-relation labels as the live TUI (mtg-p43i3).
+        let choices: Vec<String> = format_card_choices(view, valid_targets, self.player_id);
 
         // Capture screenshot (even if valid_targets is empty)
         if let Err(e) = self.capture_screenshot(view, &prompt, &choices) {

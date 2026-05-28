@@ -754,6 +754,12 @@ impl GameState {
 
         // Sort for deterministic ordering (critical for snapshot/resume)
         valid_targets.sort();
+        // Then offer opponents' player sentinels before the caster's own
+        // (mtg-p43i3). This runs AFTER the numeric sort (which would otherwise
+        // put the low-id caster's sentinel first) and is itself deterministic —
+        // keyed only on the spell owner — so snapshot/resume and network sync
+        // are unaffected.
+        crate::core::reorder_player_targets_opponents_first(&mut valid_targets, spell_owner);
         Ok(valid_targets)
     }
 

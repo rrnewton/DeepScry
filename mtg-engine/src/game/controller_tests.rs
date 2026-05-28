@@ -195,3 +195,58 @@ fn test_scry_decision_partition_is_total() {
     all.sort_by_key(|c| c.as_u32());
     assert_eq!(all, vec![CardId::new(1), CardId::new(2), CardId::new(3)]);
 }
+
+/// mtg-p43i3: player-target choices must label the viewer "(you)" and an
+/// opponent "(them)" — never "(theirs)"/"(yours)" (those are CARD-target
+/// labels) — and must list opponents BEFORE the viewer by default (most
+/// targeted spells, e.g. Lightning Bolt, are aimed at an opponent).
+#[test]
+fn test_player_target_choice_labels_and_ordering() {
+    use crate::core::{player_as_target_sentinel, reorder_player_targets_opponents_first, CardId};
+    use crate::game::controller::{format_card_choice, format_target_choices};
+    use crate::game::GameState;
+
+    let game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1 = PlayerId::new(0); // caster / viewer (active player)
+    let p2 = PlayerId::new(1); // opponent
+    let view = GameStateView::new(&game, p1);
+
+    // Single player-sentinel labels: viewer "(you)", opponent "(them)".
+    let you = format_card_choice(&view, player_as_target_sentinel(p1), p1, &Default::default());
+    let them = format_card_choice(&view, player_as_target_sentinel(p2), p1, &Default::default());
+    assert!(
+        you.ends_with("(you)"),
+        "viewer's own player must be '(you)', got: {you}"
+    );
+    assert!(them.ends_with("(them)"), "opponent must be '(them)', got: {them}");
+    assert!(!you.contains("(theirs)") && !you.contains("(yours)"));
+    assert!(!them.contains("(theirs)") && !them.contains("(yours)"));
+
+    // Ordering: simulate the post-sort valid_targets for an "any target" spell
+    // cast by P1. Numeric sort puts the caster's low-id sentinel first; the
+    // reorder must flip the opponent ahead of the caster.
+    let mut targets: Vec<CardId> = vec![player_as_target_sentinel(p1), player_as_target_sentinel(p2)];
+    targets.sort();
+    assert_eq!(
+        targets[0],
+        player_as_target_sentinel(p1),
+        "pre-reorder: caster first (sort artifact)"
+    );
+    reorder_player_targets_opponents_first(&mut targets, p1);
+    assert_eq!(targets[0], player_as_target_sentinel(p2), "opponent must come first");
+    assert_eq!(targets[1], player_as_target_sentinel(p1), "viewer last");
+
+    // The full choice list as a front-end would render it.
+    let choices = format_target_choices(&view, &targets, p1);
+    assert_eq!(choices[0], "No target");
+    assert!(
+        choices[1].ends_with("(them)"),
+        "[1] must be opponent '(them)', got: {}",
+        choices[1]
+    );
+    assert!(
+        choices[2].ends_with("(you)"),
+        "[2] must be viewer '(you)', got: {}",
+        choices[2]
+    );
+}

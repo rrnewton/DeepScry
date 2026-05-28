@@ -74,27 +74,50 @@ else
     exit 1
 fi
 
-# Required: a player's life actually dropped by 3 (20 -> 17). The two
-# assertions above already prove the user's reported bug is fixed: a Player
-# is OFFERED as a target and damage ROUTES to a Player (no "Unknown" sentinel
-# leak). This third assertion confirms the damage actually landed on a player.
-# We accept EITHER player at 17: the --p1=fixed controller casts "Lightning
-# Bolt" without an explicit target arg, so the engine auto-resolves to the
-# first player-target — which is the caster (player sentinels sort BASE+pid,
-# caster pid 0 first). Self-targeting Lightning Bolt is legal (CR 115.4: "any
-# target" includes any player, including its controller). Forcing the OPPONENT
-# specifically via fixed-input target selection is a stronger follow-up test
-# (TODO mtg-lxrqz): the fixed-input DSL needs a documented "target player N"
-# token before we can pin that down deterministically.
-if grep -qE "Life: 17" "$LOG"; then
-    echo -e "${GREEN}✓ A player's life dropped to 17 (bolt damage landed on a player)${NC}"
+# Required: the OPPONENT (Player 2) takes the 3 damage. The --p1=fixed
+# controller casts "Lightning Bolt" without an explicit target arg, so the
+# engine auto-resolves to the FIRST player-target. Since mtg-p43i3 the valid
+# target list is ordered opponents-first (most targeted spells aim at an
+# opponent), so the first player-target is now the opponent — not the caster.
+# Self-targeting is still legal (CR 115.4: "any target" includes any player,
+# including its controller); we just no longer pick self by default.
+if grep -qE "deals 3 damage to Player 2" "$LOG" && grep -qE "Life: 17" "$LOG"; then
+    echo -e "${GREEN}✓ Opponent (Player 2) took 3 damage, life settled at 17 (opponents-first default)${NC}"
 else
-    echo -e "${RED}✗ No player dropped to 17 — bolt damage did not land on a player${NC}"
-    grep -E "Life:" "$LOG" | head -10
+    echo -e "${RED}✗ Opponent did NOT take the auto-resolved Bolt damage${NC}"
+    grep -E "deals .* damage to|Life:" "$LOG" | head -10
     exit 1
+fi
+
+# --- Choice-list rendering (mtg-p43i3): label + ordering ---
+# Drive the same puzzle with the interactive (human stdin) controller and pin
+# the rendered target menu: opponent FIRST with "(them)", caster's own player
+# LAST with "(you)" — never the card-target "(theirs)"/"(yours)" labels.
+MENU_LOG=/tmp/lightning_bolt_player_target_menu.txt
+# stdin: cast Lightning Bolt [1], then quit-ish; we only need the target menu.
+printf '1\n1\n0\n' | run_mtg_with_timeout 30 tui \
+    --start-state "$PUZZLE" --p1 tui --p2 zero --seed 42 \
+    > "$MENU_LOG" 2>&1 || true
+
+if grep -qE '\[0\] Player 2 \(them\)' "$MENU_LOG" \
+    && grep -qE '\[1\] Player 1 \(you\)' "$MENU_LOG"; then
+    echo -e "${GREEN}✓ Target menu: opponent '[0] Player 2 (them)' before caster '[1] Player 1 (you)'${NC}"
+else
+    echo -e "${RED}✗ Target menu label/order wrong (expected opponent-first '(them)' then '(you)')${NC}"
+    grep -E "Targeting for|\[0\]|\[1\]" "$MENU_LOG" | head -10
+    exit 1
+fi
+
+if grep -qE '\(theirs\)|\(yours\)' "$MENU_LOG"; then
+    echo -e "${RED}✗ Player targets mislabeled with card-target '(theirs)/(yours)'${NC}"
+    grep -E '\(theirs\)|\(yours\)' "$MENU_LOG" | head
+    exit 1
+else
+    echo -e "${GREEN}✓ No card-target '(theirs)/(yours)' labels leaked onto player targets${NC}"
 fi
 
 echo
 echo -e "${GREEN}=== Test PASSED ===${NC}"
 echo "Full log: $LOG"
+echo "Menu log: $MENU_LOG"
 exit 0
