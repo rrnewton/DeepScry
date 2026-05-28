@@ -194,11 +194,10 @@
 <section class="hero">
     <div class="hero-inner">
         <h1>DeepScry</h1>
-        <p class="tagline">An experiment in porting <em>Magic: the Gathering</em> to Rust &mdash; with tree-search AI in mind.</p>
+        <p class="tagline">An experimental high-performance <em>Magic: the Gathering</em> engine in Rust &mdash; with tree-search AI in mind.</p>
         <p>
             Card data is sourced from the open-source
-            <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a> project
-            (the <code>cardsfolder/</code> tree). The MTG rules engine and game simulation are an independent
+            <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a> project. The MTG rules engine and game simulation are an independent
             Rust reimplementation &mdash; not a port of Forge's Java rules code &mdash; built for deterministic
             simulation, undo-log rewind, and AI search. See
             <a href="https://github.com/rrnewton/mtg-forge-rs/blob/main/PROJECT_VISION.md" target="_blank" rel="noopener">PROJECT_VISION.md</a>
@@ -230,7 +229,7 @@
         <h2>Pick a Username</h2>
         <p style="color: var(--muted); margin: 4px 0 12px;">
             No accounts, no passwords. Pick any name &mdash; uniqueness is advisory until you create or
-            join a game (server-side enforcement is tracked in mtg-6uuto).
+            join a game.
         </p>
         <form id="name-form" class="row" autocomplete="off">
             <div style="flex: 2 1 220px;">
