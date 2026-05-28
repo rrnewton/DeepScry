@@ -188,4 +188,4 @@ Unit tests for core types are colocated in their respective modules.
 ## See Also
 - `src/game/` - Game state and logic that uses these types
 - `src/loader/` - Loading card definitions that create these types
-- `ai_docs/CARD_SCRIPT_SPEC.md` - Card script format specification
+- `ai_docs/reference/CARD_SCRIPT_SPEC.md` - Card script format specification

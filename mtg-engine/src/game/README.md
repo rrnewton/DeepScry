@@ -60,7 +60,7 @@ This module contains the game engine that implements MTG rules and manages game 
 - `choose_attackers()` / `choose_blockers()` - Combat decisions
 - `choose_cards_to_discard()` - Hand size management
 
-**See also:** `ai_docs/CONTROLLER_DESIGN.md` for detailed architecture
+**See also:** `ai_docs/reference/CONTROLLER_DESIGN.md` for detailed architecture
 
 #### Controller Implementations
 
@@ -313,6 +313,6 @@ This module closely follows Java Forge's architecture:
 ## See Also
 - `src/core/` - Core types used by game engine
 - `src/loader/` - Loading card definitions
-- `ai_docs/CONTROLLER_DESIGN.md` - Controller architecture
+- `ai_docs/reference/CONTROLLER_DESIGN.md` - Controller architecture
 - `OPTIMIZATION.md` - Performance optimization guide
 - `PROJECT_VISION.md` - Original project vision (historical)

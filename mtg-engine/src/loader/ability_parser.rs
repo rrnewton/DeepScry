@@ -17,7 +17,7 @@
 //!
 //! # Safety
 //!
-//! This parser addresses safety concerns identified in ai_docs/ability_parsing_comparison.md:
+//! This parser addresses safety concerns identified in ai_docs/reference/ability_parsing_comparison.md:
 //! 1. Tokenization: Splits by `|` before matching to avoid substring false positives
 //! 2. Validation: Returns Result types with clear error messages
 //! 3. Type safety: Uses enums for API types instead of raw strings

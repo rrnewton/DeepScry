@@ -136,7 +136,7 @@ let game_state = initializer.create_game(
 
 ### Card Format (.txt)
 
-Based on Forge's card scripting format. See `ai_docs/CARD_SCRIPT_SPEC.md` for full specification.
+Based on Forge's card scripting format. See `ai_docs/reference/CARD_SCRIPT_SPEC.md` for full specification.
 
 **Key sections:**
 - **Metadata**: Name, ManaCost, Types, PT
@@ -321,7 +321,7 @@ let game = init.create_game(
 ```
 
 ## See Also
-- `ai_docs/CARD_SCRIPT_SPEC.md` - Complete card format specification
+- `ai_docs/reference/CARD_SCRIPT_SPEC.md` - Complete card format specification
 - `src/core/` - Core types used by loaders
 - `src/game/` - Game engine that uses loaded cards
 - Forge cardsfolder: `forge-java/res/cardsfolder/`
