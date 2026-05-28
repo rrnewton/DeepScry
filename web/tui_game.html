@@ -3616,6 +3616,30 @@ Name=My Deck
 
             // Restore saved selections after initial population
             restoreDeckSelections();
+
+            // Test-automation hook: expose a single entry point that imports a
+            // .dck (by raw content) as a custom deck and selects it for a seat.
+            // Reuses parseDckFormat + saveCustomDecks so it works for ANY deck
+            // file, including ones outside the WASM export globs. Used by
+            // web/test_network_gui_e2e.js so a single --deck mirrors both seats.
+            window.__mtg_test_import_and_select_deck = function (player, content, expectedName) {
+                const result = parseDckFormat(content);
+                const name = (result.name && result.name.trim()) || expectedName;
+                if (!name || !result.mainDeck || result.mainDeck.length === 0) {
+                    return { ok: false, reason: `parse failed: ${JSON.stringify(result.errors)}` };
+                }
+                const customDecks = getCustomDecks();
+                customDecks[name] = { main_deck: result.mainDeck, sideboard: result.sideboard || [] };
+                saveCustomDecks(customDecks);
+                const collectionSelect = document.getElementById(`${player}-collection`);
+                if (collectionSelect) {
+                    collectionSelect.value = 'custom';
+                    updateDeckDropdown(player);
+                }
+                const deckSelect = document.getElementById(`${player}-deck`);
+                if (deckSelect) deckSelect.value = name;
+                return { ok: true, name, selected: deckSelect ? deckSelect.value : null };
+            };
         }
 
         /**

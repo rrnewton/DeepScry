@@ -141,6 +141,18 @@ async function runTest() {
         const deckPath = DECK_NAME.includes('/')
             ? path.join(projectRoot, DECK_NAME)
             : path.join(projectRoot, 'decks', DECK_NAME);
+        // Read the .dck content so we can give the SAME deck to the browser P2
+        // (a single --deck applies to BOTH seats -> deterministic mirror match).
+        // Many top-level decks (monored, counterspells, ...) are NOT in the WASM
+        // export globs, so we inject the deck into the browser as a custom deck
+        // rather than relying on the dropdown's filtered built-in list.
+        const deckContent = fs.readFileSync(deckPath, 'utf8');
+        // Pull the deck's display name out of [metadata] (same field the
+        // browser's parseDckFormat keys on) for the dropdown selection.
+        const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
+        const browserDeckName = deckNameMatch
+            ? deckNameMatch[1].trim()
+            : path.basename(DECK_NAME).replace(/\.(dck|txt)$/i, '');
         nativeClient = spawn(mtgBinary, [
             'connect',
             '--server', `localhost:${SERVER_PORT}`,
@@ -210,6 +222,25 @@ async function runTest() {
         await page.fill('#server-url', `ws://localhost:${SERVER_PORT}`);
         await page.fill('#server-password', SERVER_PASSWORD);
         await page.fill('#player-name', `Web${HUMAN_MODE ? 'Human' : 'Random'}`);
+
+        // Give the browser P2 the SAME deck as the native P1 (single --deck =>
+        // both seats). Inject as a custom deck (reusing the page's own
+        // parseDckFormat + custom-deck localStorage path) so it works for ANY
+        // .dck file, including ones outside the WASM export globs.
+        const deckInjected = await page.evaluate(({ content, expectedName }) => {
+            if (typeof window.__mtg_test_import_and_select_deck !== 'function') {
+                return { ok: false, reason: 'page deck import hook unavailable' };
+            }
+            // "P1" UI controls represent "our" (browser) seat in network mode.
+            return window.__mtg_test_import_and_select_deck('p1', content, expectedName);
+        }, { content: deckContent, expectedName: browserDeckName });
+        if (!deckInjected.ok) {
+            throw new Error(`Failed to inject browser deck: ${deckInjected.reason}`);
+        }
+        if (deckInjected.selected !== deckInjected.name) {
+            throw new Error(`Browser deck not selected: wanted "${deckInjected.name}", got "${deckInjected.selected}"`);
+        }
+        log(`Browser P2 deck set to "${deckInjected.name}" (mirror of native P1)`);
 
         // Select controller type
         const controllerType = HUMAN_MODE ? 'human' : 'random';
