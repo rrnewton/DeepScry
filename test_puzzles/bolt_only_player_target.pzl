@@ -1,0 +1,24 @@
+[metadata]
+Name:Lightning Bolt Targets Opponent (no creatures)
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Lightning Bolt; only valid targets are P0 and P2 (both players). Verifies player-target sentinel routes damage to the player.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

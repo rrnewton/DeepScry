@@ -91,10 +91,21 @@ impl<'a> GameLoop<'a> {
                         target: TargetRef::None,
                         amount,
                     } if target_index < targets.len() => {
-                        // Replace placeholder with actual permanent target for logging
-                        let replaced = Effect::DealDamage {
-                            target: TargetRef::Permanent(targets[target_index]),
-                            amount: *amount,
+                        // Replace placeholder with the actual target for logging.
+                        // Player-target sentinels (Lightning Bolt at a player)
+                        // become TargetRef::Player; everything else is a
+                        // permanent CardId.
+                        let raw = targets[target_index];
+                        let replaced = if let Some(pid) = crate::core::player_target_from_sentinel(raw) {
+                            Effect::DealDamage {
+                                target: TargetRef::Player(pid),
+                                amount: *amount,
+                            }
+                        } else {
+                            Effect::DealDamage {
+                                target: TargetRef::Permanent(raw),
+                                amount: *amount,
+                            }
                         };
                         target_index += 1;
                         replaced
@@ -1108,11 +1119,22 @@ impl<'a> GameLoop<'a> {
                                     && self.verbosity >= VerbosityLevel::Normal
                                     && !self.replaying
                                 {
-                                    // Get target names for display
+                                    // Get target names for display. Player-target
+                                    // sentinels (Lightning Bolt aimed at a
+                                    // player) don't have a real CardId — fall
+                                    // back to the player's display name.
                                     let target_names: Vec<String> = chosen_targets_vec
                                         .iter()
                                         .filter_map(|&tid| {
-                                            self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
+                                            if let Some(pid) = crate::core::player_target_from_sentinel(tid) {
+                                                self.game
+                                                    .get_player(pid)
+                                                    .ok()
+                                                    .map(|p| p.name.to_string())
+                                                    .or_else(|| Some(format!("Player {}", pid.as_u32() + 1)))
+                                            } else {
+                                                self.game.cards.try_get(tid).map(|c| format!("{} ({})", c.name, tid))
+                                            }
                                         })
                                         .collect();
                                     if !target_names.is_empty() {

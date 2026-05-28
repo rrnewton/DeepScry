@@ -727,8 +727,22 @@ impl<'a> GameStateView<'a> {
         }
     }
 
-    /// Get a card's name
+    /// Get a card's name.
+    ///
+    /// If `card_id` is a player-target sentinel (see
+    /// `core::player_target_from_sentinel`), returns the player's display
+    /// name instead — this lets `Controller::choose_targets` show
+    /// "Player 2" alongside creature names for "any target" spells like
+    /// Lightning Bolt (mtg-bolt-player-tgt).
     pub fn card_name(&self, card_id: CardId) -> Option<String> {
+        if let Some(pid) = crate::core::player_target_from_sentinel(card_id) {
+            return self
+                .game
+                .get_player(pid)
+                .ok()
+                .map(|p| p.name.to_string())
+                .or_else(|| Some(format!("Player {}", pid.as_u32() + 1)));
+        }
         self.game.cards.try_get(card_id).map(|c| c.name.to_string())
     }
 

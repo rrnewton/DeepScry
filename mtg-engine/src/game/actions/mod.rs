@@ -351,12 +351,16 @@ impl GameState {
 
         // Check if targets are still valid before executing effects
         // MTG Rules 608.2b: If all targets are illegal, the spell doesn't resolve
+        // A target is legal if it is on the battlefield/stack OR is a player-
+        // target sentinel (e.g. Lightning Bolt aimed at a player) — players
+        // can't leave the game during normal play except via state-based
+        // actions checked separately.
         let all_targets_illegal = if !chosen_targets.is_empty() {
-            // Check if any permanent target is no longer on the battlefield
-            // This handles spells that target permanents
-            let any_permanent_gone = chosen_targets
-                .iter()
-                .any(|&target_id| !self.battlefield.contains(target_id) && !self.stack.contains(target_id));
+            let any_permanent_gone = chosen_targets.iter().any(|&target_id| {
+                !self.battlefield.contains(target_id)
+                    && !self.stack.contains(target_id)
+                    && crate::core::player_target_from_sentinel(target_id).is_none()
+            });
 
             // If spell has targets and they're all gone, it fizzles
             any_permanent_gone
@@ -618,10 +622,14 @@ impl GameState {
         let opponent_id = self.players.iter().map(|p| p.id).find(|id| *id != card_owner);
 
         // MTG Rules 608.2b: If all targets are illegal, the spell doesn't resolve
+        // A target is legal if it is on the battlefield, on the stack, OR is a
+        // valid player-target sentinel (Lightning Bolt aimed at a player).
         let all_targets_illegal = if !chosen_targets.is_empty() {
-            chosen_targets
-                .iter()
-                .any(|&target_id| !self.battlefield.contains(target_id) && !self.stack.contains(target_id))
+            chosen_targets.iter().any(|&target_id| {
+                !self.battlefield.contains(target_id)
+                    && !self.stack.contains(target_id)
+                    && crate::core::player_target_from_sentinel(target_id).is_none()
+            })
         } else {
             false
         };
@@ -1973,9 +1981,20 @@ impl GameState {
                     let target = chosen_targets[*target_index];
                     *target_index += 1;
                     *last_resolved_target = Some(target);
-                    Effect::DealDamage {
-                        target: TargetRef::Permanent(target),
-                        amount: *amount,
+                    // Decode player sentinel CardIds back into TargetRef::Player
+                    // so Lightning Bolt-style "any target" spells aimed at a
+                    // player route through the player-damage path. See
+                    // `player_as_target_sentinel` (mtg-bolt-player-tgt).
+                    if let Some(pid) = crate::core::player_target_from_sentinel(target) {
+                        Effect::DealDamage {
+                            target: TargetRef::Player(pid),
+                            amount: *amount,
+                        }
+                    } else {
+                        Effect::DealDamage {
+                            target: TargetRef::Permanent(target),
+                            amount: *amount,
+                        }
                     }
                 } else if let Some(opp) = opponent_id {
                     // Default to opponent for untargeted damage
@@ -1996,8 +2015,14 @@ impl GameState {
                     let target = chosen_targets[*target_index];
                     *target_index += 1;
                     *last_resolved_target = Some(target);
-                    Effect::DealDamageXPaid {
-                        target: TargetRef::Permanent(target),
+                    if let Some(pid) = crate::core::player_target_from_sentinel(target) {
+                        Effect::DealDamageXPaid {
+                            target: TargetRef::Player(pid),
+                        }
+                    } else {
+                        Effect::DealDamageXPaid {
+                            target: TargetRef::Permanent(target),
+                        }
                     }
                 } else if let Some(opp) = opponent_id {
                     Effect::DealDamageXPaid {

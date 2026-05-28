@@ -83,7 +83,7 @@ impl GameState {
 
         // Get the spell's owner, effects count, and targeting restrictions from cache
         // Extract primitives first to avoid holding a borrow while iterating
-        let (spell_owner, num_effects, targets_land, targets_creature, targets_any, spell_colors) = {
+        let (spell_owner, num_effects, targets_land, targets_creature, targets_any, targets_player, spell_colors) = {
             let spell_card = self.cards.get(spell_card_id)?;
             (
                 spell_card.owner,
@@ -91,6 +91,7 @@ impl GameState {
                 spell_card.definition.cache.spell_targets_land,
                 spell_card.definition.cache.spell_targets_creature,
                 spell_card.definition.cache.spell_targets_any,
+                spell_card.definition.cache.spell_targets_player,
                 spell_card.colors.clone(),
             )
         };
@@ -108,17 +109,36 @@ impl GameState {
                 | Effect::DealDamageXPaid {
                     target: TargetRef::None,
                 } => {
-                    // Damage can target any creature or player
-                    // Add all creatures that can be legally targeted
-                    for &card_id in &self.battlefield.cards {
-                        if let Ok(target_card) = self.cards.get(card_id) {
-                            if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors) {
-                                valid_targets.push(card_id);
+                    // Damage targets per the spell's ValidTgts (CR 115.4):
+                    //   "any target"   (Lightning Bolt) -> creatures + players
+                    //   "target player"                  -> players only
+                    //   "target creature" (Magma Rift)   -> creatures only
+                    // Add every legally-targetable creature on the battlefield
+                    // when creatures are allowed.
+                    let allow_creatures = targets_any || targets_creature || !targets_player;
+                    if allow_creatures {
+                        for &card_id in &self.battlefield.cards {
+                            if let Ok(target_card) = self.cards.get(card_id) {
+                                if target_card.is_creature() && is_legal_target(target_card, spell_owner, &spell_colors)
+                                {
+                                    valid_targets.push(card_id);
+                                }
                             }
                         }
                     }
-                    // Note: Players are also valid targets, but we handle them separately
-                    // via TargetRef::Player since they don't have CardIds
+                    // Add every Player when players are allowed targets, encoded
+                    // as a sentinel CardId so the existing
+                    // `Controller::choose_targets(&[CardId])` trait can offer
+                    // them as picks. The sentinel is decoded back into a
+                    // `TargetRef::Player` at effect-resolution time in
+                    // `resolve_target_for_effect` (mtg-bolt-player-tgt).
+                    // This fixes the user-reported bug where Lightning Bolt
+                    // refused to list the opponent as a legal target.
+                    if targets_any || targets_player {
+                        for player in &self.players {
+                            valid_targets.push(crate::core::player_as_target_sentinel(player.id));
+                        }
+                    }
                 }
                 Effect::DestroyPermanent { target, restriction } if target.is_placeholder() => {
                     // Destroy effect - check targeting restrictions

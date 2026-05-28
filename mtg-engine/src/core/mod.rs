@@ -41,3 +41,27 @@ pub type PlayerId = EntityId<Player>;
 
 /// Strongly-typed ID for Card entities
 pub type CardId = EntityId<Card>;
+
+/// Encode a `PlayerId` as a `CardId`-shaped sentinel so it can ride inside
+/// `valid_targets` for `Controller::choose_targets`. This lets controllers
+/// offer Players as targets for `ValidTgts$ Any`-style effects (Lightning
+/// Bolt, Shock, Drain Life) without churning the trait signature.
+/// See `entity::PLAYER_TARGET_BASE`.
+#[inline]
+pub fn player_as_target_sentinel(p: PlayerId) -> CardId {
+    CardId::new(entity::PLAYER_TARGET_BASE - p.as_u32())
+}
+
+/// Decode a sentinel CardId back into a PlayerId, if it is one.
+/// Returns `None` for ordinary CardIds (which lie in the low range).
+#[inline]
+pub fn player_target_from_sentinel(c: CardId) -> Option<PlayerId> {
+    let v = c.as_u32();
+    // Accept up to 64 player IDs below the base. Real CardIds grow from 0
+    // and never approach u32::MAX - 1000.
+    if v <= entity::PLAYER_TARGET_BASE && v + 64 >= entity::PLAYER_TARGET_BASE {
+        Some(PlayerId::new(entity::PLAYER_TARGET_BASE - v))
+    } else {
+        None
+    }
+}

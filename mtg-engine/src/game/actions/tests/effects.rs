@@ -2986,4 +2986,33 @@ mod tests {
             card.effects
         );
     }
+
+    /// Card compat: Lightning Bolt — player target sentinel round-trip (mtg-lxrqz).
+    ///
+    /// Asserts that `player_as_target_sentinel` and `player_target_from_sentinel`
+    /// round-trip correctly for both players (the sentinel scheme used to let
+    /// `Controller::choose_targets(&[CardId])` offer Players as legal targets
+    /// for "any target" damage spells like Lightning Bolt).
+    ///
+    /// Regression: the user reported "Lightning Bolt won't let me target
+    /// opponent" — before the fix Players never appeared in valid_targets
+    /// because the trait carried only CardId.
+    #[test]
+    fn test_player_target_sentinel_roundtrip_for_lightning_bolt() {
+        for raw in 0u32..4 {
+            let pid = PlayerId::new(raw);
+            let sentinel = crate::core::player_as_target_sentinel(pid);
+            let decoded = crate::core::player_target_from_sentinel(sentinel).expect("Player sentinel must decode");
+            assert_eq!(decoded, pid, "sentinel must round-trip");
+        }
+        // Real-looking small CardIds must NOT decode as players.
+        for raw in 0u32..32 {
+            let card = CardId::new(raw);
+            assert!(
+                crate::core::player_target_from_sentinel(card).is_none(),
+                "ordinary CardId {} must not be misread as a Player",
+                raw
+            );
+        }
+    }
 }

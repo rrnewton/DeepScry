@@ -87,6 +87,17 @@ pub const PLACEHOLDER_ID: u32 = 0;
 /// sole opponent without going through the targeting UI; tracked in mtg-6c0qe.
 pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
 
+/// Sentinel range for encoding a Player as a CardId inside the
+/// `valid_targets` slice returned to `Controller::choose_targets`. We do
+/// this so controllers can offer Players as targets for `ValidTgts$ Any`
+/// effects (Lightning Bolt) without changing the trait signature.
+/// `PlayerId(n)` is encoded as `PLAYER_TARGET_BASE - n`.
+/// The base is u32::MAX - 1000 to keep a safe gap from other sentinels and
+/// avoid colliding with realistic CardId values (which grow upward from 0).
+/// See `core::player_as_target_sentinel` / `core::player_target_from_sentinel`
+/// and mtg-lxrqz (Lightning Bolt player-target bug).
+pub const PLAYER_TARGET_BASE: u32 = u32::MAX - 1000;
+
 impl<T> EntityId<T> {
     #[inline]
     pub fn new(id: u32) -> Self {
