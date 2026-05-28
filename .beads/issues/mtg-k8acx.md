@@ -1,0 +1,12 @@
+---
+title: Eager username registration + server uniqueness on Enter Lobby (over WS)
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T18:50:44.161379273+00:00
+updated_at: 2026-05-28T18:50:44.161379273+00:00
+---
+
+# Description
+
+When the user enters a username and clicks "Enter Lobby", IMMEDIATELY register that username with the server process over the WebSocket (eager registration), rather than only at game-create/join time. The server must ENFORCE USERNAME UNIQUENESS at the moment "Enter Lobby" is pressed, and the client surfaces a clear rejection if the name is taken (so the user picks another before proceeding). Touches: web/index.html (lobby entry) + web/network.js (WS connect/register) + mtg-engine/src/network/{server.rs,protocol.rs} (a register/claim-name message + uniqueness check + logged-in-player registry). Related: mtg-574 (launcher/ready-up), and the "logged-in players" list lobby-layout issue.

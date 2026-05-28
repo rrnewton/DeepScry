@@ -1,0 +1,18 @@
+---
+title: 'Lobby layout: solo launchers on top; Lobby below with Logged-in Players (left) + Open Games (right)'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-28T18:50:44.164187587+00:00
+updated_at: 2026-05-28T18:50:44.164187587+00:00
+---
+
+# Description
+
+Lobby layout redesign. CURRENT: wide "DeepScry" banner + description on top; below it a narrower column with (A) Lobby and (B) Standalone/Solo launchers. TARGET:
+- Move the Solo/Standalone launchers to the TOP (fixed size).
+- Below them, a taller Lobby widget, two columns:
+  - RIGHT column: Open Games list (existing).
+  - LEFT column: "Create a Game" interface, and BELOW it a "Logged-in Players" list.
+- The Logged-in Players list must have the SAME treatment as the Open Games list: filtering, total count ("showing N of M"), and the same cap on number shown.
+Depends on eager-username-registration (server must track logged-in players to populate the list). Touches web/index.html + web/network.js. Related: mtg-574 (launcher/ready-up redesign).
