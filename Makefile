@@ -233,8 +233,16 @@ validate-clippy-wasm-step:
 	@$(MAKE) clippy-wasm
 	@echo "✓ clippy-wasm completed"
 
+# Build the release `mtg` binary ONCE, then run the unit/integration test suite
+# reusing it. The determinism_e2e tests (one full game x2 per .dck) invoke the
+# binary ~130 times; without a prebuilt binary they would each contend on cargo's
+# target/ build lock and run a slow DEBUG build (mtg-578). MTG_REUSE_PREBUILT=1
+# tells mtg-engine/tests/determinism_e2e.rs (and tests/lib/test_helpers.sh) to use
+# target/release/mtg directly instead of rebuilding per invocation.
 validate-test-step:
-	@$(MAKE) test
+	@echo "=== Building release binary for test reuse ==="
+	@cargo build --release --bin mtg --features network
+	@MTG_REUSE_PREBUILT=1 $(MAKE) test
 	@echo "✓ test completed"
 
 validate-examples-step:

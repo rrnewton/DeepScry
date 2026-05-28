@@ -162,12 +162,18 @@ jobs:
                       /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
           df -h
 
-      # commander_e2e.sh + snapshot_resume_e2e.sh reuse this prebuilt binary
-      # (MTG_REUSE_PREBUILT below), so build it once up front.
+      # determinism_e2e + commander_e2e.sh + snapshot_resume_e2e.sh ALL reuse this
+      # prebuilt binary (MTG_REUSE_PREBUILT below), so build it once up front.
       - name: Build release binary (network feature)
         run: cargo build --release --bin mtg --features network
 
+      # determinism_e2e runs one full game TWICE per .dck (~130 binary invocations).
+      # MTG_REUSE_PREBUILT=1 makes the test invoke the release binary built above
+      # directly instead of `cargo run` (debug build + target/ lock contention,
+      # the CI long pole — mtg-578).
       - name: Run determinism_e2e (nextest)
+        env:
+          MTG_REUSE_PREBUILT: "1"
         run: cargo nextest run -p mtg-forge-rs --features network -E 'binary(determinism_e2e)'
 
       # Dedicated steps for the two full-game determinism scripts (also
