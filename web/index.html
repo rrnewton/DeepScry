@@ -187,6 +187,7 @@
 
         footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
         footer a { color: var(--muted); }
+        .footer-version { display: block; margin-top: 6px; opacity: 0.7; font-family: monospace; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -348,10 +349,9 @@
 </div>
 
 <footer>
-    DeepScry &middot; the
-    <a href="https://github.com/rrnewton/mtg-forge-rs" target="_blank" rel="noopener">mtg-forge-rs</a>
-    engine in safe Rust + WebAssembly &middot; card data from
+    DeepScry &middot; a high-performance MTG engine in safe Rust + WebAssembly &middot; card data from
     <a href="https://github.com/Card-Forge/forge" target="_blank" rel="noopener">Forge</a>
+    <span id="footer-version" class="footer-version"></span>
 </footer>
 
 <script>

@@ -1,0 +1,17 @@
+---
+title: Remove external-facing mtg-forge-rs references (use DeepScry)
+status: closed
+priority: 3
+issue_type: task
+created_at: 2026-05-29T15:14:59.258300361+00:00
+updated_at: 2026-05-29T15:15:02.387921078+00:00
+closed_at: 2026-05-29T15:15:02.387920776+00:00
+---
+
+# Description
+
+User-visible "mtg-forge-rs" strings must become "DeepScry" or be removed. The lobby page footer (web/index.html) showed "mtg-forge-rs" with a github link to the old repo name.
+
+Scope: EXTERNAL/user-facing surfaces only (web/*.html, rendered web/*.js strings). Internal code/path refs are the separate mtg-602 sweep.
+
+Done: replaced footer text "DeepScry · the mtg-forge-rs engine ..." with "DeepScry · a high-performance MTG engine in safe Rust + WebAssembly · card data from Forge" and removed the stale rrnewton/mtg-forge-rs github link. Verified `grep -rIn 'mtg-forge-rs' web/` returns no matches. Added a #footer-version span (populated by task mtg-1iu9b version work).
