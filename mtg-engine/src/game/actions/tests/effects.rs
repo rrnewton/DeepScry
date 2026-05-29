@@ -3060,6 +3060,18 @@ mod tests {
                 "Bayou",
                 &[(0, 0, 1, 0, 0), (0, 0, 0, 0, 1)],
             ),
+            // Plateau: Mountain Plains -> {R}, {W} (Troll Disk deck, mtg-531)
+            (
+                "../cardsfolder/p/plateau.txt",
+                "Plateau",
+                &[(0, 0, 0, 1, 0), (1, 0, 0, 0, 0)],
+            ),
+            // Volcanic Island: Island Mountain -> {U}, {R} (Troll Disk deck, mtg-556)
+            (
+                "../cardsfolder/v/volcanic_island.txt",
+                "Volcanic Island",
+                &[(0, 1, 0, 0, 0), (0, 0, 0, 1, 0)],
+            ),
         ];
 
         for (path_str, name, expected_colors) in cases {
