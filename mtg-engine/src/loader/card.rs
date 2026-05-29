@@ -285,6 +285,29 @@ impl CardLoader {
     }
 }
 
+/// Serialize a `HashMap<String, String>` in deterministic (sorted-key) order.
+///
+/// Used for `CardDefinition::svars` so identical card data always serializes
+/// to identical bytes — a prerequisite for the content-addressed WASM export
+/// pipeline (mtg-571), where the on-disk filename is a hash of these bytes.
+/// `serde_map` collects nothing extra: it borrows each entry and feeds the
+/// serializer in `BTreeMap` order, so there is no clone of the values.
+fn serialize_svars_sorted<S>(
+    svars: &std::collections::HashMap<String, String>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeMap;
+    let ordered: std::collections::BTreeMap<&String, &String> = svars.iter().collect();
+    let mut map = serializer.serialize_map(Some(ordered.len()))?;
+    for (k, v) in ordered {
+        map.serialize_entry(k, v)?;
+    }
+    map.end()
+}
+
 /// Card definition (not yet instantiated in a game)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
@@ -303,6 +326,16 @@ pub struct CardDefinition {
     pub raw_keywords: Vec<String>,
     /// Script variables (SVar:NAME:...) for SubAbility chaining and other references
     /// Key: SVar name, Value: SVar body (DB$, AB$, etc.)
+    ///
+    /// DETERMINISM (mtg-571): serialized in sorted-key order via
+    /// `serialize_svars_sorted`. A plain `HashMap` serializes its entries in
+    /// run-to-run RANDOM iteration order, which made the WASM per-set `.bin`
+    /// bytes (and thus their content-addressed blake3 filenames) unstable
+    /// across exports. We keep the runtime type a `HashMap` (O(1) SVar lookups
+    /// in hot paths, ~20 call sites unchanged) but emit a deterministic byte
+    /// stream. bincode's map wire format is order-independent on read, so the
+    /// `HashMap` deserializer reads the sorted output transparently.
+    #[serde(serialize_with = "serialize_svars_sorted")]
     pub svars: std::collections::HashMap<String, String>,
     /// Pre-parsed SVars for efficient lookup during trigger/ability construction
     /// Key: SVar name, Value: Parsed AbilityParams
@@ -3958,6 +3991,56 @@ impl CardDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression test for the content-addressed WASM export pipeline (mtg-571):
+    /// a `CardDefinition` with multiple SVars must serialize to identical bytes
+    /// every time, regardless of `HashMap` iteration order. Before the
+    /// `serialize_svars_sorted` fix, the `svars` `HashMap` serialized in random
+    /// order, so the per-set `.bin` content hash (and its filename) changed
+    /// run-to-run, defeating content-addressing and racing under `make validate`.
+    #[test]
+    fn test_svars_serialize_deterministically() {
+        let mut def = CardDefinition::default();
+        // Insert many SVars in an arbitrary order; HashMap will store them in
+        // some (unspecified) bucket order that can differ between processes.
+        for (k, v) in [
+            ("Zebra", "DB$ Draw | NumCards$ 1"),
+            ("Apple", "DB$ Token | TokenScript$ c_a_food_sac"),
+            ("Mango", "DB$ DealDamage | NumDmg$ 3"),
+            ("Delta", "DB$ Pump | NumAtt$ 2"),
+            ("Echo", "DB$ Mill | NumCards$ 5"),
+            ("Bravo", "DB$ GainLife | LifeAmount$ 4"),
+        ] {
+            def.svars.insert(k.to_string(), v.to_string());
+        }
+
+        let first = bincode::serialize(&def).expect("serialize");
+
+        // Rebuild from scratch with a DIFFERENT insertion order — the HashMap
+        // layout may differ, but the serialized bytes must not.
+        let mut def2 = CardDefinition::default();
+        for (k, v) in [
+            ("Mango", "DB$ DealDamage | NumDmg$ 3"),
+            ("Bravo", "DB$ GainLife | LifeAmount$ 4"),
+            ("Zebra", "DB$ Draw | NumCards$ 1"),
+            ("Echo", "DB$ Mill | NumCards$ 5"),
+            ("Apple", "DB$ Token | TokenScript$ c_a_food_sac"),
+            ("Delta", "DB$ Pump | NumAtt$ 2"),
+        ] {
+            def2.svars.insert(k.to_string(), v.to_string());
+        }
+        let second = bincode::serialize(&def2).expect("serialize");
+
+        assert_eq!(
+            first, second,
+            "CardDefinition svars must serialize deterministically regardless of HashMap order"
+        );
+
+        // And it must still round-trip through the HashMap deserializer the
+        // WASM loader uses.
+        let restored: CardDefinition = bincode::deserialize(&first).expect("deserialize");
+        assert_eq!(restored.svars, def.svars);
+    }
 
     #[test]
     fn test_parse_lightning_bolt() {

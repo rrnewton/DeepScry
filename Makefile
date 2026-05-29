@@ -285,7 +285,16 @@ validate-wasm-e2e-step: validate-wasm-step
 # Network E2E test: builds native server + WASM client, runs networked games
 # Depends on build-network and wasm-network targets
 # Runs: baseline single-deck test, multi-deck test (quick), and click+log test
-validate-network-e2e-step:
+#
+# DEFENSE-IN-DEPTH (mtg-571): order-depend on validate-wasm-e2e-step so the two
+# browser-driven wasm steps NEVER run their `export-wasm` + `rm -rf web/pkg` +
+# `cp -r pkg web/pkg` clobbers of the SHARED web/data + web/pkg trees
+# concurrently under `make -j4`. The exporter is now byte-deterministic (so a
+# concurrent re-export would re-create identical bins), but serializing the two
+# steps also removes the web/pkg copy race and makes the build order obvious.
+# Other parallel steps (fmt/clippy/test/examples/agentplay/...) still run
+# concurrently, preserving most of the -j4 speedup.
+validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "=== Building network components ==="
 	@$(MAKE) build-network
 	@$(MAKE) wasm-network

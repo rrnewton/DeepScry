@@ -3884,9 +3884,17 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     let mut cards_to_file: std::collections::BTreeMap<&str, String> = std::collections::BTreeMap::new();
     let mut total_sets_bytes = 0usize;
     for (bucket, entries) in &buckets {
-        // bincode HashMap<String, CardDefinition> wire format matches
-        // HashMap<&str, &CardDefinition> (length-prefixed pairs).
-        let map: std::collections::HashMap<&str, &mtg_engine::loader::CardDefinition> =
+        // DETERMINISM (mtg-571): the content-addressed filename is a hash of
+        // these bytes, so the serialization MUST be a stable function of the
+        // logical card data — identical cardsfolder => identical bytes =>
+        // identical blake3 hash, every run. A `HashMap` serializes its pairs
+        // in (run-to-run RANDOM) iteration order, which produced a DIFFERENT
+        // hash each export and broke content-addressing (and raced under
+        // `make validate -j4`). A `BTreeMap` emits the SAME bincode wire format
+        // (length-prefixed key/value pairs) but in sorted-key order, so the
+        // WASM `HashMap<String, CardDefinition>` deserializer reads it
+        // unchanged while the bytes become deterministic.
+        let map: std::collections::BTreeMap<&str, &mtg_engine::loader::CardDefinition> =
             entries.iter().copied().collect();
         let bytes = bincode::serialize(&map).map_err(|e| {
             mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
@@ -3978,7 +3986,13 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     }
 
     let tokens_path = output.join("tokens.bin");
-    let tokens_data = bincode::serialize(&token_definitions)
+    // DETERMINISM (mtg-571): sort by script name before serializing so the
+    // bytes (and any future content hash) are a stable function of the token
+    // scripts. BTreeMap shares bincode's map wire format with the HashMap the
+    // WASM loader deserializes into.
+    let tokens_ordered: std::collections::BTreeMap<&str, &mtg_engine::loader::CardDefinition> =
+        token_definitions.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    let tokens_data = bincode::serialize(&tokens_ordered)
         .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize tokens: {}", e)))?;
     fs::write(&tokens_path, &tokens_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
@@ -4033,7 +4047,12 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
 
     // Serialize decks to bincode
     let decks_path = output.join("decks.bin");
-    let decks_data = bincode::serialize(&decks)
+    // DETERMINISM (mtg-571): sort by deck name before serializing (see the
+    // tokens/per-set bins above). BTreeMap shares bincode's map wire format
+    // with the HashMap the WASM loader deserializes into.
+    let decks_ordered: std::collections::BTreeMap<&str, &mtg_engine::loader::DeckList> =
+        decks.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    let decks_data = bincode::serialize(&decks_ordered)
         .map_err(|e| mtg_engine::MtgError::InvalidDeckFormat(format!("Failed to serialize decks: {}", e)))?;
     fs::write(&decks_path, &decks_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
