@@ -73,6 +73,7 @@ workflow, row format, and update rules.
 | SP$ Draw NumCards$ N/X ValidTgts$ Player      | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Ancestral Recall, Braingeyser |
 | SP$ Counter TargetType$ Spell                 | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Counterspell        |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
+| SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 
 ## Static abilities (S:)
 
