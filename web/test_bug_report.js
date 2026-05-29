@@ -5,9 +5,7 @@
 // 1. Loads the fancy TUI page
 // 2. Launches a local game to expose the floating controls widget
 // 3. Verifies the bug report modal UI and validation
-// 4. Verifies the WS-connection precheck (mtg-596): a persistent
-//    "not connected" banner + disabled Submit shown up front on dialog open
-//    when there is no active server WebSocket.
+// 4. Verifies disconnected submission handling
 // 5. Verifies cancel/reset behavior
 // 6. Mocks bug_report_result responses for success and failure flows
 
@@ -167,38 +165,39 @@ async function runTest() {
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_03_modal.png'), fullPage: true });
         testResults.steps.push({ name: 'modal_open', timestamp: new Date().toISOString() });
 
-        // mtg-596: in a local (non-network) game there is no server WS, so the
-        // precheck must show a persistent "not connected" banner AND disable
-        // Submit up front — before the user types anything.
-        log('Checking WS-connection precheck (disconnected) shows banner + disables Submit...');
+        log('Checking empty-description validation...');
+        await page.click('#btn-bug-report-submit');
         await page.waitForFunction(() => {
             const status = document.getElementById('bug-report-status')?.textContent || '';
-            const submit = document.getElementById('btn-bug-report-submit');
-            return status.includes('Not connected') && status.includes('active server connection') && submit && submit.disabled;
+            return status.includes('Enter a bug description before submitting.');
         }, { timeout: 5000 });
-        const prevDescBeforeTyping = await page.evaluate(() => document.getElementById('bug-report-description')?.value || '');
-        if (prevDescBeforeTyping !== '') {
-            throw new Error('Precheck banner should appear before the user types anything');
-        }
-        testResults.steps.push({ name: 'precheck_disconnected', timestamp: new Date().toISOString() });
+        testResults.steps.push({ name: 'validation_error', timestamp: new Date().toISOString() });
 
-        log('Checking cancel closes modal and reopen re-shows precheck banner while disconnected...');
+        log('Checking disconnected submission error...');
+        await page.fill('#bug-report-description', 'Expected connected server; bug report should reject when no WebSocket is present.');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status')?.textContent || '';
+            return status.includes('requires an active network WebSocket connection');
+        }, { timeout: 5000 });
+        const disconnectedMessage = await page.evaluate(() => window.lastBugReportSubmissionMessage || null);
+        if (!disconnectedMessage || disconnectedMessage.type !== 'bug_report') {
+            throw new Error('Disconnected submission did not assemble bug_report JSON');
+        }
+        testResults.steps.push({ name: 'disconnected_error', timestamp: new Date().toISOString() });
+
+        log('Checking cancel closes modal and resets form...');
         await page.fill('#bug-report-description', 'This text should be cleared when the modal closes.');
         await page.fill('#bug-report-password', 'reset-me');
         await closeBugReportModal(page);
         await openBugReportModal(page);
         const resetAfterClose = await readBugReportForm(page);
-        if (resetAfterClose.description !== '' || resetAfterClose.password !== '') {
-            throw new Error('Bug report form fields did not reset after closing the modal');
-        }
-        // Status is expected to be the precheck banner (still disconnected), not blank.
-        if (!resetAfterClose.statusText.includes('Not connected')) {
-            throw new Error('Reopened dialog did not re-show the not-connected precheck banner');
+        if (resetAfterClose.description !== '' || resetAfterClose.password !== '' || resetAfterClose.statusText !== '') {
+            throw new Error('Bug report form did not reset after closing the modal');
         }
         testResults.steps.push({ name: 'close_reset', timestamp: new Date().toISOString() });
-        await closeBugReportModal(page);
 
-        log('Installing mock CONNECTED network transport...');
+        log('Installing mock network transport...');
         await page.evaluate(() => {
             window.__bugReportSentMessages = [];
             window.__bugReportTestHelpers.setNetworkClient({
@@ -210,25 +209,6 @@ async function runTest() {
                 }
             });
         });
-
-        // mtg-596: with a connected transport the precheck must enable Submit
-        // and clear the not-connected banner.
-        log('Checking precheck (connected) enables Submit and clears banner...');
-        await openBugReportModal(page);
-        await page.waitForFunction(() => {
-            const submit = document.getElementById('btn-bug-report-submit');
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            return submit && !submit.disabled && !status.includes('Not connected');
-        }, { timeout: 5000 });
-        testResults.steps.push({ name: 'precheck_connected', timestamp: new Date().toISOString() });
-
-        log('Checking empty-description validation (connected)...');
-        await page.click('#btn-bug-report-submit');
-        await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            return status.includes('Enter a bug description before submitting.');
-        }, { timeout: 5000 });
-        testResults.steps.push({ name: 'validation_error', timestamp: new Date().toISOString() });
 
         log('Submitting successful bug report and checking issue URL...');
         await page.fill('#bug-report-description', 'Successful bug report should show issue link.');

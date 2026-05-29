@@ -925,9 +925,6 @@
             <div style="margin-top: 6px;">
                 <button id="btn-exit" style="background:#a03030;">Exit Game</button>
             </div>
-            <div style="margin-top: 6px;">
-                <button id="btn-bug-report" style="background:#9c6644;">Report Bug</button>
-            </div>
             <div class="controls-hint">Space=turn A=auto Q=exit C=toggle ?=help</div>
         </div>
     </div>
@@ -1000,10 +997,6 @@
             cleanup_tui_state,
             set_log_level
         } from './pkg/mtg_engine.js';
-
-        // Shared bug-report dialog (mtg-587/596/597) — one implementation reused
-        // by tui_game.html and native_game.html (mtg-597).
-        import { initBugReport } from './bug_report.js';
 
         // ==================== IMAGE SOURCE ====================
         // Image URLs come from shared Rust code (wasm/image_overlay.rs).
@@ -1152,25 +1145,6 @@
                 restoreDeckSelections();
                 attachSettingsListeners();
                 document.getElementById('btn-launch').addEventListener('click', launchGame);
-
-                // mtg-597: shared bug-report dialog on the native GUI. Wired
-                // AFTER WASM init so the game-log capture hook can safely call
-                // tui_get_logs_json(). The module wires the trigger/cancel/submit
-                // buttons and injects its modal DOM. The network client hook reads
-                // window.__mtgNetworkClient (set when/if native gains a server
-                // connection) so the WS precheck (mtg-596) reflects real state.
-                initBugReport({
-                    triggerButtonId: 'btn-bug-report',
-                    getNetworkClient: () => window.__mtgNetworkClient || null,
-                    getGameLogs: () => {
-                        try {
-                            const parsed = JSON.parse(tui_get_logs_json() || '[]');
-                            return Array.isArray(parsed) ? parsed : [];
-                        } catch (e) {
-                            return [];
-                        }
-                    },
-                });
 
                 console.log(`MTG Forge Native GUI initialized: ${deckCount} decks`);
             } catch (error) {
@@ -2192,6 +2166,8 @@
             document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
             if (autoRunning) startAutoRun();
         });
+        document.getElementById('btn-exit').addEventListener('click', exitGame);
+
         function exitGame() {
             if (!tuiLaunched) return;
             cleanup_tui_state();

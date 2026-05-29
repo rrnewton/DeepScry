@@ -232,43 +232,18 @@ async function runTest() {
         });
         await page.click('#btn-bug-report');
         await page.waitForSelector('#bug-report-modal', { state: 'visible', timeout: 5000 });
-        // mtg-596: in this local (non-network) game there is no server WS, so the
-        // precheck must show a persistent "not connected" banner up front AND
-        // disable Submit — before the user types anything.
-        await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            const submit = document.getElementById('btn-bug-report-submit');
-            return status.includes('Not connected') && submit && submit.disabled;
-        }, { timeout: 5000 });
-
-        // Install a connected mock transport so the precheck enables Submit and
-        // the report can actually be assembled + sent (mtg-587/596).
-        await page.evaluate(() => {
-            window.__bugReportSentMessages = [];
-            window.__bugReportTestHelpers.setNetworkClient({
-                isConnected() {
-                    return true;
-                },
-                send(json) {
-                    window.__bugReportSentMessages.push(JSON.parse(json));
-                }
-            });
-        });
-        await page.waitForFunction(() => {
-            const submit = document.getElementById('btn-bug-report-submit');
-            return submit && !submit.disabled;
-        }, { timeout: 5000 });
-
-        await page.fill('#bug-report-description', 'Expected remote submission success.');
+        await page.fill('#bug-report-description', 'Expected the game to advance cleanly; instead it deviated during the browser test.');
         await page.fill('#bug-report-password', 'trusted-secret');
         await page.click('#btn-bug-report-submit');
-        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 5000 });
-        // Draft payload capture (description, password, console + game logs).
+        await page.waitForFunction(() => {
+            const status = document.getElementById('bug-report-status')?.textContent || '';
+            return status.includes('requires an active network WebSocket connection');
+        }, { timeout: 5000 });
         const bugReportDraft = await page.evaluate(() => window.lastBugReportDraft || null);
         if (!bugReportDraft) {
             throw new Error('Bug report draft payload was not captured');
         }
-        if (bugReportDraft.description !== 'Expected remote submission success.') {
+        if (bugReportDraft.description !== 'Expected the game to advance cleanly; instead it deviated during the browser test.') {
             throw new Error('Bug report description was not captured correctly');
         }
         if (bugReportDraft.trustedPassword !== 'trusted-secret') {
@@ -280,13 +255,34 @@ async function runTest() {
         if (!Array.isArray(bugReportDraft.gameLogs) || bugReportDraft.gameLogs.length === 0) {
             throw new Error('Bug report game logs were not captured');
         }
-        const sentBugReport = await page.evaluate(() => window.__bugReportSentMessages[0]);
-        if (sentBugReport.trusted_password !== 'trusted-secret') {
+        const disconnectedMessage = await page.evaluate(() => window.lastBugReportSubmissionMessage || null);
+        if (!disconnectedMessage || disconnectedMessage.type !== 'bug_report') {
+            throw new Error('Bug report submission message was not assembled correctly');
+        }
+        if (disconnectedMessage.trusted_password !== 'trusted-secret') {
             throw new Error('Bug report trusted_password field was not serialized correctly');
         }
-        if (!sentBugReport.console_logs.includes('console-error-marker')) {
+        if (!disconnectedMessage.console_logs.includes('console-error-marker')) {
             throw new Error('Bug report console_logs string missing expected marker');
         }
+
+        await page.evaluate(() => {
+            window.__bugReportSentMessages = [];
+            window.__bugReportTestHelpers.setNetworkClient({
+                isConnected() {
+                    return true;
+                },
+                send(json) {
+                    window.__bugReportSentMessages.push(JSON.parse(json));
+                }
+            });
+        });
+
+        await page.fill('#bug-report-description', 'Expected remote submission success.');
+        await page.fill('#bug-report-password', 'trusted-secret');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 5000 });
+        const sentBugReport = await page.evaluate(() => window.__bugReportSentMessages[0]);
         if (sentBugReport.type !== 'bug_report') {
             throw new Error('Bug report was not sent with the correct message type');
         }
