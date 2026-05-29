@@ -357,13 +357,13 @@ cmd_deploy() {
     cd "$REPO_ROOT"
 
     # --- 1. Local WASM build if needed ---
+    # Always rebuild WASM/data on deploy (unless --skip-wasm): a stale web/pkg
+    # or web/data from an older SHA would ship mismatched code/assets, and the
+    # content-addressed hashed filenames make a stale pkg especially dangerous
+    # (silent old-glue / new-wasm mispair). --skip-wasm is the explicit opt-out
+    # for when you have deliberately prebuilt current artefacts.
     local need_wasm=0
-    if [[ "$SKIP_WASM" != "1" ]]; then
-        if [[ ! -d web/data || ! -f web/data/decks.bin || ! -f web/data/sets/index.json || ! -d web/pkg ]]; then
-            need_wasm=1
-        fi
-        [[ "$REBUILD" == "1" ]] && need_wasm=1
-    fi
+    [[ "$SKIP_WASM" != "1" ]] && need_wasm=1
     if (( need_wasm )); then
         echo "→ building WASM artefacts (make wasm-export wasm-network)"
         make wasm-export wasm-network
@@ -381,12 +381,13 @@ cmd_deploy() {
     # always pass `--features network` explicitly on the build invocation.
     local native_bin="target/release-deploy/mtg"
     if [[ "$SKIP_BUILD" != "1" ]]; then
-        if [[ ! -x "$native_bin" || "$REBUILD" == "1" ]]; then
-            echo "→ building release-deploy mtg binary (--features network)"
-            cargo build --profile release-deploy --bin mtg --features network
-        else
-            echo "→ $native_bin present; skipping native build (--rebuild to force)"
-        fi
+        # Always rebuild on deploy: a deploy must ship the CURRENT source's
+        # code. A pre-existing target/release-deploy/mtg may be a STALE binary
+        # from an older SHA — this once shipped a binary lacking the
+        # `hash-web-assets` subcommand and tripped the pre-deploy gate. Use
+        # --skip-build only when you have deliberately prebuilt this binary.
+        echo "→ building release-deploy mtg binary (--features network)"
+        cargo build --profile release-deploy --bin mtg --features network
     fi
     [[ -x "$native_bin" ]] || {
         echo "error: $native_bin missing. Build with: cargo build --profile release-deploy --bin mtg --features network" >&2
@@ -455,7 +456,10 @@ EOF
 
     local web_stage
     web_stage="$(mktemp -d)"
-    trap 'rm -rf "$web_stage"' EXIT
+    # Bake the path into the trap NOW (double-quotes): web_stage is `local`, so
+    # a deferred '$web_stage' would be unbound at EXIT under `set -u` and make
+    # the script exit 1 AFTER a successful deploy (lying exit code).
+    trap "rm -rf '$web_stage'" EXIT
     # Copy the whole web/ to staging (cheap; web/ ≈ a few hundred MB
     # with images so we exclude those first). dist/ is trunk's output dir
     # and must not be shipped raw.
