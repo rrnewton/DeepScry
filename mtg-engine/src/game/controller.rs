@@ -479,7 +479,7 @@ pub fn format_card_choice(
 
     // Player targets (Lightning Bolt et al.) are encoded as sentinel CardIds.
     // They have no `controller`, so the card-ownership branch below would
-    // mislabel even the viewer's own player as "(theirs)" (mtg-p43i3). Format
+    // mislabel even the viewer's own player as "(theirs)" (mtg-605). Format
     // them as "(you)"/"(them)" and skip the [T]/#ID card decorations.
     if let Some(pid) = crate::core::player_target_from_sentinel(card_id) {
         let relation = if pid == viewer_id { "(you)" } else { "(them)" };

@@ -2279,7 +2279,7 @@ impl WasmFancyTuiState {
                 let client_for_sync = network_client.clone();
                 let local_player = our_id;
                 let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                    // mtg-vk4b7: apply library reorders BEFORE reveals so the
+                    // mtg-589: apply library reorders BEFORE reveals so the
                     // shadow library matches the server's order before any draw.
                     // Protocol sends top-to-bottom; library Vec is bottom-to-top.
                     let reorders = client_for_sync.borrow_mut().drain_library_reorders();
@@ -2382,7 +2382,7 @@ impl WasmFancyTuiState {
                     let client_for_sync = network_client.clone();
                     let local_player = our_id;
                     let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                        // mtg-vk4b7: apply library reorders BEFORE reveals so the
+                        // mtg-589: apply library reorders BEFORE reveals so the
                         // shadow library matches the server's order before any
                         // draw. Protocol sends top-to-bottom; library Vec is
                         // bottom-to-top, so reverse.

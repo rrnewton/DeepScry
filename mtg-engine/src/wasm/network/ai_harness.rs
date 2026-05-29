@@ -204,7 +204,7 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
     // This is the WASM equivalent of the native client's blocking sync mechanism
     let client_for_sync = client.clone();
     let sync_callback = move |game: &mut GameState, _target_action: u64| {
-        // mtg-vk4b7: apply library reorders BEFORE reveals so the shadow's
+        // mtg-589: apply library reorders BEFORE reveals so the shadow's
         // library is in the server-authoritative order before any draw.
         // Mirrors the native client's sync_callback. Protocol sends the order
         // top-to-bottom; the library Vec is bottom-to-top (draw_top pops the

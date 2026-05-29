@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Suite flakiness dashboard (mtg-j010x).
+"""Suite flakiness dashboard (mtg-593).
 
 Reads experiment_results/flakiness_db.csv and summarizes the flakiness state of
 the validation suite: counts by classification, top flakers, and real-bug rows.

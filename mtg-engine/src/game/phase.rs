@@ -248,7 +248,7 @@ pub struct TurnStructure {
     /// call check_phase_triggers(BeginningOfUpkeep) a SECOND time. For a trigger that
     /// mutates state once per upkeep (e.g. All Hallow's Eve removing one scream counter
     /// and, at zero, mass-resurrecting), double-firing diverges the WASM shadow from
-    /// the server (mtg-joosa). Auto-invalidates when turn_number changes.
+    /// the server (mtg-609). Auto-invalidates when turn_number changes.
     /// Not serialized - this is transient within a single game session.
     #[serde(skip)]
     pub upkeep_triggers_checked_turn: Option<u32>,

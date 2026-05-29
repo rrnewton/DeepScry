@@ -3200,7 +3200,7 @@ async fn test_psionic_blast_does_not_waste_black_lotus() -> Result<()> {
 
     // Force P0 to cast Psionic Blast (script: 1 = first castable spell, then
     // 0 = the opponent — player targets are now listed opponents-first, so the
-    // opponent is choice index 0, self is index 1; see mtg-p43i3).
+    // opponent is choice index 0, self is index 1; see mtg-605).
     // After the script exhausts, the controller defaults to passing priority.
     let mut controller0 = FixedScriptController::new(p0_id, vec![1, 0]);
     let mut controller1 = HeuristicController::new(p1_id);

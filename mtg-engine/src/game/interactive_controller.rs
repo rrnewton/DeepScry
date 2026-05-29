@@ -638,7 +638,7 @@ impl PlayerController for InteractiveController {
         // Use the SHARED choice formatter so the human TUI shows the same
         // ownership / player-relation labels as every other front-end:
         // card targets "(yours)"/"(theirs)", player targets "(you)"/"(them)"
-        // (mtg-p43i3). valid_targets is already ordered opponents-first by the
+        // (mtg-605). valid_targets is already ordered opponents-first by the
         // engine, so [1] is the opponent and the caster's own player is last.
         if self.numeric_choices {
             // Numeric mode: 0 = No target, 1-N = targets

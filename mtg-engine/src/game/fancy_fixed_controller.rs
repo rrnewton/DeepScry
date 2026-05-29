@@ -269,7 +269,7 @@ impl PlayerController for FancyFixedController {
         let prompt = format!("Choose target for {}", spell_name);
 
         // Use the shared choice formatter so the captured screenshot shows the
-        // same ownership / player-relation labels as the live TUI (mtg-p43i3).
+        // same ownership / player-relation labels as the live TUI (mtg-605).
         let choices: Vec<String> = format_card_choices(view, valid_targets, self.player_id);
 
         // Capture screenshot (even if valid_targets is empty)

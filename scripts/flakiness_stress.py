@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Global test-flakiness stress harness (mtg-j010x).
+"""Global test-flakiness stress harness (mtg-593).
 
 Runs a single CANONICAL test name in ISOLATION N times with BOUNDED
 concurrency, records pass/fail/timeout per run, and computes a flakiness rate +
@@ -371,7 +371,7 @@ def default_concurrency():
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Test-flakiness stress harness (mtg-j010x)")
+    ap = argparse.ArgumentParser(description="Test-flakiness stress harness (mtg-593)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     one = sub.add_parser("one", help="stress a single canonical test")

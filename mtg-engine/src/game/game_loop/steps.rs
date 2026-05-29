@@ -112,7 +112,7 @@ impl<'a> GameLoop<'a> {
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
         let active_player = self.game.turn.active_player;
 
-        // WASM re-entry guard (mtg-joosa): the WASM AI harness recreates the GameLoop
+        // WASM re-entry guard (mtg-609): the WASM AI harness recreates the GameLoop
         // on every step_harness() call. The upkeep/end-step phases each fire their
         // begin-of-phase triggers and THEN run a priority_round that can block with
         // NeedInput (waiting for a server ChoiceRequest). When it blocks, current_step

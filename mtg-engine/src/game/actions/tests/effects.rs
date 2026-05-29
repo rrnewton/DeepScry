@@ -1475,7 +1475,7 @@ mod tests {
         );
     }
 
-    /// mtg-vk4b7 regression (parser shape): Demonic Tutor's
+    /// mtg-589 regression (parser shape): Demonic Tutor's
     /// `A:SP$ ChangeZone | Origin$ Library | Destination$ Hand | ChangeType$ Card`
     /// must parse into a single `Effect::SearchLibrary` so the game loop routes
     /// it through `choose_from_library_with_hook` (network-safe), instead of the
@@ -1510,7 +1510,7 @@ mod tests {
         );
     }
 
-    /// mtg-vk4b7 regression (network determinism): a forced (engine-chosen)
+    /// mtg-589 regression (network determinism): a forced (engine-chosen)
     /// `DiscardCards` of a fixed count must select cards by CardId, NOT by card
     /// properties (CMC / land), so the choice is information-independent across
     /// the server (full state) and a client's shadow state (opponent hand cards

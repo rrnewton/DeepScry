@@ -2932,7 +2932,7 @@ impl GameState {
                     // Hypnotic Specter's "discards a card at random" trigger, or
                     // any non-interactive "discards a card" effect).
                     //
-                    // mtg-vk4b7: This MUST be information-independent for network
+                    // mtg-589: This MUST be information-independent for network
                     // determinism. The previous heuristic (`choose_card_to_discard`)
                     // scored cards by card properties (lands / CMC), which requires
                     // the card identity to be materialized. On the server every

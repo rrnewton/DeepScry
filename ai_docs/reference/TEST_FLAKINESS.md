@@ -1,6 +1,6 @@
 # Global Test-Flakiness Tracking
 
-Status: living reference. Implements the design in `mtg-j010x`.
+Status: living reference. Implements the design in `mtg-593`.
 
 This document defines a **canonical name** for every validation unit in the
 repo, the **stress harness** that measures how flaky each unit is, the
@@ -132,7 +132,7 @@ Columns:
 | `timeouts` | count of runs that hit the wall-clock cap |
 | `flakiness_pct` | `100 * (fails + timeouts) / runs`, 2 dp |
 | `classification` | `deterministic-pass`/`timeout-under-load`/`true-nondeterministic`/`known-desync` |
-| `issue` | linked beads issue (e.g. `mtg-vk4b7`) or empty |
+| `issue` | linked beads issue (e.g. `mtg-589`) or empty |
 | `concurrency` | concurrency used for the measurement (context for timeouts) |
 | `notes` | freeform |
 
@@ -172,12 +172,12 @@ matching `--classify`/`--issue`, e.g.:
 
 ```
 scripts/flakiness_stress.py one validate.network_e2e.01_rogue_rogerbrand.3 \
-    --runs 20 --concurrency 1 --classify known-desync --issue mtg-vk4b7 --record
+    --runs 20 --concurrency 1 --classify known-desync --issue mtg-589 --record
 ```
 
 | canonical_name | class | issue | why |
 |---|---|---|---|
-| `validate.network_e2e.01_rogue_rogerbrand.3` + `validate.network_e2e.monored.13` | `known-desync` | mtg-vk4b7 | rogerbrand3 / monored network desync (real engine bug) |
+| `validate.network_e2e.01_rogue_rogerbrand.3` + `validate.network_e2e.monored.13` | `known-desync` | mtg-589 | rogerbrand3 / monored network desync (real engine bug) |
 | `validate.network_e2e.white_weenie.7` | `known-desync` | mtg-273 | white_weenie seed 7 desync; excluded from multideck quick set |
 | `validate.wasm_e2e.<wasm-pack-install>` (infra) | `true-nondeterministic` | mtg-577 | wasm-pack install race during the wasm build step |
 | `validate.mtg-engine--determinism_e2e.*` | `timeout-under-load` | (none) | SIGTERM timeouts under contention -- NOT a real flake |

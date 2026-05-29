@@ -82,7 +82,7 @@ pub fn player_target_from_sentinel(c: CardId) -> Option<PlayerId> {
 /// server and client (it is the spell's controller, not hidden information),
 /// this preserves network determinism — every controller sees the same order.
 ///
-/// FUTURE (mtg-p43i3): beneficial spells (gain life, regeneration, ...) should
+/// FUTURE (mtg-605): beneficial spells (gain life, regeneration, ...) should
 /// flip this to offer the caster's own player first. That classification is
 /// deliberately deferred; this helper unconditionally orders opponents first.
 pub fn reorder_player_targets_opponents_first(targets: &mut [CardId], viewer: PlayerId) {

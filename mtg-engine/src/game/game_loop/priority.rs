@@ -2924,7 +2924,7 @@ impl<'a> GameLoop<'a> {
                     // all). Route through the controller protocol for
                     // network-safe operation.
                         || matches!(e, crate::core::Effect::Clone { .. })
-                    // mtg-vk4b7: SearchLibrary tutors (Demonic Tutor, etc.) let
+                    // mtg-589: SearchLibrary tutors (Demonic Tutor, etc.) let
                     // the searcher pick a card from their own library. The naive
                     // execute_effect path picks `library_cards[0]` by iterating
                     // and calling `cards.try_get()` — which works on the server
@@ -3628,7 +3628,7 @@ impl<'a> GameLoop<'a> {
                                 .gamelog(&format!("{} enters the battlefield without copying", src_name));
                         }
                     }
-                    // mtg-vk4b7: SearchLibrary tutor (Demonic Tutor, etc.).
+                    // mtg-589: SearchLibrary tutor (Demonic Tutor, etc.).
                     //
                     // The searcher picks a card matching `card_type_filter` from
                     // their OWN library and moves it to `destination`, then
@@ -3822,7 +3822,7 @@ impl<'a> GameLoop<'a> {
                         optional: false,
                         remember_discarding_players: false,
                     },
-                    // mtg-vk4b7: resolve the SearchLibrary `player` placeholder
+                    // mtg-589: resolve the SearchLibrary `player` placeholder
                     // for display, mirroring the regular resolve path's mapping
                     // (otherwise the log would name player 0 instead of the
                     // actual searcher).

@@ -28,7 +28,7 @@ function log(msg) {
 // old_school/01_rogue_rogerbrand seed=3 (All Hallow's Eve mass-resurrection) is
 // back in the gate: the WASM-shadow desync was root-caused to the begin-of-upkeep
 // phase triggers double-firing on WASM GameLoop re-entry after a NeedInput block,
-// and fixed by a per-turn re-entry guard in check_phase_triggers (mtg-joosa).
+// and fixed by a per-turn re-entry guard in check_phase_triggers (mtg-609).
 //
 // EXCLUDED known-broken mirror scenarios (pre-existing WASM-shadow desyncs,
 // NOT introduced by the mirror-match harness fix — they reproduce identically
@@ -39,20 +39,20 @@ function log(msg) {
 //     resolution effects) return NeedInput mid-resolution; on WASM GameLoop
 //     re-entry resolve_top_spell_with_discard_hook re-runs from the first effect
 //     instead of resuming, so already-executed effects (and the clone) run twice.
-//     Distinct, broader root cause than mtg-joosa; needs an effect-resume index
+//     Distinct, broader root cause than mtg-609; needs an effect-resume index
 //     for spell resolution (cf. pending_activation_effect_idx). Tracked: mtg-559.
 // These belong to the engine shadow-state work, not the gate harness; the gate
 // uses scenarios proven STABLE as mirror matches.
 const SCENARIOS = [
     { deck: 'decks/monored.dck',                     seed: 13, desc: 'Red burn + creatures (mirror)' },
     { deck: 'decks/counterspells.dck',               seed: 5,  desc: 'Control + counters (mirror)' },
-    { deck: 'decks/old_school/01_rogue_rogerbrand.dck', seed: 3, desc: "Old-school reanimator: All Hallow's Eve (mirror, mtg-joosa)" },
+    { deck: 'decks/old_school/01_rogue_rogerbrand.dck', seed: 3, desc: "Old-school reanimator: All Hallow's Eve (mirror, mtg-609)" },
 ];
 
 // All three mirror scenarios are proven stable and fast enough for the gate, so
 // both quick (the CI fast path invoked by `make validate`) and full runs
 // exercise the entire SCENARIOS list — including the rogerbrand All Hallow's Eve
-// mirror (mtg-joosa). The --quick flag is retained for API compatibility and so
+// mirror (mtg-609). The --quick flag is retained for API compatibility and so
 // slower, experimental scenarios can later be appended to the full-only tail
 // without changing the CI fast path.
 const QUICK_MODE = process.argv.includes('--quick');

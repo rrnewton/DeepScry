@@ -663,7 +663,7 @@ impl PlayerController for NetworkController {
         // Build options list using the SHARED choice formatter so the web /
         // network frontend shows the same ownership + player-relation labels
         // as the native TUI: card targets "(yours)"/"(theirs)", player targets
-        // "(you)"/"(them)" (mtg-p43i3). These strings are display-only (not part
+        // "(you)"/"(them)" (mtg-605). These strings are display-only (not part
         // of the state hash), so they do not affect network determinism.
         let options: Vec<String> = crate::game::controller::format_card_choices(view, valid_targets, self.player_id);
 

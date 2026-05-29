@@ -76,7 +76,7 @@ fi
 
 # Required: the OPPONENT (Player 2) takes the 3 damage. The --p1=fixed
 # controller casts "Lightning Bolt" without an explicit target arg, so the
-# engine auto-resolves to the FIRST player-target. Since mtg-p43i3 the valid
+# engine auto-resolves to the FIRST player-target. Since mtg-605 the valid
 # target list is ordered opponents-first (most targeted spells aim at an
 # opponent), so the first player-target is now the opponent — not the caster.
 # Self-targeting is still legal (CR 115.4: "any target" includes any player,
@@ -89,7 +89,7 @@ else
     exit 1
 fi
 
-# --- Choice-list rendering (mtg-p43i3): label + ordering ---
+# --- Choice-list rendering (mtg-605): label + ordering ---
 # Drive the same puzzle with the interactive (human stdin) controller and pin
 # the rendered target menu: opponent FIRST with "(them)", caster's own player
 # LAST with "(you)" — never the card-target "(theirs)"/"(yours)" labels.

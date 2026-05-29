@@ -196,7 +196,7 @@ fn test_scry_decision_partition_is_total() {
     assert_eq!(all, vec![CardId::new(1), CardId::new(2), CardId::new(3)]);
 }
 
-/// mtg-p43i3: player-target choices must label the viewer "(you)" and an
+/// mtg-605: player-target choices must label the viewer "(you)" and an
 /// opponent "(them)" — never "(theirs)"/"(yours)" (those are CARD-target
 /// labels) — and must list opponents BEFORE the viewer by default (most
 /// targeted spells, e.g. Lightning Bolt, are aimed at an opponent).
