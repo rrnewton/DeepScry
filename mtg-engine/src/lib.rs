@@ -24,6 +24,7 @@ pub mod puzzle;
 #[cfg(feature = "native")]
 pub mod tournament;
 pub mod undo;
+pub mod version;
 pub mod zones;
 
 // WASM-specific modules

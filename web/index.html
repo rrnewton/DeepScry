@@ -941,6 +941,25 @@
     }
     applyLaunchLinks();
     connect();
+
+    // Populate the footer build identity from the same-origin /health probe.
+    // Best-effort: the static page is also served standalone (file://, CDN)
+    // where /health may 404 — in that case we just leave the span empty.
+    (function renderFooterVersion() {
+        var el = document.getElementById('footer-version');
+        if (!el) return;
+        fetch('/health', { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (h) {
+                if (!h) return;
+                var parts = [];
+                if (h.version) parts.push('v' + h.version);
+                if (h.build_date && h.build_date !== 'unknown') parts.push('built ' + h.build_date);
+                if (h.sha && h.sha !== 'unknown') parts.push(h.sha);
+                if (parts.length) el.textContent = parts.join(' · ');
+            })
+            .catch(function () { /* offline / standalone: leave footer version blank */ });
+    })();
 })();
 </script>
 </body>

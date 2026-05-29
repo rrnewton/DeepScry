@@ -67,19 +67,10 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
 
-/// Compile-time git short SHA (from `build.rs`). `"unknown"` if `git`
-/// was unavailable at build time (e.g. tarball release).
-pub const BUILD_SHA: &str = match option_env!("MTG_BUILD_SHA") {
-    Some(s) => s,
-    None => "unknown",
-};
-
-/// Compile-time build timestamp (Unix epoch seconds, as a string).
-/// `"0"` if unavailable.
-pub const BUILD_TIME_EPOCH: &str = match option_env!("MTG_BUILD_TIME_EPOCH") {
-    Some(s) => s,
-    None => "0",
-};
+// Build/version identity lives in the central `crate::version` module
+// (single source of truth shared with the CLI `mtg --version`). Re-export
+// the names the rest of this module already uses to avoid churn.
+pub use crate::version::{BUILD_TIME_EPOCH, GIT_HASH as BUILD_SHA};
 
 /// Maximum time we wait for in-flight WebSocket clients to drain after a
 /// shutdown signal before tearing the process down anyway.
@@ -622,7 +613,9 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     let body = serde_json::json!({
         "sha": BUILD_SHA,
         "build_time_epoch": BUILD_TIME_EPOCH,
-        "version": env!("CARGO_PKG_VERSION"),
+        // Full `Major.Minor.<gitdepth>` display version (was bare Cargo version).
+        "version": crate::version::FULL_VERSION,
+        "build_date": crate::version::BUILD_DATE,
         "uptime_secs": uptime_secs,
         "active_games": active,
         "waiting_games": waiting,
