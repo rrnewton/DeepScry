@@ -320,6 +320,16 @@ pub struct GameLoop<'a> {
     /// This is for network clients where the server is authoritative - the client
     /// waits for GameEnded from the server rather than detecting locally.
     defer_game_end_check: bool,
+
+    /// One-shot hook fired immediately after `setup_game()` completes (opening
+    /// hands drawn, libraries shuffled, turn-1 header emitted), BEFORE the first
+    /// turn runs. Used by the WASM AI harness to capture a clone of the
+    /// turn-1-start game state: in network mode the opening hands come from
+    /// server-authoritative reveals and CANNOT be reproduced by a local rewind
+    /// (turn 1 has no preceding ChangeTurn marker to rewind to), so the harness
+    /// needs a full-state baseline to restore before replaying turn-1 choices.
+    /// Fires at most once per `run_game` invocation.
+    post_setup_hook: Option<Box<dyn FnMut(&GameState) + 'a>>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -358,7 +368,19 @@ impl<'a> GameLoop<'a> {
             local_player_id: None,
             pre_choice_hook: None,
             defer_game_end_check: false,
+            post_setup_hook: None,
         }
+    }
+
+    /// Register a one-shot hook fired right after `setup_game()` completes.
+    /// See the `post_setup_hook` field docs. Used by the WASM AI harness to
+    /// snapshot the turn-1-start state for rewind/replay.
+    pub fn with_post_setup_hook<F>(mut self, hook: F) -> Self
+    where
+        F: FnMut(&GameState) + 'a,
+    {
+        self.post_setup_hook = Some(Box::new(hook));
+        self
     }
 
     /// Set maximum turns before forcing a draw
@@ -778,6 +800,13 @@ impl<'a> GameLoop<'a> {
     ) -> Result<GameResult> {
         // Setup: verify controllers and shuffle libraries
         let (player1_id, player2_id) = self.setup_game(controller1, controller2)?;
+
+        // Fire the one-shot post-setup hook (WASM harness turn-1-start snapshot).
+        // Only meaningful for fresh games: when resuming/replaying, setup_game is a
+        // no-op (undo log non-empty), so the harness already holds its baseline.
+        if let Some(mut hook) = self.post_setup_hook.take() {
+            hook(self.game);
+        }
 
         // Main game loop - repeatedly run turns until game ends
         loop {

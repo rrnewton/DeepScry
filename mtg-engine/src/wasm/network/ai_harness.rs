@@ -97,6 +97,14 @@ struct WasmAiHarness {
     /// True once the first forward run has happened. While false, `step_harness`
     /// runs forward without a preceding rewind (there is nothing to rewind yet).
     started: bool,
+    /// Clone of the game state at turn-1 start (immediately after setup_game drew
+    /// the opening hands). Turn 1 has no preceding ChangeTurn marker, so it cannot
+    /// be reached by `rewind_to_turn_start` (which would over-rewind past the
+    /// server-authoritative opening-hand reveals — unreproducible locally). While
+    /// the game is still in turn 1, re-entry restores from this full-state baseline
+    /// instead of rewinding the undo log. Captured once via the GameLoop
+    /// post-setup hook on the first forward run.
+    turn1_baseline: Option<GameState>,
     /// Debug-only per-turn cache of the post-rewind turn-start state hash.
     /// Each rewind to turn N must reproduce the same hash; a drift means the
     /// undo log is no longer a faithful inverse of forward play (fatal).
@@ -211,6 +219,7 @@ fn init_harness(client: &SharedNetworkClient, controller_type: &str, seed: u32) 
         controller_kind,
         derived_seed,
         started: false,
+        turn1_baseline: None,
         #[cfg(debug_assertions)]
         turn_start_hashes: HashMap::new(),
     })
@@ -305,28 +314,76 @@ fn harness_rewind_to_turn_start(harness: &mut WasmAiHarness) -> RewindResult {
     #[cfg(debug_assertions)]
     let pre_capture = capture_pre_rewind(&harness.game);
 
-    let mut undo_log = std::mem::take(&mut harness.game.undo_log);
-    let rewind = undo_log.rewind_to_turn_start(&mut harness.game);
-    harness.game.undo_log = undo_log;
+    // Turn 1 has no preceding ChangeTurn marker, so `rewind_to_turn_start` would
+    // over-rewind past the server-authoritative opening-hand reveals — which the
+    // client cannot reproduce locally. While still in turn 1, restore from the
+    // full-state turn-1 baseline captured right after setup, and treat every
+    // ChoicePoint currently in the undo log as an intra-turn choice to replay.
+    let in_turn_one = harness.game.undo_log.current_turn().is_none();
 
-    let (choice_actions, log_size_at_turn) = match rewind {
-        Some((_turn, choices, _rewound, log_size)) => (choices, log_size),
-        None => {
-            // Undo log disabled — should not happen for the network harness.
-            log::warn!("ai_harness: rewind_to_turn_start returned None (undo log disabled?)");
-            return RewindResult {
-                our_choices: Vec::new(),
-                opponent_choices: Vec::new(),
-                #[cfg(debug_assertions)]
-                verification: None,
-            };
+    let (choice_actions, log_size_at_turn) = if in_turn_one {
+        // Extract intra-turn choices BEFORE restoring the baseline (the restore
+        // replaces the whole game, including its undo log).
+        let choices: Vec<GameAction> = harness
+            .game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::ChoicePoint { choice: Some(_), .. }))
+            .cloned()
+            .collect();
+
+        match harness.turn1_baseline.as_ref() {
+            Some(baseline) => {
+                let log_size = baseline.logger.log_count();
+                harness.game = baseline.clone();
+                (choices, log_size)
+            }
+            None => {
+                // No baseline captured — should not happen (the post-setup hook
+                // runs on the first forward pass). Fall back to undo rewind.
+                log::warn!("ai_harness: turn-1 re-entry but no baseline captured; falling back to undo rewind");
+                let mut undo_log = std::mem::take(&mut harness.game.undo_log);
+                let rewind = undo_log.rewind_to_turn_start(&mut harness.game);
+                harness.game.undo_log = undo_log;
+                match rewind {
+                    Some((_turn, choices, _rewound, log_size)) => (choices, log_size),
+                    None => (Vec::new(), harness.game.logger.log_count()),
+                }
+            }
+        }
+    } else {
+        let mut undo_log = std::mem::take(&mut harness.game.undo_log);
+        let rewind = undo_log.rewind_to_turn_start(&mut harness.game);
+        harness.game.undo_log = undo_log;
+        match rewind {
+            Some((_turn, choices, _rewound, log_size)) => (choices, log_size),
+            None => {
+                // Undo log disabled — should not happen for the network harness.
+                log::warn!("ai_harness: rewind_to_turn_start returned None (undo log disabled?)");
+                return RewindResult {
+                    our_choices: Vec::new(),
+                    opponent_choices: Vec::new(),
+                    #[cfg(debug_assertions)]
+                    verification: None,
+                };
+            }
         }
     };
 
     // Debug capture phase 2: snapshot the log tail (about to be truncated) and
     // record the post-rewind turn-start hash, BEFORE truncating the logger.
+    //
+    // Only meaningful for the undo-rewind (turn >= 2) path: that reconstructs the
+    // turn-start state by inverting actions, so the round-trip hash check proves
+    // the undo log is a faithful inverse. The turn-1 baseline-restore path is an
+    // exact full-state clone by construction (nothing to verify), and its log
+    // buffer identity differs from the pre-restore one, so skip it there to avoid
+    // spurious log-tail mismatches.
     #[cfg(debug_assertions)]
-    let verification = {
+    let verification = if in_turn_one {
+        None
+    } else {
         let mut v = finish_capture(pre_capture, &harness.game, log_size_at_turn);
         record_turn_start_hash_with_snapshot(&mut v, &harness.game);
         Some(v)
@@ -394,22 +451,44 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
 
     let result = if !harness.started {
         // ── First call: plain forward run, no rewind. ──────────────────────
+        // Install a one-shot post-setup hook to capture the turn-1-start baseline
+        // (after opening hands are dealt, before the first choice). Turn 1 can't
+        // be reached by undo-log rewind, so this full-state clone is the
+        // checkpoint we restore to on turn-1 re-entries.
         harness.started = true;
         let mut local = build_local_controller(kind, our_id, derived_seed, &client);
         let mut remote = WasmRemoteController::new(opponent_id, client.clone());
         let sync_callback = make_sync_callback(client.clone(), our_id);
 
-        let mut game_loop = GameLoop::new(&mut harness.game)
-            .with_verbosity(VerbosityLevel::Normal)
-            .with_sync_callback(sync_callback)
-            .skip_opening_hands()
-            .with_deferred_game_end();
+        let baseline_cell: std::rc::Rc<RefCell<Option<GameState>>> = std::rc::Rc::new(RefCell::new(None));
+        let baseline_capture = baseline_cell.clone();
 
-        if we_are_p1 {
-            game_loop.run_until_input(local.as_mut(), &mut remote)
-        } else {
-            game_loop.run_until_input(&mut remote, local.as_mut())
+        let run_result = {
+            let mut game_loop = GameLoop::new(&mut harness.game)
+                .with_verbosity(VerbosityLevel::Normal)
+                .with_sync_callback(sync_callback)
+                .skip_opening_hands()
+                .with_deferred_game_end()
+                .with_post_setup_hook(move |game: &GameState| {
+                    *baseline_capture.borrow_mut() = Some(game.clone());
+                });
+
+            if we_are_p1 {
+                game_loop.run_until_input(local.as_mut(), &mut remote)
+            } else {
+                game_loop.run_until_input(&mut remote, local.as_mut())
+            }
+        };
+
+        if let Some(baseline) = baseline_cell.borrow_mut().take() {
+            log::debug!(
+                "ai_harness: captured turn-1-start baseline (log_count={})",
+                baseline.logger.log_count()
+            );
+            harness.turn1_baseline = Some(baseline);
         }
+
+        run_result
     } else {
         // ── Re-entry: rewind to turn start, replay forward. ────────────────
         let rewound = harness_rewind_to_turn_start(harness);
