@@ -1,27 +1,39 @@
 ---
 title: lightning_bolt e2e leaves orphaned spinning mtg tui (timeout doesn't kill process group; tui spins on stdin EOF)
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-29T02:13:32.482230523+00:00
-updated_at: 2026-05-29T02:13:32.482230523+00:00
+updated_at: 2026-05-29T03:01:36.623183961+00:00
 ---
 
 # Description
 
-BUG (flaky validate + CPU waste): tests/lightning_bolt_targets_opponent_player_e2e.sh leaves ORPHANED `mtg tui` processes spinning at ~100% CPU.
+RESOLVED (commit 4f445721): orphaned spinning mtg processes after test timeout.
 
-Line ~99: `printf '1\n1\n0\n' | run_mtg_with_timeout 30 tui --start-state $PUZZLE --p1 tui --p2 zero --seed 42 ... || true`.
+Two coupled defects, both fixed:
 
-Two coupled defects:
-1. run_mtg_with_timeout (tests/lib/test_helpers.sh) does not kill the PROCESS GROUP — when the 30s timeout fires it kills the immediate child/wrapper, but the actual `mtg` grandchild is orphaned (reparented to init, ppid=1) and keeps running.
-2. `mtg tui` with --p1 tui BUSY-LOOPS at ~100% CPU on stdin EOF: after consuming the piped `1\n1\n0\n` it hits EOF and (apparently) loops re-reading EOF instead of exiting/erroring. So the orphan spins a full core indefinitely.
+1. tests/lib/test_helpers.sh — run_mtg_with_timeout / run_mtg_with_timeout_stdin
+   backgrounded a shell FUNCTION and on timeout only signalled that subshell
+   PID, so the real `mtg` binary GRANDCHILD was reparented to init and kept
+   running. Both helpers now share a single _run_with_pgroup_timeout core that
+   launches the command under `setsid` (its own process group) and on timeout
+   sends SIGTERM then SIGKILL to the whole group (kill -- -PGID). Verified:
+   a deliberate-hang harness returns 124 with ZERO survivors; clean exits
+   propagate the command's own exit code.
 
-Observed TWICE: a leftover `bolt_only_player_target.pzl --p1 tui --p2 zero` orphan spinning ~12 min at 94.9% CPU (killed by PID by the coordinator) after both the step-2 (mtg-609) validate and the crate-rename (mtg-601) validate. Wastes a core, inflates load (→ false timeout-flakes in concurrent/subsequent tests), and pollutes the box.
+2. mtg-engine/src/game/interactive_controller.rs — the TUI human controller
+   only special-cased read errors (read_line(..).is_err()); at EOF read_line
+   returns Ok(0), which fell through as empty input and the looping prompts
+   re-prompted forever, busy-looping at ~100% CPU. Added read_line_or_eof()
+   that treats EOF and I/O errors identically; routed every stdin read through
+   it; the two looping action/choice prompts now return None / pass on EOF
+   instead of spinning. Verified: `printf '1\n1\n0\n' | mtg tui --p1 tui ...`
+   exits rc=0 in <1s (was a ~12-min 100%-CPU spinner).
 
-Fixes:
-- run_mtg_with_timeout: use `timeout --kill-after` + run the child in its own process group and kill the whole group (setsid + kill -- -PGID), so no orphan survives.
-- mtg tui controller: on stdin EOF, exit cleanly (or return an error) instead of busy-looping — a TUI/human controller reading EOF should terminate, not spin.
-- Consider: this test drives the interactive --p1 tui controller with piped fixed input just to capture the target menu; a fixed-input/script controller (--p1 fixed:...) would be more robust than --p1 tui for an automated test.
+Validation: full `make validate` green
+(validate_logs/validate_ad8d312cc3757d2f46f7073fd4c3cfa9833552a2_dirty.log);
+no leftover mtg processes after the run.
 
-Relates to validate stability (the green+stable priority) + the flakiness system (mtg-593): a spinning orphan manufactures timeout-under-load false flakes.
+No MTG rules review needed (pure test-harness + CLI-controller infra, no
+gameplay-rules change).
