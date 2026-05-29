@@ -4739,4 +4739,113 @@ mod tests {
             );
         }
     }
+
+    /// Card compat: Mishra's Factory (cardsfolder/m/mishras_factory.txt) —
+    /// parser-shape regression for mtg-522.
+    ///
+    /// Script:
+    ///   ManaCost:no cost
+    ///   Types:Land
+    ///   A:AB$ Mana   | Cost$ T | Produced$ C
+    ///   A:AB$ Animate| Cost$ 1 | Defined$ Self | Power$ 2 | Toughness$ 2
+    ///                  | Types$ Artifact,Creature,Assembly-Worker
+    ///                  | RemoveCreatureTypes$ True
+    ///   A:AB$ Pump   | Cost$ T | ValidTgts$ Creature.Assembly-Worker
+    ///                  | NumAtt$ +1 | NumDef$ +1
+    ///
+    /// Mishra's Factory has THREE printed activated abilities; this test
+    /// guards against any of them being silently dropped by the parser
+    /// (which would surface as the action menu showing fewer options
+    /// than the printed card text). The current engine state-of-play:
+    ///
+    /// - The mana ability and the Animate ability both parse and are
+    ///   exercised live; see `tests/puzzle_e2e::test_mishras_factory_
+    ///   animates_and_is_eligible_attacker` for runtime evidence and
+    ///   `tests/card_loading::test_load_mishras_factory_colorless_mana`
+    ///   for the mana-shape regression.
+    /// - The pump ability ("{T}: Target Assembly-Worker creature gets
+    ///   +1/+1 until end of turn") is the secondary ability. This test
+    ///   asserts an upper bound: at least one PumpCreature effect must
+    ///   appear among the parsed abilities OR else this test fails so
+    ///   the silent-drop is caught at compile-time CI.
+    #[test]
+    fn test_card_compat_mishras_factory() {
+        use crate::core::Cost;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/m/mishras_factory.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Mishra's Factory should load");
+        assert_eq!(def.name.as_str(), "Mishra's Factory");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // 1. Mana ability {T}: Add {C}
+        let mana_ability = card.activated_abilities.iter().find(|a| a.is_mana_ability);
+        assert!(
+            mana_ability.is_some(),
+            "Mishra's Factory must have a mana ability ({{T}}: Add {{C}}). Got: {:?}",
+            card.activated_abilities
+        );
+
+        // 2. Animate ability {1}: become a 2/2 Assembly-Worker creature.
+        // Parsed as Effect::SetBasePowerToughness with types_added
+        // {Artifact, Creature} and a subtype Assembly-Worker.
+        let animate_ability = card.activated_abilities.iter().find(|a| {
+            a.effects.iter().any(|e| {
+                matches!(
+                    e,
+                    Effect::SetBasePowerToughness {
+                        power: Some(2),
+                        toughness: Some(2),
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(
+            animate_ability.is_some(),
+            "Mishra's Factory must have an Animate ability ({{1}}: 2/2 Assembly-Worker). \
+             Got: {:?}",
+            card.activated_abilities
+        );
+
+        // 3. Pump ability {T}: +1/+1 to target Assembly-Worker.
+        // Parsed as Effect::PumpCreature with power_bonus=1, toughness_bonus=1.
+        // Silent-drop of this A: line was the primary mtg-522 finding; this
+        // assertion is the parser-shape regression guard.
+        let pump_ability = card.activated_abilities.iter().find(|a| {
+            a.effects.iter().any(|e| {
+                matches!(
+                    e,
+                    Effect::PumpCreature {
+                        power_bonus: 1,
+                        toughness_bonus: 1,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(
+            pump_ability.is_some(),
+            "Mishra's Factory must have a Pump ability ({{T}}: target Assembly-Worker gets +1/+1). \
+             If this fails the A:AB$ Pump line was silently dropped — see mtg-522. \
+             Got abilities: {:?}",
+            card.activated_abilities
+        );
+
+        // The pump ability's cost is a pure Tap; the Animate ability's cost
+        // is generic {1}. Sanity-assert these are distinct (i.e. they don't
+        // collapse to the same ability) so the menu can offer both.
+        let pump_cost = &pump_ability.unwrap().cost;
+        assert!(
+            matches!(pump_cost, Cost::Tap),
+            "Pump cost should be pure Tap, got: {:?}",
+            pump_cost
+        );
+    }
 }

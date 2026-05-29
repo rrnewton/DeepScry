@@ -1,0 +1,67 @@
+---
+title: 'Bug: activated-ability listing drops secondary T-cost ability when card has both mana and non-mana T abilities'
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-05-29T19:56:21.937171670+00:00
+updated_at: 2026-05-29T19:56:21.937171670+00:00
+---
+
+# Description
+
+Cards with TWO or more A: lines that share a Tap cost — one being a
+mana ability (is_mana_ability=true), another being a non-mana ability
+— surface only ONE entry in the action menu. The non-mana T-cost
+ability that has additional gating (e.g. ValidTgts\$) is the one that
+gets dropped.
+
+Found while testing Mishra's Factory (mtg-522):
+
+    A:AB\$ Mana   | Cost\$ T | Produced\$ C
+    A:AB\$ Animate| Cost\$ 1 | ...                       <-- shown
+    A:AB\$ Pump   | Cost\$ T | ValidTgts\$ Creature.Assembly-Worker
+                              | NumAtt\$ +1 | NumDef\$ +1   <-- NOT shown
+
+With two Factories on the battlefield and one already animated to
+Assembly-Worker (so the other Factory's Pump has a legal target), the
+action menu still only offers [1] activate Mishra's Factory and [2]
+activate Mishra's Factory — one entry per Factory. The Pump ability
+never surfaces.
+
+The parser produces all three abilities correctly (see
+test_card_compat_mishras_factory in mtg-engine/src/game/actions/tests/
+effects.rs which asserts Effect::PumpCreature is present). The drop
+happens at action-listing time.
+
+== Hypothesis ==
+
+mtg-engine/src/game/game_loop/actions.rs builds the action list from
+card.activated_abilities filtered by is_mana_ability (mana abilities
+get separate "tap for mana" entries). It iterates non-mana abilities
+and emits an ActivateAbility{card_id, ability_index} entry per ability
+whose cost is currently payable. The two non-mana abilities on
+Mishra's Factory have different ability_index values, so they SHOULD
+both surface — but only one does.
+
+Probable cause: the can_activate gating for Pump fails because the
+Tap-cost-payability check looks only at "is the source untapped" and
+not at ValidTgts (so the check should pass), OR the target-availability
+filter for ValidTgts\$ Creature.Assembly-Worker rejects the ability
+when the source card itself isn't an Assembly-Worker (even though
+ANOTHER Assembly-Worker on the battlefield would be a legal target).
+
+Needs deeper investigation of get_available_actions / list activated
+abilities path with a unit test that constructs a 2-Factory board and
+asserts both abilities surface.
+
+== Affected cards ==
+
+- Mishra's Factory (mtg-522) — pump ability dropped.
+- Mishra's Workshop, Mishra's War Machine (if/when implemented and
+  scripted with similar two-A pattern).
+
+== Workaround ==
+
+None at the card-script level. Mishra's Factory plays as a 2/2
+animator only — the pump combo (animate Factory A, pump Factory B
+into a 3/3) is unavailable. Reproducer is documented in mtg-522.
