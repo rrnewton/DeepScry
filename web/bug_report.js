@@ -482,6 +482,7 @@ export function initBugReport(config) {
         applyConnectionState,
         setStatus,
         setSubmitting,
+        isSubmitting: () => bugReportSubmitting,
     };
     window.__bugReportTestHelpers = {
         setNetworkClient(client) {

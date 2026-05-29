@@ -2673,6 +2673,9 @@ Name=My Deck
 
         // Network client instance (created when connecting)
         let networkClient = null;
+        // Shared bug-report dialog controller (mtg-587/596/597); assigned in the
+        // launcher init below via initBugReport(...).
+        let bugReportController = null;
 
         function wireBugReportNetworkClient(client) {
             if (bugReportController) {
@@ -2924,7 +2927,7 @@ Name=My Deck
                             statusEl.textContent = `Error: ${msg}`;
                             statusEl.style.color = '#ff6b6b';
                         }
-                        if (bugReportSubmitting) {
+                        if (bugReportController?.isSubmitting()) {
                             setBugReportSubmitting(false);
                             setBugReportStatus(`Bug report submission failed: ${msg}`, { isError: true });
                         }
@@ -3081,7 +3084,6 @@ Name=My Deck
         // native_game.html. The module reuses the inline modal DOM declared
         // above and reads page-specific data through these hooks. We wire it up
         // after the page script has defined `networkClient` / `tui_get_logs_json`.
-        let bugReportController = null;
         function getBugReportGameLogs() {
             return parseJsonArray(tui_get_logs_json(), []);
         }
