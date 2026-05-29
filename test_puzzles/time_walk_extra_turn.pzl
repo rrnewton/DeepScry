@@ -1,0 +1,24 @@
+[metadata]
+Name:Time Walk grants the caster an extra turn
+Goal:Win
+Turns:6
+Difficulty:Easy
+Description:P0 casts Time Walk (1U) on their own turn. Per CR 500.7 the caster takes an extra turn that is inserted immediately after the current turn, BEFORE the opponent's turn. Regression guard for mtg-551: the extra turn was previously queued onto a dead field and never taken, so play rotated straight to the opponent.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Time Walk
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Island; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=
+p1exile=

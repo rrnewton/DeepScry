@@ -203,6 +203,14 @@ impl<'a> GameLoop<'a> {
                         player: card_owner,
                         count: *count,
                     },
+                    // AddTurn (Time Walk): the controller takes the extra turn.
+                    // Resolve the placeholder player (0) to card_owner so the
+                    // post-resolution logger names the correct player, matching
+                    // the resolution done in actions/mod.rs (mtg-551).
+                    Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
+                        player: card_owner,
+                        num_turns: *num_turns,
+                    },
                     Effect::SearchLibrary {
                         player,
                         card_type_filter,
@@ -3838,6 +3846,12 @@ impl<'a> GameLoop<'a> {
                         destination: *destination,
                         enters_tapped: *enters_tapped,
                         shuffle: *shuffle,
+                    },
+                    // AddTurn (Time Walk): resolve placeholder player (0) to the
+                    // controller for display, matching actions/mod.rs (mtg-551).
+                    Effect::AddTurn { player, num_turns } if player.is_placeholder() => Effect::AddTurn {
+                        player: card_owner,
+                        num_turns: *num_turns,
                     },
                     Effect::CreateToken {
                         controller,

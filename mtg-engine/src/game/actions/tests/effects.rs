@@ -3890,6 +3890,56 @@ mod tests {
         }
     }
 
+    /// Card compat: Time Walk (cardsfolder/t/time_walk.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 U
+    ///   Types:Sorcery
+    ///   A:SP$ AddTurn | NumTurns$ 1 | SpellDescription$ Take an extra turn after this one.
+    ///
+    /// Asserts the parsed shape: {1}{U} Sorcery whose spell ability produces an
+    /// Effect::AddTurn with num_turns == 1. The `player` field is a placeholder
+    /// (PlayerId 0) resolved to the caster at cast time. Runtime behaviour (the
+    /// CASTER actually takes a consecutive extra turn, CR 500.7) is covered by
+    /// tests/time_walk_extra_turn_e2e.sh. Part of Troll Disk deck (mtg-562,
+    /// mtg-551). Regression guard: a previous bug pushed the extra turn onto a
+    /// dead TurnStructure field that the rotation code never drained, so the
+    /// extra turn silently never happened.
+    #[test]
+    fn test_card_compat_time_walk() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/time_walk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Time Walk should load");
+
+        assert_eq!(def.name.as_str(), "Time Walk");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{U}}");
+        assert_eq!(def.mana_cost.blue, 1, "Cost should be {{1}}{{U}}");
+        assert_eq!(def.mana_cost.cmc(), 2, "CMC should be 2");
+        assert!(def.types.contains(&CardType::Sorcery), "must be a Sorcery");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The SP$ AddTurn spell ability resolves into the card's on-resolve
+        // effects (card.effects) as Effect::AddTurn { num_turns: 1 }.
+        let add_turn = card
+            .effects
+            .iter()
+            .find_map(|e| {
+                if let Effect::AddTurn { num_turns, .. } = e {
+                    Some(*num_turns)
+                } else {
+                    None
+                }
+            })
+            .expect("Time Walk must produce an AddTurn effect (a silent drop leaves no extra turn)");
+        assert_eq!(add_turn, 1, "Time Walk grants exactly 1 extra turn");
+    }
+
     /// Card compat: Underworld Dreams (cardsfolder/u/underworld_dreams.txt)
     ///
     /// Script:

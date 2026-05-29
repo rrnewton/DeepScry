@@ -67,6 +67,7 @@ workflow, row format, and update rules.
 | AB$ Draw Cost$ B PayLife<2>                 | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Greed               |
 | AB$ Mana Cost$ T Produced$ C Amount$ 2 (fast mana) | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Sol Ring        |
 | AB$ Mana Cost$ T Sac<1/CARDNAME> Produced$ Any Amount$ 3 | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Black Lotus |
+| SP$ AddTurn NumTurns$ 1 (extra turn, CR 500.7) | WORKING | 2026-05-29_#2456(e30f4ce1) | (fixed mtg-551) | Time Walk |
 
 ## Static abilities (S:)
 

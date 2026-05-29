@@ -3476,9 +3476,14 @@ impl GameState {
             }
             Effect::AddTurn { player, num_turns } => {
                 // Take extra turns (CR 500.7) - Time Walk, Temporal Manipulation, etc.
-                // Add extra turns to the turn queue for the specified player
+                // Add extra turns to the GameState extra-turn queue (consumed in
+                // GameState::advance_step at end of turn, CR 500.7). NOTE: this
+                // must push to `self.extra_turns` (the VecDeque actually drained
+                // by the turn-rotation code), NOT `self.turn.extra_turns` (a
+                // dead, write-only field) — otherwise the extra turn was queued
+                // somewhere nothing reads, and never taken (mtg-551).
                 for _ in 0..*num_turns {
-                    self.turn.extra_turns.push(*player);
+                    self.extra_turns.push_back(*player);
                 }
                 let player_name = self
                     .get_player(*player)
