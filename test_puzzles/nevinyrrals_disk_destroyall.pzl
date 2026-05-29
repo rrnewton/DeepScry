@@ -1,0 +1,24 @@
+[metadata]
+Name:Nevinyrral's Disk Destroys All
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Nevinyrral's Disk ({1}, {T}: Destroy all artifacts, creatures, and enchantments). Disk enters tapped (replacement effect). Here it starts untapped on the battlefield. P1 activates it; all artifacts, creatures, and enchantments (including the Disk) are destroyed.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Nevinyrral's Disk; Plains; Plains; Grizzly Bears
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Sol Ring
+p1exile=

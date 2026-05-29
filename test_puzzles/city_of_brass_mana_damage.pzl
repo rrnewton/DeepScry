@@ -1,0 +1,24 @@
+[metadata]
+Name:City of Brass Mana And Tap Damage
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:City of Brass: {T}: Add one mana of any color. Whenever City of Brass becomes tapped, it deals 1 damage to you. P1 taps it (for {R}) to cast Lightning Bolt at P2; P1 takes 1 damage from the tap trigger.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=City of Brass
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

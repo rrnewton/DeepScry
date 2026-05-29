@@ -72,6 +72,12 @@ workflow, row format, and update rules.
 | SP$ DealDamage + chained DB$ DealDamage Defined$ You (downside) | WORKING | 2026-05-29_#2456(e30f4ce1) | (none) | Psionic Blast |
 | SP$ Draw NumCards$ N/X ValidTgts$ Player      | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Ancestral Recall, Braingeyser |
 | SP$ Counter TargetType$ Spell                 | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Counterspell        |
+| SP$ Destroy ValidTgts$ Creature.nonArtifact+nonBlack NoRegen$ True | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Terror |
+| AB$ Draw Cost$ 2 T NumCards$ 1 + SubAbility$ DBDiscard | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Jalum Tome |
+| AB$ DestroyAll ValidCards$ Artifact,Creature,Enchantment | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
+| R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped (enters tapped) | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
+| SP$ Charm modes enforce per-mode ValidTgts$ restriction | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-af24s | Red Elemental Blast |
+| DB$ GainLife LifeAmount$ X (X = Targeted$CardManaCost / dynamic) | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-297 | Divine Offering, Swords to Plowshares |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 

@@ -3202,6 +3202,217 @@ mod tests {
         );
     }
 
+    /// Card compat: Bazaar of Baghdad (cardsfolder/b/bazaar_of_baghdad.txt) — mtg-388
+    ///
+    /// Script: ManaCost:no cost / Types:Land
+    ///   A:AB$ Draw | Cost$ T | NumCards$ 2 | SubAbility$ DBDiscard
+    ///   SVar:DBDiscard:DB$ Discard | Defined$ You | NumCards$ 3 | Mode$ TgtChoose
+    ///
+    /// Parser shape: a Land with a {T} activated ability that draws 2 then
+    /// discards 3. The historical bug-bazaar-no-draw silently dropped the
+    /// draw half (only discard ran). This guards that the instantiated card
+    /// keeps BOTH a draw and a discard effect. Runtime verified by
+    /// tests/bazaar_of_baghdad_draw_discard_e2e.sh.
+    #[test]
+    fn test_card_compat_bazaar_of_baghdad() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/bazaar_of_baghdad.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Bazaar of Baghdad should load");
+        assert_eq!(def.name.as_str(), "Bazaar of Baghdad");
+        assert!(def.types.contains(&CardType::Land), "Bazaar of Baghdad must be a Land");
+
+        let draw = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Draw).then_some(p)
+            })
+            .expect("Bazaar must have an AB$ Draw activated ability");
+        assert_eq!(draw.get("NumCards"), Some("2"), "Bazaar draws 2 cards");
+        assert_eq!(
+            draw.get("SubAbility"),
+            Some("DBDiscard"),
+            "Bazaar must chain a discard sub-ability"
+        );
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_draw_discard = card.activated_abilities.iter().any(|a| {
+            a.effects.iter().any(|e| matches!(e, Effect::DrawCards { .. }))
+                && a.effects.iter().any(|e| matches!(e, Effect::DiscardCards { .. }))
+        });
+        assert!(
+            has_draw_discard,
+            "Bazaar's activated ability must contain BOTH a draw and a discard \
+             effect (regression for bug-bazaar-no-draw). Got: {:?}",
+            card.activated_abilities
+        );
+    }
+
+    /// Card compat: Terror (cardsfolder/t/terror.txt) — mtg-549
+    ///
+    /// Script: ManaCost:1 B / Types:Instant
+    ///   A:SP$ Destroy | ValidTgts$ Creature.nonArtifact+nonBlack | NoRegen$ True
+    ///
+    /// Parser shape: {1}{B} Instant that destroys a nonartifact, nonblack
+    /// creature and prevents regeneration. A silent drop of the target
+    /// restriction would let it kill black/artifact creatures (strictly
+    /// stronger than printed); a silent drop of NoRegen would let
+    /// regenerators survive. Runtime destroy verified by
+    /// tests/terror_destroys_creature_e2e.sh.
+    #[test]
+    fn test_card_compat_terror() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/terror.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Terror should load");
+        assert_eq!(def.name.as_str(), "Terror");
+        assert_eq!(def.mana_cost.generic, 1, "Cost generic should be 1");
+        assert_eq!(def.mana_cost.black, 1, "Cost should require {{B}}");
+        assert!(def.types.contains(&CardType::Instant), "Terror must be an Instant");
+
+        let destroy = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Destroy).then_some(p)
+            })
+            .expect("Terror must have an SP$ Destroy spell ability");
+
+        let tgts = destroy.get("ValidTgts").expect("Terror Destroy must have ValidTgts");
+        assert_eq!(
+            tgts, "Creature.nonArtifact+nonBlack",
+            "Terror must only target nonartifact, nonblack creatures (CR 608); \
+             a broader ValidTgts would make it strictly stronger than printed. Got: {:?}",
+            tgts
+        );
+        assert_eq!(
+            destroy.get("NoRegen"),
+            Some("True"),
+            "Terror's target can't be regenerated; dropping NoRegen lets regenerators survive"
+        );
+    }
+
+    /// Card compat: Jalum Tome (cardsfolder/j/jalum_tome.txt) — mtg-514
+    ///
+    /// Script: ManaCost:3 / Types:Artifact
+    ///   A:AB$ Draw | Cost$ 2 T | NumCards$ 1 | SubAbility$ DBDiscard
+    ///   SVar:DBDiscard:DB$ Discard | Defined$ You | NumCards$ 1 | Mode$ TgtChoose
+    ///
+    /// Parser shape: a {3} artifact with a {2},{T} activated ability that
+    /// draws one card then discards one. A silent drop of the SubAbility
+    /// would make it a pure card-advantage draw engine (strictly stronger).
+    /// Runtime (draw then discard) verified by
+    /// tests/jalum_tome_draw_discard_e2e.sh.
+    #[test]
+    fn test_card_compat_jalum_tome() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/j/jalum_tome.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Jalum Tome should load");
+        assert_eq!(def.name.as_str(), "Jalum Tome");
+        assert_eq!(def.mana_cost.generic, 3, "Cost should be {{3}}");
+        assert!(
+            def.types.contains(&CardType::Artifact),
+            "Jalum Tome must be an Artifact"
+        );
+
+        // The activated ability is a Draw with a chained Discard sub-ability.
+        let draw = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Draw).then_some(p)
+            })
+            .expect("Jalum Tome must have an AB$ Draw activated ability");
+        assert_eq!(draw.get("NumCards"), Some("1"), "Jalum Tome draws 1 card");
+        assert_eq!(
+            draw.get("SubAbility"),
+            Some("DBDiscard"),
+            "Jalum Tome must chain a discard sub-ability; dropping it makes it pure card advantage"
+        );
+
+        // The instantiated card must actually carry the activated ability with
+        // both a Draw and a Discard effect (proving the SubAbility wired up).
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_draw_discard = card.activated_abilities.iter().any(|a| {
+            a.effects.iter().any(|e| matches!(e, Effect::DrawCards { .. }))
+                && a.effects.iter().any(|e| matches!(e, Effect::DiscardCards { .. }))
+        });
+        assert!(
+            has_draw_discard,
+            "Jalum Tome's activated ability must contain BOTH a draw and a discard effect. \
+             Got abilities: {:?}",
+            card.activated_abilities
+        );
+    }
+
+    /// Card compat: Nevinyrral's Disk (cardsfolder/n/nevinyrrals_disk.txt) — mtg-528
+    ///
+    /// Script: ManaCost:4 / Types:Artifact
+    ///   R:Event$ Moved | ValidCard$ Card.Self | Destination$ Battlefield
+    ///     | ReplaceWith$ ETBTapped   (enters tapped)
+    ///   A:AB$ DestroyAll | Cost$ 1 T | ValidCards$ Artifact,Creature,Enchantment
+    ///
+    /// Parser shape: a {4} artifact with an ETB-tapped replacement effect and
+    /// a {1},{T} board wipe. A silent drop of either piece changes the card
+    /// meaningfully. Runtime (enters tapped + destroys all three types)
+    /// verified by tests/nevinyrrals_disk_destroyall_e2e.sh.
+    #[test]
+    fn test_card_compat_nevinyrrals_disk() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/n/nevinyrrals_disk.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Nevinyrral's Disk should load");
+        assert_eq!(def.name.as_str(), "Nevinyrral's Disk");
+        assert_eq!(def.mana_cost.generic, 4, "Cost should be {{4}}");
+        assert!(
+            def.types.contains(&CardType::Artifact),
+            "Nevinyrral's Disk must be an Artifact"
+        );
+
+        // The activated board wipe: AB$ DestroyAll over the three types.
+        let destroy_all = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DestroyAll).then_some(p)
+            })
+            .expect("Nevinyrral's Disk must have an AB$ DestroyAll activated ability");
+        let valid = destroy_all.get("ValidCards").expect("DestroyAll must have ValidCards");
+        let set: Vec<&str> = valid.split(',').map(|s| s.trim()).collect();
+        assert!(
+            set.contains(&"Artifact") && set.contains(&"Creature") && set.contains(&"Enchantment"),
+            "Nevinyrral's Disk must destroy artifacts, creatures, AND enchantments; \
+             a narrower ValidCards silently drops a category. Got: {:?}",
+            valid
+        );
+    }
+
     /// Card compat: Lightning Bolt (cardsfolder/l/lightning_bolt.txt)
     ///
     /// Script: ManaCost:R / Types:Instant
