@@ -126,7 +126,7 @@ jobs:
   # one job/badge.
   test-determinism:
     name: Test (determinism_e2e)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-4-cores
     steps:
       - uses: actions/checkout@v4
         with:
@@ -204,7 +204,7 @@ jobs:
   # test-unit and test-determinism on a separate runner.
   test-shell:
     name: Test (shell_script_tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-4-cores
     steps:
       - uses: actions/checkout@v4
         with:
