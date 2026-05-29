@@ -205,7 +205,7 @@ impl SeedArg {
 
 #[derive(Parser)]
 #[command(name = "mtg")]
-#[command(about = "MTG Forge Rust - Magic: The Gathering Game Engine", long_about = None)]
+#[command(about = "DeepScry - a high-performance Magic: The Gathering engine inspired by Forge", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

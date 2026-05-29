@@ -1,7 +1,8 @@
-//! MTG Forge - High-performance Rust port for AI research
+//! DeepScry - a high-performance MTG engine in Rust for AI research
 //!
-//! This is a port of the MTG Forge game engine from Java to Rust,
-//! optimized for efficient tree search and AI gameplay.
+//! An independent Rust engine inspired by the MTG Forge project (which
+//! it credits for card data and rules heritage), optimized for efficient
+//! tree search and AI gameplay. Not a line-by-line port of Forge's Java.
 //!
 //! ## Feature Flags
 //!

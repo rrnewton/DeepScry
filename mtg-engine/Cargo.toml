@@ -2,7 +2,7 @@
 name = "mtg-engine"
 version.workspace = true
 edition.workspace = true
-description = "A Rust reimplementation of the MTG Forge game engine"
+description = "A high-performance MTG engine inspired by Forge"
 repository = "https://github.com/rrnewton/mtg-forge-rs"
 license = "GPL-3.0"
 build = "build.rs"
