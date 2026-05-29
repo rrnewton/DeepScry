@@ -1093,6 +1093,10 @@ Name=My Deck
             tui_set_verify_rewind_replay
         } from './pkg/mtg_engine.js';
 
+        // Shared bug-report dialog (mtg-587/596/597) — one implementation reused
+        // by tui_game.html and native_game.html.
+        import { initBugReport } from './bug_report.js';
+
         // Deck builder imports - optional (only available when built with wasm-tui feature)
         let deckBuilderEnabled = false;
         let launch_deck_builder = null;
@@ -2671,9 +2675,11 @@ Name=My Deck
         let networkClient = null;
 
         function wireBugReportNetworkClient(client) {
-            if (client) {
-                client.onBugReportResult = handleBugReportResult;
+            if (bugReportController) {
+                return bugReportController.wireNetworkClient(client);
             }
+            // Controller not yet initialized; result callback gets wired when
+            // initBugReport runs (it sets onBugReportResult via wireNetworkClient).
             return client;
         }
 
@@ -3056,7 +3062,6 @@ Name=My Deck
         }
 
         let autoRunning = false;
-        let bugReportSubmitting = false;
 
         function parseJsonArray(json, fallback = []) {
             if (!json) {
@@ -3071,199 +3076,30 @@ Name=My Deck
             }
         }
 
-        function getBugReportConsoleLogs() {
-            if (typeof window.getRecentConsoleLogs === 'function') {
-                return window.getRecentConsoleLogs();
-            }
-            return [];
-        }
-
+        // mtg-587/596/597: the bug-report dialog is implemented once in the
+        // shared web/bug_report.js module and reused by both tui_game.html and
+        // native_game.html. The module reuses the inline modal DOM declared
+        // above and reads page-specific data through these hooks. We wire it up
+        // after the page script has defined `networkClient` / `tui_get_logs_json`.
+        let bugReportController = null;
         function getBugReportGameLogs() {
             return parseJsonArray(tui_get_logs_json(), []);
         }
-
-        function refreshBugReportCaptureCounts() {
-            const consoleCount = document.getElementById('bug-report-console-count');
-            const gameLogCount = document.getElementById('bug-report-game-log-count');
-            if (consoleCount) {
-                consoleCount.textContent = `${getBugReportConsoleLogs().length} buffered lines`;
-            }
-            if (gameLogCount) {
-                gameLogCount.textContent = `${getBugReportGameLogs().length} buffered lines`;
-            }
-        }
-
-        function setBugReportStatus(message = '', { isError = false, issueUrl = null } = {}) {
-            const status = document.getElementById('bug-report-status');
-            if (!status) {
-                return;
-            }
-            status.innerHTML = '';
-            status.classList.toggle('error', isError);
-            if (!message && !issueUrl) {
-                return;
-            }
-
-            if (message) {
-                status.appendChild(document.createTextNode(message));
-            }
-            if (issueUrl) {
-                if (message) {
-                    status.appendChild(document.createTextNode(' '));
-                }
-                const link = document.createElement('a');
-                link.href = issueUrl;
-                link.target = '_blank';
-                link.rel = 'noopener noreferrer';
-                link.textContent = issueUrl;
-                status.appendChild(link);
-            }
-        }
-
-        function setBugReportSubmitting(isSubmitting) {
-            bugReportSubmitting = isSubmitting;
-            const submitButton = document.getElementById('btn-bug-report-submit');
-            const cancelButton = document.getElementById('btn-bug-report-cancel');
-            if (submitButton) {
-                submitButton.disabled = isSubmitting;
-                submitButton.textContent = isSubmitting ? 'Preparing Report...' : 'Submit';
-            }
-            if (cancelButton) {
-                cancelButton.disabled = isSubmitting;
-            }
-        }
-
-        function openBugReportModal() {
-            refreshBugReportCaptureCounts();
-            setBugReportStatus('');
-            setBugReportSubmitting(false);
-            document.getElementById('bug-report-overlay').classList.add('show');
-            document.getElementById('bug-report-modal').classList.add('show');
-            document.getElementById('bug-report-description').focus();
-        }
-
-        function clearBugReportFormState() {
-            document.getElementById('bug-report-description').value = '';
-            document.getElementById('bug-report-password').value = '';
-            setBugReportStatus('');
-        }
-
-        function closeBugReportModal({ resetStatus = true } = {}) {
-            if (bugReportSubmitting) {
-                return;
-            }
-            document.getElementById('bug-report-overlay').classList.remove('show');
-            document.getElementById('bug-report-modal').classList.remove('show');
-            if (resetStatus) {
-                clearBugReportFormState();
-            }
-        }
-
+        // Thin shims so existing call sites keep working regardless of when the
+        // controller finishes initializing.
+        function openBugReportModal() { bugReportController?.openModal(); }
+        function closeBugReportModal(opts) { bugReportController?.closeModal(opts); }
+        function submitBugReportDraft() { bugReportController?.submitDraft(); }
+        function handleBugReportResult(result) { bugReportController?.handleResult(result); }
+        function setBugReportStatus(message, opts) { bugReportController?.setStatus(message, opts); }
+        function setBugReportSubmitting(isSubmitting) { bugReportController?.setSubmitting(isSubmitting); }
         function resetBugReportUi() {
-            setBugReportSubmitting(false);
-            document.getElementById('bug-report-overlay').classList.remove('show');
-            document.getElementById('bug-report-modal').classList.remove('show');
-            clearBugReportFormState();
+            bugReportController?.closeModal();
             delete window.lastBugReportDraft;
             delete window.lastBugReportResult;
             delete window.lastBugReportSubmissionMessage;
-            refreshBugReportCaptureCounts();
+            bugReportController?.refreshCaptureCounts();
         }
-
-        async function submitBugReportDraft() {
-            const descriptionEl = document.getElementById('bug-report-description');
-            const passwordEl = document.getElementById('bug-report-password');
-            const description = descriptionEl.value.trim();
-            if (!description) {
-                setBugReportStatus('Enter a bug description before submitting.', { isError: true });
-                descriptionEl.focus();
-                return;
-            }
-
-            setBugReportSubmitting(true);
-            setBugReportStatus('Capturing current logs and assembling bug report payload...');
-
-            await new Promise((resolve) => setTimeout(resolve, 150));
-
-            const bugReportPayload = {
-                description,
-                trustedPassword: passwordEl.value.trim(),
-                capturedAt: new Date().toISOString(),
-                turnInfo: document.getElementById('turn-info')?.textContent || '',
-                mode: document.getElementById('game-mode')?.value || 'unknown',
-                consoleLogs: getBugReportConsoleLogs(),
-                gameLogs: getBugReportGameLogs(),
-            };
-
-            const bugReportMessage = {
-                type: 'bug_report',
-                description: bugReportPayload.description,
-                game_logs: bugReportPayload.gameLogs.join('\n'),
-                console_logs: bugReportPayload.consoleLogs.join('\n'),
-                trusted_password: bugReportPayload.trustedPassword || undefined,
-            };
-
-            window.lastBugReportDraft = bugReportPayload;
-            window.lastBugReportSubmissionMessage = bugReportMessage;
-            refreshBugReportCaptureCounts();
-            console.log('[BugReport] Captured draft payload', {
-                descriptionLength: bugReportPayload.description.length,
-                trustedPasswordProvided: Boolean(bugReportPayload.trustedPassword),
-                consoleLogCount: bugReportPayload.consoleLogs.length,
-                gameLogCount: bugReportPayload.gameLogs.length,
-                turnInfo: bugReportPayload.turnInfo,
-            });
-
-            if (!networkClient || typeof networkClient.isConnected !== 'function' || !networkClient.isConnected()) {
-                setBugReportSubmitting(false);
-                setBugReportStatus('Bug report submission requires an active network WebSocket connection.', { isError: true });
-                return;
-            }
-
-            if (typeof networkClient.send !== 'function') {
-                setBugReportSubmitting(false);
-                setBugReportStatus('Bug report submission is unavailable because the network client cannot send messages.', { isError: true });
-                return;
-            }
-
-            try {
-                setBugReportStatus('Submitting bug report to server...');
-                networkClient.send(JSON.stringify(bugReportMessage));
-            } catch (error) {
-                setBugReportSubmitting(false);
-                setBugReportStatus(`Failed to send bug report: ${error.message}`, { isError: true });
-            }
-        }
-
-        function handleBugReportResult(result) {
-            window.lastBugReportResult = result;
-            setBugReportSubmitting(false);
-
-            if (!result?.success) {
-                setBugReportStatus(result?.error || 'Bug report submission failed.', { isError: true });
-                return;
-            }
-
-            document.getElementById('bug-report-description').value = '';
-            document.getElementById('bug-report-password').value = '';
-            refreshBugReportCaptureCounts();
-
-            if (result.issue_url) {
-                setBugReportStatus('Bug report filed:', { issueUrl: result.issue_url });
-            } else {
-                setBugReportStatus('Bug report saved locally');
-            }
-        }
-
-        window.__bugReportTestHelpers = {
-            setNetworkClient(client) {
-                networkClient = wireBugReportNetworkClient(client);
-                window.__bugReportTestTransport = networkClient;
-            },
-            handleResult(result) {
-                handleBugReportResult(result);
-            }
-        };
 
         // Post-render callback: called by WASM after every frame render
         // This is event-driven (no polling!) - synchronized with TUI rendering
@@ -3384,21 +3220,19 @@ Name=My Deck
             }
         });
 
-        document.getElementById('btn-bug-report').addEventListener('click', function() {
-            openBugReportModal();
+        // Initialize the shared bug-report dialog (mtg-587/596/597). It reuses
+        // the inline modal DOM and wires the trigger/cancel/submit/overlay
+        // buttons itself; page-specific data is read through these hooks.
+        bugReportController = initBugReport({
+            triggerButtonId: 'btn-bug-report',
+            getNetworkClient: () => networkClient,
+            getGameLogs: getBugReportGameLogs,
         });
-
-        document.getElementById('btn-bug-report-cancel').addEventListener('click', function() {
-            closeBugReportModal();
-        });
-
-        document.getElementById('bug-report-overlay').addEventListener('click', function() {
-            closeBugReportModal();
-        });
-
-        document.getElementById('btn-bug-report-submit').addEventListener('click', function() {
-            submitBugReportDraft();
-        });
+        // If a network client was already created before init, wire its result
+        // callback now.
+        if (networkClient) {
+            bugReportController.wireNetworkClient(networkClient);
+        }
 
         // Show exit confirmation dialog when Escape is pressed
         window.showExitConfirmation = function() {
