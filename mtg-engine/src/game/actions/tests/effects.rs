@@ -24,6 +24,34 @@ pub(super) fn load_test_card(game: &mut GameState, card_name: &str, owner_id: Pl
     Ok(card_id)
 }
 
+/// (white, blue, black, red, green) amounts produced by a single mana ability.
+/// Used by the dual-land / Mox card-compat tests to assert the exact colours
+/// each "{T}: Add {color}" ability produces.
+#[cfg(test)]
+type ManaColorTuple = (u8, u8, u8, u8, u8);
+
+/// Collect the colour tuples produced by a card's tap-cost mana abilities,
+/// in ability order. Centralises the `Effect::AddMana` extraction so the
+/// card-compat tests don't each repeat a wildcard match (which trips
+/// clippy::wildcard_enum_match_arm under `-D warnings`).
+#[cfg(test)]
+fn tap_mana_ability_colors(card: &Card) -> Vec<ManaColorTuple> {
+    use crate::core::Cost;
+    let mut out = Vec::new();
+    for ability in &card.activated_abilities {
+        if !ability.is_mana_ability || !matches!(ability.cost, Cost::Tap) {
+            continue;
+        }
+        for effect in &ability.effects {
+            if let Effect::AddMana { mana, .. } = effect {
+                out.push((mana.white, mana.blue, mana.black, mana.red, mana.green));
+                break;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3009,12 +3037,11 @@ mod tests {
     /// not colourless).
     #[test]
     fn test_card_compat_original_dual_lands() {
-        use crate::core::Cost;
         use std::path::PathBuf;
 
         // (card file, expected basic land subtypes, expected mana colours
         //  as (white, blue, black, red, green))
-        let cases: &[(&str, &str, &[(u8, u8, u8, u8, u8)])] = &[
+        let cases: &[(&str, &str, &[ManaColorTuple])] = &[
             // Badlands: Swamp Mountain -> {B}, {R}
             (
                 "../cardsfolder/b/badlands.txt",
@@ -3049,20 +3076,10 @@ mod tests {
             let card = def.instantiate(CardId::new(1), PlayerId::new(0));
 
             // Collect the colours produced by each mana ability.
-            let mut produced: Vec<(u8, u8, u8, u8, u8)> = card
-                .activated_abilities
-                .iter()
-                .filter(|a| a.is_mana_ability && matches!(a.cost, Cost::Tap))
-                .filter_map(|a| {
-                    a.effects.iter().find_map(|e| match e {
-                        Effect::AddMana { mana, .. } => Some((mana.white, mana.blue, mana.black, mana.red, mana.green)),
-                        _ => None,
-                    })
-                })
-                .collect();
+            let mut produced = tap_mana_ability_colors(&card);
             produced.sort_unstable();
 
-            let mut expected: Vec<(u8, u8, u8, u8, u8)> = expected_colors.to_vec();
+            let mut expected: Vec<ManaColorTuple> = expected_colors.to_vec();
             expected.sort_unstable();
 
             assert_eq!(
@@ -3088,11 +3105,10 @@ mod tests {
     /// (not collapsed to colourless or to a single shared colour).
     #[test]
     fn test_card_compat_power9_moxen() {
-        use crate::core::Cost;
         use std::path::PathBuf;
 
         // (card file, name, expected (white, blue, black, red, green))
-        let cases: &[(&str, &str, (u8, u8, u8, u8, u8))] = &[
+        let cases: &[(&str, &str, ManaColorTuple)] = &[
             ("../cardsfolder/m/mox_pearl.txt", "Mox Pearl", (1, 0, 0, 0, 0)),
             ("../cardsfolder/m/mox_ruby.txt", "Mox Ruby", (0, 0, 0, 1, 0)),
             ("../cardsfolder/m/mox_emerald.txt", "Mox Emerald", (0, 0, 0, 0, 1)),
@@ -3112,17 +3128,7 @@ mod tests {
 
             let card = def.instantiate(CardId::new(1), PlayerId::new(0));
 
-            let mana_abilities: Vec<(u8, u8, u8, u8, u8)> = card
-                .activated_abilities
-                .iter()
-                .filter(|a| a.is_mana_ability && matches!(a.cost, Cost::Tap))
-                .filter_map(|a| {
-                    a.effects.iter().find_map(|e| match e {
-                        Effect::AddMana { mana, .. } => Some((mana.white, mana.blue, mana.black, mana.red, mana.green)),
-                        _ => None,
-                    })
-                })
-                .collect();
+            let mana_abilities = tap_mana_ability_colors(&card);
 
             assert_eq!(
                 mana_abilities,
