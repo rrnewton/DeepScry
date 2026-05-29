@@ -1,0 +1,24 @@
+[metadata]
+Name:Original Dual Lands Mana Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Badlands / Scrubland / Bayou each tap for their two basic-land-type colours (CR 305.6). The ONLY red source on the board is Badlands, so casting Lightning Bolt ({R}) forces Badlands to tap for {R}. The ONLY green source is Bayou, so casting Giant Growth ({G}) forces Bayou to tap for {G}. Scrubland's white side is exercised in the heuristic Sengir test; here it sits as an extra land.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt; Giant Growth
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Badlands; Scrubland; Bayou
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

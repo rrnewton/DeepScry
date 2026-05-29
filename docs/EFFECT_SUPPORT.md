@@ -76,6 +76,7 @@ workflow, row format, and update rules.
 |---------------------------------|---------|----------------------------|-----------|---------------------|
 | Produced$ B                     | WORKING | 2026-05-12_#2226(928ec99f) | (none)    | Mox Jet             |
 | Produced$ Any                   | WORKING | 2026-05-12_#2226(928ec99f) | (fixed)   | City of Brass       |
+| Intrinsic dual-land mana (CR 305.6: 2 basic subtypes → 2 {T}:Add abilities) | WORKING | 2026-05-29_#2432(f85d828d) | (none) | Badlands, Scrubland, Bayou |
 
 ## Selectors / parameters
 

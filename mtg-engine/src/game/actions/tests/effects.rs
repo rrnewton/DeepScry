@@ -2993,6 +2993,88 @@ mod tests {
         );
     }
 
+    /// Card compat: original dual lands Badlands / Scrubland / Bayou.
+    ///
+    /// Scripts (cardsfolder/{b,s}/{badlands,scrubland,bayou}.txt):
+    ///   ManaCost:no cost
+    ///   Types:Land Swamp Mountain   (Badlands)
+    ///   Types:Land Plains Swamp     (Scrubland)
+    ///   Types:Land Swamp Forest     (Bayou)
+    ///
+    /// These cards carry NO printed mana ability — the two basic land
+    /// types each grant an intrinsic "{T}: Add {color}" ability per
+    /// CR 305.6. Verifies the loader adds exactly one mana ability per
+    /// basic land subtype, each producing the correct single colour
+    /// (so e.g. Badlands taps for {B} OR {R}, not just one of them and
+    /// not colourless).
+    #[test]
+    fn test_card_compat_original_dual_lands() {
+        use crate::core::Cost;
+        use std::path::PathBuf;
+
+        // (card file, expected basic land subtypes, expected mana colours
+        //  as (white, blue, black, red, green))
+        let cases: &[(&str, &str, &[(u8, u8, u8, u8, u8)])] = &[
+            // Badlands: Swamp Mountain -> {B}, {R}
+            (
+                "../cardsfolder/b/badlands.txt",
+                "Badlands",
+                &[(0, 0, 1, 0, 0), (0, 0, 0, 1, 0)],
+            ),
+            // Scrubland: Plains Swamp -> {W}, {B}
+            (
+                "../cardsfolder/s/scrubland.txt",
+                "Scrubland",
+                &[(1, 0, 0, 0, 0), (0, 0, 1, 0, 0)],
+            ),
+            // Bayou: Swamp Forest -> {B}, {G}
+            (
+                "../cardsfolder/b/bayou.txt",
+                "Bayou",
+                &[(0, 0, 1, 0, 0), (0, 0, 0, 0, 1)],
+            ),
+        ];
+
+        for (path_str, name, expected_colors) in cases {
+            let path = PathBuf::from(path_str);
+            if !path.exists() {
+                eprintln!("Skipping: cardsfolder not present at {:?}", path);
+                return;
+            }
+            let def = crate::loader::CardLoader::load_from_file(&path)
+                .unwrap_or_else(|e| panic!("{name} should load: {e:?}"));
+            assert_eq!(def.name.as_str(), *name);
+            assert!(def.types.contains(&CardType::Land), "{name} must be a Land");
+
+            let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+            // Collect the colours produced by each mana ability.
+            let mut produced: Vec<(u8, u8, u8, u8, u8)> = card
+                .activated_abilities
+                .iter()
+                .filter(|a| a.is_mana_ability && matches!(a.cost, Cost::Tap))
+                .filter_map(|a| {
+                    a.effects.iter().find_map(|e| match e {
+                        Effect::AddMana { mana, .. } => Some((mana.white, mana.blue, mana.black, mana.red, mana.green)),
+                        _ => None,
+                    })
+                })
+                .collect();
+            produced.sort_unstable();
+
+            let mut expected: Vec<(u8, u8, u8, u8, u8)> = expected_colors.to_vec();
+            expected.sort_unstable();
+
+            assert_eq!(
+                produced, expected,
+                "{name} must grant exactly the two intrinsic mana abilities for its basic land types \
+                 (CR 305.6). If only one (or a colourless) ability is present, a land subtype was \
+                 dropped. Got abilities: {:?}",
+                card.activated_abilities
+            );
+        }
+    }
+
     /// Card compat: Sengir Vampire (cardsfolder/s/sengir_vampire.txt)
     ///
     /// Script:
