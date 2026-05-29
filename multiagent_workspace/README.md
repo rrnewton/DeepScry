@@ -105,7 +105,7 @@ in `templates/` and extend `install.sh` to copy it on install.
 ## See also
 
 - `CLAUDE.md` — the actual workspace discipline guide.
-- `mtg-forge-rs/CLAUDE.md` — project-internal conventions (coding
+- `<RepoRoot>/CLAUDE.md` — project-internal conventions (coding
   rules, branch ceremony, beads workflow).
 - `.claude/skills/new-worktree/SKILL.md` — the worktree-creation
   workflow Claude Code auto-loads.

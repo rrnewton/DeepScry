@@ -31,7 +31,7 @@ consistently.
   in the primary checkout.
 - **`mtg-forge-rs`** — the GitHub project. Remote `origin` points at
   the OSS upstream. The three-tier branch structure is `feature
-  branches` → `integration` → `main`; see `mtg-forge-rs/CLAUDE.md` for
+  branches` → `integration` → `main`; see `<RepoRoot>/CLAUDE.md` for
   the merge ceremony.
 
 ## Repo Boundaries & Layout
@@ -63,7 +63,7 @@ Project boundaries:
 
 - `mtg-forge-rs/` is the actual project. Durable feature work, tests,
   architecture docs, and **beads (`mb`) issues** live there. See
-  `mtg-forge-rs/CLAUDE.md` for project-internal rules — the coding
+  `<RepoRoot>/CLAUDE.md` for project-internal rules — the coding
   conventions, DRY principles, no-clone/no-collect performance rules,
   the **No Hacky String Operations On Structured Data** rule, and the
   three-tier branch discipline.
@@ -102,7 +102,7 @@ Branch rules:
   build green with `cargo build --release --features network`. The
   `new_worktree.sh` script enforces this on every invocation.
 - Bug-fix branches require an MTG rules review before merging into
-  `integration`; see `mtg-forge-rs/.claude/skills/mtg-rules-review/SKILL.md`.
+  `integration`; see `<RepoRoot>/.claude/skills/mtg-rules-review/SKILL.md`.
 
 Push policy:
 
@@ -118,7 +118,7 @@ Push policy:
      mid-task WIP without explicit user approval.
 - `main` is protected; never push directly to `main`. Promotion to
   `main` goes through the integration ceremony described in
-  `mtg-forge-rs/CLAUDE.md` → "Branches and pushing".
+  `<RepoRoot>/CLAUDE.md` → "Branches and pushing".
 - `--force` / `--force-with-lease` pushes always require explicit user
   approval, regardless of branch.
 
@@ -402,18 +402,18 @@ done
 - Task instructions may direct outputs outside the agent CWD, such as
   `ai_docs/` or `experiments/`. Follow those destinations exactly.
 - Durable documentation, when agreed with the user, goes in the
-  project's canonical docs directory: `mtg-forge-rs/docs/` or
-  `mtg-forge-rs/ai_docs/`.
+  project's canonical docs directory: `<RepoRoot>/docs/` or
+  `<RepoRoot>/ai_docs/`.
 
 ## Task Tracking
 
 Two systems coexist and do not auto-sync:
 
 - **`mb` (minibeads)** — the PRIMARY, version-controlled task store
-  inside `mtg-forge-rs/.beads/`. Issues are durable project state.
+  inside `<RepoRoot>/.beads/`. Issues are durable project state.
   Run `mb` from inside the project / a worktree. Read `bd quickstart`
   (the upstream `bd` CLI is the underlying tool) for the workflow.
-  Conventions (mirrored from `mtg-forge-rs/CLAUDE.md`):
+  Conventions (mirrored from `<RepoRoot>/CLAUDE.md`):
   - Issues labelled "human" are user-created (priority 0).
   - Tracking issues sit at priority 1; `mtg-1` is the overall tracker.
   - Granular issues are priority 3-4; bumped to 2 for critical bugs.
@@ -445,7 +445,7 @@ sweeps, deck-pair tournaments), capture them under
 
 Use the project's transient-information stamp convention for any
 result that derives from a specific commit (see
-`mtg-forge-rs/CLAUDE.md` → "Mark transient information"):
+`<RepoRoot>/CLAUDE.md` → "Mark transient information"):
 
 ```
 YYYY-MM-DD_#DEPTH(<short-sha>)
@@ -486,7 +486,7 @@ output paths or external storage.
 on purpose and must not be deleted. To clean a working directory, use
 `git reset --hard HEAD` only — it resets tracked files without
 touching untracked files/directories. This matches the rule in
-`mtg-forge-rs/CLAUDE.md`.
+`<RepoRoot>/CLAUDE.md`.
 
 ## Coordinator-Specific Instructions
 
@@ -517,7 +517,7 @@ section covers the dispatch / coordination layer.
      other binaries, or any file > the 2 MB ceiling without explicit
      user approval. QA/screenshot output belongs in gitignored `debug/`
      or `scratch/`, never tracked — see the "NEVER commit images" rule
-     in `mtg-forge-rs/CLAUDE.md`. A green `make validate` does NOT excuse
+     in `<RepoRoot>/CLAUDE.md`. A green `make validate` does NOT excuse
      a polluting diff; the orchestrator owns this gate.
   3. Move the row from `ACTIVE.md` to `ARCHIVED.md`.
   4. `git -C mtg-forge-rs worktree remove worktrees/<branch>`.
@@ -552,7 +552,7 @@ tool / `Agent` tool):
   The auto-isolation worktree is reaped on agent completion, which
   is the wrong lifecycle for multi-session feature branches.
 - Every sub-agent brief must explicitly cite this CLAUDE.md and the
-  project-internal `mtg-forge-rs/CLAUDE.md` so the sub-agent knows
+  project-internal `<RepoRoot>/CLAUDE.md` so the sub-agent knows
   the discipline rules without harness context.
 - Sub-agents that file beads issues should use `mb` (the project's
   minibeads CLI), NOT the `tg` ephemeral task graph. `tg` is

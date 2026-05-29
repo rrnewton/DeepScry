@@ -1,12 +1,12 @@
 ---
 name: compatibility_tracking
-description: Standard workflow for testing, classifying, and tracking individual MTG card compatibility in mtg-forge-rs. Covers per-card beads issue structure, the parallel per-effect/keyword support matrix, the WORKING/PARTIAL/BROKEN classification, the mandatory game-log verification step, regression tests (parser-shape unit + e2e puzzle), and the isolated-worktree commit-and-push flow. Use whenever a card is being evaluated, debugged, or fixed for compatibility — including ad-hoc, single-card work, not just batch testing.
+description: Standard workflow for testing, classifying, and tracking individual MTG card compatibility in DeepScry. Covers per-card beads issue structure, the parallel per-effect/keyword support matrix, the WORKING/PARTIAL/BROKEN classification, the mandatory game-log verification step, regression tests (parser-shape unit + e2e puzzle), and the isolated-worktree commit-and-push flow. Use whenever a card is being evaluated, debugged, or fixed for compatibility — including ad-hoc, single-card work, not just batch testing.
 ---
 
 # Compatibility Tracking — MTG Forge-rs
 
 This skill codifies how we test, classify, and track individual card
-support in mtg-forge-rs. It is invoked by the
+support in DeepScry. It is invoked by the
 `expand_MTG_compatibility` command for random-discovery batch work, by
 the `targeted-compatibility` skill
 (`.claude/skills/targeted_compatibility/SKILL.md`) for work focused on

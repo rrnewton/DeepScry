@@ -5,7 +5,7 @@ description: Use BEFORE committing any new/changed beads issue to the integratio
 
 # Beads Integration Commit (renumber serialization point)
 
-Per `mtg-forge-rs/CLAUDE.md` → "Issue IDs: hash on worktrees, numeric on
+Per `<RepoRoot>/CLAUDE.md` → "Issue IDs: hash on worktrees, numeric on
 integration": every NEW issue is born **hash-based** (`mb-hash-ids: true`)
 so parallel worktrees never collide. The **integration branch / primary
 checkout is the serialization point** where hash IDs get renumbered to

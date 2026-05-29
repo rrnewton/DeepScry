@@ -1,6 +1,6 @@
 # Archived worktrees
 
-Historical log of mtg-forge-rs worktrees that have been closed out and
+Historical log of DeepScry worktrees that have been closed out and
 removed from disk. Each row records the final state of the branch at
 archive time so future agents can reason about stranded refs without
 re-cloning.

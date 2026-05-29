@@ -1,6 +1,6 @@
 # Active worktrees
 
-This file lists every live mtg-forge-rs worktree in
+This file lists every live DeepScry worktree in
 `<parent>/worktrees/` along with its branch and one-line purpose. It is
 the durable source of truth for "what agent work is in flight on this
 machine."
