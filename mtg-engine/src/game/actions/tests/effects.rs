@@ -3889,4 +3889,141 @@ mod tests {
             );
         }
     }
+
+    /// Card compat: Underworld Dreams (cardsfolder/u/underworld_dreams.txt)
+    ///
+    /// Script:
+    ///   ManaCost:B B B
+    ///   Types:Enchantment
+    ///   T:Mode$ Drawn | ValidCard$ Card.OppOwn | Execute$ TrigDamage
+    ///   SVar:TrigDamage:DB$ DealDamage | Defined$ TriggeredPlayer | NumDmg$ 1
+    ///
+    /// Asserts the parsed shape: {B}{B}{B} Enchantment carrying a CardDrawn
+    /// trigger with a DealDamage effect. The gameplay behavior (the OPPONENT
+    /// who drew takes 1 damage, while the controller's own draws do not
+    /// trigger) is covered by tests/underworld_dreams_draw_damage_e2e.sh.
+    #[test]
+    fn test_card_compat_underworld_dreams() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/u/underworld_dreams.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Underworld Dreams should load");
+
+        assert_eq!(def.name.as_str(), "Underworld Dreams");
+        assert_eq!(def.mana_cost.black, 3, "Cost should be {{B}}{{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let draw_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::CardDrawn)
+            .expect("Underworld Dreams must have a CardDrawn trigger");
+        assert!(
+            draw_trigger
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::DealDamage { .. })),
+            "Underworld Dreams' draw trigger must deal damage. Got: {:?}",
+            draw_trigger.effects
+        );
+    }
+
+    /// Card compat: Royal Assassin (cardsfolder/r/royal_assassin.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 B B
+    ///   Types:Creature Human Assassin
+    ///   PT:1/1
+    ///   A:AB$ Destroy | Cost$ T | ValidTgts$ Creature.tapped
+    ///
+    /// Asserts the parsed shape: {1}{B}{B} 1/1 with a tap-cost activated ability
+    /// producing a Destroy effect. The gameplay behavior (destroys a tapped
+    /// creature, and is NOT offered against an untapped creature) is covered by
+    /// tests/royal_assassin_destroys_tapped_e2e.sh.
+    #[test]
+    fn test_card_compat_royal_assassin() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/royal_assassin.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Royal Assassin should load");
+
+        assert_eq!(def.name.as_str(), "Royal Assassin");
+        assert_eq!(def.mana_cost.black, 2, "Cost should be {{1}}{{B}}{{B}}");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{B}}{{B}}");
+        assert_eq!(def.power, Some(1));
+        assert_eq!(def.toughness, Some(1));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let destroy_ability = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::DestroyPermanent { .. })))
+            .expect("Royal Assassin must have a Destroy activated ability");
+        assert!(
+            destroy_ability.cost.includes_tap(),
+            "Royal Assassin's Destroy ability must have a tap cost. Got: {:?}",
+            destroy_ability.cost
+        );
+    }
+
+    /// Card compat: Will-o'-the-Wisp (cardsfolder/w/will_o_the_wisp.txt)
+    ///
+    /// Script:
+    ///   ManaCost:B
+    ///   Types:Creature Spirit
+    ///   PT:0/1
+    ///   K:Flying
+    ///   A:AB$ Regenerate | Cost$ B
+    ///
+    /// Asserts the parsed shape: {B} 0/1 with Flying and a {B}-cost activated
+    /// ability producing a Regenerate effect targeting itself. The gameplay
+    /// behavior (the ability grants a regeneration shield in a real game) is
+    /// covered by tests/will_o_the_wisp_regenerate_e2e.sh. The shield's
+    /// destruction-prevention semantics are covered by the existing
+    /// test_regeneration_shield_* tests in keywords.rs.
+    #[test]
+    fn test_card_compat_will_o_the_wisp() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/w/will_o_the_wisp.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Will-o'-the-Wisp should load");
+
+        assert_eq!(def.name.as_str(), "Will-o'-the-Wisp");
+        assert_eq!(def.mana_cost.black, 1, "Cost should be {{B}}");
+        assert_eq!(def.power, Some(0));
+        assert_eq!(def.toughness, Some(1));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Will-o'-the-Wisp must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+
+        assert!(
+            card.activated_abilities
+                .iter()
+                .any(|a| a.effects.iter().any(|e| matches!(e, Effect::Regenerate { .. }))),
+            "Will-o'-the-Wisp must have a Regenerate activated ability. Got: {:?}",
+            card.activated_abilities
+        );
+    }
 }

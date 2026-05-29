@@ -1,0 +1,24 @@
+[metadata]
+Name:Will-o-the-Wisp regenerate ability grants a shield
+Goal:Survive
+Turns:5
+Difficulty:Easy
+Description:P0 has Will-o'-the-Wisp (0/1 flyer) and a Swamp. Activating {B}: Regenerate grants a regeneration shield. (The shield's destruction-prevention semantics are covered by the engine's regeneration unit tests.)
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Will-o'-the-Wisp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

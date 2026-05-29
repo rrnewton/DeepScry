@@ -1,0 +1,24 @@
+[metadata]
+Name:Royal Assassin destroys a tapped creature
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 has an untapped Royal Assassin. P1 has a tapped Serra Angel. Royal Assassin taps to destroy the tapped creature. (Its target restriction is Creature.tapped, so it cannot be activated against an untapped creature.)
+
+[state]
+turn=3
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Royal Assassin; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Serra Angel|Tapped; Plains
+p1exile=
