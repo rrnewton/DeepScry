@@ -5,7 +5,9 @@
 //! JavaScript can fill from WebSocket callbacks.
 
 use crate::core::{PlayerId, SpellAbility};
-use crate::network::{ActionLog, ChoiceType, ClientMessage, DeckSubmission, ServerMessage, StateSyncEntry};
+use crate::network::{
+    ActionLog, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission, ServerMessage, StateSyncEntry,
+};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -41,13 +43,24 @@ impl NetworkState {
     }
 }
 
-/// Data from an OpponentChoice message
+/// Data from an OpponentChoice message.
+///
+/// Carry-on view returned by [`WasmNetworkClient::pop_opponent_choice`] and
+/// [`WasmNetworkClient::peek_opponent_choice`]. The underlying storage in
+/// Phase 2 step 2 is now an `ActionLog<ChoiceEntry>` keyed by
+/// `action_count`; this struct materialises the index + payload back into
+/// the single shape `WasmRemoteController` and the SMART damage-assignment
+/// overrides already consume. Keeping the shape stable across the refactor
+/// localises the change to the storage layer.
 #[derive(Debug, Clone)]
 pub struct OpponentChoiceData {
     pub choice_seq: u32,
     pub choice_indices: Vec<usize>,
     pub description: String,
     pub spell_ability: Option<SpellAbility>,
+    /// Server-reported `action_count` (= the `ActionLog<ChoiceEntry>` key
+    /// in the new storage). Preserved for callers that still want to log
+    /// or diff it.
     pub action_count: u64,
     /// For LibrarySearchByName choices: the specific CardId that was chosen.
     /// Allows the shadow game's WasmRemoteController to know which card moved to hand.
@@ -57,6 +70,25 @@ pub struct OpponentChoiceData {
     /// pick the correct blocker even when the index would point to a different
     /// CardId in the client's view than in the server's view.
     pub target_card_ids: Option<Vec<crate::core::CardId>>,
+}
+
+impl OpponentChoiceData {
+    /// Materialise the `ActionLog`-stored `(action_count, ChoiceEntry)`
+    /// pair back into the legacy `OpponentChoiceData` shape that
+    /// `WasmRemoteController` (and the SMART damage-assignment overrides)
+    /// consume. Cheap clone of the structured payload — the same allocation
+    /// the old `VecDeque` consumed when it `push_back`ed.
+    fn from_log_entry(action_count: u64, entry: &ChoiceEntry) -> Self {
+        Self {
+            choice_seq: entry.choice_seq,
+            choice_indices: entry.choice_indices.clone(),
+            description: entry.description.clone(),
+            spell_ability: entry.spell_ability.clone(),
+            action_count,
+            library_search_result: entry.library_search_result,
+            target_card_ids: entry.target_card_ids.clone(),
+        }
+    }
 }
 
 /// Data from a ChoiceRequest message
@@ -128,8 +160,36 @@ pub struct WasmNetworkClient {
     /// of `docs/NETWORK_ACTION_LOG.md` § 8.
     last_applied_state_sync_ac: u64,
 
-    /// Queued OpponentChoice messages (consumed by WasmRemoteController)
-    opponent_choices: VecDeque<OpponentChoiceData>,
+    /// Append-only, `action_count`-indexed per-controller choice buffer for
+    /// opponent (remote) choices.
+    ///
+    /// Backs the Phase 2 step 2 migration described in
+    /// `docs/NETWORK_ACTION_LOG.md` § 3.1 / `NETWORK_ACTION_LOG_MIGRATION.md`
+    /// § 2.1. The WS receive handler pushes `ServerMessage::OpponentChoice`
+    /// here keyed by the server-reported `action_count`. Reads are
+    /// non-destructive: a per-client cursor
+    /// (`next_opponent_choice_cursor`) records how far the controller has
+    /// consumed, and a snapshot rewind resets the cursor without touching
+    /// the log itself (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
+    ///
+    /// Replaces the legacy `VecDeque<OpponentChoiceData>` queue and its
+    /// destructive `pop_front` semantics. The wire-level `action_count` is
+    /// the log's key; the structured payload is `ChoiceEntry`. See the
+    /// "STATE-SYNC LOG" parallel for the same shape applied to reveals /
+    /// reorders in step 1.
+    pub opponent_choices: ActionLog<ChoiceEntry>,
+
+    /// Read cursor into `opponent_choices`. The next `pop_opponent_choice`
+    /// returns the first entry whose `action_count > next_opponent_choice_cursor`;
+    /// the cursor then advances to that entry's `action_count`.
+    ///
+    /// This preserves the existing FIFO consume semantics that
+    /// `WasmRemoteController` relies on while the underlying storage moves
+    /// to append-only / non-destructive. A future step (the per-controller
+    /// `choose_at(view, ac)` trait method described in
+    /// `docs/NETWORK_ACTION_LOG.md` § 3.1) lets the engine ask for the
+    /// entry at a specific `action_count`, bypassing this cursor entirely.
+    next_opponent_choice_cursor: u64,
 
     /// Current ChoiceRequest from server (if any)
     current_choice_request: Option<ChoiceRequestData>,
@@ -231,7 +291,8 @@ impl WasmNetworkClient {
             state_sync: ActionLog::new(),
             next_state_sync_ac: 0,
             last_applied_state_sync_ac: 0,
-            opponent_choices: VecDeque::new(),
+            opponent_choices: ActionLog::new(),
+            next_opponent_choice_cursor: 0,
             current_choice_request: None,
             choice_acknowledged: true, // Start acknowledged (no pending)
             last_submitted_choice_seq: None,
@@ -699,15 +760,26 @@ impl WasmNetworkClient {
                     action_count,
                     description
                 );
-                self.opponent_choices.push_back(OpponentChoiceData {
-                    choice_seq,
-                    choice_indices,
-                    description,
-                    spell_ability,
+                // Phase 2 step 2: append to the per-controller choice
+                // buffer keyed by the server-reported `action_count`.
+                // The wire-protocol `action_count` is server-authoritative
+                // and strictly monotonic across choices, so it directly
+                // satisfies `ActionLog::push`'s monotonicity invariant
+                // (docs/NETWORK_ACTION_LOG.md § 8 invariant #2). If the
+                // server ever sends a stale or out-of-order ac, the push
+                // will panic — which is the correct response per
+                // NETWORK_ARCHITECTURE.md § "Desync is ALWAYS a Fatal Error".
+                self.opponent_choices.push(
                     action_count,
-                    library_search_result,
-                    target_card_ids,
-                });
+                    ChoiceEntry {
+                        choice_seq,
+                        choice_indices,
+                        description,
+                        spell_ability,
+                        library_search_result,
+                        target_card_ids,
+                    },
+                );
             }
 
             ServerMessage::ChoiceAccepted { choice_seq, .. } => {
@@ -843,24 +915,79 @@ impl WasmNetworkClient {
         self.choice_acknowledged
     }
 
-    /// Check if an OpponentChoice is pending
-    pub fn has_opponent_choice(&self) -> bool {
-        !self.opponent_choices.is_empty()
-    }
-
-    /// Pop the next OpponentChoice
-    pub fn pop_opponent_choice(&mut self) -> Option<OpponentChoiceData> {
-        self.opponent_choices.pop_front()
-    }
-
-    /// Peek at the next OpponentChoice without consuming it.
+    /// Check if at least one unconsumed `OpponentChoice` is buffered.
     ///
-    /// Used by SMART damage assignment overrides in `WasmRemoteController` so
-    /// the override can extract `target_card_ids` BEFORE calling `try_get_choice`,
-    /// which pops the entry. The peek-then-pop pattern is needed because the
-    /// trait method receives no protocol context, only blocker lists.
-    pub fn peek_opponent_choice(&self) -> Option<&OpponentChoiceData> {
-        self.opponent_choices.front()
+    /// Phase 2 step 2: this is the cursor-vs-frontier test on
+    /// `opponent_choices` — equivalent to the legacy `!is_empty()` check
+    /// against the old `VecDeque`, but it derives the answer from the
+    /// non-destructive `ActionLog` + cursor pair. See the field-level
+    /// docs on `opponent_choices` / `next_opponent_choice_cursor`.
+    pub fn has_opponent_choice(&self) -> bool {
+        self.opponent_choices
+            .frontier()
+            .is_some_and(|f| f > self.next_opponent_choice_cursor)
+    }
+
+    /// Consume the next buffered `OpponentChoice` (the smallest
+    /// `action_count` strictly greater than the read cursor).
+    ///
+    /// **Non-destructive read.** The underlying `ActionLog` is
+    /// untouched; only the per-controller cursor advances. A subsequent
+    /// `reset_opponent_choice_cursor()` re-exposes the entries to a
+    /// replay pass without re-fetching from the server (invariant #3 of
+    /// `docs/NETWORK_ACTION_LOG.md` § 8).
+    pub fn pop_opponent_choice(&mut self) -> Option<OpponentChoiceData> {
+        let (ac, entry) = self.next_opponent_choice_unconsumed()?;
+        // Clone before bumping the cursor — entry borrows `&self`, so we
+        // materialise it BEFORE the `&mut self` cursor mutation below.
+        let materialised = OpponentChoiceData::from_log_entry(ac, entry);
+        self.next_opponent_choice_cursor = ac;
+        Some(materialised)
+    }
+
+    /// Peek at the next buffered `OpponentChoice` without consuming it.
+    ///
+    /// Used by SMART damage assignment overrides in `WasmRemoteController`
+    /// so the override can extract `target_card_ids` BEFORE calling the
+    /// pop path. The peek-then-pop pattern is needed because the trait
+    /// method receives no protocol context, only blocker lists.
+    ///
+    /// Returns the entry as an owned `OpponentChoiceData` (cheap clone of
+    /// the structured fields). The previous API returned `Option<&_>`; the
+    /// new API returns owned `Option<_>` because the `ActionLog`-backed
+    /// storage materialises the carry-on `action_count` alongside the
+    /// payload (the wire `OpponentChoiceData` shape persists across the
+    /// refactor).
+    pub fn peek_opponent_choice(&self) -> Option<OpponentChoiceData> {
+        let (ac, entry) = self.next_opponent_choice_unconsumed()?;
+        Some(OpponentChoiceData::from_log_entry(ac, entry))
+    }
+
+    /// Internal helper: find the first `(action_count, &ChoiceEntry)` in
+    /// `opponent_choices` with `action_count > next_opponent_choice_cursor`.
+    /// Returns `None` if no unconsumed entry is available.
+    ///
+    /// Linear scan over the unconsumed suffix — in practice <= 1 entry at
+    /// a time (the WS reader pushes exactly one OpponentChoice per remote
+    /// turn). The `ActionLog::iter` impl yields in ascending `ac` order,
+    /// so the first match is the correct next entry.
+    fn next_opponent_choice_unconsumed(&self) -> Option<(u64, &ChoiceEntry)> {
+        self.opponent_choices
+            .iter()
+            .find(|(ac, _)| *ac > self.next_opponent_choice_cursor)
+    }
+
+    /// Reset the opponent-choice read cursor so the next `pop_opponent_choice`
+    /// re-reads every buffered entry from scratch.
+    ///
+    /// Used by snapshot-resume / rewind code paths: when the engine
+    /// rewinds `game.action_count`, the controller's choice consumption
+    /// also rewinds, so the log's entries must be re-readable during the
+    /// forward replay pass. The log itself stays intact — non-destructive
+    /// reads are precisely what makes "rewind + replay" free
+    /// (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
+    pub fn reset_opponent_choice_cursor(&mut self) {
+        self.next_opponent_choice_cursor = 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1142,7 +1269,8 @@ impl WasmNetworkClient {
         self.state_sync = ActionLog::new();
         self.next_state_sync_ac = 0;
         self.last_applied_state_sync_ac = 0;
-        self.opponent_choices.clear();
+        self.opponent_choices = ActionLog::new();
+        self.next_opponent_choice_cursor = 0;
         self.current_choice_request = None;
         self.choice_acknowledged = true;
         self.outbound_queue.clear();
@@ -1279,5 +1407,142 @@ mod tests {
         assert!(!c.has_unapplied_state_sync());
         c.push_state_sync(mk_reveal("b"));
         assert!(c.has_unapplied_state_sync());
+    }
+
+    // ─── Phase 2 step 2 — per-controller choice buffer ─────────────────
+
+    /// Drive the on_message OpponentChoice path. Bypasses JSON parsing by
+    /// directly calling the private handler; verifies the message lands in
+    /// `opponent_choices` keyed by the wire `action_count`.
+    fn push_opponent_choice(client: &mut WasmNetworkClient, ac: u64, choice_seq: u32, desc: &str) {
+        client.handle_server_message(crate::network::ServerMessage::OpponentChoice {
+            choice_seq,
+            player: PlayerId::new(1),
+            choice_type: crate::network::ChoiceType::Priority,
+            choice_indices: vec![choice_seq as usize],
+            description: desc.into(),
+            action_count: ac,
+            timestamp_ms: 0,
+            spell_ability: None,
+            library_search_result: None,
+            target_card_ids: None,
+            state_hash_after: None,
+            debug_info: None,
+        });
+    }
+
+    #[test]
+    fn opponent_choice_appended_to_action_log_by_wire_action_count() {
+        // Wire-protocol `action_count` is the ActionLog key; pushes in
+        // strictly-increasing order satisfy ActionLog::push's monotonicity
+        // invariant. This replaces the legacy VecDeque::push_back.
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 5, 1, "first");
+        push_opponent_choice(&mut c, 12, 2, "second");
+        push_opponent_choice(&mut c, 100, 3, "third");
+
+        assert_eq!(c.opponent_choices.len(), 3);
+        assert_eq!(c.opponent_choices.frontier(), Some(100));
+        // Non-destructive: same look-up returns the same payload twice.
+        let a = c.opponent_choices.get(12).unwrap().description.clone();
+        let b = c.opponent_choices.get(12).unwrap().description.clone();
+        assert_eq!(a, "second");
+        assert_eq!(b, "second");
+    }
+
+    #[test]
+    fn pop_opponent_choice_advances_cursor_without_dropping_entries() {
+        // Replaces the legacy `VecDeque::pop_front`. The log is untouched;
+        // only the per-client cursor advances. After three pops, the log
+        // still has all three entries — a `reset_opponent_choice_cursor`
+        // would re-expose them (the rewind / replay property).
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 3, 1, "a");
+        push_opponent_choice(&mut c, 7, 2, "b");
+        push_opponent_choice(&mut c, 9, 3, "c");
+
+        assert!(c.has_opponent_choice());
+        let first = c.pop_opponent_choice().unwrap();
+        assert_eq!(first.choice_seq, 1);
+        assert_eq!(first.action_count, 3);
+        let second = c.pop_opponent_choice().unwrap();
+        assert_eq!(second.choice_seq, 2);
+        assert_eq!(second.action_count, 7);
+        let third = c.pop_opponent_choice().unwrap();
+        assert_eq!(third.choice_seq, 3);
+        assert_eq!(third.action_count, 9);
+        assert!(!c.has_opponent_choice());
+        assert!(c.pop_opponent_choice().is_none());
+
+        // Log itself is intact — non-destructive read invariant.
+        assert_eq!(c.opponent_choices.len(), 3);
+    }
+
+    #[test]
+    fn peek_opponent_choice_does_not_advance_cursor() {
+        // Multi-call peek must yield the same entry; only pop advances
+        // the cursor. The SMART damage assignment overrides in
+        // WasmRemoteController rely on this: peek to grab target_card_ids,
+        // then pop the same entry.
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 4, 11, "block");
+
+        let peek_a = c.peek_opponent_choice().unwrap();
+        let peek_b = c.peek_opponent_choice().unwrap();
+        assert_eq!(peek_a.choice_seq, 11);
+        assert_eq!(peek_b.choice_seq, 11);
+        assert_eq!(peek_a.action_count, 4);
+
+        let popped = c.pop_opponent_choice().unwrap();
+        assert_eq!(popped.choice_seq, 11);
+        assert!(c.peek_opponent_choice().is_none());
+    }
+
+    #[test]
+    fn reset_opponent_choice_cursor_re_exposes_consumed_entries() {
+        // Snapshot rewind / replay: the engine rolls back action_count via
+        // its undo log; the controller's choice consumption must also roll
+        // back. The log is the persistent store, the cursor is what moves.
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 2, 1, "first");
+        push_opponent_choice(&mut c, 8, 2, "second");
+        let _ = c.pop_opponent_choice();
+        let _ = c.pop_opponent_choice();
+        assert!(!c.has_opponent_choice());
+        assert_eq!(c.opponent_choices.len(), 2);
+
+        c.reset_opponent_choice_cursor();
+
+        assert!(c.has_opponent_choice());
+        let replay_first = c.pop_opponent_choice().unwrap();
+        assert_eq!(replay_first.choice_seq, 1);
+        let replay_second = c.pop_opponent_choice().unwrap();
+        assert_eq!(replay_second.choice_seq, 2);
+    }
+
+    #[test]
+    fn reset_clears_opponent_choice_log_and_cursor() {
+        // A new game wipes the buffer and resets the cursor (parallel to
+        // the state_sync reset case in step 1).
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 5, 1, "a");
+        let _ = c.pop_opponent_choice();
+        c.reset();
+        assert_eq!(c.opponent_choices.len(), 0);
+        assert_eq!(c.opponent_choices.frontier(), None);
+        assert!(!c.has_opponent_choice());
+    }
+
+    #[test]
+    #[should_panic(expected = "strictly increasing")]
+    fn duplicate_opponent_choice_action_count_panics() {
+        // Wire-protocol guarantee: choice action_counts are strictly
+        // monotonic per session. A duplicate is a protocol bug; per
+        // NETWORK_ARCHITECTURE.md "Desync is ALWAYS a Fatal Error" we
+        // crash rather than silently accept it. ActionLog::push provides
+        // the panic; this test verifies the wiring forwards it.
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 5, 1, "first");
+        push_opponent_choice(&mut c, 5, 2, "duplicate");
     }
 }

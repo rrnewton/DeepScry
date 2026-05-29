@@ -40,6 +40,11 @@ pub use action_log::*;
 mod state_sync;
 pub use state_sync::*;
 
+// Strongly-typed payload for the per-controller choice buffer
+// `ActionLog<ChoiceEntry>`. See docs/NETWORK_ACTION_LOG.md § 3.1.
+mod choice_entry;
+pub use choice_entry::*;
+
 // Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;
