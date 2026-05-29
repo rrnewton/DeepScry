@@ -341,14 +341,29 @@ run-release:
 	cargo run --release
 
 # Install development dependencies
-setup: install-hooks
+setup: install-hooks ensure-wasm-pack
 	@echo "=== Installing development tools ==="
 	rustup component add rustfmt clippy
 	rustup target add wasm32-unknown-unknown
-	@if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "Installing wasm-pack..."; \
-		cargo install wasm-pack; \
-	fi
+
+# Single, serialized wasm-pack install site (mtg-577).
+# Every wasm target depends on this instead of carrying its own inline
+# `cargo install wasm-pack` block. `make validate` runs the wasm builds from
+# SEPARATE recursive sub-make processes (validate-wasm-step -> $(MAKE) wasm-dev,
+# validate-network-e2e-step -> $(MAKE) wasm-network), so a plain shared
+# prerequisite in one make graph is NOT sufficient — make's "build once" only
+# applies within a single process. We therefore guard the install with flock so
+# concurrent sub-make processes serialize on a lock file; once the first install
+# finishes, every other process sees wasm-pack on PATH and the inner block is a
+# no-op. This eliminates the concurrent `cargo install wasm-pack` runs that
+# corrupted cargo metadata and surfaced as the serde "invalid type: map" error.
+.PHONY: ensure-wasm-pack
+ensure-wasm-pack:
+	@flock /tmp/mtg-wasm-pack.lock sh -c '\
+		if ! command -v wasm-pack >/dev/null 2>&1; then \
+			echo "Installing wasm-pack..."; \
+			cargo install wasm-pack; \
+		fi'
 
 # Install tracked git hooks into .git/hooks/. Run once after cloning the repo.
 # The pre-commit hook runs `cargo fmt --all -- --check` so we never push
@@ -660,12 +675,8 @@ wasm-export:
 	fi
 
 # Build WebAssembly module for browser
-wasm: wasm-export
+wasm: wasm-export ensure-wasm-pack
 	@echo "=== Building WebAssembly module ==="
-	@if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "Installing wasm-pack..."; \
-		cargo install wasm-pack; \
-	fi
 	@cd mtg-engine && wasm-pack build --target web --no-default-features --features wasm-tui
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
@@ -709,12 +720,8 @@ wasm-serve: wasm-network
 	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
 
 # Quick dev build - skips wasm-opt optimization for faster iteration
-wasm-dev: wasm-export
+wasm-dev: wasm-export ensure-wasm-pack
 	@echo "=== Building WebAssembly (dev mode - no optimization) ==="
-	@if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "Installing wasm-pack..."; \
-		cargo install wasm-pack; \
-	fi
 	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
@@ -732,12 +739,8 @@ play-web-local-dev: wasm-dev
 	@cd web && python3 -m http.server $(PORT) 2>&1 | tee server.log
 
 # Build WASM with network feature (for browser multiplayer)
-wasm-network: wasm-export
+wasm-network: wasm-export ensure-wasm-pack
 	@echo "=== Building WebAssembly with network feature ==="
-	@if ! command -v wasm-pack >/dev/null 2>&1; then \
-		echo "Installing wasm-pack..."; \
-		cargo install wasm-pack; \
-	fi
 	@# CRITICAL: nuke prior pkg/ before rebuilding. wasm-pack is incremental
 	@# and has produced stale pkg/.js + .wasm pairs in the past when source
 	@# exports change but the cache doesn't notice (mtg-475). The build is
