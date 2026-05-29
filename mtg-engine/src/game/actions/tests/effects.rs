@@ -3124,6 +3124,8 @@ mod tests {
             ("../cardsfolder/m/mox_pearl.txt", "Mox Pearl", (1, 0, 0, 0, 0)),
             ("../cardsfolder/m/mox_ruby.txt", "Mox Ruby", (0, 0, 0, 1, 0)),
             ("../cardsfolder/m/mox_emerald.txt", "Mox Emerald", (0, 0, 0, 0, 1)),
+            // Mox Sapphire: {T}: Add {U} (Troll Disk deck, mtg-527)
+            ("../cardsfolder/m/mox_sapphire.txt", "Mox Sapphire", (0, 1, 0, 0, 0)),
         ];
 
         for (path_str, name, expected) in cases {

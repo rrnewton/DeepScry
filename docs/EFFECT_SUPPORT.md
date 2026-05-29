@@ -91,6 +91,7 @@ workflow, row format, and update rules.
 | Produced$ W                     | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Mox Pearl           |
 | Produced$ R                     | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Mox Ruby            |
 | Produced$ G                     | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Mox Emerald         |
+| Produced$ U                     | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)    | Mox Sapphire        |
 | Produced$ Any                   | WORKING | 2026-05-12_#2226(928ec99f) | (fixed)   | City of Brass       |
 | Produced$ C Amount$ 4 (DB$ Mana on dies trigger) | WORKING | 2026-05-29_#2440(00e22751) | (none) | Su-Chi |
 | Intrinsic basic-land mana (CR 305.6: 1 {T}:Add ability per basic subtype) | WORKING | 2026-05-29_#2456(e30f4ce1) | (none) | Island, Plains, Tundra, Underground Sea, Badlands, Scrubland, Bayou, Plateau, Volcanic Island |
