@@ -175,7 +175,7 @@ impl<'a> GameLoop<'a> {
     /// # Returns
     /// The effective mana cost after applying all cost reductions
     fn calculate_effective_cost(&self, card: &crate::core::Card, player_id: PlayerId) -> crate::core::ManaCost {
-        use crate::core::{CostReductionTarget, KeywordArgs, StaticAbility};
+        use crate::core::{KeywordArgs, StaticAbility};
 
         let mut effective_cost = card.mana_cost;
 
@@ -211,17 +211,16 @@ impl<'a> GameLoop<'a> {
             }
         }
 
-        // Check for ReduceCost static abilities from controlled permanents
-        // Example: Gran-Gran reduces non-creature spell costs by {1} with enough Lessons in graveyard
+        // Check for ReduceCost / RaiseCost static abilities from permanents.
+        // Polarity rules (CR 601.2f): ReduceCost only helps its own controller;
+        // RaiseCost ("hose" effects like Gloom, Karma) applies regardless of
+        // who controls the source. See actions/mod.rs::calculate_effective_cost
+        // for the canonical implementation — this is the same logic from the
+        // get-available-actions / cost-payability path.
         for &bf_card_id in &self.game.battlefield.cards {
             let Some(source_card) = self.game.cards.try_get(bf_card_id) else {
                 continue;
             };
-
-            // Only consider permanents controlled by the player casting the spell
-            if source_card.controller != player_id {
-                continue;
-            }
 
             for static_ability in &source_card.static_abilities {
                 if let StaticAbility::ReduceCost {
@@ -231,15 +230,12 @@ impl<'a> GameLoop<'a> {
                     description,
                 } = static_ability
                 {
-                    // Check if the spell being cast matches the valid_card filter
-                    let spell_matches = match valid_card {
-                        CostReductionTarget::AllSpells => true,
-                        CostReductionTarget::NonCreature => !card.is_creature(),
-                        CostReductionTarget::Creature => card.is_creature(),
-                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
-                    };
+                    // ReduceCost only applies to the source controller's own spells.
+                    if source_card.controller != player_id {
+                        continue;
+                    }
 
-                    if !spell_matches {
+                    if !crate::game::actions::spell_matches_cost_filter(card, valid_card) {
                         continue;
                     }
 
@@ -269,7 +265,8 @@ impl<'a> GameLoop<'a> {
                     }
                 }
 
-                // Also check for RaiseCost (mana-based cost increases)
+                // Also check for RaiseCost (mana-based cost increases). Applies
+                // regardless of source controller.
                 if let StaticAbility::RaiseCost {
                     valid_card,
                     raised_cost,
@@ -278,15 +275,7 @@ impl<'a> GameLoop<'a> {
                 {
                     use crate::core::RaisedCost;
 
-                    // Check if the spell being cast matches the valid_card filter
-                    let spell_matches = match valid_card {
-                        CostReductionTarget::AllSpells => true,
-                        CostReductionTarget::NonCreature => !card.is_creature(),
-                        CostReductionTarget::Creature => card.is_creature(),
-                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
-                    };
-
-                    if !spell_matches {
+                    if !crate::game::actions::spell_matches_cost_filter(card, valid_card) {
                         continue;
                     }
 

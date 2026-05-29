@@ -199,6 +199,25 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         .collect()
 }
 
+/// Predicate for `CostReductionTarget` against a spell's card.
+///
+/// Centralized so ReduceCost (lines ~1313+) and RaiseCost (~1359+) can share
+/// the same match logic. New `CostReductionTarget` variants only need to be
+/// handled in one place.
+pub(crate) fn spell_matches_cost_filter(
+    card: &crate::core::Card,
+    valid_card: &crate::core::CostReductionTarget,
+) -> bool {
+    use crate::core::CostReductionTarget;
+    match valid_card {
+        CostReductionTarget::AllSpells => true,
+        CostReductionTarget::NonCreature => !card.is_creature(),
+        CostReductionTarget::Creature => card.is_creature(),
+        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
+        CostReductionTarget::Color(color) => card.is_color(*color),
+    }
+}
+
 impl GameState {
     /// Play a land from hand to battlefield
     ///
@@ -1259,7 +1278,7 @@ impl GameState {
     /// # Returns
     /// The effective mana cost after applying all cost reductions, or the original cost on error
     pub fn calculate_effective_cost(&self, card_id: CardId, player_id: PlayerId) -> crate::core::ManaCost {
-        use crate::core::{CostReductionTarget, Keyword, KeywordArgs, StaticAbility};
+        use crate::core::{Keyword, KeywordArgs, StaticAbility};
 
         let card = match self.cards.get(card_id) {
             Ok(c) => c,
@@ -1298,17 +1317,21 @@ impl GameState {
             }
         }
 
-        // Check for ReduceCost static abilities from controlled permanents
-        // Example: Gran-Gran reduces non-creature spell costs by {1} with enough Lessons in graveyard
+        // Check for ReduceCost / RaiseCost static abilities from permanents.
+        //
+        // Polarity rules (CR 601.2f):
+        // - ReduceCost is a "discount" effect — by convention these abilities
+        //   only help their own controller (e.g. Affinity-style cards,
+        //   Gran-Gran). We filter to source_card.controller == player_id.
+        // - RaiseCost is a "hose" effect — the canonical examples (Gloom,
+        //   Karma, Chains of Mephistopheles) hose all players because they
+        //   raise the cost of any spell that matches the filter, regardless
+        //   of whose battlefield the static ability is on. We do NOT filter
+        //   by controller here.
         for &bf_card_id in &self.battlefield.cards {
             let Some(source_card) = self.cards.try_get(bf_card_id) else {
                 continue;
             };
-
-            // Only consider permanents controlled by the player casting the spell
-            if source_card.controller != player_id {
-                continue;
-            }
 
             for static_ability in &source_card.static_abilities {
                 if let StaticAbility::ReduceCost {
@@ -1318,15 +1341,12 @@ impl GameState {
                     description,
                 } = static_ability
                 {
-                    // Check if the spell being cast matches the valid_card filter
-                    let spell_matches = match valid_card {
-                        CostReductionTarget::AllSpells => true,
-                        CostReductionTarget::NonCreature => !card.is_creature(),
-                        CostReductionTarget::Creature => card.is_creature(),
-                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
-                    };
+                    // ReduceCost only applies to the controlling player's own spells.
+                    if source_card.controller != player_id {
+                        continue;
+                    }
 
-                    if !spell_matches {
+                    if !spell_matches_cost_filter(card, valid_card) {
                         continue;
                     }
 
@@ -1356,7 +1376,9 @@ impl GameState {
                     }
                 }
 
-                // Also check for RaiseCost (mana-based cost increases)
+                // Also check for RaiseCost (mana-based cost increases).
+                // RaiseCost applies regardless of source controller — see polarity
+                // note above (Gloom hoses both players).
                 if let StaticAbility::RaiseCost {
                     valid_card,
                     raised_cost,
@@ -1365,15 +1387,7 @@ impl GameState {
                 {
                     use crate::core::RaisedCost;
 
-                    // Check if the spell being cast matches the valid_card filter
-                    let spell_matches = match valid_card {
-                        CostReductionTarget::AllSpells => true,
-                        CostReductionTarget::NonCreature => !card.is_creature(),
-                        CostReductionTarget::Creature => card.is_creature(),
-                        CostReductionTarget::Subtype(subtype) => card.subtypes.contains(subtype),
-                    };
-
-                    if !spell_matches {
+                    if !spell_matches_cost_filter(card, valid_card) {
                         continue;
                     }
 

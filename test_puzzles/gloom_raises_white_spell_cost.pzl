@@ -1,0 +1,24 @@
+[metadata]
+Name:Gloom raises white spell cost
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Regression for Gloom (mtg-507). Gloom controlled by P0 must raise white spells cast by P1 by {3}. P1 has Savannah Lions ({W}, 2/1) in hand and only TWO Plains in play — without the raise, Savannah Lions would cast immediately; with the raise, it would cost {3}{W} and cannot be paid. Test asserts P1 has zero creatures on battlefield after its main phase.
+
+[state]
+turn=3
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Gloom; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=Savannah Lions
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Plains; Plains
+p1exile=

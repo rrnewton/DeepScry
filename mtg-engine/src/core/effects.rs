@@ -2037,6 +2037,13 @@ pub enum CostReductionTarget {
     /// Spells of a specific subtype
     /// Corresponds to: `ValidCard$ Dragon`, `ValidCard$ Spirit`, etc.
     Subtype(crate::core::Subtype),
+
+    /// Spells of a specific color (CR 105.1 / CR 202.2)
+    /// Corresponds to: `ValidCard$ Card.White`, `ValidCard$ Card.Blue`, etc.
+    /// Used by colour-hate enchantments — Gloom (white), Karma (swamps),
+    /// CoP-style hosers — where the effect targets any spell that is the
+    /// named colour regardless of controller.
+    Color(crate::core::Color),
 }
 
 /// Condition for when a cost reduction applies

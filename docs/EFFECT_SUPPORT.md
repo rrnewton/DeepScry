@@ -89,6 +89,8 @@ workflow, row format, and update rules.
 | StaticAbility IsPresent$ <selector>             | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-203  | (multiple)   |
 | ModifyPT Affected$ Card.Self + IsPresent$ <sel> | WORKING | 2026-05-29_#2430(048328c1) | (fixed)    | Sedge Troll  |
 | StaticAbility Threshold$                        | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-203  | (multiple)   |
+| RaiseCost ValidCard$ Card.<Color> Type$ Spell   | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
+| RaiseCost own-controller filter (hose effects)  | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 
 ## Replacement effects (R:)
 

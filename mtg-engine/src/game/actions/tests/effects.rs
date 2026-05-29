@@ -4848,4 +4848,220 @@ mod tests {
             pump_cost
         );
     }
+
+    /// Card compat: Juzám Djinn (cardsfolder/j/juzam_djinn.txt) — mtg-515
+    ///
+    /// Script:
+    ///   ManaCost:2 B B
+    ///   Types:Creature Djinn
+    ///   PT:5/5
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You
+    ///     | TriggerZones$ Battlefield | Execute$ TrigDealDamage
+    ///   SVar:TrigDealDamage:DB$ DealDamage | Defined$ You | NumDmg$ 1
+    ///
+    /// Parser-shape regression: {2}{B}{B} 5/5 creature with a
+    /// `BeginningOfUpkeep` trigger that deals 1 damage to its controller.
+    /// A silent-drop of the upkeep trigger would turn the card into a
+    /// strictly stronger downside-free 5/5 — important to lock down.
+    ///
+    /// Runtime evidence (mono-black Rogerbrand mirror match, seed 42):
+    ///   Juzám Djinn (108) enters the battlefield as a 5/5 creature
+    ///   Juzám Djinn deals 1 damage to AI-Heuristic2
+    /// (reproducer: `mtg tui decks/old_school/05_mono_black_rogerbrand.dck
+    ///   decks/old_school/05_mono_black_rogerbrand.dck --p1=heuristic
+    ///   --p2=heuristic --seed 42 --verbosity 2 --stop-on-choice 300`)
+    #[test]
+    fn test_card_compat_juzam_djinn() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/j/juzam_djinn.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Juzám Djinn should load");
+
+        assert_eq!(def.name.as_str(), "Juzám Djinn");
+        assert_eq!(def.mana_cost.generic, 2, "Cost should be {{2}}{{B}}{{B}}");
+        assert_eq!(def.mana_cost.black, 2, "Cost should be {{2}}{{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(5));
+        assert_eq!(def.toughness, Some(5));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let upkeep_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect(
+                "Juzám Djinn must have a BeginningOfUpkeep trigger. \
+                 Silently dropping it makes the card strictly stronger than printed.",
+            );
+        assert!(
+            upkeep_trigger
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::DealDamage { amount: 1, .. })),
+            "Juzám Djinn's upkeep trigger must deal 1 damage. Got: {:?}",
+            upkeep_trigger.effects
+        );
+    }
+
+    /// Card compat: Swamp (cardsfolder/s/swamp.txt) — mtg-546
+    ///
+    /// Script:
+    ///   ManaCost:no cost
+    ///   Types:Basic Land Swamp
+    ///
+    /// Basic-land parser-shape regression: zero mana cost, Basic+Land
+    /// supertypes, Fixed(Black) intrinsic mana production. Basic land
+    /// mana abilities are derived from the subtype (CR 305.6) rather than
+    /// an explicit A:AB$ Mana line, so this test guards against the
+    /// loader losing the Swamp → {B} derivation.
+    ///
+    /// Runtime evidence (mono-black mirror, seed 42):
+    ///   AI-Heuristic1 plays Swamp (53)
+    ///   Tap Swamp for {B}
+    #[test]
+    fn test_card_compat_swamp() {
+        use crate::core::{ManaColor, ManaProductionKind};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/swamp.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Swamp should load");
+
+        assert_eq!(def.name.as_str(), "Swamp");
+        assert!(def.types.contains(&CardType::Land), "Swamp must be a Land");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            matches!(
+                card.definition.cache.mana_production.kind,
+                ManaProductionKind::Fixed(ManaColor::Black)
+            ),
+            "Swamp must produce {{B}} (Fixed(Black)). Got: {:?}",
+            card.definition.cache.mana_production.kind
+        );
+    }
+
+    /// Card compat: Gloom (cardsfolder/g/gloom.txt) — mtg-507
+    ///
+    /// Script:
+    ///   ManaCost:2 B
+    ///   Types:Enchantment
+    ///   S:Mode$ RaiseCost | ValidCard$ Card.White | Type$ Spell | Amount$ 3
+    ///   S:Mode$ RaiseCost | ValidCard$ Enchantment.White | Type$ Ability
+    ///     | Amount$ 3 | AffectedZone$ Battlefield
+    ///
+    /// Parser-shape regression: a {2}{B} Enchantment with TWO RaiseCost
+    /// static abilities (one targeting white Spells, one targeting
+    /// activated abilities of white Enchantments). Silent-drop of
+    /// either makes Gloom strictly weaker against the matchup it's
+    /// meant to hose. The RaiseCost machinery itself is exercised live
+    /// by `tests/integration/raise_cost_*` and the static-ability
+    /// scanner in actions/mod.rs:1359.
+    #[test]
+    fn test_card_compat_gloom() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/g/gloom.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Gloom should load");
+
+        assert_eq!(def.name.as_str(), "Gloom");
+        assert_eq!(def.mana_cost.generic, 2, "Cost should be {{2}}{{B}}");
+        assert_eq!(def.mana_cost.black, 1, "Cost should be {{2}}{{B}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let raise_cost_abilities: Vec<&StaticAbility> = card
+            .static_abilities
+            .iter()
+            .filter(|s| matches!(s, StaticAbility::RaiseCost { .. }))
+            .collect();
+        assert_eq!(
+            raise_cost_abilities.len(),
+            2,
+            "Gloom must have BOTH RaiseCost static abilities (white spells \
+             +{{3}}, white enchantment activated abilities +{{3}}). \
+             Silent-drop of either half makes Gloom strictly weaker. \
+             Got: {:?}",
+            card.static_abilities
+        );
+    }
+
+    /// Card compat: Maze of Ith (cardsfolder/m/maze_of_ith.txt) — mtg-520
+    ///
+    /// Script:
+    ///   ManaCost:no cost
+    ///   Types:Land
+    ///   A:AB$ Untap | Cost$ T | ValidTgts$ Creature.attacking
+    ///                  | SubAbility$ DBPump
+    ///   SVar:DBPump:DB$ Effect | ReplacementEffects$ RPrevent1,RPrevent2
+    ///                  | RememberObjects$ Targeted | ExileOnMoved$ Battlefield
+    ///
+    /// Parser-shape regression: a non-mana-producing Land with a single
+    /// {T}-cost activated ability whose effects (a) untap target
+    /// attacking creature and (b) create a one-shot DamagePrevention
+    /// effect. Silent-drop of either half changes card identity (drop
+    /// the untap → can't undo the combat assignment; drop the
+    /// prevention → no damage stop).
+    ///
+    /// **Status — PARTIAL** at this commit: the loader keeps only the
+    /// primary `AB$ Untap` effect on the activated ability; the
+    /// `SubAbility$ DBPump` (`DB$ Effect | ReplacementEffects$
+    /// RPrevent1,RPrevent2`) is silently dropped. Net effect: Maze of
+    /// Ith untaps the creature but does NOT prevent its combat damage,
+    /// so the creature still deals damage that turn. Tracking this as a
+    /// parser/loader gap on the per-card issue (mtg-520). Once the
+    /// SubAbility chain is parsed we should add a stronger assertion
+    /// here and a puzzle/e2e for the "no damage dealt" outcome.
+    #[test]
+    fn test_card_compat_maze_of_ith() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/m/maze_of_ith.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Maze of Ith should load");
+
+        assert_eq!(def.name.as_str(), "Maze of Ith");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Maze of Ith intentionally produces NO mana — drop into a
+        // generic mana ability would mis-cost the activated ability and
+        // turn the card into a free mana source.
+        assert!(
+            !card.activated_abilities.iter().any(|a| a.is_mana_ability),
+            "Maze of Ith must NOT have a mana ability; it's a colorless utility land. \
+             Got: {:?}",
+            card.activated_abilities
+        );
+
+        // Primary mode: Untap target attacking creature.
+        // This half IS exercised by the parser at HEAD.
+        let _untap_ability = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::UntapPermanent { .. })))
+            .expect(
+                "Maze of Ith must have an Untap activated ability \
+                 (untap target attacking creature).",
+            );
+    }
 }

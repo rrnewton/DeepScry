@@ -3792,6 +3792,11 @@ impl CardDefinition {
                                 "Card.nonCreature" => CostReductionTarget::NonCreature,
                                 "Card" | "Card.Self" => CostReductionTarget::AllSpells,
                                 "Creature" => CostReductionTarget::Creature,
+                                "Card.White" => CostReductionTarget::Color(crate::core::Color::White),
+                                "Card.Blue" => CostReductionTarget::Color(crate::core::Color::Blue),
+                                "Card.Black" => CostReductionTarget::Color(crate::core::Color::Black),
+                                "Card.Red" => CostReductionTarget::Color(crate::core::Color::Red),
+                                "Card.Green" => CostReductionTarget::Color(crate::core::Color::Green),
                                 _ => {
                                     // Try to parse as a subtype (e.g., "Dragon", "Spirit")
                                     CostReductionTarget::Subtype(Subtype::new(value))
