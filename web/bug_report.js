@@ -234,11 +234,25 @@ export function initBugReport(config) {
         return activeClient || (typeof getNetworkClient === 'function' ? getNetworkClient() : null);
     }
 
+    // The page-provided log getters may reach into the WASM client (e.g.
+    // tui_get_logs_json). During wasm/network e2e startup the dialog chrome is
+    // injected and refreshCaptureCounts() runs BEFORE the WASM module is
+    // initialized, so calling those getters throws
+    // "Cannot read properties of undefined (reading '__wbindgen_free')". Guard
+    // both getters in ONE place (DRY) so a not-yet-ready client degrades to an
+    // empty capture rather than crashing the whole page (mtg-587).
+    function safeLogs(getter) {
+        try {
+            return getter() || [];
+        } catch (_error) {
+            return [];
+        }
+    }
     function getReportConsoleLogs() {
-        return getConsoleLogs() || [];
+        return safeLogs(getConsoleLogs);
     }
     function getReportGameLogs() {
-        return getGameLogs() || [];
+        return safeLogs(getGameLogs);
     }
 
     function refreshCaptureCounts() {

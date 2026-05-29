@@ -2694,23 +2694,26 @@ fn bug_report_repo_root() -> PathBuf {
 ///
 /// This is read from the `MTG_GH_REPO` environment variable (set via deploy
 /// config) so a future org/repo move is a single configuration change rather
-/// than a code edit. When unset, `gh` falls back to inferring the repository
-/// from the git remote in `repo_root`, preserving the previous behavior.
-fn bug_report_gh_repo() -> Option<String> {
+/// than a code edit. When unset, it falls back to the compiled-in
+/// [`BUG_REPORT_GITHUB_REPO`] default so filing is ALWAYS scoped to an
+/// explicit repo — never dependent on `gh`'s cwd / git-remote auto-detection
+/// (mtg-587).
+fn bug_report_gh_repo() -> String {
     std::env::var("MTG_GH_REPO")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| BUG_REPORT_GITHUB_REPO.to_string())
 }
 
-/// Append a `--repo <OWNER/REPO>` selector to `gh` subcommand args when the
-/// target repository is configured via `MTG_GH_REPO`. No-op (leaving `gh` to
-/// infer from the git remote) when the variable is unset.
+/// Append a `-R <OWNER/REPO>` selector to `gh` subcommand args, scoping the
+/// command to the configured bug-report repository (`MTG_GH_REPO` override, or
+/// the [`BUG_REPORT_GITHUB_REPO`] default). Keeps repo selection in ONE place
+/// so call sites never hardcode the repo (mtg-602 config-drive + mtg-587
+/// explicit-repo invariant).
 fn with_configured_gh_repo(mut gh_args: Vec<String>) -> Vec<String> {
-    if let Some(repo) = bug_report_gh_repo() {
-        gh_args.push("--repo".to_string());
-        gh_args.push(repo);
-    }
+    gh_args.push("-R".to_string());
+    gh_args.push(bug_report_gh_repo());
     gh_args
 }
 
@@ -2906,8 +2909,6 @@ fn available_bug_report_labels_with_runner(
         &with_configured_gh_repo(vec![
             "label".to_string(),
             "list".to_string(),
-            "-R".to_string(),
-            BUG_REPORT_GITHUB_REPO.to_string(),
             "--json".to_string(),
             "name".to_string(),
             "--limit".to_string(),
@@ -3044,8 +3045,6 @@ fn create_github_issue_with_runner(
     let mut issue_args = vec![
         "issue".to_string(),
         "create".to_string(),
-        "-R".to_string(),
-        BUG_REPORT_GITHUB_REPO.to_string(),
         "--title".to_string(),
         bug_report_issue_title(report),
         "--body-file".to_string(),
@@ -3220,13 +3219,22 @@ mod tests {
         // Snapshot any externally-set value so the test is self-contained.
         let previous = std::env::var("MTG_GH_REPO").ok();
 
-        // Unset: no `--repo` selector is appended (gh infers from git remote).
+        // Unset: falls back to the compiled-in default repo so filing is
+        // ALWAYS scoped to an explicit `-R <repo>` (never cwd-dependent).
         std::env::remove_var("MTG_GH_REPO");
         let args = with_configured_gh_repo(vec!["issue".to_string(), "create".to_string()]);
-        assert_eq!(args, vec!["issue".to_string(), "create".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "issue".to_string(),
+                "create".to_string(),
+                "-R".to_string(),
+                BUG_REPORT_GITHUB_REPO.to_string(),
+            ]
+        );
 
-        // Configured: `--repo <OWNER/REPO>` is appended so a future org/repo
-        // move is a single config change rather than a code edit.
+        // Configured: `-R <OWNER/REPO>` overrides the default so a future
+        // org/repo move is a single config change rather than a code edit.
         std::env::set_var("MTG_GH_REPO", "exampleorg/example-repo");
         let args = with_configured_gh_repo(vec!["issue".to_string(), "create".to_string()]);
         assert_eq!(
@@ -3234,15 +3242,22 @@ mod tests {
             vec![
                 "issue".to_string(),
                 "create".to_string(),
-                "--repo".to_string(),
+                "-R".to_string(),
                 "exampleorg/example-repo".to_string(),
             ]
         );
 
-        // Whitespace-only / blank values are treated as unset.
+        // Whitespace-only / blank values are treated as unset (default repo).
         std::env::set_var("MTG_GH_REPO", "   ");
         let args = with_configured_gh_repo(vec!["issue".to_string()]);
-        assert_eq!(args, vec!["issue".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "issue".to_string(),
+                "-R".to_string(),
+                BUG_REPORT_GITHUB_REPO.to_string(),
+            ]
+        );
 
         // Restore the prior environment.
         match previous {
