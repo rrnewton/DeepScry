@@ -3135,6 +3135,53 @@ mod tests {
         }
     }
 
+    /// Card compat: Disenchant (cardsfolder/d/disenchant.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 W
+    ///   Types:Instant
+    ///   A:SP$ Destroy | ValidTgts$ Artifact,Enchantment | ...
+    ///
+    /// Verifies (parser, via tokenized AbilityParams::parse — NOT substring
+    /// matching): {1}{W} Instant whose spell ability is an SP$ Destroy
+    /// targeting Artifact OR Enchantment (so it can't be silently narrowed
+    /// to artifact-only or to a non-targeted destroy). Runtime targeting /
+    /// destruction is verified by tests/disenchant_destroys_artifact_e2e.sh.
+    #[test]
+    fn test_card_compat_disenchant() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/disenchant.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Disenchant should load");
+        assert_eq!(def.name.as_str(), "Disenchant");
+        assert_eq!(def.mana_cost.generic, 1, "Cost generic should be 1");
+        assert_eq!(def.mana_cost.white, 1, "Cost should require {{W}}");
+        assert!(def.types.contains(&CardType::Instant), "Disenchant must be an Instant");
+
+        // Find the SP$ Destroy spell ability via tokenized parsing.
+        let destroy = def.raw_abilities.iter().find_map(|raw| {
+            let p = AbilityParams::parse(raw).ok()?;
+            (p.api_type == ApiType::Destroy).then_some(p)
+        });
+        let destroy = destroy.expect("Disenchant must have an SP$ Destroy spell ability");
+
+        let tgts = destroy
+            .get("ValidTgts")
+            .expect("Disenchant Destroy must have ValidTgts");
+        let tgt_set: Vec<&str> = tgts.split(',').map(|s| s.trim()).collect();
+        assert!(
+            tgt_set.contains(&"Artifact") && tgt_set.contains(&"Enchantment"),
+            "Disenchant must be able to target BOTH Artifact and Enchantment (CR 608); \
+             a narrower ValidTgts silently drops one mode. Got: {:?}",
+            tgts
+        );
+    }
+
     /// Card compat: Shivan Dragon (cardsfolder/s/shivan_dragon.txt)
     ///
     /// Script:

@@ -56,6 +56,7 @@ workflow, row format, and update rules.
 | Cost$ T (tap as cost)                      | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | Mode$ TgtChoose (controller picks discard) | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | AB$ Pump Cost$ R NumAtt$ +1 (firebreathing) | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Shivan Dragon       |
+| SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
 
 ## Static abilities (S:)
 

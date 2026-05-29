@@ -1,0 +1,24 @@
+[metadata]
+Name:Disenchant Destroys Artifact Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Disenchant ({1}{W} Instant: destroy target artifact or enchantment). P1 casts it on the opponent's Jalum Tome (an artifact). The artifact must be destroyed and moved to its owner's graveyard.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Disenchant
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Jalum Tome
+p1exile=
