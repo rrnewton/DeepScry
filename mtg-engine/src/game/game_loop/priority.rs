@@ -3,7 +3,7 @@
 //! This module handles the priority system where players alternate making choices
 //! until both pass in succession, then resolves spells from the stack.
 
-use crate::core::{CardId, Effect};
+use crate::core::{CardId, Effect, PlayerId};
 use crate::game::controller::{format_choice_menu, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
 use crate::game::GameState;
@@ -11,6 +11,25 @@ use crate::{handle_choice_result, handle_choice_result_break, Result};
 use smallvec::SmallVec;
 
 use super::{GameLoop, GameResult, VerbosityLevel};
+
+/// Resolve a `PlayerId` field on an XPaid Effect variant for **logging
+/// purposes only** (mtg-521): replace the placeholder (0) sentinel with
+/// the caster and the `target_opponent()` sentinel with the actual
+/// opponent's id. Mirrors the runtime resolution done by
+/// `resolve_x_paid_effect` + the placeholder/opponent resolution in
+/// `actions/mod.rs`; without this, the post-resolution log loop in
+/// `resolve_top_spell_from_stack` formats those sentinels as the
+/// literal strings "Player 1" / "target opponent" instead of the real
+/// player name.
+fn resolve_log_player(player: PlayerId, caster: PlayerId, opponent: Option<PlayerId>) -> PlayerId {
+    if player.is_placeholder() {
+        caster
+    } else if player.is_target_opponent() {
+        opponent.unwrap_or(player)
+    } else {
+        player
+    }
+}
 
 /// Note: Wildcards are intentional throughout - Effect enum has 24+ variants.
 /// Priority system handles specific effect types (AddMana, GainLife, etc.) specially
@@ -50,13 +69,19 @@ impl<'a> GameLoop<'a> {
         let spell_owner = self.game.cards.get(spell_id).unwrap().owner; // Safe: checked above
 
         // Get card info for logging ONLY when logging is enabled
-        // This avoids String allocation and effects clone in Silent mode
-        let (card_name, card_effects, card_owner) = if should_log {
+        // This avoids String allocation and effects clone in Silent mode.
+        // x_paid is captured here so the post-resolve log loop can rewrite
+        // XPaid effect variants (DrawCardsXPaid / DiscardCardsXPaid /
+        // DealDamageXPaid) into their resolved concrete-count variants
+        // before formatting — otherwise the log shows the literal sentinel
+        // "X" (e.g. "Mind Twist causes target opponent to discard X card(s)")
+        // instead of the real value (mtg-521).
+        let (card_name, card_effects, card_owner, card_x_paid) = if should_log {
             let card = self.game.cards.get(spell_id).unwrap(); // Safe: checked above
-            (card.name.to_string(), card.effects.clone(), card.owner)
+            (card.name.to_string(), card.effects.clone(), card.owner, card.x_paid)
         } else {
             // In Silent mode, use empty placeholders (never accessed)
-            (String::new(), Vec::new(), crate::core::PlayerId::new(0))
+            (String::new(), Vec::new(), crate::core::PlayerId::new(0), 0u8)
         };
 
         if should_log {
@@ -234,6 +259,46 @@ impl<'a> GameLoop<'a> {
                         token_script: token_script.clone(),
                         amount: *amount,
                         for_each_player: *for_each_player,
+                    },
+                    // XPaid -> concrete variants so the post-resolution log
+                    // shows the real X (e.g. "discard 3 card(s)" rather than
+                    // the sentinel "discard X card(s)"). Mirrors the
+                    // resolve_x_paid_effect() mapping in actions/mod.rs that
+                    // runs at execution time.
+                    //
+                    // Player resolution: the placeholder (0) means "the
+                    // caster" (Defined$ You / no-defined). The
+                    // target_opponent() sentinel encodes ValidTgts$ Player
+                    // (Mind Twist) and should resolve to the actual
+                    // opponent player_id at log time — otherwise the log
+                    // reads "causes target opponent to discard 1 card(s)"
+                    // (literal sentinel string from get_player_name) rather
+                    // than the opponent's actual name. See mtg-521.
+                    Effect::DiscardCardsXPaid {
+                        player,
+                        remember_discarded,
+                    } => {
+                        let resolved_player =
+                            resolve_log_player(*player, card_owner, self.game.get_other_player_id(card_owner));
+                        Effect::DiscardCards {
+                            player: resolved_player,
+                            count: card_x_paid,
+                            remember_discarded: *remember_discarded,
+                            optional: false,
+                            remember_discarding_players: false,
+                        }
+                    }
+                    Effect::DrawCardsXPaid { player } => {
+                        let resolved_player =
+                            resolve_log_player(*player, card_owner, self.game.get_other_player_id(card_owner));
+                        Effect::DrawCards {
+                            player: resolved_player,
+                            count: card_x_paid,
+                        }
+                    }
+                    Effect::DealDamageXPaid { target } => Effect::DealDamage {
+                        target: target.clone(),
+                        amount: i32::from(card_x_paid),
                     },
                     _ => effect.clone(),
                 };

@@ -80,6 +80,7 @@ workflow, row format, and update rules.
 | DB$ GainLife LifeAmount$ X (X = Targeted$CardManaCost / dynamic) | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-297 | Divine Offering, Swords to Plowshares |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
+| SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 
 ## Static abilities (S:)
 
