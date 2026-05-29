@@ -11,6 +11,7 @@
 
 #![feature(allocator_api)]
 
+pub mod asset_hash;
 pub mod core;
 pub mod deck_builder;
 #[cfg(feature = "native")]

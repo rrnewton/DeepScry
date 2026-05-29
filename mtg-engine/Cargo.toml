@@ -61,6 +61,9 @@ rand_xoshiro = { version = "0.6", features = ["serde1"] }
 
 # Hashing (for fast lookups)
 rustc-hash = "1.1"
+# Content-addressed asset hashing: single source of truth for the CAS pipeline
+# (per-set bins + the wasm pkg pair). blake3 truncated to 16 hex chars. (mtg-571)
+blake3 = "1.5"
 
 # CLI argument parsing (native only)
 clap = { version = "4.5", features = ["derive", "env"], optional = true }

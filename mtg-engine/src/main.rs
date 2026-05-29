@@ -575,6 +575,18 @@ enum Commands {
         deck_globs: Vec<String>,
     },
 
+    /// Print the content-addressed asset hash of a file (blake3, 16 hex chars).
+    ///
+    /// This is the SINGLE source of truth for the content-addressed web-asset
+    /// pipeline (mtg-571): `scripts/hash_web_assets.sh` shells out to this to
+    /// name the wasm pkg pair, using the EXACT same hashing function the
+    /// exporter uses for the per-set `.bin` files. Prints the bare hash hex
+    /// followed by a newline.
+    HashAsset {
+        /// File whose bytes to hash.
+        file: PathBuf,
+    },
+
     /// Download card images from Scryfall for offline use
     ///
     /// Downloads both small (146x204) and normal (488x680) versions by default.
@@ -1091,6 +1103,12 @@ async fn async_main() -> Result<()> {
             end_year,
         } => run_deck_build(deck_file, output_file, cardsfolder, start_year, end_year).await?,
         Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
+        Commands::HashAsset { file } => {
+            let bytes = std::fs::read(&file).map_err(mtg_forge_rs::MtgError::IoError)?;
+            // Print the bare hash so callers (hash_web_assets.sh) can capture it
+            // directly: `HASH="$(mtg hash-asset path)"`.
+            println!("{}", mtg_forge_rs::asset_hash::asset_hash_hex(&bytes));
+        }
         Commands::Download {
             output,
             cardsfolder,
@@ -3813,24 +3831,13 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         bytes: usize,
         card_count: usize,
         /// Content hash (16 hex chars / 64 bits) embedded in `file`, computed
-        /// by `content_hash_hex` (currently std `DefaultHasher`/SipHash — see
-        /// that fn). Recorded explicitly so the deploy GC mark-sweep and any
-        /// future integrity check can validate without re-deriving from the
-        /// filename. Collision margin is ample for a few hundred bins.
+        /// by `mtg_forge_rs::asset_hash::asset_hash_hex` (blake3, truncated).
+        /// Recorded explicitly so the deploy GC mark-sweep and any future
+        /// integrity check can validate without re-deriving from the filename.
+        /// Collision margin is ample for a few hundred bins. The SAME hashing
+        /// function names the wasm pkg pair (via `mtg hash-asset`), so the
+        /// whole content-addressed pipeline uses one algorithm. (mtg-571)
         hash: String,
-    }
-
-    /// Short content hash for a `.bin`'s bytes. We avoid pulling a new crate
-    /// dependency (blake3) into the exporter for a non-cryptographic
-    /// cache-busting hash and reuse `std`'s `DefaultHasher` (SipHash), which
-    /// is deterministic for a given byte slice within a build. 64 bits, 16 hex
-    /// chars. The ONLY requirement here is "different bytes -> different name
-    /// with overwhelming probability", which SipHash satisfies for our scale.
-    fn content_hash_hex(bytes: &[u8]) -> String {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        bytes.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
     }
 
     #[derive(serde::Serialize)]
@@ -3853,7 +3860,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
             mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
         })?;
         // Content-addressed filename: <YYYY>-<CODE>.<hash>.bin (mtg-571).
-        let hash = content_hash_hex(&bytes);
+        let hash = mtg_forge_rs::asset_hash::asset_hash_hex(&bytes);
         let file_name = format!("{}.{}.bin", bucket, hash);
         let path = sets_dir.join(&file_name);
         fs::write(&path, &bytes).map_err(mtg_engine::MtgError::IoError)?;

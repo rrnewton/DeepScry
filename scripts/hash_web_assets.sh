@@ -48,8 +48,30 @@ WASM="$PKG_DIR/mtg_forge_rs_bg.wasm"
 [[ -f "$JS"   ]] || { echo "error: $JS not found (run 'make wasm-network' first)" >&2; exit 1; }
 [[ -f "$WASM" ]] || { echo "error: $WASM not found (run 'make wasm-network' first)" >&2; exit 1; }
 
+# DRY: hash through the SAME Rust function the exporter uses for the per-set
+# `.bin` files, so the whole content-addressed pipeline (mtg-571) uses ONE
+# algorithm (blake3, 16 hex chars) and ONE implementation. We shell out to the
+# `mtg hash-asset` subcommand rather than reimplementing a hash in bash (no
+# more `sha256sum | cut`). Locate a release/debug `mtg` binary; allow override
+# via $MTG_BIN. The release binary is what `make wasm-network`/deploy builds.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MTG_BIN="${MTG_BIN:-}"
+if [[ -z "$MTG_BIN" ]]; then
+    for cand in \
+        "$REPO_ROOT/target/release/mtg" \
+        "$REPO_ROOT/target/debug/mtg" \
+        "$(command -v mtg || true)"; do
+        if [[ -n "$cand" && -x "$cand" ]]; then MTG_BIN="$cand"; break; fi
+    done
+fi
+[[ -n "$MTG_BIN" && -x "$MTG_BIN" ]] || {
+    echo "error: no 'mtg' binary found (build with 'cargo build --release' or set \$MTG_BIN)" >&2
+    exit 1
+}
+
 # 16 hex chars (64 bits) — ample collision margin for a 2-file bundle.
-hash_of() { sha256sum "$1" | cut -c1-16; }
+hash_of() { "$MTG_BIN" hash-asset "$1"; }
 
 # IMPORTANT ordering: the JS glue's internal default reference to the wasm is
 # bypassed by the init({module_or_path}) override we inject, so we may hash the

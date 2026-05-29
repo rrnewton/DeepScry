@@ -11,9 +11,17 @@ the GC, the invariants, and records what the prototype on branch
 `trunk-cas-assets` actually implements vs. what remains deferred.
 
 It is **speculative / research-first** and **NOT merge-ready** — it is
-intended for the user's PR review. Where the prototype diverges from the
-research doc's recommendation (notably the hash function), this doc flags
-it explicitly as an open question rather than silently papering over it.
+intended for the user's PR review.
+
+> **UPDATE (hash unification, mtg-571):** the hash-function discrepancy
+> flagged below has been **RESOLVED**. Both the per-set bins and the wasm
+> pkg pair now hash through a single shared Rust function
+> (`mtg_forge_rs::asset_hash::asset_hash_hex` — **blake3**, truncated to 16
+> hex chars). The exporter calls it directly; `hash_web_assets.sh` shells out
+> to the new `mtg hash-asset <file>` subcommand (no more `sha256sum | cut`).
+> The SipHash (`DefaultHasher`) path in the exporter is gone. §3 and the
+> §9 open question #1 below are kept for historical context but are now
+> marked resolved.
 
 ---
 
@@ -46,8 +54,11 @@ A content-addressed asset embeds a hash of its own bytes in its filename:
 | wasm-bindgen JS  | `mtg_forge_rs.js`          | `mtg_forge_rs.<hash>.js`          | `hash_web_assets.sh`  |
 | wasm-bindgen WASM| `mtg_forge_rs_bg.wasm`     | `mtg_forge_rs_bg.<hash>.wasm`     | `hash_web_assets.sh`  |
 
-`<hash>` is 16 hex chars (64 bits). Collision probability for a few
-hundred assets is negligible (birthday bound: ~2^-44 for 600 assets).
+`<hash>` is the first 16 hex chars (64 bits) of the **blake3** digest of
+the bytes, computed by the single shared function
+`mtg_forge_rs::asset_hash::asset_hash_hex` (see §3). Collision probability
+for a few hundred assets is negligible (birthday bound: ~2^-44 for 600
+assets).
 
 ### 2.2 The manifest = the resolver (logical → hashed)
 
@@ -109,41 +120,46 @@ copy**. This is the deliberate staging compromise (see §6).
 
 ---
 
-## 3. Hash function — chosen + DISCREPANCY to resolve
+## 3. Hash function — UNIFIED on blake3 (RESOLVED, mtg-571)
 
 The research doc recommended **blake3 truncated to 16 hex** for both
-layers. The prototype diverged, and the two layers currently use
-**different** hash functions:
+layers. The original prototype diverged (SipHash for bins, truncated
+SHA-256 for the pkg pair) — a DRY/consistency smell. **That divergence is
+now fixed.** The chosen end-state is the research doc's recommendation,
+option (a): a single shared Rust function used by both layers.
 
-| Layer            | Hash in prototype                            | Width |
+| Layer            | Hash (current)                               | Width |
 |------------------|----------------------------------------------|-------|
-| Per-set bins     | `std` `DefaultHasher` (SipHash 1-3)          | 64b   |
-| pkg JS+WASM      | `sha256sum \| cut -c1-16`                    | 64b   |
+| Per-set bins     | blake3 (`asset_hash_hex`)                    | 64b   |
+| pkg JS+WASM      | blake3 (`asset_hash_hex` via `mtg hash-asset`) | 64b |
 
-Two problems flagged for PR review:
+**Single source of truth:** `mtg_forge_rs::asset_hash::asset_hash_hex`
+(`mtg-engine/src/asset_hash.rs`) is the ONE function that names every
+content-addressed asset. It computes `blake3::hash(bytes)` and truncates
+to `ASSET_HASH_HEX_LEN = 16` hex chars.
 
-1. **Stale doc-comment.** `main.rs:3828` documents the `hash` field as
-   "blake3-derived" but the function (`content_hash_hex`, `main.rs:3837`)
-   actually uses `DefaultHasher` (SipHash). The comment must be corrected
-   regardless of which hash we keep.
-2. **Two hash functions in one "content-addressed" pipeline.** SipHash for
-   bins, SHA-256-truncated for pkg. This is a DRY / consistency smell. It
-   is *not* a correctness bug — both satisfy the only requirement
-   ("different bytes → different name w.h.p.") — but a content-addressed
-   scheme reads cleaner with one algorithm. SipHash is also technically
-   *seeded* (`DefaultHasher` uses a fixed seed in current std, so it is
-   deterministic across runs of the same binary, but std does NOT
-   guarantee cross-version stability — a Rust upgrade *could* change the
-   bin hashes). That is acceptable for a cache-bust (a hash change just
-   means a re-upload) but is worth a conscious decision.
+- The exporter (`main.rs`, `run_export_wasm`) calls `asset_hash_hex`
+  directly for the per-set bins — the old `content_hash_hex`
+  (`DefaultHasher`/SipHash) helper is **deleted**.
+- The new `mtg hash-asset <file>` subcommand prints
+  `asset_hash_hex(<file bytes>)`. `scripts/hash_web_assets.sh` shells out
+  to it (`hash_of() { "$MTG_BIN" hash-asset "$1"; }`) instead of
+  reimplementing a hash in bash. The `sha256sum | cut -c1-16` line is
+  **gone** — no second hash implementation exists anywhere.
 
-**Recommendation for PR:** pick ONE. Either (a) add the `blake3` crate and
-use it for both the exporter and provide a `mtg hash-web-assets`
-subcommand so the pkg pair is hashed in Rust too (kills the shell
-`sha256sum` and unifies the algorithm — cleanest, matches the research
-doc); or (b) explicitly accept SHA-256-truncated for both and drop the
-SipHash path. Option (a) is the DRY end-state and folds the pkg hashing
-into the same Rust flow as the bins.
+**Why blake3 over the previous options.** blake3 is fast, is a single
+small dependency, and (unlike `std`'s `DefaultHasher`) has **no per-process
+seed and is stable across machines / Rust versions** — so identical bytes
+always produce the identical content-addressed filename, which is exactly
+what a content-addressed scheme wants. This closes the
+SipHash-cross-version-stability worry (former §9 open question #2): blake3
+is reproducible by construction.
+
+Verified: `mtg hash-asset` of the exported `.js`/`.wasm` files produces
+the same hash that `hash_web_assets.sh` embeds in the rewritten HTML, and
+a re-`hash-asset` of any exported `<set>.<hash>.bin` reproduces the hash
+embedded in its filename and in `index.json`'s `hash` field. Same input →
+same hash; bins and pkg use the identical function.
 
 ---
 
@@ -297,15 +313,14 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
 
 ## 9. Open questions for PR review
 
-1. **Hash function unification (§3).** Adopt blake3 in Rust for BOTH bins
-   and pkg (recommended; matches research doc, kills the shell
-   `sha256sum`), or accept SHA-256-truncated for both, or keep the current
-   two-function split? The stale "blake3-derived" doc-comment must be
-   fixed either way.
-2. **SipHash cross-version stability (§3).** `DefaultHasher` is not
-   guaranteed stable across Rust versions. Acceptable for a cache-bust
-   (worst case: a spurious re-upload after a toolchain bump), or do we
-   want a pinned algorithm for reproducible bin names across builds?
+1. **Hash function unification (§3).** ✅ **RESOLVED** — adopted blake3 in
+   Rust for BOTH bins and pkg via the shared
+   `mtg_forge_rs::asset_hash::asset_hash_hex` + the `mtg hash-asset`
+   subcommand. Killed the shell `sha256sum` and the exporter's SipHash
+   path. Matches the research doc recommendation.
+2. **SipHash cross-version stability (§3).** ✅ **RESOLVED** — blake3 has
+   no per-process seed and is stable across Rust versions / machines, so
+   bin (and pkg) names are reproducible across builds by construction.
 3. **GC grace window (§5).** Keep last-N generations of hashed blobs on
    the VM for clients mid-load across a redeploy, or accept the immediate
    `--delete` (rare 404, self-heals on reload)?
