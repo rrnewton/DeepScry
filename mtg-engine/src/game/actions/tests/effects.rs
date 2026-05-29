@@ -3135,6 +3135,59 @@ mod tests {
         }
     }
 
+    /// Card compat: Shivan Dragon (cardsfolder/s/shivan_dragon.txt)
+    ///
+    /// Script:
+    ///   ManaCost:4 R R
+    ///   Types:Creature Dragon
+    ///   PT:5/5
+    ///   K:Flying
+    ///   A:AB$ Pump | Cost$ R | NumAtt$ +1 | SpellDescription$ ...+1/+0...
+    ///
+    /// Verifies the parsed card is a 5/5 {4}{R}{R} flyer with a firebreathing
+    /// activated ability (Cost$ R, a Pump effect granting +1/+0). The runtime
+    /// behaviour (firebreathing stacks, expires end of turn; flying blocking
+    /// restriction) is verified by the gameplay reproducers in the compat
+    /// issue + tests/shivan_dragon_flying_block_e2e.sh and the existing
+    /// puzzle_e2e.rs firebreathing/pump tests.
+    #[test]
+    fn test_card_compat_shivan_dragon() {
+        use crate::core::{Cost, Keyword};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/shivan_dragon.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Shivan Dragon should load");
+        assert_eq!(def.name.as_str(), "Shivan Dragon");
+        assert_eq!(def.mana_cost.generic, 4, "Cost generic should be 4");
+        assert_eq!(def.mana_cost.red, 2, "Cost should require {{R}}{{R}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(5));
+        assert_eq!(def.toughness, Some(5));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Shivan Dragon must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+
+        // Firebreathing: an activated ability costing {R} that pumps power.
+        let firebreathing = card.activated_abilities.iter().find(|a| {
+            matches!(a.cost, Cost::Mana(m) if m.red == 1 && m.cmc() == 1)
+                && a.effects.iter().any(|e| matches!(e, Effect::PumpCreature { .. }))
+        });
+        assert!(
+            firebreathing.is_some(),
+            "Shivan Dragon must have a {{R}}: +1/+0 firebreathing ability. \
+             If absent, the A:AB$ Pump line was dropped. Got abilities: {:?}",
+            card.activated_abilities
+        );
+    }
+
     /// Card compat: Sengir Vampire (cardsfolder/s/sengir_vampire.txt)
     ///
     /// Script:

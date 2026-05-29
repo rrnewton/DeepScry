@@ -1,0 +1,21 @@
+[metadata]
+Name:Shivan Dragon Flying Block Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Shivan Dragon (5/5 Flying) attacks. The defending player only has a Grizzly Bears (2/2, no flying / no reach), which CANNOT legally block a flyer (CR 509.1b / 702.9). Shivan's 5 damage must therefore hit the player.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Mountain; Mountain; Shivan Dragon
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=Grizzly Bears
+p1library=Forest; Forest; Forest
+p1graveyard=
