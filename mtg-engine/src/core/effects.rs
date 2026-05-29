@@ -1917,6 +1917,11 @@ pub enum StaticAbility {
 
         /// Description for logging
         description: String,
+
+        /// Optional condition for when this ability is active.
+        /// None = always active. Example: Sedge Troll's +1/+1 is conditional
+        /// on `IsPresent$ Swamp.YouCtrl` (see [`StaticCondition::ControlsPresent`]).
+        condition: Option<StaticCondition>,
     },
 
     /// Continuous effect that grants a keyword ability
@@ -2147,7 +2152,8 @@ impl UnlessCost {
 /// Condition for when a static ability is active
 ///
 /// Used for abilities like "During your turn, this creature has hexproof"
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// or "Sedge Troll gets +1/+1 as long as you control a Swamp".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StaticCondition {
     /// Active only during the controller's turn
     /// Corresponds to: `Condition$ PlayerTurn`
@@ -2155,6 +2161,21 @@ pub enum StaticCondition {
     /// Active only during opponents' turns
     /// Corresponds to: `Condition$ NotPlayerTurn`
     NotPlayerTurn,
+    /// Active only while the source's controller has at least `min_count`
+    /// permanents (or cards in `zone`) matching `filter`.
+    ///
+    /// Corresponds to: `IsPresent$ <filter>` (+ optional `PresentZone$`,
+    /// `PresentCompare$`). Example from Sedge Troll:
+    /// `S:Mode$ Continuous | ... | IsPresent$ Swamp.YouCtrl` — only active
+    /// while the controller controls a Swamp.
+    ControlsPresent {
+        /// Card filter, e.g. `"Swamp.YouCtrl"` (subtype `.` ownership/control).
+        filter: String,
+        /// Zone in which to look for matching cards (default Battlefield).
+        zone: crate::zones::Zone,
+        /// Minimum number of matching cards required for the condition to hold.
+        min_count: u8,
+    },
 }
 
 /// Selector for which cards are affected by a static ability

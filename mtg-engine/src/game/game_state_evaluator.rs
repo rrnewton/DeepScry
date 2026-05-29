@@ -449,6 +449,9 @@ impl GameStateEvaluator {
                     power,
                     toughness,
                     description: _,
+                    // Heuristic value estimate: optimistically assume any
+                    // condition (e.g. Sedge Troll's IsPresent$ Swamp) is met.
+                    condition: _,
                 } => {
                     // Check if this ability affects the attached creature
                     let affects_creature = match affected {
@@ -758,6 +761,7 @@ mod tests {
             power: 1,
             toughness: 2,
             description: "Enchanted creature gets +1/+2".to_string(),
+            condition: None,
         });
 
         // Attach the aura to the creature

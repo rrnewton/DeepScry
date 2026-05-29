@@ -42,6 +42,7 @@ fn create_spider_suit(id: CardId, owner: PlayerId) -> Card {
         power: 2,
         toughness: 2,
         description: "Equipped creature gets +2/+2".to_string(),
+        condition: None,
     });
 
     spider_suit
@@ -566,6 +567,7 @@ fn create_self_when_equipped_creature(id: CardId, owner: PlayerId) -> Card {
         power: 1,
         toughness: 1,
         description: "As long as ~ is equipped, it gets +1/+1".to_string(),
+        condition: None,
     });
 
     creature
@@ -702,6 +704,7 @@ fn create_test_aura(id: CardId, owner: PlayerId, power_buff: i32, toughness_buff
         power: power_buff,
         toughness: toughness_buff,
         description: format!("Enchanted creature gets +{}/+{}", power_buff, toughness_buff),
+        condition: None,
     });
 
     aura
@@ -723,6 +726,7 @@ fn create_self_when_enchanted_creature(id: CardId, owner: PlayerId) -> Card {
         power: 2,
         toughness: 2,
         description: "As long as ~ is enchanted, it gets +2/+2".to_string(),
+        condition: None,
     });
 
     creature
@@ -811,6 +815,7 @@ fn create_equipped_creatures_lord(id: CardId, owner: PlayerId) -> Card {
         power: 1,
         toughness: 1,
         description: "Equipped creatures you control get +1/+1".to_string(),
+        condition: None,
     });
 
     lord

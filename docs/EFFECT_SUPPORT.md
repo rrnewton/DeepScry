@@ -61,6 +61,7 @@ workflow, row format, and update rules.
 | Construct                                       | Status  | Last verified              | Bug issue  | Sample cards |
 |-------------------------------------------------|---------|----------------------------|------------|--------------|
 | StaticAbility IsPresent$ <selector>             | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-203  | (multiple)   |
+| ModifyPT Affected$ Card.Self + IsPresent$ <sel> | WORKING | 2026-05-29_#2430(048328c1) | (fixed)    | Sedge Troll  |
 | StaticAbility Threshold$                        | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-203  | (multiple)   |
 
 ## Replacement effects (R:)

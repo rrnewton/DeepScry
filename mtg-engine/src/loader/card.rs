@@ -3870,6 +3870,22 @@ impl CardDefinition {
                 }
             }
 
+            // Build a presence-based StaticCondition if IsPresent$ was specified
+            // on a continuous static (e.g. Sedge Troll: IsPresent$ Swamp.YouCtrl).
+            // Reuses the same is_present/present_zone/present_compare_min fields
+            // already parsed for ReduceCost conditions.
+            let present_condition = is_present
+                .as_ref()
+                .map(|filter| crate::core::StaticCondition::ControlsPresent {
+                    filter: filter.clone(),
+                    zone: present_zone.unwrap_or(crate::zones::Zone::Battlefield),
+                    min_count: present_compare_min,
+                });
+
+            // Prefer an explicit Condition$ (PlayerTurn/NotPlayerTurn) if present,
+            // otherwise fall back to the presence-based condition.
+            let static_condition = condition.clone().or(present_condition);
+
             // Create the ability based on what was parsed
             if power != 0 || toughness != 0 {
                 // P/T modification ability
@@ -3878,6 +3894,7 @@ impl CardDefinition {
                     power,
                     toughness,
                     description: description.clone(),
+                    condition: static_condition.clone(),
                 });
             }
 
@@ -3887,7 +3904,7 @@ impl CardDefinition {
                     affected: affected.clone(),
                     keyword: kw,
                     description: description.clone(),
-                    condition,
+                    condition: static_condition.clone(),
                 });
             }
 

@@ -2735,8 +2735,9 @@ mod tests {
             card.activated_abilities
         );
 
-        // Static ability: +1/+1 (currently unconditional in our engine —
-        // see KNOWN GAP above).
+        // Static ability: +1/+1 as long as you control a Swamp.
+        // The ModifyPT must carry a ControlsPresent condition derived from
+        // `IsPresent$ Swamp.YouCtrl` (mtg-398).
         let modify_pt = card.static_abilities.iter().find(|s| {
             matches!(
                 s,
@@ -2752,6 +2753,28 @@ mod tests {
             "Sedge Troll must produce a +1/+1 ModifyPT static ability. Got: {:?}",
             card.static_abilities
         );
+        let StaticAbility::ModifyPT { condition, .. } = modify_pt.unwrap() else {
+            panic!("modify_pt was matched as ModifyPT above");
+        };
+        match condition {
+            Some(crate::core::StaticCondition::ControlsPresent {
+                filter,
+                zone,
+                min_count,
+            }) => {
+                assert_eq!(filter, "Swamp.YouCtrl", "condition filter should be Swamp.YouCtrl");
+                assert_eq!(
+                    *zone,
+                    crate::zones::Zone::Battlefield,
+                    "default present zone is Battlefield"
+                );
+                assert_eq!(*min_count, 1, "default PresentCompare is GE1");
+            }
+            other => panic!(
+                "Sedge Troll's +1/+1 must be gated by ControlsPresent(Swamp.YouCtrl); got {:?}",
+                other
+            ),
+        }
     }
 
     /// Card compat: Black Knight (cardsfolder/b/black_knight.txt)

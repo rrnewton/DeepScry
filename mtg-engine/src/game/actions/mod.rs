@@ -1411,7 +1411,13 @@ impl GameState {
     /// Count cards matching a filter string in a specified zone
     ///
     /// Used for checking ReduceCost conditions like "IsPresent$ Lesson.YouOwn | PresentZone$ Graveyard"
-    fn count_cards_matching_filter(&self, player_id: PlayerId, filter: &str, zone: crate::zones::Zone) -> usize {
+    /// and conditional static abilities like Sedge Troll's `IsPresent$ Swamp.YouCtrl`.
+    pub(crate) fn count_cards_matching_filter(
+        &self,
+        player_id: PlayerId,
+        filter: &str,
+        zone: crate::zones::Zone,
+    ) -> usize {
         use crate::zones::Zone;
 
         // Parse filter: "Lesson.YouOwn" -> type="Lesson", ownership="YouOwn"

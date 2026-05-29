@@ -39,6 +39,7 @@
 //! - ✅ Layer 7d (SWITCH): Stubbed (will be needed for P/T switching effects)
 
 use crate::core::CardId;
+use crate::core::PlayerId;
 use crate::game::GameState;
 use crate::Result;
 
@@ -746,7 +747,16 @@ impl GameState {
                         power,
                         toughness,
                         description: _,
+                        condition,
                     } => {
+                        // Conditional statics (e.g. Sedge Troll's "+1/+1 as long as
+                        // you control a Swamp") only contribute while their condition
+                        // holds. CR 613.4c continuous P/T modifications.
+                        if let Some(cond) = condition {
+                            if !self.static_condition_met(cond, source.controller) {
+                                continue;
+                            }
+                        }
                         // Check if this ability affects the target creature
                         match affected {
                             AffectedSelector::CreatureEquippedBy => {
@@ -786,8 +796,13 @@ impl GameState {
                                 }
                             }
                             AffectedSelector::Self_ => {
-                                // Equipment affecting itself (not the equipped creature)
-                                // Skip - not relevant for this creature's P/T
+                                // The static buffs the source permanent itself
+                                // (e.g. Sedge Troll's conditional +1/+1). Apply only
+                                // when the creature under evaluation IS the source.
+                                if creature_id == source_id {
+                                    power_bonus += power;
+                                    toughness_bonus += toughness;
+                                }
                             }
                             AffectedSelector::LandAttachedBy => {
                                 // This Aura grants abilities to the land it's attached to
@@ -1546,6 +1561,32 @@ impl GameState {
         Ok((power_bonus, toughness_bonus))
     }
 
+    /// Evaluate whether a [`StaticCondition`] currently holds for an ability
+    /// whose source is controlled by `source_controller`.
+    ///
+    /// Shared by both ModifyPT (Layer 7c) and GrantKeyword (Layer 6) so the
+    /// turn-based and presence-based conditions are interpreted identically.
+    ///
+    /// - `PlayerTurn` / `NotPlayerTurn`: CR 614-style turn-gated statics.
+    /// - `ControlsPresent`: "as long as you control ..." (e.g. Sedge Troll's
+    ///   `IsPresent$ Swamp.YouCtrl`).
+    pub(crate) fn static_condition_met(
+        &self,
+        condition: &crate::core::StaticCondition,
+        source_controller: PlayerId,
+    ) -> bool {
+        use crate::core::StaticCondition;
+        match condition {
+            StaticCondition::PlayerTurn => self.turn.active_player == source_controller,
+            StaticCondition::NotPlayerTurn => self.turn.active_player != source_controller,
+            StaticCondition::ControlsPresent {
+                filter,
+                zone,
+                min_count,
+            } => self.count_cards_matching_filter(source_controller, filter, *zone) >= *min_count as usize,
+        }
+    }
+
     /// Get all keywords granted to a creature by static abilities (Layer 6).
     ///
     /// ## CR 613 Layer 6: Ability Adding or Removing Effects
@@ -1589,21 +1630,12 @@ impl GameState {
                     condition,
                 } = ability
                 {
-                    // Check condition (e.g., PlayerTurn = only during controller's turn)
+                    // Check condition (e.g., PlayerTurn = only during controller's
+                    // turn; ControlsPresent = only while controlling a matching
+                    // permanent). Shared with ModifyPT via static_condition_met.
                     if let Some(cond) = condition {
-                        use crate::core::StaticCondition;
-                        let is_controller_turn = self.turn.active_player == source.controller;
-                        match cond {
-                            StaticCondition::PlayerTurn => {
-                                if !is_controller_turn {
-                                    continue; // Condition not met - skip this ability
-                                }
-                            }
-                            StaticCondition::NotPlayerTurn => {
-                                if is_controller_turn {
-                                    continue; // Condition not met - skip this ability
-                                }
-                            }
+                        if !self.static_condition_met(cond, source.controller) {
+                            continue; // Condition not met - skip this ability
                         }
                     }
                     // Check if this ability affects the target creature

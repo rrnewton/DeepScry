@@ -1,0 +1,24 @@
+[metadata]
+Name:Sedge Troll Conditional Swamp Boost
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Sedge Troll is a 2/2 that "gets +1/+1 as long as you control a Swamp" (IsPresent$ Swamp.YouCtrl). With a Swamp on the battlefield it must be a 3/3; regression for mtg-398. The heuristic AI attacks with Sedge Troll, which should deal 3 combat damage to the opponent.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Sedge Troll; Swamp; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

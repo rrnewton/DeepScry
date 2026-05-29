@@ -350,6 +350,7 @@ fn test_load_spider_ham_static_ability() -> Result<()> {
             power,
             toughness,
             description: _,
+            condition: _,
         } => {
             assert_eq!(*power, 1, "Power bonus should be 1");
             assert_eq!(*toughness, 1, "Toughness bonus should be 1");
@@ -461,6 +462,7 @@ fn test_load_demonmail_hauberk_card_equipped_by_static_ability() -> Result<()> {
             power,
             toughness,
             description: _,
+            condition: _,
         } => {
             assert_eq!(*power, 4, "Power bonus should be 4");
             assert_eq!(*toughness, 2, "Toughness bonus should be 2");
@@ -525,6 +527,7 @@ fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
             power,
             toughness,
             description: _,
+            condition: _,
         } => {
             assert_eq!(*power, 2, "Power bonus should be 2");
             assert_eq!(*toughness, 2, "Toughness bonus should be 2");
