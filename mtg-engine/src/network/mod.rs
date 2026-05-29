@@ -28,6 +28,13 @@ pub use protocol::*;
 mod reveal_processor;
 pub use reveal_processor::*;
 
+// Generic append-only, action_count-indexed log. The Phase 1 primitive
+// that backs (a) each controller's private choice buffer, (b) the
+// NetworkClient-owned shadow state-sync log, and (c) future MCTS
+// rollout logs. See docs/NETWORK_ACTION_LOG.md for the ownership split.
+mod action_log;
+pub use action_log::*;
+
 // Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;
