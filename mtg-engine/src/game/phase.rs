@@ -172,94 +172,16 @@ pub struct TurnStructure {
     /// Most recent AddTurn effects add to the back (FIFO order).
     #[serde(default)]
     pub extra_turns: Vec<crate::core::PlayerId>,
-
-    /// Tracks which turn the mandatory Draw step card draw was executed.
-    /// Prevents double-draw when WASM harness re-creates GameLoop mid-step (the harness creates
-    /// a new GameLoop on each step_harness() call; if priority_round blocks with NeedInput,
-    /// current_step stays at Draw, and the next call would re-execute draw_card()).
-    /// Auto-invalidates when turn_number changes (Some(old_turn) != Some(current_turn)).
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub draw_step_executed_turn: Option<u32>,
-
-    /// Tracks which turn reset_turn_state() has already been called for.
-    /// Prevents reset_turn_state from running multiple times per turn when the WASM harness
-    /// re-creates GameLoop on each step_harness() call. Re-running reset_turn_state mid-turn
-    /// would reset lands_played_this_turn to 0, letting the local WASM client offer PlayLand
-    /// again while the server correctly denies it, causing DESYNC in available action lists.
-    /// Auto-invalidates when turn_number changes (Some(old_turn) != Some(current_turn)).
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub turn_state_reset_turn: Option<u32>,
-
-    /// Tracks which turn the DeclareAttackers choice has already been made for.
-    /// Prevents re-asking the active player for attacker choices when the game loop resumes
-    /// after NeedInput (from the subsequent priority_round). Without this flag, when the
-    /// active player chose no attackers (no creatures tapped), re-entering declare_attackers_step
-    /// would find available attackers again and consume the wrong opponent choice message.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub attackers_declared_turn: Option<u32>,
-
-    /// Tracks which turn the DeclareBlockers choice has already been made for.
-    /// Prevents re-asking the defending player for blocker choices when the game loop resumes
-    /// after NeedInput (from the subsequent priority_round). Without this flag, re-entering
-    /// declare_blockers_step would consume the wrong ChoiceRequest from the server queue,
-    /// causing the WASM shadow state's action_count to fall 1 behind the server.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub blockers_declared_turn: Option<u32>,
-
-    /// Tracks which turn first-strike combat damage has already been dealt.
-    /// Prevents re-dealing first-strike damage when the game loop resumes after NeedInput
-    /// from the subsequent priority_round. The WASM harness recreates GameLoop on every
-    /// step_harness() call, so without this guard, first-strike damage would be applied
-    /// multiple times across calls.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub combat_first_strike_damage_dealt_turn: Option<u32>,
-
-    /// Tracks which turn the priority round AFTER first-strike damage has completed.
-    /// Required because has_first_strike_combat() may return false on re-entry (if
-    /// first-strike creatures died), which would cause the first-strike priority_round
-    /// to be skipped entirely on subsequent step_harness() calls.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub combat_first_strike_priority_done_turn: Option<u32>,
-
-    /// Tracks which turn normal combat damage has already been dealt.
-    /// Prevents re-dealing combat damage when the game loop resumes after NeedInput
-    /// from the subsequent priority_round. The WASM harness recreates GameLoop on every
-    /// step_harness() call, causing double damage and action_count divergence without
-    /// this guard.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub combat_damage_dealt_turn: Option<u32>,
-
-    /// Tracks which turn the beginning-of-upkeep phase triggers were already fired.
-    /// Prevents re-firing the upkeep triggers when the WASM harness recreates the
-    /// GameLoop after the upkeep `priority_round` blocks with NeedInput: current_step
-    /// stays at Upkeep, so the next step_harness() call would re-enter upkeep_step and
-    /// call check_phase_triggers(BeginningOfUpkeep) a SECOND time. For a trigger that
-    /// mutates state once per upkeep (e.g. All Hallow's Eve removing one scream counter
-    /// and, at zero, mass-resurrecting), double-firing diverges the WASM shadow from
-    /// the server (mtg-609). Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub upkeep_triggers_checked_turn: Option<u32>,
-
-    /// Tracks which turn the beginning-of-end-step phase triggers were already fired.
-    /// Same WASM re-entry hazard as `upkeep_triggers_checked_turn`: end_step calls
-    /// check_phase_triggers(BeginningOfEndStep) then a blocking priority_round, so
-    /// re-entry would double-fire end-step triggers. Auto-invalidates per turn.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub end_step_triggers_checked_turn: Option<u32>,
+    // NOTE (mtg-j4128/mtg-610): nine #[serde(skip)] per-turn re-entry guard fields
+    // (draw_step_executed_turn, turn_state_reset_turn, attackers_declared_turn,
+    // blockers_declared_turn, combat_first_strike_damage_dealt_turn,
+    // combat_first_strike_priority_done_turn, combat_damage_dealt_turn,
+    // upkeep_triggers_checked_turn, end_step_triggers_checked_turn) used to live here.
+    // They suppressed double-application when the WASM AI harness re-entered a step
+    // after a NeedInput block WITHOUT rewinding. The harness now uses the shared
+    // undo-log rewind/replay (rewind to turn start, replay forward, suppress only
+    // external effects), which reverts then re-applies the step prologue — so these
+    // WASM-specific guards are no longer needed and have been deleted.
 }
 
 impl TurnStructure {
@@ -271,15 +193,6 @@ impl TurnStructure {
             active_player_idx: 0, // Default to first player, should be set by GameState
             priority_player: None,
             consecutive_passes: 0,
-            draw_step_executed_turn: None,
-            turn_state_reset_turn: None,
-            attackers_declared_turn: None,
-            blockers_declared_turn: None,
-            combat_first_strike_damage_dealt_turn: None,
-            combat_first_strike_priority_done_turn: None,
-            combat_damage_dealt_turn: None,
-            upkeep_triggers_checked_turn: None,
-            end_step_triggers_checked_turn: None,
             extra_turns: Vec::new(),
         }
     }
@@ -292,15 +205,6 @@ impl TurnStructure {
             active_player_idx: starting_idx,
             priority_player: None,
             consecutive_passes: 0,
-            draw_step_executed_turn: None,
-            turn_state_reset_turn: None,
-            attackers_declared_turn: None,
-            blockers_declared_turn: None,
-            combat_first_strike_damage_dealt_turn: None,
-            combat_first_strike_priority_done_turn: None,
-            combat_damage_dealt_turn: None,
-            upkeep_triggers_checked_turn: None,
-            end_step_triggers_checked_turn: None,
             extra_turns: Vec::new(),
         }
     }
@@ -326,24 +230,6 @@ impl TurnStructure {
         self.active_player = next_player;
         self.priority_player = None;
         self.consecutive_passes = 0;
-    }
-
-    /// Reset transient guard fields to None.
-    ///
-    /// These fields are `#[serde(skip)]` and not in the undo log, so they persist
-    /// their end-of-game values after a full rewind. Call this when the game has been
-    /// completely rewound to its initial state (undo log empty) so that the next
-    /// play-through starts with clean guard state.
-    pub fn reset_transient_guards(&mut self) {
-        self.draw_step_executed_turn = None;
-        self.turn_state_reset_turn = None;
-        self.attackers_declared_turn = None;
-        self.blockers_declared_turn = None;
-        self.combat_first_strike_damage_dealt_turn = None;
-        self.combat_first_strike_priority_done_turn = None;
-        self.combat_damage_dealt_turn = None;
-        self.upkeep_triggers_checked_turn = None;
-        self.end_step_triggers_checked_turn = None;
     }
 }
 

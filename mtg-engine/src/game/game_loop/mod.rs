@@ -1286,14 +1286,12 @@ impl<'a> GameLoop<'a> {
             println!("🔄 RESUMING TURN {} (will suppress header)", self.turns_elapsed + 1);
         }
 
-        // Reset turn-based state (guarded to prevent re-entry when WASM harness recreates
-        // GameLoop mid-turn: re-running reset_turn_state would zero lands_played_this_turn,
-        // causing the local WASM client to offer PlayLand when the server correctly denies it)
-        let turn_num = self.game.turn.turn_number;
-        if self.game.turn.turn_state_reset_turn != Some(turn_num) {
-            self.game.turn.turn_state_reset_turn = Some(turn_num);
-            self.reset_turn_state(active_player)?;
-        }
+        // Reset turn-based state. NOTE (mtg-j4128/mtg-610): this used to be guarded by
+        // turn_state_reset_turn so a WASM harness re-entry mid-turn would not re-zero
+        // lands_played_this_turn (letting the client offer PlayLand the server denies).
+        // The harness now rewinds to turn start and replays forward, so reset_turn_state
+        // runs exactly once at the (replayed) turn start — no guard needed.
+        self.reset_turn_state(active_player)?;
 
         // Run through all steps of the turn
         loop {

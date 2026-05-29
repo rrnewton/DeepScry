@@ -2176,12 +2176,10 @@ impl GameState {
         if from_step == crate::game::Step::EndCombat && self.extra_combat_phases > 0 {
             self.extra_combat_phases -= 1;
             self.turn.current_step = crate::game::Step::BeginCombat;
-            // Reset combat-specific turn guards so combat steps work again
-            self.turn.attackers_declared_turn = None;
-            self.turn.blockers_declared_turn = None;
-            self.turn.combat_first_strike_damage_dealt_turn = None;
-            self.turn.combat_first_strike_priority_done_turn = None;
-            self.turn.combat_damage_dealt_turn = None;
+            // NOTE (mtg-j4128/mtg-610): previously reset per-turn combat guards here
+            // so the second combat phase's steps would run again. Those WASM re-entry
+            // guards have been removed (the harness rewinds+replays), so there is
+            // nothing to reset — combat state itself is cleared at end_of_combat.
             self.logger.gamelog("Additional combat phase begins!");
             return Ok(());
         }
@@ -3089,14 +3087,12 @@ impl GameState {
                 cache.mark_dirty();
             }
 
-            // When fully rewound to the initial state, reset transient guard fields.
-            // These fields are #[serde(skip)] (not in undo log) so they persist their
-            // end-of-game values after rewind. This matters for rewind benchmarks where
-            // the game is fully rewound and replayed in the same session: without this
-            // reset, guards like draw_step_executed_turn = Some(N) would fire on turn N
-            // in the replay, corrupting game state (e.g. skipping mandatory draw steps).
+            // When fully rewound to the initial state, clear transient pending state
+            // that is not tracked by the undo log (so a same-session replay starts clean).
+            // NOTE (mtg-j4128/mtg-610): the per-turn re-entry guard fields this also used
+            // to reset have been removed; the harness now rewinds+replays instead of
+            // re-running, so no guard reset is needed here.
             if self.undo_log.is_empty() {
-                self.turn.reset_transient_guards();
                 self.pending_cast = None;
                 self.pending_activation = None;
                 self.pending_activation_effect_idx = None;

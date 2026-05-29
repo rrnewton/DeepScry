@@ -1078,13 +1078,11 @@ impl UndoLog {
         // The game state has been rewound either way.
         let effective_turn = turn_number.unwrap_or(1);
 
-        // Reset transient guard fields that are NOT tracked by the undo log.
-        // These are #[serde(skip)] fields that persist from the original execution.
-        // Without this reset, guards like draw_step_executed_turn = Some(N) would
-        // cause the draw step to be skipped during replay, resulting in missing
-        // cards and DESYNC errors. (See also: the full-rewind reset at
-        // GameState::undo_to_previous_choice_point which does this when undo_log is empty.)
-        game.turn.reset_transient_guards();
+        // NOTE (mtg-j4128/mtg-610): this used to call game.turn.reset_transient_guards()
+        // to clear the #[serde(skip)] per-turn WASM re-entry guards that persisted from
+        // the original execution. Those guard fields have been removed (the harness now
+        // rewinds+replays through this very function instead of re-running), so there is
+        // nothing to reset here.
 
         // Invalidate mana engine cache. Undo actions restore the battlefield
         // but the ManaEngine memoization (keyed on mana_state_version) may

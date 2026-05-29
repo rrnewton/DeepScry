@@ -112,45 +112,12 @@ impl<'a> GameLoop<'a> {
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
         let active_player = self.game.turn.active_player;
 
-        // WASM re-entry guard (mtg-609): the WASM AI harness recreates the GameLoop
-        // on every step_harness() call. The upkeep/end-step phases each fire their
-        // begin-of-phase triggers and THEN run a priority_round that can block with
-        // NeedInput (waiting for a server ChoiceRequest). When it blocks, current_step
-        // does not advance, so the next step_harness() call re-enters the same step and
-        // would fire these phase triggers a SECOND time. For triggers that mutate state
-        // exactly once per phase (e.g. All Hallow's Eve: remove one scream counter and,
-        // at zero, mass-resurrect), double-firing diverges the WASM shadow from the
-        // server. Track which turn each once-per-turn phase trigger already fired and
-        // skip the duplicate, mirroring the established `draw_step_executed_turn` guard.
-        // (Other events like card-drawn / attackers-declared use their own guards.)
-        let current_turn = self.game.turn.turn_number;
-        // Only the two once-per-turn phase events that precede a blocking
-        // priority_round need the guard; all other trigger events resolve via
-        // their own dedicated guards or do not block, so leave them unguarded.
-        let guard_slot: Option<&mut Option<u32>> = match trigger_event {
-            TriggerEvent::BeginningOfUpkeep => Some(&mut self.game.turn.upkeep_triggers_checked_turn),
-            TriggerEvent::BeginningOfEndStep => Some(&mut self.game.turn.end_step_triggers_checked_turn),
-            TriggerEvent::EntersBattlefield
-            | TriggerEvent::LeavesBattlefield
-            | TriggerEvent::BeginningOfCombat
-            | TriggerEvent::SpellCast
-            | TriggerEvent::Attacks
-            | TriggerEvent::Blocks
-            | TriggerEvent::DealsCombatDamage
-            | TriggerEvent::Sacrificed
-            | TriggerEvent::CardDrawn
-            | TriggerEvent::Taps
-            | TriggerEvent::AttackersDeclared
-            | TriggerEvent::EquippedCreatureDies
-            | TriggerEvent::DamagedCreatureDies => None,
-        };
-        if let Some(slot) = guard_slot {
-            if *slot == Some(current_turn) {
-                // Already fired this turn — re-entry after a NeedInput block. Skip.
-                return Ok(());
-            }
-            *slot = Some(current_turn);
-        }
+        // NOTE (mtg-j4128/mtg-610): this used to carry per-turn idempotency guards
+        // (upkeep_triggers_checked_turn / end_step_triggers_checked_turn) to suppress
+        // double-firing when the WASM AI harness re-entered a step after a NeedInput
+        // block WITHOUT rewinding. The harness now rewinds to turn start and replays
+        // forward (the shared undo-log time-travel mechanism), which reverts these
+        // triggers' effects before re-applying them — so no per-step guards are needed.
 
         // A phase trigger fires from the battlefield (the overwhelmingly common
         // case) or, for a card whose trigger declares a non-battlefield
@@ -387,13 +354,12 @@ impl<'a> GameLoop<'a> {
             return Ok(None);
         }
 
-        // Guard against re-entry: WASM harness creates a new GameLoop on each step_harness() call.
-        // If priority_round() blocks with NeedInput, current_step stays at Draw (advance_step()
-        // is never called), so the next step_harness() call would re-execute draw_card() again.
-        // We track which turn we already drew on to skip the draw on re-entry.
-        let current_turn = self.game.turn.turn_number;
-        let already_drew = self.game.turn.draw_step_executed_turn == Some(current_turn);
-        if !already_drew {
+        // NOTE (mtg-j4128/mtg-610): this used to carry a `draw_step_executed_turn`
+        // guard to avoid re-drawing when the WASM harness re-entered the Draw step
+        // after a NeedInput block. The harness now rewinds to turn start and replays
+        // forward, which reverts the draw (and its undo-logged effects) before
+        // re-applying it — so the draw runs exactly once per turn with no guard.
+        {
             // Sync network state before drawing
             // This ensures revealed cards are queued in the library before draw_card() pops them
             self.sync_to_action();
@@ -409,9 +375,6 @@ impl<'a> GameLoop<'a> {
             // Draw a card
             let (_, draw_count) = self.game.draw_card(active_player)?;
 
-            // Mark this turn's mandatory draw as executed
-            self.game.turn.draw_step_executed_turn = Some(current_turn);
-
             // Check for "second card drawn" triggers (e.g., Knowledge Seeker, Otter-Penguin)
             self.game.check_card_drawn_triggers(active_player, draw_count)?;
 
@@ -422,9 +385,7 @@ impl<'a> GameLoop<'a> {
             // Per-card "P draws CARD (id)" logging is now centralised inside
             // GameState::draw_card so every draw source — the mandatory draw
             // step, activated abilities (e.g. Bazaar of Baghdad), spells (e.g.
-            // Ancestral Recall), and Loot effects — produces a consistent draw
-            // log. The `already_drew` guard above already prevents re-drawing
-            // (and therefore re-logging) on WASM GameLoop re-entry.
+            // Ancestral Recall), and Loot effects — produces a consistent draw log.
         }
 
         // Print battlefield state AFTER draw step completes
