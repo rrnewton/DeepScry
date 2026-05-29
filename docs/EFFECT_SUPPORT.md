@@ -43,6 +43,7 @@ workflow, row format, and update rules.
 | ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-29_#2440(00e22751) | (none)      | Su-Chi, (multiple) |
 | ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | WORKING | 2026-05-28_#2360(897881c9) | (fixed)     | Sengir Vampire   |
 | DamageDoneOnce by ~ to creature/player                                           | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | Hypnotic Specter |
+| DamageDone Execute$ DB$ Discard Defined$ TriggeredTarget (damaged player discards)| WORKING | 2026-05-29_#2449(b5fd60b7) | (fixed)     | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
 
 ## Activated abilities (A:) and cost shapes

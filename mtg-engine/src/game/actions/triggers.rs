@@ -149,6 +149,25 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             remember_discarding_players: *remember_discarding_players,
         },
 
+        // Defined$ TriggeredTarget / TriggeredPlayer (Hypnotic Specter: "that player
+        // discards a card at random"). The target_opponent sentinel resolves to the
+        // player the trigger event acted on; in a 2-player game that is the
+        // controller's opponent (the player the creature dealt damage to). Falls back
+        // to the controller if no opponent is known (single-player edge case).
+        Effect::DiscardCards {
+            player,
+            count,
+            remember_discarded,
+            optional,
+            remember_discarding_players,
+        } if player.is_target_opponent() => Effect::DiscardCards {
+            player: ctx.opponent.unwrap_or(ctx.controller),
+            count: *count,
+            remember_discarded: *remember_discarded,
+            optional: *optional,
+            remember_discarding_players: *remember_discarding_players,
+        },
+
         Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
             player: ctx.controller,
             amount: *amount,

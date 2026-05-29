@@ -1,0 +1,24 @@
+[metadata]
+Name:Hypnotic Specter damage triggers opponent discard
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 attacks with an untapped Hypnotic Specter into an empty board. When it connects, the OPPONENT (P1) discards a card at random (mtg-Hypnotic). Regression for Defined$ TriggeredTarget discard resolving to the wrong player.
+
+[state]
+turn=3
+activeplayer=p0
+activephase=COMBAT_BEGIN
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Hypnotic Specter; Swamp; Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=Plains; Plains; Plains
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

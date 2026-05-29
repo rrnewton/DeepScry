@@ -113,6 +113,14 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             //                             discards X cards"; we auto-pick the sole
             //                             opponent in 2-player games until a real
             //                             player-targeting UI lands)
+            //   Defined$ TriggeredTarget / TriggeredPlayer
+            //                          -> the player the trigger event acted on
+            //                             (Hypnotic Specter — "that player discards a
+            //                             card at random"). In 2-player games the
+            //                             player Hypnotic Specter damaged is always the
+            //                             controller's opponent, so we reuse the
+            //                             target_opponent sentinel; resolved from
+            //                             TriggerContext::opponent at execution time.
             //   otherwise              -> placeholder, resolved to controller
             //
             // CR 116.2c / CR 601.2c: targeted spells require a chosen target; we
@@ -121,6 +129,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let player = match (params.get("Defined"), params.get("ValidTgts")) {
                 (Some("Player"), _) => PlayerId::all_players(),
                 (Some("You"), _) => PlayerId::placeholder(),
+                (Some("TriggeredTarget" | "TriggeredPlayer"), _) => PlayerId::target_opponent(),
                 (_, Some(vt)) if vt.contains("Player") => PlayerId::target_opponent(),
                 _ => PlayerId::placeholder(),
             };

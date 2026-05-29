@@ -3420,6 +3420,77 @@ mod tests {
         );
     }
 
+    /// Card compat: Hypnotic Specter (cardsfolder/h/hypnotic_specter.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 B B
+    ///   Types:Creature Specter
+    ///   PT:2/2
+    ///   K:Flying
+    ///   T:Mode$ DamageDone | ValidSource$ Card.Self | ValidTarget$ Opponent | Execute$ TrigDiscard
+    ///   SVar:TrigDiscard:DB$ Discard | Defined$ TriggeredTarget | NumCards$ 1 | Mode$ Random
+    ///
+    /// Asserts (a) the parsed shape (cost, P/T, Flying, a DealsCombatDamage
+    /// trigger), and (b) that the trigger's discard effect carries the
+    /// `target_opponent` PlayerId sentinel — NOT the bare placeholder. Before
+    /// the fix, `Defined$ TriggeredTarget` fell through the converter's player
+    /// match to `placeholder()`, which `resolve_effect_placeholder` then
+    /// mapped to `ctx.controller` (the attacker), so the ATTACKER discarded
+    /// instead of the player Hypnotic Specter hit. The sentinel routes the
+    /// trigger-path resolver to `ctx.opponent` (CR 116.2c, 2-player approx —
+    /// the player the creature dealt damage to). See mtg-564 for the long-term
+    /// multiplayer player-targeting fix.
+    #[test]
+    fn test_card_compat_hypnotic_specter() {
+        use crate::core::{Keyword, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/h/hypnotic_specter.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Hypnotic Specter should load");
+
+        assert_eq!(def.name.as_str(), "Hypnotic Specter");
+        assert_eq!(def.mana_cost.black, 2, "Cost should be {{1}}{{B}}{{B}}");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(2));
+        assert_eq!(def.toughness, Some(2));
+
+        let card_id = CardId::new(1);
+        let card = def.instantiate(card_id, PlayerId::new(0));
+
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Hypnotic Specter must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+
+        // The DamageDone trigger must parse and its Execute$ discard effect must
+        // carry the target_opponent sentinel (not the placeholder/controller).
+        let discard_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::DealsCombatDamage)
+            .expect("Hypnotic Specter must have a DealsCombatDamage trigger");
+
+        let found = discard_trigger.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::DiscardCards { player, .. } if player.is_target_opponent()
+            )
+        });
+        assert!(
+            found,
+            "Hypnotic Specter's damage trigger must produce DiscardCards with \
+             PlayerId::target_opponent() so the DAMAGED player (opponent), not the \
+             attacker, discards. Got trigger effects: {:?}",
+            discard_trigger.effects
+        );
+    }
+
     /// Card compat: Mind Twist (mtg-564; cardsfolder/m/mind_twist.txt)
     ///
     /// Script:
