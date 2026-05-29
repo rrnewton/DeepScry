@@ -355,34 +355,17 @@ pub fn network_has_opponent_choice() -> bool {
     with_client(|client| client.has_opponent_choice())
 }
 
-/// Check if card reveals are pending
+/// Check if any state-sync entries have arrived but not yet been applied
+/// to the shadow `GameState`.
+///
+/// Phase 2 step 1: this is the diagnostic replacement for the legacy
+/// `network_has_pending_reveals()` (deleted along with the
+/// `pending_reveals` VecDeque). The state-sync log carries both reveals
+/// AND library reorders, so the question "are there unprocessed pushes"
+/// is now answered by the log's frontier vs the apply cursor.
 #[wasm_bindgen]
 pub fn network_has_pending_reveals() -> bool {
-    with_client(|client| client.has_pending_reveals())
-}
-
-/// Get pending reveals as JSON array
-///
-/// Returns a JSON array of reveal objects, or "[]" if none.
-#[wasm_bindgen]
-pub fn network_get_pending_reveals_json() -> String {
-    with_client(|client| {
-        let reveals: Vec<_> = client
-            .drain_reveals()
-            .iter()
-            .map(|(owner, card, reason)| {
-                // CardReveal now only contains card_id and name
-                // The WASM client should look up full card info from its local DB
-                serde_json::json!({
-                    "owner": owner.as_u32(),
-                    "card_id": card.card_id.as_u32(),
-                    "name": card.name,
-                    "reason": format!("{:?}", reason),
-                })
-            })
-            .collect();
-        serde_json::to_string(&reveals).unwrap_or_else(|_| "[]".to_string())
-    })
+    with_client(|client| client.has_unapplied_state_sync())
 }
 
 /// Get the current choice request as JSON, or null if none

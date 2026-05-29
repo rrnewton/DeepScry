@@ -2275,34 +2275,20 @@ impl WasmFancyTuiState {
             // Run the game with both replay controllers
             // Scope game_loop tightly so self can be accessed afterwards
             let result = {
-                // Create sync callback that processes pending reveals
+                // Apply pending state-sync entries from the shadow log
+                // (Phase 2 step 1 — non-destructive ActionLog read).
                 let client_for_sync = network_client.clone();
                 let local_player = our_id;
                 let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                    // mtg-589: apply library reorders BEFORE reveals so the
-                    // shadow library matches the server's order before any draw.
-                    // Protocol sends top-to-bottom; library Vec is bottom-to-top.
-                    let reorders = client_for_sync.borrow_mut().drain_library_reorders();
-                    for (player, new_order) in reorders {
+                    let applied = client_for_sync
+                        .borrow_mut()
+                        .apply_state_sync_up_to_frontier(game, Some(local_player));
+                    if applied > 0 {
                         log::debug!(
-                            "WASM sync_callback (replay): library reorder for {:?} ({} cards)",
-                            player,
-                            new_order.len()
-                        );
-                        if let Some(zones) = game.get_player_zones_mut(player) {
-                            zones.library.cards = new_order.into_iter().rev().collect();
-                        }
-                    }
-                    let reveals = client_for_sync.borrow_mut().drain_reveals();
-                    if !reveals.is_empty() {
-                        log::debug!(
-                            "WASM sync_callback (replay): processing {} reveals at action_count={}",
-                            reveals.len(),
+                            "WASM sync_callback (replay): applied {} state-sync entries at action_count={}",
+                            applied,
                             game.action_count()
                         );
-                        for (owner, card, reason) in reveals {
-                            process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
-                        }
                     }
                 };
 
@@ -2378,35 +2364,20 @@ impl WasmFancyTuiState {
 
                 // Scope game_loop so borrow of self.game ends before accessing self
                 let result = {
-                    // Create sync callback that processes pending reveals
+                    // Apply pending state-sync entries from the shadow log
+                    // (Phase 2 step 1 — non-destructive ActionLog read).
                     let client_for_sync = network_client.clone();
                     let local_player = our_id;
                     let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                        // mtg-589: apply library reorders BEFORE reveals so the
-                        // shadow library matches the server's order before any
-                        // draw. Protocol sends top-to-bottom; library Vec is
-                        // bottom-to-top, so reverse.
-                        let reorders = client_for_sync.borrow_mut().drain_library_reorders();
-                        for (player, new_order) in reorders {
+                        let applied = client_for_sync
+                            .borrow_mut()
+                            .apply_state_sync_up_to_frontier(game, Some(local_player));
+                        if applied > 0 {
                             log::debug!(
-                                "WASM sync_callback (normal): library reorder for {:?} ({} cards)",
-                                player,
-                                new_order.len()
-                            );
-                            if let Some(zones) = game.get_player_zones_mut(player) {
-                                zones.library.cards = new_order.into_iter().rev().collect();
-                            }
-                        }
-                        let reveals = client_for_sync.borrow_mut().drain_reveals();
-                        if !reveals.is_empty() {
-                            log::debug!(
-                                "WASM sync_callback (normal): processing {} reveals at action_count={}",
-                                reveals.len(),
+                                "WASM sync_callback (normal): applied {} state-sync entries at action_count={}",
+                                applied,
                                 game.action_count()
                             );
-                            for (owner, card, reason) in reveals {
-                                process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
-                            }
                         }
                     };
 
@@ -2482,22 +2453,20 @@ impl WasmFancyTuiState {
 
         // Scope game_loop so borrow of self.game ends before accessing self
         let result = {
-            // Create sync callback that processes pending reveals
-            // This is the WASM equivalent of the native client's sync_callback
+            // Apply pending state-sync entries from the shadow log
+            // (Phase 2 step 1 — non-destructive ActionLog read).
             let client_for_sync = network_client.clone();
             let local_player = our_id;
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                // Drain all pending reveals and process them
-                let reveals = client_for_sync.borrow_mut().drain_reveals();
-                if !reveals.is_empty() {
+                let applied = client_for_sync
+                    .borrow_mut()
+                    .apply_state_sync_up_to_frontier(game, Some(local_player));
+                if applied > 0 {
                     log::debug!(
-                        "WASM sync_callback: processing {} reveals at action_count={}",
-                        reveals.len(),
+                        "WASM sync_callback (ai): applied {} state-sync entries at action_count={}",
+                        applied,
                         game.action_count()
                     );
-                    for (owner, card, reason) in reveals {
-                        process_card_reveal_wasm(game, owner, card, reason, Some(local_player));
-                    }
                 }
             };
 
@@ -3987,4 +3956,4 @@ fn create_game_from_database(
 
 // Shared with ai_harness.rs - functions live in crate::wasm::network::game_init
 #[cfg(feature = "wasm-network")]
-use crate::wasm::network::game_init::{init_game_reserve_only_wasm, process_card_reveal_wasm};
+use crate::wasm::network::game_init::init_game_reserve_only_wasm;

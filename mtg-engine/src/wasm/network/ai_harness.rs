@@ -27,7 +27,7 @@
 
 use super::client::SharedNetworkClient;
 use super::exports::ensure_client;
-use super::game_init::{init_game_reserve_only_wasm, process_card_reveal_wasm};
+use super::game_init::init_game_reserve_only_wasm;
 use super::{WasmNetworkLocalController, WasmRemoteController};
 use crate::core::PlayerId;
 use crate::game::{
@@ -200,33 +200,17 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
     // Create a remote controller for the opponent (cheap, just holds refs)
     let mut remote = WasmRemoteController::new(opponent_id, client.clone());
 
-    // Build the sync callback that drains pending card reveals
-    // This is the WASM equivalent of the native client's blocking sync mechanism
+    // Build the sync callback that applies pending state-sync entries
+    // (reveals + library reorders) from the WS-fed ActionLog. This is the
+    // WASM equivalent of the native client's blocking sync mechanism, but
+    // non-destructive — see docs/NETWORK_ACTION_LOG.md § 3.2.
     let client_for_sync = client.clone();
     let sync_callback = move |game: &mut GameState, _target_action: u64| {
-        // mtg-589: apply library reorders BEFORE reveals so the shadow's
-        // library is in the server-authoritative order before any draw.
-        // Mirrors the native client's sync_callback. Protocol sends the order
-        // top-to-bottom; the library Vec is bottom-to-top (draw_top pops the
-        // last element), so reverse.
-        let reorders = client_for_sync.borrow_mut().drain_library_reorders();
-        for (player, new_order) in reorders {
-            log::debug!(
-                "ai_harness sync_callback: applying library reorder for {:?} ({} cards)",
-                player,
-                new_order.len()
-            );
-            if let Some(zones) = game.get_player_zones_mut(player) {
-                zones.library.cards = new_order.into_iter().rev().collect();
-            }
-        }
-
-        let reveals = client_for_sync.borrow_mut().drain_reveals();
-        if !reveals.is_empty() {
-            log::debug!("ai_harness sync_callback: processing {} reveals", reveals.len());
-            for (owner, card, reason) in reveals {
-                process_card_reveal_wasm(game, owner, card, reason, Some(our_id));
-            }
+        let applied = client_for_sync
+            .borrow_mut()
+            .apply_state_sync_up_to_frontier(game, Some(our_id));
+        if applied > 0 {
+            log::debug!("ai_harness sync_callback: applied {} state-sync entries", applied);
         }
     };
 

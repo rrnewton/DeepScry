@@ -35,6 +35,11 @@ pub use reveal_processor::*;
 mod action_log;
 pub use action_log::*;
 
+// Strongly-typed payload for the shadow state-sync `ActionLog<StateSyncEntry>`.
+// See docs/NETWORK_ACTION_LOG.md § 3.2.
+mod state_sync;
+pub use state_sync::*;
+
 // Native controller types (require std::sync::mpsc and network feature)
 #[cfg(feature = "network")]
 mod client;

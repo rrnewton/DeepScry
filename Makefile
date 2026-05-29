@@ -313,6 +313,10 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."
 	@bash tests/network_vs_local_equivalence_e2e.sh 3 random
 	@bash tests/network_vs_local_equivalence_e2e.sh 3 zero
+	@echo "=== Running robots42 state-sync regression (Phase 2 step 1 / mtg-559) ==="
+	@echo "    Locks in the ActionLog<StateSyncEntry> reveal/reorder path"
+	@echo "    that replaces WasmNetworkClient's destructive drain_* helpers."
+	@bash tests/robots42_state_sync_e2e.sh
 	@echo "✓ network-e2e tests completed"
 
 # Generate documentation and open in browser
