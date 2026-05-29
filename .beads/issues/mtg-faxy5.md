@@ -1,0 +1,13 @@
+---
+title: Remove EXTERNAL-facing mtg-forge-rs references (lobby footer, landing, web)
+status: closed
+priority: 2
+issue_type: task
+created_at: 2026-05-29T15:00:43.735824375+00:00
+updated_at: 2026-05-29T15:45:26.451249078+00:00
+closed_at: 2026-05-29T15:45:26.451248946+00:00
+---
+
+# Description
+
+User request 2026-05-29 — PRIORITIZE external/user-facing over internal. Lobby page footer still shows 'mtg-forge-rs'. Sweep web/ (index.html landing + lobby, native_game.html, tui_game.html, demo.html, *.js) for user-visible 'mtg-forge-rs' and replace with DeepScry (or remove). Distinct from the internal code/doc path-ref sweep (mtg-602, partly done). Do external first.

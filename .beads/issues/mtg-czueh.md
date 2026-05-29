@@ -1,0 +1,13 @@
+---
+title: Soften Forge references — we are a fresh reimplementation, not a port
+status: closed
+priority: 3
+issue_type: task
+created_at: 2026-05-29T15:00:43.737313532+00:00
+updated_at: 2026-05-29T15:45:26.452576558+00:00
+closed_at: 2026-05-29T15:45:26.452576507+00:00
+---
+
+# Description
+
+User request 2026-05-29. We've diverged far from Forge — more a fresh reimplementation than a port. Tweak language that calls it a Forge port/reimplementation. Example: Cargo.toml description 'A Rust reimplementation of the MTG Forge game engine' → 'A high-performance MTG engine inspired by Forge'. Find other refs (READMEs, landing copy, docs, --about strings) and update. Keep attribution where due (card data/rules heritage) but don't overstate it as a port. (Note: the forge-java submodule + cardsfolder provenance stay.)

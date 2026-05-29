@@ -1,0 +1,13 @@
+---
+title: 'Version info: 0.1.<gitdepth> + build date + git hash in binary & website'
+status: closed
+priority: 2
+issue_type: feature
+created_at: 2026-05-29T15:00:43.734107979+00:00
+updated_at: 2026-05-29T15:45:26.454234806+00:00
+closed_at: 2026-05-29T15:45:26.454234563+00:00
+---
+
+# Description
+
+User request 2026-05-29. Currently Cargo version stuck at 0.1.0 and there is no `mtg --version`. Adopt version convention Major.Minor.PatchLevel where PatchLevel = monotonic gitdepth (`git rev-list --count HEAD`), e.g. 0.1.2434. Snapshot build date + short git hash at build time (build.rs). Surface: (a) `mtg --version` should print version + build date + hash; (b) store on each deployment; (c) website lists it — lobby page FOOTER. NOTE /health already returns sha + build_time_epoch + version — extend/reuse that. build.rs can emit gitdepth/date/hash as env at compile time.
