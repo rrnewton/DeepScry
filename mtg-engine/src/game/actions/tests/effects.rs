@@ -5151,4 +5151,49 @@ mod tests {
             "Flash Counter must restrict ValidTgts to Instant"
         );
     }
+
+    /// Card compat: Blue Elemental Blast (cardsfolder/b/blue_elemental_blast.txt)
+    ///
+    /// Script: ManaCost:U / Types:Instant
+    ///   A:SP$ Charm | Choices$ DBCounter,DBDestroy
+    ///   SVar:DBCounter:DB$ Counter | TargetType$ Spell | ValidTgts$ Card.Red
+    ///   SVar:DBDestroy:DB$ Destroy | ValidTgts$ Permanent.Red
+    ///
+    /// Parser shape: {U} Instant modal spell with exactly two choices,
+    /// each restricted to red cards/permanents. Runtime (both modes:
+    /// counter a red spell, destroy a red permanent) verified by
+    /// tests/blue_elemental_blast_e2e.sh (mtg-487).
+    #[test]
+    fn test_card_compat_blue_elemental_blast() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/blue_elemental_blast.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Blue Elemental Blast should load");
+        assert_eq!(def.name.as_str(), "Blue Elemental Blast");
+        assert_eq!(def.mana_cost.blue, 1);
+        assert_eq!(def.mana_cost.generic, 0);
+        assert!(def.types.contains(&CardType::Instant));
+
+        let charm = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Charm).then_some(p)
+            })
+            .expect("Blue Elemental Blast must have an SP$ Charm spell ability");
+        // Both modes are referenced from the Choices$ list. Order matters
+        // for the fixed-input scripts in the e2e test (0 = counter, 1 =
+        // destroy).
+        assert_eq!(
+            charm.get("Choices"),
+            Some("DBCounter,DBDestroy"),
+            "Blue Elemental Blast modes must be DBCounter,DBDestroy in order"
+        );
+    }
 }

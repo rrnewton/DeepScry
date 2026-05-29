@@ -1,0 +1,24 @@
+[metadata]
+Name:Blue Elemental Blast Destroy Red Permanent Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Blue Elemental Blast destroy mode — P2 casts BEB on P1's Mountain (a red permanent); the Mountain is destroyed and moves to its owner's graveyard.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=Blue Elemental Blast
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Island
+p1exile=

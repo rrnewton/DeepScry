@@ -1,0 +1,24 @@
+[metadata]
+Name:Blue Elemental Blast Counter Red Spell Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Blue Elemental Blast ({U} Instant: choose one — counter target red spell; or destroy target red permanent). P1 casts Lightning Bolt at P2; P2 responds with Blue Elemental Blast, picks the counter mode, and counters the Bolt.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=Blue Elemental Blast
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Island
+p1exile=
