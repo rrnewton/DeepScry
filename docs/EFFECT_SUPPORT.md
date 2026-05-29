@@ -40,7 +40,7 @@ workflow, row format, and update rules.
 
 | Trigger pattern                                                                  | Status  | Last verified              | Bug issue   | Sample cards     |
 |----------------------------------------------------------------------------------|---------|----------------------------|-------------|------------------|
-| ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | (multiple)       |
+| ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-29_#2440(00e22751) | (none)      | Su-Chi, (multiple) |
 | ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | WORKING | 2026-05-28_#2360(897881c9) | (fixed)     | Sengir Vampire   |
 | DamageDoneOnce by ~ to creature/player                                           | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
@@ -81,6 +81,7 @@ workflow, row format, and update rules.
 | Produced$ R                     | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Mox Ruby            |
 | Produced$ G                     | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Mox Emerald         |
 | Produced$ Any                   | WORKING | 2026-05-12_#2226(928ec99f) | (fixed)   | City of Brass       |
+| Produced$ C Amount$ 4 (DB$ Mana on dies trigger) | WORKING | 2026-05-29_#2440(00e22751) | (none) | Su-Chi |
 | Intrinsic dual-land mana (CR 305.6: 2 basic subtypes → 2 {T}:Add abilities) | WORKING | 2026-05-29_#2432(f85d828d) | (none) | Badlands, Scrubland, Bayou |
 
 ## Selectors / parameters

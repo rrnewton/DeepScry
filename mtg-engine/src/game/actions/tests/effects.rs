@@ -3670,4 +3670,88 @@ mod tests {
             card.triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
         );
     }
+
+    /// Card compat: Su-Chi (cardsfolder/s/su_chi.txt)
+    ///
+    /// Script:
+    ///   ManaCost:4
+    ///   Types:Artifact Creature Construct
+    ///   PT:4/4
+    ///   T:Mode$ ChangesZone | Origin$ Battlefield | Destination$ Graveyard
+    ///     | ValidCard$ Card.Self | Execute$ TrigAddMana
+    ///   SVar:TrigAddMana:DB$ Mana | Produced$ C | Amount$ 4
+    ///
+    /// Verifies (parser + runtime): {4} 4/4 Artifact Creature whose dies
+    /// trigger (ChangesZone Battlefield -> Graveyard, Card.Self) fires and
+    /// adds {C}{C}{C}{C} to its controller's mana pool. A silent drop of the
+    /// `T:` line would leave a vanilla 4/4 with no mana on death. Part of
+    /// thedeck (mtg-413, mtg-545).
+    #[test]
+    fn test_card_compat_su_chi() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/su_chi.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Su-Chi should load");
+
+        assert_eq!(def.name.as_str(), "Su-Chi");
+        assert_eq!(def.mana_cost.generic, 4, "Cost should be {{4}}");
+        assert_eq!(def.mana_cost.cmc(), 4, "CMC should be 4");
+        assert!(def.types.contains(&CardType::Artifact), "must be an Artifact");
+        assert!(def.types.contains(&CardType::Creature), "must be a Creature");
+        assert_eq!(def.power, Some(4));
+        assert_eq!(def.toughness, Some(4));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The dies trigger (ChangesZone Battlefield -> Graveyard, Card.Self)
+        // is modelled as LeavesBattlefield (see loader/card.rs ~2040). A
+        // silent drop of the `T:` line would leave zero triggers.
+        let dies_trigger = card
+            .triggers
+            .iter()
+            .find(|t| matches!(t.event, TriggerEvent::LeavesBattlefield))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Su-Chi must have a dies (LeavesBattlefield) trigger. Got triggers: {:?}",
+                    card.triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
+                )
+            });
+        assert!(
+            dies_trigger.trigger_self_only,
+            "Su-Chi's dies trigger targets Card.Self, so it must be self-only"
+        );
+
+        // Its Execute$ TrigAddMana (DB$ Mana | Produced$ C | Amount$ 4) must
+        // resolve to an AddMana effect granting exactly 4 colourless mana —
+        // not colour-shifted, not a different amount.
+        let add_mana = dies_trigger
+            .effects
+            .iter()
+            .find_map(|e| {
+                if let Effect::AddMana { mana, .. } = e {
+                    Some(mana)
+                } else {
+                    None
+                }
+            })
+            .expect("Su-Chi dies trigger must carry an AddMana effect (Produced$ C | Amount$ 4)");
+        assert_eq!(
+            (
+                add_mana.white,
+                add_mana.blue,
+                add_mana.black,
+                add_mana.red,
+                add_mana.green,
+                add_mana.colorless
+            ),
+            (0, 0, 0, 0, 0, 4),
+            "Su-Chi's death must add exactly {{C}}{{C}}{{C}}{{C}} (4 colourless). Got: {:?}",
+            add_mana
+        );
+    }
 }

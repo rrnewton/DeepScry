@@ -1,0 +1,24 @@
+[metadata]
+Name:Su-Chi Dies Adds Mana Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Su-Chi (4/4 Artifact Creature for {4}) has "When Su-Chi dies, add {C}{C}{C}{C}." P1 bolts its own Su-Chi twice (3+3 = 6 lethal damage). When Su-Chi dies it must trigger and add four colorless mana to P1's pool. Regression for mtg-545 (thedeck, mtg-413).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt; Lightning Bolt; Lightning Bolt; Lightning Bolt
+p0library=Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Su-Chi
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=
