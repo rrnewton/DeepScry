@@ -3754,4 +3754,68 @@ mod tests {
             add_mana
         );
     }
+
+    /// Card compat: Tundra / Underground Sea (original dual lands) + the
+    /// Island / Plains basics that share the type-driven intrinsic-mana path.
+    ///
+    /// Scripts carry NO printed `A:` mana line — each basic-land subtype on
+    /// the type line grants an intrinsic "{T}: Add {color}" ability (CR
+    /// 305.6). Tundra = Plains Island ({W},{U}); Underground Sea = Island
+    /// Swamp ({U},{B}); Island = {U}; Plains = {W}. A dropped subtype would
+    /// show up as a missing colour here. Companion to
+    /// `test_card_compat_original_dual_lands`. Part of thedeck (mtg-413:
+    /// mtg-553 Tundra, mtg-554 Underground Sea, mtg-513 Island, mtg-530
+    /// Plains).
+    #[test]
+    fn test_card_compat_thedeck_lands() {
+        use std::path::PathBuf;
+
+        // (card file, name, expected mana colours as (W,U,B,R,G) tuples)
+        let cases: &[(&str, &str, &[ManaColorTuple])] = &[
+            // Tundra: Plains Island -> {W}, {U}
+            (
+                "../cardsfolder/t/tundra.txt",
+                "Tundra",
+                &[(1, 0, 0, 0, 0), (0, 1, 0, 0, 0)],
+            ),
+            // Underground Sea: Island Swamp -> {U}, {B}
+            (
+                "../cardsfolder/u/underground_sea.txt",
+                "Underground Sea",
+                &[(0, 1, 0, 0, 0), (0, 0, 1, 0, 0)],
+            ),
+            // Island (basic) -> {U}
+            ("../cardsfolder/i/island.txt", "Island", &[(0, 1, 0, 0, 0)]),
+            // Plains (basic) -> {W}
+            ("../cardsfolder/p/plains.txt", "Plains", &[(1, 0, 0, 0, 0)]),
+        ];
+
+        for (path_str, name, expected_colors) in cases {
+            let path = PathBuf::from(path_str);
+            if !path.exists() {
+                eprintln!("Skipping: cardsfolder not present at {:?}", path);
+                return;
+            }
+            let def = crate::loader::CardLoader::load_from_file(&path)
+                .unwrap_or_else(|e| panic!("{name} should load: {e:?}"));
+            assert_eq!(def.name.as_str(), *name);
+            assert!(def.types.contains(&CardType::Land), "{name} must be a Land");
+
+            let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+            let mut produced = tap_mana_ability_colors(&card);
+            produced.sort_unstable();
+
+            let mut expected: Vec<ManaColorTuple> = expected_colors.to_vec();
+            expected.sort_unstable();
+
+            assert_eq!(
+                produced, expected,
+                "{name} must grant exactly its intrinsic mana abilities for its basic land \
+                 types (CR 305.6). A missing/colourless ability means a subtype was dropped. \
+                 Got abilities: {:?}",
+                card.activated_abilities
+            );
+        }
+    }
 }
