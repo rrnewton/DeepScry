@@ -12,14 +12,14 @@
 # Trunk's `rel="rust"` model OWNS the cargo+wasm-bindgen build and injects its
 # own bootstrap that exposes the module via `window.wasmBindings`. Our four
 # game pages instead `import init, { ...many named exports... } from
-# './pkg/mtg_forge_rs.js'` (static + dynamic imports), which trunk's injected
+# './pkg/mtg_engine.js'` (static + dynamic imports), which trunk's injected
 # bootstrap cannot serve directly. Fully migrating to trunk therefore requires
 # rewriting all four pages onto `window.wasmBindings.*` — a large change gated
 # behind a separate task (see mtg-571 follow-ups) and deliberately deferred
 # while a network-desync fix is in flight.
 #
 # What IS content-addressed today (the stale-bundle bug is killed on deploy):
-#   * The wasm-bindgen pkg pair  (mtg_forge_rs.<hash>.js + _bg.<hash>.wasm) —
+#   * The wasm-bindgen pkg pair  (mtg_engine.<hash>.js + _bg.<hash>.wasm) —
 #     hashed by scripts/hash_web_assets.sh on the deploy-staging copy, which
 #     rewrites the import specifier + the init({module_or_path}) arg in the
 #     HTML pages (structured, controlled-injection rewrite).

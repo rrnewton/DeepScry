@@ -1,6 +1,6 @@
 # Content-Addressed Immutable Web-Asset Pipeline — Design (mtg-571)
 
-Transient-info stamp: `2026-05-28_#2408(f0c2aa22)`
+Transient-info stamp: `2026-05-28_#2411(trunk-cas-assets)` (shell-script-free + smoke-test maturation)
 
 Status: **DESIGN + PROTOTYPE.** This document is the concrete design that
 follows the options survey in
@@ -17,11 +17,24 @@ intended for the user's PR review.
 > flagged below has been **RESOLVED**. Both the per-set bins and the wasm
 > pkg pair now hash through a single shared Rust function
 > (`mtg_forge_rs::asset_hash::asset_hash_hex` — **blake3**, truncated to 16
-> hex chars). The exporter calls it directly; `hash_web_assets.sh` shells out
-> to the new `mtg hash-asset <file>` subcommand (no more `sha256sum | cut`).
+> hex chars). The exporter calls it directly; the pkg pair is hashed by the
+> new `mtg hash-web-assets <web_dir>` subcommand (no more `sha256sum | cut`).
 > The SipHash (`DefaultHasher`) path in the exporter is gone. §3 and the
 > §9 open question #1 below are kept for historical context but are now
 > marked resolved.
+>
+> **UPDATE (shell-script-free + smoke test, mtg-571, this session):** the
+> deploy-staging shell script `scripts/hash_web_assets.sh` has been **DELETED**
+> and fully folded into Rust as `mtg hash-web-assets` (hashes the pkg pair,
+> renames it, and structurally rewrites the HTML import specifier +
+> `init({module_or_path})`). `deploy-cloud.sh` calls the Rust subcommand. The
+> web_server now serves a *content-addressed* `/pkg/<stem>.<hash>.<ext>` as
+> `immutable` and a *fixed-name* `/pkg/<stem>.<ext>` as `no-cache` (was always
+> no-cache) — closing the split-brain so the deployed hashed pkg pair is
+> finally immutable-eligible. A NEW hermetic local smoke test
+> (`web/test_web_server_smoke.js`) launches `mtg server-web` on a temp port and
+> asserts the cache tiers + logical→hashed resolution; it is the deploy
+> PRE-rsync gate AND a `make validate` step. See §3.1, §4, §6, §10.
 
 ---
 
@@ -48,11 +61,11 @@ A content-addressed asset embeds a hash of its own bytes in its filename:
 <logical-name>.<hash>.<ext>
 ```
 
-| Asset class      | Source name                | Content-addressed name             | Who names it          |
-|------------------|----------------------------|------------------------------------|-----------------------|
-| Per-set data bin | `<YYYY>-<CODE>.bin`        | `<YYYY>-<CODE>.<hash>.bin`         | exporter (Rust)       |
-| wasm-bindgen JS  | `mtg_forge_rs.js`          | `mtg_forge_rs.<hash>.js`          | `hash_web_assets.sh`  |
-| wasm-bindgen WASM| `mtg_forge_rs_bg.wasm`     | `mtg_forge_rs_bg.<hash>.wasm`     | `hash_web_assets.sh`  |
+| Asset class      | Source name                | Content-addressed name             | Who names it           |
+|------------------|----------------------------|------------------------------------|------------------------|
+| Per-set data bin | `<YYYY>-<CODE>.bin`        | `<YYYY>-<CODE>.<hash>.bin`         | exporter (Rust)        |
+| wasm-bindgen JS  | `mtg_forge_rs.js`          | `mtg_forge_rs.<hash>.js`          | `mtg hash-web-assets`  |
+| wasm-bindgen WASM| `mtg_forge_rs_bg.wasm`     | `mtg_forge_rs_bg.<hash>.wasm`     | `mtg hash-web-assets`  |
 
 `<hash>` is the first 16 hex chars (64 bits) of the **blake3** digest of
 the bytes, computed by the single shared function
@@ -89,7 +102,7 @@ mutable pointer** for the bin layer.
 
 For the **pkg pair**, the resolver is the HTML page itself: the ES import
 specifier (`import init, {…} from './pkg/mtg_forge_rs.js'`) and the
-`init()` call. `hash_web_assets.sh` rewrites both injection points to the
+`init()` call. `mtg hash-web-assets` rewrites both injection points to the
 hashed names on a deploy-staging copy (see §4).
 
 ### 2.3 The immutability invariant (the load-bearing rule)
@@ -105,18 +118,20 @@ asset re-opens the desync bug. Consequences for the current tree:
 |--------------------------|--------------------|---------------------------------------------|
 | `/data/**/*.bin` (sets)  | YES (exporter)     | `public, max-age=31536000, immutable`       |
 | `/images/**`             | YES (scryfall id)  | `public, max-age=31536000, immutable`       |
-| `/pkg/*` (source tree)   | NO (fixed name)    | `no-cache, must-revalidate` + `?v=<sha>`    |
-| `/pkg/*` (deployed tree) | YES (staging hash) | hashed, served immutable-eligible           |
+| `/pkg/<stem>.<hash>.ext` | YES (staging hash) | `public, max-age=31536000, immutable`       |
+| `/pkg/<stem>.ext` (fixed)| NO (fixed name)    | `no-cache, must-revalidate`                 |
 | `/data/sets/index.json`  | NO (mutable ptr)   | `no-cache, must-revalidate`                 |
 | `/data/decks.bin`        | NO (fixed name)    | `no-cache, must-revalidate` (dedicated rt)  |
 | `/data/tokens.bin`       | NO (fixed name)    | `no-cache, must-revalidate` (dedicated rt)  |
 | HTML, `server-config.js` | NO (mutable ptr)   | `public, max-age=60`                        |
 
-Note the split-brain on `/pkg/*`: the **committed source HTML** still
-imports the fixed name (so `make validate`'s e2e tests are unaffected),
-so the web_server's `/pkg/*` route stays `no-cache`. The
-content-addressing of the pkg pair happens only on the **deploy-staging
-copy**. This is the deliberate staging compromise (see §6).
+The previous split-brain on `/pkg/*` (always-no-cache, hashed only on the
+staging copy) is **resolved**: `web_server::pkg_cache_header` inspects the
+request filename and serves a content-addressed `<stem>.<hash>.<ext>` as
+`immutable` while keeping a fixed `<stem>.<ext>` (the committed source-tree
+import target used by `make validate` e2e) on `no-cache`. One binary serves
+both the source tree and a hashed deploy tree correctly. The `?v=<sha>`
+cache-bust is fully retired.
 
 ---
 
@@ -131,7 +146,7 @@ option (a): a single shared Rust function used by both layers.
 | Layer            | Hash (current)                               | Width |
 |------------------|----------------------------------------------|-------|
 | Per-set bins     | blake3 (`asset_hash_hex`)                    | 64b   |
-| pkg JS+WASM      | blake3 (`asset_hash_hex` via `mtg hash-asset`) | 64b |
+| pkg JS+WASM      | blake3 (`asset_hash_hex` via `mtg hash-web-assets`) | 64b |
 
 **Single source of truth:** `mtg_forge_rs::asset_hash::asset_hash_hex`
 (`mtg-engine/src/asset_hash.rs`) is the ONE function that names every
@@ -141,11 +156,22 @@ to `ASSET_HASH_HEX_LEN = 16` hex chars.
 - The exporter (`main.rs`, `run_export_wasm`) calls `asset_hash_hex`
   directly for the per-set bins — the old `content_hash_hex`
   (`DefaultHasher`/SipHash) helper is **deleted**.
-- The new `mtg hash-asset <file>` subcommand prints
-  `asset_hash_hex(<file bytes>)`. `scripts/hash_web_assets.sh` shells out
-  to it (`hash_of() { "$MTG_BIN" hash-asset "$1"; }`) instead of
-  reimplementing a hash in bash. The `sha256sum | cut -c1-16` line is
-  **gone** — no second hash implementation exists anywhere.
+- The pkg pair is hashed + renamed + HTML-rewritten by
+  `asset_hash::web_pkg::hash_web_assets`, exposed as the
+  `mtg hash-web-assets <web_dir>` subcommand. It calls `asset_hash_hex`
+  directly — no shell, no `sha256sum`, no second hash implementation
+  anywhere. (`mtg hash-asset <file>` remains a thin one-off CLI wrapper
+  over the same function for ad-hoc scripting.)
+
+### 3.1 Shell-script-free (mtg-571, this session)
+
+`scripts/hash_web_assets.sh` is **deleted**. All pkg hashing + renaming +
+HTML rewriting now lives in Rust (`asset_hash::web_pkg`), unit-tested in
+isolation: `rewrite_html` has 8 tests covering static/dynamic import
+specifiers (dot- and slash-form), `await init()` / `init()`, idempotency,
+and the no-clobber guards. The structured-rewrite property (only the two
+controlled injection points are touched) is preserved exactly as the shell
+version did, but now type-checked and DRY with the exporter.
 
 **Why blake3 over the previous options.** blake3 is fast, is a single
 small dependency, and (unlike `std`'s `DefaultHasher`) has **no per-process
@@ -176,9 +202,9 @@ await init({ module_or_path: './pkg/mtg_forge_rs_bg.<hash>.wasm' })
 ```
 
 — wasm-bindgen's documented override — so **the generated glue is never
-edited**. The script's two rewrites are confined to controlled injection
-points (the ES import specifier + the `init()` arg), consistent with the
-project's "No Hacky String Operations On Structured Data" rule. The script
+edited**. The two rewrites are confined to controlled injection points (the
+ES import specifier + the `init()` arg), consistent with the project's "No
+Hacky String Operations On Structured Data" rule. `mtg hash-web-assets`
 operates **in place on a staging copy only** (never the source tree).
 
 ---
@@ -230,13 +256,15 @@ served `no-cache`.
 
 **After (this design):**
 
-- The `?v=<sha>` query-string cache-bust is **replaced** by the staging
-  rewrite (`hash_web_assets.sh`) + the manifest GC sweep + `rsync
-  --delete`.
-- The `?v=<sha>` remains only as a residual safety belt for the
-  source-tree `/pkg/*` path that is still fixed-name (until the multi-page
-  migration lands). Once the source HTML ships hashed pkg names, `?v=` can
-  be retired entirely (tracked by mtg-dxig9).
+- The `?v=<sha>` query-string cache-bust is **fully retired**. Pkg
+  freshness now comes from the staging rewrite (`mtg hash-web-assets`) +
+  the manifest GC sweep + `rsync --delete`; fixed-name source-tree pkg
+  files are served `no-cache` by `web_server::pkg_cache_header`, so there
+  is no residual reliance on a query string. (No `?v=` references remain in
+  any HTML or script.)
+- A **PRE-rsync local smoke-test gate** runs `web/test_web_server_smoke.js`
+  against a temp `mtg server-web` before anything touches the VM; a broken
+  pipeline aborts the deploy locally (see §10).
 - `build.rs` still emits `MTG_BUILD_SHA` (used by `/health` and the
   residual `?v=`); no change needed there.
 - The post-deploy probe was updated to *derive* the hashed pkg names from
@@ -286,24 +314,32 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
 1. **Bins content-addressed** (`mtg-engine/src/main.rs`): `<set>.<hash>.bin`
    names in `index.json` `file`/`cards` + a `hash` field. Verified in the
    prior session: 315 hashed bins, manifest references match.
-2. **pkg pair content-addressed on the staging copy**
-   (`scripts/hash_web_assets.sh`): structured rewrite of the import
-   specifier + `init({module_or_path})`. Verified on a staging copy: 5
-   pages rewritten, hashed JS/WASM serve 200, old names 404.
+2. **pkg pair content-addressed on the staging copy — now in RUST**
+   (`asset_hash::web_pkg::hash_web_assets`, exposed as
+   `mtg hash-web-assets`): structured rewrite of the import specifier +
+   `init({module_or_path})`. `scripts/hash_web_assets.sh` is DELETED. 8
+   unit tests on `rewrite_html`; verified live by the smoke test.
 3. **Cache tiers** (`mtg-engine/src/web_server/mod.rs`): hashed
-   `/data/**/*.bin` → immutable 1y; `decks.bin`/`tokens.bin` get dedicated
-   no-cache routes (fixed-name → must NOT be immutable); the immutability
-   INVARIANT documented inline.
+   `/data/**/*.bin` → immutable 1y; hashed `/pkg/<stem>.<hash>.<ext>` →
+   immutable 1y, fixed `/pkg/<stem>.<ext>` → no-cache (content-aware
+   `pkg_cache_header`); `decks.bin`/`tokens.bin` dedicated no-cache routes;
+   immutability INVARIANT documented inline.
 4. **Deploy GC mark-sweep + rsync --delete** (`scripts/deploy-cloud.sh`):
-   replaces `?v=`; prunes orphaned hashed bins; post-deploy probe derives
-   hashed pkg names from the deployed HTML.
-5. **`Trunk.toml`** declared with documented staged-migration path.
+   replaces `?v=`; prunes orphaned hashed bins; PRE-rsync local smoke-test
+   gate; post-deploy probe derives hashed pkg names from the deployed HTML.
+5. **Hermetic local smoke test** (`web/test_web_server_smoke.js`): launches
+   `mtg server-web` on a temp port against a hashed staging tree and asserts
+   the cache tiers + logical→hashed resolution. Wired into BOTH the deploy
+   gate and `make validate` (`validate-network-e2e-step`).
+6. **`Trunk.toml`** declared with documented staged-migration path.
 
 ### Deferred (filed follow-ups)
 
 - **mtg-dxig9** — full trunk `rel="rust"` migration of the source HTML
-  (so the committed HTML ships hashed pkg, retiring `hash_web_assets.sh`
-  and the residual `?v=`).
+  (so the committed HTML ships hashed pkg directly). NOTE: this is now an
+  *optimization*, not a correctness requirement — `hash_web_assets.sh` and
+  the `?v=` cache-bust are ALREADY retired (the staging-copy `mtg
+  hash-web-assets` + content-aware `pkg_cache_header` cover correctness).
 - **mtg-ntx2j** — content-address `decks.bin` / `tokens.bin` so they can
   join the immutable tier instead of no-cache.
 - **mtg-1rvug** — hash the game-page HTML (`tui_game.<hash>.html` etc.) so
@@ -326,9 +362,11 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
    `--delete` (rare 404, self-heals on reload)?
 4. **Local-tree GC (§5).** Add `mtg export-wasm --prune` / a make target
    to sweep orphan bins from the local `web/data/sets/` between exports?
-5. **Staging-copy vs. source-tree pkg hashing (§6).** Accept the
-   split-brain (`/pkg` no-cache in source, hashed only on deploy) until
-   mtg-dxig9, or prioritize the multi-page trunk migration sooner?
+5. **Staging-copy vs. source-tree pkg hashing (§6).** ✅ **RESOLVED for
+   correctness** — `pkg_cache_header` is content-aware, so the source tree's
+   fixed pkg name is correctly `no-cache` and the deploy tree's hashed name
+   is correctly `immutable`, from ONE binary. Migrating the *source* HTML to
+   ship hashed pkg directly (mtg-dxig9) is now a nice-to-have, not required.
 6. **`index.html` mutable pointer.** Confirm `index.html` +
    `server-config.js` + `index.json` are the intended permanent mutable
    tier (everything else immutable). mtg-1rvug would make `index.html`
@@ -338,27 +376,37 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
 
 ## 10. Validation status
 
-This is a research/prototype branch. Per CPU-courtesy (another agent was
-mid `make validate`), a full `make validate` was NOT run in this session.
-The prior session recorded light checks (`cargo check`, `cargo clippy
--D warnings`, `cargo fmt --check`, `bash -n`, a live `export-wasm`, and a
-local static serve). **Before any PR / merge**, a full `make validate`
-must run on a tree rebased onto the post-rename integration (the engine
-crate `mtg-forge-rs` → `mtg-engine` rename is queued and will touch the
-`mtg_forge_rs.js` / `mtg_forge_rs_bg.wasm` names that `hash_web_assets.sh`
-and the probes hard-code).
+**This session (mtg-571 maturation):**
+
+- `cargo fmt --all -- --check` — clean.
+- `cargo clippy -p mtg-forge-rs --all-targets --all-features --features
+  network -- -D warnings` — clean (matches CI).
+- `cargo test --lib asset_hash` — 12 passed (4 hash + 8 `rewrite_html`).
+- **Hermetic pre-deploy smoke test** (`web/test_web_server_smoke.js`) RUN
+  and **PASS**: launched `mtg server-web` on a temp localhost port against a
+  hashed staging tree; asserted landing 200, `/data/sets/index.json` 200 +
+  no-cache, a hashed per-set bin 200 + immutable, the hashed wasm 200 +
+  immutable, the hashed JS glue 200 + immutable, the fixed pkg name 404 on
+  the hashed tree, and (against the source tree) the fixed pkg name 200 +
+  no-cache. No orphaned `mtg server-web` processes left behind.
+- Full `make validate` — see the cited `validate_logs/validate_<sha>.log`
+  in the commit / PR (run on this branch; CPU-courtesy serialized behind
+  the sibling agents).
 
 ### Rename impact (mtg-forge-rs → mtg-engine)
 
-When the crate rename lands, the wasm-pack output base name changes from
-`mtg_forge_rs` to `mtg_engine`, so the following hard-coded references must
-update in lockstep:
+This branch deliberately PREDATES the crate rename and keeps `mtg_forge_rs`
+naming (it will be rebased onto post-rename integration later). When the
+rename lands, the wasm-pack output base name changes from `mtg_forge_rs` to
+`mtg_engine`, so these references update in lockstep:
 
-- `scripts/hash_web_assets.sh`: `mtg_forge_rs.js` / `mtg_forge_rs_bg.wasm`
-  literals + the sed import-specifier patterns + the `grep -oE` probe.
+- `mtg-engine/src/asset_hash.rs`: `PKG_JS_STEM` / `PKG_WASM_STEM` consts
+  (single point of truth for the pkg base names — the rename touches ONLY
+  these two consts in the hashing logic now that the shell script is gone).
 - `deploy-cloud.sh`: the `grep -oE "pkg/mtg_forge_rs\.…"` probe patterns.
+- `web/test_web_server_smoke.js`: the `pkg/mtg_forge_rs…` regexes.
 - Every game-page HTML import specifier (independent of this branch).
 
-This is a mechanical rename, but it is a real coupling point — flagged so
-the rebase onto post-rename integration does not silently leave the
-hashing script pointed at a name wasm-pack no longer emits.
+Folding the hashing into Rust SHRANK this coupling surface: the old shell
+script hard-coded the names + sed patterns; now the naming lives in two
+Rust consts.

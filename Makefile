@@ -295,6 +295,10 @@ validate-network-e2e-step:
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
 	@cd web && node test_landing_page_ux.js
+	@echo "=== Running hermetic content-addressed web-asset smoke test (mtg-571) ==="
+	@echo "    Local-only: launches 'mtg server-web' on a temp port; asserts"
+	@echo "    index.json no-cache, hashed bin/wasm/js immutable, fixed pkg no-cache."
+	@cd web && node test_web_server_smoke.js
 	@echo "=== Running network-vs-local equivalence E2E (deterministic gamelog identity) ==="
 	@echo "    Guards the network-determinism class fixed in fix-network-desync"
 	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."

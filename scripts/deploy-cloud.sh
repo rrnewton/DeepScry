@@ -414,10 +414,31 @@ EOF
         exit 1
     fi
 
+    # --- 4b. PRE-RSYNC LOCAL SMOKE-TEST GATE (mtg-571) ---
+    # Before touching the VM, prove the content-addressed pipeline works
+    # end-to-end against a LOCAL `mtg server-web`: stage a hashed copy of
+    # web/, serve it on a temp localhost port, and assert index.json is
+    # no-cache, the hashed bin/wasm/js are immutable, asset resolution
+    # (logical→hashed) works, and a fixed pkg name stays no-cache. This is
+    # the same hermetic test wired into `make validate` (no deepscry.net), so
+    # a broken pipeline aborts the deploy here instead of shipping a 404-y or
+    # mis-cached tree to the VM. Skippable only via --skip-build/--skip-wasm
+    # (which would mean assets weren't rebuilt anyway).
+    if command -v node >/dev/null 2>&1; then
+        echo "→ PRE-DEPLOY GATE: hermetic web-asset smoke test (mtg server-web)"
+        ( cd "$REPO_ROOT/web" && MTG_BIN="$REPO_ROOT/$native_bin" node test_web_server_smoke.js ) || {
+            echo "✗ PRE-DEPLOY GATE FAILED: web-asset smoke test did not pass; ABORTING deploy (nothing rsynced to the VM)." >&2
+            exit 1
+        }
+        echo "✓ pre-deploy gate passed"
+    else
+        echo "warning: node not found; SKIPPING pre-deploy web-asset smoke test (install Node to enable the gate)" >&2
+    fi
+
     # --- 5. Rsync web/ (content-addressed, mtg-571) ---
     # Stage web/ into a temp dir, then CONTENT-ADDRESS the wasm-bindgen pkg
-    # pair there via scripts/hash_web_assets.sh: mtg_forge_rs.js +
-    # mtg_forge_rs_bg.wasm are renamed to `<name>.<hash>.<ext>` and the HTML
+    # pair there via `mtg hash-web-assets`: mtg_engine.js +
+    # mtg_engine_bg.wasm are renamed to `<name>.<hash>.<ext>` and the HTML
     # import specifier + init({module_or_path}) arg are rewritten to match.
     # This SUPERSEDES the old `?v=<sha>` query-string cache-bust: a query
     # string still shared one filename (so a CDN ignoring `no-cache` could
@@ -449,8 +470,13 @@ EOF
     # Content-address the pkg pair on the staging copy (NOT the source tree,
     # so the committed HTML + `make validate` e2e tests stay on the fixed
     # path). Renames pkg/*.{js,wasm} -> hashed names and rewrites the HTML.
-    echo "→ content-addressing pkg bundle (hash_web_assets.sh)"
-    "$SCRIPT_DIR/hash_web_assets.sh" "$web_stage"
+    # This is now a RUST subcommand (`mtg hash-web-assets`) — the shell
+    # `hash_web_assets.sh` was retired (mtg-571) so the WHOLE content-addressed
+    # pipeline (per-set bins + pkg pair) lives in one Rust path with one hash
+    # implementation (blake3, asset_hash::asset_hash_hex). $native_bin was just
+    # built above and carries the subcommand.
+    echo "→ content-addressing pkg bundle (mtg hash-web-assets)"
+    "$native_bin" hash-web-assets "$web_stage"
     # GC mark-sweep of orphaned hashed data bins: the exporter writes each
     # bin once per content hash, but if a previous export left a stale
     # <set>.<oldhash>.bin in web/data/sets that the CURRENT index.json no
@@ -587,16 +613,16 @@ run_post_deploy_probe() {
     fi
 
     # 2+3. Content-addressed pkg pair (mtg-571). The pkg filenames are now
-    # hashed (mtg_forge_rs.<hash>.js / _bg.<hash>.wasm), so we can't probe a
+    # hashed (mtg_engine.<hash>.js / _bg.<hash>.wasm), so we can't probe a
     # fixed name. Derive the hashed names from a deployed game page's import
-    # specifier (the structured injection point hash_web_assets.sh rewrites),
+    # specifier (the structured injection point `mtg hash-web-assets` rewrites),
     # then probe those. This also implicitly verifies the HTML rewrite landed.
     local game_html hashed_js hashed_wasm
     game_html="$(curl "${curl_opts[@]}" "$base/tui_game.html")" || game_html=""
-    hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_forge_rs\.[0-9a-f]+\.js" | head -1)"
-    hashed_wasm="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_forge_rs_bg\.[0-9a-f]+\.wasm" | head -1)"
+    hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine\.[0-9a-f]+\.js" | head -1)"
+    hashed_wasm="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine_bg\.[0-9a-f]+\.wasm" | head -1)"
     if [[ -z "$hashed_js" ]]; then
-        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg JS import found (hash_web_assets.sh did not run?)")
+        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg JS import found (mtg hash-web-assets did not run?)")
     else
         local glue_size
         glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/$hashed_js")" || glue_size=0

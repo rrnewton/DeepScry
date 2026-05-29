@@ -196,17 +196,20 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     //   /data/sets/index.json       → no-cache, must-revalidate
     //                                 The MUTABLE pointer to the hashed bins.
     //                                 Small (tens of KB); cheap 304 per hit.
-    //   /pkg/*                      → no-cache, must-revalidate
-    //                                 NOT yet content-addressed: the game
-    //                                 pages still `import init, {…named…}
-    //                                 from './pkg/mtg_forge_rs.js'` with a
-    //                                 FIXED specifier (trunk's rel="rust"
-    //                                 multi-page rewrite is the deferred
-    //                                 follow-up — see mtg-571). Until those
-    //                                 pages are rewritten to a hashed glue
-    //                                 name, /pkg stays no-cache + the
-    //                                 deploy-time `?v=<sha>` query-string
-    //                                 cache-bust so glue+wasm swap together.
+    //   /pkg/<stem>.<hash>.<ext>    → public, max-age=31536000, immutable
+    //                                 CONTENT-ADDRESSED pkg pair produced by
+    //                                 `mtg hash-web-assets` on the deploy tree
+    //                                 (the hashed name is rewritten into the
+    //                                 HTML import specifier + init() arg). A
+    //                                 content change is a new URL → immutable
+    //                                 is correct, retiring the old `?v=<sha>`.
+    //   /pkg/<stem>.<ext>  (fixed)   → no-cache, must-revalidate
+    //                                 The committed source-tree HTML imports
+    //                                 the FIXED `./pkg/mtg_engine.js` (used
+    //                                 by `make validate`'s e2e tests); a fixed
+    //                                 name is NOT content-addressed so it must
+    //                                 stay no-cache. `pkg_cache_header` picks
+    //                                 the tier per request from the filename.
     //   /images/**                  → public, max-age=31536000, immutable
     //                                 (filenames embed scryfall art_id;
     //                                  they never change for a given URL)
@@ -221,17 +224,26 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     let images_dir = config.static_dir.join("images");
     let general_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
 
-    let no_cache = SetResponseHeaderLayer::overriding(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("no-cache, must-revalidate"),
-    );
     let immutable_year = SetResponseHeaderLayer::overriding(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=31536000, immutable"),
     );
 
+    // /pkg cache tier is now CONTENT-AWARE (mtg-571 full adoption): a
+    // content-addressed pkg filename (`<stem>.<16-hex-hash>.<ext>`, produced by
+    // `mtg hash-web-assets` on the deploy-staging tree) is safe to serve
+    // `immutable, max-age=1y` — its bytes uniquely determine its URL, so the
+    // glue↔wasm desync (mtg-475 / mtg-2indh) is structurally impossible. A
+    // FIXED-NAME pkg file (`mtg_engine.js`, the committed source-tree HTML
+    // import target used by `make validate`'s e2e tests) is NOT
+    // content-addressed and MUST stay `no-cache` per the immutability
+    // INVARIANT. We pick per-request via `pkg_cache_header` rather than a
+    // static layer, so one server binary serves both the source tree (fixed
+    // names → no-cache) and a hashed deploy tree (hashed names → immutable)
+    // correctly. This retires the old `/pkg → always no-cache` + `?v=<sha>`
+    // workaround.
     let pkg_service = ServiceBuilder::new()
-        .layer(no_cache.clone())
+        .layer(axum::middleware::from_fn(pkg_cache_header))
         .service(ServeDir::new(&pkg_dir));
 
     // /data is split: the small index.json manifest is the MUTABLE pointer
@@ -539,6 +551,52 @@ async fn close_client_with_error(mut ws: WebSocket, reason: &str) -> Result<(), 
     ws.send(AxumMessage::Text(json)).await?;
     ws.send(AxumMessage::Close(None)).await?;
     Ok(())
+}
+
+// ─── /pkg content-aware cache tier (mtg-571) ──────────────────────────
+
+/// Cache-Control for a content-addressed pkg file: safe forever.
+const PKG_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// Cache-Control for a fixed-name (NOT content-addressed) pkg file.
+const PKG_NO_CACHE: &str = "no-cache, must-revalidate";
+
+/// Is `file_name` a content-addressed pkg filename, i.e. does it embed a
+/// blake3 hash of the form `<stem>.<16-lowercase-hex>.<ext>`?
+///
+/// `mtg hash-web-assets` produces `mtg_engine.<hash>.js` /
+/// `mtg_engine_bg.<hash>.wasm` where `<hash>` is exactly
+/// [`crate::asset_hash::ASSET_HASH_HEX_LEN`] lowercase hex chars. A fixed name
+/// like `mtg_engine.js` has no such hash segment. We detect the hash by the
+/// SECOND-to-last dot-segment being exactly that many lowercase-hex chars —
+/// reusing the pipeline's own naming convention rather than guessing.
+fn is_content_addressed_pkg(file_name: &str) -> bool {
+    let segments: Vec<&str> = file_name.split('.').collect();
+    // Need at least `<stem>.<hash>.<ext>` → 3 segments.
+    if segments.len() < 3 {
+        return false;
+    }
+    let hash_seg = segments[segments.len() - 2];
+    hash_seg.len() == crate::asset_hash::ASSET_HASH_HEX_LEN
+        && hash_seg.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
+/// axum middleware for `/pkg/*`: serve content-addressed pkg files
+/// `immutable, max-age=1y` and fixed-name pkg files `no-cache`. See the
+/// immutability INVARIANT in `run_web_server`.
+async fn pkg_cache_header(request: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    // The nested service strips `/pkg`; the request path here is the
+    // remainder, e.g. `/mtg_engine.<hash>.js`. Take the last path segment.
+    let file_name = request.uri().path().rsplit('/').next().unwrap_or("").to_string();
+    let header = if is_content_addressed_pkg(&file_name) {
+        PKG_IMMUTABLE
+    } else {
+        PKG_NO_CACHE
+    };
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static(header));
+    response
 }
 
 // ─── Status endpoints (ops + deploy probes) ───────────────────────────

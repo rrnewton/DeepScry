@@ -577,14 +577,30 @@ enum Commands {
 
     /// Print the content-addressed asset hash of a file (blake3, 16 hex chars).
     ///
-    /// This is the SINGLE source of truth for the content-addressed web-asset
-    /// pipeline (mtg-571): `scripts/hash_web_assets.sh` shells out to this to
-    /// name the wasm pkg pair, using the EXACT same hashing function the
-    /// exporter uses for the per-set `.bin` files. Prints the bare hash hex
-    /// followed by a newline.
+    /// A thin CLI wrapper over the SINGLE source of truth for the
+    /// content-addressed web-asset pipeline (mtg-571),
+    /// `asset_hash::asset_hash_hex` — the EXACT same function the exporter uses
+    /// for the per-set `.bin` files and `hash-web-assets` uses for the pkg
+    /// pair. Prints the bare hash hex followed by a newline. (Kept as a small
+    /// debugging/scripting utility; the pkg-pair pipeline itself is now
+    /// `hash-web-assets`, not a shell script.)
     HashAsset {
         /// File whose bytes to hash.
         file: PathBuf,
+    },
+
+    /// Content-address the wasm-bindgen pkg pair in a (staging) web dir.
+    ///
+    /// The Rust replacement for the retired `scripts/hash_web_assets.sh`
+    /// (mtg-571): hashes `pkg/mtg_engine.js` + `pkg/mtg_engine_bg.wasm`
+    /// through the SAME `asset_hash::asset_hash_hex` the exporter uses for the
+    /// per-set `.bin` files, renames them to `<name>.<hash>.<ext>`, and
+    /// structurally rewrites every `*.html` page's ES import specifier +
+    /// `init({module_or_path})` call to the hashed names. Operates IN PLACE on
+    /// `<web_dir>` — point it at a deploy-staging copy, never the source tree.
+    HashWebAssets {
+        /// Web directory containing `pkg/` and the `*.html` pages.
+        web_dir: PathBuf,
     },
 
     /// Download card images from Scryfall for offline use
@@ -1104,10 +1120,26 @@ async fn async_main() -> Result<()> {
         } => run_deck_build(deck_file, output_file, cardsfolder, start_year, end_year).await?,
         Commands::ExportWasm { output, deck_globs } => run_export_wasm(output, deck_globs).await?,
         Commands::HashAsset { file } => {
-            let bytes = std::fs::read(&file).map_err(mtg_forge_rs::MtgError::IoError)?;
-            // Print the bare hash so callers (hash_web_assets.sh) can capture it
-            // directly: `HASH="$(mtg hash-asset path)"`.
-            println!("{}", mtg_forge_rs::asset_hash::asset_hash_hex(&bytes));
+            let bytes = std::fs::read(&file).map_err(mtg_engine::MtgError::IoError)?;
+            // Print the bare hash so scripts can capture it directly:
+            // `HASH="$(mtg hash-asset path)"`.
+            println!("{}", mtg_engine::asset_hash::asset_hash_hex(&bytes));
+        }
+        Commands::HashWebAssets { web_dir } => {
+            let res =
+                mtg_engine::asset_hash::web_pkg::hash_web_assets(&web_dir).map_err(mtg_engine::MtgError::IoError)?;
+            println!("→ hashed pkg bundle in {}:", web_dir.display());
+            println!(
+                "    {} -> {}",
+                mtg_engine::asset_hash::web_pkg::PKG_JS_STEM,
+                res.js_hashed
+            );
+            println!(
+                "    {} -> {}",
+                mtg_engine::asset_hash::web_pkg::PKG_WASM_STEM,
+                res.wasm_hashed
+            );
+            println!("✓ rewrote pkg references in {} HTML page(s)", res.html_pages_rewritten);
         }
         Commands::Download {
             output,
@@ -3831,7 +3863,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         bytes: usize,
         card_count: usize,
         /// Content hash (16 hex chars / 64 bits) embedded in `file`, computed
-        /// by `mtg_forge_rs::asset_hash::asset_hash_hex` (blake3, truncated).
+        /// by `mtg_engine::asset_hash::asset_hash_hex` (blake3, truncated).
         /// Recorded explicitly so the deploy GC mark-sweep and any future
         /// integrity check can validate without re-deriving from the filename.
         /// Collision margin is ample for a few hundred bins. The SAME hashing
@@ -3860,7 +3892,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
             mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
         })?;
         // Content-addressed filename: <YYYY>-<CODE>.<hash>.bin (mtg-571).
-        let hash = mtg_forge_rs::asset_hash::asset_hash_hex(&bytes);
+        let hash = mtg_engine::asset_hash::asset_hash_hex(&bytes);
         let file_name = format!("{}.{}.bin", bucket, hash);
         let path = sets_dir.join(&file_name);
         fs::write(&path, &bytes).map_err(mtg_engine::MtgError::IoError)?;
