@@ -68,6 +68,11 @@ workflow, row format, and update rules.
 | AB$ Mana Cost$ T Produced$ C Amount$ 2 (fast mana) | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Sol Ring        |
 | AB$ Mana Cost$ T Sac<1/CARDNAME> Produced$ Any Amount$ 3 | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Black Lotus |
 | SP$ AddTurn NumTurns$ 1 (extra turn, CR 500.7) | WORKING | 2026-05-29_#2456(e30f4ce1) | (fixed mtg-551) | Time Walk |
+| SP$ DealDamage ValidTgts$ Any NumDmg$ 3       | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Lightning Bolt      |
+| SP$ DealDamage + chained DB$ DealDamage Defined$ You (downside) | WORKING | 2026-05-29_#2456(e30f4ce1) | (none) | Psionic Blast |
+| SP$ Draw NumCards$ N/X ValidTgts$ Player      | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Ancestral Recall, Braingeyser |
+| SP$ Counter TargetType$ Spell                 | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Counterspell        |
+| S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 
 ## Static abilities (S:)
 

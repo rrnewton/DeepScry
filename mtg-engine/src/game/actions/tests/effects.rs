@@ -3202,6 +3202,252 @@ mod tests {
         );
     }
 
+    /// Card compat: Lightning Bolt (cardsfolder/l/lightning_bolt.txt)
+    ///
+    /// Script: ManaCost:R / Types:Instant
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 3
+    ///
+    /// Parser shape: {R} Instant dealing exactly 3 damage to any target.
+    /// Runtime (deals 3 to a creature / player) is exercised by the Troll
+    /// Disk deck reproducer in mtg-518.
+    #[test]
+    fn test_card_compat_lightning_bolt() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/lightning_bolt.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Lightning Bolt should load");
+        assert_eq!(def.name.as_str(), "Lightning Bolt");
+        assert_eq!(def.mana_cost.red, 1, "Cost should be {{R}}");
+        assert_eq!(def.mana_cost.cmc(), 1, "CMC should be 1");
+        assert!(def.types.contains(&CardType::Instant), "must be an Instant");
+
+        let dmg = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage).then_some(p)
+            })
+            .expect("Lightning Bolt must have an SP$ DealDamage spell ability");
+        assert_eq!(dmg.get("NumDmg"), Some("3"), "Lightning Bolt deals 3");
+        assert_eq!(dmg.get("ValidTgts"), Some("Any"), "Lightning Bolt targets any target");
+    }
+
+    /// Card compat: Psionic Blast (cardsfolder/p/psionic_blast.txt)
+    ///
+    /// Script: ManaCost:2 U / Types:Instant
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 4 | SubAbility$ DBDealDamage
+    ///   SVar:DBDealDamage:DB$ DealDamage | Defined$ You | NumDmg$ 2 | ...
+    ///
+    /// Parser shape: {2}{U} Instant that deals 4 to any target (primary SP$)
+    /// AND 2 to you (chained DB$). A silent drop of the SubAbility would make
+    /// it a strictly-better bolt with no self-damage. Runtime (4 to target +
+    /// 2 to caster) is exercised by the Troll Disk deck reproducer (mtg-533).
+    #[test]
+    fn test_card_compat_psionic_blast() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/psionic_blast.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Psionic Blast should load");
+        assert_eq!(def.name.as_str(), "Psionic Blast");
+        assert_eq!(def.mana_cost.generic, 2, "Cost generic should be 2");
+        assert_eq!(def.mana_cost.blue, 1, "Cost should require {{U}}");
+        assert!(def.types.contains(&CardType::Instant), "must be an Instant");
+
+        // Primary SP$ DealDamage: 4 to any target.
+        let primary = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage && p.get("NumDmg") == Some("4")).then_some(p)
+            })
+            .expect("Psionic Blast must deal 4 to any target");
+        assert_eq!(primary.get("ValidTgts"), Some("Any"));
+
+        // The chained DB$ DealDamage (2 to you) lives in the DBDealDamage
+        // SVar; assert the self-damage half survives parsing so the downside
+        // isn't silently dropped (making Psionic Blast a strictly-better bolt).
+        // parsed_svars holds the tokenized AbilityParams for each SVar body.
+        let p = def
+            .parsed_svars
+            .get("DBDealDamage")
+            .expect("Psionic Blast must keep its DBDealDamage SVar (the 2-to-you downside)");
+        assert_eq!(p.api_type, ApiType::DealDamage, "DBDealDamage must be a DealDamage");
+        assert_eq!(p.get("NumDmg"), Some("2"), "self-damage must be 2");
+        assert_eq!(p.get("Defined"), Some("You"), "self-damage targets the caster (You)");
+    }
+
+    /// Card compat: Ancestral Recall (cardsfolder/a/ancestral_recall.txt)
+    ///
+    /// Script: ManaCost:U / Types:Instant
+    ///   A:SP$ Draw | NumCards$ 3 | ValidTgts$ Player
+    ///
+    /// Parser shape: {U} Instant, target player draws 3. Runtime (draw 3)
+    /// verified by the Troll Disk deck reproducer (mtg-480).
+    #[test]
+    fn test_card_compat_ancestral_recall() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/a/ancestral_recall.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Ancestral Recall should load");
+        assert_eq!(def.name.as_str(), "Ancestral Recall");
+        assert_eq!(def.mana_cost.blue, 1, "Cost should be {{U}}");
+        assert_eq!(def.mana_cost.cmc(), 1, "CMC should be 1");
+        assert!(def.types.contains(&CardType::Instant), "must be an Instant");
+
+        let draw = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Draw).then_some(p)
+            })
+            .expect("Ancestral Recall must have an SP$ Draw spell ability");
+        assert_eq!(draw.get("NumCards"), Some("3"), "Ancestral Recall draws 3");
+        assert_eq!(draw.get("ValidTgts"), Some("Player"), "targets a player");
+    }
+
+    /// Card compat: Braingeyser (cardsfolder/b/braingeyser.txt)
+    ///
+    /// Script: ManaCost:X U U / Types:Sorcery
+    ///   A:SP$ Draw | NumCards$ X | ValidTgts$ Player
+    ///   SVar:X:Count$xPaid
+    ///
+    /// Parser shape: {X}{U}{U} Sorcery, target player draws X. Runtime
+    /// (draw X) verified by the Troll Disk deck reproducer (mtg-488).
+    #[test]
+    fn test_card_compat_braingeyser() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/braingeyser.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Braingeyser should load");
+        assert_eq!(def.name.as_str(), "Braingeyser");
+        assert_eq!(def.mana_cost.blue, 2, "Cost should require {{U}}{{U}}");
+        assert!(def.types.contains(&CardType::Sorcery), "must be a Sorcery");
+
+        let draw = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Draw).then_some(p)
+            })
+            .expect("Braingeyser must have an SP$ Draw spell ability");
+        assert_eq!(draw.get("NumCards"), Some("X"), "Braingeyser draws X");
+        assert_eq!(draw.get("ValidTgts"), Some("Player"), "targets a player");
+    }
+
+    /// Card compat: Counterspell (cardsfolder/c/counterspell.txt)
+    ///
+    /// Script: ManaCost:U U / Types:Instant
+    ///   A:SP$ Counter | TargetType$ Spell | ValidTgts$ Card
+    ///
+    /// Parser shape: {U}{U} Instant that counters target spell. Runtime
+    /// (counters a spell on the stack) verified by the Troll Disk deck
+    /// reproducer (mtg-495).
+    #[test]
+    fn test_card_compat_counterspell() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/counterspell.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Counterspell should load");
+        assert_eq!(def.name.as_str(), "Counterspell");
+        assert_eq!(def.mana_cost.blue, 2, "Cost should be {{U}}{{U}}");
+        assert!(def.types.contains(&CardType::Instant), "must be an Instant");
+
+        let counter = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Counter).then_some(p)
+            })
+            .expect("Counterspell must have an SP$ Counter spell ability");
+        assert_eq!(counter.get("TargetType"), Some("Spell"), "counters a spell");
+    }
+
+    /// Card compat: Serendib Efreet (cardsfolder/s/serendib_efreet.txt)
+    ///
+    /// Script: ManaCost:2 U / Types:Creature Efreet / PT:3/4
+    ///   K:Flying
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | Execute$ TrigDealDamage
+    ///   SVar:TrigDealDamage:DB$ DealDamage | Defined$ You | NumDmg$ 1
+    ///
+    /// Parser shape: {2}{U} 3/4 flyer with an upkeep trigger that deals 1 to
+    /// its controller. A dropped trigger leaves a strictly-better vanilla
+    /// flyer. Runtime (upkeep self-damage + flying combat) verified by the
+    /// Troll Disk deck reproducer (mtg-540).
+    #[test]
+    fn test_card_compat_serendib_efreet() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/serendib_efreet.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Serendib Efreet should load");
+        assert_eq!(def.name.as_str(), "Serendib Efreet");
+        assert_eq!(def.mana_cost.generic, 2, "Cost generic should be 2");
+        assert_eq!(def.mana_cost.blue, 1, "Cost should require {{U}}");
+        assert_eq!(def.power, Some(3));
+        assert_eq!(def.toughness, Some(4));
+        assert!(def.types.contains(&CardType::Creature), "must be a Creature");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(crate::core::Keyword::Flying),
+            "Serendib Efreet must have Flying. Got: {:?}",
+            card.keywords
+        );
+
+        // Upkeep phase trigger carrying a DealDamage (1 to controller).
+        let upkeep = card
+            .triggers
+            .iter()
+            .find(|t| matches!(t.event, TriggerEvent::BeginningOfUpkeep))
+            .expect("Serendib Efreet must have an upkeep trigger");
+        let dmg = upkeep
+            .effects
+            .iter()
+            .find_map(|e| {
+                if let Effect::DealDamage { amount, .. } = e {
+                    Some(*amount)
+                } else {
+                    None
+                }
+            })
+            .expect("Serendib Efreet upkeep trigger must deal damage to its controller");
+        assert_eq!(dmg, 1, "Serendib Efreet deals 1 to its controller each upkeep");
+    }
+
     /// Card compat: Shivan Dragon (cardsfolder/s/shivan_dragon.txt)
     ///
     /// Script:
