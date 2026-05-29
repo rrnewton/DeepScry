@@ -64,7 +64,7 @@ fn default_controller_type() -> ControllerType {
 /// `#[serde(tag = "...")]` (internally-tagged), `#[serde(untagged)]`, or
 /// `#[serde(flatten)]` on any field, because those representations invoke
 /// `Deserializer::deserialize_any`, which **bincode does not support**
-/// (snapshots in the `.bincode` format would fail to load — see mtg-c232f4).
+/// (snapshots in the `.bincode` format would fail to load — see mtg-430).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControllerState {
     /// Fixed script controller with predetermined choices

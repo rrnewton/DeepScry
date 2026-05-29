@@ -88,10 +88,10 @@ choices that stop-and-go mode reads from `--snapshot-output`. If
 `ClaudeResumeSession` falls back to one-shot mode.
 
 The WASM driver requires:
-* `web/pkg/mtg_forge_rs.js` (built via `make wasm-dev` or `make wasm`).
+* `web/pkg/mtg_engine.js` (built via `make wasm-dev` or `make wasm`).
 * `web/data/{decks.bin,tokens.bin}` plus `web/data/sets/index.json` and
   `web/data/sets/<YYYY>-<CODE>.bin` per-set bins (built via `mtg
-  export-wasm`; see mtg-6fsjb).
+  export-wasm`; see mtg-464).
 * `web/node_modules/playwright` (built via `cd web && npm install`).
 * The Python `playwright` package + Chromium browser (`pip install
   playwright && python3 -m playwright install chromium`).

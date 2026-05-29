@@ -3,9 +3,9 @@
 //! Demonstrates counterspell mechanics - when one player casts a spell and
 //! their opponent responds with a counterspell to prevent it from resolving.
 
-use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, TargetRef};
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::Result;
+use mtg_engine::core::{Card, CardType, Effect, ManaCost, TargetRef};
+use mtg_engine::game::GameState;
+use mtg_engine::Result;
 
 fn main() -> Result<()> {
     println!("=== MTG Forge - Counterspell Demo ===\n");

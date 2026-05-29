@@ -14,8 +14,8 @@
 //! # Example
 //!
 //! ```
-//! use mtg_forge_rs::core::ManaColor;
-//! use mtg_forge_rs::game::mana_colors::ManaColors;
+//! use mtg_engine::core::ManaColor;
+//! use mtg_engine::game::mana_colors::ManaColors;
 //!
 //! // Create a set with Red and Green (dual land like Taiga)
 //! let taiga = ManaColors::new()

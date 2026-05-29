@@ -174,7 +174,7 @@ def test_parse_with_validation_bug_report() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MockSession-based tests removed in commit fixing mtg-kvikk.
+# MockSession-based tests removed in commit fixing mtg-460.
 #
 # Historically these tests exercised `MockSession.ask()` (a Python-side
 # `random.Random(seed)` path). That code path was removed in 61e06688

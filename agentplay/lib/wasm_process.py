@@ -25,7 +25,7 @@ Architecture
     │ Python sync      │ ──────────────────────────▶│ Chromium (headless)  │
     │ playwright       │                            │   web/tui_game.html     │
     │   wasm_process   │ ◀──── view model JSON ────│   ↓                  │
-    └──────────────────┘                            │   pkg/mtg_forge_rs   │
+    └──────────────────┘                            │   pkg/mtg_engine   │
               │                                     │      WASM            │
               │ subprocess.Popen                    └──────────────────────┘
               ▼                                              ▲
@@ -307,7 +307,7 @@ class WasmPlaywrightProcess:
             """
             window.__mtgEnsureBridge = async () => {
                 if (!window.__mtgBridge) {
-                    window.__mtgBridge = await import('/pkg/mtg_forge_rs.js');
+                    window.__mtgBridge = await import('/pkg/mtg_engine.js');
                 }
                 return window.__mtgBridge;
             };
@@ -360,7 +360,7 @@ class WasmPlaywrightProcess:
                 }
 
                 // Load the cards needed for both decks via the per-set bins
-                // (mtg-6fsjb). The WASM card DB requires every referenced
+                // (mtg-464). The WASM card DB requires every referenced
                 // card definition to be loaded before launching a game; the
                 // simplest deterministic approach for the agentplay harness
                 // is to fetch every set bin in parallel.

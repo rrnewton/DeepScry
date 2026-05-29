@@ -87,7 +87,7 @@ fi
 echo "Verifying P1's opening hand contains all requested cards..."
 
 # Extract P1's hand from Turn 1 output
-# After mtg-p9svf fix, hand contents is displayed AFTER the Draw Step
+# After mtg-204 fix, hand contents is displayed AFTER the Draw Step
 # Look for the section with "Hand contents:" after "Turn 1" header
 # Format: Turn header, then Draw Step, then P1 name (active) with Hand contents
 # Note: Player names are now based on controller type (e.g., "Zero1" for --p1=zero)

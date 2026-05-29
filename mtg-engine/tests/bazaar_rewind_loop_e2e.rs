@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
 //! Regression test for `bug-rewind-infinite-loop`.
@@ -36,7 +36,7 @@
 //! Before the fix this count was 0 (rewind/replay of any later choice
 //! re-prompts for the discard). After the fix it is exactly 1.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{CardId, ManaCost, PlayerId, SpellAbility},
     game::{
         controller::{ChoiceResult, GameStateView, PlayerController},
@@ -153,7 +153,7 @@ impl PlayerController for BazaarBot {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+        valid_cards: &[&mtg_engine::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
@@ -217,7 +217,7 @@ async fn test_bazaar_discard_logs_choice_point_for_replay() -> Result<()> {
     let p2_id = game.players[1].id;
 
     let mut p1 = BazaarBot::new(p1_id);
-    let mut p2 = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2 = mtg_engine::game::ZeroController::new(p2_id);
 
     // One main phase is enough for Bazaar to be activated and resolve.
     {

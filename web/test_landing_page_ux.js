@@ -86,7 +86,7 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // NEW (mtg-njdwy): Create no longer pairs in-place. It closes the
+    // NEW (mtg-474): Create no longer pairs in-place. It closes the
     // browse-WS and REDIRECTS to tui_game.html?lobby_create=NAME so the game
     // page can open its own fresh WS, dispatch CreateGame via the new WASM
     // lobby-action exports, and run the real network-mode game. We verify
@@ -155,7 +155,7 @@ async function scenarioFullFlow() {
     const charlieInLobby = await charlie.isVisible('#pane-lobby:not(.hidden)');
     // Now that alice has a real waiting game, the best-effort uniqueness
     // check fires against `creator_name`. Charlie's lobby SHOULD reject.
-    // (True server-side uniqueness is still tracked in mtg-6uuto.)
+    // (True server-side uniqueness is still tracked in mtg-466.)
     if (charlieInLobby) {
         record(
             'major',
@@ -198,7 +198,7 @@ async function scenarioFullFlow() {
     await browser.close();
 }
 
-// mtg-njdwy: After a Create/Join redirect the user lands on tui_game.html
+// mtg-474: After a Create/Join redirect the user lands on tui_game.html
 // with `?lobby_create=...`. The page should:
 //   (a) auto-fire the launch (no manual click required),
 //   (b) reach a "Waiting" / "WaitingForOpponent" network state.
@@ -207,7 +207,7 @@ async function scenarioFullFlow() {
 // 5s refreshTimer caused previously (the timer now skips when pendingFlow
 // is non-null AND we never even enter pendingFlow now that Create redirects).
 async function scenarioPostRedirectAutoLaunch() {
-    console.log('\n=== Scenario: post-redirect auto-launch on tui_game.html (mtg-njdwy) ===');
+    console.log('\n=== Scenario: post-redirect auto-launch on tui_game.html (mtg-474) ===');
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     const page = await ctx.newPage();
@@ -252,7 +252,7 @@ async function scenarioPostRedirectAutoLaunch() {
     await browser.close();
 }
 
-// mtg-njdwy: scenario covering the "Already authenticated" regression. We
+// mtg-474: scenario covering the "Already authenticated" regression. We
 // open the lobby, let the periodic refreshTimer fire several times (10+ s),
 // and verify no red status appears. The previous bug was: even from the
 // browse state, the timer would fire ListGames over a WS that was no longer
@@ -260,7 +260,7 @@ async function scenarioPostRedirectAutoLaunch() {
 // is twofold: (a) Create/Join no longer reuses the lobby WS, and (b) the
 // refreshTimer is paused whenever pendingFlow is non-null.
 async function scenarioRefreshTimerNoError() {
-    console.log('\n=== Scenario: lobby refresh timer never triggers "Already authenticated" (mtg-njdwy) ===');
+    console.log('\n=== Scenario: lobby refresh timer never triggers "Already authenticated" (mtg-474) ===');
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
@@ -360,7 +360,7 @@ async function scenarioLaunchPagesSmoke() {
     await browser.close();
 }
 
-// mtg-p5tyf: the ?allow_local_img_load=true unlock must be "sticky" across
+// mtg-477: the ?allow_local_img_load=true unlock must be "sticky" across
 // same-tab navigation (index -> game page) via sessionStorage + launcher-link
 // propagation, WITHOUT becoming bypassable by stale localStorage. This scenario
 // covers: (1) index with the param propagates it onto launcher hrefs, (2) the
@@ -368,7 +368,7 @@ async function scenarioLaunchPagesSmoke() {
 // game-page visit with NO param and NO session flag stays locked (anti-bypass),
 // and (4) sessionStorage (not localStorage) is the persistence layer.
 async function scenarioStickyLocalImageUnlock() {
-    console.log('\n=== Scenario: sticky allow_local_img_load unlock (mtg-p5tyf) ===');
+    console.log('\n=== Scenario: sticky allow_local_img_load unlock (mtg-477) ===');
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();

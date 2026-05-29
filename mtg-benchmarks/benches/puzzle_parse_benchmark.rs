@@ -1,7 +1,7 @@
 //! Benchmark for PZL file parsing performance
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use mtg_forge_rs::puzzle::PuzzleFile;
+use mtg_engine::puzzle::PuzzleFile;
 use std::fs;
 use std::path::PathBuf;
 

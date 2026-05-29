@@ -3,7 +3,7 @@ Name:Mind Twist X=8 hits opponent
 Goal:Win
 Turns:5
 Difficulty:Easy
-Description:P0 casts Mind Twist with X=8 (sufficient mana). Opponent has 8 cards in hand. All 8 should be discarded (mtg-6c0qe).
+Description:P0 casts Mind Twist with X=8 (sufficient mana). Opponent has 8 cards in hand. All 8 should be discarded (mtg-564).
 
 [state]
 turn=2

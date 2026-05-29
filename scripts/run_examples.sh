@@ -28,7 +28,7 @@ done
 
 echo "=== Discovering available examples ==="
 # Get list of examples by parsing cargo output
-EXAMPLES=$(cargo run -p mtg-forge-rs --features network --example 2>&1 | grep -A 1000 "Available examples:" | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$' | grep -vxE 'lobby_probe')
+EXAMPLES=$(cargo run -p mtg-engine --features network --example 2>&1 | grep -A 1000 "Available examples:" | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$' | grep -vxE 'lobby_probe')
 
 if [ -z "$EXAMPLES" ]; then
     echo "ERROR: No examples found!"
@@ -68,7 +68,7 @@ if [ "$FORCE_SEQUENTIAL" = true ] || ! command -v parallel &> /dev/null; then
         echo "Running example: $example" >> "$OUTPUT_FILE"
         echo "----------------------------------------" >> "$OUTPUT_FILE"
 
-        if cargo run -p mtg-forge-rs --features network --example "$example" >> "$OUTPUT_FILE" 2>&1; then
+        if cargo run -p mtg-engine --features network --example "$example" >> "$OUTPUT_FILE" 2>&1; then
             echo "" >> "$OUTPUT_FILE"
             echo "✅ $example: PASSED" >> "$OUTPUT_FILE"
             PASSED=$((PASSED + 1))
@@ -123,7 +123,7 @@ run_example() {
     echo "Running example: $example" >> "$output_file"
     echo "----------------------------------------" >> "$output_file"
 
-    if cargo run -p mtg-forge-rs --features network --example "$example" >> "$output_file" 2>&1; then
+    if cargo run -p mtg-engine --features network --example "$example" >> "$output_file" 2>&1; then
         echo "" >> "$output_file"
         echo "✅ $example: PASSED" >> "$output_file"
         return 0

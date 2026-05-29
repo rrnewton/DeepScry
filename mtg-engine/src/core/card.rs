@@ -502,7 +502,7 @@ impl CardCache {
 
                     // Check for "any color" - this is indicated by having all 5 colors set
                     // (from Produced$ Any which the effect converter handles)
-                    // TODO(mtg-s3ri5): Track "any color" explicitly in Effect::AddMana
+                    // TODO(mtg-173): Track "any color" explicitly in Effect::AddMana
                     // For now, if all 5 colors are present, treat as any color
                     if mana.white > 0 && mana.blue > 0 && mana.black > 0 && mana.red > 0 && mana.green > 0 {
                         produces_any = true;

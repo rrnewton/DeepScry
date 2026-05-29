@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Strip Mine ({T}, Sacrifice CARDNAME: Destroy target land)
 #
-# Regression test for mtg-0e702a (Card Compatibility: Strip Mine).
+# Regression test for mtg-404 (Card Compatibility: Strip Mine).
 # Verifies the composite-cost activated ability:
 # - Tap + Sacrifice cost is parsed and paid in the right order
 # - Strip Mine itself moves to graveyard (sacrificed) before the effect resolves

@@ -121,5 +121,5 @@ Equipment implementation is **FEATURE-COMPLETE** for basic Equipment cards. All 
 - 7d5cab6e: test(equipment): Add validation test for real Equipment cards from cardsfolder
 
 **Issues:**
-- Closed mtg-98df7d: Basic Equipment implementation complete
+- Closed mtg-169: Basic Equipment implementation complete
 - Updated mtg-17: Documented advanced features remaining

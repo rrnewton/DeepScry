@@ -283,7 +283,7 @@ Cards with variable power/toughness (like Tarmogoyf) parse as `None` for power a
 
 ### Loading a Single Card
 ```rust
-use mtg_forge_rs::loader::CardLoader;
+use mtg_engine::loader::CardLoader;
 
 let card = CardLoader::load_from_file("path/to/card.txt")?;
 println!("Loaded: {} ({})", card.name, card.mana_cost);
@@ -291,7 +291,7 @@ println!("Loaded: {} ({})", card.name, card.mana_cost);
 
 ### Loading Card Database
 ```rust
-use mtg_forge_rs::loader::CardDatabase;
+use mtg_engine::loader::CardDatabase;
 
 let db = CardDatabase::load_from_folder("forge-java/res/cardsfolder").await?;
 println!("Loaded {} cards", db.card_count());
@@ -299,7 +299,7 @@ println!("Loaded {} cards", db.card_count());
 
 ### Loading a Deck
 ```rust
-use mtg_forge_rs::loader::DeckLoader;
+use mtg_engine::loader::DeckLoader;
 
 let deck = DeckLoader::load_from_file("mydeck.dck")?;
 println!("Deck: {} ({} cards)", deck.name, deck.main_deck.len());
@@ -307,7 +307,7 @@ println!("Deck: {} ({} cards)", deck.name, deck.main_deck.len());
 
 ### Creating a Game
 ```rust
-use mtg_forge_rs::loader::{CardDatabase, GameInitializer};
+use mtg_engine::loader::{CardDatabase, GameInitializer};
 
 let db = CardDatabase::load_from_folder("forge-java/res/cardsfolder").await?;
 let init = GameInitializer::new(db);

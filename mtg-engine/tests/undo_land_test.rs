@@ -3,7 +3,7 @@
 //! This test demonstrates the bug where playing a land sets turn_entered_battlefield
 //! but this mutation is not logged to the undo system.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{Card, CardType},
     game::{compute_undo_test_hash, GameState},
     Result,

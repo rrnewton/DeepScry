@@ -1,7 +1,7 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
-//! Regression test for `mtg-c54e90` — Seismic Sense network desync.
+//! Regression test for `mtg-415` — Seismic Sense network desync.
 //!
 //! ## The bug
 //!
@@ -46,7 +46,7 @@
 //! which deterministically reproduces the original gabriel-vs-ryan game
 //! that triggered this desync.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{replay_controller::ReplayChoice, GameLoop, HeuristicController, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
@@ -61,7 +61,7 @@ use std::path::PathBuf;
 /// 2. Emit a `ChoicePoint(LibrarySearch)` for snapshot/replay determinism.
 ///
 /// Both invariants are required for the network shadow client to stay in
-/// sync with the server (see mtg-c54e90 for full analysis).
+/// sync with the server (see mtg-415 for full analysis).
 #[tokio::test]
 async fn test_seismic_sense_dig_self_records_choice_point() -> Result<()> {
     let cardsfolder = require_cardsfolder();
@@ -121,7 +121,7 @@ async fn test_seismic_sense_dig_self_records_choice_point() -> Result<()> {
         "Ostrich-Horse must leave the library after Seismic Sense resolves. \
          If this fires, the dig effect put the card back on the bottom of \
          the library — exactly the legacy execute_effect failure mode that \
-         caused mtg-c54e90."
+         caused mtg-415."
     );
 
     // 2) Resolution must have emitted a ChoicePoint(LibrarySearch). The
@@ -150,7 +150,7 @@ async fn test_seismic_sense_dig_self_records_choice_point() -> Result<()> {
          ChoicePoint(LibrarySearch). Without it the network coordinator \
          never bundles CardRevealed messages with the choice request, the \
          shadow client never learns the top-N library identities, and \
-         the dig fizzles (mtg-c54e90)."
+         the dig fizzles (mtg-415)."
     );
 
     // 3) Sanity: the move was a Library->Hand move_card, not some other

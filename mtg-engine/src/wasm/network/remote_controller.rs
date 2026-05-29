@@ -299,14 +299,14 @@ impl PlayerController for WasmRemoteController {
         killable_blockers: &[(CardId, i32)],
         _remaining_power: i32,
     ) -> ChoiceResult<CardId> {
-        // SMART damage assignment (mtg-e05f9c): the server sends the index AND the
+        // SMART damage assignment (mtg-418): the server sends the index AND the
         // authoritative CardId via target_card_ids. Prefer the CardId — index-based
         // lookup is unreliable in shadow state where blocker ordering may differ.
         //
         // CRITICAL: We MUST consume an OpponentChoice from the queue here, even
         // though we have a default impl on the trait. Failing to consume the message
         // would leave it in the queue and shift every subsequent OpponentChoice by
-        // one, causing immediate state-hash desync (the bug described in mtg-e05f9c).
+        // one, causing immediate state-hash desync (the bug described in mtg-418).
         // Peek at the next queued OpponentChoice (which try_get_choice will pop)
         // and capture its target_card_ids before consuming the choice.
         let target_card_ids = self
@@ -362,7 +362,7 @@ impl PlayerController for WasmRemoteController {
         remaining_blockers: &[CardId],
         _remaining_damage: i32,
     ) -> ChoiceResult<CardId> {
-        // Mirror of choose_blocker_for_lethal_damage above (mtg-e05f9c).
+        // Mirror of choose_blocker_for_lethal_damage above (mtg-418).
         let target_card_ids = self
             .network_client
             .borrow()

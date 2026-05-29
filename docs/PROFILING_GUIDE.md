@@ -35,7 +35,7 @@ make dhatprofile
 ```
 === TOP 20 ALLOCATION SITES BY TOTAL BYTES ===
 #1: 9.75 MB (11.8%) in 1,278,093 blocks (avg 8.0 bytes/block)
-  Location: mtg_forge_rs::game::mana_engine::get_complex_mana_production (src/game/mana_engine.rs:550:20)
+  Location: mtg_engine::game::mana_engine::get_complex_mana_production (src/game/mana_engine.rs:550:20)
 ```
 
 **Key metrics:**
@@ -65,9 +65,9 @@ make callgrindprofile
 ```
 === Top 30 CPU Hotspots (by instruction count) ===
 Ir                      file:function
-5,701,666,144 (30.46%)  mtg_forge_rs::game::mana_engine::ManaEngine::update
-4,358,477,547 (23.28%)  mtg_forge_rs::game::actions::cast_spell_8_step
-2,667,150,711 (14.25%)  mtg_forge_rs::game::mana_payment::check_payment
+5,701,666,144 (30.46%)  mtg_engine::game::mana_engine::ManaEngine::update
+4,358,477,547 (23.28%)  mtg_engine::game::actions::cast_spell_8_step
+2,667,150,711 (14.25%)  mtg_engine::game::mana_payment::check_payment
 ```
 
 **Key metrics:**

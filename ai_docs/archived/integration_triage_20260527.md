@@ -8,7 +8,7 @@
 
 ## Executive summary
 
-After landing the audit-suite fixes (mtg-c232f4 / mtg-ivrqv / mtg-nufig)
+After landing the audit-suite fixes (mtg-430 / mtg-457 / mtg-458)
 the team-visible CI signal on `integration` is **still red**, but the
 remaining failures are small and narrowly scoped:
 
@@ -45,7 +45,7 @@ workflow patch" holds for the four blocking failures.
    to `rust-toolchain.toml`).
 2. **F3 (separate, low-urgency):** bump `actions/*@v4` → `@v5`
    before the GitHub-enforced Node 24 cutover on 2026-06-02 (filed
-   in mtg-99og6 follow-up #3, still open).
+   in mtg-459 follow-up #3, still open).
 3. **F4 (cleanup, non-blocking):** suppress the spurious Network E2E
    shutdown-time ERROR log lines so future failures stand out.
 
@@ -53,12 +53,12 @@ workflow patch" holds for the four blocking failures.
 
 | ID | Job / Step | Name | Category | First broken | Fix complexity | Owner | Beads |
 |----|------------|------|----------|---------------|----------------|-------|-------|
-| F1a | Test / Run agentplay tests | `test_mock_mode_selects_randomly_without_subprocess` | Stale test | `61e06688` (2026-05-15) | trivial | 1-agent, delete or rewrite | mtg-kvikk (filed) |
-| F1b | Test / Run agentplay tests | `test_mock_session_deterministic` | Stale test | `61e06688` | trivial | 1-agent, delete or rewrite | mtg-kvikk (filed) |
-| F1c | Test / Run agentplay tests | `test_mock_session_returns_in_range` | Stale test | `61e06688` | trivial | 1-agent, delete or rewrite | mtg-kvikk (filed) |
-| F2 | Clippy / Run clippy (WASM target) | `cargo clippy --target wasm32-unknown-unknown` cannot find crate `core` | Env / config | `7a423c75` (2026-05-26, when the WASM-clippy step was added) | trivial | 1-agent, CI YAML edit | mtg-vy7rv (filed) |
-| F3 | All jobs | `actions/checkout@v4` Node 20 deprecation warning | Config (latent) | n/a (pre-existing) | small | 1-agent, YAML bump | mtg-99og6 (follow-up #3) |
-| F4 | Network E2E (info only) | `[ERROR mtg_forge_rs::network::server] Game 1: P2 handler exited unexpectedly: Ok(Ok(()))` and friends, AFTER the test reports PASS | Cosmetic | unknown, pre-existing | small | 1-agent, demote to INFO/DEBUG at shutdown | mtg-i77h0 (filed) |
+| F1a | Test / Run agentplay tests | `test_mock_mode_selects_randomly_without_subprocess` | Stale test | `61e06688` (2026-05-15) | trivial | 1-agent, delete or rewrite | mtg-460 (filed) |
+| F1b | Test / Run agentplay tests | `test_mock_session_deterministic` | Stale test | `61e06688` | trivial | 1-agent, delete or rewrite | mtg-460 (filed) |
+| F1c | Test / Run agentplay tests | `test_mock_session_returns_in_range` | Stale test | `61e06688` | trivial | 1-agent, delete or rewrite | mtg-460 (filed) |
+| F2 | Clippy / Run clippy (WASM target) | `cargo clippy --target wasm32-unknown-unknown` cannot find crate `core` | Env / config | `7a423c75` (2026-05-26, when the WASM-clippy step was added) | trivial | 1-agent, CI YAML edit | mtg-461 (filed) |
+| F3 | All jobs | `actions/checkout@v4` Node 20 deprecation warning | Config (latent) | n/a (pre-existing) | small | 1-agent, YAML bump | mtg-459 (follow-up #3) |
+| F4 | Network E2E (info only) | `[ERROR mtg_forge_rs::network::server] Game 1: P2 handler exited unexpectedly: Ok(Ok(()))` and friends, AFTER the test reports PASS | Cosmetic | unknown, pre-existing | small | 1-agent, demote to INFO/DEBUG at shutdown | mtg-462 (filed) |
 | L1 | (local validate only) validate-wasm-e2e-step + validate-network-e2e-step | `browserType.launch: Executable doesn't exist at ~/.cache/ms-playwright/chromium_headless_shell-1223/...` — Playwright auto-attempt to `install chromium` then fails with `Installation process exited with code: 1` (likely missing sudo or apt deps in the WSL/agent env) | Env (local only) | n/a (pre-existing) | small | dev-env doc, not a CI fix | n/a — CI passes via `npx playwright install chromium --with-deps` |
 
 ### F1a/F1b/F1c — pytest first-error excerpts
@@ -147,7 +147,7 @@ forced to run with Node.js 24 by default starting June 2nd, 2026.
 ```
 
 The cutover happens in ~6 days. Currently a WARNING, not a FAIL.
-mtg-99og6 follow-up #3 already tracks this; bump `actions/checkout@v4`,
+mtg-459 follow-up #3 already tracks this; bump `actions/checkout@v4`,
 `actions/cache@v4`, `actions/setup-python@v5`, `actions/setup-node@v4`,
 `actions/upload-artifact@v4` → their `@v5` (where available) before
 2026-06-02.
@@ -183,15 +183,15 @@ dispatched in parallel.
 
 ## Out-of-scope / file-for-later
 
-- mtg-99og6 follow-up #2 (further `Test` job splits along Rust-unit
+- mtg-459 follow-up #2 (further `Test` job splits along Rust-unit
   vs shell-script vs agentplay boundaries) — desirable but not
   blocking.
-- mtg-99og6 follow-up #4 (auto-file a beads issue on integration CI
+- mtg-459 follow-up #4 (auto-file a beads issue on integration CI
   going red) — desirable, prevents recurrence of the original
   "12 days unnoticed" failure mode, but is infrastructure work
   rather than a fix.
 - Process discipline (orchestrator must run `gh run list --branch
-  integration --limit 1` at every spawn) — covered in mtg-99og6, no
+  integration --limit 1` at every spawn) — covered in mtg-459, no
   code fix possible.
 - `make validate` cannot be run unmodified from inside the Claude
   Code harness because `scripts/check_clean_environment.py` flags the
@@ -226,22 +226,22 @@ commit `7a423c75`).
 
 ## New beads issues filed
 
-- **mtg-kvikk** (priority 2, bug): agentplay tests reference removed
+- **mtg-460** (priority 2, bug): agentplay tests reference removed
   `MockSession.ask()` (3 tests). Covers F1a/b/c. Trivial fix.
-- **mtg-vy7rv** (priority 2, bug): clippy-wasm CI step fails because
+- **mtg-461** (priority 2, bug): clippy-wasm CI step fails because
   pinned nightly toolchain has no wasm rust-std. Covers F2.
   Recommended one-line fix: add `targets =
   ["wasm32-unknown-unknown"]` to `rust-toolchain.toml`.
-- **mtg-i77h0** (priority 4, bug): Network E2E shutdown noise — demote
+- **mtg-462** (priority 4, bug): Network E2E shutdown noise — demote
   post-test-pass disconnect logs from ERROR to INFO/DEBUG. Covers F4.
-- **mtg-fg9cf** (priority 3, bug): `scripts/validate.sh` flags its own
+- **mtg-463** (priority 3, bug): `scripts/validate.sh` flags its own
   caller's shell as a conflicting process — affects every agent in the
   Claude Code harness. Documented under Process red flags below.
 
 ## Process red flags
 
 1. **The same "ignore red CI" failure mode just repeated.** The audit
-   `mtg-99og6` was filed precisely because CI had been red for 12 days
+   `mtg-459` was filed precisely because CI had been red for 12 days
    unnoticed. The audit branch then landed three fixes — and CI is
    STILL red. The team merged the audit without re-checking that CI
    actually went green. The mandatory "Clean Start" check in

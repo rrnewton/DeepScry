@@ -19,7 +19,7 @@
 //! allocations, excluding one-time initialization overhead. See benchmarks in
 //! game_benchmark.rs for comparison with other profiling approaches.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{random_controller::RandomController, GameLoop, VerbosityLevel},
     loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
 };

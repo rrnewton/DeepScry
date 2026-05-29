@@ -8,9 +8,9 @@
 
 1. **CI has been red on `integration` for ~12 days** (since `61e066882b`,
    2026-05-15). The team has been ignoring red CI. Beads issues
-   `mtg-c232f4` and `mtg-ivrqv` describe the failure modes; both have
+   `mtg-430` and `mtg-457` describe the failure modes; both have
    landed fixes (`a13b311f`, `6fc7f945`), but a third regression
-   (`mtg-nufig`) remains open and keeps the `Test` job red.
+   (`mtg-458`) remains open and keeps the `Test` job red.
 2. **The shell-script test harness (`mtg-engine/tests/shell_script_tests.rs`)
    auto-discovers every `tests/*.sh` and runs it as a Rust test.** This
    means CI *was already running* the three "missing" tests via
@@ -32,7 +32,7 @@
 |------|----------------------|------|-----|
 | `tests/snapshot_resume_e2e.sh` (Phase 3 bincode) | `61e066882b fix(rng): centralize seed derivation…` | 2026-05-15 14:04 UTC | Added `#[serde(tag = "controller_type")]` to `ControllerState` in `mtg-engine/src/game/snapshot.rs`. Bincode rejects `deserialize_any`, which internally-tagged enums require. Test was added the previous day (`21ff552a`, 2026-05-14) and was passing in CI; the very next snapshot.rs touch broke it. |
 | `tests/network_vs_local_equivalence_e2e.sh` | `67f046f08e feat(server): multi-game lobby…` | 2026-05-15 06:27 UTC | Replaced single-game server lifecycle with long-lived lobby. Test was polling `kill -0 $SERVER_PID` and treating server exit as "game done"; with the lobby server, `SERVER_PID` never exits → 180 s timeout, exit 1. |
-| `tests/cycle_ability_network_sync_e2e.sh` | `67f046f08e` (same — it wraps the equivalence harness) | 2026-05-15 06:27 UTC | Same lobby-lifecycle hang masks an earlier real gamelog desync; the hang fix (`9101ba6f`) re-exposes the desync. The underlying desync regression is filed as **mtg-nufig** and is in-scope for the parallel `fix-mtg-nufig` worktree. |
+| `tests/cycle_ability_network_sync_e2e.sh` | `67f046f08e` (same — it wraps the equivalence harness) | 2026-05-15 06:27 UTC | Same lobby-lifecycle hang masks an earlier real gamelog desync; the hang fix (`9101ba6f`) re-exposes the desync. The underlying desync regression is filed as **mtg-458** and is in-scope for the parallel `fix-mtg-458` worktree. |
 
 Both root causes were introduced on **the same day** (2026-05-15), and
 CI red on `integration` started on that day. The first-broken merge
@@ -79,7 +79,7 @@ Targeted manual verification at HEAD `a13b311f`:
 
 - `bash tests/snapshot_resume_e2e.sh` → **7/7 PASS** (bincode fix `cfe4f256` landed).
 - `bash tests/network_vs_local_equivalence_e2e.sh` → **PASS** in ~20s (wait-loop fix `9101ba6f` landed).
-- `bash tests/cycle_ability_network_sync_e2e.sh` → **FAIL** at ~21s with "LOCAL and SERVER gamelogs differ by 232 lines" (mtg-nufig regression, expected — being fixed in `fix-mtg-nufig` parallel worktree).
+- `bash tests/cycle_ability_network_sync_e2e.sh` → **FAIL** at ~21s with "LOCAL and SERVER gamelogs differ by 232 lines" (mtg-458 regression, expected — being fixed in `fix-mtg-458` parallel worktree).
 
 Historical bisect was unnecessary because the commit-level forensics
 above pinpoint the breakage exactly (one snapshot.rs edit in
@@ -137,7 +137,7 @@ See the workflow patch committed alongside this audit. Summary:
   shape and has been catching regressions.
 
 The cycle_ability test is currently failing on `integration` HEAD
-(mtg-nufig); the parallel `fix-mtg-nufig` worktree is addressing it.
+(mtg-458); the parallel `fix-mtg-458` worktree is addressing it.
 This audit does NOT mask or skip that test in CI — the right thing
 is to land the underlying fix and let the existing CI red signal
 clear naturally.

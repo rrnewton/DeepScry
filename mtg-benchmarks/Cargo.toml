@@ -7,7 +7,7 @@ autobenches = false
 
 [dependencies]
 # Main engine as library dependency
-mtg-forge-rs = { path = "../mtg-engine" }
+mtg-engine = { path = "../mtg-engine" }
 
 # Benchmark framework
 criterion = "0.5"

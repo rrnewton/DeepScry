@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
 //! End-to-end tests for browser TUI rewind/replay pattern
@@ -17,7 +17,7 @@
 //! This specifically tests the "cards disappearing" and "card not in hand" bugs
 //! described in the browser TUI issues.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{CardId, ManaCost, PlayerId, SpellAbility},
     game::{
         controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController},
@@ -32,7 +32,7 @@ use smallvec::SmallVec;
 use std::path::PathBuf;
 
 /// Helper function to load test game with old school decks
-async fn load_old_school_game() -> Result<(mtg_forge_rs::game::GameState, PlayerId, PlayerId)> {
+async fn load_old_school_game() -> Result<(mtg_engine::game::GameState, PlayerId, PlayerId)> {
     let cardsfolder = require_cardsfolder();
     let card_db = CardDatabase::new(cardsfolder);
 
@@ -76,7 +76,7 @@ async fn test_rich_input_basic() -> Result<()> {
     // Test controller with pass commands
     let mut p1_controller =
         RichInputController::new(p1_id, vec!["pass".to_string(), "pass".to_string(), "pass".to_string()]);
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run a turn
     let mut game_loop = GameLoop::new(&mut game)
@@ -110,7 +110,7 @@ async fn test_rich_input_wildcard() -> Result<()> {
 
     // Use wildcard to pass until a land becomes playable
     let mut p1_controller = RichInputController::new(p1_id, vec!["*".to_string(), "play mountain".to_string()]);
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run several turns with the wildcard script
     let mut game_loop = GameLoop::new(&mut game)
@@ -237,7 +237,7 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
         fn choose_from_library(
             &mut self,
             _view: &GameStateView,
-            valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+            valid_cards: &[&mtg_engine::loader::CardDefinition],
         ) -> ChoiceResult<Option<usize>> {
             ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
         }
@@ -285,7 +285,7 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
         player_id: p1_id,
         called: false,
     };
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Step 1: Run until NeedInput
     let result = {
@@ -307,7 +307,7 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
         .actions()
         .iter()
         .filter_map(|action| {
-            if let mtg_forge_rs::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
+            if let mtg_engine::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
                 Some(c.clone())
             } else {
                 None
@@ -357,9 +357,9 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
     replay_choices.push(new_choice);
 
     // Step 6: Run with ReplayController
-    let inner = Box::new(mtg_forge_rs::game::ZeroController::new(p1_id));
+    let inner = Box::new(mtg_engine::game::ZeroController::new(p1_id));
     let mut replay_p1 = ReplayController::new(p1_id, inner, replay_choices);
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     let result = {
         let mut game_loop = GameLoop::new(&mut game)
@@ -424,7 +424,7 @@ async fn test_play_land_script() -> Result<()> {
             "play badlands".to_string(),
         ],
     );
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run a few turns
     let result = {
@@ -498,7 +498,7 @@ async fn test_hand_persistence() -> Result<()> {
             "pass".to_string(),
         ],
     );
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     {
         let mut game_loop = GameLoop::new(&mut game)
@@ -650,7 +650,7 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
         fn choose_from_library(
             &mut self,
             _view: &GameStateView,
-            valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+            valid_cards: &[&mtg_engine::loader::CardDefinition],
         ) -> ChoiceResult<Option<usize>> {
             ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
         }
@@ -698,7 +698,7 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
         player_id: p1_id,
         need_input_count: 0,
     };
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run until we get NeedInput
     let result = {
@@ -733,7 +733,7 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
         .actions()
         .iter()
         .filter_map(|action| {
-            if let mtg_forge_rs::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
+            if let mtg_engine::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
                 Some(c.clone())
             } else {
                 None
@@ -767,9 +767,9 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
     let mut replay_choices = choices_so_far;
     replay_choices.push(ReplayChoice::SpellAbility(land_to_play));
 
-    let inner = Box::new(mtg_forge_rs::game::ZeroController::new(p1_id));
+    let inner = Box::new(mtg_engine::game::ZeroController::new(p1_id));
     let mut replay_p1 = ReplayController::new(p1_id, inner, replay_choices);
-    let mut p2_controller = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut p2_controller = mtg_engine::game::ZeroController::new(p2_id);
 
     // Step 6: Run with replay
     {

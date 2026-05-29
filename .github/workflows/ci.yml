@@ -88,7 +88,7 @@ jobs:
       # silently skipped. The filterset is the exact complement of the
       # determinism/shell jobs, so the three jobs cover all tests with no gaps.
       - name: Run unit + integration tests (nextest)
-        run: cargo nextest run -p mtg-forge-rs --features network -E 'not binary(determinism_e2e) and not binary(shell_script_tests)'
+        run: cargo nextest run -p mtg-engine --features network -E 'not binary(determinism_e2e) and not binary(shell_script_tests)'
 
       - name: Run examples
         run: ./scripts/run_examples.sh
@@ -174,7 +174,7 @@ jobs:
       - name: Run determinism_e2e (nextest)
         env:
           MTG_REUSE_PREBUILT: "1"
-        run: cargo nextest run -p mtg-forge-rs --features network -E 'binary(determinism_e2e)'
+        run: cargo nextest run -p mtg-engine --features network -E 'binary(determinism_e2e)'
 
       # Dedicated steps for the two full-game determinism scripts (also
       # auto-discovered by shell_script_tests, but run explicitly here so a
@@ -251,7 +251,7 @@ jobs:
       - name: Run shell_script_tests (nextest, serial + binary reuse)
         env:
           MTG_REUSE_PREBUILT: "1"
-        run: cargo nextest run -p mtg-forge-rs --features network -E 'binary(shell_script_tests)' --test-threads=1
+        run: cargo nextest run -p mtg-engine --features network -E 'binary(shell_script_tests)' --test-threads=1
 
   wasm:
     name: WASM Build and E2E Tests
@@ -425,9 +425,9 @@ jobs:
       #    when local validate caught lints that the native CI clippy missed)
       - name: Run clippy
         run: |
-          cargo clippy -p mtg-forge-rs --all-targets --all-features --features network -- -D warnings
-          cargo clippy -p mtg-forge-rs --all-targets --features wasm,network -- -D warnings
+          cargo clippy -p mtg-engine --all-targets --all-features --features network -- -D warnings
+          cargo clippy -p mtg-engine --all-targets --features wasm,network -- -D warnings
           cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
       - name: Run clippy (WASM target)
-        run: cargo clippy -p mtg-forge-rs --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
+        run: cargo clippy -p mtg-engine --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings

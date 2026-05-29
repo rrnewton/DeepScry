@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
 //! End-to-end tests for human input handling (WASM-like rewind/replay pattern)
@@ -14,7 +14,7 @@
 //! 5. ReplayController replays previous choices + new choice
 //! 6. Game continues from where it left off
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{CardId, ManaCost, PlayerId, SpellAbility},
     game::{
         controller::{ChoiceContext, ChoiceResult, GameStateView, PlayerController},
@@ -143,7 +143,7 @@ impl PlayerController for TestHumanController {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+        valid_cards: &[&mtg_engine::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         // Select first valid card
         ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
@@ -209,7 +209,7 @@ async fn test_run_until_input_returns_awaiting_input() -> Result<()> {
 
     // Human controller for P1, Zero for P2
     let mut human = TestHumanController::new(p1_id);
-    let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run until input is needed
     let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
@@ -250,7 +250,7 @@ async fn test_run_until_input_continues_with_choice() -> Result<()> {
     let p2_id = game.players[1].id;
 
     let mut human = TestHumanController::new(p1_id);
-    let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai = mtg_engine::game::ZeroController::new(p2_id);
 
     // First run - should return AwaitingInput
     let result = {
@@ -300,8 +300,8 @@ async fn test_run_one_turn_advances_exactly_one_turn() -> Result<()> {
     let p1_id = game.players[0].id;
     let p2_id = game.players[1].id;
 
-    let mut ai1 = mtg_forge_rs::game::ZeroController::new(p1_id);
-    let mut ai2 = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai1 = mtg_engine::game::ZeroController::new(p1_id);
+    let mut ai2 = mtg_engine::game::ZeroController::new(p2_id);
 
     let initial_turn = game.turn.turn_number;
 
@@ -354,11 +354,11 @@ async fn test_replay_controller_replays_choices() -> Result<()> {
     ];
 
     // Inner controller to delegate to after replay
-    let inner = Box::new(mtg_forge_rs::game::ZeroController::new(p1_id));
+    let inner = Box::new(mtg_engine::game::ZeroController::new(p1_id));
 
     // Create replay controller
     let mut replay = ReplayController::new(p1_id, inner, replay_choices);
-    let mut ai2 = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai2 = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run the game - replay controller should consume its choices then delegate
     let mut game_loop = GameLoop::new(&mut game)
@@ -399,7 +399,7 @@ async fn test_rewind_extracts_choices_from_undo_log() -> Result<()> {
 
     // Use TestHumanController which returns NeedInput when there are choices
     let mut human = TestHumanController::new(p1_id);
-    let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run until human needs to make a choice - this will log choice points
     let result = {
@@ -421,7 +421,7 @@ async fn test_rewind_extracts_choices_from_undo_log() -> Result<()> {
             assert!(
                 actions
                     .iter()
-                    .any(|a| matches!(a, mtg_forge_rs::undo::GameAction::AdvanceStep { .. })),
+                    .any(|a| matches!(a, mtg_engine::undo::GameAction::AdvanceStep { .. })),
                 "Should have AdvanceStep actions in undo log"
             );
         }
@@ -458,8 +458,8 @@ async fn test_rewind_to_turn_start() -> Result<()> {
     let p1_id = game.players[0].id;
     let p2_id = game.players[1].id;
 
-    let mut ai1 = mtg_forge_rs::game::ZeroController::new(p1_id);
-    let mut ai2 = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai1 = mtg_engine::game::ZeroController::new(p1_id);
+    let mut ai2 = mtg_engine::game::ZeroController::new(p2_id);
 
     // Run a couple of turns
     {
@@ -549,7 +549,7 @@ async fn test_full_rewind_replay_cycle() -> Result<()> {
 
     // Step 1: Run until human needs to make a choice
     let mut human = TestHumanController::new(p1_id);
-    let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai = mtg_engine::game::ZeroController::new(p2_id);
 
     let result = {
         let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
@@ -571,7 +571,7 @@ async fn test_full_rewind_replay_cycle() -> Result<()> {
         .actions()
         .iter()
         .filter_map(|action| {
-            if let mtg_forge_rs::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
+            if let mtg_engine::undo::GameAction::ChoicePoint { choice: Some(c), .. } = action {
                 Some(c.clone())
             } else {
                 None
@@ -595,9 +595,9 @@ async fn test_full_rewind_replay_cycle() -> Result<()> {
     replay_choices.push(new_choice);
 
     // Step 6: Create ReplayController and run
-    let inner = Box::new(mtg_forge_rs::game::ZeroController::new(p1_id));
+    let inner = Box::new(mtg_engine::game::ZeroController::new(p1_id));
     let mut replay = ReplayController::new(p1_id, inner, replay_choices);
-    let mut ai = mtg_forge_rs::game::ZeroController::new(p2_id);
+    let mut ai = mtg_engine::game::ZeroController::new(p2_id);
 
     let result = {
         let mut game_loop = GameLoop::new(&mut game)

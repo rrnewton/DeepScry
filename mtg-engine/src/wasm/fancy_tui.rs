@@ -1305,7 +1305,7 @@ struct WasmFancyTuiState {
     is_network_mode: bool,
     /// Controller seed for deterministic RandomController (network mode)
     /// IMPORTANT: This must match the seed used by native client to ensure identical behavior.
-    /// See mtg-d0jg3 for WASM/native behavioral identity requirements.
+    /// See mtg-254 for WASM/native behavioral identity requirements.
     #[cfg(feature = "wasm-network")]
     controller_seed: u64,
     /// High-water mark for action count (for monotonicity invariant checking)
@@ -1369,7 +1369,7 @@ struct WasmFancyTuiState {
 
 /// Extract the cards that are valid choices for the current `ChoiceContext`.
 ///
-/// Decouple-step6 (mtg-81ed52): the WASM `WasmHumanController` returns a
+/// Decouple-step6 (mtg-382): the WASM `WasmHumanController` returns a
 /// `ChoiceResult::NeedInput(ChoiceContext::*)` to signal "what cards can be
 /// picked", while the GUI's `is_valid_choice` highlight reads from
 /// `GameUiSessionState::valid_choices`. Bridging the two requires a tiny bit
@@ -1451,7 +1451,7 @@ impl WasmFancyTuiState {
     ///
     /// # Parameters
     /// - `controller_seed`: Seed for RandomController. MUST match native client's seed
-    ///   for behavioral identity (see mtg-d0jg3).
+    ///   for behavioral identity (see mtg-254).
     fn new_with_network_mode(
         game: GameState,
         p1_controller_type: WasmControllerType,
@@ -2151,7 +2151,7 @@ impl WasmFancyTuiState {
             }
             WasmControllerType::Random => {
                 // Random controller - runs directly without user input
-                // IMPORTANT: Use self.controller_seed to match native client behavior (mtg-d0jg3)
+                // IMPORTANT: Use self.controller_seed to match native client behavior (mtg-254)
                 let inner = RandomController::with_seed(our_player_id, self.controller_seed);
                 let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
                 self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
@@ -2572,7 +2572,7 @@ impl WasmFancyTuiState {
                             // No real choices to highlight while we wait —
                             // mirror update_choices_from_context's clear so
                             // cards on the battlefield don't get dimmed
-                            // (decouple-step6 / mtg-81ed52).
+                            // (decouple-step6 / mtg-382).
                             self.clear_pending_choice_highlights();
                             return;
                         }
@@ -2631,7 +2631,7 @@ impl WasmFancyTuiState {
     /// "after the prompt" code paths (see e.g.
     /// `fancy_tui_controller.rs:407-413`) so the GUI / TUI stop dimming
     /// non-valid cards as soon as no decision is outstanding
-    /// (decouple-step6 / mtg-81ed52).
+    /// (decouple-step6 / mtg-382).
     fn clear_pending_choice_highlights(&mut self) {
         self.renderer.state.session.valid_choices.clear();
         self.renderer.state.session.choice_context = crate::game::fancy_tui_renderer::ChoiceContext::None;
@@ -2643,7 +2643,7 @@ impl WasmFancyTuiState {
     /// with native TUI. Also populates
     /// `state.session.valid_choices` and `state.session.choice_context`
     /// so the GUI's `is_valid_choice` highlighting matches the native TUI
-    /// (decouple-step6 / mtg-81ed52): the WASM controllers signal "what
+    /// (decouple-step6 / mtg-382): the WASM controllers signal "what
     /// cards can be picked" via the `ChoiceContext` returned from
     /// `NeedInput`, but the highlight code reads from
     /// `GameUiSessionState::valid_choices` and dims non-valid cards based
@@ -3088,7 +3088,7 @@ impl WasmFancyTuiState {
     ///
     /// NOTE: This is used for LOCAL (non-network) games only. In network mode,
     /// controllers are created directly with the proper seed from self.controller_seed
-    /// to ensure behavioral identity with native client (see mtg-d0jg3).
+    /// to ensure behavioral identity with native client (see mtg-254).
     fn create_ai_controller(
         &self,
         controller_type: WasmControllerType,
@@ -3608,7 +3608,7 @@ fn attach_ratzilla_renderer() -> Result<(), JsValue> {
 ///
 /// The struct is still called `WasmFancyTuiState` because step 5 of the
 /// decoupling plan splits it into `GameUiSessionState` (shared) +
-/// `RatatuiViewState` (ratatui-only) — see beads `mtg-81ed52`. The split
+/// `RatatuiViewState` (ratatui-only) — see beads `mtg-382`. The split
 /// is cosmetic; the public API (the WASM exports) is already ratatui-free.
 ///
 /// # Errors
@@ -3719,14 +3719,14 @@ pub fn launch_network_game(
     // Parse the controller type from JavaScript
     // IMPORTANT: Only human and random are currently supported in WASM network mode.
     // Heuristic and zero are disabled until we achieve proper state synchronization
-    // with the native client (mtg-d0jg3).
+    // with the native client (mtg-254).
     let our_controller_type = match controller_type {
         "human" => WasmControllerType::Human,
         "random" => WasmControllerType::Random,
         "heuristic" | "zero" => {
             log::warn!(
                 "launch_network_game: Controller '{}' disabled in WASM network mode. \
-                 Only 'human' and 'random' are supported until state sync is fixed (mtg-d0jg3). \
+                 Only 'human' and 'random' are supported until state sync is fixed (mtg-254). \
                  Defaulting to Human.",
                 controller_type
             );
@@ -3751,7 +3751,7 @@ pub fn launch_network_game(
     let opponent_name = client_ref.opponent_name().unwrap_or("Opponent").to_string();
     let our_name = deck_name.to_string(); // Use deck name as our name for now
 
-    // CRITICAL: Get late-binding architecture data (mtg-d0jg3)
+    // CRITICAL: Get late-binding architecture data (mtg-254)
     let deck_card_ids = client_ref.deck_card_ids().cloned();
     let rng_state = client_ref.rng_state().to_vec();
 
@@ -3776,7 +3776,7 @@ pub fn launch_network_game(
     // Drop the borrow before creating the game
     drop(client_ref);
 
-    // Create the game using late-binding architecture (mtg-d0jg3)
+    // Create the game using late-binding architecture (mtg-254)
     // CRITICAL: Use init_game_reserve_only_wasm() with server's DeckCardIdRanges
     // This ensures WASM uses the SAME CardIDs as the server for behavioral identity.
     let game = if let Some(ref ranges) = deck_card_ids {

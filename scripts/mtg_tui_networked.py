@@ -459,7 +459,7 @@ def main():
             # Note: We don't pass --tag-gamelogs to clients by default because:
             # 1. The 2-way equivalence test (local vs server) only needs server logs
             # 2. Client logs are for 4-way testing which requires separate file outputs
-            # TODO(mtg-037fw): Add --tag-gamelogs-clients flag for 4-way testing
+            # TODO(mtg-193): Add --tag-gamelogs-clients flag for 4-way testing
 
             return cmd
 

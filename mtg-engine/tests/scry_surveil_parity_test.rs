@@ -20,8 +20,8 @@
 //! split pipeline, with the expected layout derived from the rules
 //! summarised above.
 
-use mtg_forge_rs::core::{Card, CardId, CardType, PlayerId};
-use mtg_forge_rs::game::{controller::ChoiceResult, GameState, GameStateView, HeuristicController, PlayerController};
+use mtg_engine::core::{Card, CardId, CardType, PlayerId};
+use mtg_engine::game::{controller::ChoiceResult, GameState, GameStateView, HeuristicController, PlayerController};
 use smallvec::SmallVec;
 
 /// Build a fresh two-player game with `library_cards` placed onto P1's

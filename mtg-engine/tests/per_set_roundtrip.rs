@@ -1,4 +1,4 @@
-//! Round-trip test for the per-set WASM exporter (mtg-6fsjb).
+//! Round-trip test for the per-set WASM exporter (mtg-464).
 //!
 //! Self-contained: invokes the `mtg export-wasm` binary into a tempdir
 //! and then verifies that splitting the card database into per-set bins
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mtg_forge_rs::loader::{CardDefinition, CardLoader};
+use mtg_engine::loader::{CardDefinition, CardLoader};
 
 /// CARGO_MANIFEST_DIR is mtg-engine/; repo root is its parent.
 fn find_repo_root() -> PathBuf {
@@ -82,7 +82,7 @@ fn run_exporter(into: &Path) -> PathBuf {
 #[test]
 fn per_set_roundtrip_preserves_every_card() {
     let repo = find_repo_root();
-    let cardsfolder = mtg_forge_rs::loader::find_cardsfolder()
+    let cardsfolder = mtg_engine::loader::find_cardsfolder()
         .expect("cardsfolder must be resolvable (forge-java submodule populated)");
 
     // Export into a tempdir so the test is hermetic and doesn't clobber
@@ -170,7 +170,7 @@ fn per_set_roundtrip_preserves_every_card() {
     // `CardLoader::load_from_file` uses HashMap fields whose bincode wire
     // order is iteration-order-dependent and therefore non-deterministic
     // between separate loads of the same card. That's a property of the
-    // existing CardDefinition struct, not something introduced by mtg-6fsjb.
+    // existing CardDefinition struct, not something introduced by mtg-464.
     let mut total_seen = 0usize;
     for (file, names) in &per_file {
         let path = sets_dir.join(file);

@@ -3,7 +3,7 @@
 //! These tests load specific game states from .pzl files and verify
 //! that controllers make expected decisions and actions.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{zero_controller::ZeroController, FixedScriptController, GameLoop, HeuristicController, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase},
     puzzle::{loader::load_puzzle_into_game, PuzzleFile},
@@ -205,7 +205,7 @@ async fn test_royal_assassin_with_log_capture() -> Result<()> {
     let p2_zones = game_loop
         .game
         .get_player_zones(p2_id)
-        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidAction("P2 zones not found".to_string()))?;
+        .ok_or_else(|| mtg_engine::MtgError::InvalidAction("P2 zones not found".to_string()))?;
 
     // Check if Grizzly Bears is in graveyard
     let bears_in_graveyard = p2_zones
@@ -699,7 +699,7 @@ async fn test_spell_targeting_removal() -> Result<()> {
     let p2_zones = game_loop
         .game
         .get_player_zones(p2_id)
-        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidAction("P2 zones not found".to_string()))?;
+        .ok_or_else(|| mtg_engine::MtgError::InvalidAction("P2 zones not found".to_string()))?;
 
     let serra_in_graveyard = p2_zones.graveyard.cards.iter().any(|&card_id| {
         if let Ok(card) = game_loop.game.cards.get(card_id) {
@@ -2907,7 +2907,7 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
 /// - Mode 1 should NOT be available (no creatures without counters)
 /// - Mode 2 should be available and chosen automatically
 ///
-/// This addresses issue mtg-29crm.
+/// This addresses issue mtg-209.
 #[tokio::test]
 async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
     let cardsfolder = require_cardsfolder();
@@ -2943,7 +2943,7 @@ async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
         .expect("Grizzly Bears should be on battlefield");
 
     let grizzly_bears = game.cards.get(grizzly_bears_id)?;
-    let initial_counters = grizzly_bears.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+    let initial_counters = grizzly_bears.get_counter(mtg_engine::core::CounterType::P1P1);
     assert_eq!(initial_counters, 5, "Grizzly Bears should start with 5 +1/+1 counters");
     assert!(grizzly_bears.has_counters(), "Grizzly Bears should have counters");
 
@@ -3004,7 +3004,7 @@ async fn test_modal_spell_mode_validation_heartless_act() -> Result<()> {
 
     // Check final counter count on Grizzly Bears
     let final_grizzly_bears = game_loop.game.cards.get(grizzly_bears_id)?;
-    let final_counters = final_grizzly_bears.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+    let final_counters = final_grizzly_bears.get_counter(mtg_engine::core::CounterType::P1P1);
     println!(
         "Grizzly Bears counters: {} -> {} (removed {})",
         initial_counters,
@@ -3282,7 +3282,7 @@ async fn test_psionic_blast_does_not_waste_black_lotus() -> Result<()> {
 /// See task `bug-mishras-factory-tapping`.
 #[tokio::test]
 async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> {
-    use mtg_forge_rs::core::{CardType, Effect, Subtype};
+    use mtg_engine::core::{CardType, Effect, Subtype};
 
     let cardsfolder = require_cardsfolder();
     let puzzle_path = PathBuf::from("../test_puzzles/mishras_factory_attacks.pzl");
@@ -3408,14 +3408,14 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
 /// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
 /// sees them before accepting.
 ///
-/// See task `bug-sacrifice-cost-display` and tracking issue `mtg-0f9d13`.
+/// See task `bug-sacrifice-cost-display` and tracking issue `mtg-413`.
 #[tokio::test]
 async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
-    use mtg_forge_rs::core::{
+    use mtg_engine::core::{
         Card, CardId, CardType, ManaCost, ManaProduction, ManaProductionKind, ManaSideCost, SpellAbility,
     };
-    use mtg_forge_rs::game::controller::{format_spell_ability_choice, GameStateView};
-    use mtg_forge_rs::game::GameState;
+    use mtg_engine::game::controller::{format_spell_ability_choice, GameStateView};
+    use mtg_engine::game::GameState;
 
     // Build a tiny game by hand so we don't need a card database round-trip.
     // P0 has only Black Lotus on the battlefield + a 3-mana spell in hand.
@@ -3469,7 +3469,7 @@ async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
         f.definition
             .cache
             .set_mana_production(ManaProduction::free(ManaProductionKind::Fixed(
-                mtg_forge_rs::core::ManaColor::Green,
+                mtg_engine::core::ManaColor::Green,
             )));
         f.definition.cache.is_mana_source = true;
         game.cards.insert(f_id, f);
@@ -3548,7 +3548,7 @@ async fn test_action_menu_shows_sacrifice_and_pain_hints() -> Result<()> {
     Ok(())
 }
 
-/// Regression for mtg-6b510d: the Plainscycling handler used to TAP lands to
+/// Regression for mtg-417: the Plainscycling handler used to TAP lands to
 /// fill the pool but then never DEDUCT the cost from the pool. Combined with
 /// ignoring `compute_tap_order`'s false return, this made cycling effectively
 /// free and — when no untapped lands existed — caused the cycled card to be
@@ -3649,7 +3649,7 @@ async fn test_plainscycling_pays_mana_cost() -> Result<()> {
     Ok(())
 }
 
-/// Regression for mtg-a5e7f1: Twin Blades crashed with
+/// Regression for mtg-416: Twin Blades crashed with
 /// `InvalidAction("Only Equipment or Auras can be attached")` when its ETB
 /// trigger fired, because the trigger emitted
 /// `Effect::AttachEquipment { source_equipment: CardId::placeholder(), ... }`

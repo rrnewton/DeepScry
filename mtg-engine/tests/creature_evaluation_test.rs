@@ -5,8 +5,8 @@
 //!
 //! Reference: forge-java/forge-ai/src/main/java/forge/ai/CreatureEvaluator.java
 
-use mtg_forge_rs::core::{Card, CardId, CardType, Keyword, PlayerId};
-use mtg_forge_rs::game::{controller::GameStateView, state::GameState, HeuristicController};
+use mtg_engine::core::{Card, CardId, CardType, Keyword, PlayerId};
+use mtg_engine::game::{controller::GameStateView, state::GameState, HeuristicController};
 
 /// Helper to create a basic creature card for testing with optional keywords
 fn create_test_setup_with_keywords(
@@ -26,7 +26,7 @@ fn create_test_setup_with_keywords(
     card.set_base_power(Some(power));
     card.set_base_toughness(Some(toughness));
     // Set mana cost to generic mana for simplicity
-    let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
+    let mut mana_cost = mtg_engine::core::ManaCost::new();
     mana_cost.generic = cmc;
     card.mana_cost = mana_cost;
 
@@ -444,7 +444,7 @@ fn test_shroud_creature() {
 // These tests verify that creatures with recurring costs are properly penalized
 // =========================================================================
 
-use mtg_forge_rs::core::KeywordArgs;
+use mtg_engine::core::KeywordArgs;
 
 /// Helper for creating creatures with complex keywords (those requiring arguments)
 fn create_test_setup_with_complex_keywords(
@@ -463,7 +463,7 @@ fn create_test_setup_with_complex_keywords(
     card.types.push(CardType::Creature);
     card.set_base_power(Some(power));
     card.set_base_toughness(Some(toughness));
-    let mut mana_cost = mtg_forge_rs::core::ManaCost::new();
+    let mut mana_cost = mtg_engine::core::ManaCost::new();
     mana_cost.generic = cmc;
     card.mana_cost = mana_cost;
 
@@ -496,7 +496,7 @@ fn test_cumulative_upkeep_penalty() {
         2,
         4,
         vec![KeywordArgs::CumulativeUpkeep {
-            cost: mtg_forge_rs::core::ManaCost::new(),
+            cost: mtg_engine::core::ManaCost::new(),
         }],
     );
     let controller = HeuristicController::new(player_id);
@@ -527,7 +527,7 @@ fn test_echo_penalty() {
         3,
         2,
         vec![KeywordArgs::Echo {
-            cost: mtg_forge_rs::core::ManaCost::new(),
+            cost: mtg_engine::core::ManaCost::new(),
         }],
     );
     let controller = HeuristicController::new(player_id);
@@ -601,7 +601,7 @@ fn test_vanishing_penalty() {
 // These tests load actual cards from cardsfolder and verify AI evaluation
 // =========================================================================
 
-use mtg_forge_rs::loader::CardLoader;
+use mtg_engine::loader::CardLoader;
 use std::path::PathBuf;
 
 /// Test evaluating real Jötun Grunt (Cumulative Upkeep) from cardsfolder
@@ -870,7 +870,7 @@ fn test_ward_creature() {
         2,
         2,
         vec![KeywordArgs::Ward {
-            cost: mtg_forge_rs::core::ManaCost::from_string("2"),
+            cost: mtg_engine::core::ManaCost::from_string("2"),
         }],
     );
     let controller = HeuristicController::new(player_id);
@@ -1169,7 +1169,7 @@ fn test_afflict_creature() {
 // player controls a land of the appropriate type
 // =========================================================================
 
-use mtg_forge_rs::core::{CardType as CT, Subtype};
+use mtg_engine::core::{CardType as CT, Subtype};
 
 /// Helper to create a game with a landwalk creature and opponent with specific lands
 fn create_landwalk_test_setup(land_type: &str, opponent_has_matching_land: bool) -> (GameState, CardId, PlayerId) {
@@ -1348,7 +1348,7 @@ fn load_real_card_for_eval(card_path: &str) -> Option<(GameState, CardId, Player
     if !path.exists() {
         return None;
     }
-    let def = mtg_forge_rs::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
+    let def = mtg_engine::loader::CardLoader::load_from_file(&path).expect("Failed to load card");
     let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
     let p1_id = game.players[0].id;
     let card_id = CardId::new(100);
@@ -1606,7 +1606,7 @@ fn test_real_card_shivan_dragon_pump_ability() {
     let has_pump = card.activated_abilities.iter().any(|a| {
         a.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::PumpCreature { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::PumpCreature { .. }))
     });
     assert!(has_pump, "Shivan Dragon should have a pump ability");
 
@@ -1729,7 +1729,7 @@ fn test_real_card_drudge_skeletons_regeneration_ability() {
     let has_regen = card.activated_abilities.iter().any(|ab| {
         ab.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Regenerate { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::Regenerate { .. }))
     });
     assert!(
         has_regen,
@@ -1764,7 +1764,7 @@ fn test_real_card_sedge_troll_regeneration_ability() {
     let has_regen = card.activated_abilities.iter().any(|ab| {
         ab.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Regenerate { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::Regenerate { .. }))
     });
     assert!(
         has_regen,

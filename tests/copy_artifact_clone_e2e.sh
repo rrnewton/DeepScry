@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # E2E test: Copy Artifact enters the battlefield as a copy of a chosen artifact
-# via the Clone mechanic (mtg-uh5gz).
+# via the Clone mechanic (mtg-566).
 #
 # Before this change:
 #   K:ETBReplacement:Copy:DBCopy:Optional was only wired for the ChooseColor

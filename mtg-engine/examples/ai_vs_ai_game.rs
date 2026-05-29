@@ -3,9 +3,9 @@
 //! Demonstrates a complete game loop with two AI players
 //! Uses RandomController for both players to play a full game
 
-use mtg_forge_rs::core::{Card, CardType, Color, Effect, ManaCost, TargetRef};
-use mtg_forge_rs::game::{GameLoop, GameState};
-use mtg_forge_rs::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
+use mtg_engine::core::{Card, CardType, Color, Effect, ManaCost, TargetRef};
+use mtg_engine::game::{GameLoop, GameState};
+use mtg_engine::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -77,8 +77,8 @@ async fn main() {
     game.seed_rng(42);
 
     // Create AI controllers
-    let mut alice_ai = mtg_forge_rs::game::random_controller::RandomController::with_seed(players[0].0, 42);
-    let mut bob_ai = mtg_forge_rs::game::random_controller::RandomController::with_seed(players[1].0, 42);
+    let mut alice_ai = mtg_engine::game::random_controller::RandomController::with_seed(players[0].0, 42);
+    let mut bob_ai = mtg_engine::game::random_controller::RandomController::with_seed(players[1].0, 42);
 
     println!("=== Starting Game Loop ===\n");
 
@@ -114,9 +114,9 @@ async fn main() {
 
 /// Set up Lightning Bolt effects for all Lightning Bolts in the game
 /// In a real implementation, this would be done by the ability parser
-fn setup_lightning_bolt_effects(game: &mut GameState, players: &[(mtg_forge_rs::core::PlayerId, String)]) {
+fn setup_lightning_bolt_effects(game: &mut GameState, players: &[(mtg_engine::core::PlayerId, String)]) {
     // Get opponent mapping
-    let opponent_of = |player_id: mtg_forge_rs::core::PlayerId| {
+    let opponent_of = |player_id: mtg_engine::core::PlayerId| {
         if player_id == players[0].0 {
             players[1].0
         } else {
@@ -220,8 +220,8 @@ fn run_simplified_game() {
     game.seed_rng(42);
 
     // Create AI controllers
-    let mut alice_ai = mtg_forge_rs::game::random_controller::RandomController::with_seed(alice, 42);
-    let mut bob_ai = mtg_forge_rs::game::random_controller::RandomController::with_seed(bob, 42);
+    let mut alice_ai = mtg_engine::game::random_controller::RandomController::with_seed(alice, 42);
+    let mut bob_ai = mtg_engine::game::random_controller::RandomController::with_seed(bob, 42);
 
     println!("=== Starting Game Loop ===\n");
 

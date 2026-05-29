@@ -2,13 +2,13 @@
 //!
 //! Tests that verify cards from cardsfolder can be loaded and parsed correctly
 
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
-use mtg_forge_rs::core::{CardId, CardType, DigFilter, Keyword, KeywordArgs, PlayerId};
-use mtg_forge_rs::loader::CardLoader;
-use mtg_forge_rs::zones::Zone;
-use mtg_forge_rs::{MtgError, Result};
+use mtg_engine::core::{CardId, CardType, DigFilter, Keyword, KeywordArgs, PlayerId};
+use mtg_engine::loader::CardLoader;
+use mtg_engine::zones::Zone;
+use mtg_engine::{MtgError, Result};
 use std::path::PathBuf;
 
 /// Test loading Abbey Gargoyles (simple keywords)
@@ -156,8 +156,8 @@ fn test_instantiate_with_keywords() -> Result<()> {
     }
 
     let def = CardLoader::load_from_file(&path)?;
-    let card_id = mtg_forge_rs::core::CardId::new(1);
-    let player_id = mtg_forge_rs::core::PlayerId::new(1);
+    let card_id = mtg_engine::core::CardId::new(1);
+    let player_id = mtg_engine::core::PlayerId::new(1);
 
     let card = def.instantiate(card_id, player_id);
 
@@ -181,8 +181,8 @@ fn test_instantiate_with_madness() -> Result<()> {
     }
 
     let def = CardLoader::load_from_file(&path)?;
-    let card_id = mtg_forge_rs::core::CardId::new(1);
-    let player_id = mtg_forge_rs::core::PlayerId::new(1);
+    let card_id = mtg_engine::core::CardId::new(1);
+    let player_id = mtg_engine::core::PlayerId::new(1);
 
     let card = def.instantiate(card_id, player_id);
 
@@ -210,8 +210,8 @@ fn test_instantiate_with_flashback() -> Result<()> {
     }
 
     let def = CardLoader::load_from_file(&path)?;
-    let card_id = mtg_forge_rs::core::CardId::new(1);
-    let player_id = mtg_forge_rs::core::PlayerId::new(1);
+    let card_id = mtg_engine::core::CardId::new(1);
+    let player_id = mtg_engine::core::PlayerId::new(1);
 
     let card = def.instantiate(card_id, player_id);
 
@@ -239,8 +239,8 @@ fn test_instantiate_with_enchant() -> Result<()> {
     }
 
     let def = CardLoader::load_from_file(&path)?;
-    let card_id = mtg_forge_rs::core::CardId::new(1);
-    let player_id = mtg_forge_rs::core::PlayerId::new(1);
+    let card_id = mtg_engine::core::CardId::new(1);
+    let player_id = mtg_engine::core::PlayerId::new(1);
 
     let card = def.instantiate(card_id, player_id);
 
@@ -263,7 +263,7 @@ fn test_instantiate_with_enchant() -> Result<()> {
 /// detected as producing colorless mana.
 #[test]
 fn test_load_mishras_factory_colorless_mana() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, ManaProductionKind, PlayerId};
+    use mtg_engine::core::{CardId, ManaProductionKind, PlayerId};
 
     let path = PathBuf::from("cardsfolder/m/mishras_factory.txt");
     if !path.exists() {
@@ -307,7 +307,7 @@ fn test_load_mishras_factory_colorless_mana() -> Result<()> {
 /// The card has a multi-type buff: "Other Spiders, Boars, Bears, ... get +1/+1"
 #[test]
 fn test_load_spider_ham_static_ability() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/s/spider_ham_peter_porker.txt");
     if !path.exists() {
@@ -379,7 +379,7 @@ fn test_load_spider_ham_static_ability() -> Result<()> {
 /// (Card.EquippedBy and Creature.EquippedBy are semantically equivalent for Equipment)
 #[test]
 fn test_load_cranial_plating_card_equipped_by_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId, Subtype};
+    use mtg_engine::core::{CardId, PlayerId, Subtype};
 
     let path = PathBuf::from("cardsfolder/c/cranial_plating.txt");
     if !path.exists() {
@@ -424,7 +424,7 @@ fn test_load_cranial_plating_card_equipped_by_selector() -> Result<()> {
 /// This is the key test for the Card.EquippedBy fix - it uses Card.EquippedBy with numeric values
 #[test]
 fn test_load_demonmail_hauberk_card_equipped_by_static_ability() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility, Subtype};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility, Subtype};
 
     let path = PathBuf::from("cardsfolder/d/demonmail_hauberk.txt");
     if !path.exists() {
@@ -479,7 +479,7 @@ fn test_load_demonmail_hauberk_card_equipped_by_static_ability() -> Result<()> {
 /// Test that Sword of Feast and Famine with Creature.EquippedBy parses correctly
 #[test]
 fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/s/sword_of_feast_and_famine.txt");
     if !path.exists() {
@@ -544,7 +544,7 @@ fn test_load_sword_of_feast_and_famine_creature_equipped_by() -> Result<()> {
 /// Black Lotus: "T, Sacrifice Black Lotus: Add three mana of any one color."
 #[test]
 fn test_load_black_lotus_mana_ability() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/b/black_lotus.txt");
     if !path.exists() {
@@ -610,7 +610,7 @@ fn test_load_black_lotus_mana_ability() -> Result<()> {
     let has_add_mana = ability
         .effects
         .iter()
-        .any(|e| matches!(e, mtg_forge_rs::core::Effect::AddMana { .. }));
+        .any(|e| matches!(e, mtg_engine::core::Effect::AddMana { .. }));
     assert!(
         has_add_mana,
         "Black Lotus should have AddMana effect. Effects: {:?}",
@@ -635,8 +635,8 @@ fn test_load_black_lotus_mana_ability() -> Result<()> {
 /// verify mana is added and Black Lotus is sacrificed (moved to graveyard).
 #[test]
 fn test_black_lotus_sacrifice_on_activation() -> Result<()> {
-    use mtg_forge_rs::game::GameState;
-    use mtg_forge_rs::loader::CardDatabase;
+    use mtg_engine::game::GameState;
+    use mtg_engine::loader::CardDatabase;
 
     let cardsfolder = PathBuf::from("cardsfolder");
     if !cardsfolder.exists() {
@@ -726,7 +726,7 @@ fn test_black_lotus_sacrifice_on_activation() -> Result<()> {
 /// This is critical for dual lands to produce the correct mana colors
 #[test]
 fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId, Subtype};
+    use mtg_engine::core::{CardId, PlayerId, Subtype};
 
     let path = PathBuf::from("cardsfolder/v/volcanic_island.txt");
     if !path.exists() {
@@ -765,7 +765,7 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
     assert!(card.definition.cache.is_land, "Cache should have is_land=true");
 
     // Critical test: mana production should be Choice (dual land) not just Blue
-    use mtg_forge_rs::core::ManaProductionKind;
+    use mtg_engine::core::ManaProductionKind;
     assert!(
         card.definition.cache.is_mana_source,
         "Volcanic Island should be a mana source"
@@ -775,13 +775,10 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
     match &card.definition.cache.mana_production.kind {
         ManaProductionKind::Choice(colors) => {
             assert!(
-                colors.contains(mtg_forge_rs::core::ManaColor::Blue),
+                colors.contains(mtg_engine::core::ManaColor::Blue),
                 "Should produce Blue"
             );
-            assert!(
-                colors.contains(mtg_forge_rs::core::ManaColor::Red),
-                "Should produce Red"
-            );
+            assert!(colors.contains(mtg_engine::core::ManaColor::Red), "Should produce Red");
             assert_eq!(colors.len(), 2, "Should produce exactly 2 colors");
         }
         other => panic!("Expected ManaProductionKind::Choice for dual land, got {:?}", other),
@@ -794,7 +791,7 @@ fn test_volcanic_island_has_mountain_subtype() -> Result<()> {
 /// Uses Spider.Other+YouCtrl which should parse to CreatureTypeOtherYouControl
 #[test]
 fn test_load_spider_punk_type_other_you_ctrl() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility, Subtype};
+    use mtg_engine::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility, Subtype};
 
     let path = PathBuf::from("cardsfolder/s/spider_punk.txt");
     if !path.exists() {
@@ -873,7 +870,7 @@ fn test_load_spider_punk_type_other_you_ctrl() -> Result<()> {
 /// Uses Land.AttachedBy which should parse to LandAttachedBy
 #[test]
 fn test_load_friendly_neighborhood_land_attached_by() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/f/friendly_neighborhood.txt");
     if !path.exists() {
@@ -951,7 +948,7 @@ fn test_load_clot_sliver_global_selector() -> Result<()> {
 /// Uses Affected$ Creature.Sliver pattern.
 #[test]
 fn test_load_muscle_sliver_creature_sliver_selector() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/m/muscle_sliver.txt");
     if !path.exists() {
@@ -1013,7 +1010,7 @@ fn test_load_muscle_sliver_creature_sliver_selector() -> Result<()> {
 /// Uses Affected$ Creature.Sliver with AddKeyword$ Flying.
 #[test]
 fn test_load_winged_sliver_grants_flying() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/w/winged_sliver.txt");
     if !path.exists() {
@@ -1066,7 +1063,7 @@ fn test_load_winged_sliver_grants_flying() -> Result<()> {
 /// Related to: mtg-170
 #[test]
 fn test_load_assemble_the_players_top_library_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/a/assemble_the_players.txt");
     if !path.exists() {
@@ -1103,7 +1100,7 @@ fn test_load_assemble_the_players_top_library_selector() -> Result<()> {
 /// Related to: mtg-170
 #[test]
 fn test_load_brainwash_creature_attached_by_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/b/brainwash.txt");
     if !path.exists() {
@@ -1139,7 +1136,7 @@ fn test_load_brainwash_creature_attached_by_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_aang_creature_other_youctrl_selector() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/a/aang_air_nomad.txt");
     if !path.exists() {
@@ -1189,7 +1186,7 @@ fn test_load_aang_creature_other_youctrl_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_darksteel_forge_artifact_youctrl_selector() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/d/darksteel_forge.txt");
     if !path.exists() {
@@ -1239,7 +1236,7 @@ fn test_load_darksteel_forge_artifact_youctrl_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_blanket_of_night_land_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/b/blanket_of_night.txt");
     if !path.exists() {
@@ -1276,7 +1273,7 @@ fn test_load_blanket_of_night_land_selector() -> Result<()> {
 /// the selector is recognized without warnings.
 #[test]
 fn test_load_wondrous_crucible_permanent_youctrl_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/w/wondrous_crucible.txt");
     if !path.exists() {
@@ -1313,7 +1310,7 @@ fn test_load_wondrous_crucible_permanent_youctrl_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_goblin_oriflamme_attacking_youctrl_selector() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/g/goblin_oriflamme.txt");
     if !path.exists() {
@@ -1361,7 +1358,7 @@ fn test_load_goblin_oriflamme_attacking_youctrl_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_gnat_miser_opponent_selector() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/g/gnat_miser.txt");
     if !path.exists() {
@@ -1396,7 +1393,7 @@ fn test_load_gnat_miser_opponent_selector() -> Result<()> {
 /// Related to: mtg-147
 #[test]
 fn test_load_soltari_lancer_self_attacking_selector() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, Keyword, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/s/soltari_lancer.txt");
     if !path.exists() {
@@ -1443,7 +1440,7 @@ fn test_load_soltari_lancer_self_attacking_selector() -> Result<()> {
 /// Test loading Crusade - should parse AllCreaturesOfColor selector
 #[test]
 fn test_load_crusade_all_creatures_of_color() -> Result<()> {
-    use mtg_forge_rs::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
+    use mtg_engine::core::{AffectedSelector, CardId, PlayerId, StaticAbility};
 
     let path = PathBuf::from("cardsfolder/c/crusade.txt");
     if !path.exists() {
@@ -1495,7 +1492,7 @@ fn test_load_crusade_all_creatures_of_color() -> Result<()> {
 /// Test that Spirit Link is correctly recognized as an Aura that can target creatures
 #[test]
 fn test_spirit_link_aura_targeting() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, PlayerId};
+    use mtg_engine::core::{CardId, PlayerId};
 
     let path = PathBuf::from("cardsfolder/s/spirit_link.txt");
     if !path.exists() {
@@ -1545,7 +1542,7 @@ fn test_spirit_link_aura_targeting() -> Result<()> {
 /// Regression test for bug where Thriving Grove wasn't being tapped for mana
 #[test]
 fn test_load_thriving_grove_mana_ability() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, ManaProductionKind, PlayerId};
+    use mtg_engine::core::{CardId, ManaProductionKind, PlayerId};
 
     let path = PathBuf::from("cardsfolder/t/thriving_grove.txt");
     if !path.exists() {
@@ -1607,13 +1604,13 @@ fn test_load_thriving_grove_mana_ability() -> Result<()> {
         ManaProductionKind::Fixed(color) => {
             assert_eq!(
                 *color,
-                mtg_forge_rs::core::ManaColor::Green,
+                mtg_engine::core::ManaColor::Green,
                 "Thriving Grove should produce Green"
             );
         }
         ManaProductionKind::Choice(colors) => {
             assert!(
-                colors.contains(mtg_forge_rs::core::ManaColor::Green),
+                colors.contains(mtg_engine::core::ManaColor::Green),
                 "Thriving Grove should be able to produce Green. Colors: {:?}",
                 colors
             );
@@ -1633,9 +1630,9 @@ fn test_load_thriving_grove_mana_ability() -> Result<()> {
 /// Regression test for bug where Thriving Grove wasn't being tapped for mana
 #[tokio::test]
 async fn test_thriving_grove_mana_cache_population() -> Result<()> {
-    use mtg_forge_rs::game::GameState;
-    use mtg_forge_rs::loader::CardDatabase;
-    use mtg_forge_rs::zones::Zone;
+    use mtg_engine::game::GameState;
+    use mtg_engine::loader::CardDatabase;
+    use mtg_engine::zones::Zone;
 
     // Load card database
     let path = PathBuf::from("cardsfolder");
@@ -1715,7 +1712,7 @@ async fn test_thriving_grove_mana_cache_population() -> Result<()> {
     );
     let chosen = card.chosen_color.unwrap();
     assert!(
-        !matches!(chosen, mtg_forge_rs::core::Color::Green),
+        !matches!(chosen, mtg_engine::core::Color::Green),
         "Thriving Grove's chosen color should not be green (it's excluded). Got: {:?}",
         chosen
     );
@@ -1735,8 +1732,8 @@ async fn test_thriving_grove_mana_cache_population() -> Result<()> {
 /// This is a non-basic land that should produce green mana
 #[tokio::test]
 async fn test_ba_sing_se_mana_detection() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, ManaColor, ManaProductionKind, PlayerId};
-    use mtg_forge_rs::loader::CardDatabase;
+    use mtg_engine::core::{CardId, ManaColor, ManaProductionKind, PlayerId};
+    use mtg_engine::loader::CardDatabase;
 
     // Load card database
     let path = PathBuf::from("cardsfolder");
@@ -1792,9 +1789,9 @@ async fn test_ba_sing_se_mana_detection() -> Result<()> {
 /// Regression test for bug where Ba Sing Se wasn't being tapped for mana
 #[tokio::test]
 async fn test_ba_sing_se_mana_cache_population() -> Result<()> {
-    use mtg_forge_rs::game::GameState;
-    use mtg_forge_rs::loader::CardDatabase;
-    use mtg_forge_rs::zones::Zone;
+    use mtg_engine::game::GameState;
+    use mtg_engine::loader::CardDatabase;
+    use mtg_engine::zones::Zone;
 
     // Load card database
     let path = PathBuf::from("cardsfolder");
@@ -1872,9 +1869,9 @@ async fn test_ba_sing_se_mana_cache_population() -> Result<()> {
 /// This tests the FULL path: card cache -> ManaSourceCache -> ManaEngine
 #[tokio::test]
 async fn test_ba_sing_se_mana_engine_sources() -> Result<()> {
-    use mtg_forge_rs::game::{GameState, ManaEngine};
-    use mtg_forge_rs::loader::CardDatabase;
-    use mtg_forge_rs::zones::Zone;
+    use mtg_engine::game::{GameState, ManaEngine};
+    use mtg_engine::loader::CardDatabase;
+    use mtg_engine::zones::Zone;
 
     // Load card database
     let path = PathBuf::from("cardsfolder");
@@ -2022,7 +2019,7 @@ fn test_foggy_swamp_vinebender_not_mana_source() -> Result<()> {
 /// Abilities with unimplemented effects (Animate, AnimateAll) will be skipped.
 #[test]
 fn test_waterbend_ability_parsing() -> Result<()> {
-    use mtg_forge_rs::core::Cost;
+    use mtg_engine::core::Cost;
 
     // Test Foggy Swamp Vinebender: Cost$ Waterbend<5> with PutCounter effect
     // (PutCounter is implemented, unlike Animate used by Flexible Waterbender)
@@ -2075,7 +2072,7 @@ fn test_waterbend_ability_parsing() -> Result<()> {
 /// CR 702.8a: Flash allows a permanent to be cast anytime you could cast an instant
 #[test]
 fn test_flash_keyword_parsing() -> Result<()> {
-    use mtg_forge_rs::core::Keyword;
+    use mtg_engine::core::Keyword;
 
     // Test Twin Blades which has K:Flash
     let path = PathBuf::from("cardsfolder/t/twin_blades.txt");
@@ -2118,10 +2115,10 @@ fn test_flash_keyword_parsing() -> Result<()> {
     Ok(())
 }
 
-/// Test Ba Sing Se activated earthbend ability parsing (mtg-5hvly)
+/// Test Ba Sing Se activated earthbend ability parsing (mtg-230)
 #[test]
 fn test_ba_sing_se_earthbend_ability() -> Result<()> {
-    use mtg_forge_rs::core::Effect;
+    use mtg_engine::core::Effect;
 
     let path = PathBuf::from("cardsfolder/b/ba_sing_se.txt");
     if !path.exists() {
@@ -2202,7 +2199,7 @@ fn test_load_caldera_kavu_choose_color() -> Result<()> {
     let choose_color_ability = card.activated_abilities.iter().find(|a| {
         a.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::ChooseColor { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::ChooseColor { .. }))
     });
     assert!(
         choose_color_ability.is_some(),
@@ -2237,7 +2234,7 @@ fn test_load_spiritmonger_choose_color() -> Result<()> {
     let has_choose_color = card.activated_abilities.iter().any(|a| {
         a.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::ChooseColor { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::ChooseColor { .. }))
     });
     assert!(
         has_choose_color,
@@ -2269,7 +2266,7 @@ fn test_load_impulse_dig() -> Result<()> {
     let has_dig = card.effects.iter().any(|e| {
         matches!(
             e,
-            mtg_forge_rs::core::Effect::Dig {
+            mtg_engine::core::Effect::Dig {
                 dig_count: 4,
                 change_count: 1,
                 change_all: false,
@@ -2306,7 +2303,7 @@ fn test_load_wrenn_and_seven_dig() -> Result<()> {
     let dig_ability = card.activated_abilities.iter().find(|a| {
         a.effects
             .iter()
-            .any(|e| matches!(e, mtg_forge_rs::core::Effect::Dig { .. }))
+            .any(|e| matches!(e, mtg_engine::core::Effect::Dig { .. }))
     });
     assert!(dig_ability.is_some(), "Wrenn and Seven should have a Dig ability");
 
@@ -2314,9 +2311,9 @@ fn test_load_wrenn_and_seven_dig() -> Result<()> {
         .unwrap()
         .effects
         .iter()
-        .find(|e| matches!(e, mtg_forge_rs::core::Effect::Dig { .. }));
+        .find(|e| matches!(e, mtg_engine::core::Effect::Dig { .. }));
 
-    if let Some(mtg_forge_rs::core::Effect::Dig {
+    if let Some(mtg_engine::core::Effect::Dig {
         dig_count,
         change_all,
         destination,
@@ -2346,7 +2343,7 @@ fn test_load_wrenn_and_seven_dig() -> Result<()> {
 /// Test DigFilter::matches correctly identifies card types
 #[test]
 fn test_dig_filter_matches() {
-    use mtg_forge_rs::core::{Card, DigFilter};
+    use mtg_engine::core::{Card, DigFilter};
 
     let owner = PlayerId::new(1);
 

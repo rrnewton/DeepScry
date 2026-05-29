@@ -99,12 +99,12 @@ if [ "$RUN_FULL" = true ]; then
     echo ""
 
     # Discover available examples
-    EXAMPLES=$(cargo run -p mtg-forge-rs --example 2>&1 | grep -A 1000 "Available examples:" | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$')
+    EXAMPLES=$(cargo run -p mtg-engine --example 2>&1 | grep -A 1000 "Available examples:" | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$')
 
     if [ -n "$EXAMPLES" ]; then
         while IFS= read -r example; do
             echo "  Running example: $example"
-            cargo llvm-cov --no-report run -p mtg-forge-rs --example "$example" 2>&1 | tail -1
+            cargo llvm-cov --no-report run -p mtg-engine --example "$example" 2>&1 | tail -1
         done <<< "$EXAMPLES"
         echo ""
     else

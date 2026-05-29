@@ -75,7 +75,7 @@ function log(msg) {
 
         // ===== Step 1: Confirm there is no #ratzilla-terminal in the DOM =====
         //
-        // Pre decouple-step4 (mtg-81ed52), `web/native_game.html` shipped with a
+        // Pre decouple-step4 (mtg-382), `web/native_game.html` shipped with a
         // hidden `<div id="ratzilla-terminal" style="display:none">` that
         // `launch_fancy_tui` populated with a ratzilla `DomBackend`. This
         // test deliberately asserted the div *was* there and removed it,
@@ -115,9 +115,9 @@ function log(msg) {
         const launchResult = await page.evaluate(async () => {
             try {
                 // Use the same module path native_game.html itself imports from
-                // (`./pkg/mtg_forge_rs.js` — relative to the served root,
+                // (`./pkg/mtg_engine.js` — relative to the served root,
                 // which is `web/`, so the absolute URL is `/pkg/...`).
-                const mod = await import('/pkg/mtg_forge_rs.js');
+                const mod = await import('/pkg/mtg_engine.js');
                 if (!mod.default) {
                     return { ok: false, error: 'No default init export' };
                 }
@@ -144,7 +144,7 @@ function log(msg) {
                 cardDb.load_decks(new Uint8Array(await decksResp.arrayBuffer()));
 
                 // Load full card definitions so any deck works.
-                // mtg-6fsjb split the monolithic cards.bin into per-set bins
+                // mtg-464 split the monolithic cards.bin into per-set bins
                 // at `./data/sets/<YYYY>-<CODE>.bin`. For this isolated smoke
                 // test we eagerly fetch every set bin in parallel — the wire
                 // size is the same as the old single fetch.

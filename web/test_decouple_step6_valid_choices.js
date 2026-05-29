@@ -91,7 +91,7 @@ function log(msg) {
         // collect every is_valid_choice flag we can see on cards across
         // the hand and both battlefields.
         const sampleViewModel = async () => page.evaluate(async () => {
-            const mod = await import('/pkg/mtg_forge_rs.js');
+            const mod = await import('/pkg/mtg_engine.js');
             const json = mod.tui_get_gui_view_model_json();
             const vm = JSON.parse(json);
 

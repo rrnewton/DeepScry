@@ -256,7 +256,7 @@
             WasmGame,
             WasmCardDatabase,
             WasmControllerType
-        } from './pkg/mtg_forge_rs.js';
+        } from './pkg/mtg_engine.js';
 
         let game = null;
         let cardDb = null;
@@ -278,7 +278,7 @@
                 progress.textContent = 'Loading card database...';
                 cardDb = new WasmCardDatabase();
 
-                // Load every per-set card bin in parallel (mtg-6fsjb).
+                // Load every per-set card bin in parallel (mtg-464).
                 // The AI-vs-AI demo needs the full card database because the
                 // deck dropdown lets the user pick ANY pair of decks.
                 progress.textContent = 'Loading per-set card index...';

@@ -1262,7 +1262,7 @@ pub enum Effect {
     /// - Seismic Sense: "Look at top X cards of your library. You may reveal a creature or land
     ///   and put it into your hand. Put the rest on bottom in random order." (target_self=true)
     ///
-    /// TODO(mtg-0iad2): Implement "may play without paying mana cost" via persistent effects
+    /// TODO(mtg-213): Implement "may play without paying mana cost" via persistent effects
     Dig {
         /// Number of cards to look at from each library (DigNum$)
         dig_count: u8,

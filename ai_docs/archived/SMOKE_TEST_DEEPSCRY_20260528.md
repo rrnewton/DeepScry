@@ -34,7 +34,7 @@ flow does NOT work for a real user on production right now.
 
 ## Root causes
 
-### mtg-vevb7 — lobby WS URL is wrong in `server-config.js`
+### mtg-478 — lobby WS URL is wrong in `server-config.js`
 
 `scripts/deploy-cloud.sh` writes:
 
@@ -51,7 +51,7 @@ the path-based endpoint is live. The deploy script needs to emit
 `window.MTG_WS_URL` unset and let the committed default's same-origin
 auto-detect run).
 
-### mtg-aai16 — `cardDb.load_set is not a function` in tui_game.html
+### mtg-479 — `cardDb.load_set is not a function` in tui_game.html
 
 After the redirect to `tui_game.html?lobby_create=...`, WASM init fails:
 
@@ -83,5 +83,5 @@ per-set-bins WASM API that wasn't reflected in `tui_game.html`.
 
 ## Filed beads issues
 
-- `mtg-vevb7` (p2 bug): deploy-cloud.sh emits broken `wss://host:8080`
-- `mtg-aai16` (p2 bug): tui_game.html calls missing `cardDb.load_set`
+- `mtg-478` (p2 bug): deploy-cloud.sh emits broken `wss://host:8080`
+- `mtg-479` (p2 bug): tui_game.html calls missing `cardDb.load_set`

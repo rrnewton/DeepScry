@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Combat Demonstration Example
 //!
@@ -12,10 +12,10 @@
 //!
 //! Uses classic cards from Limited/Alpha/Beta/4th Edition
 
-use mtg_forge_rs::core::{Card, CardId, CardType, EntityId, ManaCost, Player, PlayerId, SpellAbility};
-use mtg_forge_rs::game::controller::ChoiceResult;
-use mtg_forge_rs::game::controller::PlayerController;
-use mtg_forge_rs::game::{GameLoop, GameState, GameStateView, Step};
+use mtg_engine::core::{Card, CardId, CardType, EntityId, ManaCost, Player, PlayerId, SpellAbility};
+use mtg_engine::game::controller::ChoiceResult;
+use mtg_engine::game::controller::PlayerController;
+use mtg_engine::game::{GameLoop, GameState, GameStateView, Step};
 use smallvec::SmallVec;
 
 /// Alice's controller - attacks with all creatures
@@ -122,7 +122,7 @@ impl PlayerController for AliceController {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+        valid_cards: &[&mtg_engine::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         // Alice picks the first valid card if available
         ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
@@ -165,8 +165,8 @@ impl PlayerController for AliceController {
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
 
-    fn get_controller_type(&self) -> mtg_forge_rs::game::ControllerType {
-        mtg_forge_rs::game::ControllerType::Zero
+    fn get_controller_type(&self) -> mtg_engine::game::ControllerType {
+        mtg_engine::game::ControllerType::Zero
     }
 }
 
@@ -277,7 +277,7 @@ impl PlayerController for BobController {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+        valid_cards: &[&mtg_engine::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         // Bob picks the first valid card if available
         ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
@@ -320,8 +320,8 @@ impl PlayerController for BobController {
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
 
-    fn get_controller_type(&self) -> mtg_forge_rs::game::ControllerType {
-        mtg_forge_rs::game::ControllerType::Zero
+    fn get_controller_type(&self) -> mtg_engine::game::ControllerType {
+        mtg_engine::game::ControllerType::Zero
     }
 }
 

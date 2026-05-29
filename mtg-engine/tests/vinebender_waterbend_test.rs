@@ -25,9 +25,9 @@
 //! These tests load the actual cardsfolder/f/foggy_swamp_vinebender.txt so a
 //! parser regression also fails them.
 
-use mtg_forge_rs::core::{CardId, CounterType, PlayerId, SpellAbility};
-use mtg_forge_rs::game::{GameLoop, GameState, VerbosityLevel};
-use mtg_forge_rs::loader::CardLoader;
+use mtg_engine::core::{CardId, CounterType, PlayerId, SpellAbility};
+use mtg_engine::game::{GameLoop, GameState, VerbosityLevel};
+use mtg_engine::loader::CardLoader;
 use std::path::PathBuf;
 
 /// Load a card from `cardsfolder/<dir>/<file>.txt`, instantiate it on the
@@ -85,7 +85,7 @@ fn add_forest(game: &mut GameState, owner: PlayerId) -> CardId {
 fn set_active(game: &mut GameState, player: PlayerId) {
     game.turn.active_player = player;
     game.turn.priority_player = Some(player);
-    game.turn.current_step = mtg_forge_rs::game::Step::Main1;
+    game.turn.current_step = mtg_engine::game::Step::Main1;
     // Bump turn so summoning sickness checks pass for things we placed on turn 0.
     game.turn.turn_number = 2;
 }
@@ -275,11 +275,11 @@ fn vinebender_activation_places_p1p1_counter_on_self() {
     // than the old id=0 placeholder, so we must match `is_self_target()` here.
     for effect in &effects {
         let fixed = match effect {
-            mtg_forge_rs::core::Effect::PutCounter {
+            mtg_engine::core::Effect::PutCounter {
                 target,
                 counter_type,
                 amount,
-            } if target.is_self_target() => mtg_forge_rs::core::Effect::PutCounter {
+            } if target.is_self_target() => mtg_engine::core::Effect::PutCounter {
                 target: vinebender,
                 counter_type: *counter_type,
                 amount: *amount,

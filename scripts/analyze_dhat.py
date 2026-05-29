@@ -73,14 +73,14 @@ def analyze_dhat_profile(json_path):
 
         print(f"#{i}: {format_bytes(tb)} ({percentage:.1f}%) in {tbk:,} blocks (avg {avg_bytes:.1f} bytes/block)")
 
-        # Find first mtg_forge_rs frame (most specific call site)
+        # Find first mtg_engine frame (most specific call site)
         mtg_frames = []
         other_frames = []
 
         for frame_idx in frames[:10]:  # Show first 10 frames
             if frame_idx < len(ftbl):
                 frame = ftbl[frame_idx]
-                if 'mtg_forge_rs' in frame:
+                if 'mtg_engine' in frame:
                     mtg_frames.append(frame)
                 elif not mtg_frames:  # Only show other frames before first mtg frame
                     other_frames.append(frame)

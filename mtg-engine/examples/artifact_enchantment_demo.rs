@@ -3,8 +3,8 @@
 //! Demonstrates that artifacts and enchantments can be cast and enter the battlefield.
 //! This validates that non-creature permanents are properly supported.
 
-use mtg_forge_rs::core::PlayerId;
-use mtg_forge_rs::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
+use mtg_engine::core::PlayerId;
+use mtg_engine::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -146,7 +146,7 @@ async fn main() {
         println!("\n=== Alice casts Sol Ring (Artifact) ===");
 
         // Create a ManaEngine for mana payment
-        use mtg_forge_rs::game::ManaEngine;
+        use mtg_engine::game::ManaEngine;
         let mut mana_engine = ManaEngine::new();
         mana_engine.update(&game, alice);
 

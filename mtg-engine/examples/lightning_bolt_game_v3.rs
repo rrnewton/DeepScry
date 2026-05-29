@@ -3,8 +3,8 @@
 //! Demonstrates game initialization from decks and mid-game scenarios.
 //! Uses the AsyncCardDatabase and GameInitializer to set up a game state.
 
-use mtg_forge_rs::core::PlayerId;
-use mtg_forge_rs::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
+use mtg_engine::core::PlayerId;
+use mtg_engine::loader::{prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer};
 use std::path::PathBuf;
 
 #[tokio::main]

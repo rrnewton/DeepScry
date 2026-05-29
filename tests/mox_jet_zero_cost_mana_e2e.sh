@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Mox Jet ({0} Artifact, {T}: Add {B}) acts as a zero-cost mana source
 #
-# Regression test for mtg-fa9c28 (Card Compatibility: Mox Jet).
+# Regression test for mtg-405 (Card Compatibility: Mox Jet).
 # Confirms the entire Power-9 Mox cycle pattern (zero-mana-cost artifact +
 # tap-for-one-color mana ability) works end-to-end:
 # - Card loads as Artifact

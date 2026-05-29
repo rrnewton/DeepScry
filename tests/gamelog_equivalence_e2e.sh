@@ -7,7 +7,7 @@
 # Current status: Compares local mode vs server-side logs (2-way comparison)
 # Future: Will extend to 4-way comparison including client shadow state logs
 #
-# Related issue: mtg-037fw
+# Related issue: mtg-193
 
 set -euo pipefail
 
@@ -29,9 +29,9 @@ echo
 
 # SKIP: Network synchronized GameLoop mode has known sync issues causing games to hang.
 # The client GameLoop can get out of sync with the server GameLoop at Turn 7.
-# See mtg-037fw for details on the synchronization issues.
-# TODO(mtg-037fw): Re-enable once NetworkLocalController sync is fixed.
-echo -e "${YELLOW}SKIPPING: Network synchronized GameLoop has known sync issues (mtg-037fw)${NC}"
+# See mtg-193 for details on the synchronization issues.
+# TODO(mtg-193): Re-enable once NetworkLocalController sync is fixed.
+echo -e "${YELLOW}SKIPPING: Network synchronized GameLoop has known sync issues (mtg-193)${NC}"
 echo "Test will be re-enabled once client/server GameLoop synchronization is fixed."
 exit 0
 

@@ -370,7 +370,7 @@ cmd_deploy() {
     else
         echo "→ WASM artefacts present (or --skip-wasm); not rebuilding"
     fi
-    for f in web/pkg/mtg_forge_rs_bg.wasm web/data/decks.bin web/data/sets/index.json; do
+    for f in web/pkg/mtg_engine_bg.wasm web/data/decks.bin web/data/sets/index.json; do
         [[ -f "$f" ]] || { echo "error: missing required artefact: $f (run 'cargo run --bin mtg -- export-wasm' to (re)generate)" >&2; exit 1; }
     done
 
@@ -400,7 +400,7 @@ cmd_deploy() {
     # baking in port numbers or protocol assumptions that break behind
     # reverse proxies. Earlier deploys hardcoded "wss://<host>:8080"
     # which broke when CF proxied 443 → origin:8080 (browser tried 8080
-    # directly and got SSL errors); see mtg-vevb7.
+    # directly and got SSL errors); see mtg-478.
     echo "→ using committed web/server-config.js (self-detects ws/wss + /lobby path)"
 
     # --- 4. Pre-flight: check remote layout exists ---
@@ -416,8 +416,8 @@ EOF
 
     # --- 5. Rsync web/ ---
     # Stage web/ into a temp dir first and run cache-bust sed on the HTML
-    # files there: every `./pkg/mtg_forge_rs.js` import is rewritten to
-    # `./pkg/mtg_forge_rs.js?v=<BUILD_SHA>`. With the no-cache header on
+    # files there: every `./pkg/mtg_engine.js` import is rewritten to
+    # `./pkg/mtg_engine.js?v=<BUILD_SHA>`. With the no-cache header on
     # /pkg the browser would already 304-revalidate every load, but the
     # `?v=` makes the URL itself change across deploys so the browser
     # treats the new bundle as a brand-new resource (no 304 roundtrip on
@@ -442,12 +442,12 @@ EOF
         --exclude='package-lock.json' --exclude='test_*.js' \
         --exclude='network_*_test_results.json' \
         web/ "$web_stage/"
-    # Cache-bust every HTML file's `./pkg/mtg_forge_rs.js` import.
-    # The expression matches both `from './pkg/mtg_forge_rs.js'` and
-    # `import('./pkg/mtg_forge_rs.js')`. We replace ONLY in .html files
+    # Cache-bust every HTML file's `./pkg/mtg_engine.js` import.
+    # The expression matches both `from './pkg/mtg_engine.js'` and
+    # `import('./pkg/mtg_engine.js')`. We replace ONLY in .html files
     # to avoid mangling the .js file's own internal references.
     find "$web_stage" -maxdepth 2 -name '*.html' -print0 | while IFS= read -r -d '' f; do
-        sed -i "s|\\./pkg/mtg_forge_rs\\.js|./pkg/mtg_forge_rs.js?v=${BUILD_SHA}|g" "$f"
+        sed -i "s|\\./pkg/mtg_engine\\.js|./pkg/mtg_engine.js?v=${BUILD_SHA}|g" "$f"
     done
     echo "→ rsyncing web/ (cache-busted)"
     rsync -avh --delete "$web_stage/" "$REMOTE_SSH:$REMOTE_DIR/web/"
@@ -515,8 +515,8 @@ EOF
 #
 # Verifies the freshly-deployed server actually serves what we expect:
 #   - landing page returns 200
-#   - /pkg/mtg_forge_rs.js is present and reasonable size
-#   - /pkg/mtg_forge_rs_bg.wasm is present and reasonable size
+#   - /pkg/mtg_engine.js is present and reasonable size
+#   - /pkg/mtg_engine_bg.wasm is present and reasonable size
 #   - /data/sets/index.json parses as JSON
 #   - /health returns 200 with our build sha
 #   - /lobby responds to a WS upgrade attempt (101 expected; 400 on
@@ -554,22 +554,22 @@ run_post_deploy_probe() {
         echo "  ✓ /                          200"
     fi
 
-    # 2. /pkg/mtg_forge_rs.js — JS glue, expect > 50 KB.
+    # 2. /pkg/mtg_engine.js — JS glue, expect > 50 KB.
     local glue_size
-    glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_forge_rs.js")" || glue_size=0
+    glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_engine.js")" || glue_size=0
     if (( glue_size < 50000 )); then
-        probe_failed=1; fail_reasons+=("/pkg/mtg_forge_rs.js: $glue_size bytes (expected > 50000)")
+        probe_failed=1; fail_reasons+=("/pkg/mtg_engine.js: $glue_size bytes (expected > 50000)")
     else
-        echo "  ✓ /pkg/mtg_forge_rs.js       200 ($glue_size bytes)"
+        echo "  ✓ /pkg/mtg_engine.js       200 ($glue_size bytes)"
     fi
 
-    # 3. /pkg/mtg_forge_rs_bg.wasm — wasm bundle, expect > 1 MB.
+    # 3. /pkg/mtg_engine_bg.wasm — wasm bundle, expect > 1 MB.
     local wasm_size
-    wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_forge_rs_bg.wasm")" || wasm_size=0
+    wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/pkg/mtg_engine_bg.wasm")" || wasm_size=0
     if (( wasm_size < 1000000 )); then
-        probe_failed=1; fail_reasons+=("/pkg/mtg_forge_rs_bg.wasm: $wasm_size bytes (expected > 1000000)")
+        probe_failed=1; fail_reasons+=("/pkg/mtg_engine_bg.wasm: $wasm_size bytes (expected > 1000000)")
     else
-        echo "  ✓ /pkg/mtg_forge_rs_bg.wasm  200 ($wasm_size bytes)"
+        echo "  ✓ /pkg/mtg_engine_bg.wasm  200 ($wasm_size bytes)"
     fi
 
     # 4. /data/sets/index.json — must parse as JSON.

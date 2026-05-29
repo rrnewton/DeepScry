@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Sengir Vampire — 4/4 Flying creature with DamagedCreatureDies trigger
 #
-# Regression test for mtg-d4da18 (Card Compatibility: Sengir Vampire).
+# Regression test for mtg-403 (Card Compatibility: Sengir Vampire).
 #
 # Verifies the FULL behaviour of Sengir Vampire:
 # - Loads as Creature Vampire with PT 4/4

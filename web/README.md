@@ -25,9 +25,9 @@ wasm-pack build --target web --no-default-features --features wasm --out-dir ../
 ```
 
 This will create a `pkg/` directory containing:
-- `mtg_forge_rs.js` - JavaScript bindings
-- `mtg_forge_rs_bg.wasm` - WebAssembly binary
-- `mtg_forge_rs.d.ts` - TypeScript definitions
+- `mtg_engine.js` - JavaScript bindings
+- `mtg_engine_bg.wasm` - WebAssembly binary
+- `mtg_engine.d.ts` - TypeScript definitions
 
 ## Running
 
@@ -70,7 +70,7 @@ The WASM build has some limitations compared to the native CLI:
 The main JavaScript API:
 
 ```javascript
-import init, { WasmGame, WasmControllerType, version } from './pkg/mtg_forge_rs.js';
+import init, { WasmGame, WasmControllerType, version } from './pkg/mtg_engine.js';
 
 // Initialize WASM module
 await init();

@@ -93,18 +93,18 @@ fmt-check:
 
 # Run clippy linter
 # Note: mtg-benchmarks has mutually exclusive features, so we run it separately without --all-features
-# Note: mtg-forge-rs network feature requires native deps, so we include it explicitly
+# Note: mtg-engine network feature requires native deps, so we include it explicitly
 # Note: wasm feature is mutually exclusive with native TUI, so we run it separately
 clippy:
 	@echo "=== Running clippy ==="
-	cargo clippy -p mtg-forge-rs --all-targets --all-features --features network -- -D warnings
-	cargo clippy -p mtg-forge-rs --all-targets --features wasm,network -- -D warnings
+	cargo clippy -p mtg-engine --all-targets --all-features --features network -- -D warnings
+	cargo clippy -p mtg-engine --all-targets --features wasm,network -- -D warnings
 	cargo clippy -p mtg-benchmarks --all-targets -- -D warnings
 
 # Run clippy on WASM target (catches WASM-specific code paths like #[cfg(target_arch = "wasm32")])
 clippy-wasm:
 	@echo "=== Running clippy on WASM target ==="
-	cargo clippy -p mtg-forge-rs --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
+	cargo clippy -p mtg-engine --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
 
 # Detect code duplication
 code-dups:
@@ -627,7 +627,7 @@ full_deck_list.txt:
 # WebAssembly
 # ==============================================================================
 
-# Export card database and decks for WASM (mtg-6fsjb per-set layout):
+# Export card database and decks for WASM (mtg-464 per-set layout):
 #   web/data/sets/<YYYY>-<CODE>.bin   per-set card bins (~315 files, ~32 MB total)
 #   web/data/sets/index.json          card-name -> set-file lookup
 #   web/data/tokens.bin               token definitions (monolithic)
@@ -727,7 +727,7 @@ wasm-network: wasm-export
 	fi
 	@# CRITICAL: nuke prior pkg/ before rebuilding. wasm-pack is incremental
 	@# and has produced stale pkg/.js + .wasm pairs in the past when source
-	@# exports change but the cache doesn't notice (mtg-2indh). The build is
+	@# exports change but the cache doesn't notice (mtg-475). The build is
 	@# ~10s either way; forced clean is much cheaper than a stale-glue deploy.
 	@rm -rf mtg-engine/pkg web/pkg
 	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network

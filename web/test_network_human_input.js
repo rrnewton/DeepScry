@@ -303,7 +303,7 @@ async function runTest() {
     try {
         log(`Using ports: server=${SERVER_PORT}, http=${HTTP_PORT}`);
         // Check prerequisites
-        const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_forge_rs.js');
+        const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_engine.js');
         if (!fs.existsSync(wasmPkgPath)) {
             throw new Error('WASM package not found. Run: make wasm-network');
         }

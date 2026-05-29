@@ -609,13 +609,13 @@ impl GameState {
                     // SVar chain `TrigReanimate → DBAnimate → DBAttach → DBDelay`, but several
                     // of those API stops (DB$ ChangeZone Graveyard→Battlefield with
                     // `Defined$ Enchanted`, DB$ Attach with `Defined$ Remembered`) are not yet
-                    // implemented in the effect converter — see mtg-abfad9. We get the same
+                    // implemented in the effect converter — see mtg-400. We get the same
                     // user-visible outcome (the chosen graveyard creature comes back under
                     // our control with the Aura on it, applying its continuous -1/-0 via the
                     // existing `Affected$ Creature.EnchantedBy` static-effect path) by
                     // inlining the reanimation here.
                     //
-                    // Caveats not yet handled (tracked in mtg-abfad9):
+                    // Caveats not yet handled (tracked in mtg-400):
                     //   * The "when CARDNAME leaves the battlefield, that creature's
                     //     controller sacrifices it" delayed trigger (DBDelay) is skipped.
                     //   * The keyword swap (RemoveKeywords$/Keywords$ Enchant) that rewrites
@@ -827,7 +827,7 @@ impl GameState {
     ///      Aura attaches.
     ///   3. Attach the Aura to the freshly reanimated creature.
     ///
-    /// What is intentionally **not** done here (tracked in mtg-abfad9):
+    /// What is intentionally **not** done here (tracked in mtg-400):
     ///   * The delayed leave-the-battlefield trigger that sacrifices the
     ///     reanimated creature when the Aura goes away.
     ///   * The keyword swap that rewrites the Aura's enchant restriction so it
@@ -952,7 +952,7 @@ impl GameState {
                 return Ok(());
             };
             let Ok(amt) = amount.parse::<u8>() else {
-                // TODO(mtg-abfad9): symbolic amounts like "X" / "Y" require an
+                // TODO(mtg-400): symbolic amounts like "X" / "Y" require an
                 // evaluation context (caster's choice, X paid, etc.).
                 log::warn!(
                     "apply_etb_counters: non-numeric amount '{}' on {} not yet supported",
@@ -2384,7 +2384,7 @@ impl GameState {
                 optional: *optional,
                 remember_discarding_players: *remember_discarding_players,
             },
-            // ValidTgts$ Player (Mind Twist): target the opponent. See mtg-6c0qe.
+            // ValidTgts$ Player (Mind Twist): target the opponent. See mtg-564.
             Effect::DiscardCards {
                 player,
                 count,
@@ -4820,7 +4820,7 @@ impl GameState {
             Effect::CopyPermanent {
                 target,
                 controller,
-                non_legendary: _, // TODO(mtg-8pen1): Implement legendary rule removal when legendary is tracked
+                non_legendary: _, // TODO(mtg-210): Implement legendary rule removal when legendary is tracked
                 set_power,
                 set_toughness,
                 ref add_types,

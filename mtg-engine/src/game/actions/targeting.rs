@@ -1616,7 +1616,7 @@ mod tests {
     }
 
     /// Test that Animate Dead targets creatures in graveyards, NOT on battlefield
-    /// This verifies the fix for mtg-s2atg
+    /// This verifies the fix for mtg-239
     #[test]
     fn test_animate_dead_targets_graveyard_not_battlefield() {
         use crate::core::{KeywordArgs, Subtype};
@@ -1669,7 +1669,7 @@ mod tests {
         // Should NOT target the creature on battlefield
         assert!(
             !targets.contains(&battlefield_creature_id),
-            "Animate Dead should NOT target creatures on battlefield (this was the bug in mtg-s2atg!)"
+            "Animate Dead should NOT target creatures on battlefield (this was the bug in mtg-239!)"
         );
     }
 }

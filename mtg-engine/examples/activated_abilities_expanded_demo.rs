@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Expanded Activated Abilities Demo
 //!
@@ -7,8 +7,8 @@
 //! - AB$ Pump: Activated abilities that boost creatures
 //! - AB$ Tap: Activated abilities that tap permanents
 
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::loader::CardDatabase;
+use mtg_engine::game::GameState;
+use mtg_engine::loader::CardDatabase;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Add some cards to Alice's library so she can draw
     for i in 0..5 {
         let card_id = game.next_card_id();
-        let card = mtg_forge_rs::core::Card::new(card_id, format!("Library Card {}", i + 1), alice_id);
+        let card = mtg_engine::core::Card::new(card_id, format!("Library Card {}", i + 1), alice_id);
         game.cards.insert(card_id, card);
         if let Some(zones) = game.get_player_zones_mut(alice_id) {
             zones.library.add(card_id);
@@ -82,8 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for effect in &ability.effects {
                     // Fix placeholder player IDs
                     let fixed_effect = match effect {
-                        mtg_forge_rs::core::Effect::DrawCards { player, count } if player.is_placeholder() => {
-                            mtg_forge_rs::core::Effect::DrawCards {
+                        mtg_engine::core::Effect::DrawCards { player, count } if player.is_placeholder() => {
+                            mtg_engine::core::Effect::DrawCards {
                                 player: alice_id,
                                 count: *count,
                             }
@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn count_hand(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usize {
+fn count_hand(game: &GameState, player_id: mtg_engine::core::PlayerId) -> usize {
     if let Some(zones) = game.get_player_zones(player_id) {
         zones.hand.cards.len()
     } else {
@@ -127,7 +127,7 @@ fn count_hand(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usiz
     }
 }
 
-fn count_battlefield_creatures(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usize {
+fn count_battlefield_creatures(game: &GameState, player_id: mtg_engine::core::PlayerId) -> usize {
     game.battlefield
         .cards
         .iter()
@@ -141,7 +141,7 @@ fn count_battlefield_creatures(game: &GameState, player_id: mtg_forge_rs::core::
         .count()
 }
 
-fn count_graveyard(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usize {
+fn count_graveyard(game: &GameState, player_id: mtg_engine::core::PlayerId) -> usize {
     if let Some(zones) = game.get_player_zones(player_id) {
         zones.graveyard.cards.len()
     } else {

@@ -137,7 +137,7 @@ if ! $PVP_MODE; then
         exit 1
     fi
 fi
-if [[ ! -f "${REPO_ROOT}/web/pkg/mtg_forge_rs_bg.wasm" ]]; then
+if [[ ! -f "${REPO_ROOT}/web/pkg/mtg_engine_bg.wasm" ]]; then
     echo "Error: WASM build not found." >&2
     echo "Build with: make wasm-network" >&2
     echo "       (or rerun this script with --rebuild)" >&2
@@ -145,7 +145,7 @@ if [[ ! -f "${REPO_ROOT}/web/pkg/mtg_forge_rs_bg.wasm" ]]; then
 fi
 
 # Check that the WASM build includes network support (network_init export)
-if ! grep -q "network_init" "${REPO_ROOT}/web/pkg/mtg_forge_rs.js" 2>/dev/null; then
+if ! grep -q "network_init" "${REPO_ROOT}/web/pkg/mtg_engine.js" 2>/dev/null; then
     echo "Error: WASM build does not include network support." >&2
     echo "Rebuild with: make wasm-network" >&2
     echo "       (or rerun this script with --rebuild)" >&2

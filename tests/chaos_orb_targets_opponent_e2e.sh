@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Chaos Orb FlipOntoBattlefield targets opponent permanents
 #
-# Regression test for mtg-4c1696 (was: mtg-ad79fd compat issue).
+# Regression test for mtg-392 (was: mtg-389 compat issue).
 # Before the fix, Chaos Orb's FlipOntoBattlefield was a `DestroyPermanent`
 # with `requires_nontoken=true` and no controller restriction. The activation
 # auto-targeted the first valid nontoken permanent which was the Orb itself,

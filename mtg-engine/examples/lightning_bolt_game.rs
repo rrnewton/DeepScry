@@ -3,8 +3,8 @@
 //! Demonstrates a simple MTG game with just Mountains and Lightning Bolts.
 //! This is the minimal viable product for the game engine.
 
-use mtg_forge_rs::core::{Card, CardType, Color, Effect, ManaCost, TargetRef};
-use mtg_forge_rs::game::GameState;
+use mtg_engine::core::{Card, CardType, Color, Effect, ManaCost, TargetRef};
+use mtg_engine::game::GameState;
 
 /// Print the current game state in a readable format
 fn print_game_state(game: &GameState, label: &str) {

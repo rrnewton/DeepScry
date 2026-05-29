@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E regression test: Cycling ability stays synchronised in network mode
 #
-# Reproduces and locks-in the fix for mtg-ced6d1:
+# Reproduces and locks-in the fix for mtg-420:
 #
 #   "Network desync: Cycle ability (Mountaincycling) not visible to client;
 #    ABILITY SYNC BUG -> FATAL DESYNC on Cycle vs CastSpell"
@@ -41,7 +41,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo "=== Cycle/Mountaincycling network-sync regression (mtg-ced6d1) ==="
+echo "=== Cycle/Mountaincycling network-sync regression (mtg-420) ==="
 echo
 
 # Run the underlying equivalence harness with the historically-failing seed.
@@ -58,7 +58,7 @@ if ! "$SCRIPT_DIR/network_vs_local_equivalence_e2e.sh" "$SEED" "$CTRL_P1" "$CTRL
 fi
 
 # The harness preserves logs at /tmp/network_vs_local_e2e_<pid>; locate the
-# most recent one so we can inspect it for the specific symptoms of mtg-ced6d1.
+# most recent one so we can inspect it for the specific symptoms of mtg-420.
 LATEST_LOG_DIR="$(ls -dt /tmp/network_vs_local_e2e_* 2>/dev/null | head -n 1 || true)"
 if [[ -z "$LATEST_LOG_DIR" ]]; then
     echo -e "${YELLOW}WARN: could not locate harness log dir; skipping deeper assertions${NC}"
@@ -66,7 +66,7 @@ if [[ -z "$LATEST_LOG_DIR" ]]; then
 fi
 
 echo
-echo "Inspecting $LATEST_LOG_DIR for mtg-ced6d1 symptoms..."
+echo "Inspecting $LATEST_LOG_DIR for mtg-420 symptoms..."
 
 fail=0
 
@@ -97,9 +97,9 @@ fi
 
 if [[ "$fail" -ne 0 ]]; then
     echo
-    echo -e "${RED}REGRESSION: mtg-ced6d1 symptoms re-appeared. Logs at $LATEST_LOG_DIR${NC}"
+    echo -e "${RED}REGRESSION: mtg-420 symptoms re-appeared. Logs at $LATEST_LOG_DIR${NC}"
     exit 1
 fi
 
 echo
-echo -e "${GREEN}PASS: cycle network-sync (mtg-ced6d1) regression test${NC}"
+echo -e "${GREEN}PASS: cycle network-sync (mtg-420) regression test${NC}"

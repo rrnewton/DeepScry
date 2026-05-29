@@ -898,7 +898,7 @@
     </div>
 
     <!--
-        decouple-step4 (mtg-81ed52): the hidden `<div id="ratzilla-terminal">`
+        decouple-step4 (mtg-382): the hidden `<div id="ratzilla-terminal">`
         used to live here. It hosted a RatZilla `DomBackend` that the WASM
         TUI rendered into off-screen so the JS-driven HTML overlay could
         sit on top. After step 4, native_game.html uses `launch_game_session()`
@@ -968,7 +968,7 @@
             is_ready,
             WasmCardDatabase,
             WasmControllerType,
-            // decouple-step4 (mtg-81ed52): we used to import `launch_fancy_tui`
+            // decouple-step4 (mtg-382): we used to import `launch_fancy_tui`
             // and let it spin up a hidden ratzilla terminal behind the visible
             // DOM. Now we use the ratzilla-free `launch_game_session` (from
             // decouple-step3) and drive the UI entirely from JS — DOM event
@@ -996,7 +996,7 @@
             tui_get_help_text,
             cleanup_tui_state,
             set_log_level
-        } from './pkg/mtg_forge_rs.js';
+        } from './pkg/mtg_engine.js';
 
         // ==================== IMAGE SOURCE ====================
         // Image URLs come from shared Rust code (wasm/image_overlay.rs).
@@ -1055,7 +1055,7 @@
 
         // ==================== STATE ====================
         let cardDb = null;
-        // Per-set card-data index loaded from data/sets/index.json (mtg-6fsjb).
+        // Per-set card-data index loaded from data/sets/index.json (mtg-464).
         // See web/tui_game.html for schema details.
         let setIndex = null;
         const loadedSetFiles = new Set();
@@ -1128,7 +1128,7 @@
                 const decksData = new Uint8Array(await decksResp.arrayBuffer());
                 const deckCount = cardDb.load_decks(decksData);
 
-                // Load per-set card index (mtg-6fsjb).
+                // Load per-set card index (mtg-464).
                 const setIndexResp = await fetch('./data/sets/index.json');
                 if (!setIndexResp.ok) throw new Error(`Failed to load sets/index.json: ${setIndexResp.status}. Run 'mtg export-wasm' first.`);
                 setIndex = await setIndexResp.json();
@@ -1262,7 +1262,7 @@
         }
 
         // Gate the "Local" card-image source behind ?allow_local_img_load=true.
-        // Rationale (mtg-p5tyf): licensing posture for serving card images from
+        // Rationale (mtg-477): licensing posture for serving card images from
         // our VM is unsettled; default UX must offer only Scryfall/Gatherer until
         // clarified.
         //
@@ -1301,7 +1301,7 @@
             if (note) note.style.display = 'block';
         }
 
-        // ==================== CARD LOADING (mtg-6fsjb per-set) ====================
+        // ==================== CARD LOADING (mtg-464 per-set) ====================
         async function loadSetFiles(setFiles) {
             const toFetch = [...setFiles].filter(f => !loadedSetFiles.has(f));
             if (toFetch.length === 0) return 0;
@@ -2026,7 +2026,7 @@
 
         // ==================== KEYBOARD HANDLING ====================
         //
-        // After decouple-step4 (mtg-81ed52), native_game.html owns the keyboard
+        // After decouple-step4 (mtg-382), native_game.html owns the keyboard
         // outright — there is no hidden ratzilla `terminal.on_key_event`
         // listener to compete with. Each branch below dispatches to a
         // ratzilla-free WASM export that mutates `GLOBAL_TUI_STATE` and

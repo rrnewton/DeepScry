@@ -566,7 +566,7 @@ impl GameState {
             // Capture the previous order for undo
             let previous_order = zones.library.cards.clone();
 
-            // DEBUG: Log RNG state hash before shuffle (mtg-ar269 investigation)
+            // DEBUG: Log RNG state hash before shuffle (mtg-232 investigation)
             let rng_hash_before = {
                 let rng = self.rng.borrow();
                 let serialized = bincode::serialize(&*rng).unwrap_or_default();
@@ -586,7 +586,7 @@ impl GameState {
             // Perform the shuffle
             zones.library.cards.shuffle(&mut *self.rng.borrow_mut());
 
-            // DEBUG: Log RNG state hash after shuffle (mtg-ar269 investigation)
+            // DEBUG: Log RNG state hash after shuffle (mtg-232 investigation)
             let rng_hash_after = {
                 let rng = self.rng.borrow();
                 let serialized = bincode::serialize(&*rng).unwrap_or_default();
@@ -956,7 +956,7 @@ impl GameState {
         // If a commander would be put into its owner's graveyard or exile from anywhere,
         // its owner may put it into the command zone instead.
         // For now, this is automatic (always returns to command zone).
-        // TODO(mtg-4s1lq): Add player choice for commander zone replacement
+        // TODO(mtg-274): Add player choice for commander zone replacement
         if self.is_commander_game && (to == Zone::Graveyard || to == Zone::Exile) {
             if let Some(card) = self.cards.try_get(card_id) {
                 if card.is_commander {
@@ -1683,7 +1683,7 @@ impl GameState {
             }
         }
 
-        // NETWORK SYNC: see scry_apply_decision for rationale (mtg-ced6d1).
+        // NETWORK SYNC: see scry_apply_decision for rationale (mtg-420).
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
             self.pending_library_reorders.borrow_mut().push(player_id);
         }
@@ -3767,7 +3767,7 @@ mod tests {
         ));
     }
 
-    /// Regression for mtg-ced6d1 (post-merge with fix-scry-choice-pipeline):
+    /// Regression for mtg-420 (post-merge with fix-scry-choice-pipeline):
     /// scry on the SERVER side must enqueue the scrying player into
     /// `pending_library_reorders` whenever the decision actually moves cards
     /// to the bottom, so NetworkController can broadcast a `LibraryReordered`.
@@ -3818,7 +3818,7 @@ mod tests {
             queued,
             vec![p1_id],
             "server scry must enqueue exactly one pending LibraryReorder for the scrying player \
-             (mtg-ced6d1)"
+             (mtg-420)"
         );
     }
 
@@ -3850,7 +3850,7 @@ mod tests {
 
         assert!(
             game.pending_library_reorders.borrow().is_empty(),
-            "no library reorder => no broadcast (mtg-ced6d1)"
+            "no library reorder => no broadcast (mtg-420)"
         );
     }
 }

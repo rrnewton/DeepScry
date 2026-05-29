@@ -18,7 +18,7 @@
 
 use anyhow::{anyhow, Result};
 use futures_util::{SinkExt, StreamExt};
-use mtg_forge_rs::network::{ClientMessage, DeckSubmission, ServerMessage};
+use mtg_engine::network::{ClientMessage, DeckSubmission, ServerMessage};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 #[tokio::main]

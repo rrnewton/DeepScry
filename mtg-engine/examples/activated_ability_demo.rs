@@ -3,9 +3,9 @@
 //! Demonstrates activated abilities using Prodigal Sorcerer
 //! "{T}: Prodigal Sorcerer deals 1 damage to any target"
 
-use mtg_forge_rs::core::{ActivatedAbility, Card, CardType, Cost, Effect, TargetRef};
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::Result;
+use mtg_engine::core::{ActivatedAbility, Card, CardType, Cost, Effect, TargetRef};
+use mtg_engine::game::GameState;
+use mtg_engine::Result;
 
 fn main() -> Result<()> {
     println!("=== MTG Forge - Activated Abilities Demo ===\n");

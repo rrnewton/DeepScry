@@ -2744,7 +2744,7 @@ dependencies = [
  "dhat",
  "libc",
  "mimalloc",
- "mtg-forge-rs",
+ "mtg-engine",
  "num_cpus",
  "rayon",
  "stats_alloc",
@@ -2754,7 +2754,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mtg-forge-rs"
+name = "mtg-engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",

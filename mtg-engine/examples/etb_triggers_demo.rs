@@ -11,9 +11,9 @@
 //! 3. Automatic trigger execution when creatures enter the battlefield
 //! 4. Various trigger effects: draw cards, deal damage, etc.
 
-use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::loader::CardDatabase;
+use mtg_engine::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+use mtg_engine::game::GameState;
+use mtg_engine::loader::CardDatabase;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let land_id = game.next_card_id();
         let mut land = Card::new(land_id, format!("Forest {}", i + 1), alice_id);
         land.add_type(CardType::Land);
-        land.colors.push(mtg_forge_rs::core::Color::Green);
+        land.colors.push(mtg_engine::core::Color::Green);
         game.cards.insert(land_id, land);
         game.battlefield.add(land_id);
     }
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
         vec![Effect::DealDamage {
-            target: mtg_forge_rs::core::TargetRef::None, // Will be filled in by trigger system
+            target: mtg_engine::core::TargetRef::None, // Will be filled in by trigger system
             amount: 4,
         }],
         "When Flametongue Kavu enters, it deals 4 damage to target creature.".to_string(),

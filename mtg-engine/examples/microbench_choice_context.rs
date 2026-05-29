@@ -11,9 +11,9 @@
 //!
 //! Reports nanoseconds per call. Per-game cost ≈ ns/call × choices/game.
 
-use mtg_forge_rs::core::PlayerId;
-use mtg_forge_rs::game::controller::{format_choice_menu, GameStateView};
-use mtg_forge_rs::game::{GameState, Step};
+use mtg_engine::core::PlayerId;
+use mtg_engine::game::controller::{format_choice_menu, GameStateView};
+use mtg_engine::game::{GameState, Step};
 use std::time::Instant;
 
 fn main() {

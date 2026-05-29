@@ -140,7 +140,7 @@ pub struct WasmNetworkClient {
     opponent_library_size: usize,
     /// Opponent's hand count
     opponent_hand_count: usize,
-    /// CardID ranges for late-binding architecture (mtg-d0jg3)
+    /// CardID ranges for late-binding architecture (mtg-254)
     /// CRITICAL: WASM must use these ranges to initialize game state
     /// with the same CardIDs as the server for behavioral identity.
     deck_card_ids: Option<crate::network::DeckCardIdRanges>,
@@ -159,7 +159,7 @@ pub struct WasmNetworkClient {
     player_name: Option<String>,
     /// Deck JSON for submission
     deck_json: Option<String>,
-    /// Lobby action to dispatch on WebSocket open (mtg-njdwy).
+    /// Lobby action to dispatch on WebSocket open (mtg-474).
     ///
     /// `None` (default) → preserve legacy behaviour: auto-send `Authenticate`
     /// against the well-known `DEFAULT_LOBBY_GAME` slot. The first authenticator
@@ -305,7 +305,7 @@ impl WasmNetworkClient {
         self.opponent_hand_count
     }
 
-    /// Get CardID ranges for late-binding architecture (mtg-d0jg3)
+    /// Get CardID ranges for late-binding architecture (mtg-254)
     ///
     /// CRITICAL: WASM must use these ranges to initialize game state
     /// with `init_game_reserve_only()` for behavioral identity with native.
@@ -347,7 +347,7 @@ impl WasmNetworkClient {
         self.state = NetworkState::Connecting;
 
         // Auto-dispatch the appropriate first message if we have stored params.
-        // `lobby_action` (mtg-njdwy) selects between legacy Authenticate vs the
+        // `lobby_action` (mtg-474) selects between legacy Authenticate vs the
         // explicit CreateGame / JoinGame paths used by the post-lobby redirect.
         let (Some(password), Some(player_name), Some(deck_json)) =
             (self.password.clone(), self.player_name.clone(), self.deck_json.clone())
@@ -420,7 +420,7 @@ impl WasmNetworkClient {
     /// Queue a `CreateGame` message — register a named pre-game slot on the
     /// server and wait for an opponent to `JoinGame` it.
     ///
-    /// Used by the post-lobby redirect path (mtg-njdwy): the landing-page
+    /// Used by the post-lobby redirect path (mtg-474): the landing-page
     /// lobby (web/index.html) closes its own browsing WS and redirects to
     /// `tui_game.html?lobby_create=NAME&...`. The TUI page then opens a fresh
     /// WS, calls `network_create_game`, and runs the per-game flow from there.
@@ -565,7 +565,7 @@ impl WasmNetworkClient {
                     starting_life
                 );
 
-                // Log critical sync data (mtg-d0jg3: behavioral identity)
+                // Log critical sync data (mtg-254: behavioral identity)
                 if let Some(ref ranges) = deck_card_ids {
                     log::info!(
                         "WasmNetworkClient: DeckCardIdRanges received - P1:[{}..{}), P2:[{}..{})",
@@ -602,7 +602,7 @@ impl WasmNetworkClient {
                 self.library_size = library_size;
                 self.opponent_library_size = opponent_library_size;
                 self.opponent_hand_count = opponent_hand_count;
-                // CRITICAL: Store late-binding architecture data (mtg-d0jg3)
+                // CRITICAL: Store late-binding architecture data (mtg-254)
                 self.deck_card_ids = deck_card_ids;
                 self.rng_state = rng_state;
                 self.token_definitions = token_definitions;
@@ -874,7 +874,7 @@ impl WasmNetworkClient {
     /// Used for choices like SMART damage assignment (`choose_blocker_for_lethal_damage`,
     /// `choose_blocker_for_remaining_damage`) where the server needs the actual chosen
     /// CardId — not just an index — because the client and server may have different
-    /// blocker lists in network mode (mtg-e05f9c).
+    /// blocker lists in network mode (mtg-418).
     pub fn submit_choice_with_targets(
         &mut self,
         choice_indices: Vec<usize>,
@@ -966,7 +966,7 @@ impl WasmNetworkClient {
         self.outbound_queue.clear();
         self.last_error = None;
         self.winner = None;
-        // Clear late-binding architecture data (mtg-d0jg3)
+        // Clear late-binding architecture data (mtg-254)
         self.deck_card_ids = None;
         self.rng_state.clear();
         self.token_definitions.clear();

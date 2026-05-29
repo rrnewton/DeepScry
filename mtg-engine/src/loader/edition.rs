@@ -278,7 +278,7 @@ impl PrimarySetAssignment {
     /// `year == 0` entries are still considered, but only if no other set
     /// also lists the card (so a real release always wins over an unparseable
     /// date). All edition files in the repo today have a valid four-digit
-    /// year — see the manual scan in mtg-6fsjb — so this fallback path is
+    /// year — see the manual scan in mtg-464 — so this fallback path is
     /// dormant.
     ///
     /// # Errors

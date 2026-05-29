@@ -10,8 +10,8 @@
 //! - Damage dealing (Flametongue Kavu)
 //! - Life gain (custom Soul Warden-like creature)
 
-use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
-use mtg_forge_rs::game::GameState;
+use mtg_engine::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+use mtg_engine::game::GameState;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== MTG Forge - ETB Triggers Expansion Demo ===\n");
@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     kavu.triggers.push(Trigger::new(
         TriggerEvent::EntersBattlefield,
         vec![Effect::DealDamage {
-            target: mtg_forge_rs::core::TargetRef::None,
+            target: mtg_engine::core::TargetRef::None,
             amount: 4,
         }],
         "When Flametongue Kavu enters, it deals 4 damage to target creature.".to_string(),

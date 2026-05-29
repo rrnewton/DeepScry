@@ -13,7 +13,7 @@ impl<'a> GameLoop<'a> {
     ///
     /// Called when `debug_validate_reveals` is enabled (gated by `network_debug` flag).
     /// In network mode with hidden info, only validates the local player's cards
-    /// (opponent's cards are intentionally hidden per mtg-qtqcr).
+    /// (opponent's cards are intentionally hidden per mtg-218).
     ///
     /// This validation follows the linear transfer of control model: all reveals should
     /// have been processed before we reach a point where we need the card. If a reveal

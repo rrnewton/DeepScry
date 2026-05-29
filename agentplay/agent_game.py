@@ -1250,7 +1250,7 @@ def _run_wasm(
     # Spawn the headless Chromium tab + WASM session
     # ------------------------------------------------------------------
     web_dir = repo_root / "web"
-    if not (web_dir / "pkg" / "mtg_forge_rs.js").exists():
+    if not (web_dir / "pkg" / "mtg_engine.js").exists():
         print(
             f"Error: WASM build not found at {web_dir / 'pkg'}.\n"
             "Build it with: make wasm-dev (or symlink web/pkg from a built checkout)",

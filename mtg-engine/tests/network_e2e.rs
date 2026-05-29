@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
 //! End-to-end network tests for client/server multiplayer
@@ -18,8 +18,8 @@
 
 #[cfg(test)]
 mod async_tests {
-    use mtg_forge_rs::core::PlayerId;
-    use mtg_forge_rs::network::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
+    use mtg_engine::core::PlayerId;
+    use mtg_engine::network::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
 
     /// Test protocol message round-trips work correctly
     #[test]
@@ -29,7 +29,7 @@ mod async_tests {
             your_player_id: PlayerId::new(0),
             opponent_name: "TestOpponent".to_string(),
             opening_hand: vec![CardReveal {
-                card_id: mtg_forge_rs::core::CardId::new(1),
+                card_id: mtg_engine::core::CardId::new(1),
                 name: "Mountain".to_string(),
                 card_def: None,
             }],
@@ -135,7 +135,7 @@ mod async_tests {
         }
     }
 
-    /// Regression test for mtg-e05f9c: SMART damage assignment OpponentChoice
+    /// Regression test for mtg-418: SMART damage assignment OpponentChoice
     /// must carry `target_card_ids` so the WASM client's shadow game can resolve
     /// the chosen blocker by CardId rather than by index.
     ///
@@ -146,7 +146,7 @@ mod async_tests {
     /// scenario.
     #[test]
     fn test_opponent_choice_preserves_target_card_ids() {
-        use mtg_forge_rs::core::CardId;
+        use mtg_engine::core::CardId;
 
         let blocker_id = CardId::new(72);
         let msg = ServerMessage::OpponentChoice {
@@ -189,7 +189,7 @@ mod async_tests {
         let reveal_msg = ServerMessage::CardRevealed {
             owner: PlayerId::new(0),
             card: CardReveal {
-                card_id: mtg_forge_rs::core::CardId::new(100),
+                card_id: mtg_engine::core::CardId::new(100),
                 name: "Serra Angel".to_string(),
                 card_def: None,
             },
@@ -221,7 +221,7 @@ mod async_tests {
 #[cfg(test)]
 mod websocket_integration {
     use futures_util::{SinkExt, StreamExt};
-    use mtg_forge_rs::network::{ClientMessage, DeckSubmission, GameServer, ServerConfig, ServerMessage};
+    use mtg_engine::network::{ClientMessage, DeckSubmission, GameServer, ServerConfig, ServerMessage};
     use std::path::PathBuf;
     use std::time::Duration;
     use tokio::net::TcpStream;
@@ -661,9 +661,9 @@ mod websocket_integration {
     /// Run an automated client that always chooses option 0 until game ends
     async fn run_auto_client(
         mut ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
-        _our_player_id: mtg_forge_rs::core::PlayerId,
+        _our_player_id: mtg_engine::core::PlayerId,
         name: &str,
-    ) -> Result<Option<mtg_forge_rs::core::PlayerId>, String> {
+    ) -> Result<Option<mtg_engine::core::PlayerId>, String> {
         let mut choice_count = 0;
         let max_choices = 10000; // Safety limit to prevent infinite loops
 
@@ -1074,7 +1074,7 @@ mod websocket_integration {
     /// - Action count synchronization between server and clients
     ///
     /// NOTE: This test is flaky due to a race condition in game-end handling.
-    /// The action_count sync issue (mtg-akjrb) has been fixed, but there's a timing issue where:
+    /// The action_count sync issue (mtg-184) has been fixed, but there's a timing issue where:
     /// 1. Server sends GameEnded to both clients
     /// 2. One client's WebSocket handler exits, dropping remote_choice_tx
     /// 3. Other client's GameLoop may still be waiting for opponent choice
@@ -1100,8 +1100,8 @@ mod websocket_integration {
     /// with --network-debug covers strict reveal validation using separate processes.
     #[tokio::test]
     async fn test_run_game_with_random_controllers() {
-        use mtg_forge_rs::game::RandomController;
-        use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+        use mtg_engine::game::RandomController;
+        use mtg_engine::network::{ClientConfig, NetworkClient};
 
         let port = allocate_random_port();
         let password = "rungametest";

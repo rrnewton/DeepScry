@@ -166,7 +166,7 @@ StaticAbility::Continuous {
 5. Implement continuous effects evaluation for Equipment buffs
 6. Add state-based actions for Equipment detachment
 7. Create comprehensive tests
-8. Update mtg-98df7d issue with progress
+8. Update mtg-169 issue with progress
 
 ## Test Cases
 

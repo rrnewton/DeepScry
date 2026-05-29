@@ -3,7 +3,7 @@
 //! These tests verify that the TUI can successfully run complete games
 //! from start to finish with various deck configurations.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{zero_controller::ZeroController, GameLoop, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
@@ -62,7 +62,7 @@ async fn test_tui_zero_vs_zero_simple_bolt() -> Result<()> {
     // Verify the game ended due to player death (Lightning Bolts dealing damage)
     // With the correct spell casting implementation, players cast bolts and deal damage
     assert!(
-        matches!(result.end_reason, mtg_forge_rs::game::GameEndReason::PlayerDeath(_)),
+        matches!(result.end_reason, mtg_engine::game::GameEndReason::PlayerDeath(_)),
         "Game should end by player death with Lightning Bolts being cast: {:?}",
         result.end_reason
     );
@@ -193,11 +193,11 @@ async fn test_tui_random_vs_random_deals_damage() -> Result<()> {
     let p2_id = players[1];
 
     // Use deterministic seeds derived from game seed (42)
-    let mut controller1 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+    let mut controller1 = mtg_engine::game::random_controller::RandomController::with_seed(
         p1_id,
         42u64.wrapping_add(0x1234_5678_9ABC_DEF0),
     );
-    let mut controller2 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+    let mut controller2 = mtg_engine::game::random_controller::RandomController::with_seed(
         p2_id,
         42u64.wrapping_add(0xFEDC_BA98_7654_3210),
     );
@@ -222,7 +222,7 @@ async fn test_tui_random_vs_random_deals_damage() -> Result<()> {
     // With the simple bolt deck and random controllers, someone should die
     // (not just deck out)
     assert!(
-        matches!(result.end_reason, mtg_forge_rs::game::GameEndReason::PlayerDeath(_)),
+        matches!(result.end_reason, mtg_engine::game::GameEndReason::PlayerDeath(_)),
         "Game should end by player death with random controllers casting bolts: {:?}",
         result.end_reason
     );
@@ -243,7 +243,7 @@ async fn test_tui_random_vs_random_deals_damage() -> Result<()> {
 /// Test that players discard down to 7 cards during cleanup step
 #[tokio::test]
 async fn test_discard_to_hand_size() -> Result<()> {
-    use mtg_forge_rs::core::{Card, CardType, EntityId};
+    use mtg_engine::core::{Card, CardType, EntityId};
 
     // Load card database (lazy loading)
     let cardsfolder = require_cardsfolder();
@@ -281,15 +281,15 @@ async fn test_discard_to_hand_size() -> Result<()> {
     assert_eq!(hand_size_before, 10, "Player 1 should start with 10 cards in hand");
 
     // Create controllers and run cleanup step
-    let mut controller1 = mtg_forge_rs::game::zero_controller::ZeroController::new(p1_id);
-    let mut controller2 = mtg_forge_rs::game::zero_controller::ZeroController::new(p2_id);
+    let mut controller1 = mtg_engine::game::zero_controller::ZeroController::new(p1_id);
+    let mut controller2 = mtg_engine::game::zero_controller::ZeroController::new(p2_id);
 
     // Set Player 1 as active player
     game.turn.active_player = p1_id;
 
     // Run cleanup step through game loop
     let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
-    game_loop.game.turn.current_step = mtg_forge_rs::game::Step::Cleanup;
+    game_loop.game.turn.current_step = mtg_engine::game::Step::Cleanup;
 
     // Execute cleanup step manually
     game_loop.execute_step(&mut controller1, &mut controller2)?;
@@ -350,11 +350,11 @@ async fn test_creature_combat_game() -> Result<()> {
     let p2_id = players[1];
 
     // Use deterministic seeds derived from game seed (77777)
-    let mut controller1 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+    let mut controller1 = mtg_engine::game::random_controller::RandomController::with_seed(
         p1_id,
         77777u64.wrapping_add(0x1234_5678_9ABC_DEF0),
     );
-    let mut controller2 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+    let mut controller2 = mtg_engine::game::random_controller::RandomController::with_seed(
         p2_id,
         77777u64.wrapping_add(0xFEDC_BA98_7654_3210),
     );
@@ -379,7 +379,7 @@ async fn test_creature_combat_game() -> Result<()> {
 
     // Game should end by player death (not deck out) with creature combat
     assert!(
-        matches!(result.end_reason, mtg_forge_rs::game::GameEndReason::PlayerDeath(_)),
+        matches!(result.end_reason, mtg_engine::game::GameEndReason::PlayerDeath(_)),
         "Game should end by player death with creatures attacking: {:?}",
         result.end_reason
     );
@@ -394,7 +394,7 @@ async fn test_creature_combat_game() -> Result<()> {
     // At minimum, the winner should have creatures in graveyard (died during combat)
     let winner_zones = game
         .get_player_zones(winner)
-        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidAction("Winner zones not found".to_string()))?;
+        .ok_or_else(|| mtg_engine::MtgError::InvalidAction("Winner zones not found".to_string()))?;
 
     // Count creatures on battlefield (owned by winner)
     let battlefield_creatures = game
@@ -424,7 +424,7 @@ async fn test_creature_combat_game() -> Result<()> {
 /// Tests a game between two different decks with different strategies
 #[tokio::test]
 async fn test_different_deck_matchup() -> Result<()> {
-    use mtg_forge_rs::core::CardType;
+    use mtg_engine::core::CardType;
 
     // Load card database (lazy loading)
     let cardsfolder = require_cardsfolder();
@@ -457,11 +457,11 @@ async fn test_different_deck_matchup() -> Result<()> {
         let p2_id = players[1];
 
         // Use deterministic seeds derived from game seed
-        let mut controller1 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+        let mut controller1 = mtg_engine::game::random_controller::RandomController::with_seed(
             p1_id,
             seed.wrapping_add(0x1234_5678_9ABC_DEF0),
         );
-        let mut controller2 = mtg_forge_rs::game::random_controller::RandomController::with_seed(
+        let mut controller2 = mtg_engine::game::random_controller::RandomController::with_seed(
             p2_id,
             seed.wrapping_add(0xFEDC_BA98_7654_3210),
         );
@@ -484,7 +484,7 @@ async fn test_different_deck_matchup() -> Result<()> {
         assert!(
             matches!(
                 result.end_reason,
-                mtg_forge_rs::game::GameEndReason::PlayerDeath(_) | mtg_forge_rs::game::GameEndReason::Decking(_)
+                mtg_engine::game::GameEndReason::PlayerDeath(_) | mtg_engine::game::GameEndReason::Decking(_)
             ),
             "Game should end by player death or decking: {:?}",
             result.end_reason
@@ -511,10 +511,10 @@ async fn test_different_deck_matchup() -> Result<()> {
         // Verify cards are in valid zones (not lost or duplicated)
         let p1_zones = game
             .get_player_zones(p1_id)
-            .ok_or_else(|| mtg_forge_rs::MtgError::InvalidAction("P1 zones not found".to_string()))?;
+            .ok_or_else(|| mtg_engine::MtgError::InvalidAction("P1 zones not found".to_string()))?;
         let p2_zones = game
             .get_player_zones(p2_id)
-            .ok_or_else(|| mtg_forge_rs::MtgError::InvalidAction("P2 zones not found".to_string()))?;
+            .ok_or_else(|| mtg_engine::MtgError::InvalidAction("P2 zones not found".to_string()))?;
 
         let p1_total = p1_zones.hand.cards.len() + p1_zones.library.cards.len() + p1_zones.graveyard.cards.len();
 
@@ -571,7 +571,7 @@ async fn test_different_deck_matchup() -> Result<()> {
 /// 3. The mana pool is cleared
 #[tokio::test]
 async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
-    use mtg_forge_rs::core::{Card, CardType, EntityId, ManaCost};
+    use mtg_engine::core::{Card, CardType, EntityId, ManaCost};
 
     // Load card database
     let cardsfolder = require_cardsfolder();
@@ -621,7 +621,7 @@ async fn test_spell_casting_unwind_on_mana_failure() -> Result<()> {
     // Try to cast the spell without sufficient mana
     // This should fail and properly unwind
     // Create an empty ManaEngine (no mana sources available)
-    let mut mana_engine = mtg_forge_rs::game::ManaEngine::new();
+    let mut mana_engine = mtg_engine::game::ManaEngine::new();
     mana_engine.update(&game, p1_id);
 
     let result = game.cast_spell_8_step(

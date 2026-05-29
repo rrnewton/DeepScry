@@ -3,7 +3,7 @@
 //! This is the ONLY test that loads the full card database.
 //! All other tests should load only the specific cards they need.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader},
     Result,
 };

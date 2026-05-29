@@ -54,8 +54,8 @@
 //! ## Basic Usage - Check if a spell is castable
 //!
 //! ```ignore
-//! use mtg_forge_rs::game::{ManaEngine, GameState};
-//! use mtg_forge_rs::core::{ManaCost, PlayerId};
+//! use mtg_engine::game::{ManaEngine, GameState};
+//! use mtg_engine::core::{ManaCost, PlayerId};
 //!
 //! let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
 //! let alice_id = game.players[0].id;

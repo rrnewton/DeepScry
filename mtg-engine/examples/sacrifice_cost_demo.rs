@@ -3,8 +3,8 @@
 //! Demonstrates activated abilities with sacrifice costs using Zuran Orb.
 //! Zuran Orb: "Sacrifice a land: You gain 2 life."
 
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::loader::CardDatabase;
+use mtg_engine::game::GameState;
+use mtg_engine::loader::CardDatabase;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -128,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn count_lands(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usize {
+fn count_lands(game: &GameState, player_id: mtg_engine::core::PlayerId) -> usize {
     game.battlefield
         .cards
         .iter()
@@ -142,7 +142,7 @@ fn count_lands(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usi
         .count()
 }
 
-fn count_graveyard(game: &GameState, player_id: mtg_forge_rs::core::PlayerId) -> usize {
+fn count_graveyard(game: &GameState, player_id: mtg_engine::core::PlayerId) -> usize {
     if let Some(zones) = game.get_player_zones(player_id) {
         zones.graveyard.cards.len()
     } else {

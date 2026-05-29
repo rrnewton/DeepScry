@@ -757,7 +757,7 @@ impl RenderConfig {
 /// for non-ratatui clients (native_game.html and any future renderer) to read /
 /// mutate via the WASM `tui_*` exports without dragging in `Rect`,
 /// `FocusedPane`, ratatui `EntityPosition`, etc. See decouple-step5
-/// (mtg-81ed52) for the architectural motivation.
+/// (mtg-382) for the architectural motivation.
 pub struct GameUiSessionState {
     /// Currently highlighted choice index (if in choice mode)
     pub highlighted_choice: usize,

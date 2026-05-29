@@ -7,7 +7,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{
         derive_player_seed, random_controller::RandomController, zero_controller::ZeroController, FancyTuiController,
         GameLoop, GameSnapshot, HeuristicController, InteractiveController, PlayerSlot, RichInputController,
@@ -56,7 +56,7 @@ fn format_yyyymmdd_hhmmss_utc(secs: u64) -> String {
 /// Caller is responsible for surfacing the returned path to the user (e.g. via
 /// `println!`); we deliberately don't print here so the message can be emitted
 /// AFTER any TUI screen has been torn down.
-fn save_game_log_to_tmp(logger: &mtg_forge_rs::game::logger::GameLogger) -> std::io::Result<Option<PathBuf>> {
+fn save_game_log_to_tmp(logger: &mtg_engine::game::logger::GameLogger) -> std::io::Result<Option<PathBuf>> {
     use std::io::Write;
 
     let logs = logger.logs();
@@ -85,7 +85,7 @@ fn save_game_log_to_tmp(logger: &mtg_forge_rs::game::logger::GameLogger) -> std:
 ///
 /// Searches: CARDSFOLDER env var → ./cardsfolder → binary dir → parent dirs up to root
 fn find_cardsfolder() -> PathBuf {
-    mtg_forge_rs::loader::find_cardsfolder().unwrap_or_else(|| {
+    mtg_engine::loader::find_cardsfolder().unwrap_or_else(|| {
         eprintln!(
             "Warning: cardsfolder not found! Searched:\n\
              - CARDSFOLDER environment variable\n\
@@ -969,9 +969,9 @@ async fn async_main() -> Result<()> {
         } => {
             // Convert json flag to SnapshotFormat
             let snapshot_format = if json {
-                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+                mtg_engine::game::snapshot::SnapshotFormat::Json
             } else {
-                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+                mtg_engine::game::snapshot::SnapshotFormat::Bincode
             };
 
             // Apply default names based on controller type if not specified
@@ -1053,9 +1053,9 @@ async fn async_main() -> Result<()> {
         } => {
             // Convert json flag to SnapshotFormat
             let snapshot_format = if json {
-                mtg_forge_rs::game::snapshot::SnapshotFormat::Json
+                mtg_engine::game::snapshot::SnapshotFormat::Json
             } else {
-                mtg_forge_rs::game::snapshot::SnapshotFormat::Bincode
+                mtg_engine::game::snapshot::SnapshotFormat::Bincode
             };
 
             run_resume(
@@ -1231,21 +1231,21 @@ fn should_print(verbosity: VerbosityLevel, level: VerbosityLevel, suppress: bool
     verbosity >= level && !suppress
 }
 
-// StopCondition is now imported from mtg_forge_rs::game module
+// StopCondition is now imported from mtg_engine::game module
 
 /// Convert CLI ControllerType to tournament ControllerType
 ///
 /// Note: Wildcard is intentional - ControllerType has Human/Fixed/etc variants
 /// that aren't supported for tournament mode.
 #[allow(clippy::wildcard_enum_match_arm)]
-fn to_tourney_controller(ct: ControllerType) -> Result<mtg_forge_rs::tournament::ControllerType> {
-    use mtg_forge_rs::tournament::ControllerType as TourneyController;
+fn to_tourney_controller(ct: ControllerType) -> Result<mtg_engine::tournament::ControllerType> {
+    use mtg_engine::tournament::ControllerType as TourneyController;
 
     match ct {
         ControllerType::Zero => Ok(TourneyController::Zero),
         ControllerType::Random => Ok(TourneyController::Random),
         ControllerType::Heuristic => Ok(TourneyController::Heuristic),
-        _ => Err(mtg_forge_rs::MtgError::InvalidAction(
+        _ => Err(mtg_engine::MtgError::InvalidAction(
             "Tournament mode only supports Zero, Random, and Heuristic controllers".to_string(),
         )),
     }
@@ -1264,7 +1264,7 @@ async fn run_tourney_cmd(
     let p1_tourney = to_tourney_controller(p1)?;
     let p2_tourney = to_tourney_controller(p2)?;
     let seed_resolved = seed.map(|s| s.resolve());
-    mtg_forge_rs::tournament::run_tourney(
+    mtg_engine::tournament::run_tourney(
         decks,
         games,
         seconds,
@@ -1294,7 +1294,7 @@ async fn run_server(
     loop_mode: bool,
     max_memory_percent: u32,
 ) -> Result<()> {
-    use mtg_forge_rs::network::{GameServer, ServerConfig};
+    use mtg_engine::network::{GameServer, ServerConfig};
 
     let verbosity_level: VerbosityLevel = verbosity.into();
 
@@ -1319,13 +1319,13 @@ async fn run_server(
     server
         .run()
         .await
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Server error: {}", e)))?;
+        .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Server error: {}", e)))?;
     Ok(())
 }
 
 /// Run the unified axum web server (`mtg server-web`).
 ///
-/// Boots an embedded [`mtg_forge_rs::network::GameServer`] on a private
+/// Boots an embedded [`mtg_engine::network::GameServer`] on a private
 /// loopback port and serves static files + lobby WS proxy on the public
 /// bind address.
 #[cfg(feature = "web-server")]
@@ -1348,8 +1348,8 @@ async fn run_server_web(
     no_color_logs: bool,
     max_memory_percent: u32,
 ) -> Result<()> {
-    use mtg_forge_rs::network::ServerConfig;
-    use mtg_forge_rs::web_server::{run_web_server, WebServerConfig};
+    use mtg_engine::network::ServerConfig;
+    use mtg_engine::web_server::{run_web_server, WebServerConfig};
 
     let verbosity_level: VerbosityLevel = verbosity.into();
 
@@ -1381,7 +1381,7 @@ async fn run_server_web(
 
     run_web_server(cfg)
         .await
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("web-server error: {e}")))?;
+        .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("web-server error: {e}")))?;
     Ok(())
 }
 
@@ -1404,13 +1404,13 @@ async fn run_connect(
     reconnect: bool,
     accept_invalid_certs: bool,
 ) -> Result<()> {
-    use mtg_forge_rs::core::PlayerId;
-    use mtg_forge_rs::game::FancyTuiController;
-    use mtg_forge_rs::network::{ClientConfig, NetworkClient};
+    use mtg_engine::core::PlayerId;
+    use mtg_engine::game::FancyTuiController;
+    use mtg_engine::network::{ClientConfig, NetworkClient};
 
     // Validate fixed controller has inputs
     if matches!(controller_type, ControllerType::Fixed) && fixed_inputs.is_none() {
-        return Err(mtg_forge_rs::MtgError::InvalidAction(
+        return Err(mtg_engine::MtgError::InvalidAction(
             "--fixed-inputs is required when --controller=fixed".to_string(),
         ));
     }
@@ -1453,10 +1453,7 @@ async fn run_connect(
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 continue;
             }
-            return Err(mtg_forge_rs::MtgError::InvalidAction(format!(
-                "Connection error: {}",
-                e
-            )));
+            return Err(mtg_engine::MtgError::InvalidAction(format!("Connection error: {}", e)));
         }
 
         if let Err(e) = client.wait_for_game_start().await {
@@ -1465,10 +1462,7 @@ async fn run_connect(
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 continue;
             }
-            return Err(mtg_forge_rs::MtgError::InvalidAction(format!(
-                "Game start error: {}",
-                e
-            )));
+            return Err(mtg_engine::MtgError::InvalidAction(format!("Game start error: {}", e)));
         }
 
         // Get our player ID from the client state
@@ -1514,19 +1508,18 @@ async fn run_connect(
                 client.run_game(ctrl).await
             }
             ControllerType::Fixed => {
-                let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap()).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e))
-                })?;
+                let script = parse_fixed_inputs(fixed_inputs.as_ref().unwrap())
+                    .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Error parsing --fixed-inputs: {}", e)))?;
                 let ctrl = RichInputController::new(our_player_id, script);
                 client.run_game(ctrl).await
             }
             ControllerType::Fancy => {
                 let ctrl = FancyTuiController::new(our_player_id, visual_stacks)
-                    .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e)))?;
+                    .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to initialize TUI: {}", e)))?;
                 client.run_game(ctrl).await
             }
             ControllerType::FancyFixed => {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "FancyFixed controller requires --fixed-inputs (not yet fully supported in network mode)."
                         .to_string(),
                 ));
@@ -1543,7 +1536,7 @@ async fn run_connect(
                 if reconnect {
                     log::warn!("Game {} error: {}. Will reconnect...", game_number, e);
                 } else {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(format!("Game error: {}", e)));
+                    return Err(mtg_engine::MtgError::InvalidAction(format!("Game error: {}", e)));
                 }
             }
         }
@@ -1585,7 +1578,7 @@ async fn run_tui(
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
-    snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
+    snapshot_format: mtg_engine::game::snapshot::SnapshotFormat,
     start_from: Option<PathBuf>,
     save_final_gamestate: Option<PathBuf>,
     log_tail: Option<usize>,
@@ -1609,7 +1602,7 @@ async fn run_tui(
     // Parse stop condition if provided
     let stop_condition = if let Some(ref stop_str) = stop_on_choice {
         let condition = StopCondition::parse(stop_str)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
+            .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
         if !suppress_output {
             log::info!("Stop condition: {:?}", condition);
             log::info!("Snapshot output: {}\n", snapshot_output.display());
@@ -1621,27 +1614,27 @@ async fn run_tui(
 
     // Parse hand setup if provided
     let p1_hand_setup = if let Some(ref p1_draw_str) = p1_draw {
-        Some(mtg_forge_rs::game::HandSetup::parse(p1_draw_str)?)
+        Some(mtg_engine::game::HandSetup::parse(p1_draw_str)?)
     } else {
         None
     };
 
     let p2_hand_setup = if let Some(ref p2_draw_str) = p2_draw {
-        Some(mtg_forge_rs::game::HandSetup::parse(p2_draw_str)?)
+        Some(mtg_engine::game::HandSetup::parse(p2_draw_str)?)
     } else {
         None
     };
 
     // Check for conflicting options
     if start_from.is_some() && (deck1_path.is_some() || deck2_path.is_some() || puzzle_path.is_some()) {
-        return Err(mtg_forge_rs::MtgError::InvalidAction(
+        return Err(mtg_engine::MtgError::InvalidAction(
             "Cannot specify both --start-from and deck/puzzle files".to_string(),
         ));
     }
 
     // Hand setup flags only work at game start, not when resuming from snapshot
     if start_from.is_some() && (p1_draw.is_some() || p2_draw.is_some()) {
-        return Err(mtg_forge_rs::MtgError::InvalidAction(
+        return Err(mtg_engine::MtgError::InvalidAction(
             "--p1-draw and --p2-draw only work at game start (not when resuming from snapshot)".to_string(),
         ));
     }
@@ -1653,7 +1646,7 @@ async fn run_tui(
     // Load snapshot early if resuming, so we can extract both game state and player-specific choices
     let loaded_snapshot: Option<GameSnapshot> = if let Some(ref snapshot_file) = start_from {
         let snapshot = GameSnapshot::load_from_file(snapshot_file, snapshot_format)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
+            .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
         Some(snapshot)
     } else {
         None
@@ -1864,12 +1857,12 @@ async fn run_tui(
     let p2_controller_seed = seed_p2_resolved.or_else(|| seed_resolved.map(|s| derive_player_seed(s, PlayerSlot::P2)));
 
     // Create base controllers
-    let base_controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> = match p1_type {
+    let base_controller1: Box<dyn mtg_engine::game::controller::PlayerController> = match p1_type {
         ControllerType::Zero => Box::new(ZeroController::new(p1_id)),
         ControllerType::Random => {
             // Check if we're resuming from snapshot with saved RandomController state
             if let Some(ref snapshot) = loaded_snapshot {
-                if let Some(mtg_forge_rs::game::ControllerState::Random(random_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Random(random_controller)) =
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -1918,7 +1911,7 @@ async fn run_tui(
         }
         ControllerType::Fancy => Box::new(
             FancyTuiController::new(p1_id, visual_stacks)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+                .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => {
             // First check whether we're resuming from a snapshot that captured
@@ -1928,7 +1921,7 @@ async fn run_tui(
             // silently use seed 0 and produce identical heuristic decisions for
             // every game regardless of --seed).
             if let Some(ref snapshot) = loaded_snapshot {
-                if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Heuristic(heuristic_controller)) =
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -1947,13 +1940,12 @@ async fn run_tui(
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
                 })?;
                 Box::new(RichInputController::new(p1_id, script))
             } else if let Some(ref snapshot) = loaded_snapshot {
                 // Restore from snapshot if available
-                if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
-                    &snapshot.p1_controller_state
+                if let Some(mtg_engine::game::ControllerState::Fixed(fixed_controller)) = &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                         log::info!(
@@ -1963,23 +1955,23 @@ async fn run_tui(
                     }
                     Box::new(fixed_controller.clone())
                 } else {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    return Err(mtg_engine::MtgError::InvalidAction(
                         "--p1-fixed-inputs is required when --p1=fixed (no snapshot state available or wrong controller type)".to_string(),
                     ));
                 }
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --p1=fixed".to_string(),
                 ));
             }
         }
         ControllerType::FancyFixed => {
-            use mtg_forge_rs::game::FancyFixedController;
+            use mtg_engine::game::FancyFixedController;
 
             // FancyFixed requires --p1-fixed-inputs
             if let Some(input) = &p1_fixed_inputs {
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
                 })?;
 
                 // Determine screenshot directory from snapshot-output or use current.game
@@ -1997,19 +1989,19 @@ async fn run_tui(
                     screenshot_height,
                 )?)
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --p1=fancy-fixed".to_string(),
                 ));
             }
         }
     };
 
-    let base_controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> = match p2_type {
+    let base_controller2: Box<dyn mtg_engine::game::controller::PlayerController> = match p2_type {
         ControllerType::Zero => Box::new(ZeroController::new(p2_id)),
         ControllerType::Random => {
             // Check if we're resuming from snapshot with saved RandomController state
             if let Some(ref snapshot) = loaded_snapshot {
-                if let Some(mtg_forge_rs::game::ControllerState::Random(random_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Random(random_controller)) =
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2073,7 +2065,7 @@ async fn run_tui(
             // the rationale (snapshot state takes precedence; otherwise seed
             // from the canonical derive_player_seed(master, P2)).
             if let Some(ref snapshot) = loaded_snapshot {
-                if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Heuristic(heuristic_controller)) =
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2092,13 +2084,12 @@ async fn run_tui(
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
                 })?;
                 Box::new(RichInputController::new(p2_id, script))
             } else if let Some(ref snapshot) = loaded_snapshot {
                 // Restore from snapshot if available
-                if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
-                    &snapshot.p2_controller_state
+                if let Some(mtg_engine::game::ControllerState::Fixed(fixed_controller)) = &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                         log::info!(
@@ -2108,23 +2099,23 @@ async fn run_tui(
                     }
                     Box::new(fixed_controller.clone())
                 } else {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    return Err(mtg_engine::MtgError::InvalidAction(
                         "--p2-fixed-inputs is required when --p2=fixed (no snapshot state available or wrong controller type)".to_string(),
                     ));
                 }
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --p2=fixed".to_string(),
                 ));
             }
         }
         ControllerType::FancyFixed => {
-            use mtg_forge_rs::game::FancyFixedController;
+            use mtg_engine::game::FancyFixedController;
 
             // FancyFixed requires --p2-fixed-inputs
             if let Some(input) = &p2_fixed_inputs {
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
                 })?;
 
                 // Determine screenshot directory from snapshot-output
@@ -2142,7 +2133,7 @@ async fn run_tui(
                     screenshot_height,
                 )?)
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --p2=fancy-fixed".to_string(),
                 ));
             }
@@ -2155,7 +2146,7 @@ async fn run_tui(
     // EXCEPTION: Don't wrap FixedScriptController with ReplayController.
     // Fixed controller already has the full game script and wrapping it would cause
     // double-replay (ReplayController replays intra-turn, then Fixed restarts from index 0).
-    let mut controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> =
+    let mut controller1: Box<dyn mtg_engine::game::controller::PlayerController> =
         if let Some(ref snapshot) = loaded_snapshot {
             // Check if base controller is Fixed or FancyFixed - don't wrap if it is
             let is_fixed = matches!(p1_type, ControllerType::Fixed | ControllerType::FancyFixed);
@@ -2169,7 +2160,7 @@ async fn run_tui(
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                     log::info!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
                 }
-                Box::new(mtg_forge_rs::game::ReplayController::new(
+                Box::new(mtg_engine::game::ReplayController::new(
                     p1_id,
                     base_controller1,
                     p1_replay_choices,
@@ -2179,7 +2170,7 @@ async fn run_tui(
             base_controller1
         };
 
-    let mut controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> =
+    let mut controller2: Box<dyn mtg_engine::game::controller::PlayerController> =
         if let Some(ref snapshot) = loaded_snapshot {
             // Check if base controller is Fixed or FancyFixed - don't wrap if it is
             let is_fixed = matches!(p2_type, ControllerType::Fixed | ControllerType::FancyFixed);
@@ -2193,7 +2184,7 @@ async fn run_tui(
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                     log::info!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
                 }
-                Box::new(mtg_forge_rs::game::ReplayController::new(
+                Box::new(mtg_engine::game::ReplayController::new(
                     p2_id,
                     base_controller2,
                     p2_replay_choices,
@@ -2215,22 +2206,20 @@ async fn run_tui(
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
         // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
-        game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+        game.logger.set_output_mode(mtg_engine::game::logger::OutputMode::Both);
     }
 
     // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
     let is_fancy_tui = matches!(p1_type, ControllerType::Fancy) || matches!(p2_type, ControllerType::Fancy);
     if is_fancy_tui {
         game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
+            .set_output_mode(mtg_engine::game::logger::OutputMode::Memory);
     } else {
         // For non-fancy CLI tui mode, also capture logs to memory in addition to
         // printing them to stdout, so we can persist a complete game log to disk
         // at exit (see `save_game_log_to_tmp` below). `Both` keeps the existing
         // user-visible stdout output intact.
-        game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+        game.logger.set_output_mode(mtg_engine::game::logger::OutputMode::Both);
     }
 
     // Note: When using init_game_with_positional_ids (which shuffles BEFORE assigning CardIDs),
@@ -2248,7 +2237,7 @@ async fn run_tui(
         // Turn numbers are 1-based (turn 1, 2, 3...), never 0
         // If we see turn 0, that's a critical bug in snapshot serialization
         if turn_num == 0 {
-            return Err(mtg_forge_rs::MtgError::InvalidAction(
+            return Err(mtg_engine::MtgError::InvalidAction(
                 "Invalid snapshot: turn_number is 0 (turns are 1-based, not 0-based)".to_string(),
             ));
         }
@@ -2270,7 +2259,7 @@ async fn run_tui(
     // This is ALWAYS needed when resuming to determine when to stop suppressing logs,
     // not just when using --stop-on-choice
     if let Some(ref snapshot) = loaded_snapshot {
-        use mtg_forge_rs::undo::GameAction;
+        use mtg_engine::undo::GameAction;
 
         // Count all ChoicePoints in the undo log to establish baseline
         // If stop_condition exists, filter by applicable player; otherwise count all
@@ -2309,7 +2298,7 @@ async fn run_tui(
     // If resuming from snapshot, enable replay mode to suppress logging during replay
     // This must be done AFTER setting baseline, and applies regardless of stop_condition
     if let Some(ref snapshot) = loaded_snapshot {
-        use mtg_forge_rs::undo::GameAction;
+        use mtg_engine::undo::GameAction;
 
         // Count ALL ChoicePoint entries - each one will trigger log_choice_point
         // and we need to suppress logging for all of them until replay is complete
@@ -2360,7 +2349,7 @@ async fn run_tui(
     // as the &mut GameState reference, causing Rust to be conservative about borrows.
     drop(game_loop);
 
-    use mtg_forge_rs::game::GameEndReason;
+    use mtg_engine::game::GameEndReason;
 
     // If log_tail was enabled, flush only the last K lines now
     // Skip for snapshot exits - logs were already printed in real-time with OutputMode::Both,
@@ -2447,7 +2436,7 @@ async fn run_tui(
 
             final_snapshot
                 .save_to_file(&final_state_path, snapshot_format)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
+                .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
                 log::info!("\nFinal game state saved to: {}", final_state_path.display());
@@ -2569,7 +2558,7 @@ async fn run_resume(
     stop_on_choice: Option<String>,
     stop_when_fixed_exhausted: bool,
     snapshot_output: PathBuf,
-    snapshot_format: mtg_forge_rs::game::snapshot::SnapshotFormat,
+    snapshot_format: mtg_engine::game::snapshot::SnapshotFormat,
     save_final_gamestate: Option<PathBuf>,
     log_tail: Option<usize>,
 ) -> Result<()> {
@@ -2588,7 +2577,7 @@ async fn run_resume(
     // Parse stop condition if provided
     let stop_condition = if let Some(ref stop_str) = stop_on_choice {
         let condition = StopCondition::parse(stop_str)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
+            .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Error parsing --stop-on-choice: {}", e)))?;
         if !suppress_output {
             log::info!("Stop condition: {:?}", condition);
             log::info!("Snapshot output: {}\n", snapshot_output.display());
@@ -2604,7 +2593,7 @@ async fn run_resume(
     }
 
     let snapshot = GameSnapshot::load_from_file(&snapshot_file, snapshot_format)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
+        .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to load snapshot: {}", e)))?;
 
     if should_print(verbosity, VerbosityLevel::Minimal, suppress_output) {
         log::info!("  Turn number: {}", snapshot.turn_number);
@@ -2615,30 +2604,30 @@ async fn run_resume(
     let p1_type = override_p1.unwrap_or({
         // Use the saved controller type from snapshot
         match snapshot.p1_controller_type {
-            mtg_forge_rs::game::ControllerType::Zero => ControllerType::Zero,
-            mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
-            mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
-            mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
-            mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
+            mtg_engine::game::ControllerType::Zero => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Random => ControllerType::Random,
+            mtg_engine::game::ControllerType::Tui => ControllerType::Tui,
+            mtg_engine::game::ControllerType::Heuristic => ControllerType::Heuristic,
+            mtg_engine::game::ControllerType::Fixed => ControllerType::Fixed,
+            mtg_engine::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
             // Remote/Network controllers can't be restored from snapshot - they require network
-            mtg_forge_rs::game::ControllerType::Remote => ControllerType::Zero,
-            mtg_forge_rs::game::ControllerType::Network => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Remote => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Network => ControllerType::Zero,
         }
     });
 
     let p2_type = override_p2.unwrap_or({
         // Use the saved controller type from snapshot
         match snapshot.p2_controller_type {
-            mtg_forge_rs::game::ControllerType::Zero => ControllerType::Zero,
-            mtg_forge_rs::game::ControllerType::Random => ControllerType::Random,
-            mtg_forge_rs::game::ControllerType::Tui => ControllerType::Tui,
-            mtg_forge_rs::game::ControllerType::Heuristic => ControllerType::Heuristic,
-            mtg_forge_rs::game::ControllerType::Fixed => ControllerType::Fixed,
-            mtg_forge_rs::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
+            mtg_engine::game::ControllerType::Zero => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Random => ControllerType::Random,
+            mtg_engine::game::ControllerType::Tui => ControllerType::Tui,
+            mtg_engine::game::ControllerType::Heuristic => ControllerType::Heuristic,
+            mtg_engine::game::ControllerType::Fixed => ControllerType::Fixed,
+            mtg_engine::game::ControllerType::FancyFixed => ControllerType::FancyFixed,
             // Remote/Network controllers can't be restored from snapshot - they require network
-            mtg_forge_rs::game::ControllerType::Remote => ControllerType::Zero,
-            mtg_forge_rs::game::ControllerType::Network => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Remote => ControllerType::Zero,
+            mtg_engine::game::ControllerType::Network => ControllerType::Zero,
         }
     });
 
@@ -2752,7 +2741,7 @@ async fn run_resume(
     };
 
     // Create base controllers
-    let base_controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> = match p1_type {
+    let base_controller1: Box<dyn mtg_engine::game::controller::PlayerController> = match p1_type {
         ControllerType::Zero => Box::new(ZeroController::new(p1_id)),
         ControllerType::Random => {
             // If overriding or if override seed provided, create fresh controller
@@ -2776,7 +2765,7 @@ async fn run_resume(
                 }
             } else {
                 // Restore from snapshot
-                if let Some(mtg_forge_rs::game::ControllerState::Random(random_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Random(random_controller)) =
                     &snapshot.p1_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2784,7 +2773,7 @@ async fn run_resume(
                     }
                     Box::new(random_controller.clone())
                 } else {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    return Err(mtg_engine::MtgError::InvalidAction(
                         "Cannot restore Random controller: no saved state in snapshot".to_string(),
                     ));
                 }
@@ -2793,7 +2782,7 @@ async fn run_resume(
         ControllerType::Tui => Box::new(InteractiveController::with_numeric_choices(p1_id, numeric_choices)),
         ControllerType::Fancy => Box::new(
             FancyTuiController::new(p1_id, visual_stacks)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
+                .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to initialize Fancy TUI: {}", e)))?,
         ),
         ControllerType::Heuristic => {
             // On resume, prefer the snapshotted heuristic state (so the RNG
@@ -2807,7 +2796,7 @@ async fn run_resume(
                     log::info!("Player 1 Heuristic controller: fresh with seed {}", p1_seed);
                 }
                 Box::new(HeuristicController::with_seed(p1_id, p1_seed))
-            } else if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+            } else if let Some(mtg_engine::game::ControllerState::Heuristic(heuristic_controller)) =
                 &snapshot.p1_controller_state
             {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2823,13 +2812,13 @@ async fn run_resume(
             if let Some(input) = &p1_fixed_inputs {
                 // CLI override - use provided script
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
                 })?;
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                     log::info!("Player 1 Fixed controller: fresh with {} commands", script.len());
                 }
                 Box::new(RichInputController::new(p1_id, script))
-            } else if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
+            } else if let Some(mtg_engine::game::ControllerState::Fixed(fixed_controller)) =
                 &snapshot.p1_controller_state
             {
                 // Restore from snapshot
@@ -2841,18 +2830,18 @@ async fn run_resume(
                 }
                 Box::new(fixed_controller.clone())
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --override-p1=fixed (no snapshot state available)".to_string(),
                 ));
             }
         }
         ControllerType::FancyFixed => {
-            use mtg_forge_rs::game::FancyFixedController;
+            use mtg_engine::game::FancyFixedController;
 
             // FancyFixed requires --p1-fixed-inputs
             if let Some(input) = &p1_fixed_inputs {
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p1-fixed-inputs: {}", e))
                 })?;
 
                 // FancyFixed does not support snapshot restoration yet
@@ -2860,14 +2849,14 @@ async fn run_resume(
 
                 Box::new(FancyFixedController::new(p1_id, script, screenshot_dir)?)
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p1-fixed-inputs is required when --override-p1=fancy-fixed".to_string(),
                 ));
             }
         }
     };
 
-    let base_controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> = match p2_type {
+    let base_controller2: Box<dyn mtg_engine::game::controller::PlayerController> = match p2_type {
         ControllerType::Zero => Box::new(ZeroController::new(p2_id)),
         ControllerType::Random => {
             // If overriding or if override seed provided, create fresh controller
@@ -2891,7 +2880,7 @@ async fn run_resume(
                 }
             } else {
                 // Restore from snapshot
-                if let Some(mtg_forge_rs::game::ControllerState::Random(random_controller)) =
+                if let Some(mtg_engine::game::ControllerState::Random(random_controller)) =
                     &snapshot.p2_controller_state
                 {
                     if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2899,7 +2888,7 @@ async fn run_resume(
                     }
                     Box::new(random_controller.clone())
                 } else {
-                    return Err(mtg_forge_rs::MtgError::InvalidAction(
+                    return Err(mtg_engine::MtgError::InvalidAction(
                         "Cannot restore Random controller: no saved state in snapshot".to_string(),
                     ));
                 }
@@ -2923,7 +2912,7 @@ async fn run_resume(
                     log::info!("Player 2 Heuristic controller: fresh with seed {}", p2_seed);
                 }
                 Box::new(HeuristicController::with_seed(p2_id, p2_seed))
-            } else if let Some(mtg_forge_rs::game::ControllerState::Heuristic(heuristic_controller)) =
+            } else if let Some(mtg_engine::game::ControllerState::Heuristic(heuristic_controller)) =
                 &snapshot.p2_controller_state
             {
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2939,13 +2928,13 @@ async fn run_resume(
             if let Some(input) = &p2_fixed_inputs {
                 // CLI override - use provided script
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
                 })?;
                 if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                     log::info!("Player 2 Fixed controller: fresh with {} commands", script.len());
                 }
                 Box::new(RichInputController::new(p2_id, script))
-            } else if let Some(mtg_forge_rs::game::ControllerState::Fixed(fixed_controller)) =
+            } else if let Some(mtg_engine::game::ControllerState::Fixed(fixed_controller)) =
                 &snapshot.p2_controller_state
             {
                 // Restore from snapshot
@@ -2957,18 +2946,18 @@ async fn run_resume(
                 }
                 Box::new(fixed_controller.clone())
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --override-p2=fixed (no snapshot state available)".to_string(),
                 ));
             }
         }
         ControllerType::FancyFixed => {
-            use mtg_forge_rs::game::FancyFixedController;
+            use mtg_engine::game::FancyFixedController;
 
             // FancyFixed requires --p2-fixed-inputs
             if let Some(input) = &p2_fixed_inputs {
                 let script = parse_fixed_inputs(input).map_err(|e| {
-                    mtg_forge_rs::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
+                    mtg_engine::MtgError::InvalidAction(format!("Error parsing --p2-fixed-inputs: {}", e))
                 })?;
 
                 // FancyFixed does not support snapshot restoration yet
@@ -2976,7 +2965,7 @@ async fn run_resume(
 
                 Box::new(FancyFixedController::new(p2_id, script, screenshot_dir)?)
             } else {
-                return Err(mtg_forge_rs::MtgError::InvalidAction(
+                return Err(mtg_engine::MtgError::InvalidAction(
                     "--p2-fixed-inputs is required when --override-p2=fancy-fixed".to_string(),
                 ));
             }
@@ -2987,7 +2976,7 @@ async fn run_resume(
     // EXCEPTION: Don't wrap FixedScriptController with ReplayController.
     // Fixed controller already has the full game script and wrapping it would cause
     // double-replay (ReplayController replays intra-turn, then Fixed restarts from index 0).
-    let mut controller1: Box<dyn mtg_forge_rs::game::controller::PlayerController> = {
+    let mut controller1: Box<dyn mtg_engine::game::controller::PlayerController> = {
         let is_fixed = matches!(p1_type, ControllerType::Fixed);
         if is_fixed {
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -2999,7 +2988,7 @@ async fn run_resume(
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                 log::info!("Player 1 will replay {} intra-turn choices", p1_replay_choices.len());
             }
-            Box::new(mtg_forge_rs::game::ReplayController::new(
+            Box::new(mtg_engine::game::ReplayController::new(
                 p1_id,
                 base_controller1,
                 p1_replay_choices,
@@ -3007,7 +2996,7 @@ async fn run_resume(
         }
     };
 
-    let mut controller2: Box<dyn mtg_forge_rs::game::controller::PlayerController> = {
+    let mut controller2: Box<dyn mtg_engine::game::controller::PlayerController> = {
         let is_fixed = matches!(p2_type, ControllerType::Fixed | ControllerType::FancyFixed);
         if is_fixed {
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
@@ -3019,7 +3008,7 @@ async fn run_resume(
             if should_print(verbosity, VerbosityLevel::Verbose, suppress_output) {
                 log::info!("Player 2 will replay {} intra-turn choices", p2_replay_choices.len());
             }
-            Box::new(mtg_forge_rs::game::ReplayController::new(
+            Box::new(mtg_engine::game::ReplayController::new(
                 p2_id,
                 base_controller2,
                 p2_replay_choices,
@@ -3035,20 +3024,18 @@ async fn run_resume(
     // Must be done BEFORE creating game loop since loop borrows game mutably
     if log_tail.is_some() {
         // Use Both mode to capture AND output to stdout (not Memory which suppresses stdout)
-        game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+        game.logger.set_output_mode(mtg_engine::game::logger::OutputMode::Both);
     }
 
     // Enable memory-only logging if fancy TUI is being used (prevents screen flickering)
     let is_fancy_tui_resume = matches!(p1_type, ControllerType::Fancy) || matches!(p2_type, ControllerType::Fancy);
     if is_fancy_tui_resume {
         game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Memory);
+            .set_output_mode(mtg_engine::game::logger::OutputMode::Memory);
     } else {
         // Same rationale as run_tui: capture to memory so we can persist a
         // complete game log to /tmp at exit, while keeping stdout output.
-        game.logger
-            .set_output_mode(mtg_forge_rs::game::logger::OutputMode::Both);
+        game.logger.set_output_mode(mtg_engine::game::logger::OutputMode::Both);
     }
 
     // Run the game loop
@@ -3061,7 +3048,7 @@ async fn run_resume(
     // but turns_elapsed tracks COMPLETED turns, so we need turn_number - 1
     let turn_num = snapshot.turn_number;
     if turn_num == 0 {
-        return Err(mtg_forge_rs::MtgError::InvalidAction(
+        return Err(mtg_engine::MtgError::InvalidAction(
             "Invalid snapshot: turn_number is 0 (turns are 1-based, not 0-based)".to_string(),
         ));
     }
@@ -3079,7 +3066,7 @@ async fn run_resume(
     // Set baseline choice count for replay mode
     // This is ALWAYS needed when resuming to determine when to stop suppressing logs
     {
-        use mtg_forge_rs::undo::GameAction;
+        use mtg_engine::undo::GameAction;
 
         // Count all ChoicePoints in the undo log to establish baseline
         // If stop_condition exists, filter by applicable player; otherwise count all
@@ -3118,7 +3105,7 @@ async fn run_resume(
     // Enable replay mode to suppress logging during replay
     // This must be done AFTER setting baseline
     {
-        use mtg_forge_rs::undo::GameAction;
+        use mtg_engine::undo::GameAction;
 
         // Count ALL ChoicePoint entries - each one will trigger log_choice_point
         // and we need to suppress logging for all of them until replay is complete
@@ -3147,7 +3134,7 @@ async fn run_resume(
     // as the &mut GameState reference, causing Rust to be conservative about borrows.
     drop(game_loop);
 
-    use mtg_forge_rs::game::GameEndReason;
+    use mtg_engine::game::GameEndReason;
 
     // If log_tail was enabled, flush only the last K lines now
     // Skip for snapshot exits - logs were already printed in real-time with OutputMode::Both,
@@ -3234,7 +3221,7 @@ async fn run_resume(
 
             final_snapshot
                 .save_to_file(&final_state_path, snapshot_format)
-                .map_err(|e| mtg_forge_rs::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
+                .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("Failed to save final gamestate: {}", e)))?;
 
             if verbosity >= VerbosityLevel::Verbose {
                 log::info!("\nFinal game state saved to: {}", final_state_path.display());
@@ -3267,8 +3254,8 @@ async fn run_deck_build(
     start_year: Option<u16>,
     end_year: Option<u16>,
 ) -> Result<()> {
-    use mtg_forge_rs::deck_builder::{run_deck_builder, DeckBuilderConfig};
-    use mtg_forge_rs::loader::{AsyncCardDatabase as CardDatabase, CardEditionIndex};
+    use mtg_engine::deck_builder::{run_deck_builder, DeckBuilderConfig};
+    use mtg_engine::loader::{AsyncCardDatabase as CardDatabase, CardEditionIndex};
 
     println!("=== MTG Forge - Fast Deck Builder ===\n");
 
@@ -3284,7 +3271,7 @@ async fn run_deck_build(
 
     // Verify cardsfolder exists
     if !cardsfolder.exists() {
-        return Err(mtg_forge_rs::MtgError::InvalidDeckFormat(format!(
+        return Err(mtg_engine::MtgError::InvalidDeckFormat(format!(
             "Cardsfolder not found: {:?}",
             cardsfolder
         )));
@@ -3348,7 +3335,7 @@ async fn run_deck_build(
     card_names.sort();
 
     // Build definitions map for card details
-    let card_definitions: std::collections::HashMap<String, std::sync::Arc<mtg_forge_rs::loader::CardDefinition>> =
+    let card_definitions: std::collections::HashMap<String, std::sync::Arc<mtg_engine::loader::CardDefinition>> =
         filtered_cards.into_iter().map(|c| (c.name.to_string(), c)).collect();
 
     println!();
@@ -3365,7 +3352,7 @@ async fn run_deck_build(
 
 /// Print statistics about the card database
 async fn run_stats(paths: Vec<String>) -> Result<()> {
-    use mtg_forge_rs::loader::{CardDefinition, CardLoader};
+    use mtg_engine::loader::{CardDefinition, CardLoader};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -3489,7 +3476,7 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
     // Keyword distribution
     let mut keyword_counts: HashMap<String, usize> = HashMap::new();
     for card in &all_cards {
-        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        let instantiated = card.instantiate(mtg_engine::core::CardId::new(0), mtg_engine::core::PlayerId::new(0));
 
         // Count all keywords
         for keyword in instantiated.keywords.iter() {
@@ -3497,141 +3484,141 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
             if let Some(args) = instantiated.keywords.get_args(keyword) {
                 // Complex keyword - strip parameter for aggregation
                 let keyword_name = match args {
-                    mtg_forge_rs::core::KeywordArgs::Madness { .. } => "Madness",
-                    mtg_forge_rs::core::KeywordArgs::Flashback { .. } => "Flashback",
-                    mtg_forge_rs::core::KeywordArgs::Kicker { .. } => "Kicker",
-                    mtg_forge_rs::core::KeywordArgs::Cycling { .. } => "Cycling",
-                    mtg_forge_rs::core::KeywordArgs::Equip { .. } => "Equip",
-                    mtg_forge_rs::core::KeywordArgs::Morph { .. } => "Morph",
-                    mtg_forge_rs::core::KeywordArgs::Evoke { .. } => "Evoke",
-                    mtg_forge_rs::core::KeywordArgs::Buyback { .. } => "Buyback",
-                    mtg_forge_rs::core::KeywordArgs::Echo { .. } => "Echo",
-                    mtg_forge_rs::core::KeywordArgs::Suspend { .. } => "Suspend",
-                    mtg_forge_rs::core::KeywordArgs::Enchant { .. } => "Enchant",
-                    mtg_forge_rs::core::KeywordArgs::Landwalk { .. } => "Landwalk",
-                    mtg_forge_rs::core::KeywordArgs::Affinity { .. } => "Affinity",
-                    mtg_forge_rs::core::KeywordArgs::Protection { .. } => "Protection",
-                    mtg_forge_rs::core::KeywordArgs::Offering { .. } => "Offering",
-                    mtg_forge_rs::core::KeywordArgs::Champion { .. } => "Champion",
-                    mtg_forge_rs::core::KeywordArgs::Amplify { .. } => "Amplify",
-                    mtg_forge_rs::core::KeywordArgs::Annihilator { .. } => "Annihilator",
-                    mtg_forge_rs::core::KeywordArgs::Bushido { .. } => "Bushido",
-                    mtg_forge_rs::core::KeywordArgs::Fading { .. } => "Fading",
-                    mtg_forge_rs::core::KeywordArgs::Vanishing { .. } => "Vanishing",
-                    mtg_forge_rs::core::KeywordArgs::Dredge { .. } => "Dredge",
-                    mtg_forge_rs::core::KeywordArgs::Modular { .. } => "Modular",
-                    mtg_forge_rs::core::KeywordArgs::Absorb { .. } => "Absorb",
-                    mtg_forge_rs::core::KeywordArgs::HexproofFrom { .. } => "Hexproof From",
-                    mtg_forge_rs::core::KeywordArgs::PartnerWith { .. } => "Partner With",
-                    mtg_forge_rs::core::KeywordArgs::Companion { .. } => "Companion",
+                    mtg_engine::core::KeywordArgs::Madness { .. } => "Madness",
+                    mtg_engine::core::KeywordArgs::Flashback { .. } => "Flashback",
+                    mtg_engine::core::KeywordArgs::Kicker { .. } => "Kicker",
+                    mtg_engine::core::KeywordArgs::Cycling { .. } => "Cycling",
+                    mtg_engine::core::KeywordArgs::Equip { .. } => "Equip",
+                    mtg_engine::core::KeywordArgs::Morph { .. } => "Morph",
+                    mtg_engine::core::KeywordArgs::Evoke { .. } => "Evoke",
+                    mtg_engine::core::KeywordArgs::Buyback { .. } => "Buyback",
+                    mtg_engine::core::KeywordArgs::Echo { .. } => "Echo",
+                    mtg_engine::core::KeywordArgs::Suspend { .. } => "Suspend",
+                    mtg_engine::core::KeywordArgs::Enchant { .. } => "Enchant",
+                    mtg_engine::core::KeywordArgs::Landwalk { .. } => "Landwalk",
+                    mtg_engine::core::KeywordArgs::Affinity { .. } => "Affinity",
+                    mtg_engine::core::KeywordArgs::Protection { .. } => "Protection",
+                    mtg_engine::core::KeywordArgs::Offering { .. } => "Offering",
+                    mtg_engine::core::KeywordArgs::Champion { .. } => "Champion",
+                    mtg_engine::core::KeywordArgs::Amplify { .. } => "Amplify",
+                    mtg_engine::core::KeywordArgs::Annihilator { .. } => "Annihilator",
+                    mtg_engine::core::KeywordArgs::Bushido { .. } => "Bushido",
+                    mtg_engine::core::KeywordArgs::Fading { .. } => "Fading",
+                    mtg_engine::core::KeywordArgs::Vanishing { .. } => "Vanishing",
+                    mtg_engine::core::KeywordArgs::Dredge { .. } => "Dredge",
+                    mtg_engine::core::KeywordArgs::Modular { .. } => "Modular",
+                    mtg_engine::core::KeywordArgs::Absorb { .. } => "Absorb",
+                    mtg_engine::core::KeywordArgs::HexproofFrom { .. } => "Hexproof From",
+                    mtg_engine::core::KeywordArgs::PartnerWith { .. } => "Partner With",
+                    mtg_engine::core::KeywordArgs::Companion { .. } => "Companion",
                     // New cost-based keywords
-                    mtg_forge_rs::core::KeywordArgs::AuraSwap { .. } => "Aura Swap",
-                    mtg_forge_rs::core::KeywordArgs::Bestow { .. } => "Bestow",
-                    mtg_forge_rs::core::KeywordArgs::Blitz { .. } => "Blitz",
-                    mtg_forge_rs::core::KeywordArgs::CumulativeUpkeep { .. } => "Cumulative Upkeep",
-                    mtg_forge_rs::core::KeywordArgs::Dash { .. } => "Dash",
-                    mtg_forge_rs::core::KeywordArgs::Disguise { .. } => "Disguise",
-                    mtg_forge_rs::core::KeywordArgs::Disturb { .. } => "Disturb",
-                    mtg_forge_rs::core::KeywordArgs::Embalm { .. } => "Embalm",
-                    mtg_forge_rs::core::KeywordArgs::Encore { .. } => "Encore",
-                    mtg_forge_rs::core::KeywordArgs::Entwine { .. } => "Entwine",
-                    mtg_forge_rs::core::KeywordArgs::Escalate { .. } => "Escalate",
-                    mtg_forge_rs::core::KeywordArgs::Escape { .. } => "Escape",
-                    mtg_forge_rs::core::KeywordArgs::Eternalize { .. } => "Eternalize",
-                    mtg_forge_rs::core::KeywordArgs::Foretell { .. } => "Foretell",
-                    mtg_forge_rs::core::KeywordArgs::Fortify { .. } => "Fortify",
-                    mtg_forge_rs::core::KeywordArgs::Freerunning { .. } => "Freerunning",
-                    mtg_forge_rs::core::KeywordArgs::Harmonize { .. } => "Harmonize",
-                    mtg_forge_rs::core::KeywordArgs::LevelUp { .. } => "Level Up",
-                    mtg_forge_rs::core::KeywordArgs::MayFlashCost { .. } => "MayFlashCost",
-                    mtg_forge_rs::core::KeywordArgs::Megamorph { .. } => "Megamorph",
-                    mtg_forge_rs::core::KeywordArgs::Miracle { .. } => "Miracle",
-                    mtg_forge_rs::core::KeywordArgs::MoreThanMeetsTheEye { .. } => "More Than Meets The Eye",
-                    mtg_forge_rs::core::KeywordArgs::Multikicker { .. } => "Multikicker",
-                    mtg_forge_rs::core::KeywordArgs::Mutate { .. } => "Mutate",
-                    mtg_forge_rs::core::KeywordArgs::Offspring { .. } => "Offspring",
-                    mtg_forge_rs::core::KeywordArgs::Outlast { .. } => "Outlast",
-                    mtg_forge_rs::core::KeywordArgs::Overload { .. } => "Overload",
-                    mtg_forge_rs::core::KeywordArgs::Plot { .. } => "Plot",
-                    mtg_forge_rs::core::KeywordArgs::Prowl { .. } => "Prowl",
-                    mtg_forge_rs::core::KeywordArgs::Prototype { .. } => "Prototype",
-                    mtg_forge_rs::core::KeywordArgs::Reconfigure { .. } => "Reconfigure",
-                    mtg_forge_rs::core::KeywordArgs::Reflect { .. } => "Reflect",
-                    mtg_forge_rs::core::KeywordArgs::Scavenge { .. } => "Scavenge",
-                    mtg_forge_rs::core::KeywordArgs::Sneak { .. } => "Sneak",
-                    mtg_forge_rs::core::KeywordArgs::Specialize { .. } => "Specialize",
-                    mtg_forge_rs::core::KeywordArgs::Spectacle { .. } => "Spectacle",
-                    mtg_forge_rs::core::KeywordArgs::Squad { .. } => "Squad",
-                    mtg_forge_rs::core::KeywordArgs::Strive { .. } => "Strive",
-                    mtg_forge_rs::core::KeywordArgs::Surge { .. } => "Surge",
-                    mtg_forge_rs::core::KeywordArgs::Transfigure { .. } => "Transfigure",
-                    mtg_forge_rs::core::KeywordArgs::Transmute { .. } => "Transmute",
-                    mtg_forge_rs::core::KeywordArgs::Unearth { .. } => "Unearth",
-                    mtg_forge_rs::core::KeywordArgs::Ward { .. } => "Ward",
-                    mtg_forge_rs::core::KeywordArgs::WardWaterbend { .. } => "Ward (Waterbend)",
-                    mtg_forge_rs::core::KeywordArgs::Warp { .. } => "Warp",
-                    mtg_forge_rs::core::KeywordArgs::WebSlinging { .. } => "Web-Slinging",
+                    mtg_engine::core::KeywordArgs::AuraSwap { .. } => "Aura Swap",
+                    mtg_engine::core::KeywordArgs::Bestow { .. } => "Bestow",
+                    mtg_engine::core::KeywordArgs::Blitz { .. } => "Blitz",
+                    mtg_engine::core::KeywordArgs::CumulativeUpkeep { .. } => "Cumulative Upkeep",
+                    mtg_engine::core::KeywordArgs::Dash { .. } => "Dash",
+                    mtg_engine::core::KeywordArgs::Disguise { .. } => "Disguise",
+                    mtg_engine::core::KeywordArgs::Disturb { .. } => "Disturb",
+                    mtg_engine::core::KeywordArgs::Embalm { .. } => "Embalm",
+                    mtg_engine::core::KeywordArgs::Encore { .. } => "Encore",
+                    mtg_engine::core::KeywordArgs::Entwine { .. } => "Entwine",
+                    mtg_engine::core::KeywordArgs::Escalate { .. } => "Escalate",
+                    mtg_engine::core::KeywordArgs::Escape { .. } => "Escape",
+                    mtg_engine::core::KeywordArgs::Eternalize { .. } => "Eternalize",
+                    mtg_engine::core::KeywordArgs::Foretell { .. } => "Foretell",
+                    mtg_engine::core::KeywordArgs::Fortify { .. } => "Fortify",
+                    mtg_engine::core::KeywordArgs::Freerunning { .. } => "Freerunning",
+                    mtg_engine::core::KeywordArgs::Harmonize { .. } => "Harmonize",
+                    mtg_engine::core::KeywordArgs::LevelUp { .. } => "Level Up",
+                    mtg_engine::core::KeywordArgs::MayFlashCost { .. } => "MayFlashCost",
+                    mtg_engine::core::KeywordArgs::Megamorph { .. } => "Megamorph",
+                    mtg_engine::core::KeywordArgs::Miracle { .. } => "Miracle",
+                    mtg_engine::core::KeywordArgs::MoreThanMeetsTheEye { .. } => "More Than Meets The Eye",
+                    mtg_engine::core::KeywordArgs::Multikicker { .. } => "Multikicker",
+                    mtg_engine::core::KeywordArgs::Mutate { .. } => "Mutate",
+                    mtg_engine::core::KeywordArgs::Offspring { .. } => "Offspring",
+                    mtg_engine::core::KeywordArgs::Outlast { .. } => "Outlast",
+                    mtg_engine::core::KeywordArgs::Overload { .. } => "Overload",
+                    mtg_engine::core::KeywordArgs::Plot { .. } => "Plot",
+                    mtg_engine::core::KeywordArgs::Prowl { .. } => "Prowl",
+                    mtg_engine::core::KeywordArgs::Prototype { .. } => "Prototype",
+                    mtg_engine::core::KeywordArgs::Reconfigure { .. } => "Reconfigure",
+                    mtg_engine::core::KeywordArgs::Reflect { .. } => "Reflect",
+                    mtg_engine::core::KeywordArgs::Scavenge { .. } => "Scavenge",
+                    mtg_engine::core::KeywordArgs::Sneak { .. } => "Sneak",
+                    mtg_engine::core::KeywordArgs::Specialize { .. } => "Specialize",
+                    mtg_engine::core::KeywordArgs::Spectacle { .. } => "Spectacle",
+                    mtg_engine::core::KeywordArgs::Squad { .. } => "Squad",
+                    mtg_engine::core::KeywordArgs::Strive { .. } => "Strive",
+                    mtg_engine::core::KeywordArgs::Surge { .. } => "Surge",
+                    mtg_engine::core::KeywordArgs::Transfigure { .. } => "Transfigure",
+                    mtg_engine::core::KeywordArgs::Transmute { .. } => "Transmute",
+                    mtg_engine::core::KeywordArgs::Unearth { .. } => "Unearth",
+                    mtg_engine::core::KeywordArgs::Ward { .. } => "Ward",
+                    mtg_engine::core::KeywordArgs::WardWaterbend { .. } => "Ward (Waterbend)",
+                    mtg_engine::core::KeywordArgs::Warp { .. } => "Warp",
+                    mtg_engine::core::KeywordArgs::WebSlinging { .. } => "Web-Slinging",
                     // New amount-based keywords
-                    mtg_forge_rs::core::KeywordArgs::Afflict { .. } => "Afflict",
-                    mtg_forge_rs::core::KeywordArgs::Afterlife { .. } => "Afterlife",
-                    mtg_forge_rs::core::KeywordArgs::Bloodthirst { .. } => "Bloodthirst",
-                    mtg_forge_rs::core::KeywordArgs::Casualty { .. } => "Casualty",
-                    mtg_forge_rs::core::KeywordArgs::Crew { .. } => "Crew",
-                    mtg_forge_rs::core::KeywordArgs::Fabricate { .. } => "Fabricate",
-                    mtg_forge_rs::core::KeywordArgs::Frenzy { .. } => "Frenzy",
-                    mtg_forge_rs::core::KeywordArgs::Graft { .. } => "Graft",
-                    mtg_forge_rs::core::KeywordArgs::Hideaway { .. } => "Hideaway",
-                    mtg_forge_rs::core::KeywordArgs::Mobilize { .. } => "Mobilize",
-                    mtg_forge_rs::core::KeywordArgs::Poisonous { .. } => "Poisonous",
-                    mtg_forge_rs::core::KeywordArgs::Rampage { .. } => "Rampage",
-                    mtg_forge_rs::core::KeywordArgs::Renown { .. } => "Renown",
-                    mtg_forge_rs::core::KeywordArgs::Ripple { .. } => "Ripple",
-                    mtg_forge_rs::core::KeywordArgs::Saddle { .. } => "Saddle",
-                    mtg_forge_rs::core::KeywordArgs::Soulshift { .. } => "Soulshift",
-                    mtg_forge_rs::core::KeywordArgs::StartingIntensity { .. } => "Starting Intensity",
-                    mtg_forge_rs::core::KeywordArgs::Station { .. } => "Station",
-                    mtg_forge_rs::core::KeywordArgs::Toxic { .. } => "Toxic",
-                    mtg_forge_rs::core::KeywordArgs::Tribute { .. } => "Tribute",
+                    mtg_engine::core::KeywordArgs::Afflict { .. } => "Afflict",
+                    mtg_engine::core::KeywordArgs::Afterlife { .. } => "Afterlife",
+                    mtg_engine::core::KeywordArgs::Bloodthirst { .. } => "Bloodthirst",
+                    mtg_engine::core::KeywordArgs::Casualty { .. } => "Casualty",
+                    mtg_engine::core::KeywordArgs::Crew { .. } => "Crew",
+                    mtg_engine::core::KeywordArgs::Fabricate { .. } => "Fabricate",
+                    mtg_engine::core::KeywordArgs::Frenzy { .. } => "Frenzy",
+                    mtg_engine::core::KeywordArgs::Graft { .. } => "Graft",
+                    mtg_engine::core::KeywordArgs::Hideaway { .. } => "Hideaway",
+                    mtg_engine::core::KeywordArgs::Mobilize { .. } => "Mobilize",
+                    mtg_engine::core::KeywordArgs::Poisonous { .. } => "Poisonous",
+                    mtg_engine::core::KeywordArgs::Rampage { .. } => "Rampage",
+                    mtg_engine::core::KeywordArgs::Renown { .. } => "Renown",
+                    mtg_engine::core::KeywordArgs::Ripple { .. } => "Ripple",
+                    mtg_engine::core::KeywordArgs::Saddle { .. } => "Saddle",
+                    mtg_engine::core::KeywordArgs::Soulshift { .. } => "Soulshift",
+                    mtg_engine::core::KeywordArgs::StartingIntensity { .. } => "Starting Intensity",
+                    mtg_engine::core::KeywordArgs::Station { .. } => "Station",
+                    mtg_engine::core::KeywordArgs::Toxic { .. } => "Toxic",
+                    mtg_engine::core::KeywordArgs::Tribute { .. } => "Tribute",
                     // Cost + amount keywords
-                    mtg_forge_rs::core::KeywordArgs::Adapt { .. } => "Adapt",
-                    mtg_forge_rs::core::KeywordArgs::Awaken { .. } => "Awaken",
-                    mtg_forge_rs::core::KeywordArgs::Backup { .. } => "Backup",
-                    mtg_forge_rs::core::KeywordArgs::Impending { .. } => "Impending",
-                    mtg_forge_rs::core::KeywordArgs::Monstrosity { .. } => "Monstrosity",
-                    mtg_forge_rs::core::KeywordArgs::Reinforce { .. } => "Reinforce",
+                    mtg_engine::core::KeywordArgs::Adapt { .. } => "Adapt",
+                    mtg_engine::core::KeywordArgs::Awaken { .. } => "Awaken",
+                    mtg_engine::core::KeywordArgs::Backup { .. } => "Backup",
+                    mtg_engine::core::KeywordArgs::Impending { .. } => "Impending",
+                    mtg_engine::core::KeywordArgs::Monstrosity { .. } => "Monstrosity",
+                    mtg_engine::core::KeywordArgs::Reinforce { .. } => "Reinforce",
                     // Cost + type keywords
-                    mtg_forge_rs::core::KeywordArgs::Splice { .. } => "Splice",
-                    mtg_forge_rs::core::KeywordArgs::Typecycling { .. } => "Typecycling",
+                    mtg_engine::core::KeywordArgs::Splice { .. } => "Splice",
+                    mtg_engine::core::KeywordArgs::Typecycling { .. } => "Typecycling",
                     // Type-based keywords
-                    mtg_forge_rs::core::KeywordArgs::BandsWithOther { .. } => "Bands With Other",
+                    mtg_engine::core::KeywordArgs::BandsWithOther { .. } => "Bands With Other",
                     // Special keywords
-                    mtg_forge_rs::core::KeywordArgs::Emerge { .. } => "Emerge",
-                    mtg_forge_rs::core::KeywordArgs::Firebending { .. } => "Firebending",
-                    mtg_forge_rs::core::KeywordArgs::Ninjutsu { .. } => "Ninjutsu",
-                    mtg_forge_rs::core::KeywordArgs::Partner => "Partner",
-                    mtg_forge_rs::core::KeywordArgs::Craft { .. } => "Craft",
-                    mtg_forge_rs::core::KeywordArgs::Devour { .. } => "Devour",
-                    mtg_forge_rs::core::KeywordArgs::Haunt { .. } => "Haunt",
-                    mtg_forge_rs::core::KeywordArgs::Replicate { .. } => "Replicate",
-                    mtg_forge_rs::core::KeywordArgs::MayEffectFromOpeningHand { .. } => "May Effect From Opening Hand",
-                    mtg_forge_rs::core::KeywordArgs::Mayhem { .. } => "Mayhem",
-                    mtg_forge_rs::core::KeywordArgs::Recover { .. } => "Recover",
-                    mtg_forge_rs::core::KeywordArgs::Visit { .. } => "Visit",
-                    mtg_forge_rs::core::KeywordArgs::DeckLimit { .. } => "Deck Limit",
-                    mtg_forge_rs::core::KeywordArgs::Dungeon { .. } => "Dungeon",
+                    mtg_engine::core::KeywordArgs::Emerge { .. } => "Emerge",
+                    mtg_engine::core::KeywordArgs::Firebending { .. } => "Firebending",
+                    mtg_engine::core::KeywordArgs::Ninjutsu { .. } => "Ninjutsu",
+                    mtg_engine::core::KeywordArgs::Partner => "Partner",
+                    mtg_engine::core::KeywordArgs::Craft { .. } => "Craft",
+                    mtg_engine::core::KeywordArgs::Devour { .. } => "Devour",
+                    mtg_engine::core::KeywordArgs::Haunt { .. } => "Haunt",
+                    mtg_engine::core::KeywordArgs::Replicate { .. } => "Replicate",
+                    mtg_engine::core::KeywordArgs::MayEffectFromOpeningHand { .. } => "May Effect From Opening Hand",
+                    mtg_engine::core::KeywordArgs::Mayhem { .. } => "Mayhem",
+                    mtg_engine::core::KeywordArgs::Recover { .. } => "Recover",
+                    mtg_engine::core::KeywordArgs::Visit { .. } => "Visit",
+                    mtg_engine::core::KeywordArgs::DeckLimit { .. } => "Deck Limit",
+                    mtg_engine::core::KeywordArgs::Dungeon { .. } => "Dungeon",
                     // Saga and Class keywords
-                    mtg_forge_rs::core::KeywordArgs::Chapter { .. } => "Chapter",
-                    mtg_forge_rs::core::KeywordArgs::Class { .. } => "Class",
+                    mtg_engine::core::KeywordArgs::Chapter { .. } => "Chapter",
+                    mtg_engine::core::KeywordArgs::Class { .. } => "Class",
                     // ETB keywords
-                    mtg_forge_rs::core::KeywordArgs::ETBReplacement { .. } => "ETB Replacement",
-                    mtg_forge_rs::core::KeywordArgs::EtbCounter { .. } => "ETB Counter",
+                    mtg_engine::core::KeywordArgs::ETBReplacement { .. } => "ETB Replacement",
+                    mtg_engine::core::KeywordArgs::EtbCounter { .. } => "ETB Counter",
                     // Alternate costs and special keywords
-                    mtg_forge_rs::core::KeywordArgs::AlternateAdditionalCost { .. } => "Alternate Additional Cost",
-                    mtg_forge_rs::core::KeywordArgs::MustBeBlockedByAllFiltered { .. } => {
+                    mtg_engine::core::KeywordArgs::AlternateAdditionalCost { .. } => "Alternate Additional Cost",
+                    mtg_engine::core::KeywordArgs::MustBeBlockedByAllFiltered { .. } => {
                         "Must Be Blocked By All (Filtered)"
                     }
-                    mtg_forge_rs::core::KeywordArgs::MayEffectFromOpeningDeck { .. } => "May Effect From Opening Deck",
-                    mtg_forge_rs::core::KeywordArgs::Prize { .. } => "Prize",
+                    mtg_engine::core::KeywordArgs::MayEffectFromOpeningDeck { .. } => "May Effect From Opening Deck",
+                    mtg_engine::core::KeywordArgs::Prize { .. } => "Prize",
                 }
                 .to_string();
                 *keyword_counts.entry(keyword_name).or_insert(0) += 1;
@@ -3663,7 +3650,7 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
     let mut cards_with_triggers = 0;
     let mut cards_with_activated = 0;
     for card in &all_cards {
-        let instantiated = card.instantiate(mtg_forge_rs::core::CardId::new(0), mtg_forge_rs::core::PlayerId::new(0));
+        let instantiated = card.instantiate(mtg_engine::core::CardId::new(0), mtg_engine::core::PlayerId::new(0));
         if !instantiated.triggers.is_empty() {
             cards_with_triggers += 1;
         }
@@ -3704,7 +3691,7 @@ async fn run_stats(paths: Vec<String>) -> Result<()> {
 ///
 /// These files can be loaded by the WASM module in the browser.
 async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()> {
-    use mtg_forge_rs::loader::CardLoader;
+    use mtg_engine::loader::CardLoader;
     use std::collections::HashMap;
     use std::fs;
 
@@ -3712,7 +3699,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
 
     // Create output directory if it doesn't exist
     fs::create_dir_all(&output).map_err(|e| {
-        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+        mtg_engine::MtgError::IoError(std::io::Error::other(format!(
             "Failed to create output directory {}: {}",
             output.display(),
             e
@@ -3724,12 +3711,12 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     println!("Loading card definitions from {}...", cardsfolder.display());
 
     // Load all card files directly from cardsfolder (using glob)
-    let mut card_definitions: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+    let mut card_definitions: HashMap<String, mtg_engine::loader::CardDefinition> = HashMap::new();
     let mut load_errors = 0;
 
     let card_pattern = format!("{}/**/*.txt", cardsfolder.display());
     for entry in glob::glob(&card_pattern)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Invalid glob pattern: {}", e)))?
+        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Invalid glob pattern: {}", e)))?
     {
         match entry {
             Ok(path) => {
@@ -3759,22 +3746,22 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     );
 
     // Partition cards into per-set bins (replaces the legacy single cards.bin
-    // write — see mtg-6fsjb). Each card is stored ONCE, at its earliest
+    // write — see mtg-464). Each card is stored ONCE, at its earliest
     // printing's `<YYYY>-<CODE>.bin`; cards with no edition entry land in
     // `0000-MISC.bin`. The browser fetches only the sets a deck needs.
     let sets_dir = output.join("sets");
     if sets_dir.exists() {
         fs::remove_dir_all(&sets_dir).map_err(|e| {
-            mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!("Failed to clean sets directory: {}", e)))
+            mtg_engine::MtgError::IoError(std::io::Error::other(format!("Failed to clean sets directory: {}", e)))
         })?;
     }
     fs::create_dir_all(&sets_dir).map_err(|e| {
-        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!("Failed to create sets directory: {}", e)))
+        mtg_engine::MtgError::IoError(std::io::Error::other(format!("Failed to create sets directory: {}", e)))
     })?;
 
     println!("\nScanning editions/ for per-set primary assignments...");
-    let primary = mtg_forge_rs::loader::PrimarySetAssignment::scan(std::path::Path::new("editions"))
-        .map_err(mtg_forge_rs::MtgError::IoError)?;
+    let primary = mtg_engine::loader::PrimarySetAssignment::scan(std::path::Path::new("editions"))
+        .map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "  Editions: {} sets, {} card names indexed",
         primary.set_count(),
@@ -3784,7 +3771,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     // Bucket card definitions by their primary set file basename.
     // Uses references into `card_definitions` (no clone) per CLAUDE.md rules.
     const FALLBACK_BUCKET: &str = "0000-MISC";
-    let mut buckets: std::collections::BTreeMap<String, Vec<(&str, &mtg_forge_rs::loader::CardDefinition)>> =
+    let mut buckets: std::collections::BTreeMap<String, Vec<(&str, &mtg_engine::loader::CardDefinition)>> =
         std::collections::BTreeMap::new();
     let mut orphan_count = 0usize;
     for (name, def) in &card_definitions {
@@ -3829,14 +3816,14 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     for (bucket, entries) in &buckets {
         // bincode HashMap<String, CardDefinition> wire format matches
         // HashMap<&str, &CardDefinition> (length-prefixed pairs).
-        let map: std::collections::HashMap<&str, &mtg_forge_rs::loader::CardDefinition> =
+        let map: std::collections::HashMap<&str, &mtg_engine::loader::CardDefinition> =
             entries.iter().copied().collect();
         let bytes = bincode::serialize(&map).map_err(|e| {
-            mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
+            mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize set {}: {}", bucket, e))
         })?;
         let file_name = format!("{}.bin", bucket);
         let path = sets_dir.join(&file_name);
-        fs::write(&path, &bytes).map_err(mtg_forge_rs::MtgError::IoError)?;
+        fs::write(&path, &bytes).map_err(mtg_engine::MtgError::IoError)?;
         total_sets_bytes += bytes.len();
         sets_manifest.push(SetManifestEntry {
             file: file_name.clone(),
@@ -3855,8 +3842,8 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     };
     let index_path = sets_dir.join("index.json");
     let index_json = serde_json::to_string(&index)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize sets index: {}", e)))?;
-    fs::write(&index_path, &index_json).map_err(mtg_forge_rs::MtgError::IoError)?;
+        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize sets index: {}", e)))?;
+    fs::write(&index_path, &index_json).map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "\nWrote {} per-set bins ({} bytes total) + index.json ({} bytes)",
         buckets.len(),
@@ -3864,16 +3851,16 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         index_json.len()
     );
 
-    // Export tokens (single file, partitioning out of scope — see mtg-6fsjb Q10).
+    // Export tokens (single file, partitioning out of scope — see mtg-464 Q10).
     let cardsfolder_canonical = std::fs::canonicalize(&cardsfolder).map_err(|e| {
-        mtg_forge_rs::MtgError::IoError(std::io::Error::other(format!(
+        mtg_engine::MtgError::IoError(std::io::Error::other(format!(
             "Failed to resolve cardsfolder path: {}",
             e
         )))
     })?;
     let tokenscripts_dir = cardsfolder_canonical
         .parent()
-        .ok_or_else(|| mtg_forge_rs::MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
+        .ok_or_else(|| mtg_engine::MtgError::InvalidCardFormat("Invalid cardsfolder path".to_string()))?
         .join("tokenscripts");
 
     println!(
@@ -3885,11 +3872,11 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         }
     );
 
-    let mut token_definitions: HashMap<String, mtg_forge_rs::loader::CardDefinition> = HashMap::new();
+    let mut token_definitions: HashMap<String, mtg_engine::loader::CardDefinition> = HashMap::new();
     if tokenscripts_dir.exists() {
         let token_pattern = format!("{}/*.txt", tokenscripts_dir.display());
         for entry in glob::glob(&token_pattern)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Invalid token glob pattern: {}", e)))?
+            .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Invalid token glob pattern: {}", e)))?
         {
             match entry {
                 Ok(path) => {
@@ -3919,8 +3906,8 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
 
     let tokens_path = output.join("tokens.bin");
     let tokens_data = bincode::serialize(&token_definitions)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidCardFormat(format!("Failed to serialize tokens: {}", e)))?;
-    fs::write(&tokens_path, &tokens_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize tokens: {}", e)))?;
+    fs::write(&tokens_path, &tokens_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "Exported {} token definitions to {} ({} bytes)",
         token_definitions.len(),
@@ -3933,12 +3920,12 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     for pattern in &deck_globs {
         println!("  - {}", pattern);
     }
-    let mut decks: HashMap<String, mtg_forge_rs::loader::DeckList> = HashMap::new();
+    let mut decks: HashMap<String, mtg_engine::loader::DeckList> = HashMap::new();
 
     // Use glob to find matching deck files from all patterns
     for deck_glob in &deck_globs {
         for entry in glob::glob(deck_glob)
-            .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Invalid glob pattern: {}", e)))?
+            .map_err(|e| mtg_engine::MtgError::InvalidDeckFormat(format!("Invalid glob pattern: {}", e)))?
         {
             match entry {
                 Ok(path) => {
@@ -3974,8 +3961,8 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     // Serialize decks to bincode
     let decks_path = output.join("decks.bin");
     let decks_data = bincode::serialize(&decks)
-        .map_err(|e| mtg_forge_rs::MtgError::InvalidDeckFormat(format!("Failed to serialize decks: {}", e)))?;
-    fs::write(&decks_path, &decks_data).map_err(mtg_forge_rs::MtgError::IoError)?;
+        .map_err(|e| mtg_engine::MtgError::InvalidDeckFormat(format!("Failed to serialize decks: {}", e)))?;
+    fs::write(&decks_path, &decks_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "\nExported {} decks to {} ({} bytes)",
         decks.len(),
@@ -4039,7 +4026,7 @@ async fn run_download(
     force: bool,
     rate_limit: u64,
 ) -> Result<()> {
-    use mtg_forge_rs::download::{
+    use mtg_engine::download::{
         load_card_names_from_cardsfolder, load_card_names_from_deck, DownloadConfig, ImageDownloader, ImageSize,
     };
 
@@ -4052,7 +4039,7 @@ async fn run_download(
         .collect();
 
     if sizes.is_empty() {
-        return Err(mtg_forge_rs::MtgError::InvalidAction(
+        return Err(mtg_engine::MtgError::InvalidAction(
             "No valid image sizes specified. Use: small, normal".to_string(),
         ));
     }

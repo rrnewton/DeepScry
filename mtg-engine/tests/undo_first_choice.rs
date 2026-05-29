@@ -6,7 +6,7 @@
 //! 3. Player presses Z to undo
 //! 4. Should return to state before first choice with Forest back in hand
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{Card, CardId, CardType, PlayerId, SpellAbility},
     game::{
         controller::{ChoiceResult, GameStateView, PlayerController},
@@ -93,7 +93,7 @@ impl PlayerController for UndoFirstChoiceController {
     fn choose_mana_sources_to_pay(
         &mut self,
         _view: &GameStateView,
-        cost: &mtg_forge_rs::core::ManaCost,
+        cost: &mtg_engine::core::ManaCost,
         available_sources: &[CardId],
     ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
         let mut sources = SmallVec::new();
@@ -142,7 +142,7 @@ impl PlayerController for UndoFirstChoiceController {
     fn choose_from_library(
         &mut self,
         _view: &GameStateView,
-        valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+        valid_cards: &[&mtg_engine::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
         ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
     }
@@ -183,8 +183,8 @@ impl PlayerController for UndoFirstChoiceController {
 
     fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
 
-    fn get_controller_type(&self) -> mtg_forge_rs::game::snapshot::ControllerType {
-        mtg_forge_rs::game::snapshot::ControllerType::Tui
+    fn get_controller_type(&self) -> mtg_engine::game::snapshot::ControllerType {
+        mtg_engine::game::snapshot::ControllerType::Tui
     }
 
     fn get_snapshot_state(&self) -> Option<serde_json::Value> {

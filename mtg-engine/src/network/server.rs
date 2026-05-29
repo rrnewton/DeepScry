@@ -339,7 +339,7 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
+// SINGLE-CHANNEL ARCHITECTURE (mtg-228)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Each player handler has exactly ONE channel from the game coordinator and
@@ -404,7 +404,7 @@ enum GameToHandler {
     /// Server wants to broadcast a library reorder to this client (e.g., after
     /// the engine ran a hidden-info-dependent scry/surveil heuristic on the
     /// authoritative game state). Handler forwards as
-    /// `ServerMessage::LibraryReordered`. See mtg-ced6d1.
+    /// `ServerMessage::LibraryReordered`. See mtg-420.
     LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
     /// Game has ended normally.
     /// Handler should forward to client and exit.
@@ -1191,7 +1191,7 @@ async fn run_game(
     log::info!("Game {}: Initializing {} vs {}", game_id, p1_name, p2_name);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // SINGLE-CHANNEL ARCHITECTURE (mtg-secqu)
+    // SINGLE-CHANNEL ARCHITECTURE (mtg-228)
     // ═══════════════════════════════════════════════════════════════════════
     //
     // The architecture has three layers:
@@ -1209,7 +1209,7 @@ async fn run_game(
     let (p2_request_tx, p2_sync_request_rx) = std::sync::mpsc::channel::<ChoiceRequest>();
     let (p2_response_tx, p2_response_rx) = std::sync::mpsc::channel::<ChoiceResponse>();
 
-    // Create SINGLE async channel pairs for handler communication (mtg-secqu)
+    // Create SINGLE async channel pairs for handler communication (mtg-228)
     // Each player has exactly one rx and one tx with the coordinator
     let (p1_to_handler_tx, p1_game_rx) = tokio_mpsc::channel::<GameToHandler>(16);
     let (p1_from_handler_tx, p1_handler_rx) = tokio_mpsc::channel::<HandlerToGame>(16);
@@ -1429,7 +1429,7 @@ async fn run_game(
     // ALL players receive reveals for ALL cards to keep action_count in sync.
     // But opponent's cards are sent as "dummy reveals" with name stripped.
     //
-    // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+    // HIDDEN INFO ARCHITECTURE (mtg-218):
     // - Own cards: real reveal with name (player can see their hand)
     // - Opponent cards: dummy reveal with empty name (keeps count synced, reveals nothing)
 
@@ -1652,7 +1652,7 @@ async fn run_game(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// COORDINATOR TASK (mtg-secqu)
+// COORDINATOR TASK (mtg-228)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // The coordinator bridges sync NetworkControllers to async WebSocket handlers.
@@ -1744,7 +1744,7 @@ async fn run_coordinator(
                         let server_state_hash = choice_request.state_hash;
                         let server_debug_info = choice_request.debug_info.clone();
 
-                        // mtg-ced6d1: Broadcast any pending LibraryReorders (from server-side
+                        // mtg-420: Broadcast any pending LibraryReorders (from server-side
                         // scry/surveil) to BOTH clients BEFORE forwarding the ChoiceRequest.
                         // The client's sync_callback drains LibraryReordered queue at its
                         // priority sync point, ensuring its shadow library matches the server
@@ -1939,7 +1939,7 @@ async fn run_coordinator(
                         let server_state_hash = choice_request.state_hash;
                         let server_debug_info = choice_request.debug_info.clone();
 
-                        // mtg-ced6d1: Broadcast pending LibraryReorders to BOTH clients
+                        // mtg-420: Broadcast pending LibraryReorders to BOTH clients
                         // before forwarding the ChoiceRequest. See P1 branch above.
                         if !choice_request.library_reorders.is_empty() {
                             log::debug!(
@@ -2115,7 +2115,7 @@ async fn run_coordinator(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PLAYER WEBSOCKET HANDLER (mtg-secqu)
+// PLAYER WEBSOCKET HANDLER (mtg-228)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // New single-channel architecture:
@@ -2172,11 +2172,11 @@ async fn handle_player_websocket(
                         }
 
                         // For LibrarySearchByName choices, reveal all searchable library cards
-                        // BEFORE sending ChoiceRequest so client can filter them (mtg-ondgo fix)
+                        // BEFORE sending ChoiceRequest so client can filter them (mtg-253 fix)
                         if let Some(ref library_cards) = choice_request.library_search_cards {
                             let game_guard = game.lock().await;
                             log::debug!(
-                                "Handler P{}: Sending {} CardRevealed for library search (mtg-ondgo)",
+                                "Handler P{}: Sending {} CardRevealed for library search (mtg-253)",
                                 conn.player_id, library_cards.len()
                             );
                             for &card_id in library_cards {

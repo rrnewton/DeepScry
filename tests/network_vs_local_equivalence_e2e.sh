@@ -4,7 +4,7 @@
 # This test validates that network and local games produce identical results when
 # using the same seed, decks, and deterministic controllers.
 #
-# HISTORY: This test was previously disabled (mtg-a33hf) due to library search
+# HISTORY: This test was previously disabled (mtg-252) due to library search
 # state divergence in network mode. The issue was that clients didn't know which
 # specific CardId was chosen by the server for library searches (like typecycling).
 # This was fixed by adding library_search_result to the ChoiceAccepted message,
@@ -107,7 +107,7 @@ CONTROLLER_SEED=3
 # in the `connect` command). Local TUI is given `--seed-p1`/`--seed-p2` which
 # bypass derivation, so we MUST pre-derive here to match the network stream.
 # Without this match, the LOCAL RandomController RNG diverges from the NETWORK
-# RandomController RNG and the gamelog comparison fails — see mtg-nufig.
+# RandomController RNG and the gamelog comparison fails — see mtg-458.
 #
 # bash arithmetic is signed 64-bit; the SALTs wrap into signed-negative values
 # whose unsigned (u64) reinterpretation is what Rust's seed parser accepts.

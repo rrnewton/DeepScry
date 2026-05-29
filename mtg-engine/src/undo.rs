@@ -191,7 +191,7 @@ pub enum GameAction {
 
     /// Reveal a card's identity (CardID ⟺ CardName binding)
     ///
-    /// Part of the late-binding CardID architecture (mtg-qtqcr). This action binds
+    /// Part of the late-binding CardID architecture (mtg-218). This action binds
     /// a pre-allocated CardID to its actual card identity (name).
     ///
     /// ## Target Audience
@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     // =========================================================================
-    // RevealCard tests (Phase 2, mtg-qtqcr)
+    // RevealCard tests (Phase 2, mtg-218)
     // =========================================================================
 
     #[test]

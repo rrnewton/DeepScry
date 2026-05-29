@@ -3,9 +3,9 @@
 //! Demonstrates mana abilities like Llanowar Elves and Sol Ring
 //! that produce mana to help cast spells
 
-use mtg_forge_rs::core::{ActivatedAbility, Card, CardType, Cost, Effect, ManaCost};
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::Result;
+use mtg_engine::core::{ActivatedAbility, Card, CardType, Cost, Effect, ManaCost};
+use mtg_engine::game::GameState;
+use mtg_engine::Result;
 
 fn main() -> Result<()> {
     println!("=== MTG Forge - Mana Abilities Demo ===\n");

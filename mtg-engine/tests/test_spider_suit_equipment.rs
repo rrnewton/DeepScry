@@ -21,11 +21,11 @@
 //!
 //! See tracking issue mtg-TODO for Equipment implementation.
 
-use mtg_forge_rs::core::{
+use mtg_engine::core::{
     AffectedSelector, Card, CardId, CardName, CardType, ManaCost, PlayerId, StaticAbility, Subtype,
 };
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::zones::Zone;
+use mtg_engine::game::GameState;
+use mtg_engine::zones::Zone;
 use smallvec::SmallVec;
 
 /// Helper function to create a Spider-Suit Equipment card with its static ability
@@ -921,7 +921,7 @@ fn test_equipped_creatures_you_control_selector() {
 /// keeps random/AI controllers from blowing mana on it. See bug-equipment-detach-reattach.
 #[test]
 fn test_equip_excludes_already_attached_creature() {
-    use mtg_forge_rs::core::{ActivatedAbility, Cost, Effect, ManaCost};
+    use mtg_engine::core::{ActivatedAbility, Cost, Effect, ManaCost};
 
     let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
     let p1_id = game.players[0].id;

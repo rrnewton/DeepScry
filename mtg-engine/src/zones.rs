@@ -1,6 +1,6 @@
 //! Game zones (Library, Hand, Graveyard, Battlefield, etc.)
 //!
-//! ## Late-Binding CardID Architecture (mtg-qtqcr)
+//! ## Late-Binding CardID Architecture (mtg-218)
 //!
 //! In networked play, CardIDs are shared publicly between server and clients,
 //! but the CardID ⟺ CardName binding is deferred until reveal time.

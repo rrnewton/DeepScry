@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: The Abyss destroys the active player's nonartifact creature each upkeep.
 #
-# Regression test for mtg-sgkjv (Card Compatibility: The Abyss).
+# Regression test for mtg-550 (Card Compatibility: The Abyss).
 #
 # The Abyss: World Enchantment, "At the beginning of each player's upkeep,
 # destroy target nonartifact creature that player controls of their choice.

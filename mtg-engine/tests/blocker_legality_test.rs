@@ -12,19 +12,19 @@
 //! These tests pin the predicate's behaviour for every per-pair evasion ability
 //! so future changes can't silently regress the GUI/engine contract.
 
-use mtg_forge_rs::core::{Card, CardType, Color, Keyword};
-use mtg_forge_rs::game::{combat_rules, GameState};
+use mtg_engine::core::{Card, CardType, Color, Keyword};
+use mtg_engine::game::{combat_rules, GameState};
 use smallvec::SmallVec;
 
 fn add_creature(
     game: &mut GameState,
     name: &str,
-    owner: mtg_forge_rs::core::PlayerId,
+    owner: mtg_engine::core::PlayerId,
     power: i8,
     toughness: i8,
     keywords: &[Keyword],
     colors: &[Color],
-) -> mtg_forge_rs::core::CardId {
+) -> mtg_engine::core::CardId {
     let id = game.next_card_id();
     let mut c = Card::new(id, name, owner);
     c.set_types(SmallVec::from_vec(vec![CardType::Creature]));

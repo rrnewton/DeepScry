@@ -272,7 +272,7 @@ trigger pattern work, and which other cards are blocked on it".
 
 ```
 | Construct                                          | Status   | Last verified            | Bug issue        | Sample cards |
-| ChangesZone B→Gy ValidCard$ Creature.DamagedBy     | BROKEN   | 2026-05-12_#NNNN(d1c581)  | mtg-f0bfb8       | Sengir Vampire |
+| ChangesZone B→Gy ValidCard$ Creature.DamagedBy     | BROKEN   | 2026-05-12_#NNNN(d1c581)  | mtg-409       | Sengir Vampire |
 | Cost$ SubCounter<ChargeCounter>                    | WORKING  | 2026-05-12_#NNNN(901d85)  | (fixed)          | Triskelion     |
 | Produced$ Any                                      | WORKING  | 2026-05-12_#NNNN(c808ce)  | (fixed)          | City of Brass  |
 | StaticAbility IsPresent$ <selector>                | BROKEN   | 2026-05-12_#NNNN(...)     | mtg-XXXXXX       | (multiple)     |

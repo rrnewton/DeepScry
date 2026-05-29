@@ -43,8 +43,8 @@ panic = "abort"
 # Workspace-wide lint configuration
 [workspace.lints.clippy]
 # DENY wildcard enum match arms - these can silently fail when new variants are added
-# Use #[allow(clippy::wildcard_enum_match_arm)] with comment citing mtg-0et0f for exceptions
-# See .beads/issues/mtg-0et0f.md for the wildcard audit tracking issue
+# Use #[allow(clippy::wildcard_enum_match_arm)] with comment citing mtg-211 for exceptions
+# See .beads/issues/mtg-211.md for the wildcard audit tracking issue
 wildcard_enum_match_arm = "deny"
 
 # Deny debug artifacts that should never be committed

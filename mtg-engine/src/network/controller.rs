@@ -65,7 +65,7 @@ pub struct ChoiceRequest {
     ///
     /// Index 0 is "Pass priority" (None), indices 1+ are the abilities.
     /// This allows the handler to look up the chosen ability directly
-    /// without a separate channel round-trip. (mtg-e66iz channel consolidation)
+    /// without a separate channel round-trip. (mtg-227 channel consolidation)
     pub abilities: Option<Vec<Option<crate::core::SpellAbility>>>,
     /// For LibrarySearchByName choices, ALL CardIds in flat order.
     ///
@@ -85,7 +85,7 @@ pub struct ChoiceRequest {
     /// shadow game can re-sync its library before running ability enumeration.
     ///
     /// Always empty for non-network controllers and for client-built
-    /// requests. See mtg-ced6d1 (Cycle/Mountaincycling FATAL DESYNC).
+    /// requests. See mtg-420 (Cycle/Mountaincycling FATAL DESYNC).
     pub library_reorders: Vec<(PlayerId, Vec<CardId>)>,
 }
 
@@ -305,7 +305,7 @@ impl NetworkController {
         // Drain any queued library reorders from the engine
         // (e.g., scry/surveil heuristic moved cards). These must be sent to
         // BOTH clients before the ChoiceRequest so their shadow libraries
-        // re-sync before ability enumeration. See mtg-ced6d1.
+        // re-sync before ability enumeration. See mtg-420.
         let library_reorders = view.take_pending_library_reorders();
         if !library_reorders.is_empty() {
             log::debug!(
@@ -357,7 +357,7 @@ impl NetworkController {
         }
 
         // Validate choice indices - FATAL ERROR on invalid index (desync detection)
-        // Per mtg-wsl8g: "Desync is ALWAYS a Fatal Error" - we do NOT paper over desync
+        // Per mtg-234: "Desync is ALWAYS a Fatal Error" - we do NOT paper over desync
         // with recovery hacks like clamping. Instead, we crash with a clear error message.
         //
         // Special case: LibrarySearchByName sends [name_idx+1, instance_idx] where:
@@ -481,7 +481,7 @@ impl NetworkController {
 
         // First pass: build a map of card_id -> to_zone from MoveCard actions
         // This lets us determine the actual destination zone for each revealed card
-        // (mtg-ar269 fix: milled cards were incorrectly revealed as Draw instead of Effect)
+        // (mtg-232 fix: milled cards were incorrectly revealed as Draw instead of Effect)
         let mut card_zones: std::collections::HashMap<CardId, Zone> = std::collections::HashMap::new();
         for action in actions.iter().skip(last_reveal_index) {
             if let GameAction::MoveCard { card_id, to_zone, .. } = action {
@@ -521,7 +521,7 @@ impl NetworkController {
                         // Look up the actual card owner from the game state
                         // CRITICAL: Using self.player_id was WRONG - it caused cards to be
                         // assigned to the wrong player when the reveal was collected by
-                        // a different player's controller (mtg-d0jg3 DESYNC fix)
+                        // a different player's controller (mtg-254 DESYNC fix)
                         let card_owner = view.get_card(*card_id).map(|c| c.owner).unwrap_or(self.player_id); // Fallback to self if card not found
 
                         // Look up actual destination zone from MoveCard actions
@@ -529,7 +529,7 @@ impl NetworkController {
                         // - Hand -> Draw (e.g., regular draw, tutored card)
                         // - Graveyard -> Effect (e.g., mill, discard from library)
                         // - Battlefield/Stack -> Played
-                        // (mtg-ar269 fix: using placeholder Zone::Hand caused milled cards
+                        // (mtg-232 fix: using placeholder Zone::Hand caused milled cards
                         // to be treated as draws, triggering incorrect "empty library mode")
                         let to_zone = card_zones.get(card_id).copied().unwrap_or(Zone::Hand);
 
@@ -586,7 +586,7 @@ impl PlayerController for NetworkController {
 
         // Build abilities list for handler to look up chosen ability directly
         // Index 0 is "Pass priority" (None), indices 1+ are the actual abilities
-        // This eliminates the need for a separate ability_rx channel (mtg-e66iz)
+        // This eliminates the need for a separate ability_rx channel (mtg-227)
         let abilities: Vec<Option<SpellAbility>> = std::iter::once(None)
             .chain(available.iter().map(|a| Some(a.clone())))
             .collect();
@@ -1556,7 +1556,7 @@ mod tests {
         );
 
         // Invalid index should return a DesyncError, NOT be clamped
-        // Per mtg-wsl8g: "Desync is ALWAYS a Fatal Error"
+        // Per mtg-234: "Desync is ALWAYS a Fatal Error"
         match result {
             Err(NetworkError::DesyncError(msg)) => {
                 assert!(msg.contains("DESYNC DETECTED"), "Error should mention desync: {}", msg);

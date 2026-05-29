@@ -177,13 +177,13 @@ preserve the tip commit so the branch can always be resurrected.
   landed on integration before this cleanup pass; their `v1` tags
   preserve the tips.
 
-### `fix-cycle-desync` (mtg-ced6d1)
+### `fix-cycle-desync` (mtg-420)
 - ~1 day old (May 2026). Broadcasts `LibraryReordered` from the server
   to clients after scry/surveil so the cycling/Mountaincycling network
-  desync (mtg-ced6d1) doesn't recur. Merged into integration in
+  desync (mtg-420) doesn't recur. Merged into integration in
   `61f28fd9`. Tag `fix-cycle-desync.v1` preserves the tip.
 
-### `fix-seismic-sense` (mtg-c54e90)
+### `fix-seismic-sense` (mtg-415)
 - ~1 day old (May 2026). Routes `Dig{target_self}` (e.g. Seismic
   Sense) through `choose_from_library` so the network shadow client
   has matching CardId visibility, fixing the FATAL state-hash
@@ -215,7 +215,7 @@ preserve the tip commit so the branch can always be resurrected.
 ### `build-test`
 - Short-lived experimental branch used for the deterministic-builds
   research (cargo `trim-paths` + sccache cross-worktree caching).
-  Findings were preserved in beads issue `mtg-3cc232`; experimental
+  Findings were preserved in beads issue `mtg-431`; experimental
   config files (`.cargo/config.toml` + `Cargo.toml` `cargo-features`
   prelude) were captured verbatim there. Branch deleted without a
   tag — no code value, just the research notes which now live in

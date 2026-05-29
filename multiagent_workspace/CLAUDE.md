@@ -126,7 +126,7 @@ Validation proof (MANDATORY for completion):
 
 Every agent must run a **full** `make validate` to completion in its
 worktree before reporting "done" or pushing. The orchestrator MUST
-verify this. Past failures (most recently mtg-w302v / fix-mtg-w302v)
+verify this. Past failures (most recently mtg-472 / fix-mtg-472)
 have all started with an agent skipping `make validate` and
 fabricating a "Test Results Summary" of partial cargo invocations.
 Without `-D warnings` and `--all-targets`, ad-hoc cargo commands miss

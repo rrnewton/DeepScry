@@ -3,7 +3,7 @@ Name=Plainscycling actually pays its mana cost
 Goal=Win
 Turns=2
 Difficulty=Easy
-Description=Regression for mtg-6b510d: the cycling activation handler used to tap lands to fill the pool but never DEDUCT the cost from the pool, making cycling effectively free. (Worse, when no untapped lands existed it discarded the card anyway, leaving the AI looping on subsequent unpayable actions.) This puzzle gives P0 exactly two untapped Plains and a Rabaroo Troop (Plainscycling 2). After ZeroController activates Plainscycling, both Plains must be tapped, the pool drained, and the discarded card must be in graveyard.
+Description=Regression for mtg-417: the cycling activation handler used to tap lands to fill the pool but never DEDUCT the cost from the pool, making cycling effectively free. (Worse, when no untapped lands existed it discarded the card anyway, leaving the AI looping on subsequent unpayable actions.) This puzzle gives P0 exactly two untapped Plains and a Rabaroo Troop (Plainscycling 2). After ZeroController activates Plainscycling, both Plains must be tapped, the pool drained, and the discarded card must be in graveyard.
 
 [state]
 turn=2

@@ -308,7 +308,7 @@ make dhatprofile
 **Output example:**
 ```
 #1: 90.82 KB (8.4%) in 3,100 blocks (avg 30.0 bytes/block)
-  Location: mtg_forge_rs::game::game_loop::GameLoop::get_available_spell_abilities
+  Location: mtg_engine::game::game_loop::GameLoop::get_available_spell_abilities
   (src/game/game_loop.rs:3041:18)
     ↳ GameLoop::priority_round (src/game/game_loop.rs:2150:38)
 ```

@@ -1,5 +1,5 @@
 [package]
-name = "mtg-forge-rs"
+name = "mtg-engine"
 version.workspace = true
 edition.workspace = true
 description = "A Rust reimplementation of the MTG Forge game engine"
@@ -25,7 +25,7 @@ path = "examples/lobby_probe.rs"
 required-features = ["network"]
 
 [lib]
-name = "mtg_forge_rs"
+name = "mtg_engine"
 path = "src/lib.rs"
 # Library can be built for WASM without native features
 crate-type = ["cdylib", "rlib"]

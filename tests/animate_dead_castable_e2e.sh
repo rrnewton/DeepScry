@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Animate Dead is castable when a creature card exists in a graveyard
 #
-# Regression test for mtg-efb050 (Card Compatibility: Animate Dead).
+# Regression test for mtg-394 (Card Compatibility: Animate Dead).
 #
 # Two bugs fixed:
 # 1. K:Enchant:Creature.inZoneGraveyard:creature card in a graveyard

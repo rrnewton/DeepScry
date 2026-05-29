@@ -8,13 +8,13 @@
 //!
 //! These tests verify the implementation of the Effect::Earthbend and the delayed trigger system.
 
-use mtg_forge_rs::core::{Card, CardType, CounterType, Effect, Keyword};
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::zones::Zone;
+use mtg_engine::core::{Card, CardType, CounterType, Effect, Keyword};
+use mtg_engine::game::GameState;
+use mtg_engine::zones::Zone;
 use smallvec::SmallVec;
 
 /// Helper function to create a basic land card
-fn create_land(game: &mut GameState, name: &str, owner: mtg_forge_rs::core::PlayerId) -> mtg_forge_rs::core::CardId {
+fn create_land(game: &mut GameState, name: &str, owner: mtg_engine::core::PlayerId) -> mtg_engine::core::CardId {
     let land_id = game.next_card_id();
     let mut land = Card::new(land_id, name, owner);
     land.set_types(SmallVec::from_vec(vec![CardType::Land]));
@@ -27,10 +27,10 @@ fn create_land(game: &mut GameState, name: &str, owner: mtg_forge_rs::core::Play
 fn create_creature(
     game: &mut GameState,
     name: &str,
-    owner: mtg_forge_rs::core::PlayerId,
+    owner: mtg_engine::core::PlayerId,
     power: i8,
     toughness: i8,
-) -> mtg_forge_rs::core::CardId {
+) -> mtg_engine::core::CardId {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, name, owner);
     creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
@@ -290,7 +290,7 @@ fn test_earthbend_with_placeholder_target_fizzles() {
 
     // Execute Earthbend with placeholder target
     let effect = Effect::Earthbend {
-        target: mtg_forge_rs::core::CardId::new(0),
+        target: mtg_engine::core::CardId::new(0),
         num_counters: 5,
     };
     let result = game.execute_effect(&effect);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Lightning Bolt can target the opponent PLAYER, not just creatures.
 #
-# Regression test for mtg-lxrqz (user bug report, fix-gameplay-bugs-4pack):
+# Regression test for mtg-565 (user bug report, fix-gameplay-bugs-4pack):
 # Before the fix, `Controller::choose_targets` accepted only `&[CardId]`.
 # Players have `PlayerId` not `CardId`, so the legal-targets list for
 # `SP$ DealDamage | ValidTgts$ Any` (Lightning Bolt) never included

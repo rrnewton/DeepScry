@@ -333,10 +333,10 @@ If you find an existing script without it, that's a bug — fix it.
 
 ## Related Issues
 
-- `mtg-secqu`: Single-channel architecture to eliminate select! nondeterminism
-- `mtg-hbt5i`: Shadow state desync debugging
-- `mtg-qtqcr`: Hidden information architecture
-- `mtg-to96y`: Main networking tracking issue
+- `mtg-228`: Single-channel architecture to eliminate select! nondeterminism
+- `mtg-229`: Shadow state desync debugging
+- `mtg-218`: Hidden information architecture
+- `mtg-176`: Main networking tracking issue
 
 ## Summary
 

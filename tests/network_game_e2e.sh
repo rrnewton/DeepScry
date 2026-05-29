@@ -27,9 +27,9 @@ echo
 
 # SKIP: Network synchronized GameLoop mode has known sync issues causing games to hang.
 # The client GameLoop can get out of sync with the server GameLoop at Turn 7.
-# See mtg-037fw for details on the synchronization issues.
-# TODO(mtg-037fw): Re-enable once NetworkLocalController sync is fixed.
-echo -e "${YELLOW}SKIPPING: Network synchronized GameLoop has known sync issues (mtg-037fw)${NC}"
+# See mtg-193 for details on the synchronization issues.
+# TODO(mtg-193): Re-enable once NetworkLocalController sync is fixed.
+echo -e "${YELLOW}SKIPPING: Network synchronized GameLoop has known sync issues (mtg-193)${NC}"
 echo "Test will be re-enabled once client/server GameLoop synchronization is fixed."
 exit 0
 

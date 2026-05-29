@@ -68,7 +68,7 @@ use benchlib::{
     ParPinned, ParRayon, RestartStrategy, RewindPlayAgain, RewindPlayAgainConfig, BASELINE_DECK_PATH,
 };
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{random_controller::RandomController, GameLoop, GameSnapshot, GameState, VerbosityLevel},
     loader::GameInitializer,
 };
@@ -666,7 +666,7 @@ fn bench_save_snapshot(c: &mut Criterion) {
             snapshot
                 .save_to_file(
                     black_box(snapshot_path),
-                    mtg_forge_rs::game::snapshot::SnapshotFormat::Json,
+                    mtg_engine::game::snapshot::SnapshotFormat::Json,
                 )
                 .expect("Failed to save snapshot");
         });

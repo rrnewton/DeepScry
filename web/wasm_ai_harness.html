@@ -25,7 +25,7 @@ Poll window.gameResult via Playwright evaluate() for results.
 <body>
 <pre id="log"></pre>
 <script type="module">
-import init, * as wasm from '/pkg/mtg_forge_rs.js';
+import init, * as wasm from '/pkg/mtg_engine.js';
 
 // --- URL parameters ---
 const params = new URLSearchParams(location.search);
@@ -76,7 +76,7 @@ if (typeof wasm.network_init !== 'function') {
     throw new Error(msg);
 }
 
-// --- Load card database (mtg-6fsjb per-set bins) ---
+// --- Load card database (mtg-464 per-set bins) ---
 // sets/index.json maps every card name to its primary per-set bin file.
 // For the AI test harness we eagerly load EVERY set bin in parallel so any
 // late-bound deck-submission card name resolves immediately. The total

@@ -2,13 +2,13 @@
 //!
 //! This demonstrates loading a puzzle file and creating a game state from it.
 
-use mtg_forge_rs::loader::AsyncCardDatabase;
-use mtg_forge_rs::puzzle::{load_puzzle_into_game, PuzzleFile};
+use mtg_engine::loader::AsyncCardDatabase;
+use mtg_engine::puzzle::{load_puzzle_into_game, PuzzleFile};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> mtg_forge_rs::Result<()> {
+async fn main() -> mtg_engine::Result<()> {
     // Parse a simple inline puzzle
     let puzzle_contents = r#"
 [metadata]
@@ -82,7 +82,7 @@ p1battlefield=Grizzly Bears
                 println!("    {}/{}", p, t);
             }
             // Show counters
-            let p1p1 = card.get_counter(mtg_forge_rs::core::CounterType::P1P1);
+            let p1p1 = card.get_counter(mtg_engine::core::CounterType::P1P1);
             if p1p1 > 0 {
                 println!("    +1/+1 counters: {}", p1p1);
             }

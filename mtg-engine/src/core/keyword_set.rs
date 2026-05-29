@@ -321,7 +321,7 @@ impl Keyword {
     ///
     /// # Example
     /// ```
-    /// use mtg_forge_rs::core::Keyword;
+    /// use mtg_engine::core::Keyword;
     /// assert_eq!(Keyword::from_string("Flying"), Some(Keyword::Flying));
     /// assert_eq!(Keyword::from_string("Riot"), Some(Keyword::Riot));
     /// assert_eq!(Keyword::from_string("Unknown"), None);

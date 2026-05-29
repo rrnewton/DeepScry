@@ -368,7 +368,7 @@
     // replies with GameCreated / WaitingForOpponent / GameStarted / JoinFailed /
     // ServerFull / Error.
     //
-    // NOTE on username uniqueness (mtg-6uuto): The protocol does not yet have a
+    // NOTE on username uniqueness (mtg-466): The protocol does not yet have a
     // ClaimName / RegisterUsername message. We display an advisory disclaimer
     // and keep the best-effort `nameIsTaken` check against waiting-game host
     // names; true uniqueness needs a server-side protocol extension.
@@ -376,14 +376,14 @@
     // NOTE on post-pairing playflow: When `game_started` arrives, the lobby
     // page currently holds the open WebSocket. Playing the actual game
     // (rendering the TUI / native UI on top of that WS) is not implemented
-    // here yet — see mtg-i1ye3 follow-up. For now we surface a clear status
+    // here yet — see mtg-465 follow-up. For now we surface a clear status
     // message; the server-side game still starts (this fixes BLOCKING-1 by
     // making the create/join flow ACTUALLY register on the server, so a
     // second browser sees the game in its Open Games list).
     // ---------------------------------------------------------------------
 
     // Tiny mono-color 60-card placeholder deck. Server requires >= 40 cards.
-    // (Real deck-picker UI is out of scope for this fix — track in mtg-i1ye3.)
+    // (Real deck-picker UI is out of scope for this fix — track in mtg-465.)
     // Mirrors decks/combat_test_4ed.dck (a known-good 60-card list used by
     // existing tests).
     var DEFAULT_DECK = {
@@ -401,7 +401,7 @@
     var wsUrl = qs.get('ws') || window.MTG_WS_URL;
     document.getElementById('ws-url-display').textContent = wsUrl;
 
-    // Local-card-image gate stickiness (mtg-p5tyf). The lobby page itself never
+    // Local-card-image gate stickiness (mtg-477). The lobby page itself never
     // loads local card images, but it is the entry point that the user typically
     // first hits with ?allow_local_img_load=true. We resolve the same sticky flag
     // the game pages use so that (a) the unlock persists across same-tab
@@ -567,7 +567,7 @@
             }
         } else if (msg.type === 'game_started') {
             // Both sides paired; per-game task has started. The lobby page
-            // does NOT yet render the actual game (see mtg-i1ye3); surface
+            // does NOT yet render the actual game (see mtg-465); surface
             // a clear "game is live on the server" state.
             if (pendingFlow) {
                 showGameLivePlaceholder(pendingFlow);
@@ -735,7 +735,7 @@
         if (currentUsername) p.set('name', currentUsername);
         if (wsUrl) p.set('ws', wsUrl);
         // Propagate the sticky local-image unlock onto the launcher hrefs
-        // (mtg-p5tyf). The game pages also inherit it from sessionStorage, but
+        // (mtg-477). The game pages also inherit it from sessionStorage, but
         // keeping the param in the URL makes the unlock visible in the address
         // bar and survives bookmarking/sharing of the launched page.
         if (allowLocalImgLoad) p.set('allow_local_img_load', 'true');
@@ -748,7 +748,7 @@
     function startRefreshTimer() {
         if (refreshTimer) return;
         refreshTimer = setInterval(function () {
-            // CRITICAL (mtg-njdwy): Only poll while we are truly browsing the
+            // CRITICAL (mtg-474): Only poll while we are truly browsing the
             // lobby. If a Create/Join is in flight (or the WS has already been
             // taken over by a started game), sending ListGames over that WS
             // would trigger the server's `handle_player_websocket` "Already
@@ -796,7 +796,7 @@
         document.getElementById('waiting-body').textContent =
             'Both players are paired and the game is running on the server. ' +
             'Playing the game from this lobby page is not yet wired up ' +
-            '(tracked in mtg-i1ye3); for now, closing this tab will end the ' +
+            '(tracked in mtg-465); for now, closing this tab will end the ' +
             'server-side game.';
         setWaitingStatus('Game is LIVE on server.', 'ok');
         var btn = document.getElementById('btn-cancel-waiting');
@@ -818,9 +818,9 @@
 
     // ----- create / join over WebSocket -------------------------------------
 
-    // mtg-njdwy: Create/Join redirect to tui_game.html.
+    // mtg-474: Create/Join redirect to tui_game.html.
     //
-    // Earlier design (mtg-i1ye3 fix) sent CreateGame/JoinGame over the lobby's
+    // Earlier design (mtg-465 fix) sent CreateGame/JoinGame over the lobby's
     // WS, then surfaced a stub "game is live on server, in-page play is not
     // wired" message. The follow-up (THIS issue) wires actual play. We chose
     // Option B (redirect to tui_game.html) over Option A (inline WASM into
@@ -837,7 +837,7 @@
         if (gamePass) qp.set('lobby_pass', gamePass);
         if (currentUsername) qp.set('name', currentUsername);
         if (wsUrl) qp.set('ws', wsUrl);
-        // Carry the sticky local-image unlock into the game page (mtg-p5tyf).
+        // Carry the sticky local-image unlock into the game page (mtg-477).
         if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
         // Close our own browse-WS so the server cleanly drops the lobby task
         // and we never accidentally race the new tab's CreateGame against a

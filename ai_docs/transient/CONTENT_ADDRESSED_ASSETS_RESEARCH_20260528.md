@@ -10,7 +10,7 @@ recommendation for the user to decide on.
 
 ## 1. Problem statement
 
-### 1.1 The stale-artifact bug class (mtg-2indh)
+### 1.1 The stale-artifact bug class (mtg-475)
 
 The wasm-bindgen output is **two files that MUST stay version-matched**:
 
@@ -347,13 +347,13 @@ to a tiny manifest). Then have `web_server` serve `/data/sets/*.bin` with
 per-bin pointer). This alone removes the bulk of cacheable bytes from the
 revalidation path and makes bin staleness impossible.
 
-**Phase 2 — content-address the pkg bundle (fixes the actual mtg-2indh
+**Phase 2 — content-address the pkg bundle (fixes the actual mtg-475
 bug class).** Add an `mtg hash-web-assets` step (or a Makefile shim) that,
 after `wasm-pack`, hashes `mtg_forge_rs.js` + `mtg_forge_rs_bg.wasm`,
 renames both, and rewrites the game pages' `import './pkg/…'` specifier +
 the `init({ module_or_path: '…_bg.<hash>.wasm' })` call (§4). Serve `/pkg/*`
 `immutable, max-age=1yr`. This makes the JS↔WASM desync **structurally
-impossible**, which is the whole point of mtg-2indh.
+impossible**, which is the whole point of mtg-475.
 
 **Phase 3 — `index.html` as the sole mutable pointer.** Hash the game
 HTML pages (`tui_game.html`, `native_game.html`, `demo.html`) and have
@@ -399,7 +399,7 @@ Keep ETag/short-TTL (Option 4 mechanics) for the residual mutable pointers
    — acceptable collision margin for a few hundred assets? Or sha256
    truncated for "boring" familiarity? (blake3 is faster; recommended.)
 2. **Phase scope now.** Land Phase 1 (bins) only, or Phase 1+2 (bins +
-   pkg) together? Phase 2 is the one that actually kills mtg-2indh.
+   pkg) together? Phase 2 is the one that actually kills mtg-475.
 3. **`decks.bin` / `tokens.bin` placement.** Fold them into the
    `index.json` manifest, give them their own tiny manifest, or keep them
    mutable+short-TTL? (They're referenced directly by HTML `fetch`.)

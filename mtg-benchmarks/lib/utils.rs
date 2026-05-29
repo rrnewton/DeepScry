@@ -3,11 +3,11 @@
 //! This module provides helper functions for benchmarks including
 //! working directory management, game state creation, and resource loading.
 
-use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
-use mtg_forge_rs::loader::{
+use mtg_engine::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
+use mtg_engine::loader::{
     prefetch_deck_cards, AsyncCardDatabase as CardDatabase, DeckList, DeckLoader, GameInitializer,
 };
-use mtg_forge_rs::Result;
+use mtg_engine::Result;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::runtime::Runtime;

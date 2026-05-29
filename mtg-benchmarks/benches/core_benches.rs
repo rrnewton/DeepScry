@@ -7,7 +7,7 @@
 use super::allocator::{allocator_name, AllocStats, AllocTracker};
 use super::types::{AtomicMetrics, BatchBenchmark, GameMetrics, GameOutcome, LoggingMode, RewindPlayAgainConfig};
 use super::utils::{create_game_at_percent, ensure_correct_working_directory, BenchmarkSetup};
-use mtg_forge_rs::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
+use mtg_engine::game::{random_controller::RandomController, GameLoop, GameState, VerbosityLevel};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

@@ -105,7 +105,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let remember_discarded = params.get("RememberDiscarded") == Some("True");
             let optional = params.get("Optional") == Some("True");
             let remember_discarding_players = params.get("RememberDiscardingPlayers") == Some("True");
-            // Player resolution semantics for Discard (mtg-6c0qe):
+            // Player resolution semantics for Discard (mtg-564):
             //   Defined$ Player        -> each player (Mindslicer, Magus of the Wheel)
             //   Defined$ You           -> the controller (You Find the Villains' Lair);
             //                             resolved later from placeholder→card_owner
@@ -117,7 +117,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             //
             // CR 116.2c / CR 601.2c: targeted spells require a chosen target; we
             // approximate the choice as "opponent" in the absence of a player-
-            // targeting UI. See mtg-6c0qe for the long-term fix.
+            // targeting UI. See mtg-564 for the long-term fix.
             let player = match (params.get("Defined"), params.get("ValidTgts")) {
                 (Some("Player"), _) => PlayerId::all_players(),
                 (Some("You"), _) => PlayerId::placeholder(),
@@ -1507,7 +1507,7 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         // (Chaos Orb is a removal piece, not a self-destruct of your own board).
         // The chained DBDestroyChaosOrb (Defined$ Self) still destroys the Orb
         // itself via the SubAbility chain — see cardsfolder/c/chaos_orb.txt.
-        // Tracking: mtg-4c1696, mtg-ad79fd.
+        // Tracking: mtg-392, mtg-389.
         ApiType::Unknown(ref s) if s == "FlipOntoBattlefield" => {
             let mut restriction = TargetRestriction::any();
             restriction.requires_nontoken = true;
@@ -3194,7 +3194,7 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
         // Chaos Orb's "FlipOntoBattlefield" cannot be physically simulated;
         // we degrade it to "destroy target nontoken permanent controlled by an
         // opponent." Without the OppCtrl restriction the auto-target picker
-        // would pick the Orb itself (mtg-4c1696). This test pins that contract.
+        // would pick the Orb itself (mtg-392). This test pins that contract.
         let params = AbilityParams::parse(
             "A:AB$ FlipOntoBattlefield | Cost$ 1 T | SubAbility$ DBDestroyTouched | ActivationZone$ Battlefield",
         )

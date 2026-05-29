@@ -30,7 +30,7 @@ export class MTGNetworkClient {
     /**
      * Connect to game server.
      *
-     * The optional `lobbyAction` argument (mtg-njdwy) selects the first
+     * The optional `lobbyAction` argument (mtg-474) selects the first
      * message sent on WS open:
      *   - omitted / null  → legacy `Authenticate` against DEFAULT_LOBBY_GAME
      *   - { kind: 'create', gameName, gamePassword } → `CreateGame`
@@ -59,7 +59,7 @@ export class MTGNetworkClient {
 
         // Configure the WS-open dispatch (Authenticate vs CreateGame vs JoinGame).
         // The WASM client exposes setters for the CreateGame/JoinGame paths
-        // (mtg-njdwy); absence reverts to the legacy Authenticate behaviour.
+        // (mtg-474); absence reverts to the legacy Authenticate behaviour.
         if (lobbyAction && lobbyAction.kind === 'create' && typeof this.wasm.network_set_lobby_create === 'function') {
             this.wasm.network_set_lobby_create(lobbyAction.gameName || '', lobbyAction.gamePassword || '');
         } else if (lobbyAction && lobbyAction.kind === 'join' && typeof this.wasm.network_set_lobby_join === 'function') {

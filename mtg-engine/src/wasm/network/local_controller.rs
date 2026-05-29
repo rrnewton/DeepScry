@@ -245,7 +245,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     /// the correct blocker by CardId rather than by index.
     ///
     /// Used for `choose_blocker_for_lethal_damage` and
-    /// `choose_blocker_for_remaining_damage` (mtg-e05f9c).
+    /// `choose_blocker_for_remaining_damage` (mtg-418).
     fn submit_damage_choice_to_server(&self, choice_indices: Vec<usize>, blocker_id: CardId, view: &GameStateView) {
         let mut client = self.network_client.borrow_mut();
 
@@ -546,7 +546,7 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         killable_blockers: &[(CardId, i32)],
         remaining_power: i32,
     ) -> ChoiceResult<CardId> {
-        // SMART damage assignment (mtg-e05f9c). Server pre-sends the matching
+        // SMART damage assignment (mtg-418). Server pre-sends the matching
         // ChoiceRequest of type LethalDamageAssignment; we delegate to the inner
         // controller, then submit BOTH the index AND the chosen CardId so the
         // opponent's shadow game can resolve the correct blocker even if its
@@ -584,7 +584,7 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         remaining_blockers: &[CardId],
         remaining_damage: i32,
     ) -> ChoiceResult<CardId> {
-        // Mirror of choose_blocker_for_lethal_damage above (mtg-e05f9c).
+        // Mirror of choose_blocker_for_lethal_damage above (mtg-418).
         if self.check_choice_request_ready().is_none() {
             if self.has_pending_submission() {
                 if self.check_and_clear_ack() {

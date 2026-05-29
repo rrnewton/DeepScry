@@ -263,7 +263,7 @@ async function runTest() {
         log('\n=== BUG #4: Log Display ===');
 
         // Run several Space presses to populate the log. Bumped from 3 → 10
-        // after decouple-step4 (mtg-81ed52): pre-step-4 native_game.html had a
+        // after decouple-step4 (mtg-382): pre-step-4 native_game.html had a
         // hidden ratzilla terminal that ALSO processed Space (calling
         // run_until_choice on top of the JS-side tui_run_turn), so 3 Space
         // presses gave 6 effective game advances. Post-step-4 there's no

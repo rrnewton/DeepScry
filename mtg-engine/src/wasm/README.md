@@ -42,7 +42,7 @@ Controller options: `Zero`, `Random`, `Heuristic`, `Human`
 ## JavaScript Usage Example
 
 ```javascript
-import init, { WasmCardDatabase, WasmGame, version } from './mtg_forge_rs.js';
+import init, { WasmCardDatabase, WasmGame, version } from './mtg_engine.js';
 
 async function main() {
     await init();

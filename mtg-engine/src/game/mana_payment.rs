@@ -16,8 +16,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use mtg_forge_rs::game::mana_payment::{ManaSource, ManaPaymentResolver, SimpleManaResolver};
-//! use mtg_forge_rs::core::ManaCost;
+//! use mtg_engine::game::mana_payment::{ManaSource, ManaPaymentResolver, SimpleManaResolver};
+//! use mtg_engine::core::ManaCost;
 //!
 //! let resolver = SimpleManaResolver::new();
 //! let sources = vec![/* ... */];

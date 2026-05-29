@@ -3,7 +3,7 @@
 //! This test directly calls undo_to_previous_choice_point() to verify
 //! the undo mechanism works correctly.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     core::{Card, CardType},
     game::GameState,
     zones::Zone,
@@ -42,7 +42,7 @@ async fn test_undo_first_choice_direct() -> Result<()> {
     // Note: ChoicePoint has fields: player_id, choice_id, choice (not description)
     let prior_log_size = game.logger.log_count();
     game.undo_log.log(
-        mtg_forge_rs::undo::GameAction::ChoicePoint {
+        mtg_engine::undo::GameAction::ChoicePoint {
             player_id: p1_id,
             choice_id: 1, // First choice
             choice: None, // Not replaying, so no choice data

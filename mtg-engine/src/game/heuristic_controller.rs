@@ -6207,7 +6207,7 @@ impl PlayerController for HeuristicController {
         // snapshot/resume is required for stop-and-go runs to produce the
         // same heuristic decisions as the equivalent single-process run.
         // (Internally-tagged `#[serde(tag = "controller_type")]` would break
-        // bincode snapshots — see mtg-c232f4.)
+        // bincode snapshots — see mtg-430.)
         let state = crate::game::ControllerState::Heuristic(self.clone());
         serde_json::to_value(state).ok()
     }

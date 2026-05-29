@@ -98,7 +98,7 @@ async function runTest() {
     ensureDir(screenshotDir);
 
     try {
-        const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_forge_rs.js');
+        const wasmPkgPath = path.join(__dirname, 'pkg', 'mtg_engine.js');
         if (!fs.existsSync(wasmPkgPath)) {
             throw new Error('WASM package not found. Run: make wasm or make wasm-dev');
         }

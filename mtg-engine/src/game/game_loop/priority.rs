@@ -1700,7 +1700,7 @@ impl<'a> GameLoop<'a> {
                                                     .unwrap_or_default();
 
                                                 // Sync network state to process pending CardRevealed messages
-                                                // before filtering library cards (mtg-ondgo fix)
+                                                // before filtering library cards (mtg-253 fix)
                                                 self.sync_to_action();
 
                                                 // Filter cards by type
@@ -1784,7 +1784,7 @@ impl<'a> GameLoop<'a> {
                                                 }
                                             }
                                             // DiscardCards with choice (count != u8::MAX): Route through
-                                            // controller for network-safe discard decisions (mtg-xomxx).
+                                            // controller for network-safe discard decisions (mtg-272).
                                             //
                                             // Without this, choose_card_to_discard() runs independently
                                             // on both server and shadow. The shadow can't see cards drawn
@@ -1896,7 +1896,7 @@ impl<'a> GameLoop<'a> {
                                                 remember_discarding_players: false,
                                             },
                                             // Loot (discard then draw): Route discard through controller
-                                            // for network-safe decisions (mtg-xomxx).
+                                            // for network-safe decisions (mtg-272).
                                             crate::core::Effect::Loot {
                                                 player,
                                                 discard_count,
@@ -2501,7 +2501,7 @@ impl<'a> GameLoop<'a> {
                                 // emptied the board's lands) the cycling proceeded anyway —
                                 // discarding the card without paying — and left the controller
                                 // looping on the next "available" spell that it then couldn't
-                                // afford either. (Tracked in mtg-6b510d.)
+                                // afford either. (Tracked in mtg-417.)
                                 self.mana_engine.update_mut(self.game, current_priority);
                                 use crate::game::mana_payment::{GreedyManaResolver, ManaPaymentResolver};
 
@@ -2638,7 +2638,7 @@ impl<'a> GameLoop<'a> {
                                         log::debug!("[TYPECYCLING] Library has {} cards", library_cards.len());
 
                                         // Sync network state to process pending CardRevealed messages
-                                        // before filtering library cards (mtg-ondgo fix)
+                                        // before filtering library cards (mtg-253 fix)
                                         self.sync_to_action();
 
                                         // Filter cards by type
@@ -2854,7 +2854,7 @@ impl<'a> GameLoop<'a> {
                 // negative too, leaving the "winner" at negative life (and
                 // making a strict winner-life invariant unobservable). This is
                 // newly reachable now that Lightning Bolt can target players
-                // (mtg-lxrqz).
+                // (mtg-565).
                 if let Some(result) = self.check_win_condition() {
                     return Ok(Some(result));
                 }
@@ -2872,7 +2872,7 @@ impl<'a> GameLoop<'a> {
     ///
     /// This wraps `resolve_top_spell_from_stack` and handles interactive effects
     /// like Balance and DiscardCards that require player choices routed through
-    /// the controller protocol (mtg-xomxx network desync fix).
+    /// the controller protocol (mtg-272 network desync fix).
     fn resolve_top_spell_from_stack_interactive(
         &mut self,
         spell_id: CardId,
@@ -2909,7 +2909,7 @@ impl<'a> GameLoop<'a> {
                             | crate::core::Effect::Scry { .. }
                             | crate::core::Effect::Surveil { .. }
                     )
-                    // mtg-c54e90: Dig effects on the active player's own library
+                    // mtg-415: Dig effects on the active player's own library
                     // (e.g. Seismic Sense) need pre-reveal + sync so the network
                     // shadow client knows the card identities before filtering.
                     // Without this, the client's filter (ChangeValid$) sees an
@@ -2943,7 +2943,7 @@ impl<'a> GameLoop<'a> {
 
         if has_choice_discard {
             // Use effect-by-effect resolution so we can intercept discard choices
-            // (mtg-xomxx) or pre-reveal Dig cards (mtg-c54e90) to route everything
+            // (mtg-272) or pre-reveal Dig cards (mtg-415) to route everything
             // through the controller protocol for network-safe operation.
             self.resolve_top_spell_with_discard_hook(spell_id, controller1, controller2)?;
         } else {
@@ -2967,7 +2967,7 @@ impl<'a> GameLoop<'a> {
     }
 
     /// Resolve a spell effect-by-effect, intercepting discard choices through
-    /// the controller protocol for network-safe operation (mtg-xomxx).
+    /// the controller protocol for network-safe operation (mtg-272).
     ///
     /// This is used instead of `resolve_top_spell_from_stack` when a spell
     /// contains choice-based DiscardCards or Loot effects.
@@ -3146,7 +3146,7 @@ impl<'a> GameLoop<'a> {
                             }
                         }
                     }
-                    // mtg-c54e90: Dig from your own library (e.g. Seismic Sense).
+                    // mtg-415: Dig from your own library (e.g. Seismic Sense).
                     //
                     // The naive `execute_effect` path looks at top-N cards, then
                     // filters them by ChangeValid$ before moving any to hand.
@@ -3397,7 +3397,7 @@ impl<'a> GameLoop<'a> {
                     //
                     // This was previously masked by the engine-baked heuristic
                     // running consistently on both sides (when the heuristic's
-                    // inputs happened to match — see mtg-ced6d1 for the case
+                    // inputs happened to match — see mtg-420 for the case
                     // where they didn't, fixed for the legacy path by 3b052c70
                     // on a never-merged branch). With Phase B/C the engine no
                     // longer carries that heuristic, so the consistency

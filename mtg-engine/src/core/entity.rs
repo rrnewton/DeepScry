@@ -84,7 +84,7 @@ pub const PLACEHOLDER_ID: u32 = 0;
 /// resolving spell/ability. Distinct from `PLACEHOLDER_ID` so the resolver
 /// can tell apart "ValidTgts$ Player" (Mind Twist — picks an opponent) from
 /// "Defined$ You" (controller). In 2-player games we currently auto-pick the
-/// sole opponent without going through the targeting UI; tracked in mtg-6c0qe.
+/// sole opponent without going through the targeting UI; tracked in mtg-564.
 pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
 
 /// Sentinel range for encoding a Player as a CardId inside the
@@ -95,7 +95,7 @@ pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
 /// The base is u32::MAX - 1000 to keep a safe gap from other sentinels and
 /// avoid colliding with realistic CardId values (which grow upward from 0).
 /// See `core::player_as_target_sentinel` / `core::player_target_from_sentinel`
-/// and mtg-lxrqz (Lightning Bolt player-target bug).
+/// and mtg-565 (Lightning Bolt player-target bug).
 pub const PLAYER_TARGET_BASE: u32 = u32::MAX - 1000;
 
 impl<T> EntityId<T> {
@@ -193,7 +193,7 @@ impl<T> EntityId<T> {
     }
 
     /// Check if this ID is the "target opponent" sentinel
-    /// (Mind Twist-style `ValidTgts$ Player`; tracked in mtg-6c0qe).
+    /// (Mind Twist-style `ValidTgts$ Player`; tracked in mtg-564).
     #[inline]
     pub fn is_target_opponent(&self) -> bool {
         self.id == TARGET_OPPONENT_ID
@@ -440,7 +440,7 @@ where
     }
 
     // =========================================================================
-    // LATE-BINDING CARDID SUPPORT (mtg-qtqcr)
+    // LATE-BINDING CARDID SUPPORT (mtg-218)
     // =========================================================================
     //
     // These methods support the late-binding CardID<=>CardName architecture where
@@ -704,7 +704,7 @@ mod tests {
     }
 
     // =========================================================================
-    // LATE-BINDING CARDID TESTS (mtg-qtqcr)
+    // LATE-BINDING CARDID TESTS (mtg-218)
     // =========================================================================
 
     #[test]

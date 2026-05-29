@@ -1460,7 +1460,7 @@ mod tests {
     }
 
     /// Regression test for All Hallow's Eve self-exile-with-counters
-    /// (mtg-2b3951, mtg-464870).
+    /// (mtg-393, mtg-464870).
     ///
     /// Card script (cardsfolder/a/all_hallows_eve.txt):
     /// ```text
@@ -1598,7 +1598,7 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
     }
 
     /// Parser-shape regression for All Hallow's Eve's exile-resident upkeep
-    /// trigger (mtg-464870 / mtg-2b3951). Exercises:
+    /// trigger (mtg-464870 / mtg-393). Exercises:
     ///   - `TriggerZones$ Exile` → Trigger::trigger_zones contains Exile.
     ///   - `IsPresent$ Card.Self+counters_GE1_SCREAM` →
     ///     Trigger::present_self_condition is GE1 SCREAM.

@@ -460,7 +460,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
 
         // Convert result to index and send
         // Use SERVER's action_count - this is a correlation ID for the ChoiceRequest
-        // Also include the actual SpellAbility for robust choice matching (mtg-wsl8g)
+        // Also include the actual SpellAbility for robust choice matching (mtg-234)
         if let ChoiceResult::Ok(ref choice) = result {
             let idx = match choice {
                 None => 0, // Pass

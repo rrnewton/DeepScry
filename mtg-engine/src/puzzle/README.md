@@ -32,7 +32,7 @@ This module provides parsing and loading for .pzl (puzzle) files from Java Forge
 ### Parsing a PZL File
 
 ```rust
-use mtg_forge_rs::puzzle::PuzzleFile;
+use mtg_engine::puzzle::PuzzleFile;
 use std::path::Path;
 
 // Load and parse a puzzle file

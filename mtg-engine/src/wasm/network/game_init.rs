@@ -7,7 +7,7 @@ use crate::core::{CardId, PlayerId};
 use crate::game::GameState;
 use crate::network::DeckCardIdRanges;
 
-/// Initialize a game with reserved CardID slots for late-binding architecture (mtg-d0jg3)
+/// Initialize a game with reserved CardID slots for late-binding architecture (mtg-254)
 ///
 /// This is the WASM equivalent of `GameInitializer::init_game_reserve_only()`.
 /// It creates CardID slots upfront without instantiating cards - card identities

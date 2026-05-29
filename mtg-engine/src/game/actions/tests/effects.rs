@@ -3021,7 +3021,7 @@ mod tests {
             card.keywords
         );
 
-        // Regression guard for mtg-7a1f62 / mtg-d4da18: the
+        // Regression guard for mtg-408 / mtg-403: the
         // "Whenever a creature dealt damage by CARDNAME this turn dies, put a
         // +1/+1 counter on CARDNAME" trigger (Forge
         // `T:Mode$ ChangesZone | ... | ValidCard$ Creature.DamagedBy`) was
@@ -3047,7 +3047,7 @@ mod tests {
         );
     }
 
-    /// Card compat: Sengir Vampire — "this turn" linkage (mtg-7a1f62).
+    /// Card compat: Sengir Vampire — "this turn" linkage (mtg-408).
     ///
     /// Verifies the trigger's "dealt damage by CARDNAME *this turn*" clause is
     /// satisfied by damage recorded EARLIER in the turn even when the creature
@@ -3108,7 +3108,7 @@ mod tests {
         );
     }
 
-    /// Card compat: Sengir Vampire — negative case (mtg-7a1f62).
+    /// Card compat: Sengir Vampire — negative case (mtg-408).
     ///
     /// The trigger must NOT fire for a creature Sengir never damaged. Guards
     /// against an over-broad `DamagedCreatureDies` firing on every death.
@@ -3149,7 +3149,7 @@ mod tests {
         );
     }
 
-    /// Card compat: Mind Twist (mtg-6c0qe; cardsfolder/m/mind_twist.txt)
+    /// Card compat: Mind Twist (mtg-564; cardsfolder/m/mind_twist.txt)
     ///
     /// Script:
     ///   ManaCost:X B
@@ -3191,13 +3191,13 @@ mod tests {
         assert!(
             found,
             "Mind Twist must produce DiscardCardsXPaid with PlayerId::target_opponent() \
-             sentinel so ValidTgts$ Player resolves to the opponent (mtg-6c0qe). \
+             sentinel so ValidTgts$ Player resolves to the opponent (mtg-564). \
              Got effects: {:?}",
             card.effects
         );
     }
 
-    /// Card compat: Lightning Bolt — player target sentinel round-trip (mtg-lxrqz).
+    /// Card compat: Lightning Bolt — player target sentinel round-trip (mtg-565).
     ///
     /// Asserts that `player_as_target_sentinel` and `player_target_from_sentinel`
     /// round-trip correctly for both players (the sentinel scheme used to let
@@ -3226,7 +3226,7 @@ mod tests {
         }
     }
 
-    /// Parser-shape regression test for The Abyss (mtg-sgkjv).
+    /// Parser-shape regression test for The Abyss (mtg-550).
     ///
     /// The Abyss: `3 B` World Enchantment with an "each player's upkeep" phase
     /// trigger whose Execute$ SVar is

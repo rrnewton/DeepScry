@@ -37,12 +37,12 @@
 //!   construction (only the scrying player's NetworkController calls
 //!   `request_choice` with ChoiceType::Scry).
 
-use mtg_forge_rs::core::{Card, CardId, CardType, PlayerId};
-use mtg_forge_rs::game::{
+use mtg_engine::core::{Card, CardId, CardType, PlayerId};
+use mtg_engine::game::{
     controller::ChoiceResult, GameState, GameStateView, PlayerController, RandomController, ScryDecision,
     SurveilDecision,
 };
-use mtg_forge_rs::network::{ChoiceRequest, ChoiceResponse, ChoiceType, NetworkController};
+use mtg_engine::network::{ChoiceRequest, ChoiceResponse, ChoiceType, NetworkController};
 use smallvec::SmallVec;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc;

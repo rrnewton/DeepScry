@@ -99,7 +99,7 @@ pub fn network_authenticate(password: &str, player_name: &str, deck_json: &str) 
     Ok(())
 }
 
-/// Configure the WS-open handler to send `CreateGame` (mtg-njdwy).
+/// Configure the WS-open handler to send `CreateGame` (mtg-474).
 ///
 /// Call BEFORE `network_init` (or at least before the WebSocket opens). On
 /// the next `on_open` the client will dispatch `ClientMessage::CreateGame`
@@ -121,7 +121,7 @@ pub fn network_set_lobby_create(game_name: &str, game_password: &str) {
     });
 }
 
-/// Configure the WS-open handler to send `JoinGame` (mtg-njdwy).
+/// Configure the WS-open handler to send `JoinGame` (mtg-474).
 ///
 /// Mirror of [`network_set_lobby_create`] for the joiner side.
 #[wasm_bindgen]

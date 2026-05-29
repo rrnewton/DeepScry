@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: Triskelion's "remove a +1/+1 counter: deal 1 damage" activation
 #
-# Regression test for mtg-b1f634 (Card Compatibility: Triskelion).
+# Regression test for mtg-396 (Card Compatibility: Triskelion).
 # Before the SubCounter cost was implemented, Triskelion's activated ability
 # was silently dropped during ability parsing because the parser only knew
 # how to handle SubCounter<N/LOYALTY> (planeswalker minus abilities). Cards

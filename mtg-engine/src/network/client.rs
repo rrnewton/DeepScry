@@ -874,7 +874,7 @@ pub struct GameStartInfo {
 /// - Only sees own hand contents and public information
 /// - Syncs via choice messages, not full state transfer
 ///
-/// TODO(mtg-qtqcr Phase 3): Complete late-binding architecture migration
+/// TODO(mtg-218 Phase 3): Complete late-binding architecture migration
 pub struct ClientGameState {
     /// Shadow game state
     pub game: GameState,
@@ -928,7 +928,7 @@ impl ClientGameState {
         );
 
         // Set up our library as remote (we don't know the order)
-        // TODO(mtg-qtqcr Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
+        // TODO(mtg-218 Phase 3): Use CardZone::new_library_with_cards() once server sends DeckCardIdRanges
         // For now, just create empty libraries since we don't have CardIDs yet
         if let Some(zones) = game.get_player_zones_mut(our_player_id) {
             zones.library = crate::zones::CardZone::new(crate::zones::Zone::Library, our_player_id);
@@ -1551,7 +1551,7 @@ impl NetworkClient {
             let msg = self.receive_message().await?;
             match msg {
                 ServerMessage::CardRevealed { owner, card, reason } => {
-                    // HIDDEN INFO ARCHITECTURE (mtg-qtqcr):
+                    // HIDDEN INFO ARCHITECTURE (mtg-218):
                     // - Real reveal: name is non-empty, instantiate the card
                     // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate
                     let is_dummy_reveal = card.name.is_empty();

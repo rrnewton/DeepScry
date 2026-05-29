@@ -8,7 +8,7 @@
 //! This is the "from-scratch consistency" gold standard for incremental computing:
 //! the incremental result must match the full recomputation result.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{random_controller::RandomController, GameLoop, VerbosityLevel},
     loader::{AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,

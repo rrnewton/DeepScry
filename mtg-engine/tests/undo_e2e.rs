@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 
 //! End-to-end tests for the undo/replay system
@@ -6,7 +6,7 @@
 //! These tests verify that we can rewind and replay game states correctly,
 //! which is critical for tree search and AI development.
 
-use mtg_forge_rs::{
+use mtg_engine::{
     game::{random_controller::RandomController, GameLoop, VerbosityLevel},
     loader::{require_cardsfolder, AsyncCardDatabase as CardDatabase, DeckLoader, GameInitializer},
     Result,
@@ -163,11 +163,11 @@ async fn test_full_game_undo_replay() -> Result<()> {
     let mut other_count = 0;
     for action in game_loop.game.undo_log.actions() {
         match action {
-            mtg_forge_rs::undo::GameAction::ChangeTurn { .. } => change_turn_count += 1,
-            mtg_forge_rs::undo::GameAction::AdvanceStep { .. } => advance_step_count += 1,
-            mtg_forge_rs::undo::GameAction::MoveCard { from_zone, to_zone, .. } => {
+            mtg_engine::undo::GameAction::ChangeTurn { .. } => change_turn_count += 1,
+            mtg_engine::undo::GameAction::AdvanceStep { .. } => advance_step_count += 1,
+            mtg_engine::undo::GameAction::MoveCard { from_zone, to_zone, .. } => {
                 move_card_count += 1;
-                use mtg_forge_rs::zones::Zone;
+                use mtg_engine::zones::Zone;
                 match (from_zone, to_zone) {
                     (Zone::Library, Zone::Hand) => lib_to_hand += 1,
                     (Zone::Hand, Zone::Stack) => hand_to_stack += 1,
@@ -436,7 +436,7 @@ async fn test_full_game_undo_replay() -> Result<()> {
 /// Test that individual actions can be undone correctly
 #[tokio::test]
 async fn test_action_undo() -> Result<()> {
-    use mtg_forge_rs::core::{Card, CardType};
+    use mtg_engine::core::{Card, CardType};
 
     // Load card database
     let cardsfolder = require_cardsfolder();
@@ -548,7 +548,7 @@ async fn test_aggressive_undo_snapshots() -> Result<()> {
 
     // Track snapshots at different undo log positions
     // Store (undo_log_size, snapshot_clone)
-    let mut snapshots: Vec<(usize, mtg_forge_rs::game::GameState)> = Vec::new();
+    let mut snapshots: Vec<(usize, mtg_engine::game::GameState)> = Vec::new();
 
     // Take initial snapshot
     snapshots.push((0, game_loop.game.clone()));
@@ -704,14 +704,14 @@ async fn test_aggressive_undo_snapshots() -> Result<()> {
 ///
 /// This uses state hashing to detect ANY divergence in game state, not just zone sizes.
 fn verify_state_equivalence(
-    current: &mtg_forge_rs::game::GameState,
-    snapshot: &mtg_forge_rs::game::GameState,
-    p1_id: mtg_forge_rs::core::PlayerId,
-    p2_id: mtg_forge_rs::core::PlayerId,
+    current: &mtg_engine::game::GameState,
+    snapshot: &mtg_engine::game::GameState,
+    p1_id: mtg_engine::core::PlayerId,
+    p2_id: mtg_engine::core::PlayerId,
     iteration: usize,
 ) -> Result<()> {
-    use mtg_forge_rs::game::{compute_undo_test_hash, format_hash};
-    use mtg_forge_rs::MtgError;
+    use mtg_engine::game::{compute_undo_test_hash, format_hash};
+    use mtg_engine::MtgError;
 
     // Compute state hashes for full comparison (using stricter undo test hash)
     let current_hash = compute_undo_test_hash(current);
@@ -882,8 +882,8 @@ fn verify_state_equivalence(
 /// undo back to the previous choice point, not just a single action.
 #[tokio::test]
 async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
-    use mtg_forge_rs::core::{CardId, ManaCost, PlayerId, SpellAbility};
-    use mtg_forge_rs::game::controller::{ChoiceResult, GameStateView, PlayerController};
+    use mtg_engine::core::{CardId, ManaCost, PlayerId, SpellAbility};
+    use mtg_engine::game::controller::{ChoiceResult, GameStateView, PlayerController};
     use smallvec::SmallVec;
 
     // Create a simple controller that makes a few choices then issues an undo request
@@ -1014,7 +1014,7 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
         fn choose_from_library(
             &mut self,
             _view: &GameStateView,
-            valid_cards: &[&mtg_forge_rs::loader::CardDefinition],
+            valid_cards: &[&mtg_engine::loader::CardDefinition],
         ) -> ChoiceResult<Option<usize>> {
             ChoiceResult::Ok(if valid_cards.is_empty() { None } else { Some(0) })
         }
@@ -1055,8 +1055,8 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
 
         fn on_game_end(&mut self, _view: &GameStateView, _won: bool) {}
 
-        fn get_controller_type(&self) -> mtg_forge_rs::game::snapshot::ControllerType {
-            mtg_forge_rs::game::snapshot::ControllerType::Tui
+        fn get_controller_type(&self) -> mtg_engine::game::snapshot::ControllerType {
+            mtg_engine::game::snapshot::ControllerType::Tui
         }
 
         fn get_snapshot_state(&self) -> Option<serde_json::Value> {

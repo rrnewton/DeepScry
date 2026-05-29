@@ -132,7 +132,7 @@ Focus areas:
 ### Priority 3: MCTS-Specific Optimizations
 
 **For parallel MCTS**:
-1. Use bump allocators per thread (Phase 2 from mtg-a6ca26)
+1. Use bump allocators per thread (Phase 2 from mtg-162)
 2. Snapshot only minimal game state needed for simulation
 3. Consider using GameState references where possible (tricky with lifetimes)
 
@@ -169,7 +169,7 @@ Focus areas:
 
 ## References
 
-- mtg-a6ca26: Parallel MCTS optimization tracking issue
+- mtg-162: Parallel MCTS optimization tracking issue
 - mtg-2: Main optimization tracking (allocation reduction)
 - Benchmark: benches/game_benchmark.rs:1103-1105 (GameState cloning)
 - GameState: src/game/state.rs:17 (structure definition)

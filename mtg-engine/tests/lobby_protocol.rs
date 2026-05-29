@@ -24,9 +24,9 @@
 #![allow(clippy::ok_expect)]
 
 use futures_util::{SinkExt, StreamExt};
-use mtg_forge_rs::network::lobby::{new_shared_lobby, ActiveGame, JoinedPlayer, LobbyState, PendingGame};
+use mtg_engine::network::lobby::{new_shared_lobby, ActiveGame, JoinedPlayer, LobbyState, PendingGame};
 // Protocol types are re-exported via `network::*` (see network/mod.rs).
-use mtg_forge_rs::network::{ClientMessage, DeckSubmission, JoinFailReason, ServerMessage, DEFAULT_LOBBY_GAME};
+use mtg_engine::network::{ClientMessage, DeckSubmission, JoinFailReason, ServerMessage, DEFAULT_LOBBY_GAME};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
@@ -138,8 +138,8 @@ fn too_small_deck() -> DeckSubmission {
 ///
 /// Returns the bound port.
 async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32) -> u16 {
-    use mtg_forge_rs::network::lobby::{build_server_full_message, hash_game_password};
-    use mtg_forge_rs::network::memory::{check_memory_admission, current_system_memory, AdmissionVerdict};
+    use mtg_engine::network::lobby::{build_server_full_message, hash_game_password};
+    use mtg_engine::network::memory::{check_memory_admission, current_system_memory, AdmissionVerdict};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -274,7 +274,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                             };
                             let r = ServerMessage::GameCreated {
                                 game_name: name,
-                                your_player_id: mtg_forge_rs::core::PlayerId::new(0),
+                                your_player_id: mtg_engine::core::PlayerId::new(0),
                                 your_name: Some(creator_name),
                             };
                             let _ = ws.send(Message::Text(serde_json::to_string(&r).unwrap().into())).await;
@@ -363,7 +363,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                             let r = ServerMessage::AuthResult {
                                 success: true,
                                 error: None,
-                                your_player_id: Some(mtg_forge_rs::core::PlayerId::new(1)),
+                                your_player_id: Some(mtg_engine::core::PlayerId::new(1)),
                                 your_name: Some(player_name.unwrap_or_else(|| "Player2".to_string())),
                             };
                             let _ = ws.send(Message::Text(serde_json::to_string(&r).unwrap().into())).await;

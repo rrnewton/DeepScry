@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # E2E test: All Hallow's Eve self-exile, upkeep counter-tick, mass resurrection.
 #
-# Regression test for mtg-464870 (compat) / mtg-2b3951 (bug). Three fixes are
+# Regression test for mtg-464870 (compat) / mtg-393 (bug). Three fixes are
 # exercised end-to-end:
 #
 # 1. ChangeZone Origin$ Stack | Destination$ Exile | RememberChanged$ True —

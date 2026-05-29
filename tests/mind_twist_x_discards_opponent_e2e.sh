@@ -2,7 +2,7 @@
 # E2E test: Mind Twist with X=N actually causes the OPPONENT to discard N
 # cards at random.
 #
-# Regression test for mtg-6c0qe (user bug report, fix-gameplay-bugs-4pack):
+# Regression test for mtg-564 (user bug report, fix-gameplay-bugs-4pack):
 # Before the fix, `SP$ Discard | ValidTgts$ Player | NumCards$ X | Mode$ Random`
 # parsed to a placeholder PlayerId. `resolve_target_for_effect` then defaulted
 # the placeholder to `card_owner` (the CASTER). So when an opponent cast

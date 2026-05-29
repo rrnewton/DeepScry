@@ -1,7 +1,7 @@
 # Java Forge Architecture Analysis: Mana & Spell Casting
 
 **Date:** 2025-11-08
-**Context:** Analysis for mtg-36acf8 optimization work
+**Context:** Analysis for mtg-166 optimization work
 **Purpose:** Compare Java Forge's approach to mana management and spell casting vs Rust implementation
 
 ---
@@ -424,7 +424,7 @@ impl GameState {
 
 ### Recommended Next Steps
 
-1. **Implement quick-win optimizations** (Phase 1-3 from mtg-36acf8)
+1. **Implement quick-win optimizations** (Phase 1-3 from mtg-166)
    - Get 15-20% improvement with low risk
    - Learn where the remaining bottlenecks are
 
@@ -451,4 +451,4 @@ This is a **greenfield advantage** we should exploit.
 **Next Actions:**
 - Share this analysis with user
 - Decide on incremental framework scope
-- Update mtg-36acf8 with decision and plan
+- Update mtg-166 with decision and plan

@@ -1,4 +1,4 @@
-// TODO(mtg-0et0f): Remove once wildcard patterns are audited
+// TODO(mtg-211): Remove once wildcard patterns are audited
 #![allow(clippy::wildcard_enum_match_arm)]
 //! Basic Land Demo
 //!
@@ -6,8 +6,8 @@
 //! automatically get implicit mana abilities even though they're not explicitly
 //! written in the card files.
 
-use mtg_forge_rs::game::GameState;
-use mtg_forge_rs::loader::CardDatabase;
+use mtg_engine::game::GameState;
+use mtg_engine::loader::CardDatabase;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .clone();
 
         // Pay the cost (tap)
-        use mtg_forge_rs::core::Cost;
+        use mtg_engine::core::Cost;
         game.pay_ability_cost(alice_id, *land_id, &Cost::Tap)?;
         println!("  ✓ Paid cost: Tapped {}", land_name.as_str());
 
@@ -114,12 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for effect in &ability.effects {
             // Fix placeholder player ID
             let fixed_effect = match effect {
-                mtg_forge_rs::core::Effect::AddMana {
+                mtg_engine::core::Effect::AddMana {
                     player,
                     mana,
                     produces_chosen_color,
                     amount_var,
-                } if player.is_placeholder() => mtg_forge_rs::core::Effect::AddMana {
+                } if player.is_placeholder() => mtg_engine::core::Effect::AddMana {
                     player: alice_id,
                     mana: *mana,
                     produces_chosen_color: *produces_chosen_color,

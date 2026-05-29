@@ -1091,7 +1091,7 @@ Name=My Deck
             cleanup_tui_state,
             set_log_level,
             tui_set_verify_rewind_replay
-        } from './pkg/mtg_forge_rs.js';
+        } from './pkg/mtg_engine.js';
 
         // Deck builder imports - optional (only available when built with wasm-tui feature)
         let deckBuilderEnabled = false;
@@ -1105,7 +1105,7 @@ Name=My Deck
 
         // Try to import deck builder functions
         try {
-            const deckBuilderModule = await import('./pkg/mtg_forge_rs.js');
+            const deckBuilderModule = await import('./pkg/mtg_engine.js');
             if (deckBuilderModule.launch_deck_builder) {
                 launch_deck_builder = deckBuilderModule.launch_deck_builder;
                 cleanup_deck_builder_state = deckBuilderModule.cleanup_deck_builder_state;
@@ -1138,7 +1138,7 @@ Name=My Deck
 
         // Try to import network functions
         try {
-            const networkModule = await import('./pkg/mtg_forge_rs.js');
+            const networkModule = await import('./pkg/mtg_engine.js');
             if (networkModule.network_init) {
                 launch_network_game = networkModule.launch_network_game;
                 network_init = networkModule.network_init;
@@ -1150,7 +1150,7 @@ Name=My Deck
                 network_get_state = networkModule.network_get_state;
                 network_is_game_ready = networkModule.network_is_game_ready;
                 network_get_our_player_id = networkModule.network_get_our_player_id;
-                // Lobby-action setters used by the landing-page redirect (mtg-njdwy).
+                // Lobby-action setters used by the landing-page redirect (mtg-474).
                 // May be absent in older WASM builds — network.js guards usage.
                 window.__mtg_network_set_lobby_create = networkModule.network_set_lobby_create;
                 window.__mtg_network_set_lobby_join = networkModule.network_set_lobby_join;
@@ -1182,7 +1182,7 @@ Name=My Deck
         window.tui_set_verify_rewind_replay = tui_set_verify_rewind_replay;
 
         let cardDb = null;
-        // Per-set card-data index loaded from data/sets/index.json (mtg-6fsjb).
+        // Per-set card-data index loaded from data/sets/index.json (mtg-464).
         // Schema: { version, sets: [{file, bytes, card_count}, ...],
         //           cards: { "<Card Name>": "YYYY-CODE.bin", ... } }
         // The lobby/launch path consults this to know which set bins to
@@ -1216,7 +1216,7 @@ Name=My Deck
                 const decksData = new Uint8Array(await decksResp.arrayBuffer());
                 const deckCount = cardDb.load_decks(decksData);
 
-                // Load the per-set card index (mtg-6fsjb). Required: without
+                // Load the per-set card index (mtg-464). Required: without
                 // it we cannot map deck card names -> the right set bin.
                 const indexResp = await fetch('./data/sets/index.json');
                 if (!indexResp.ok) {
@@ -1277,7 +1277,7 @@ Name=My Deck
 
                 console.log(`MTG Forge WASM initialized: ${deckCount} decks ready (deferred card loading)`);
 
-                // mtg-njdwy: landing-page-lobby redirect auto-launch.
+                // mtg-474: landing-page-lobby redirect auto-launch.
                 // The lobby (web/index.html) closes its own browse-WS before
                 // redirecting here with ?lobby_create=NAME or ?lobby_join=NAME
                 // (plus &lobby_pass=, &name=, &ws=, &deck=). Detect that and
@@ -1411,7 +1411,7 @@ Name=My Deck
         /**
          * Load cards needed for the selected decks (called at game launch).
          *
-         * Per mtg-6fsjb:
+         * Per mtg-464:
          * 1. Register any custom decks (from localStorage) with the WASM card DB.
          * 2. Walk every deck's unique card names, look each up in setIndex.cards
          *    to find its owning per-set bin, and Promise.all-fetch the union.
@@ -1511,7 +1511,7 @@ Name=My Deck
         const SETTINGS_KEY = 'mtg-forge-fancy-settings';
 
         // Gate the "Local" card-image source behind ?allow_local_img_load=true.
-        // Rationale (mtg-p5tyf): licensing posture for serving card images from
+        // Rationale (mtg-477): licensing posture for serving card images from
         // our VM is unsettled; default UX must offer only Scryfall/Gatherer until
         // clarified.
         //
@@ -1750,7 +1750,7 @@ Name=My Deck
                 p2Pane.style.display = isNetworkMode ? 'none' : 'block';
             }
 
-            // Show seed in network mode too - needed for deterministic random controller (mtg-d0jg3)
+            // Show seed in network mode too - needed for deterministic random controller (mtg-254)
             // IMPORTANT: For WASM/native behavioral identity, both clients MUST use the same seed!
             if (seedRow) {
                 seedRow.style.display = 'flex'; // Always show - coordination needed for testing
@@ -2677,7 +2677,7 @@ Name=My Deck
             return client;
         }
 
-        // mtg-njdwy: detect the landing-page lobby redirect and auto-launch
+        // mtg-474: detect the landing-page lobby redirect and auto-launch
         // network mode targeting the specified named slot. The lobby closes
         // its own WS before redirect so there is no second-pairing race.
         function maybeAutoLaunchFromLobby() {
@@ -2791,7 +2791,7 @@ Name=My Deck
                 // password may be empty for an unconfigured server (the
                 // default). The server's check_server_password accepts any
                 // value when config.password.is_empty() — so we don't
-                // demand one client-side either. (mtg-njdwy: needed for
+                // demand one client-side either. (mtg-474: needed for
                 // the landing-page redirect path which does not collect a
                 // server password from the user.)
                 if (!playerName) {
@@ -2892,7 +2892,7 @@ Name=My Deck
                         network_get_state,
                         network_is_game_ready,
                         network_get_our_player_id,
-                        // mtg-njdwy: optional lobby-action setters used by the
+                        // mtg-474: optional lobby-action setters used by the
                         // landing-page redirect. network.js guards optional
                         // usage so old WASM builds still work.
                         network_set_lobby_create: window.__mtg_network_set_lobby_create,
@@ -2931,7 +2931,7 @@ Name=My Deck
                         // Both clients MUST use the same seed for random controllers to behave identically
                         const seedInput = document.getElementById('game-seed').value;
                         const controllerSeed = seedInput ? BigInt(seedInput) : BigInt(0);
-                        console.log(`[Network] Using controller seed: ${controllerSeed} (mtg-d0jg3)`);
+                        console.log(`[Network] Using controller seed: ${controllerSeed} (mtg-254)`);
 
                         // Launch network TUI mode with selected controller
                         launch_network_game(
@@ -3693,7 +3693,7 @@ Name=My Deck
                 } else {
                     // Per-deck pack-size annotation (~KB) was removed when
                     // we switched from per-deck packs to per-set bins
-                    // (mtg-6fsjb); on-demand fetch sizes are now a function
+                    // (mtg-464); on-demand fetch sizes are now a function
                     // of the deck's set-union and aren't pre-computed.
                     for (const name of matchingDecks) {
                         const info = JSON.parse(cardDb.get_deck_info_json(name));
@@ -4067,7 +4067,7 @@ Name=My Deck
 
         /**
          * Load all per-set bins for the deck builder (it needs every card
-         * available for browse/search). After mtg-6fsjb this is implemented
+         * available for browse/search). After mtg-464 this is implemented
          * as N parallel small fetches via loadAllCards().
          */
         async function loadAllCardsForDeckBuilder() {

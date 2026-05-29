@@ -429,7 +429,7 @@ impl<'a> GameLoop<'a> {
 
         // Print battlefield state AFTER draw step completes
         // This ensures the active player's hand shows the newly drawn card
-        // (Previously this was printed at turn start, before draw - see mtg-p9svf)
+        // (Previously this was printed at turn start, before draw - see mtg-204)
         if !self.replaying && self.verbosity >= VerbosityLevel::Normal {
             self.print_battlefield_state();
         }

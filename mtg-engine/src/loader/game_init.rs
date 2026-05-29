@@ -26,7 +26,7 @@ impl<'a> GameInitializer<'a> {
     /// 3. Card identities will be revealed later via RevealCard actions
     ///
     /// This is used by network clients in the late-binding CardID architecture
-    /// (mtg-qtqcr) where CardIDs are known upfront but card identities are hidden.
+    /// (mtg-218) where CardIDs are known upfront but card identities are hidden.
     pub fn init_game_reserve_only(
         &self,
         player1_name: String,

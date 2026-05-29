@@ -321,7 +321,7 @@ pub fn sort_spell_abilities(abilities: &[SpellAbility]) -> Vec<SpellAbility> {
 ///
 /// Speculatively runs the GreedyManaResolver against the player's current
 /// untapped sources. The resolver already orders sources cheapest-first
-/// (`mtg-0f9d13`), so this hint is what *will* actually happen if the
+/// (`mtg-413`), so this hint is what *will* actually happen if the
 /// player accepts the action. If the spell can't be paid at all, returns
 /// `None` (the action wouldn't have been offered in the first place).
 fn predicted_side_costs_hint(view: &GameStateView, card_id: crate::core::CardId) -> Option<String> {
@@ -390,7 +390,7 @@ fn predicted_side_costs_hint(view: &GameStateView, card_id: crate::core::CardId)
 ///   "cast Psionic Blast (sacrificing Black Lotus)"
 ///   "cast Lightning Bolt (1 damage from City of Brass)"
 /// — so the player sees the cost before accepting the action. See task
-/// `bug-sacrifice-cost-display` and `mtg-0f9d13` for the broader context.
+/// `bug-sacrifice-cost-display` and `mtg-413` for the broader context.
 ///
 /// See docs/FIXED_INPUT_SYNTAX.md for full input syntax documentation.
 pub fn format_spell_ability_choice(view: &GameStateView, ability: &SpellAbility) -> String {
@@ -984,7 +984,7 @@ impl<'a> GameStateView<'a> {
     /// `ChoiceRequest`; safe to call on any `GameStateView` (no-op if nothing
     /// queued).
     ///
-    /// See `mtg-ced6d1` for the bug this plumbing fixes.
+    /// See `mtg-420` for the bug this plumbing fixes.
     pub fn take_pending_library_reorders(&self) -> Vec<(PlayerId, Vec<crate::core::CardId>)> {
         let mut queue = self.game.pending_library_reorders.borrow_mut();
         if queue.is_empty() {

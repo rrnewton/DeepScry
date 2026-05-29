@@ -174,7 +174,7 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     // ── Tiered cache policy ───────────────────────────────────────────
     //
     // Splitting the cache by route addresses the stale-WASM bug class
-    // (mtg-2indh): the JS glue and the .wasm binary use FIXED filenames
+    // (mtg-475): the JS glue and the .wasm binary use FIXED filenames
     // (no content hashing), so an old cached glue paired with a new wasm
     // (or vice versa) yields the cryptic "WebAssembly.instantiate():
     // Import #N __wbindgen_cast_<hash>: function import requires a

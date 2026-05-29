@@ -1,7 +1,7 @@
 # Commander Chandra Tokens Deck - Playtest Checklist
 
 Deck: `decks/commander/chandra_tokens.dck`
-Tracking issue: mtg-4s1lq
+Tracking issue: mtg-274
 Updated: 2026-04-01_#2038
 
 ## Bugs Found and Fixed (10 total across 6 iterations)

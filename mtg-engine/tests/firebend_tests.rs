@@ -7,8 +7,8 @@
 //!
 //! These tests verify the implementation of Effect::Firebend and combat mana pools.
 
-use mtg_forge_rs::core::{Card, CardType, Effect, PlayerId};
-use mtg_forge_rs::game::GameState;
+use mtg_engine::core::{Card, CardType, Effect, PlayerId};
+use mtg_engine::game::GameState;
 use smallvec::SmallVec;
 
 /// Helper function to create a creature card
@@ -18,7 +18,7 @@ fn create_creature(
     owner: PlayerId,
     power: i8,
     toughness: i8,
-) -> mtg_forge_rs::core::CardId {
+) -> mtg_engine::core::CardId {
     let creature_id = game.next_card_id();
     let mut creature = Card::new(creature_id, name, owner);
     creature.set_types(SmallVec::from_vec(vec![CardType::Creature]));
@@ -30,12 +30,12 @@ fn create_creature(
 }
 
 /// Helper to get combat mana red count (returns 0 if None)
-fn combat_red(player: &mtg_forge_rs::core::Player) -> u8 {
+fn combat_red(player: &mtg_engine::core::Player) -> u8 {
     player.combat_mana_pool.as_ref().map_or(0, |p| p.red)
 }
 
 /// Helper to get combat mana total (returns 0 if None)
-fn combat_total(player: &mtg_forge_rs::core::Player) -> u8 {
+fn combat_total(player: &mtg_engine::core::Player) -> u8 {
     player.combat_mana_pool.as_ref().map_or(0, |p| p.total())
 }
 
@@ -217,7 +217,7 @@ fn test_firebend_zero_amount() {
 #[test]
 fn test_firebend_attack_trigger_keyword() {
     // Test that a card with Firebending keyword has an attack trigger
-    use mtg_forge_rs::core::{Keyword, KeywordArgs};
+    use mtg_engine::core::{Keyword, KeywordArgs};
 
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
@@ -252,7 +252,7 @@ fn test_firebend_attack_trigger_keyword() {
 #[test]
 fn test_firebend_attack_trigger_execution() {
     // Test that check_attack_triggers executes Firebend effects
-    use mtg_forge_rs::core::{Effect, Trigger, TriggerEvent};
+    use mtg_engine::core::{Effect, Trigger, TriggerEvent};
 
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
@@ -293,7 +293,7 @@ fn test_firebend_attack_trigger_execution() {
 #[test]
 fn test_firebend_attack_trigger_with_power() {
     // Test Firebending X where X is creature's power
-    use mtg_forge_rs::core::{Effect, Trigger, TriggerEvent};
+    use mtg_engine::core::{Effect, Trigger, TriggerEvent};
 
     let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
     let p1_id = game.players[0].id;
@@ -339,7 +339,7 @@ fn test_firebend_attack_trigger_with_power() {
 /// 4. Combat mana is spent, spell resolves
 #[test]
 fn test_firebend_e2e_attack_and_cast_spell() {
-    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+    use mtg_engine::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
 
     let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
     let alice = game.players[0].id;
@@ -420,7 +420,7 @@ fn test_firebend_e2e_attack_and_cast_spell() {
     // Resolve the bolt (simplified - just execute its effect)
     // In a real game, resolve_top_spell_from_stack would handle this
     let bolt_effect = Effect::DealDamage {
-        target: mtg_forge_rs::core::TargetRef::Player(bob),
+        target: mtg_engine::core::TargetRef::Player(bob),
         amount: 3,
     };
     game.execute_effect(&bolt_effect).expect("Bolt should deal damage");
@@ -435,7 +435,7 @@ fn test_firebend_e2e_attack_and_cast_spell() {
 /// Test that combat mana can pay for a more expensive spell
 #[test]
 fn test_firebend_e2e_combat_mana_pays_expensive_spell() {
-    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+    use mtg_engine::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
 
     let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
     let alice = game.players[0].id;
@@ -502,7 +502,7 @@ fn test_firebend_e2e_combat_mana_pays_expensive_spell() {
 /// Test that regular mana and combat mana work together
 #[test]
 fn test_firebend_e2e_combined_regular_and_combat_mana() {
-    use mtg_forge_rs::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
+    use mtg_engine::core::{Card, CardType, Effect, ManaCost, Trigger, TriggerEvent};
 
     let mut game = GameState::new_two_player("Alice".to_string(), "Bob".to_string(), 20);
     let alice = game.players[0].id;
