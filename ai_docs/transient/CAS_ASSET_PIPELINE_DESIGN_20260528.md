@@ -286,7 +286,7 @@ rewrite. So:
   documented migration path, but trunk does NOT yet own the build.
 - The content-addressing that actually kills the stale-bundle bug is
   delivered NOW via the exporter (bins) + `hash_web_assets.sh` (pkg).
-- Full trunk adoption is deferred (mtg-dxig9).
+- Full trunk adoption is deferred (mtg-611).
 
 ---
 
@@ -335,14 +335,14 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
 
 ### Deferred (filed follow-ups)
 
-- **mtg-dxig9** — full trunk `rel="rust"` migration of the source HTML
+- **mtg-611** — full trunk `rel="rust"` migration of the source HTML
   (so the committed HTML ships hashed pkg directly). NOTE: this is now an
   *optimization*, not a correctness requirement — `hash_web_assets.sh` and
   the `?v=` cache-bust are ALREADY retired (the staging-copy `mtg
   hash-web-assets` + content-aware `pkg_cache_header` cover correctness).
-- **mtg-ntx2j** — content-address `decks.bin` / `tokens.bin` so they can
+- **mtg-612** — content-address `decks.bin` / `tokens.bin` so they can
   join the immutable tier instead of no-cache.
-- **mtg-1rvug** — hash the game-page HTML (`tui_game.<hash>.html` etc.) so
+- **mtg-613** — hash the game-page HTML (`tui_game.<hash>.html` etc.) so
   `index.html` is the ONLY mutable HTML pointer (the user's stated ideal).
 
 ---
@@ -366,10 +366,10 @@ asset pipeline is about the naming scheme + manifest, not the bytes.
    correctness** — `pkg_cache_header` is content-aware, so the source tree's
    fixed pkg name is correctly `no-cache` and the deploy tree's hashed name
    is correctly `immutable`, from ONE binary. Migrating the *source* HTML to
-   ship hashed pkg directly (mtg-dxig9) is now a nice-to-have, not required.
+   ship hashed pkg directly (mtg-611) is now a nice-to-have, not required.
 6. **`index.html` mutable pointer.** Confirm `index.html` +
    `server-config.js` + `index.json` are the intended permanent mutable
-   tier (everything else immutable). mtg-1rvug would make `index.html`
+   tier (everything else immutable). mtg-613 would make `index.html`
    the *sole* mutable HTML.
 
 ---

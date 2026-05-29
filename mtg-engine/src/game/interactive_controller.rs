@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// Returns `true` when a line of input was read, and `false` on EOF **or** an
 /// I/O error.
 ///
-/// Rationale (mtg-eo8x2): `io::Stdin::read_line` returns `Ok(0)` at EOF (e.g.
+/// Rationale (mtg-615): `io::Stdin::read_line` returns `Ok(0)` at EOF (e.g.
 /// once a piped automated test has exhausted its scripted input). The previous
 /// code only special-cased `Err(_)` (`read_line(..).is_err()`); on `Ok(0)` it
 /// fell through with an empty string, and the surrounding `loop { .. }` prompts
@@ -132,7 +132,7 @@ impl InteractiveController {
     /// Read and buffer commands from stdin, splitting on semicolons.
     ///
     /// Returns `Err` on EOF or I/O error so callers break out of their input
-    /// loop instead of spinning (mtg-eo8x2).
+    /// loop instead of spinning (mtg-615).
     fn read_and_buffer_commands(&mut self) -> Result<(), std::io::Error> {
         let mut input = String::new();
         if !read_line_or_eof(&mut input) {
@@ -175,7 +175,7 @@ impl InteractiveController {
             if !read_line_or_eof(&mut input) {
                 // EOF / I/O error: no more input will arrive. Give up on this
                 // prompt (treat as "pass / no choice") instead of re-looping,
-                // which would busy-spin at 100% CPU (mtg-eo8x2).
+                // which would busy-spin at 100% CPU (mtg-615).
                 eprintln!("Input closed (EOF); aborting prompt");
                 return None;
             }
@@ -560,7 +560,7 @@ impl PlayerController for InteractiveController {
                 if !read_line_or_eof(&mut input) {
                     // EOF / I/O error: no more input will arrive. Pass (the
                     // index-0 action) rather than re-looping, which would
-                    // busy-spin at 100% CPU and orphan the process (mtg-eo8x2).
+                    // busy-spin at 100% CPU and orphan the process (mtg-615).
                     eprintln!("Input closed (EOF); passing");
                     return ChoiceResult::Ok(None);
                 }

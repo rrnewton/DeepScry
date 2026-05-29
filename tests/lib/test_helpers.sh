@@ -178,7 +178,7 @@ run_mtg() {
 # Internal core: run a shell command in its OWN process group with a timeout,
 # and on timeout KILL THE ENTIRE PROCESS GROUP so no grandchild survives.
 #
-# Why this exists (mtg-eo8x2): the old implementation backgrounded a shell
+# Why this exists (mtg-615): the old implementation backgrounded a shell
 # FUNCTION (`run_mtg_prebuilt "$@" &`) and, on timeout, only signalled that
 # function's subshell PID. The real `mtg` binary is a GRANDCHILD; killing the
 # subshell reparents it to init (ppid=1) where it kept running — and a
@@ -255,7 +255,7 @@ _run_with_pgroup_timeout() {
 # Usage: run_mtg_with_timeout TIMEOUT_SECONDS tui deck1.dck deck2.dck --p1 heuristic ...
 #
 # Runs run_mtg_prebuilt in its own process group with timeout handling, so a
-# timeout kills the entire group (no orphaned `mtg` grandchild — mtg-eo8x2).
+# timeout kills the entire group (no orphaned `mtg` grandchild — mtg-615).
 # Works with shell functions (unlike bare `timeout cmd`).
 #
 # For explicit piped input use run_mtg_with_timeout_stdin, or pipe into this
@@ -275,7 +275,7 @@ run_mtg_with_timeout() {
 # Usage: run_mtg_with_timeout_stdin TIMEOUT_SECONDS "input_data" tui deck1.dck ...
 #
 # Like run_mtg_with_timeout but accepts stdin data as second argument. Uses the
-# same process-group kill semantics so no orphan survives a timeout (mtg-eo8x2).
+# same process-group kill semantics so no orphan survives a timeout (mtg-615).
 run_mtg_with_timeout_stdin() {
     local timeout_secs="$1"
     local stdin_data="$2"
