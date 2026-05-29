@@ -5109,4 +5109,46 @@ mod tests {
             "Wrath of God must set NoRegen$ True"
         );
     }
+
+    /// Card compat: Flash Counter (cardsfolder/f/flash_counter.txt)
+    ///
+    /// Script: ManaCost:1 U / Types:Instant
+    ///   A:SP$ Counter | TargetType$ Spell | ValidTgts$ Instant
+    ///
+    /// Parser shape: {1}{U} Instant that counters target instant spell.
+    /// Runtime (counters a target instant) shares the SP$ Counter
+    /// implementation already exercised by Counterspell tests
+    /// (mtg-506).
+    #[test]
+    fn test_card_compat_flash_counter() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/f/flash_counter.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Flash Counter should load");
+        assert_eq!(def.name.as_str(), "Flash Counter");
+        assert_eq!(def.mana_cost.generic, 1);
+        assert_eq!(def.mana_cost.blue, 1);
+        assert!(def.types.contains(&CardType::Instant));
+
+        let counter = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::Counter).then_some(p)
+            })
+            .expect("Flash Counter must have an SP$ Counter spell ability");
+        assert_eq!(counter.get("TargetType"), Some("Spell"));
+        // The narrowing predicate: only Instant spells can be targeted.
+        assert_eq!(
+            counter.get("ValidTgts"),
+            Some("Instant"),
+            "Flash Counter must restrict ValidTgts to Instant"
+        );
+    }
 }

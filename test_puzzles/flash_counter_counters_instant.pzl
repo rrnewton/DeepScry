@@ -1,0 +1,24 @@
+[metadata]
+Name:Flash Counter Counters Instant Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Flash Counter ({1}{U} Instant: counter target instant spell). P1 casts Lightning Bolt (an instant); P2 responds with Flash Counter targeting it. The Lightning Bolt is countered and goes to its owner's graveyard.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=Flash Counter
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Island; Island
+p1exile=
