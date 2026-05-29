@@ -1,0 +1,24 @@
+[metadata]
+Name:Wrath of God Destroys All Creatures Test
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Wrath of God ({2}{W}{W} Sorcery: destroy all creatures. They can't be regenerated). P1 casts it; all three of P2's creatures are destroyed and move to graveyard.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Wrath of God
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains; Plains; Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears; Savannah Lions; Black Knight
+p1exile=

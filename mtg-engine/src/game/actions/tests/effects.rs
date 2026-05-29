@@ -5064,4 +5064,49 @@ mod tests {
                  (untap target attacking creature).",
             );
     }
+
+    /// Card compat: Wrath of God (cardsfolder/w/wrath_of_god.txt)
+    ///
+    /// Script: ManaCost:2 W W / Types:Sorcery
+    ///   A:SP$ DestroyAll | ValidCards$ Creature | NoRegen$ True
+    ///
+    /// Parser shape: {2}{W}{W} Sorcery that destroys all creatures with
+    /// no regeneration. Runtime (board-wipe with NoRegen honored)
+    /// verified by tests/wrath_of_god_destroys_all_creatures_e2e.sh
+    /// (mtg-558).
+    #[test]
+    fn test_card_compat_wrath_of_god() {
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/w/wrath_of_god.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Wrath of God should load");
+        assert_eq!(def.name.as_str(), "Wrath of God");
+        assert_eq!(def.mana_cost.generic, 2);
+        assert_eq!(def.mana_cost.white, 2);
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let destroy_all = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DestroyAll).then_some(p)
+            })
+            .expect("Wrath of God must have an SP$ DestroyAll spell ability");
+        assert_eq!(
+            destroy_all.get("ValidCards"),
+            Some("Creature"),
+            "Wrath of God must target Creatures"
+        );
+        assert_eq!(
+            destroy_all.get("NoRegen"),
+            Some("True"),
+            "Wrath of God must set NoRegen$ True"
+        );
+    }
 }
