@@ -240,6 +240,26 @@ pub struct TurnStructure {
     /// Not serialized - this is transient within a single game session.
     #[serde(skip)]
     pub combat_damage_dealt_turn: Option<u32>,
+
+    /// Tracks which turn the beginning-of-upkeep phase triggers were already fired.
+    /// Prevents re-firing the upkeep triggers when the WASM harness recreates the
+    /// GameLoop after the upkeep `priority_round` blocks with NeedInput: current_step
+    /// stays at Upkeep, so the next step_harness() call would re-enter upkeep_step and
+    /// call check_phase_triggers(BeginningOfUpkeep) a SECOND time. For a trigger that
+    /// mutates state once per upkeep (e.g. All Hallow's Eve removing one scream counter
+    /// and, at zero, mass-resurrecting), double-firing diverges the WASM shadow from
+    /// the server (mtg-joosa). Auto-invalidates when turn_number changes.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub upkeep_triggers_checked_turn: Option<u32>,
+
+    /// Tracks which turn the beginning-of-end-step phase triggers were already fired.
+    /// Same WASM re-entry hazard as `upkeep_triggers_checked_turn`: end_step calls
+    /// check_phase_triggers(BeginningOfEndStep) then a blocking priority_round, so
+    /// re-entry would double-fire end-step triggers. Auto-invalidates per turn.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub end_step_triggers_checked_turn: Option<u32>,
 }
 
 impl TurnStructure {
@@ -258,6 +278,8 @@ impl TurnStructure {
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
             combat_damage_dealt_turn: None,
+            upkeep_triggers_checked_turn: None,
+            end_step_triggers_checked_turn: None,
             extra_turns: Vec::new(),
         }
     }
@@ -277,6 +299,8 @@ impl TurnStructure {
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
             combat_damage_dealt_turn: None,
+            upkeep_triggers_checked_turn: None,
+            end_step_triggers_checked_turn: None,
             extra_turns: Vec::new(),
         }
     }
@@ -318,6 +342,8 @@ impl TurnStructure {
         self.combat_first_strike_damage_dealt_turn = None;
         self.combat_first_strike_priority_done_turn = None;
         self.combat_damage_dealt_turn = None;
+        self.upkeep_triggers_checked_turn = None;
+        self.end_step_triggers_checked_turn = None;
     }
 }
 

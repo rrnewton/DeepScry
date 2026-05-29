@@ -112,6 +112,46 @@ impl<'a> GameLoop<'a> {
     pub(super) fn check_phase_triggers(&mut self, trigger_event: TriggerEvent) -> Result<()> {
         let active_player = self.game.turn.active_player;
 
+        // WASM re-entry guard (mtg-joosa): the WASM AI harness recreates the GameLoop
+        // on every step_harness() call. The upkeep/end-step phases each fire their
+        // begin-of-phase triggers and THEN run a priority_round that can block with
+        // NeedInput (waiting for a server ChoiceRequest). When it blocks, current_step
+        // does not advance, so the next step_harness() call re-enters the same step and
+        // would fire these phase triggers a SECOND time. For triggers that mutate state
+        // exactly once per phase (e.g. All Hallow's Eve: remove one scream counter and,
+        // at zero, mass-resurrect), double-firing diverges the WASM shadow from the
+        // server. Track which turn each once-per-turn phase trigger already fired and
+        // skip the duplicate, mirroring the established `draw_step_executed_turn` guard.
+        // (Other events like card-drawn / attackers-declared use their own guards.)
+        let current_turn = self.game.turn.turn_number;
+        // Only the two once-per-turn phase events that precede a blocking
+        // priority_round need the guard; all other trigger events resolve via
+        // their own dedicated guards or do not block, so leave them unguarded.
+        let guard_slot: Option<&mut Option<u32>> = match trigger_event {
+            TriggerEvent::BeginningOfUpkeep => Some(&mut self.game.turn.upkeep_triggers_checked_turn),
+            TriggerEvent::BeginningOfEndStep => Some(&mut self.game.turn.end_step_triggers_checked_turn),
+            TriggerEvent::EntersBattlefield
+            | TriggerEvent::LeavesBattlefield
+            | TriggerEvent::BeginningOfCombat
+            | TriggerEvent::SpellCast
+            | TriggerEvent::Attacks
+            | TriggerEvent::Blocks
+            | TriggerEvent::DealsCombatDamage
+            | TriggerEvent::Sacrificed
+            | TriggerEvent::CardDrawn
+            | TriggerEvent::Taps
+            | TriggerEvent::AttackersDeclared
+            | TriggerEvent::EquippedCreatureDies
+            | TriggerEvent::DamagedCreatureDies => None,
+        };
+        if let Some(slot) = guard_slot {
+            if *slot == Some(current_turn) {
+                // Already fired this turn — re-entry after a NeedInput block. Skip.
+                return Ok(());
+            }
+            *slot = Some(current_turn);
+        }
+
         // A phase trigger fires from the battlefield (the overwhelmingly common
         // case) or, for a card whose trigger declares a non-battlefield
         // `TriggerZones$` (e.g. All Hallow's Eve's `TriggerZones$ Exile`), from

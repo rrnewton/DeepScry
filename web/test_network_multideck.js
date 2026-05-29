@@ -25,29 +25,38 @@ function log(msg) {
 // so every scenario below is a deterministic same-deck MIRROR match
 // (see test_network_gui_e2e.js's deck-injection step).
 //
+// old_school/01_rogue_rogerbrand seed=3 (All Hallow's Eve mass-resurrection) is
+// back in the gate: the WASM-shadow desync was root-caused to the begin-of-upkeep
+// phase triggers double-firing on WASM GameLoop re-entry after a NeedInput block,
+// and fixed by a per-turn re-entry guard in check_phase_triggers (mtg-joosa).
+//
 // EXCLUDED known-broken mirror scenarios (pre-existing WASM-shadow desyncs,
 // NOT introduced by the mirror-match harness fix — they reproduce identically
 // on the prior non-mirror code too):
 //   - white_weenie seed=7: native P2 hash mismatch ~choice_seq=214 (mtg-nkd71).
-//   - old_school/01_rogue_rogerbrand seed=3: All Hallow's Eve mass-resurrection
-//     trigger sequences differently on the WASM shadow vs server -> P2 hash
-//     mismatch at choice_seq=148, action_count=741, Turn 13 upkeep (mtg-vk4b7
-//     description / All Hallow's Eve family mtg-464870).
-//   - old_school/03_robots_jesseisbak seed=42: artifact-ability shadow desync
-//     at choice_seq=335 (tracked under mtg-vk4b7).
+//   - old_school/03_robots_jesseisbak seed=42: WASM in-stack-resolution re-entry
+//     desync. Copy Artifact's Clone choice (and Balance / other interactive
+//     resolution effects) return NeedInput mid-resolution; on WASM GameLoop
+//     re-entry resolve_top_spell_with_discard_hook re-runs from the first effect
+//     instead of resuming, so already-executed effects (and the clone) run twice.
+//     Distinct, broader root cause than mtg-joosa; needs an effect-resume index
+//     for spell resolution (cf. pending_activation_effect_idx). Tracked: mtg-559.
 // These belong to the engine shadow-state work, not the gate harness; the gate
-// uses the two scenarios proven STABLE as mirror matches.
+// uses scenarios proven STABLE as mirror matches.
 const SCENARIOS = [
-    { deck: 'decks/monored.dck',       seed: 13, desc: 'Red burn + creatures (mirror)' },
-    { deck: 'decks/counterspells.dck', seed: 5,  desc: 'Control + counters (mirror)' },
+    { deck: 'decks/monored.dck',                     seed: 13, desc: 'Red burn + creatures (mirror)' },
+    { deck: 'decks/counterspells.dck',               seed: 5,  desc: 'Control + counters (mirror)' },
+    { deck: 'decks/old_school/01_rogue_rogerbrand.dck', seed: 3, desc: "Old-school reanimator: All Hallow's Eve (mirror, mtg-joosa)" },
 ];
 
-// Quick mode currently runs the same proven-stable mirror set as the full run
-// (both scenarios are fast, ~10s each). The --quick flag is retained for CI
-// compatibility and so additional, slower scenarios can be added to the full
-// set later without changing the fast path.
+// All three mirror scenarios are proven stable and fast enough for the gate, so
+// both quick (the CI fast path invoked by `make validate`) and full runs
+// exercise the entire SCENARIOS list — including the rogerbrand All Hallow's Eve
+// mirror (mtg-joosa). The --quick flag is retained for API compatibility and so
+// slower, experimental scenarios can later be appended to the full-only tail
+// without changing the CI fast path.
 const QUICK_MODE = process.argv.includes('--quick');
-const scenarios = QUICK_MODE ? SCENARIOS.slice(0, 2) : SCENARIOS;
+const scenarios = SCENARIOS;
 
 const testScript = path.join(__dirname, 'test_network_gui_e2e.js');
 

@@ -1,65 +1,61 @@
 ---
 title: 'Network desync: All Hallow''s Eve mass-resurrection WASM-shadow sequencing (rogerbrand s3 P2 choice_seq=148)'
-status: open
+status: in_progress
 priority: 2
 issue_type: bug
 created_at: 2026-05-28T20:51:33.988492574+00:00
-updated_at: 2026-05-28T20:51:33.988492574+00:00
+updated_at: 2026-05-29T00:09:22.325781999+00:00
 ---
 
 # Description
 
-## Summary
+## RESOLVED (fix-desync-realdecks)
 
-In NETWORK mirror play (both seats = `decks/old_school/01_rogue_rogerbrand.dck`,
-server `--seed 3`), the WASM browser client (P2) desyncs from the server during
-the **All Hallow's Eve** mass-resurrection upkeep trigger.
+Root cause: WASM-shadow GameLoop **re-entry double-firing of begin-of-phase
+triggers**. The WASM AI harness (`run_network_ai_step` -> `step_harness`)
+recreates the `GameLoop` on every step. `upkeep_step` fires
+`check_phase_triggers(BeginningOfUpkeep)` and THEN runs a `priority_round` that
+can return `NeedInput` (waiting for the server's ChoiceRequest). When it blocks,
+`current_step` does not advance, so the next `step_harness()` call re-enters
+`upkeep_step` and fires the begin-of-upkeep triggers a SECOND time.
 
-Reproducer (deterministic, fails every run):
-```
-node web/test_network_gui_e2e.js --deck decks/old_school/01_rogue_rogerbrand.dck --seed 3
-```
+For All Hallow's Eve this removed a scream counter TWICE in one upkeep
+(2->1 on the first fire, 1->0 on the duplicate), so the `counters_EQ0_SCREAM`
+condition flipped true and the mass-resurrection `ChangeZoneAll` ran a full turn
+early on the WASM shadow while the server (single continuous loop, blocks INSIDE
+priority_round, never re-enters) only removed one counter. The WASM shadow ran
+~6 actions ahead and computed its state hash on the post-resurrection state,
+labelling it with the server's pre-resurrection action_count -> FATAL P2 state
+hash mismatch at the next priority pass (Turn 13 upkeep, choice_seq~148-149).
 
-## Precise divergence
+Evidence (instrumented run, since reverted): server fired the
+ConditionalSelfCounter ONCE (cur=Some(1), satisfied=false); the WASM client
+fired it at cur=Some(1) AND again at cur=Some(0) satisfied=true -> ChangeZoneAll
+moved 4 creatures. After the fix, both fired exactly once: ChangeZoneAll
+appears on server AND client at the same action_count with identical card lists.
 
-- Through action_count=730 (end of Turn 12) server and client agree exactly
-  (`gyard=[7,11] bf=11`, identical hashes, `local==server` action count).
-- FATAL P2 state-hash mismatch at **choice_seq=148, action_count=741, Turn 13
-  "Upkeep"** (server hash != client hash).
-- At the SAME action_count=741:
-  - SERVER: `Battlefield: 11  Graveyards: [7, 11]` (resurrection NOT yet applied).
-  - CLIENT (WASM): `bf=15  gyard=[5,10]`, and `local action_count=747` (the
-    client has run **6 actions ahead** and already applied the resurrection).
-- i.e. the client front-loads the `ChangeZoneAll | Origin$ Graveyard |
-  Destination$ Battlefield | ChangeType$ Creature` resurrection sub-ability
-  earlier in the trigger chain than the server does; the eventual SET of moves
-  matches but the per-action ORDER/TIMING differs, so the intermediate hash
-  checkpoint diverges.
+Fix: a per-turn WASM re-entry guard inside `check_phase_triggers`
+(`game_loop/steps.rs`), keyed by turn_number, for the two once-per-turn phase
+events that precede a blocking priority_round: `BeginningOfUpkeep` and
+`BeginningOfEndStep`. New `#[serde(skip)]` `Option<u32>` fields
+`upkeep_triggers_checked_turn` / `end_step_triggers_checked_turn` on
+`TurnStructure` (phase.rs), reset in `reset_transient_guards()`. This mirrors
+the established `draw_step_executed_turn` / `attackers_declared_turn` family of
+WASM re-entry guards. Server/native single-pass behaviour is byte-for-byte
+unchanged (guard auto-invalidates each turn; extra turns get a new turn_number).
 
-Card script (cardsfolder/.../all_hallows_eve.txt):
-`T:Mode$ Phase | Phase$ Upkeep ... Execute$ TrigRemoveCounter`
--> `DBMoveToGraveyard` (ChangeZone Exile->Graveyard, ConditionPresent EQ0 SCREAM)
--> `DBResurrection` (ChangeZoneAll Graveyard->Battlefield Creature, same condition).
+Validation:
+- `node web/test_network_gui_e2e.js --deck decks/old_school/01_rogue_rogerbrand.dck --seed 3`
+  now runs CLEAN to completion (game ends with a winner). 11/11 PASS on the
+  instrumented build; clean-build stability re-confirmed.
+- Re-added `decks/old_school/01_rogue_rogerbrand.dck` seed 3 to the SCENARIOS
+  array in `web/test_network_multideck.js` (full-run mirror scenario).
 
-## NOT introduced by the mirror-match harness change
+MTG rules note: BeginningOfUpkeep/BeginningOfEndStep each occur once per turn
+(CR 603 — one upkeep/end step per normal turn), so firing once per turn is
+correct. The guard shares the same theoretical limitation as the long-standing
+`draw_step_executed_turn` guard re: hypothetical "additional upkeep step"
+effects (e.g. Paradox Haze) — not present in any old-school deck and consistent
+with existing project behaviour.
 
-Confirmed pre-existing: `git stash` of the harness fix (test_network_gui_e2e.js
-deck injection + tui_game.html hook) and re-running the SAME reproducer on the
-prior non-mirror code still fails identically at choice_seq=148 action_count=741
-(server=353df4d27265a637 client=9c746035ad588a7a). The mirror-match harness fix
-(mtg-vk4b7) merely made it deterministic instead of matchup-dependent.
-
-## Class
-
-WASM-client shadow trigger/ChangeZoneAll sequencing (mtg-263 reveal/replay-timing
-family). The fix must make the WASM shadow expand the All Hallow's Eve trigger
-chain (RemoveCounter -> conditional self exile->graveyard -> conditional
-ChangeZoneAll resurrection) into the SAME action sequence, at the SAME action
-indices, as the server. Likely in the WASM client trigger-replay path, not the
-core ChangeZoneAll executor (which iterates a deterministic Vec of player_zones).
-
-## Related
-mtg-vk4b7 (network desync tracker / mirror-match harness fix), mtg-390 (All
-Hallow's Eve card compatibility), mtg-464870 (All Hallow's Eve triggers),
-mtg-263 (WASM reveal timing), mtg-559 (robots deck — a separate mirror desync at
-choice_seq=335 with seed 42, same WASM-shadow class).
+Status: FIXED. rogerbrand back in the network gate.
