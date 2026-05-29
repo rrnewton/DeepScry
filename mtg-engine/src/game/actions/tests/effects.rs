@@ -4165,11 +4165,14 @@ mod tests {
 
         // Greed's cost is "B PayLife<2>" -> a Composite containing a PayLife.
         fn has_pay_life(cost: &crate::core::Cost) -> bool {
-            match cost {
-                crate::core::Cost::PayLife { .. } => true,
-                crate::core::Cost::Composite(parts) => parts.iter().any(has_pay_life),
-                _ => false,
+            use crate::core::Cost;
+            if matches!(cost, Cost::PayLife { .. }) {
+                return true;
             }
+            if let Cost::Composite(parts) = cost {
+                return parts.iter().any(has_pay_life);
+            }
+            false
         }
         assert!(
             has_pay_life(&draw_ability.cost),
