@@ -61,6 +61,12 @@ workflow, row format, and update rules.
 | SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
 | AB$ Destroy Cost$ T ValidTgts$ Creature.tapped | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Royal Assassin      |
 | AB$ Regenerate Cost$ B (self)              | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Will-o'-the-Wisp    |
+| SP$ Mana Produced$ B Amount$ 3 (ritual)    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Dark Ritual         |
+| SP$ Destroy ValidTgts$ Land                | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Sinkhole            |
+| SP$ ChangeZone Library->Hand (tutor->SearchLibrary) | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Demonic Tutor   |
+| AB$ Draw Cost$ B PayLife<2>                 | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Greed               |
+| AB$ Mana Cost$ T Produced$ C Amount$ 2 (fast mana) | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Sol Ring        |
+| AB$ Mana Cost$ T Sac<1/CARDNAME> Produced$ Any Amount$ 3 | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Black Lotus |
 
 ## Static abilities (S:)
 

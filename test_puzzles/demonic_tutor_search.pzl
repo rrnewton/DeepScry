@@ -1,0 +1,22 @@
+[metadata]
+Name:Demonic Tutor search
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Demonic Tutor.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Demonic Tutor
+p0library=Black Lotus; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp; Swamp
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

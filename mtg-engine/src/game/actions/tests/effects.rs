@@ -4026,4 +4026,193 @@ mod tests {
             card.activated_abilities
         );
     }
+
+    /// Card compat: Dark Ritual (cardsfolder/d/dark_ritual.txt)
+    ///
+    /// Script:
+    ///   ManaCost:B
+    ///   Types:Instant
+    ///   A:SP$ Mana | Produced$ B | Amount$ 3
+    ///
+    /// Asserts the parsed shape: {B} Instant whose spell effect adds {B}{B}{B}.
+    /// Gameplay (ritual mana funds a 1BB creature off a single Swamp) is covered
+    /// by tests/dark_ritual_mana_e2e.sh.
+    #[test]
+    fn test_card_compat_dark_ritual() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/dark_ritual.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Dark Ritual should load");
+
+        assert_eq!(def.name.as_str(), "Dark Ritual");
+        assert_eq!(def.mana_cost.black, 1, "Cost should be {{B}}");
+        assert!(def.types.contains(&CardType::Instant));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.effects.iter().any(|e| matches!(e, Effect::AddMana { .. })),
+            "Dark Ritual must produce mana (AddMana). Got: {:?}",
+            card.effects
+        );
+    }
+
+    /// Card compat: Sinkhole (cardsfolder/s/sinkhole.txt)
+    ///
+    /// Script:
+    ///   ManaCost:B B
+    ///   Types:Sorcery
+    ///   A:SP$ Destroy | ValidTgts$ Land
+    ///
+    /// Asserts the parsed shape: {B}{B} Sorcery whose spell effect destroys a
+    /// land target. Gameplay (destroys the opponent's land) is covered by
+    /// tests/sinkhole_destroys_land_e2e.sh.
+    #[test]
+    fn test_card_compat_sinkhole() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sinkhole.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sinkhole should load");
+
+        assert_eq!(def.name.as_str(), "Sinkhole");
+        assert_eq!(def.mana_cost.black, 2, "Cost should be {{B}}{{B}}");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.effects
+                .iter()
+                .any(|e| matches!(e, Effect::DestroyPermanent { .. })),
+            "Sinkhole must destroy a permanent (DestroyPermanent). Got: {:?}",
+            card.effects
+        );
+    }
+
+    /// Card compat: Demonic Tutor (cardsfolder/d/demonic_tutor.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 B
+    ///   Types:Sorcery
+    ///   A:SP$ ChangeZone | Origin$ Library | Destination$ Hand | ChangeType$ Card | ChangeNum$ 1 | Mandatory$ True
+    ///
+    /// Asserts the parsed shape: {1}{B} Sorcery that searches the library. The
+    /// Library->Hand ChangeZone converts to a SearchLibrary effect. Gameplay
+    /// (search finds a card, puts it in hand, shuffles) is covered by
+    /// tests/demonic_tutor_search_e2e.sh.
+    #[test]
+    fn test_card_compat_demonic_tutor() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/demonic_tutor.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Demonic Tutor should load");
+
+        assert_eq!(def.name.as_str(), "Demonic Tutor");
+        assert_eq!(def.mana_cost.black, 1, "Cost should be {{1}}{{B}}");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{B}}");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.effects.iter().any(|e| matches!(e, Effect::SearchLibrary { .. })),
+            "Demonic Tutor must search the library (SearchLibrary). Got: {:?}",
+            card.effects
+        );
+    }
+
+    /// Card compat: Greed (cardsfolder/g/greed.txt)
+    ///
+    /// Script:
+    ///   ManaCost:3 B
+    ///   Types:Enchantment
+    ///   A:AB$ Draw | Cost$ B PayLife<2> | NumCards$ 1
+    ///
+    /// Asserts the parsed shape: {3}{B} Enchantment with an activated ability
+    /// whose cost includes paying 2 life and which draws a card. Gameplay
+    /// (activate -> draw, life paid) is covered by tests/greed_draw_e2e.sh.
+    #[test]
+    fn test_card_compat_greed() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/g/greed.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Greed should load");
+
+        assert_eq!(def.name.as_str(), "Greed");
+        assert_eq!(def.mana_cost.black, 1, "Cost should be {{3}}{{B}}");
+        assert_eq!(def.mana_cost.generic, 3, "Cost should be {{3}}{{B}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let draw_ability = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.effects.iter().any(|e| matches!(e, Effect::DrawCards { .. })))
+            .expect("Greed must have a Draw activated ability");
+
+        // Greed's cost is "B PayLife<2>" -> a Composite containing a PayLife.
+        fn has_pay_life(cost: &crate::core::Cost) -> bool {
+            match cost {
+                crate::core::Cost::PayLife { .. } => true,
+                crate::core::Cost::Composite(parts) => parts.iter().any(has_pay_life),
+                _ => false,
+            }
+        }
+        assert!(
+            has_pay_life(&draw_ability.cost),
+            "Greed's draw ability must include a pay-life cost. Got: {:?}",
+            draw_ability.cost
+        );
+    }
+
+    /// Card compat: Sol Ring (cardsfolder/s/sol_ring.txt) and Black Lotus
+    /// (cardsfolder/b/black_lotus.txt) — fast-mana artifacts.
+    ///
+    /// Sol Ring:    A:AB$ Mana | Cost$ T | Produced$ C | Amount$ 2
+    /// Black Lotus: A:AB$ Mana | Cost$ T Sac<1/CARDNAME> | Produced$ Any | Amount$ 3
+    ///
+    /// Asserts each parses with a mana ability. Gameplay (Sol Ring taps for
+    /// {C}{C}; Black Lotus taps+sacrifices for three of one color) is covered by
+    /// tests/sol_ring_mana_e2e.sh and tests/black_lotus_sac_mana_e2e.sh.
+    #[test]
+    fn test_card_compat_sol_ring_and_black_lotus() {
+        use std::path::PathBuf;
+
+        for (file, name, black_cost, generic_cost) in [
+            ("../cardsfolder/s/sol_ring.txt", "Sol Ring", 0u8, 1u8),
+            ("../cardsfolder/b/black_lotus.txt", "Black Lotus", 0u8, 0u8),
+        ] {
+            let path = PathBuf::from(file);
+            if !path.exists() {
+                eprintln!("Skipping: cardsfolder not present at {:?}", path);
+                return;
+            }
+            let def = crate::loader::CardLoader::load_from_file(&path)
+                .unwrap_or_else(|e| panic!("{name} should load: {e:?}"));
+            assert_eq!(def.name.as_str(), name);
+            assert_eq!(def.mana_cost.black, black_cost, "{name} black cost");
+            assert_eq!(def.mana_cost.generic, generic_cost, "{name} generic cost");
+            assert!(def.types.contains(&CardType::Artifact), "{name} must be an Artifact");
+
+            let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+            assert!(
+                card.activated_abilities.iter().any(|a| a.is_mana_ability),
+                "{name} must have a mana ability. Got: {:?}",
+                card.activated_abilities
+            );
+        }
+    }
 }

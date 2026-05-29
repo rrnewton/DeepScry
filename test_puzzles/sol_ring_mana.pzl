@@ -1,0 +1,22 @@
+[metadata]
+Name:Sol Ring funds a cast
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts a 2-cost artifact using only Sol Ring's CC.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Icy Manipulator
+p0library=Swamp; Swamp
+p0graveyard=
+p0battlefield=Sol Ring; Swamp; Swamp
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

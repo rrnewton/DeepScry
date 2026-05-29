@@ -1,0 +1,22 @@
+[metadata]
+Name:Dark Ritual mana
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Dark Ritual for BBB.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Dark Ritual; Hypnotic Specter
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Swamp
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

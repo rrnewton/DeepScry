@@ -1,0 +1,22 @@
+[metadata]
+Name:Greed draw
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 activates Greed (B, pay 2 life: draw).
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Greed; Swamp; Swamp
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

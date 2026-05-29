@@ -1,0 +1,22 @@
+[metadata]
+Name:Sinkhole destroys opponent land
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Sinkhole; only legal land target belongs to P1.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Sinkhole
+p0library=Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Mox Jet; Mox Jet
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Plains
+p1exile=
