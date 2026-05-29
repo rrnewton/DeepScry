@@ -616,17 +616,27 @@ run_post_deploy_probe() {
         echo "  ✓ /                          200"
     fi
 
-    # 2+3. Content-addressed pkg pair (mtg-571). The pkg filenames are now
-    # hashed (mtg_engine.<hash>.js / _bg.<hash>.wasm), so we can't probe a
-    # fixed name. Derive the hashed names from a deployed game page's import
-    # specifier (the structured injection point `mtg hash-web-assets` rewrites),
-    # then probe those. This also implicitly verifies the HTML rewrite landed.
-    local game_html hashed_js hashed_wasm
-    game_html="$(curl "${curl_opts[@]}" "$base/tui_game.html")" || game_html=""
+    # 2+3. Content-addressed pkg pair (mtg-571 + mtg-620). The pkg filenames
+    # AND the game-page HTML names are now hashed by `mtg hash-web-assets`.
+    # Only `index.html` keeps a stable URL — every other reachable asset is
+    # discovered by chasing references from there, exactly like a browser.
+    # We:
+    #   - fetch / (index.html), discover the hashed tui_game.<h>.html name,
+    #   - fetch that, and from its content discover the hashed pkg pair JS +
+    #     wasm, plus the hashed data/sets/index.<h>.json,
+    #   - probe each hashed URL.
+    local landing_html game_html hashed_tui hashed_js hashed_wasm hashed_data_idx
+    landing_html="$(curl "${curl_opts[@]}" "$base/")" || landing_html=""
+    hashed_tui="$(printf '%s' "$landing_html" | grep -oE "tui_game\.[0-9a-f]+\.html" | head -1)"
+    if [[ -z "$hashed_tui" ]]; then
+        probe_failed=1; fail_reasons+=("index.html: no hashed tui_game.<h>.html reference (mtg hash-web-assets did not run?)")
+    fi
+    game_html="$(curl "${curl_opts[@]}" "$base/$hashed_tui")" || game_html=""
     hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine\.[0-9a-f]+\.js" | head -1)"
     hashed_wasm="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine_bg\.[0-9a-f]+\.wasm" | head -1)"
+    hashed_data_idx="$(printf '%s' "$game_html" | grep -oE "data/sets/index\.[0-9a-f]+\.json" | head -1)"
     if [[ -z "$hashed_js" ]]; then
-        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg JS import found (mtg hash-web-assets did not run?)")
+        probe_failed=1; fail_reasons+=("$hashed_tui: no hashed pkg JS import found")
     else
         local glue_size
         glue_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/$hashed_js")" || glue_size=0
@@ -637,7 +647,7 @@ run_post_deploy_probe() {
         fi
     fi
     if [[ -z "$hashed_wasm" ]]; then
-        probe_failed=1; fail_reasons+=("tui_game.html: no hashed pkg wasm (init module_or_path) found")
+        probe_failed=1; fail_reasons+=("$hashed_tui: no hashed pkg wasm (init module_or_path) found")
     else
         local wasm_size
         wasm_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/$hashed_wasm")" || wasm_size=0
@@ -648,11 +658,19 @@ run_post_deploy_probe() {
         fi
     fi
 
-    # 4. /data/sets/index.json — must parse as JSON, AND its first listed
-    # content-addressed bin must be fetchable under its hashed name (verifies
-    # the manifest->bin content-addressing landed end-to-end on the VM).
+    # 4. hashed data/sets/index.<h>.json — must parse as JSON, AND its first
+    # listed content-addressed bin must be fetchable under its hashed name
+    # (verifies the manifest->bin content-addressing landed end-to-end on the
+    # VM). After mtg-620 the index.json itself is content-addressed and the
+    # fixed `/data/sets/index.json` URL 404s — its hashed name was discovered
+    # from the rewritten game HTML above.
     local idx_json
-    idx_json="$(curl "${curl_opts[@]}" "$base/data/sets/index.json")" || idx_json=""
+    if [[ -z "$hashed_data_idx" ]]; then
+        probe_failed=1; fail_reasons+=("$hashed_tui: no hashed data/sets/index.<h>.json reference")
+        idx_json=""
+    else
+        idx_json="$(curl "${curl_opts[@]}" "$base/$hashed_data_idx")" || idx_json=""
+    fi
     local first_bin
     first_bin="$(printf '%s' "$idx_json" | python3 -c 'import json,sys
 try:
@@ -660,9 +678,9 @@ try:
 except Exception:
     pass' 2>/dev/null || echo "")"
     if [[ -z "$first_bin" ]]; then
-        probe_failed=1; fail_reasons+=("/data/sets/index.json: not valid JSON or no sets[]")
+        probe_failed=1; fail_reasons+=("/$hashed_data_idx: not valid JSON or no sets[]")
     else
-        echo "  ✓ /data/sets/index.json      200 (valid JSON)"
+        echo "  ✓ /$hashed_data_idx      200 (valid JSON)"
         local bin_size
         bin_size="$(curl -o /dev/null -w '%{size_download}' "${curl_opts[@]}" "$base/data/sets/$first_bin")" || bin_size=0
         if (( bin_size < 1000 )); then

@@ -1,27 +1,34 @@
 // Hermetic PRE-DEPLOY smoke test for the content-addressed web-asset pipeline
-// (mtg-571). Distinct from web/smoke_test_live.js: this is LOCAL ONLY (no
-// deepscry.net / cloud VM), so it is safe to wire into `make validate` and CI.
+// (mtg-571 + mtg-620). Distinct from web/smoke_test_live.js: this is LOCAL
+// ONLY (no deepscry.net / cloud VM), so it is safe to wire into `make
+// validate` and CI.
+//
+// After mtg-620 the invariant is the FULL asset graph rooted at index.html
+// is content-addressed and `index.html` is the SOLE unhashed entrypoint.
+// This test asserts exactly that.
 //
 // What it does:
 //   1. Stage a hashed copy of web/ via `mtg hash-web-assets` (the Rust
-//      replacement for the retired scripts/hash_web_assets.sh) into a temp
-//      dir, so the pkg pair is content-addressed exactly like a real deploy.
+//      replacement for the retired scripts/hash_web_assets.sh, now extended
+//      to the full asset graph) into a temp dir.
 //   2. Launch `mtg server-web` on a temp localhost port serving that staged,
 //      hashed tree.
 //   3. Assert, over plain HTTP against 127.0.0.1 (no TLS, no external host):
-//        a. GET /              (landing page)        → 200
-//        b. GET /data/sets/index.json                → 200 + no-cache
-//        c. a per-set hashed .bin (logical→hashed via index.json)
-//                                                     → 200 + IMMUTABLE
-//        d. the hashed wasm (logical→hashed via the rewritten HTML import)
-//                                                     → 200 + IMMUTABLE
-//        e. the hashed JS glue                        → 200 + IMMUTABLE
-//        f. a FIXED-name pkg path (mtg_engine.js)   → 404 (renamed away) and
-//           the immutability INVARIANT: a fixed pkg name, were it present,
-//           is served no-cache — verified against the SOURCE tree below.
-//        g. asset resolution end-to-end: every name the client would fetch
-//           (index.json sets[].file, the HTML import specifier) actually
-//           resolves to 200 bytes on the server.
+//        a. GET /                (landing page)        → 200 + short-TTL
+//        b. GET /index.html                            → 200 + short-TTL (entry)
+//        c. The OLD fixed names of every now-hashed asset (`/server-config.js`,
+//           `/network.js`, `/bug_report.js`, `/data/sets/index.json`,
+//           `/native_game.html`, `/tui_game.html`, `/demo.html`, the pkg pair)
+//           all return 404 on the hashed tree — proof the rewrite renamed them.
+//        d. The HASHED names that index.html now references all return 200 +
+//           IMMUTABLE. We extract those names from the rewritten index.html
+//           and from a sample game page, exactly like a browser would.
+//        e. A per-set hashed .bin (logical→hashed via index.json) → 200 +
+//           IMMUTABLE.
+//        f. Source-tree invariant: against the un-hashed source tree, the
+//           FIXED-name pkg (`/pkg/mtg_engine.js`) is served short-TTL (NOT
+//           immutable) — the immutability INVARIANT preserved for the
+//           `make validate` e2e tests that run pre-hash.
 //
 // This is the deploy gate's structural guarantee: if the pipeline did not
 // hash + rewrite correctly, the hashed-asset fetches 404 and the test fails
@@ -109,8 +116,14 @@ function check(cond, msg) {
 function isImmutable(cc) {
     return !!cc && /immutable/.test(cc) && /max-age=31536000/.test(cc);
 }
-function isNoCache(cc) {
-    return !!cc && /no-cache/.test(cc);
+// `isNoCache` retired post-mtg-620: the global cache-tier middleware now
+// returns `max-age=60` (short-TTL) for fixed-name assets and immutable
+// for content-addressed ones — there is no longer a `no-cache` tier.
+// `index.html` (and any other mutable, fixed-name asset on the source tree)
+// is served `public, max-age=60`. mtg-620 dropped the `no-cache, must-revalidate`
+// header for index.json because the hashed `index.<h>.json` is now immutable.
+function isShortTtl(cc) {
+    return !!cc && /max-age=60\b/.test(cc) && !/immutable/.test(cc);
 }
 
 async function startServer(staticDir, port) {
@@ -162,11 +175,14 @@ async function main() {
     // --- 1. Stage a HASHED copy of web/ (exactly like the deploy path) ---
     const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'mtg-web-smoke-'));
     log(`Staging hashed web tree → ${stage}`);
-    // Copy only what we need (pkg + data + html); skip the huge images/ tree.
+    // Copy only what we need (pkg + data + html + JS leaves); skip the huge
+    // images/ tree. After mtg-620 every HTML page + JS leaf participates in
+    // hashing, so all three JS leaves must be staged.
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
+    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js'];
     for (const f of fs.readdirSync(WEB_SRC)) {
-        if (f.endsWith('.html') || f === 'server-config.js' || f === 'network.js') {
+        if (f.endsWith('.html') || JS_LEAVES.includes(f)) {
             fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
         }
     }
@@ -178,21 +194,65 @@ async function main() {
         throw new Error(`mtg hash-web-assets failed: ${hashRes.stderr || hashRes.stdout}`);
     }
 
-    // Derive the hashed pkg names from the rewritten landing/game HTML import
-    // specifier — the SAME resolution path a browser performs.
-    const tuiHtml = fs.readFileSync(path.join(stage, 'tui_game.html'), 'utf8');
-    const jsMatch = tuiHtml.match(/\/pkg\/(mtg_engine\.[0-9a-f]+\.js)/);
-    const wasmMatch = tuiHtml.match(/\/pkg\/(mtg_engine_bg\.[0-9a-f]+\.wasm)/);
-    check(!!jsMatch, 'HTML rewrite produced a hashed JS import specifier');
-    check(!!wasmMatch, 'HTML rewrite produced a hashed wasm module_or_path');
-    const hashedJs = jsMatch ? jsMatch[1] : null;
-    const hashedWasm = wasmMatch ? wasmMatch[1] : null;
+    // index.html stays unhashed; read it and discover every hashed name it
+    // now references — exactly the resolution path a browser performs.
+    check(fs.existsSync(path.join(stage, 'index.html')), 'index.html remains unhashed (sole entrypoint)');
+    const indexHtml = fs.readFileSync(path.join(stage, 'index.html'), 'utf8');
 
-    // First hashed bin from index.json (logical→hashed resolution for bins).
-    const idx = JSON.parse(fs.readFileSync(path.join(stage, 'data', 'sets', 'index.json'), 'utf8'));
-    check(Array.isArray(idx.sets) && idx.sets.length > 0, 'index.json has sets[]');
-    const firstBin = idx.sets[0].file;
-    check(/^[0-9-]+[A-Z]+\.[0-9a-f]+\.bin$/.test(firstBin), `first bin is content-addressed: ${firstBin}`);
+    // Hashed pkg pair (rewritten by web_pkg).
+    const jsMatch = indexHtml.match(/(?:\.\/)?pkg\/(mtg_engine\.[0-9a-f]{16}\.js)/);
+    const wasmMatch = indexHtml.match(/(?:\.\/)?pkg\/(mtg_engine_bg\.[0-9a-f]{16}\.wasm)/);
+    // For pages that don't actually use the pkg (index.html may or may not
+    // import it) try the game pages too.
+    let tuiHashedName = null;
+    const tuiMatch = indexHtml.match(/(tui_game\.[0-9a-f]{16}\.html)/);
+    if (tuiMatch) tuiHashedName = tuiMatch[1];
+    let nativeHashedName = null;
+    const nativeMatch = indexHtml.match(/(native_game\.[0-9a-f]{16}\.html)/);
+    if (nativeMatch) nativeHashedName = nativeMatch[1];
+    let serverCfgHashed = null;
+    const cfgMatch = indexHtml.match(/(server-config\.[0-9a-f]{16}\.js)/);
+    if (cfgMatch) serverCfgHashed = cfgMatch[1];
+    check(!!tuiHashedName, 'index.html references hashed tui_game.<h>.html');
+    check(!!nativeHashedName, 'index.html references hashed native_game.<h>.html');
+    check(!!serverCfgHashed, 'index.html references hashed server-config.<h>.js');
+
+    // From the hashed tui_game.html, discover the wasm + data-index + JS-leaf hashed names.
+    let hashedJs = jsMatch ? jsMatch[1] : null;
+    let hashedWasm = wasmMatch ? wasmMatch[1] : null;
+    let dataIndexHashed = null;
+    let networkJsHashed = null;
+    if (tuiHashedName) {
+        const tuiPath = path.join(stage, tuiHashedName);
+        check(fs.existsSync(tuiPath), `hashed ${tuiHashedName} present on disk`);
+        const tuiHtml = fs.readFileSync(tuiPath, 'utf8');
+        if (!hashedJs) {
+            const m = tuiHtml.match(/(?:\.\/)?pkg\/(mtg_engine\.[0-9a-f]{16}\.js)/);
+            if (m) hashedJs = m[1];
+        }
+        if (!hashedWasm) {
+            const m = tuiHtml.match(/(?:\.\/)?pkg\/(mtg_engine_bg\.[0-9a-f]{16}\.wasm)/);
+            if (m) hashedWasm = m[1];
+        }
+        const di = tuiHtml.match(/data\/sets\/(index\.[0-9a-f]{16}\.json)/);
+        if (di) dataIndexHashed = di[1];
+        const ni = tuiHtml.match(/(network\.[0-9a-f]{16}\.js)/);
+        if (ni) networkJsHashed = ni[1];
+    }
+    check(!!hashedJs, 'pkg JS glue is hashed');
+    check(!!hashedWasm, 'pkg wasm is hashed');
+    check(!!dataIndexHashed, 'data/sets/index.json is hashed');
+    check(!!networkJsHashed, 'network.js is hashed');
+
+    // First hashed bin from the HASHED index.json (logical→hashed resolution for bins).
+    let firstBin = null;
+    if (dataIndexHashed) {
+        const idxPath = path.join(stage, 'data', 'sets', dataIndexHashed);
+        const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
+        check(Array.isArray(idx.sets) && idx.sets.length > 0, 'hashed index.json has sets[]');
+        firstBin = idx.sets[0].file;
+        check(/^[0-9-]+[A-Z]+\.[0-9a-f]+\.bin$/.test(firstBin), `first bin is content-addressed: ${firstBin}`);
+    }
 
     // --- 2. Launch mtg server-web against the staged hashed tree ---
     let serverPort;
@@ -211,29 +271,61 @@ async function main() {
         check(up, 'server-web came up and /health returned 200');
         if (!up) throw new Error('server never came up');
 
-        // a. Landing page.
+        // a. Landing page (/ → index.html): 200 + short-TTL (the sole stable URL).
         const landing = await httpGet(base + '/');
         check(landing.status === 200, `landing page / → 200 (got ${landing.status})`);
         check(landing.body.length > 100, 'landing page has a body');
-
-        // b. index.json: 200 + no-cache (the MUTABLE pointer).
-        const indexJson = await httpGet(base + '/data/sets/index.json');
-        check(indexJson.status === 200, `/data/sets/index.json → 200 (got ${indexJson.status})`);
         check(
-            isNoCache(indexJson.headers['cache-control']),
-            `/data/sets/index.json is no-cache (got "${indexJson.headers['cache-control']}")`,
+            isShortTtl(landing.headers['cache-control']),
+            `/ (index.html) is short-TTL not immutable (got "${landing.headers['cache-control']}")`,
         );
+        const indexExplicit = await httpGet(base + '/index.html');
+        check(indexExplicit.status === 200, `/index.html → 200`);
+        check(
+            isShortTtl(indexExplicit.headers['cache-control']),
+            `/index.html is short-TTL not immutable (got "${indexExplicit.headers['cache-control']}")`,
+        );
+
+        // b. mtg-620 INVARIANT: every FIXED name of a now-hashed asset
+        //    must 404 on the hashed tree (proves the rewrite renamed them).
+        const fixed404s = [
+            '/pkg/mtg_engine.js',
+            '/pkg/mtg_engine_bg.wasm',
+            '/server-config.js',
+            '/network.js',
+            '/bug_report.js',
+            '/data/sets/index.json',
+            '/native_game.html',
+            '/tui_game.html',
+            '/demo.html',
+        ];
+        for (const u of fixed404s) {
+            const r = await httpGet(base + u);
+            check(r.status === 404, `fixed-name ${u} → 404 on hashed tree (got ${r.status})`);
+        }
 
         // c. hashed per-set bin: 200 + immutable.
-        const bin = await httpGet(base + '/data/sets/' + firstBin);
-        check(bin.status === 200, `/data/sets/${firstBin} → 200 (got ${bin.status})`);
-        check(bin.body.length > 100, `hashed bin has bytes (${bin.body.length})`);
-        check(
-            isImmutable(bin.headers['cache-control']),
-            `hashed bin is IMMUTABLE (got "${bin.headers['cache-control']}")`,
-        );
+        if (firstBin) {
+            const bin = await httpGet(base + '/data/sets/' + firstBin);
+            check(bin.status === 200, `/data/sets/${firstBin} → 200 (got ${bin.status})`);
+            check(bin.body.length > 100, `hashed bin has bytes (${bin.body.length})`);
+            check(
+                isImmutable(bin.headers['cache-control']),
+                `hashed bin is IMMUTABLE (got "${bin.headers['cache-control']}")`,
+            );
+        }
 
-        // d. hashed wasm: 200 + immutable.
+        // d. hashed data/sets/index.json: 200 + IMMUTABLE (NOT no-cache anymore).
+        if (dataIndexHashed) {
+            const di = await httpGet(base + '/data/sets/' + dataIndexHashed);
+            check(di.status === 200, `/data/sets/${dataIndexHashed} → 200 (got ${di.status})`);
+            check(
+                isImmutable(di.headers['cache-control']),
+                `hashed index.json is IMMUTABLE (got "${di.headers['cache-control']}")`,
+            );
+        }
+
+        // e. hashed wasm: 200 + immutable.
         if (hashedWasm) {
             const wasm = await httpGet(base + '/pkg/' + hashedWasm);
             check(wasm.status === 200, `/pkg/${hashedWasm} → 200 (got ${wasm.status})`);
@@ -244,7 +336,7 @@ async function main() {
             );
         }
 
-        // e. hashed JS glue: 200 + immutable.
+        // f. hashed JS glue: 200 + immutable.
         if (hashedJs) {
             const js = await httpGet(base + '/pkg/' + hashedJs);
             check(js.status === 200, `/pkg/${hashedJs} → 200 (got ${js.status})`);
@@ -255,9 +347,21 @@ async function main() {
             );
         }
 
-        // f. The FIXED pkg name was renamed away on the staged tree → 404.
-        const fixed = await httpGet(base + '/pkg/mtg_engine.js');
-        check(fixed.status === 404, `fixed-name /pkg/mtg_engine.js → 404 on hashed tree (got ${fixed.status})`);
+        // g. hashed JS leaves + hashed game HTML: 200 + immutable.
+        const moreImmutable = [
+            serverCfgHashed && '/' + serverCfgHashed,
+            networkJsHashed && '/' + networkJsHashed,
+            tuiHashedName && '/' + tuiHashedName,
+            nativeHashedName && '/' + nativeHashedName,
+        ].filter(Boolean);
+        for (const u of moreImmutable) {
+            const r = await httpGet(base + u);
+            check(r.status === 200, `${u} → 200 (got ${r.status})`);
+            check(
+                isImmutable(r.headers['cache-control']),
+                `${u} is IMMUTABLE (got "${r.headers['cache-control']}")`,
+            );
+        }
 
         log('  → all hashed-tree assertions complete');
     } finally {
@@ -270,8 +374,10 @@ async function main() {
     }
 
     // --- 3. Immutability INVARIANT against the SOURCE tree: a FIXED pkg name
-    //        MUST be served no-cache (NOT immutable). This guards the rule
-    //        "immutable iff content-addressed" directly. ---
+    //        MUST NOT be served immutable. After mtg-620 the fallback for
+    //        fixed-name assets is short-TTL (`max-age=60`), not `no-cache`,
+    //        so the rule we assert is "NOT immutable" — the invariant
+    //        "immutable iff content-addressed" remains intact. ---
     let serverPort2;
     {
         const ports = await getRandomPorts();
@@ -286,8 +392,8 @@ async function main() {
             const srcJs = await httpGet(base2 + '/pkg/mtg_engine.js');
             check(srcJs.status === 200, `source /pkg/mtg_engine.js → 200 (got ${srcJs.status})`);
             check(
-                isNoCache(srcJs.headers['cache-control']),
-                `fixed-name pkg is NO-CACHE not immutable (got "${srcJs.headers['cache-control']}")`,
+                !isImmutable(srcJs.headers['cache-control']),
+                `fixed-name pkg is NOT immutable (got "${srcJs.headers['cache-control']}")`,
             );
         }
     } finally {

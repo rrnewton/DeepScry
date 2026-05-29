@@ -62,7 +62,6 @@ use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as TungMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tower_http::services::ServeDir;
-use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::network::lobby::SharedLobby;
 use crate::network::{GameServer, ServerConfig};
@@ -162,7 +161,7 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
         lobby: lobby_for_health,
     };
 
-    // ── Tiered cache policy (content-addressing, mtg-571) ─────────────
+    // ── Tiered cache policy (content-addressing, mtg-571 + mtg-620) ───
     //
     // The stale-WASM bug class (mtg-475 / mtg-2indh) is the JS-glue ↔ .wasm
     // desync: an old cached glue paired with a new wasm (or vice versa)
@@ -174,139 +173,49 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     // `immutable, max-age=1y` even behind a CDN that overrides headers
     // (because the only way to get new bytes is a new URL).
     //
-    // Tiering (immutable iff the URL is content-addressed):
+    // After mtg-620 (full asset-graph hashing) the picture is much simpler:
     //
-    //   /data/**/*.bin              → public, max-age=31536000, immutable
-    //                                 NOW content-addressed: the exporter
-    //                                 writes `<YYYY>-<CODE>.<hash>.bin` and
-    //                                 the hashed name lives in index.json's
-    //                                 `file`/`cards` fields (mtg-571). The
-    //                                 client only ever fetches names it read
-    //                                 from index.json, so a content change is
-    //                                 a new URL — immutable is correct.
-    //   /data/sets/index.json       → no-cache, must-revalidate
-    //                                 The MUTABLE pointer to the hashed bins.
-    //                                 Small (tens of KB); cheap 304 per hit.
-    //   /pkg/<stem>.<hash>.<ext>    → public, max-age=31536000, immutable
-    //                                 CONTENT-ADDRESSED pkg pair produced by
-    //                                 `mtg hash-web-assets` on the deploy tree
-    //                                 (the hashed name is rewritten into the
-    //                                 HTML import specifier + init() arg). A
-    //                                 content change is a new URL → immutable
-    //                                 is correct, retiring the old `?v=<sha>`.
-    //   /pkg/<stem>.<ext>  (fixed)   → no-cache, must-revalidate
-    //                                 The committed source-tree HTML imports
-    //                                 the FIXED `./pkg/mtg_engine.js` (used
-    //                                 by `make validate`'s e2e tests); a fixed
-    //                                 name is NOT content-addressed so it must
-    //                                 stay no-cache. `pkg_cache_header` picks
-    //                                 the tier per request from the filename.
-    //   /images/**                  → public, max-age=31536000, immutable
-    //                                 (filenames embed scryfall art_id;
-    //                                  they never change for a given URL)
-    //   HTML, server-config.js, etc → public, max-age=60 (mutable pointers)
+    //   /index.html (the sole stable URL)        → public, max-age=60
+    //   /<anything>.<16-hex-hash>.<ext>           → public, max-age=31536000, immutable
+    //   /images/**                                → public, max-age=31536000, immutable
+    //                                                (scryfall art_id-named)
+    //   /data/<YYYY>-<CODE>.<hash>.bin            → public, max-age=31536000, immutable
+    //                                                (exporter-named; same family)
+    //   anything ELSE that lacks the hash pattern → public, max-age=60
+    //                                                (fixed-name fallback — used by
+    //                                                 the source tree before
+    //                                                 hash-web-assets has run,
+    //                                                 which makes `make validate`'s
+    //                                                 fixed-name e2e tests work)
     //
-    // INVARIANT: a route may be marked `immutable` ONLY if its URL is
-    // content-addressed (the bytes uniquely determine the filename). Adding
-    // an immutable tier for a fixed-name asset re-opens the desync bug.
-    use tower::ServiceBuilder;
-    let pkg_dir = config.static_dir.join("pkg");
-    let data_dir = config.static_dir.join("data");
-    let images_dir = config.static_dir.join("images");
-    let general_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
-
-    let immutable_year = SetResponseHeaderLayer::overriding(
-        axum::http::header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
-
-    // /pkg cache tier is now CONTENT-AWARE (mtg-571 full adoption): a
-    // content-addressed pkg filename (`<stem>.<16-hex-hash>.<ext>`, produced by
-    // `mtg hash-web-assets` on the deploy-staging tree) is safe to serve
-    // `immutable, max-age=1y` — its bytes uniquely determine its URL, so the
-    // glue↔wasm desync (mtg-475 / mtg-2indh) is structurally impossible. A
-    // FIXED-NAME pkg file (`mtg_engine.js`, the committed source-tree HTML
-    // import target used by `make validate`'s e2e tests) is NOT
-    // content-addressed and MUST stay `no-cache` per the immutability
-    // INVARIANT. We pick per-request via `pkg_cache_header` rather than a
-    // static layer, so one server binary serves both the source tree (fixed
-    // names → no-cache) and a hashed deploy tree (hashed names → immutable)
-    // correctly. This retires the old `/pkg → always no-cache` + `?v=<sha>`
-    // workaround.
-    let pkg_service = ServiceBuilder::new()
-        .layer(axum::middleware::from_fn(pkg_cache_header))
-        .service(ServeDir::new(&pkg_dir));
-
-    // /data is split: the small index.json manifest is the MUTABLE pointer
-    // (no-cache; revalidate every hit, cheap 304 because it's a few KB)
-    // while the large per-set .bin / decks.bin / tokens.bin bundles are now
-    // CONTENT-ADDRESSED (mtg-571) — `<set>.<hash>.bin` names referenced
-    // from index.json — so they are safe to mark `immutable, max-age=1y`.
-    // The index.json case wins via a dedicated axum `.route()` (more
-    // specific than the nest_service); everything else under /data lands on
-    // the immutable bundle service — which is correct ONLY for the
-    // content-addressed `<set>.<hash>.bin` files.
+    // INVARIANT (unchanged): a route may be marked `immutable` ONLY if its
+    // URL is content-addressed. The new global `content_addressed_cache_header`
+    // middleware below enforces this from the filename token alone, retiring
+    // the old per-route no-cache carve-outs for index.json/server-config.js/etc.
+    // Their HASHED forms (e.g. `index.<hash>.json`) trip the same hash detector
+    // and inherit immutable for free.
+    // ── ONE static service + ONE global cache-tier middleware (mtg-620) ──
     //
-    // decks.bin / tokens.bin are FIXED-NAME (referenced by a literal
-    // `fetch('./data/decks.bin')` in the pages), so per the immutable
-    // INVARIANT above they must NOT be immutable. They get dedicated
-    // no-cache routes alongside index.json (mutable pointers). Hashing them
-    // too is a tracked mtg-571 follow-up; until then no-cache keeps them
-    // honest across a card-DB re-export.
-    let data_bins_service = ServiceBuilder::new()
-        .layer(immutable_year.clone())
-        .service(ServeDir::new(&data_dir));
-    let data_index_path = data_dir.join("sets").join("index.json");
-    let data_decks_path = data_dir.join("decks.bin");
-    let data_tokens_path = data_dir.join("tokens.bin");
-    let index_no_cache_header = HeaderValue::from_static("no-cache, must-revalidate");
-
-    let images_service = ServiceBuilder::new()
-        .layer(immutable_year.clone())
-        .service(ServeDir::new(&images_dir));
+    // mtg-571 needed per-route carve-outs because the only content-
+    // addressed assets were the pkg pair + the `<set>.<hash>.bin` files,
+    // while mutable pointers (`index.json`, fixed-name JS, fixed-name
+    // pkg) lived alongside them in the same tree. mtg-620 makes EVERY
+    // reachable asset content-addressed except for `index.html`. That
+    // collapses the routing: one `ServeDir` covers all static paths,
+    // and one middleware sets Cache-Control based on whether the URL's
+    // last filename token has the hash pattern. The fixed-name fallback
+    // (`max-age=60`) covers the source-tree case before
+    // `mtg hash-web-assets` runs — which keeps `make validate`'s e2e
+    // tests against the committed unhashed names working.
+    let static_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
+    let static_with_cache = tower::ServiceBuilder::new()
+        .layer(axum::middleware::from_fn(content_addressed_cache_header))
+        .service(static_service);
 
     let app = Router::new()
         .route(&config.lobby_path, get(lobby_ws_handler))
         .route("/health", get(health_handler))
-        .nest_service("/pkg", pkg_service)
-        // The MORE-SPECIFIC route wins in axum's matching: a request to
-        // /data/sets/index.json gets the dedicated no-cache handler,
-        // anything else under /data goes to data_bins_service (daily).
-        .route(
-            "/data/sets/index.json",
-            get({
-                let path = data_index_path.clone();
-                let hdr = index_no_cache_header.clone();
-                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/json")
-            }),
-        )
-        // decks.bin / tokens.bin: fixed-name (NOT content-addressed) -> the
-        // mutable-pointer no-cache tier, NOT the immutable bin tier below.
-        .route(
-            "/data/decks.bin",
-            get({
-                let path = data_decks_path.clone();
-                let hdr = index_no_cache_header.clone();
-                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/octet-stream")
-            }),
-        )
-        .route(
-            "/data/tokens.bin",
-            get({
-                let path = data_tokens_path.clone();
-                let hdr = index_no_cache_header.clone();
-                move || serve_static_file_with_header(path.clone(), hdr.clone(), "application/octet-stream")
-            }),
-        )
-        .nest_service("/data", data_bins_service)
-        .nest_service("/images", images_service)
-        .fallback_service(general_service)
-        // Default cache for HTML / server-config.js / etc. (`if_not_present`
-        // so it does not override the per-route headers above).
-        .layer(SetResponseHeaderLayer::if_not_present(
-            axum::http::header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=60"),
-        ))
+        .fallback_service(static_with_cache)
         .with_state(state);
 
     // ---- 4. Install shutdown signal handler. ----
@@ -544,23 +453,32 @@ async fn close_client_with_error(mut ws: WebSocket, reason: &str) -> Result<(), 
     Ok(())
 }
 
-// ─── /pkg content-aware cache tier (mtg-571) ──────────────────────────
+// ─── Content-addressed cache tier middleware (mtg-571 + mtg-620) ──────
 
-/// Cache-Control for a content-addressed pkg file: safe forever.
-const PKG_IMMUTABLE: &str = "public, max-age=31536000, immutable";
-/// Cache-Control for a fixed-name (NOT content-addressed) pkg file.
-const PKG_NO_CACHE: &str = "no-cache, must-revalidate";
+/// Cache-Control for a content-addressed file: safe forever.
+const CAS_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// Cache-Control for `index.html` and any other fixed-name (NOT
+/// content-addressed) asset. Short-TTL so a deploy propagates quickly,
+/// no `no-cache` so the browser can revalidate cheaply via 304.
+const MUTABLE_SHORT: &str = "public, max-age=60";
+/// Cache-Control for `/images/**`: filenames embed the scryfall art_id,
+/// so a given URL never changes bytes — safe to mark immutable even
+/// though they don't carry the blake3 hash token.
+const IMAGES_IMMUTABLE: &str = CAS_IMMUTABLE;
 
-/// Is `file_name` a content-addressed pkg filename, i.e. does it embed a
+/// Is `file_name` a content-addressed filename, i.e. does it embed a
 /// blake3 hash of the form `<stem>.<16-lowercase-hex>.<ext>`?
 ///
-/// `mtg hash-web-assets` produces `mtg_engine.<hash>.js` /
-/// `mtg_engine_bg.<hash>.wasm` where `<hash>` is exactly
-/// [`crate::asset_hash::ASSET_HASH_HEX_LEN`] lowercase hex chars. A fixed name
-/// like `mtg_engine.js` has no such hash segment. We detect the hash by the
-/// SECOND-to-last dot-segment being exactly that many lowercase-hex chars —
-/// reusing the pipeline's own naming convention rather than guessing.
-fn is_content_addressed_pkg(file_name: &str) -> bool {
+/// `mtg hash-web-assets` (mtg-620) produces hashed names in this exact
+/// form for the pkg pair, the JS leaves, the data set-resolver JSON,
+/// and the non-entry HTML pages. The exporter produces
+/// `<YYYY>-<CODE>.<hash>.bin` for per-set bins, which fits the same
+/// "second-to-last dot-segment is the hash" predicate, so this one
+/// detector covers every content-addressed asset class.
+///
+/// A fixed name like `index.html` / `decks.bin` has no such hash
+/// segment.
+fn is_content_addressed(file_name: &str) -> bool {
     let segments: Vec<&str> = file_name.split('.').collect();
     // Need at least `<stem>.<hash>.<ext>` → 3 segments.
     if segments.len() < 3 {
@@ -571,17 +489,26 @@ fn is_content_addressed_pkg(file_name: &str) -> bool {
         && hash_seg.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
-/// axum middleware for `/pkg/*`: serve content-addressed pkg files
-/// `immutable, max-age=1y` and fixed-name pkg files `no-cache`. See the
-/// immutability INVARIANT in `run_web_server`.
-async fn pkg_cache_header(request: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
-    // The nested service strips `/pkg`; the request path here is the
-    // remainder, e.g. `/mtg_engine.<hash>.js`. Take the last path segment.
-    let file_name = request.uri().path().rsplit('/').next().unwrap_or("").to_string();
-    let header = if is_content_addressed_pkg(&file_name) {
-        PKG_IMMUTABLE
+/// Global middleware: set Cache-Control based on whether the request
+/// URL is for a content-addressed file, an image (always immutable by
+/// scryfall art_id naming), or a fixed-name file (short-TTL).
+///
+/// Enforces the IMMUTABILITY INVARIANT centrally: a route is marked
+/// `immutable` ONLY if its URL is content-addressed (or in the
+/// `/images/` art-id-addressed namespace). Replaces every per-route
+/// no-cache carve-out the mtg-571 layout needed.
+async fn content_addressed_cache_header(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    let file_name = path.rsplit('/').next().unwrap_or("");
+    let header = if is_content_addressed(file_name) {
+        CAS_IMMUTABLE
+    } else if path.starts_with("/images/") {
+        IMAGES_IMMUTABLE
     } else {
-        PKG_NO_CACHE
+        MUTABLE_SHORT
     };
     let mut response = next.run(request).await;
     response
@@ -628,31 +555,6 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-/// Serve a single file from disk with a fixed `Cache-Control` header
-/// and `Content-Type`. Used for the `/data/sets/index.json` carve-out
-/// where we want no-cache semantics on a single file inside an
-/// otherwise daily-cached `/data` tree.
-///
-/// Reads the file fresh per request (small JSON file, < 100 KB, OS
-/// page cache makes this near-free). Returns 500 if the read fails.
-async fn serve_static_file_with_header(
-    path: PathBuf,
-    cache_control: HeaderValue,
-    content_type: &'static str,
-) -> impl IntoResponse {
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [
-                (axum::http::header::CACHE_CONTROL, cache_control),
-                (axum::http::header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
-            ],
-            bytes,
-        )
-            .into_response(),
-        Err(e) => {
-            log::warn!("[web-server] failed to read {path:?}: {e}");
-            (StatusCode::NOT_FOUND, format!("not found: {path:?}\n")).into_response()
-        }
-    }
-}
+// (`serve_static_file_with_header` retired with mtg-620: the per-route
+// no-cache carve-outs it implemented are now handled by the global
+// `content_addressed_cache_header` middleware above.)
