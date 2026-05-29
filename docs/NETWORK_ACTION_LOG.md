@@ -464,6 +464,15 @@ A reviewer can check Phase 2 code against this list:
    network client beyond the optional `apply_state_sync_at` hook.
 10. **Same primitive native + WASM**; the only difference is
     `Rc<RefCell>` vs `Arc<Mutex>` wrapping the *owner*, not the log.
+11. **Buffer/undo-log isomorphism.** For every entry pushed to a
+    controller's choice buffer at `action_count = K`, the engine's
+    undo log records the *same* action (or its state-sync effect) at
+    the same `K` on replay. The buffered logs add no information the
+    undo log lacks; they exist purely to decouple input arrival from
+    the engine's pull. A reviewer can mechanically check this by
+    asserting, for each buffered entry, that
+    `undo_log.entry_at(K).matches(buffer.get(K))` on every successful
+    replay.
 
 ## 10. Related docs
 
