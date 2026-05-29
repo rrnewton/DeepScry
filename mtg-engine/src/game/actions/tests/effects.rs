@@ -3075,6 +3075,66 @@ mod tests {
         }
     }
 
+    /// Card compat: Power-9 Moxen Mox Pearl / Mox Ruby / Mox Emerald.
+    ///
+    /// Scripts (cardsfolder/m/mox_{pearl,ruby,emerald}.txt):
+    ///   ManaCost:0
+    ///   Types:Artifact
+    ///   A:AB$ Mana | Cost$ T | Produced$ {W|R|G}
+    ///
+    /// Sibling of Mox Jet (mtg-405, already WORKING). Each Mox is a
+    /// zero-cost artifact with a single "{T}: Add {color}" mana ability.
+    /// Verifies the parser keeps the `Produced$` colour distinct per Mox
+    /// (not collapsed to colourless or to a single shared colour).
+    #[test]
+    fn test_card_compat_power9_moxen() {
+        use crate::core::Cost;
+        use std::path::PathBuf;
+
+        // (card file, name, expected (white, blue, black, red, green))
+        let cases: &[(&str, &str, (u8, u8, u8, u8, u8))] = &[
+            ("../cardsfolder/m/mox_pearl.txt", "Mox Pearl", (1, 0, 0, 0, 0)),
+            ("../cardsfolder/m/mox_ruby.txt", "Mox Ruby", (0, 0, 0, 1, 0)),
+            ("../cardsfolder/m/mox_emerald.txt", "Mox Emerald", (0, 0, 0, 0, 1)),
+        ];
+
+        for (path_str, name, expected) in cases {
+            let path = PathBuf::from(path_str);
+            if !path.exists() {
+                eprintln!("Skipping: cardsfolder not present at {:?}", path);
+                return;
+            }
+            let def = crate::loader::CardLoader::load_from_file(&path)
+                .unwrap_or_else(|e| panic!("{name} should load: {e:?}"));
+            assert_eq!(def.name.as_str(), *name);
+            assert!(def.types.contains(&CardType::Artifact), "{name} must be an Artifact");
+            assert_eq!(def.mana_cost.cmc(), 0, "{name} must be zero mana cost");
+
+            let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+            let mana_abilities: Vec<(u8, u8, u8, u8, u8)> = card
+                .activated_abilities
+                .iter()
+                .filter(|a| a.is_mana_ability && matches!(a.cost, Cost::Tap))
+                .filter_map(|a| {
+                    a.effects.iter().find_map(|e| match e {
+                        Effect::AddMana { mana, .. } => Some((mana.white, mana.blue, mana.black, mana.red, mana.green)),
+                        _ => None,
+                    })
+                })
+                .collect();
+
+            assert_eq!(
+                mana_abilities,
+                vec![*expected],
+                "{name} must have exactly one {{T}} mana ability producing its printed colour. \
+                 If colourless or a different colour, Produced$ was dropped/misparsed. \
+                 Got abilities: {:?}",
+                card.activated_abilities
+            );
+        }
+    }
+
     /// Card compat: Sengir Vampire (cardsfolder/s/sengir_vampire.txt)
     ///
     /// Script:

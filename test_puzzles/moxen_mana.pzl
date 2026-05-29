@@ -1,0 +1,24 @@
+[metadata]
+Name:Power-9 Moxen Mana Test
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Mox Ruby ({T}: Add {R}), Mox Emerald ({T}: Add {G}) and Mox Pearl ({T}: Add {W}) each tap for their printed single colour. The board has NO other red/green/white source, so casting Lightning Bolt ({R}) forces Mox Ruby, Giant Growth ({G}) forces Mox Emerald, and Disenchant ({1}{W}) consumes Mox Pearl's {W} (the Swamp pays the generic {1}). P2 has a Jalum Tome (artifact) as a Disenchant target.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Lightning Bolt; Giant Growth; Disenchant
+p0library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p0graveyard=
+p0battlefield=Mox Ruby; Mox Emerald; Mox Pearl; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p1graveyard=
+p1battlefield=Grizzly Bears; Jalum Tome
+p1exile=
