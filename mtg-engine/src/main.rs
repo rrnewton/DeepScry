@@ -3812,8 +3812,9 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         file: String,
         bytes: usize,
         card_count: usize,
-        /// blake3-derived content hash (16 hex chars / 64 bits) embedded in
-        /// `file`. Recorded explicitly so the deploy GC mark-sweep and any
+        /// Content hash (16 hex chars / 64 bits) embedded in `file`, computed
+        /// by `content_hash_hex` (currently std `DefaultHasher`/SipHash — see
+        /// that fn). Recorded explicitly so the deploy GC mark-sweep and any
         /// future integrity check can validate without re-deriving from the
         /// filename. Collision margin is ample for a few hundred bins.
         hash: String,
