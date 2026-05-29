@@ -2828,6 +2828,7 @@ dependencies = [
  "ratatui-image",
  "ratzilla",
  "rayon",
+ "regex",
  "reqwest",
  "rustc-hash 1.1.0",
  "rustls",

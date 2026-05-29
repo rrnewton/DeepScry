@@ -172,6 +172,327 @@ pub mod web_pkg {
     }
 }
 
+/// Full asset-graph content-addresser (mtg-620).
+///
+/// Extends the pkg-pair rewriter in [`web_pkg`] into a recursive,
+/// reference-graph-aware hasher rooted at `index.html`. Everything
+/// reachable from `index.html` is hashed (immutable URL); `index.html`
+/// itself stays unhashed (the sole stable entrypoint, served short-TTL).
+///
+/// ### What gets hashed
+///
+/// - Other HTML pages: `native_game.html`, `tui_game.html`, `demo.html`,
+///   `wasm_ai_harness.html`.
+/// - JS leaves loaded by `<script src>` / ES `import` / `await import`:
+///   `server-config.js`, `network.js`, `bug_report.js`.
+/// - The set-resolver `data/sets/index.json` (fetched as a plain JS
+///   string literal from the HTML pages).
+/// - The wasm-bindgen pkg pair (delegated to [`web_pkg::hash_web_assets`],
+///   run FIRST so its hashed names land inside the HTML before the HTML
+///   files are themselves hashed).
+///
+/// ### What does NOT get hashed
+///
+/// - `index.html` — the stable entrypoint. Its content IS rewritten to
+///   point at the hashed names of its dependencies, but its own
+///   filename never changes.
+/// - `pkg/package.json` — wasm-pack metadata, never fetched by the
+///   browser.
+/// - Per-set `<set>.<hash>.bin` files — already content-addressed by
+///   the exporter; left untouched.
+///
+/// ### Cycle break
+///
+/// The HTML pages cross-link to each other (`tui_game.html` ↔
+/// `native_game.html` in their nav bars). With every HTML page hashed,
+/// those references form a cycle whose fixpoint we cannot compute
+/// post-build (a referrer's hash depends on the hashed names it cites).
+/// We break the cycle by rewriting **cross-page HTML→HTML navigation
+/// links** to point at `index.html` instead — the lobby is the entry
+/// and re-launches the chosen game page with the current hashed name.
+/// References to `index.html` itself are kept as-is (unhashed).
+///
+/// ### Rewrite precision
+///
+/// All rewrites are filename-token aware (not blind substring replace)
+/// and preserve `?query` strings + `#fragments`. The patterns we match:
+///
+/// - HTML: `<script src="NAME">`, `<a href="NAME[?...][#...]">`.
+/// - JS / inline JS: `import ... from './NAME'` / `from '/NAME'`,
+///   `import('./NAME')` / `await import('./NAME')`,
+///   `fetch('./NAME[?...]')` / `fetch('/NAME[?...]')`,
+///   bare string literals like `'./tui_game.html?...'` /
+///   `'tui_game.html?...'` (the lobby's redirect builder).
+///
+/// Each pattern uses an exact filename token bounded by quote/brackets,
+/// so a longer name that contains a shorter one as a prefix/suffix
+/// cannot accidentally match.
+pub mod asset_graph {
+    use super::{asset_hash_hex, web_pkg};
+    use regex::Regex;
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    /// Sole unhashed entrypoint — its filename never changes; only its
+    /// content is rewritten (to point at hashed dependencies).
+    pub const ENTRY_HTML: &str = "index.html";
+
+    /// HTML pages (besides `ENTRY_HTML`) that participate in hashing.
+    /// Listed explicitly so the staging-tree walk is deterministic and
+    /// surfaces any new HTML page as a deliberate addition.
+    pub const HASHED_HTML_PAGES: &[&str] = &["native_game.html", "tui_game.html", "demo.html", "wasm_ai_harness.html"];
+
+    /// JS leaves loaded by `<script src>` or ES `import`. None of these
+    /// have internal JS imports of their own (verified 2026-05-29), so
+    /// they are pure leaves: hash bytes once, rename, rewrite referrers.
+    pub const HASHED_JS_LEAVES: &[&str] = &["server-config.js", "network.js", "bug_report.js"];
+
+    /// The data leaf — the set→bin resolver. Fetched as a JS string
+    /// literal `fetch('./data/sets/index.json')` (or `/data/...`) from
+    /// every HTML page that loads card data. Its inner `file:` /
+    /// `cards:` fields already reference per-set hashed bins (exporter),
+    /// so this file changes whenever those bins change.
+    pub const DATA_INDEX_JSON: &str = "data/sets/index.json";
+
+    /// Result of [`hash_full_graph`]. The maps log original→hashed for
+    /// each asset class so the caller (and tests) can assert / print
+    /// exactly what happened.
+    #[derive(Debug, Clone)]
+    pub struct GraphHashResult {
+        /// Pkg pair (delegated to `web_pkg`).
+        pub pkg: web_pkg::PkgHashResult,
+        /// `server-config.js` → `server-config.<hash>.js`, etc.
+        pub js_leaves: BTreeMap<String, String>,
+        /// `data/sets/index.json` → `data/sets/index.<hash>.json`.
+        pub data_index: (String, String),
+        /// `native_game.html` → `native_game.<hash>.html`, etc.
+        pub html_pages: BTreeMap<String, String>,
+    }
+
+    /// Insert `.<hash>` before the final extension of `name`. E.g.
+    /// `network.js` → `network.<hash>.js`, `data/sets/index.json` →
+    /// `data/sets/index.<hash>.json`. Panics if `name` has no extension
+    /// (none of our inputs lack one — guarded by the const lists above).
+    fn hashed_name(name: &str, hash: &str) -> String {
+        let (stem, ext) = name
+            .rsplit_once('.')
+            .expect("asset_graph: every hashable name must have an extension");
+        format!("{stem}.{hash}.{ext}")
+    }
+
+    /// One reference-rewrite rule: replace every occurrence of the
+    /// FILENAME TOKEN `from` (matched precisely, query/fragment
+    /// preserved) with `to` in `src`. Returns the rewritten string.
+    ///
+    /// The matched contexts are the union of every place HTML/inline-JS
+    /// references a sibling asset by name:
+    ///
+    /// 1. HTML attribute values inside `src="..."` / `src='...'` and
+    ///    `href="..."` / `href='...'`, possibly with leading `./` or
+    ///    `/`, possibly trailed by `?query` and/or `#fragment`.
+    /// 2. JS string literals (single or double quoted), with the same
+    ///    leading-prefix + trailing-query/fragment shapes. Covers
+    ///    `import(...)`, `fetch(...)`, `window.location.href = '...'`,
+    ///    `el.href = '...'`, and the lobby's redirect builders like
+    ///    `'tui_game.html' + suffix`.
+    ///
+    /// Filename-token boundaries are enforced: the character before the
+    /// name must be `"`, `'`, `/`, OR begin a quoted JS string (handled
+    /// via the `/` and `./` alternatives), and the character after the
+    /// name must be `"`, `'`, `?`, or `#`. A longer filename that
+    /// contains the shorter as a substring (e.g. `index.html` vs
+    /// `super_index.html`) therefore cannot accidentally match.
+    fn rewrite_one_reference(src: &str, from: &str, to: &str) -> String {
+        // Escape the filename for regex use (dots etc.). Filenames in
+        // our const lists are safe ASCII so this is short, but do it
+        // properly.
+        let from_re = regex::escape(from);
+        // The pattern, broken down:
+        //   (?P<lead>['"]|['"]\./|['"]/)       -- opening quote + optional prefix
+        //   NAME                                 -- the literal filename
+        //   (?P<tail>['"]|[?#][^'"<>\s]*['"])    -- closing quote OR query/fragment then quote
+        // We allow both single and double quotes (HTML + JS).
+        let pat = format!(
+            r#"(?P<lead>['"](?:\./|/)?){name}(?P<tail>['"]|[?#][^'"<>\s]*['"])"#,
+            name = from_re,
+        );
+        let re = Regex::new(&pat).expect("asset_graph rewrite: regex compiles");
+        re.replace_all(src, |caps: &regex::Captures<'_>| {
+            format!("{}{}{}", &caps["lead"], to, &caps["tail"])
+        })
+        .into_owned()
+    }
+
+    /// Apply EVERY rule in `rules` to `src`. Rules are applied longest
+    /// `from` first to avoid one rule's `from` being a prefix of
+    /// another's (none of our current names overlap that way, but
+    /// future-proof the ordering anyway).
+    fn rewrite_all_references(src: &str, rules: &BTreeMap<String, String>) -> String {
+        let mut keys: Vec<&str> = rules.keys().map(|s| s.as_str()).collect();
+        keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+        let mut out = src.to_string();
+        for k in keys {
+            out = rewrite_one_reference(&out, k, &rules[k]);
+        }
+        out
+    }
+
+    /// Cycle-break helper: in a non-entry HTML page, rewrite every
+    /// reference to ANOTHER non-entry hashed HTML page to point at
+    /// `ENTRY_HTML` instead. The hashed entry remains `index.html`
+    /// (unchanged name), so these become navigation-back-to-lobby
+    /// links — exactly the design's "index.html is the entry" model.
+    ///
+    /// `self_name` is the page being processed, excluded from the
+    /// rewrite so it does not self-rewrite (we never link to ourselves
+    /// in practice, but be defensive).
+    fn redirect_cross_html_to_entry(src: &str, self_name: &str) -> String {
+        let mut out = src.to_string();
+        for &other in HASHED_HTML_PAGES {
+            if other == self_name {
+                continue;
+            }
+            out = rewrite_one_reference(&out, other, ENTRY_HTML);
+        }
+        out
+    }
+
+    /// Hash one file in place: read, hash bytes, rename to its hashed
+    /// name, and return the (logical, hashed) pair. `rel` is the path
+    /// relative to `web_dir`; the hashed name is in the same directory.
+    fn hash_in_place(web_dir: &Path, rel: &str) -> std::io::Result<(String, String)> {
+        let src = web_dir.join(rel);
+        if !src.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("asset_graph: missing required asset {}", src.display()),
+            ));
+        }
+        let bytes = std::fs::read(&src)?;
+        let hash = asset_hash_hex(&bytes);
+        let hashed_rel = hashed_name(rel, &hash);
+        let dst = web_dir.join(&hashed_rel);
+        std::fs::rename(&src, &dst)?;
+        Ok((rel.to_string(), hashed_rel))
+    }
+
+    /// Run the full asset-graph hasher on `web_dir` IN PLACE.
+    ///
+    /// Order (matters — a referrer's hash depends on its already-hashed
+    /// referents):
+    ///   1. pkg pair (delegated). Renames + rewrites every `*.html`.
+    ///   2. JS leaves: hash + rename. No internal refs.
+    ///   3. `data/sets/index.json`: hash + rename. No internal refs.
+    ///   4. Each non-entry HTML page: rewrite refs (JS leaves, data
+    ///      leaf, cross-HTML → ENTRY), hash the rewritten content,
+    ///      rename. The hashed pkg names are already present from step 1.
+    ///   5. ENTRY_HTML (`index.html`): rewrite refs (JS leaves, data
+    ///      leaf, other-HTML → their hashed names). Do NOT rename.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required file is missing from `web_dir`
+    /// or if any filesystem I/O fails (read, write, or rename).
+    pub fn hash_full_graph(web_dir: &Path) -> std::io::Result<GraphHashResult> {
+        // ── 1. pkg pair via the existing rewriter ────────────────────
+        let pkg = web_pkg::hash_web_assets(web_dir)?;
+
+        // ── 2. JS leaves ────────────────────────────────────────────
+        let mut js_leaves: BTreeMap<String, String> = BTreeMap::new();
+        for leaf in HASHED_JS_LEAVES {
+            let (k, v) = hash_in_place(web_dir, leaf)?;
+            js_leaves.insert(k, v);
+        }
+
+        // ── 3. data/sets/index.json ─────────────────────────────────
+        let data_index = hash_in_place(web_dir, DATA_INDEX_JSON)?;
+
+        // Aggregate the "JS + data" rules — applied to every HTML page
+        // (entry and non-entry alike).
+        let mut leaf_rules: BTreeMap<String, String> = js_leaves.clone();
+        leaf_rules.insert(data_index.0.clone(), data_index.1.clone());
+
+        // ── 4. non-entry HTML pages: rewrite then hash ──────────────
+        // Two-pass: first pass writes the rewritten (cycle-broken)
+        // content back to the logical filename so its bytes-on-disk
+        // exactly match what the hash will be computed over. Second
+        // pass hashes that content and renames the file.
+        let mut html_pages: BTreeMap<String, String> = BTreeMap::new();
+        for &page in HASHED_HTML_PAGES {
+            let path = web_dir.join(page);
+            if !path.is_file() {
+                // Some pages may not exist in older staging trees; skip
+                // gracefully so a partial deploy tree (e.g. without
+                // wasm_ai_harness.html) is still hashable.
+                continue;
+            }
+            let src = std::fs::read_to_string(&path)?;
+            let with_leaves = rewrite_all_references(&src, &leaf_rules);
+            let cycle_broken = redirect_cross_html_to_entry(&with_leaves, page);
+            // Write the rewritten content under the logical name so the
+            // bytes we hash are exactly the bytes the server will serve.
+            std::fs::write(&path, &cycle_broken)?;
+            let (k, v) = hash_in_place(web_dir, page)?;
+            html_pages.insert(k, v);
+        }
+
+        // ── 5. ENTRY_HTML: rewrite (do NOT rename) ──────────────────
+        let entry_path = web_dir.join(ENTRY_HTML);
+        if entry_path.is_file() {
+            let src = std::fs::read_to_string(&entry_path)?;
+            // Entry rewrites: leaves + ALL hashed HTML pages (entry's
+            // launch buttons point at the hashed game pages directly).
+            let mut entry_rules = leaf_rules.clone();
+            for (k, v) in &html_pages {
+                entry_rules.insert(k.clone(), v.clone());
+            }
+            let rewritten = rewrite_all_references(&src, &entry_rules);
+            if rewritten != src {
+                std::fs::write(&entry_path, rewritten)?;
+            }
+        }
+
+        Ok(GraphHashResult {
+            pkg,
+            js_leaves,
+            data_index,
+            html_pages,
+        })
+    }
+
+    // Re-export the path constant for callers that want to assert it.
+    pub const _: () = ();
+
+    /// Test-only re-export of [`rewrite_all_references`] so the unit
+    /// tests in `super::tests` can exercise the rewrite primitive
+    /// without needing a real `web_dir` on disk.
+    #[doc(hidden)]
+    pub fn __test_rewrite_all(src: &str, rules: &BTreeMap<String, String>) -> String {
+        rewrite_all_references(src, rules)
+    }
+
+    /// Test-only re-export of [`redirect_cross_html_to_entry`].
+    #[doc(hidden)]
+    pub fn __test_redirect(self_name: &str, src: &str) -> String {
+        redirect_cross_html_to_entry(src, self_name)
+    }
+
+    /// Convenience: list every file path (relative to `web_dir`) that
+    /// `hash_full_graph` will TRY to hash (regardless of whether it
+    /// exists on disk). Used by the CLI summary + tests.
+    pub fn declared_assets() -> Vec<PathBuf> {
+        let mut v = Vec::new();
+        v.push(PathBuf::from(DATA_INDEX_JSON));
+        for s in HASHED_JS_LEAVES {
+            v.push(PathBuf::from(s));
+        }
+        for s in HASHED_HTML_PAGES {
+            v.push(PathBuf::from(s));
+        }
+        v
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +580,62 @@ mod tests {
             let once = rewrite_html(src, JS_HASHED, WASM_HASHED);
             let twice = rewrite_html(&once, JS_HASHED, WASM_HASHED);
             assert_eq!(once, twice, "re-running the rewrite must be a no-op");
+        }
+
+        #[test]
+        fn graph_rewrite_preserves_query_string() {
+            // The lobby's redirect builder: tui_game.html?lobby=&game=&pass=
+            // MUST keep its query string when the filename is rewritten.
+            use crate::asset_hash::asset_graph;
+            let mut rules = std::collections::BTreeMap::new();
+            rules.insert(
+                "tui_game.html".to_string(),
+                "tui_game.deadbeefdeadbeef.html".to_string(),
+            );
+            // Mimic the inline-JS pattern from index.html lines 853/743.
+            let src = "window.location.href = 'tui_game.html?' + qp.toString();\n\
+                       el.href = 'tui_game.html' + suffix;\n\
+                       <a href=\"tui_game.html#anchor\">go</a>";
+            let out = asset_graph::__test_rewrite_all(src, &rules);
+            assert!(out.contains("'tui_game.deadbeefdeadbeef.html?'"));
+            assert!(out.contains("'tui_game.deadbeefdeadbeef.html'"));
+            assert!(out.contains("\"tui_game.deadbeefdeadbeef.html#anchor\""));
+        }
+
+        #[test]
+        fn graph_rewrite_handles_dot_slash_and_slash_prefixes() {
+            use crate::asset_hash::asset_graph;
+            let mut rules = std::collections::BTreeMap::new();
+            rules.insert(
+                "data/sets/index.json".to_string(),
+                "data/sets/index.cafef00dcafef00d.json".to_string(),
+            );
+            let src = "await fetch('./data/sets/index.json');\n\
+                       await fetch('/data/sets/index.json');";
+            let out = asset_graph::__test_rewrite_all(src, &rules);
+            assert!(out.contains("'./data/sets/index.cafef00dcafef00d.json'"));
+            assert!(out.contains("'/data/sets/index.cafef00dcafef00d.json'"));
+        }
+
+        #[test]
+        fn graph_rewrite_does_not_clobber_unrelated_names() {
+            use crate::asset_hash::asset_graph;
+            let mut rules = std::collections::BTreeMap::new();
+            rules.insert("network.js".to_string(), "network.aaaaaaaaaaaaaaaa.js".to_string());
+            // `super_network.js` must NOT be rewritten.
+            let src = "import './super_network.js';\nimport './network.js';\nawait import('./network.js');";
+            let out = asset_graph::__test_rewrite_all(src, &rules);
+            assert!(out.contains("'./super_network.js'"), "longer name preserved");
+            assert!(out.contains("'./network.aaaaaaaaaaaaaaaa.js'"));
+        }
+
+        #[test]
+        fn graph_redirect_cross_html_to_entry() {
+            use crate::asset_hash::asset_graph;
+            let src = "<a href=\"native_game.html\">GUI</a>\n<a href=\"index.html\">lobby</a>";
+            let out = asset_graph::__test_redirect("tui_game.html", src);
+            assert!(out.contains("href=\"index.html\">GUI"), "cross-page → entry");
+            assert!(out.contains("href=\"index.html\">lobby"), "index.html untouched");
         }
 
         #[test]

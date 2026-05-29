@@ -1127,20 +1127,34 @@ async fn async_main() -> Result<()> {
             println!("{}", mtg_engine::asset_hash::asset_hash_hex(&bytes));
         }
         Commands::HashWebAssets { web_dir } => {
-            let res =
-                mtg_engine::asset_hash::web_pkg::hash_web_assets(&web_dir).map_err(mtg_engine::MtgError::IoError)?;
-            println!("→ hashed pkg bundle in {}:", web_dir.display());
+            // mtg-620: full asset-graph hasher. Hashes the pkg pair AND
+            // every other reachable asset from index.html (other HTML
+            // pages, JS leaves, the set-resolver JSON). `index.html`
+            // itself stays unhashed — the sole stable entrypoint.
+            let res = mtg_engine::asset_hash::asset_graph::hash_full_graph(&web_dir)
+                .map_err(mtg_engine::MtgError::IoError)?;
+            println!("→ hashed full asset graph in {}:", web_dir.display());
             println!(
-                "    {} -> {}",
+                "    pkg/{} -> pkg/{}",
                 mtg_engine::asset_hash::web_pkg::PKG_JS_STEM,
-                res.js_hashed
+                res.pkg.js_hashed
             );
             println!(
-                "    {} -> {}",
+                "    pkg/{} -> pkg/{}",
                 mtg_engine::asset_hash::web_pkg::PKG_WASM_STEM,
-                res.wasm_hashed
+                res.pkg.wasm_hashed
             );
-            println!("✓ rewrote pkg references in {} HTML page(s)", res.html_pages_rewritten);
+            for (k, v) in &res.js_leaves {
+                println!("    {k} -> {v}");
+            }
+            println!("    {} -> {}", res.data_index.0, res.data_index.1);
+            for (k, v) in &res.html_pages {
+                println!("    {k} -> {v}");
+            }
+            println!(
+                "✓ entrypoint {} rewritten (filename UNCHANGED — short-TTL stable URL)",
+                mtg_engine::asset_hash::asset_graph::ENTRY_HTML
+            );
         }
         Commands::Download {
             output,
