@@ -296,6 +296,11 @@ def run_once(argv, cwd, timeout):
 
 
 def classify(fails, timeouts, runs):
+    """Auto-classify a run. Returns one of the flakiness_db `classification`
+    enum values (schema: ai_docs/reference/TEST_FLAKINESS.md §2/§3):
+    deterministic-pass | timeout-under-load | true-nondeterministic. The 4th
+    value, known-desync, is NEVER auto-assigned — a human links it to a bug via
+    `--classify known-desync --issue mtg-NNN`."""
     if fails == 0 and timeouts == 0:
         return "deterministic-pass"
     if fails == 0 and timeouts > 0:
@@ -381,7 +386,13 @@ def main():
     one.add_argument("--timeout", type=int, default=300)
     one.add_argument("--record", action="store_true")
     one.add_argument("--classify", dest="cls_override", default=None,
-                     help="override auto-classification (e.g. known-desync)")
+                     choices=["deterministic-pass", "timeout-under-load",
+                              "true-nondeterministic", "known-desync"],
+                     help="override auto-classification. One of: deterministic-pass, "
+                          "timeout-under-load, true-nondeterministic, known-desync "
+                          "(see ai_docs/reference/TEST_FLAKINESS.md §2). Typically only "
+                          "used as `--classify known-desync --issue mtg-NNN` to link a "
+                          "real engine bug; the other three are auto-assigned.")
     one.add_argument("--issue", default="", help="linked beads issue")
     one.add_argument("--notes", default="")
 
