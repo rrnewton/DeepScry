@@ -122,6 +122,13 @@ impl Default for ServerConfig {
     }
 }
 
+/// GitHub repository that bug-report issues are filed against.
+///
+/// Passed EXPLICITLY via `gh ... -R <repo>` on every repo-scoped command so the
+/// server never relies on `GH_REPO` being present in the systemd unit env or on
+/// `gh`'s cwd-based repo auto-detection (mtg-587).
+const BUG_REPORT_GITHUB_REPO: &str = "rrnewton/DeepScry";
+
 #[derive(Debug, Clone)]
 struct BugReportRequest {
     description: String,
@@ -2876,6 +2883,19 @@ fn schedule_claude_autofix_with_spawner(
     });
 }
 
+/// Preflight `gh auth status` so a missing/expired token surfaces as a clear
+/// warning in the issue-filing log path rather than an opaque failure on the
+/// first repo-scoped command (mtg-587). Returns `Ok(())` when authenticated,
+/// `Err` otherwise; callers treat the error as a non-fatal warning and fall
+/// back to local storage.
+fn check_gh_auth_with_runner(
+    runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
+    repo_root: &Path,
+) -> Result<()> {
+    run_gh_command_with_runner(runner, repo_root, &["auth".to_string(), "status".to_string()])?;
+    Ok(())
+}
+
 fn available_bug_report_labels_with_runner(
     runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
     repo_root: &Path,
@@ -2886,6 +2906,8 @@ fn available_bug_report_labels_with_runner(
         &with_configured_gh_repo(vec![
             "label".to_string(),
             "list".to_string(),
+            "-R".to_string(),
+            BUG_REPORT_GITHUB_REPO.to_string(),
             "--json".to_string(),
             "name".to_string(),
             "--limit".to_string(),
@@ -2977,6 +2999,17 @@ fn create_github_issue_with_runner(
 ) -> Result<GitHubIssueOutcome> {
     let repo_root = bug_report_repo_root();
 
+    // Preflight: a clear, early signal if the VM's `gh` is not authenticated.
+    // Non-fatal — we still attempt to file (and fall back to local storage on
+    // failure), but the warning makes auth problems easy to diagnose.
+    if let Err(error) = check_gh_auth_with_runner(runner, &repo_root) {
+        log::warn!(
+            "gh auth status preflight failed before filing bug-report issue to {}: {}",
+            BUG_REPORT_GITHUB_REPO,
+            error
+        );
+    }
+
     let available_labels = match available_bug_report_labels_with_runner(runner, &repo_root) {
         Ok(labels) => labels,
         Err(error) => {
@@ -3011,6 +3044,8 @@ fn create_github_issue_with_runner(
     let mut issue_args = vec![
         "issue".to_string(),
         "create".to_string(),
+        "-R".to_string(),
+        BUG_REPORT_GITHUB_REPO.to_string(),
         "--title".to_string(),
         bug_report_issue_title(report),
         "--body-file".to_string(),
@@ -3346,12 +3381,14 @@ mod tests {
         let calls_clone = Arc::clone(&calls);
         let runner = move |args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
             calls_clone.lock().expect("lock calls").push(args.to_vec());
-            if args.get(2).map(String::as_str) == Some("label") {
+            if args.get(2).map(String::as_str) == Some("auth") {
+                Ok(make_output("Logged in to github.com as rrnewton\n", ""))
+            } else if args.get(2).map(String::as_str) == Some("label") {
                 Ok(make_output(r#"[{"name":"bug"},{"name":"triage"}]"#, ""))
             } else if args.get(2).map(String::as_str) == Some("gist") {
                 Ok(make_output("https://gist.github.com/example/logs\n", ""))
             } else if args.get(2).map(String::as_str) == Some("issue") {
-                Ok(make_output("https://github.com/rrnewton/mtg-forge-rs/issues/123\n", ""))
+                Ok(make_output("https://github.com/rrnewton/DeepScry/issues/123\n", ""))
             } else {
                 panic!("unexpected command: {args:?}");
             }
@@ -3363,23 +3400,32 @@ mod tests {
         assert_eq!(
             outcome,
             GitHubIssueOutcome {
-                issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/123".to_string(),
+                issue_url: "https://github.com/rrnewton/DeepScry/issues/123".to_string(),
                 warning: None,
             }
         );
 
         let calls = calls.lock().expect("lock calls");
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 4);
+        // 0: gh auth status preflight
         assert_eq!(calls[0][0], "/usr/bin/with-proxy");
         assert_eq!(calls[0][1], "/usr/bin/gh");
-        assert_eq!(calls[0][2], "label");
-        assert_eq!(calls[1][2], "gist");
-        assert!(calls[1].iter().any(|arg| arg.ends_with("game_logs.txt")));
-        assert!(calls[1].iter().any(|arg| arg.ends_with("console_logs.txt")));
-        assert_eq!(calls[2][2], "issue");
-        assert!(calls[2].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
-        assert!(calls[2].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
-        assert!(calls[2]
+        assert_eq!(calls[0][2], "auth");
+        assert_eq!(calls[0][3], "status");
+        // 1: label list -- repo-scoped via explicit -R
+        assert_eq!(calls[1][2], "label");
+        assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
+        // 2: gist create -- NOT repo-scoped (gists are user-scoped)
+        assert_eq!(calls[2][2], "gist");
+        assert!(calls[2].iter().any(|arg| arg.ends_with("game_logs.txt")));
+        assert!(calls[2].iter().any(|arg| arg.ends_with("console_logs.txt")));
+        assert!(!calls[2].iter().any(|arg| arg == "-R"));
+        // 3: issue create -- repo-scoped via explicit -R
+        assert_eq!(calls[3][2], "issue");
+        assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
+        assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
+        assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
+        assert!(calls[3]
             .windows(2)
             .any(|w| w[0] == "--body-file" && w[1].ends_with("github_issue_body.md")));
 
@@ -3389,6 +3435,29 @@ mod tests {
         assert!(stdfs::read_to_string(report_dir.join("github_issue_url.txt"))
             .expect("issue url")
             .contains("/issues/123"));
+    }
+
+    #[test]
+    fn test_check_gh_auth_with_runner_reports_unauthenticated() {
+        // Authenticated: gh auth status exits 0.
+        let ok_runner = |args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            assert_eq!(args.get(2).map(String::as_str), Some("auth"));
+            assert_eq!(args.get(3).map(String::as_str), Some("status"));
+            Ok(make_output("Logged in to github.com\n", ""))
+        };
+        assert!(check_gh_auth_with_runner(&ok_runner, Path::new("/tmp")).is_ok());
+
+        // Unauthenticated: gh auth status exits non-zero -> Err (treated as a
+        // non-fatal warning by the caller, which falls back to local storage).
+        let fail_runner = |_args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            Ok(CommandOutput {
+                success: false,
+                stdout: String::new(),
+                stderr: "You are not logged into any GitHub hosts.".to_string(),
+            })
+        };
+        let error = check_gh_auth_with_runner(&fail_runner, Path::new("/tmp")).expect_err("unauthenticated");
+        assert!(error.to_string().contains("not logged into"));
     }
 
     #[test]
