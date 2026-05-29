@@ -9,6 +9,28 @@ use smallvec::SmallVec;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+/// Read one line of input from stdin into `buf`, distinguishing real input
+/// from end-of-stream.
+///
+/// Returns `true` when a line of input was read, and `false` on EOF **or** an
+/// I/O error.
+///
+/// Rationale (mtg-eo8x2): `io::Stdin::read_line` returns `Ok(0)` at EOF (e.g.
+/// once a piped automated test has exhausted its scripted input). The previous
+/// code only special-cased `Err(_)` (`read_line(..).is_err()`); on `Ok(0)` it
+/// fell through with an empty string, and the surrounding `loop { .. }` prompts
+/// re-prompted forever — busy-looping at ~100% CPU and leaving an orphaned
+/// `mtg tui` process spinning a full core. Collapsing EOF into the same "give
+/// up / fall back" branch the error case already used makes the controller
+/// terminate cleanly on EOF instead of spinning.
+fn read_line_or_eof(buf: &mut String) -> bool {
+    match io::stdin().read_line(buf) {
+        Ok(0) => false,  // EOF: no more input will ever arrive.
+        Ok(_) => true,   // Got a line of input.
+        Err(_) => false, // I/O error: treat like EOF (fall back / give up).
+    }
+}
+
 /// A controller that prompts a human player for decisions via stdin
 pub struct InteractiveController {
     player_id: PlayerId,
@@ -107,10 +129,15 @@ impl InteractiveController {
         None
     }
 
-    /// Read and buffer commands from stdin, splitting on semicolons
+    /// Read and buffer commands from stdin, splitting on semicolons.
+    ///
+    /// Returns `Err` on EOF or I/O error so callers break out of their input
+    /// loop instead of spinning (mtg-eo8x2).
     fn read_and_buffer_commands(&mut self) -> Result<(), std::io::Error> {
         let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+        if !read_line_or_eof(&mut input) {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stdin closed"));
+        }
 
         // Split on semicolons and buffer all commands
         for cmd in input.split(';') {
@@ -145,9 +172,12 @@ impl InteractiveController {
             io::stdout().flush().unwrap();
 
             let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_err() {
-                eprintln!("Error reading input");
-                continue;
+            if !read_line_or_eof(&mut input) {
+                // EOF / I/O error: no more input will arrive. Give up on this
+                // prompt (treat as "pass / no choice") instead of re-looping,
+                // which would busy-spin at 100% CPU (mtg-eo8x2).
+                eprintln!("Input closed (EOF); aborting prompt");
+                return None;
             }
 
             let trimmed = input.trim();
@@ -354,7 +384,7 @@ impl InteractiveController {
         io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
+        if !read_line_or_eof(&mut input) {
             return;
         }
 
@@ -527,9 +557,12 @@ impl PlayerController for InteractiveController {
                 io::stdout().flush().unwrap();
 
                 let mut input = String::new();
-                if io::stdin().read_line(&mut input).is_err() {
-                    eprintln!("Error reading input");
-                    continue;
+                if !read_line_or_eof(&mut input) {
+                    // EOF / I/O error: no more input will arrive. Pass (the
+                    // index-0 action) rather than re-looping, which would
+                    // busy-spin at 100% CPU and orphan the process (mtg-eo8x2).
+                    eprintln!("Input closed (EOF); passing");
+                    return ChoiceResult::Ok(None);
                 }
 
                 let trimmed = input.trim();
@@ -1111,7 +1144,7 @@ impl PlayerController for InteractiveController {
             println!("(separated by space):");
 
             let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_err() {
+            if !read_line_or_eof(&mut input) {
                 return ChoiceResult::Ok(blockers.iter().copied().collect());
             }
 
@@ -1166,7 +1199,7 @@ impl PlayerController for InteractiveController {
             println!("\nSelect cards to discard (enter indices separated by space):");
 
             let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_err() {
+            if !read_line_or_eof(&mut input) {
                 // Auto-discard first N cards if input fails
                 return ChoiceResult::Ok(hand.iter().take(count).copied().collect());
             }
@@ -1214,7 +1247,7 @@ impl PlayerController for InteractiveController {
         println!("\nEnter choice (0-{}, or 'n' to fail to find):", valid_cards.len() - 1);
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
+        if !read_line_or_eof(&mut input) {
             // On input error, auto-select first card
             return ChoiceResult::Ok(Some(0));
         }
@@ -1285,7 +1318,7 @@ impl PlayerController for InteractiveController {
             let _ = io::Write::flush(&mut io::stdout());
 
             let mut input = String::new();
-            if io::stdin().read_line(&mut input).is_err() {
+            if !read_line_or_eof(&mut input) {
                 // On input error, auto-select first available
                 if let Some(&&card_id) = available.first() {
                     sacrifices.push(card_id);
@@ -1330,7 +1363,7 @@ impl PlayerController for InteractiveController {
         println!("\nEnter indices of permanents to KEEP TAPPED (space-separated), or press Enter to untap all:");
 
         let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_ok() {
+        if read_line_or_eof(&mut input) {
             let input = input.trim();
             if !input.is_empty() {
                 for part in input.split_whitespace() {
@@ -1381,7 +1414,7 @@ impl PlayerController for InteractiveController {
         println!("\nEnter mode indices (space-separated):");
 
         let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_ok() {
+        if read_line_or_eof(&mut input) {
             let input = input.trim();
             for part in input.split_whitespace() {
                 if let Ok(idx) = part.parse::<usize>() {

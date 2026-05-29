@@ -175,13 +175,91 @@ run_mtg() {
     fi
 }
 
-# Run mtg with a timeout, compatible with network mode
+# Internal core: run a shell command in its OWN process group with a timeout,
+# and on timeout KILL THE ENTIRE PROCESS GROUP so no grandchild survives.
+#
+# Why this exists (mtg-eo8x2): the old implementation backgrounded a shell
+# FUNCTION (`run_mtg_prebuilt "$@" &`) and, on timeout, only signalled that
+# function's subshell PID. The real `mtg` binary is a GRANDCHILD; killing the
+# subshell reparents it to init (ppid=1) where it kept running — and a
+# `mtg tui` controller reading stdin EOF busy-loops at ~100% CPU, leaving an
+# orphan spinning a full core for minutes. Polluting concurrent/subsequent
+# tests with false timeout-flakes.
+#
+# Fix: launch the command tree under `setsid` so it becomes the leader of a
+# brand-new process group (PGID == the setsid child's PID). Poll for the
+# timeout; when it fires, send SIGTERM then SIGKILL to the NEGATIVE pid
+# (`kill -- -PGID`), which targets every process in the group — child, the
+# `mtg` binary, and anything it spawned. Nothing is left orphaned.
+#
+# Args:
+#   $1            - timeout in seconds
+#   $2            - stdin data to pipe to the command, or empty string for none
+#   $3..          - the command + args to run (a shell function such as
+#                   run_mtg_prebuilt, kept for network-mode compatibility)
+# Returns:
+#   0   - completed successfully
+#   124 - timed out (group killed)
+#   N   - command's own exit code
+_run_with_pgroup_timeout() {
+    local timeout_secs="$1"
+    local stdin_data="$2"
+    shift 2
+
+    # Launch the command as a new process-group leader via setsid, backgrounded.
+    # We re-enter this same script's functions through `bash -c`, so export the
+    # helper functions and the env they rely on into the setsid child.
+    export -f run_mtg_prebuilt run_mtg_cargo run_mtg _try_network_mode
+    export MTG_BIN MTG_NETWORK_MODE MTG_CARDSFOLDER WORKSPACE_ROOT
+
+    # Pass the command through the positional list to an inline `bash -c` that
+    # invokes it via `"$@"`. The first positional ($1 inside bash -c) is the
+    # exported shell-function name (e.g. run_mtg_prebuilt); bash resolves it
+    # against the exported function table. We DON'T `exec` it because it's a
+    # function, not an external binary. The literal "pgrp" is bash -c's $0
+    # (just a label for error messages).
+    if [ -n "$stdin_data" ]; then
+        setsid bash -c '"$@"' pgrp "$@" <<<"$(printf '%b' "$stdin_data")" &
+    else
+        setsid bash -c '"$@"' pgrp "$@" &
+    fi
+    local leader_pid=$!
+    # With setsid, the child is the group leader, so PGID == leader_pid.
+    local pgid="$leader_pid"
+
+    # Poll for completion or timeout.
+    local elapsed=0
+    while kill -0 "$leader_pid" 2>/dev/null; do
+        if [ "$elapsed" -ge "$timeout_secs" ]; then
+            # Timeout: kill the WHOLE process group (negative pid).
+            kill -TERM -- "-$pgid" 2>/dev/null
+            sleep 0.5
+            kill -KILL -- "-$pgid" 2>/dev/null
+            wait "$leader_pid" 2>/dev/null
+            return 124
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    # Normal exit: reap and propagate the command's exit code. Also sweep the
+    # group with SIGKILL in case the command forked anything that outlived it
+    # (belt-and-suspenders: a clean exit normally leaves nothing here).
+    wait "$leader_pid"
+    local rc=$?
+    kill -KILL -- "-$pgid" 2>/dev/null
+    return $rc
+}
+
+# Run mtg with a timeout, compatible with network mode.
 # Usage: run_mtg_with_timeout TIMEOUT_SECONDS tui deck1.dck deck2.dck --p1 heuristic ...
 #
-# This runs run_mtg_prebuilt in a background process with timeout handling.
-# Works with shell functions (unlike `timeout cmd` which only works with executables).
+# Runs run_mtg_prebuilt in its own process group with timeout handling, so a
+# timeout kills the entire group (no orphaned `mtg` grandchild — mtg-eo8x2).
+# Works with shell functions (unlike bare `timeout cmd`).
 #
-# For piped input, use: echo "input" | run_mtg_with_timeout_stdin TIMEOUT ...
+# For explicit piped input use run_mtg_with_timeout_stdin, or pipe into this
+# function directly (stdin is inherited by the process group).
 #
 # Returns:
 #   0 - Command completed successfully
@@ -190,60 +268,17 @@ run_mtg() {
 run_mtg_with_timeout() {
     local timeout_secs="$1"
     shift
-
-    # Run in background and capture PID
-    run_mtg_prebuilt "$@" &
-    local cmd_pid=$!
-
-    # Wait with timeout
-    local elapsed=0
-    while kill -0 $cmd_pid 2>/dev/null; do
-        if [ $elapsed -ge $timeout_secs ]; then
-            # Timeout - kill process group
-            kill -TERM $cmd_pid 2>/dev/null
-            sleep 0.5
-            kill -KILL $cmd_pid 2>/dev/null
-            wait $cmd_pid 2>/dev/null
-            return 124
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-
-    # Get exit status
-    wait $cmd_pid
-    return $?
+    _run_with_pgroup_timeout "$timeout_secs" "" run_mtg_prebuilt "$@"
 }
 
-# Run mtg with a timeout and stdin input, compatible with network mode
+# Run mtg with a timeout and stdin input, compatible with network mode.
 # Usage: run_mtg_with_timeout_stdin TIMEOUT_SECONDS "input_data" tui deck1.dck ...
 #
-# Like run_mtg_with_timeout but accepts stdin data as second argument.
+# Like run_mtg_with_timeout but accepts stdin data as second argument. Uses the
+# same process-group kill semantics so no orphan survives a timeout (mtg-eo8x2).
 run_mtg_with_timeout_stdin() {
     local timeout_secs="$1"
     local stdin_data="$2"
     shift 2
-
-    # Run in background with piped input
-    echo -e "$stdin_data" | run_mtg_prebuilt "$@" &
-    local cmd_pid=$!
-
-    # Wait with timeout
-    local elapsed=0
-    while kill -0 $cmd_pid 2>/dev/null; do
-        if [ $elapsed -ge $timeout_secs ]; then
-            # Timeout - kill process group
-            kill -TERM $cmd_pid 2>/dev/null
-            sleep 0.5
-            kill -KILL $cmd_pid 2>/dev/null
-            wait $cmd_pid 2>/dev/null
-            return 124
-        fi
-        sleep 1
-        elapsed=$((elapsed + 1))
-    done
-
-    # Get exit status
-    wait $cmd_pid
-    return $?
+    _run_with_pgroup_timeout "$timeout_secs" "$stdin_data" run_mtg_prebuilt "$@"
 }
