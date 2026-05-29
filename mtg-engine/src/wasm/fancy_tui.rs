@@ -2455,15 +2455,26 @@ impl WasmFancyTuiState {
         let result = {
             // Apply pending state-sync entries from the shadow log
             // (Phase 2 step 1 — non-destructive ActionLog read).
+            //
+            // AI-v2 path note: the LEGACY `run_network_mode_ai_v2`
+            // sync_callback ONLY applied reveals — it never drained the
+            // library-reorder queue. Reorders sit in the log here and are
+            // consumed by later sync points (e.g. via the
+            // `run_network_mode_human_v2` / replay paths). Preserving that
+            // behaviour avoids opening-hand divergence for AI clients
+            // (mtg-559 family); the ActionLog primitive lets us do this
+            // by filtering the apply pass instead of holding back the
+            // log itself. The reorders remain visible to any subsequent
+            // apply call.
             let client_for_sync = network_client.clone();
             let local_player = our_id;
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
                 let applied = client_for_sync
                     .borrow_mut()
-                    .apply_state_sync_up_to_frontier(game, Some(local_player));
+                    .apply_state_sync_reveals_up_to_frontier(game, Some(local_player));
                 if applied > 0 {
                     log::debug!(
-                        "WASM sync_callback (ai): applied {} state-sync entries at action_count={}",
+                        "WASM sync_callback (ai): applied {} reveal-only state-sync entries at action_count={}",
                         applied,
                         game.action_count()
                     );

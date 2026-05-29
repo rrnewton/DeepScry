@@ -906,46 +906,56 @@ impl WasmNetworkClient {
         }
 
         let mut applied = 0;
-        // Iterate in append (= action_count-ascending) order; this is the
-        // ordering that matches the wire arrival sequence. Library reorders
-        // and reveals are interleaved correctly because each receipt got its
-        // own synthetic ac in receive order.
+        // CRITICAL ORDERING (mtg-589): apply LibraryReorder entries BEFORE
+        // RevealCard entries within each apply batch, even when the reveals
+        // arrived earlier on the wire. The server guarantees the library
+        // order BEFORE draws are processed (otherwise the shadow would
+        // draw from a stale order and diverge on the first draw). The
+        // legacy `drain_library_reorders → drain_reveals` two-step
+        // preserved this; the new log preserves it via a two-pass apply
+        // over the same cursor window. The cursor still moves
+        // monotonically, so re-runs after a rewind replay the entries in
+        // the same per-pass order and produce bit-identical shadow state.
         let to_apply: Vec<(u64, StateSyncEntry)> = self
             .state_sync
             .iter()
             .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= frontier)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
+
+        // Pass 1: library reorders. Protocol sends top-to-bottom; shadow
+        // library Vec is bottom-to-top (draw pops the last element).
+        for (ac, entry) in &to_apply {
+            if let StateSyncEntry::LibraryReorder { player, new_order } = entry {
+                log::debug!(
+                    "apply_state_sync: library reorder ac={} player={:?} ({} cards)",
+                    ac,
+                    player,
+                    new_order.len()
+                );
+                if let Some(zones) = shadow.get_player_zones_mut(*player) {
+                    zones.library.cards = new_order.iter().rev().copied().collect();
+                }
+            }
+        }
+
+        // Pass 2: card reveals. Library order is now server-authoritative,
+        // so reveal-side mutations that touch library order (e.g. moving a
+        // revealed card from library to hand) see the correct positions.
+        //
+        // The cursor advances for EVERY entry in the window (reorder and
+        // reveal alike) so that subsequent calls don't re-apply pass-1
+        // entries. Pass-1 reorders that have no pass-2 counterpart still
+        // need their cursor tick.
         for (ac, entry) in to_apply {
-            match entry {
-                StateSyncEntry::LibraryReorder { player, new_order } => {
-                    // Protocol sends top-to-bottom; shadow library Vec is
-                    // bottom-to-top (draw pops the last element).
-                    log::debug!(
-                        "apply_state_sync: library reorder ac={} player={:?} ({} cards)",
-                        ac,
-                        player,
-                        new_order.len()
-                    );
-                    if let Some(zones) = shadow.get_player_zones_mut(player) {
-                        zones.library.cards = new_order.into_iter().rev().collect();
-                    }
-                }
-                StateSyncEntry::RevealCard { owner, card, reason } => {
-                    log::debug!(
-                        "apply_state_sync: reveal ac={} owner={:?} card={}",
-                        ac,
-                        owner,
-                        card.name
-                    );
-                    crate::wasm::network::game_init::process_card_reveal_wasm(
-                        shadow,
-                        owner,
-                        *card,
-                        reason,
-                        local_player,
-                    );
-                }
+            if let StateSyncEntry::RevealCard { owner, card, reason } = entry {
+                log::debug!(
+                    "apply_state_sync: reveal ac={} owner={:?} card={}",
+                    ac,
+                    owner,
+                    card.name
+                );
+                crate::wasm::network::game_init::process_card_reveal_wasm(shadow, owner, *card, reason, local_player);
             }
             self.last_applied_state_sync_ac = ac;
             applied += 1;
@@ -964,6 +974,56 @@ impl WasmNetworkClient {
     /// reads" buys us (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
     pub fn reset_state_sync_cursor(&mut self) {
         self.last_applied_state_sync_ac = 0;
+    }
+
+    /// Reveal-only variant of [`apply_state_sync_up_to_frontier`].
+    ///
+    /// Applies `RevealCard` entries but **skips** `LibraryReorder` entries
+    /// in the cursor window. The cursor still advances over BOTH so a
+    /// re-call is idempotent; skipped reorders will NOT be re-applied.
+    ///
+    /// This preserves the legacy `run_network_mode_ai_v2` behaviour where
+    /// only reveals were drained at each sync point. Reorders queued
+    /// during the AI-v2 path were never drained, and adopting them now
+    /// would diverge from the GameLoop's opening-hand `draw_card_silent`
+    /// sequence (which expects the library in its as-initialised order).
+    pub fn apply_state_sync_reveals_up_to_frontier(
+        &mut self,
+        shadow: &mut crate::game::GameState,
+        local_player: Option<PlayerId>,
+    ) -> usize {
+        let frontier = match self.state_sync.frontier() {
+            Some(f) => f,
+            None => return 0,
+        };
+        if frontier <= self.last_applied_state_sync_ac {
+            return 0;
+        }
+
+        let mut applied = 0;
+        let to_apply: Vec<(u64, StateSyncEntry)> = self
+            .state_sync
+            .iter()
+            .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= frontier)
+            .map(|(ac, entry)| (ac, entry.clone()))
+            .collect();
+        for (ac, entry) in to_apply {
+            if let StateSyncEntry::RevealCard { owner, card, reason } = entry {
+                log::debug!(
+                    "apply_state_sync_reveals: reveal ac={} owner={:?} card={}",
+                    ac,
+                    owner,
+                    card.name
+                );
+                crate::wasm::network::game_init::process_card_reveal_wasm(shadow, owner, *card, reason, local_player);
+                applied += 1;
+            }
+            // Cursor advances for BOTH reveals and reorders. Reorders in
+            // this window are intentionally skipped and will NOT be
+            // re-applied by a later call to either apply method.
+            self.last_applied_state_sync_ac = ac;
+        }
+        applied
     }
 
     /// True iff there is at least one unapplied state-sync entry. Cheap
