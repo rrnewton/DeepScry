@@ -3620,4 +3620,54 @@ mod tests {
             "regeneration shield must save a creature from an ordinary destroy"
         );
     }
+
+    /// Card compat: Savannah Lions (cardsfolder/s/savannah_lions.txt)
+    ///
+    /// Script:
+    ///   Name:Savannah Lions
+    ///   ManaCost:W
+    ///   Types:Creature Cat
+    ///   PT:2/1
+    ///
+    /// A pure vanilla 2/1 for {W} (no keywords, no abilities). Verifies the
+    /// loader keeps the printed cost / P-T / type line intact and does NOT
+    /// hallucinate spurious abilities or keywords on a French-vanilla card.
+    /// Runtime cast + attack behaviour is verified by the gameplay reproducer
+    /// in the compat issue (mtg-538). Part of thedeck (mtg-413).
+    #[test]
+    fn test_card_compat_savannah_lions() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/savannah_lions.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Savannah Lions should load");
+
+        assert_eq!(def.name.as_str(), "Savannah Lions");
+        assert_eq!(def.mana_cost.generic, 0, "Cost should be exactly {{W}}");
+        assert_eq!(def.mana_cost.white, 1, "Cost should be exactly {{W}}");
+        assert_eq!(def.mana_cost.cmc(), 1, "CMC should be 1");
+        assert!(def.types.contains(&CardType::Creature), "must be a Creature");
+        assert_eq!(def.power, Some(2));
+        assert_eq!(def.toughness, Some(1));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.is_empty(),
+            "Savannah Lions is vanilla — it must have NO keywords. Got: {:?}",
+            card.keywords
+        );
+        assert!(
+            card.activated_abilities.is_empty(),
+            "Savannah Lions is vanilla — it must have NO activated abilities. Got: {:?}",
+            card.activated_abilities
+        );
+        assert!(
+            card.triggers.is_empty(),
+            "Savannah Lions is vanilla — it must have NO triggers. Got: {:?}",
+            card.triggers.iter().map(|t| &t.event).collect::<Vec<_>>()
+        );
+    }
 }
