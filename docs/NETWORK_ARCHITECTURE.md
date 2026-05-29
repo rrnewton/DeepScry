@@ -331,6 +331,18 @@ This includes:
 If you create a new test or script that launches a network server, add `--network-debug`.
 If you find an existing script without it, that's a bug — fix it.
 
+## Related Docs
+
+- [`NETWORK_ACTION_LOG.md`](NETWORK_ACTION_LOG.md) — generic
+  append-only, `action_count`-indexed, non-destructive `ActionLog<T>`
+  primitive plus its two-store ownership split: per-controller choice
+  buffers (private to each `Controller`) and a separate
+  `NetworkClient`-owned shadow state-sync log (`CardRevealed` /
+  `LibraryReordered`, shadow mode only). The engine sees only
+  `controller.choose_at(view, action_count)` and an optional
+  `apply_state_sync_at(K)` hook — it is controller-agnostic. Replaces
+  the destructive-FIFO `pop_*` / `drain_*` paths.
+
 ## Related Issues
 
 - `mtg-228`: Single-channel architecture to eliminate select! nondeterminism
