@@ -93,6 +93,7 @@ workflow, row format, and update rules.
 | RaiseCost ValidCard$ Card.<Color> Type$ Spell   | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 | RaiseCost own-controller filter (hose effects)  | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 | Continuous GainControl$ You (control Auras)     | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed)   | Control Magic |
+| GrantKeyword Affected$ Creature (AllCreatures)  | WORKING | 2026-05-30_#2487(30dd3c20) | (none)    | Concordant Crossroads |
 
 ## Replacement effects (R:)
 

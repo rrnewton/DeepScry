@@ -3159,6 +3159,60 @@ mod tests {
         }
     }
 
+    /// Card compat: Concordant Crossroads (cardsfolder/c/concordant_crossroads.txt)
+    ///
+    /// Script:
+    ///   ManaCost:G
+    ///   Types:World Enchantment
+    ///   S:Mode$ Continuous | Affected$ Creature | AddKeyword$ Haste
+    ///                      | Description$ All creatures have haste.
+    ///
+    /// Verifies the parser turns the single continuous static line into a
+    /// GrantKeyword(Haste) static ability whose selector is AllCreatures
+    /// (bare `Affected$ Creature` ⇒ ALL creatures on the battlefield, both
+    /// players — CR 702.10b haste, granted globally). The granted-haste
+    /// gameplay (attack the turn it enters) is verified end-to-end by
+    /// tests/concordant_crossroads_haste_e2e.sh. Beads: mtg-492.
+    #[test]
+    fn test_card_compat_concordant_crossroads() {
+        use crate::core::effects::AffectedSelector;
+        use crate::core::{Keyword, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/concordant_crossroads.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Concordant Crossroads should load");
+        assert_eq!(def.name.as_str(), "Concordant Crossroads");
+        // {G} Enchantment (World supertype is not tracked as a distinct field).
+        assert_eq!(def.mana_cost.green, 1, "Cost should require {{G}}");
+        assert_eq!(def.mana_cost.generic, 0, "Cost should have no generic mana");
+        assert!(def.types.contains(&CardType::Enchantment), "Should be an Enchantment");
+
+        // The single S: line must parse into a GrantKeyword(Haste) static
+        // ability affecting ALL creatures (not just YouCtrl, not Self).
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let grants_haste_to_all = card.static_abilities.iter().any(|ability| {
+            matches!(
+                ability,
+                StaticAbility::GrantKeyword {
+                    affected: AffectedSelector::AllCreatures,
+                    keyword: Keyword::Haste,
+                    ..
+                }
+            )
+        });
+        assert!(
+            grants_haste_to_all,
+            "Concordant Crossroads must grant Haste to AllCreatures. \
+             If absent, the S:Mode$ Continuous | Affected$ Creature | AddKeyword$ Haste \
+             line was dropped or mis-scoped. Got: {:?}",
+            card.static_abilities
+        );
+    }
+
     /// Card compat: Disenchant (cardsfolder/d/disenchant.txt)
     ///
     /// Script:

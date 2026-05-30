@@ -1,0 +1,22 @@
+[metadata]
+Name:Concordant Crossroads Haste
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Verify Concordant Crossroads grants haste to all creatures. With Concordant Crossroads on the battlefield, a Grizzly Bears cast this turn can attack immediately (no summoning sickness).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Grizzly Bears
+p0library=Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest
+p0battlefield=Concordant Crossroads; Forest; Forest
+p0graveyard=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1battlefield=
+p1graveyard=
