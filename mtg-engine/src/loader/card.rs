@@ -3661,6 +3661,10 @@ impl CardDefinition {
             // GrantAbility-specific parameters
             let mut add_ability_svar: Option<String> = None;
 
+            // GainControl-specific parameter: `GainControl$ You` on a control-stealing
+            // Aura (Control Magic, Mind Control, ...). Models CR 613.2 layer-2 control.
+            let mut gain_control = false;
+
             // Split by | and parse each parameter
             for param in ability.split('|') {
                 let param = param.trim();
@@ -3870,6 +3874,15 @@ impl CardDefinition {
                             let svar_name = value.split('&').next().unwrap_or(value).trim();
                             add_ability_svar = Some(svar_name.to_string());
                         }
+                        "GainControl" => {
+                            // `GainControl$ You` — the source's controller gains control
+                            // of the affected permanent (Control Magic, Mind Control, ...).
+                            // We only model the "You" form (control to the aura's
+                            // controller); other defined players are not yet supported.
+                            if value.eq_ignore_ascii_case("You") {
+                                gain_control = true;
+                            }
+                        }
                         _ => {} // Ignore other parameters (e.g., AddType$, Type$, Activator$)
                     }
                 }
@@ -3963,10 +3976,18 @@ impl CardDefinition {
                         abilities.push(StaticAbility::GrantAbility {
                             affected: affected.clone(),
                             ability: parsed_ability,
-                            description,
+                            description: description.clone(),
                         });
                     }
                 }
+            }
+
+            // GainControl static (control-stealing Auras: Control Magic, Mind Control).
+            if gain_control {
+                abilities.push(StaticAbility::GainControl {
+                    affected: affected.clone(),
+                    description: description.clone(),
+                });
             }
         }
 

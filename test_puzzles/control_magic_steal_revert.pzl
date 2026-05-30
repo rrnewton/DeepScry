@@ -1,0 +1,24 @@
+[metadata]
+Name:Control Magic Steal Then Revert
+Goal:Win
+Turns:6
+Difficulty:Medium
+Description:P1 has 6 lands and Control Magic + Disenchant in hand. P2 controls a Savannah Lions. P1 casts Control Magic to steal the Lions (it comes under P1's control), then Disenchants its own Control Magic; the Lions returns to P2's control (CR 613.2 layer-2 control change; CR 704.5 aura falls off when destroyed). Tracks mtg-493.
+
+[state]
+turn=4
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Control Magic; Disenchant
+p0library=Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=City of Brass; City of Brass; City of Brass; City of Brass; City of Brass; City of Brass
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Savannah Lions
+p1exile=

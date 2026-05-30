@@ -2037,6 +2037,133 @@ impl GameState {
         Ok(())
     }
 
+    /// Re-derive control of permanents from control-changing Auras (CR 613.2, layer 2).
+    ///
+    /// Control-stealing Auras (Control Magic, Mind Control, Persuasion, Enslave, ...)
+    /// carry a `S:Mode$ Continuous | Affected$ Card.EnchantedBy | GainControl$ You`
+    /// static ([`StaticAbility::GainControl`]). Control is a *continuous* effect, so
+    /// rather than mutating the host's controller at attach time and undoing it on
+    /// detach, we recompute it from scratch every state-based-action pass:
+    ///
+    ///   desired_controller(permanent) =
+    ///       controller of the most-recently-attached control Aura on it,
+    ///       else the permanent's owner.
+    ///
+    /// This makes control self-correcting: when the Aura leaves the battlefield
+    /// (destroyed by Disenchant, bounced, or the host dies and the Aura falls off),
+    /// the Aura no longer contributes and control reverts to the owner on the very
+    /// next SBA check — exactly the CR 613 behaviour, with no special-case cleanup.
+    ///
+    /// Note: an effect that *grants* control via a one-shot `AB$ GainControl`
+    /// (Threaten/Act of Treason) is a separate mechanism — it mutates `controller`
+    /// directly and is not re-derived here. Those effects do not enchant a permanent,
+    /// so they never produce a control Aura and are unaffected by this pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a card lookup fails.
+    pub fn recompute_aura_control(&mut self) -> Result<()> {
+        use crate::core::StaticAbility;
+
+        // Step 1: collect (host_id -> (aura_id, new_controller)) for every permanent
+        // currently enchanted by a control-granting Aura. Later auras in battlefield
+        // order overwrite earlier ones, approximating CR 613.7 timestamp order (the
+        // rare multi-control case).
+        let mut control_overrides: smallvec::SmallVec<[(CardId, CardId, PlayerId); 2]> = smallvec::SmallVec::new();
+        for &aura_id in &self.battlefield.cards {
+            let Some(aura) = self.cards.try_get(aura_id) else {
+                continue;
+            };
+            if !aura.is_aura() {
+                continue;
+            }
+            let Some(host_id) = aura.get_attached_to() else {
+                continue;
+            };
+            let grants_control = aura
+                .static_abilities
+                .iter()
+                .any(|a| matches!(a, StaticAbility::GainControl { .. }));
+            if !grants_control {
+                continue;
+            }
+            // Only meaningful while the host is still on the battlefield.
+            if !self.battlefield.cards.contains(&host_id) {
+                continue;
+            }
+            let new_controller = aura.controller;
+            if let Some(slot) = control_overrides.iter_mut().find(|(h, _, _)| *h == host_id) {
+                slot.1 = aura_id;
+                slot.2 = new_controller;
+            } else {
+                control_overrides.push((host_id, aura_id, new_controller));
+            }
+        }
+
+        // Step 2: apply changes. We ONLY touch permanents whose control is, or should
+        // be, governed by a control Aura — identified by `control_from_aura`. This
+        // deliberately leaves control gained by other means untouched (Animate Dead's
+        // one-shot `GainControl$ True`, Threaten's `AB$ GainControl`), which set the
+        // controller directly and never populate `control_from_aura`.
+        for &card_id in &self.battlefield.cards.clone() {
+            let Some(card) = self.cards.try_get(card_id) else {
+                continue;
+            };
+            let owner = card.owner;
+            let current = card.controller;
+            let prior_aura = card.control_from_aura;
+            let override_entry = control_overrides.iter().find(|(h, _, _)| *h == card_id);
+
+            // Determine the desired controller + the aura responsible (if any).
+            let (desired, new_aura): (PlayerId, Option<CardId>) = match override_entry {
+                Some((_, aura_id, controller)) => (*controller, Some(*aura_id)),
+                None => {
+                    // No control Aura on this permanent now. If a control Aura USED to
+                    // govern it (prior_aura set), the Aura is gone — revert to owner.
+                    // Otherwise leave the permanent entirely alone.
+                    if prior_aura.is_some() {
+                        (owner, None)
+                    } else {
+                        continue;
+                    }
+                }
+            };
+
+            if current == desired && prior_aura == new_aura {
+                continue;
+            }
+
+            let card_name = card.name.to_string();
+            let prior_log_size = self.logger.log_count();
+            let card_mut = self.cards.get_mut(card_id)?;
+            card_mut.control_from_aura = new_aura;
+            if current != desired {
+                card_mut.controller = desired;
+                self.undo_log.log(
+                    crate::undo::GameAction::ChangeController {
+                        card_id,
+                        old_controller: current,
+                        new_controller: desired,
+                    },
+                    prior_log_size,
+                );
+                let target_name = self
+                    .get_player(desired)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_else(|_| format!("Player {}", desired.as_u32() + 1));
+                if new_aura.is_none() {
+                    self.logger
+                        .gamelog(&format!("{} returns to {}'s control", card_name, target_name));
+                } else {
+                    self.logger
+                        .gamelog(&format!("{} comes under {}'s control", card_name, target_name));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check state-based actions for equipment attachment (MTG CR 704.5n)
     ///
     /// If an Equipment or Fortification is attached to an illegal permanent or

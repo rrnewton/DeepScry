@@ -91,6 +91,7 @@ workflow, row format, and update rules.
 | StaticAbility Threshold$                        | BROKEN  | 2026-05-12_#2226(928ec99f) | mtg-203  | (multiple)   |
 | RaiseCost ValidCard$ Card.<Color> Type$ Spell   | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 | RaiseCost own-controller filter (hose effects)  | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
+| Continuous GainControl$ You (control Auras)     | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed)   | Control Magic |
 
 ## Replacement effects (R:)
 

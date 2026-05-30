@@ -5001,6 +5001,54 @@ mod tests {
         );
     }
 
+    /// Card compat: Control Magic (cardsfolder/c/control_magic.txt) — mtg-493
+    ///
+    /// Script:
+    ///   ManaCost:2 U U
+    ///   Types:Enchantment Aura
+    ///   K:Enchant:Creature
+    ///   S:Mode$ Continuous | Affected$ Card.EnchantedBy | GainControl$ You
+    ///
+    /// Parser-shape regression: the control-stealing `GainControl$ You`
+    /// continuous static must parse into a `StaticAbility::GainControl`
+    /// (CR 613.2, layer-2 control change). Previously the `GainControl$`
+    /// parameter was silently dropped, leaving Control Magic an inert Aura
+    /// that attached but never transferred control. This guards every
+    /// control-stealing Aura (Mind Control, Persuasion, Enslave, ...).
+    #[test]
+    fn test_card_compat_control_magic() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/control_magic.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Control Magic should load");
+
+        assert_eq!(def.name.as_str(), "Control Magic");
+        assert_eq!(def.mana_cost.generic, 2, "Cost should be {{2}}{{U}}{{U}}");
+        assert_eq!(def.mana_cost.blue, 2, "Cost should be {{2}}{{U}}{{U}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+        assert!(
+            def.subtypes.iter().any(|s| s.as_str() == "Aura"),
+            "Control Magic must be an Aura"
+        );
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_gain_control = card
+            .static_abilities
+            .iter()
+            .any(|s| matches!(s, StaticAbility::GainControl { .. }));
+        assert!(
+            has_gain_control,
+            "Control Magic must parse its `GainControl$ You` continuous static into \
+             StaticAbility::GainControl. Silent-drop leaves the Aura inert. Got: {:?}",
+            card.static_abilities
+        );
+    }
+
     /// Card compat: Maze of Ith (cardsfolder/m/maze_of_ith.txt) — mtg-520
     ///
     /// Script:

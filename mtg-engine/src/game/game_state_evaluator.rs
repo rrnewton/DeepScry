@@ -498,6 +498,11 @@ impl GameStateEvaluator {
                     // Value depends on the granted ability
                     value += 30; // Base value for granting an ability
                 }
+                StaticAbility::GainControl { .. } => {
+                    // Stealing control of an opponent's permanent is highly valuable:
+                    // it both removes a threat and adds it to our side.
+                    value += 80;
+                }
             }
         }
 

@@ -750,6 +750,17 @@ pub struct Card {
     /// - Used to track Equipment→Creature and Aura→Permanent relationships
     pub attached_to: Option<CardId>,
 
+    /// If this permanent's controller was changed by a control-stealing Aura
+    /// (`S:Mode$ Continuous | GainControl$ You` — Control Magic, Mind Control,
+    /// Persuasion, ...), this records the Aura granting that control. It lets
+    /// [`crate::game::GameState::recompute_aura_control`] revert control to the
+    /// owner the moment that Aura leaves the battlefield, WITHOUT clobbering
+    /// control gained through other mechanisms (Animate Dead's one-shot
+    /// `GainControl$ True` on a ChangeZone effect, Threaten's `AB$ GainControl`).
+    /// `None` for everything not under aura-granted control.
+    #[serde(default)]
+    pub control_from_aura: Option<CardId>,
+
     /// Chosen color for cards with "choose a color" effects (e.g., Thriving lands)
     /// Set when the card enters the battlefield, affects what mana it can produce
     pub chosen_color: Option<Color>,
@@ -865,6 +876,7 @@ impl Card {
             activated_abilities: Vec::new(),
             static_abilities: Vec::new(),
             attached_to: None,
+            control_from_aura: None,
             chosen_color: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,

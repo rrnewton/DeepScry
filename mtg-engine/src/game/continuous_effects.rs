@@ -1521,6 +1521,10 @@ impl GameState {
                         // GrantAbility doesn't affect P/T
                         // It grants activated abilities, handled in get_granted_abilities()
                     }
+                    StaticAbility::GainControl { .. } => {
+                        // Control-changing statics don't affect P/T.
+                        // They are applied in GameState::recompute_aura_control().
+                    }
                 }
             }
         }

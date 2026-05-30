@@ -363,6 +363,12 @@ impl<'a> GameLoop<'a> {
                 eprintln!("    Failed to check aura attachment: {e}");
             }
         }
+        // Re-derive control from control-changing Auras (MTG CR 613.2, layer 2).
+        if let Err(e) = self.game.recompute_aura_control() {
+            if should_log {
+                eprintln!("    Failed to recompute aura control: {e}");
+            }
+        }
         // Check equipment attachment (MTG CR 704.5n)
         if let Err(e) = self.game.check_equipment_attachment() {
             if should_log {
@@ -2226,6 +2232,12 @@ impl<'a> GameLoop<'a> {
                                             eprintln!("    Failed to check aura attachment: {e}");
                                         }
                                     }
+                                    // Re-derive control from control-changing Auras (CR 613.2).
+                                    if let Err(e) = self.game.recompute_aura_control() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to recompute aura control: {e}");
+                                        }
+                                    }
                                     // Check equipment attachment (MTG CR 704.5n)
                                     if let Err(e) = self.game.check_equipment_attachment() {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
@@ -3983,6 +3995,11 @@ impl<'a> GameLoop<'a> {
         if let Err(e) = self.game.check_aura_attachment() {
             if should_log {
                 eprintln!("    Failed to check aura attachment: {e}");
+            }
+        }
+        if let Err(e) = self.game.recompute_aura_control() {
+            if should_log {
+                eprintln!("    Failed to recompute aura control: {e}");
             }
         }
         if let Err(e) = self.game.check_equipment_attachment() {

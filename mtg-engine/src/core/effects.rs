@@ -2015,6 +2015,27 @@ pub enum StaticAbility {
         /// Description for logging
         description: String,
     },
+
+    /// Continuous control-changing effect (CR 613.2 / layer 2).
+    ///
+    /// Corresponds to: `S:Mode$ Continuous | Affected$ Card.EnchantedBy | GainControl$ You`
+    /// as printed on control-stealing Auras (Control Magic, Mind Control, Persuasion,
+    /// Enslave, Confiscate, ...). The source Aura's controller gains control of the
+    /// affected permanent for as long as the source has the static ability and the
+    /// affected permanent is the source's attach target.
+    ///
+    /// Unlike `Effect::GainControl` (the one-shot `AB$ GainControl` of Threaten /
+    /// Aladdin), this is a *continuous* effect that is re-derived every state-based
+    /// check, so control reverts automatically the moment the Aura leaves the
+    /// battlefield (destroyed, bounced, or the host dies) — no explicit "lose
+    /// control at end of turn" bookkeeping is required.
+    GainControl {
+        /// Selector for which permanent is affected (typically `Card.EnchantedBy`).
+        affected: AffectedSelector,
+
+        /// Description for logging.
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities
