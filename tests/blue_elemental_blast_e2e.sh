@@ -72,12 +72,12 @@ else
 fi
 
 if grep -qE "Player 2 chooses mode: Destroy target red permanent" "$LOG_DESTROY" \
-   && grep -qE "Blue Elemental Blast \([0-9]+\) destroys Mountain" "$LOG_DESTROY" \
-   && grep -qE "Mountain \([0-9]+\) goes to graveyard" "$LOG_DESTROY"; then
-    echo -e "${GREEN}✓ Destroy mode selected and Mountain destroyed/graveyarded${NC}"
+   && grep -qE "Blue Elemental Blast \([0-9]+\) destroys Mons's Goblin Raiders" "$LOG_DESTROY" \
+   && grep -qE "Mons's Goblin Raiders \([0-9]+\) goes to graveyard" "$LOG_DESTROY"; then
+    echo -e "${GREEN}✓ Destroy mode selected and red creature destroyed/graveyarded${NC}"
 else
     echo -e "${RED}✗ Destroy mode did not fire${NC}"
-    grep -iE "blue elemental|destroy|mode|target|graveyard|mountain" "$LOG_DESTROY" | head -10
+    grep -iE "blue elemental|destroy|mode|target|graveyard|goblin" "$LOG_DESTROY" | head -10
     exit 1
 fi
 

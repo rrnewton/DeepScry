@@ -3,7 +3,7 @@ Name:Blue Elemental Blast Destroy Red Permanent Test
 Goal:Win
 Turns:3
 Difficulty:Easy
-Description:Blue Elemental Blast destroy mode — P2 casts BEB on P1's Mountain (a red permanent); the Mountain is destroyed and moves to its owner's graveyard.
+Description:Blue Elemental Blast destroy mode — P2 casts BEB on P1's Mons's Goblin Raiders (a genuinely RED creature); it is destroyed and moves to its owner's graveyard. A basic Mountain is colorless (CR 105.2a: a land type does not grant color), so BEB's "destroy target red permanent" may NOT target a Mountain — the legal target must actually be red.
 
 [state]
 turn=2
@@ -13,7 +13,7 @@ p0life=20
 p0hand=
 p0library=Plains; Plains; Plains; Plains
 p0graveyard=
-p0battlefield=Mountain; Mountain
+p0battlefield=Mons's Goblin Raiders
 p0exile=
 
 p1life=20

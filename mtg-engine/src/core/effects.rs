@@ -401,9 +401,12 @@ impl TargetRestriction {
         }
 
         // Check color restriction (e.g. Red Elemental Blast's `Permanent.Blue`
-        // destroy mode may only hit BLUE permanents).
+        // destroy mode may only hit BLUE permanents). A basic Mountain is a
+        // *colorless* land, so `Permanent.Red` does NOT match it (CR 105.2a:
+        // a land type does not grant color); only genuinely red permanents
+        // (red creatures, red artifacts, etc.) qualify.
         if let Some(color) = self.required_color {
-            if !card.colors.contains(&color) {
+            if !card.is_color(color) {
                 return false;
             }
         }

@@ -277,11 +277,11 @@ impl GameState {
                             continue;
                         }
                         if let Some(color) = required_color {
-                            let color_ok = self
-                                .cards
-                                .get(card_id)
-                                .map(|c| c.colors.contains(color))
-                                .unwrap_or(false);
+                            // Same color-membership rule as TargetRestriction's
+                            // color qualifier (Card::is_color), shared via the
+                            // Card helper so counter-mode and destroy-mode color
+                            // checks stay one concept.
+                            let color_ok = self.cards.get(card_id).map(|c| c.is_color(*color)).unwrap_or(false);
                             if !color_ok {
                                 continue;
                             }
