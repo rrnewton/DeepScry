@@ -368,13 +368,36 @@ run_equivalence() {
 
     # --- two clients (background). Clients get the MASTER controller seed and
     #     derive per-slot internally, so both pass --seed-player=$seed. ---
+    #
+    # SEATING DETERMINISM (mtg-586): the server seats players by Authenticate
+    # arrival order — the FIRST client to authenticate becomes p1/creator, the
+    # second becomes p2. The local TUI run always assigns deck1->p1 (Ryan) and
+    # deck2->p2 (Gabriel); for the network run to be EQUIVALENT it MUST seat the
+    # same way. A fixed `sleep` head-start for client 1 is NOT enough: under
+    # heavy `make validate` load each `connect` spends seconds loading the
+    # ~4800-card DB before it authenticates, and that latency varies enough that
+    # client 2 (Gabriel) can authenticate first — swapping the seats, which
+    # swaps the per-player shuffle + first player and diverges the games from
+    # turn 1. So we BLOCK until the server confirms client 1 is the creator
+    # ("created by Ryan") before launching client 2. This makes seating
+    # deterministic regardless of load. (The engine simulation is already
+    # deterministic per (p1,p2,seed); this only removes harness-level seating
+    # nondeterminism.)
     timeout "$GAME_TIMEOUT" "$MTG_BIN" connect "$d1" \
         --server "localhost:$port" --controller "$ctrl" \
         --seed-player "$seed" --name Ryan \
         --cardsfolder "$CARDSFOLDER" \
         > "$c1Raw" 2>&1 &
     local C1_PID=$!
-    sleep 0.5
+    # Wait until the server has seated Ryan as the creator (p1) before starting
+    # client 2, so seating matches the local run deterministically.
+    local seat_waited=0
+    while ! grep -qE "created by Ryan|starting Ryan vs" "$srvRaw" 2>/dev/null; do
+        sleep 0.2; seat_waited=$((seat_waited+1))
+        if ! kill -0 "$C1_PID" 2>/dev/null; then break; fi
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+        [ "$seat_waited" -ge "$((GAME_TIMEOUT * 5))" ] && break   # cap ~GAME_TIMEOUT s
+    done
     timeout "$GAME_TIMEOUT" "$MTG_BIN" connect "$d2" \
         --server "localhost:$port" --controller "$ctrl" \
         --seed-player "$seed" --name Gabriel \

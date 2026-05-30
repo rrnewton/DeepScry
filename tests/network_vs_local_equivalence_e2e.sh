@@ -235,7 +235,19 @@ fi
 CLIENT1_PID=$!
 echo "  Client 1 PID: $CLIENT1_PID ($P1_NAME - $CONTROLLER_P1)"
 
-sleep 1
+# SEATING DETERMINISM (mtg-586): the server seats players by Authenticate
+# arrival order (first authenticator => p1/creator). The local run always maps
+# DECK1->p1 ($P1_NAME); the network run MUST seat identically or the per-player
+# shuffle + first player swap and the games diverge from turn 1. A fixed `sleep`
+# head-start is racy under load (each client loads the full card DB before
+# authenticating). Block until the server confirms client 1 is the creator.
+seat_waited=0
+while ! grep -qE "created by $P1_NAME|starting $P1_NAME vs" "$NETWORK_OUTPUT/server.log" 2>/dev/null; do
+    sleep 0.2; seat_waited=$((seat_waited+1))
+    kill -0 $CLIENT1_PID 2>/dev/null || break
+    kill -0 $SERVER_PID 2>/dev/null || break
+    [ "$seat_waited" -ge 150 ] && break   # ~30s cap then proceed
+done
 
 # Start client 2
 "$MTG_BIN" connect \
