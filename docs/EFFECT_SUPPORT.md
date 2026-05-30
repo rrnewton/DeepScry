@@ -96,7 +96,7 @@ workflow, row format, and update rules.
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 | AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |
-| AB$ ChooseSource Choices$ Card.<Color>Source (source-filtered damage prevention, Circle of Protection) | WORKING | 2026-05-30_#2491(compat-damage-prevention-cop) | (fixed mtg-490) | Circle of Protection: Red |
+| AB$ ChooseSource Choices$ Card.<Color>Source (source-filtered damage prevention, Circle of Protection) | WORKING | 2026-05-30_#2491(dded4d83) | (fixed mtg-490) | Circle of Protection: Red |
   - 2026-05-30: New general damage-prevention construct (CR 615.1/615.6).
     `core/prevention.rs` adds strong-typed `DamageSourceFilter` (Color /
     SpecificSource / ColoredSource) + `DamagePreventionShield` (scope
