@@ -46,6 +46,7 @@ workflow, row format, and update rules.
 | DamageDone Execute$ DB$ Discard Defined$ TriggeredTarget (damaged player discards)| WORKING | 2026-05-29_#2449(b5fd60b7) | (fixed)     | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
 | Drawn ValidCard$ Card.OppOwn Execute$ DB$ DealDamage Defined$ TriggeredPlayer    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)      | Underworld Dreams |
+| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura) | BROKEN | 2026-05-30_#2530(199b91e1) | mtg-r9po1 | Spirit Link |
 
 ## Activated abilities (A:) and cost shapes
 
@@ -77,6 +78,8 @@ workflow, row format, and update rules.
 | SP$ DealDamage + chained DB$ DealDamage Defined$ You (downside) | WORKING | 2026-05-29_#2456(e30f4ce1) | (none) | Psionic Blast |
 | SP$ Draw NumCards$ N/X ValidTgts$ Player      | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Ancestral Recall, Braingeyser |
 | SP$ Counter TargetType$ Spell                 | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Counterspell        |
+| SP$ Counter UnlessCost$ X + SubAbility$ TapAll → DB$ DrainMana Defined$ TargetedController | WORKING | 2026-05-30_#2530(199b91e1) | (fixed mtg-532) | Power Sink |
+| DB$ DrainMana Defined$ TargetedController (empty a player's unspent mana pool, CR 106.4/500.4) | WORKING | 2026-05-30_#2530(199b91e1) | (fixed mtg-532) | Power Sink |
 | SP$ Destroy ValidTgts$ Creature.nonArtifact+nonBlack NoRegen$ True | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Terror |
 | AB$ Draw Cost$ 2 T NumCards$ 1 + SubAbility$ DBDiscard | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Jalum Tome |
 | AB$ DestroyAll ValidCards$ Artifact,Creature,Enchantment | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |

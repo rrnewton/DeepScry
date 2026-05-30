@@ -47,6 +47,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::PumpCreatureVariable { .. }
         | Effect::Scry { .. }
         | Effect::Surveil { .. }
+        | Effect::DrainMana { .. }
         | Effect::CounterSpell { .. }
         | Effect::AddMana { .. }
         | Effect::PutCounter { .. }
@@ -161,6 +162,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::PumpCreatureVariable { .. }
             | Effect::Scry { .. }
             | Effect::Surveil { .. }
+            | Effect::DrainMana { .. }
             | Effect::CounterSpell { .. }
             | Effect::AddMana { .. }
             | Effect::PutCounter { .. }
@@ -2566,6 +2568,26 @@ impl GameState {
                 player: card_owner,
                 count: *count,
             },
+            // DrainMana (Power Sink "lose all unspent mana"): resolve the player
+            // sentinel. TargetedController => controller of the countered spell
+            // (tracked via last_resolved_target); placeholder => controller;
+            // target_opponent => opponent.
+            Effect::DrainMana { player }
+                if player.is_target_controller() || player.is_placeholder() || player.is_target_opponent() =>
+            {
+                let resolved = if player.is_target_controller() {
+                    last_resolved_target
+                        .and_then(|t| self.cards.try_get(t).map(|c| c.controller))
+                        .or(opponent_id)
+                        .unwrap_or(card_owner)
+                } else if player.is_placeholder() {
+                    card_owner
+                } else {
+                    // target_opponent sentinel
+                    opponent_id.unwrap_or(card_owner)
+                };
+                Effect::DrainMana { player: resolved }
+            }
             Effect::Scry { player, count } if player.is_placeholder() => Effect::Scry {
                 player: card_owner,
                 count: *count,
@@ -3596,6 +3618,21 @@ impl GameState {
             Effect::Mill { player, count } => {
                 // Mill cards from library to graveyard
                 self.mill_cards(*player, *count)?;
+            }
+            Effect::DrainMana { player } => {
+                // "Lose all unspent mana" (Power Sink). Empty the player's mana
+                // pool. CR 500.4 empties pools automatically at step/phase end;
+                // this rider forces it immediately so the player can't spend the
+                // mana they floated to cast the countered spell.
+                let (player_name, amount) = self
+                    .get_player(*player)
+                    .map(|p| (p.name.to_string(), p.mana_pool.total()))
+                    .unwrap_or_else(|_| (format!("Player {}", player.as_u32()), 0));
+                if let Some(p) = self.players.iter_mut().find(|p| p.id == *player) {
+                    p.empty_mana_pool();
+                }
+                self.logger
+                    .gamelog(&format!("{} loses all unspent mana ({} drained)", player_name, amount));
             }
             Effect::Scry { player, count } => {
                 // Scry — CR 701.18. The "real" controller-dispatched path

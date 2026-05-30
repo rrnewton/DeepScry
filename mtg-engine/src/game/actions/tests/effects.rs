@@ -5842,4 +5842,143 @@ mod tests {
             "Blue Elemental Blast modes must be DBCounter,DBDestroy in order"
         );
     }
+
+    /// Card compat: Power Sink (cardsfolder/p/power_sink.txt) — mtg-532.
+    ///
+    /// Script: ManaCost:X U / Types:Instant
+    ///   A:SP$ Counter | UnlessCost$ X | TargetType$ Spell | SubAbility$ TapLands
+    ///   SVar:TapLands:DB$ TapAll | ValidCards$ Land.hasManaAbility
+    ///       | Defined$ TargetedController | SubAbility$ ManaLose
+    ///   SVar:ManaLose:DB$ DrainMana | Defined$ TargetedController
+    ///
+    /// Before mtg-532 the final `DB$ DrainMana` step parsed to
+    /// `ApiType::Unknown("DrainMana")` and resolved as a logged no-op, so the
+    /// "lose all unspent mana" rider never fired. This asserts the converter now
+    /// produces a concrete `Effect::DrainMana` in the spell's effect chain with
+    /// the `target_controller` sentinel (Defined$ TargetedController), so it
+    /// resolves against the countered spell's controller. Runtime behavior
+    /// (no "Unimplemented effect 'DrainMana'" warning, "loses all unspent mana"
+    /// log line) is verified by tests/power_sink_drain_mana_e2e.sh.
+    #[test]
+    fn test_card_compat_power_sink() {
+        use crate::loader::ability_parser::ApiType;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/power_sink.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Power Sink should load");
+        assert_eq!(def.name.as_str(), "Power Sink");
+        assert_eq!(def.mana_cost.blue, 1);
+        assert_eq!(def.mana_cost.x_count, 1, "Power Sink cost is {{X}}{{U}}");
+        assert!(def.types.contains(&CardType::Instant));
+
+        // The DrainMana ApiType must now be recognized (not Unknown).
+        assert_eq!(
+            ApiType::parse("DrainMana"),
+            ApiType::DrainMana,
+            "DrainMana must parse to its own ApiType, not Unknown"
+        );
+
+        // The flattened spell effect chain must contain a concrete DrainMana
+        // carrying the target_controller sentinel (Defined$ TargetedController).
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_drain = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::DrainMana { player } if player.is_target_controller()));
+        assert!(
+            has_drain,
+            "Power Sink must produce Effect::DrainMana with the target_controller \
+             sentinel so the countered spell's controller loses unspent mana \
+             (mtg-532). Got effects: {:?}",
+            card.effects
+        );
+        // And it must NOT degrade to an Unimplemented placeholder.
+        let has_unimpl = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::Unimplemented { api_type } if api_type == "DrainMana"));
+        assert!(!has_unimpl, "DrainMana must not parse as Unimplemented");
+    }
+
+    /// Mechanical check that `Effect::DrainMana` empties a non-empty mana pool
+    /// (Power Sink "lose all unspent mana"; mtg-532). Floats {U}{U}{C} into a
+    /// player's pool, drains it, and asserts the pool is empty afterward while
+    /// the OTHER player's floating mana is untouched.
+    #[test]
+    fn test_drain_mana_empties_pool() {
+        use crate::core::{Color, Effect};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        // P1 floats {U}{U}{C}; P2 floats {R} (must be left untouched).
+        {
+            let p1 = game.get_player_mut(p1_id).unwrap();
+            p1.mana_pool.add_color(Color::Blue);
+            p1.mana_pool.add_color(Color::Blue);
+            p1.mana_pool.add_color(Color::Colorless);
+        }
+        {
+            let p2 = game.get_player_mut(p2_id).unwrap();
+            p2.mana_pool.add_color(Color::Red);
+        }
+        assert_eq!(game.get_player(p1_id).unwrap().mana_pool.total(), 3);
+
+        game.execute_effect(&Effect::DrainMana { player: p1_id })
+            .expect("DrainMana should resolve");
+
+        assert!(
+            game.get_player(p1_id).unwrap().mana_pool.is_empty(),
+            "P1's unspent mana must be fully drained"
+        );
+        assert_eq!(
+            game.get_player(p2_id).unwrap().mana_pool.total(),
+            1,
+            "P2's floating mana must be untouched"
+        );
+    }
+
+    /// Card compat: Spirit Link (cardsfolder/s/spirit_link.txt) — mtg-544.
+    ///
+    /// Script: ManaCost:W / Types:Enchantment Aura / K:Enchant:Creature
+    ///   T:Mode$ DamageDealtOnce | ValidSource$ Card.AttachedBy | Execute$ TrigGain
+    ///   SVar:TrigGain:DB$ GainLife | Defined$ You | LifeAmount$ X
+    ///   SVar:X:TriggerCount$DamageAmount
+    ///
+    /// PARTIAL (mtg-544): the aura side (cost, types, Enchant:Creature) parses
+    /// and the card casts + attaches correctly, but the "gain that much life
+    /// when enchanted creature deals damage" trigger is silently dropped — the
+    /// `DamageDealtOnce` mode + `Card.AttachedBy` source + `TriggerCount$DamageAmount`
+    /// amount are unsupported (engine gap mtg-r9po1). This test pins the
+    /// currently-correct parser shape (aura side) and documents the gap; update
+    /// it to assert the trigger once mtg-r9po1 lands.
+    #[test]
+    fn test_card_compat_spirit_link() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/spirit_link.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Spirit Link should load");
+        assert_eq!(def.name.as_str(), "Spirit Link");
+        assert_eq!(def.mana_cost.white, 1, "Spirit Link costs {{W}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        // Aura side: carries the Enchant keyword (Enchant:Creature).
+        assert!(
+            card.keywords.contains(Keyword::Enchant),
+            "Spirit Link must carry the Enchant keyword. Keywords: {:?}",
+            card.keywords
+        );
+        // TODO(mtg-r9po1): once DamageDealtOnce + Card.AttachedBy + TriggerCount$DamageAmount
+        // are supported, assert the card has the lifegain trigger here.
+    }
 }

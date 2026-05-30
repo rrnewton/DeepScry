@@ -960,6 +960,11 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) untaps all matching permanents");
                 self.game.logger.gamelog(&message);
             }
+            Effect::DrainMana { .. } => {
+                // The "loses all unspent mana" line is emitted by execute_effect
+                // once the player sentinel is resolved and the actual drained
+                // amount is known; nothing to add at the pre-execution stage.
+            }
             Effect::SetLife { player, amount } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) sets {player_name}'s life total to {amount}");

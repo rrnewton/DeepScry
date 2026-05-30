@@ -3549,6 +3549,7 @@ impl GameState {
                     | crate::core::Effect::PumpAllCreatures { .. }
                     | crate::core::Effect::AnimateAll { .. }
                     | crate::core::Effect::Mill { .. }
+                    | crate::core::Effect::DrainMana { .. }
                     | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::CounterSpell { .. }

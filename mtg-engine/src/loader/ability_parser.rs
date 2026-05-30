@@ -98,6 +98,10 @@ pub enum ApiType {
     Mana,
     ManaReflected,
     StoreMana,
+    /// Empty a player's unspent mana pool (CR 500.4 happens automatically at step
+    /// end, but this forces it mid-resolution). Used by Power Sink's "lose all
+    /// unspent mana" rider. `Defined$` selects whose pool is emptied.
+    DrainMana,
 
     // === Creatures & Combat ===
     Pump,
@@ -324,6 +328,7 @@ impl ApiType {
             "Mana" => Self::Mana,
             "ManaReflected" => Self::ManaReflected,
             "StoreMana" => Self::StoreMana,
+            "DrainMana" => Self::DrainMana,
 
             // Creatures & Combat
             "Pump" => Self::Pump,
@@ -451,6 +456,7 @@ impl ApiType {
             Self::Mana => "Mana",
             Self::ManaReflected => "ManaReflected",
             Self::StoreMana => "StoreMana",
+            Self::DrainMana => "DrainMana",
             Self::Pump => "Pump",
             Self::PumpAll => "PumpAll",
             Self::Debuff => "Debuff",

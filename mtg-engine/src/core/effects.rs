@@ -891,6 +891,11 @@ pub enum Effect {
     /// Example: "Target player mills 3 cards"
     Mill { player: PlayerId, count: u8 },
 
+    /// Empty a player's unspent mana pool ("lose all unspent mana").
+    /// Used by Power Sink's not-paid rider. `player` may be a sentinel
+    /// (`target_controller()` / placeholder) resolved at execution time.
+    DrainMana { player: PlayerId },
+
     /// Scry - look at top N cards and put any number on bottom
     /// Example: "Scry 1" or "Scry 2"
     /// Corresponds to: DB$ Scry | ScryNum$ N
@@ -1673,6 +1678,7 @@ impl Effect {
             | Effect::ForceSacrifice { .. }
             | Effect::SetLife { .. }
             | Effect::Mill { .. }
+            | Effect::DrainMana { .. }
             | Effect::Scry { .. }
             | Effect::Surveil { .. }
             | Effect::AddMana { .. }

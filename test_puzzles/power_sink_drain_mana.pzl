@@ -1,0 +1,17 @@
+[metadata]
+Name:Power Sink drains floating mana
+Goal:Win
+Turns:3
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0manapool=U U U
+p0hand=Lightning Bolt
+p0library=Plains; Plains; Plains; Plains
+p0battlefield=Mountain
+p1life=20
+p1hand=Power Sink
+p1library=Plains; Plains; Plains; Plains
+p1battlefield=Island; Island; Island; Island; Island

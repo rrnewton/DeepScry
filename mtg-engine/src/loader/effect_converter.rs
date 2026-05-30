@@ -1465,6 +1465,21 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::UntapAll { restriction })
         }
 
+        ApiType::DrainMana => {
+            // DrainMana: empty a player's unspent mana pool ("lose all unspent mana").
+            // Power Sink: "DB$ DrainMana | Defined$ TargetedController".
+            // The player sentinel is resolved at execution time:
+            //   Defined$ TargetedController -> controller of the countered spell
+            //   Defined$ You                -> the controller
+            //   otherwise (default)         -> the opponent (placeholder fallback)
+            let player = match params.get("Defined") {
+                Some("TargetedController") => PlayerId::target_controller(),
+                Some("You") => PlayerId::placeholder(),
+                _ => PlayerId::target_opponent(),
+            };
+            Some(Effect::DrainMana { player })
+        }
+
         ApiType::SetLife => {
             // SetLife: Set a player's life total to a specific amount
             // Example: "AB$ SetLife | Defined$ You | LifeAmount$ 10" (Angel of Grace)

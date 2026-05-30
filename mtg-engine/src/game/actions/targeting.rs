@@ -522,6 +522,7 @@ impl GameState {
                             | Effect::GainLife { .. }
                             | Effect::GainLifeDynamic { .. }
                             | Effect::Mill { .. }
+                            | Effect::DrainMana { .. }
                             | Effect::Scry { .. }
                             | Effect::Surveil { .. }
                             | Effect::AddMana { .. }
@@ -606,6 +607,7 @@ impl GameState {
                 | Effect::GainLife { .. }
                 | Effect::GainLifeDynamic { .. }
                 | Effect::Mill { .. }
+                | Effect::DrainMana { .. }
                 | Effect::Scry { .. }
                 | Effect::Surveil { .. }
                 | Effect::AddMana { .. }
@@ -1166,6 +1168,7 @@ impl GameState {
                 | Effect::GainLife { .. }
                 | Effect::GainLifeDynamic { .. }
                 | Effect::Mill { .. }
+                | Effect::DrainMana { .. }
                 | Effect::Scry { .. }
                 | Effect::Surveil { .. }
                 | Effect::AddMana { .. }
@@ -1475,6 +1478,7 @@ impl GameState {
             | Effect::GainLife { .. }
             | Effect::GainLifeDynamic { .. }
             | Effect::Mill { .. }
+            | Effect::DrainMana { .. }
             | Effect::Scry { .. }
             | Effect::Surveil { .. }
             | Effect::AddMana { .. }

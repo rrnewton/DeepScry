@@ -100,6 +100,24 @@ pub async fn load_puzzle_into_game(puzzle: &PuzzleFile, card_db: &AsyncCardDatab
         game.players[player_idx].life = player_state.life;
         game.players[player_idx].lands_played_this_turn = player_state.lands_played as u8;
 
+        // Pre-float mana into the pool (e.g. `p0manapool=U U C`). Each token is a
+        // sequence of WUBRGC symbols; non-mana chars are ignored. Used by tests
+        // that need unspent mana already in the pool (e.g. Power Sink DrainMana).
+        for token in &player_state.mana_pool {
+            for c in token.chars() {
+                let color = match c {
+                    'W' => crate::core::Color::White,
+                    'U' => crate::core::Color::Blue,
+                    'B' => crate::core::Color::Black,
+                    'R' => crate::core::Color::Red,
+                    'G' => crate::core::Color::Green,
+                    'C' => crate::core::Color::Colorless,
+                    _ => continue,
+                };
+                game.players[player_idx].mana_pool.add_color(color);
+            }
+        }
+
         // Load cards into hand
         for card_def in &player_state.hand {
             let card_id = {
