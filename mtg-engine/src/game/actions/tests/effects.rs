@@ -5001,6 +5001,43 @@ mod tests {
         );
     }
 
+    /// Card compat: Armageddon (cardsfolder/a/armageddon.txt) — mtg-481
+    ///
+    /// Script:
+    ///   ManaCost:3 W
+    ///   Types:Sorcery
+    ///   A:SP$ DestroyAll | ValidCards$ Land
+    ///
+    /// Parser-shape regression: Armageddon must parse as a {3}{W} Sorcery whose
+    /// spell ability is an Effect::DestroyAll restricted to lands. The full
+    /// "destroy every land, creatures survive" behavior is exercised by
+    /// tests/armageddon_destroys_lands_e2e.sh.
+    #[test]
+    fn test_card_compat_armageddon() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/a/armageddon.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Armageddon should load");
+        assert_eq!(def.name.as_str(), "Armageddon");
+        assert_eq!(def.mana_cost.generic, 3, "Cost should be {{3}}{{W}}");
+        assert_eq!(def.mana_cost.white, 1, "Cost should be {{3}}{{W}}");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_destroy_all = card.effects.iter().any(|e| matches!(e, Effect::DestroyAll { .. }));
+        assert!(
+            has_destroy_all,
+            "Armageddon must parse `SP$ DestroyAll | ValidCards$ Land` into an \
+             Effect::DestroyAll. Got: {:?}",
+            card.effects
+        );
+    }
+
     /// Card compat: Balance (cardsfolder/b/balance.txt) — mtg-483
     ///
     /// Script:

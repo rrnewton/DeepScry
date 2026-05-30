@@ -1,0 +1,24 @@
+[metadata]
+Name:Armageddon Destroys All Lands
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P1 casts Armageddon ({3}{W}); every land both players control is destroyed (SP$ DestroyAll | ValidCards$ Land). Non-land permanents survive. Tracks mtg-481.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Armageddon
+p0library=Island; Island; Island
+p0graveyard=
+p0battlefield=City of Brass; City of Brass; City of Brass; City of Brass; Savannah Lions
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=City of Brass; City of Brass; Serendib Efreet
+p1exile=
