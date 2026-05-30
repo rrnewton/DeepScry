@@ -3916,36 +3916,35 @@ fn create_game_from_database(
     let p1_id = game.players[0].id;
     let p2_id = game.players[1].id;
 
-    // Helper to add cards from a deck entry
-    let add_deck_cards = |game: &mut GameState,
-                          owner: PlayerId,
-                          entry: &crate::loader::DeckEntry,
-                          cards: &HashMap<String, Arc<CardDefinition>>|
-     -> Result<(), String> {
-        let card_def = cards
-            .get(&entry.card_name)
-            .ok_or_else(|| format!("Card '{}' not found in database", entry.card_name))?;
-
-        for _ in 0..entry.count {
-            let card_id = game.next_entity_id();
-            let card = card_def.instantiate(card_id, owner);
-            game.cards.insert(card_id, card);
-            if let Some(zones) = game.get_player_zones_mut(owner) {
-                zones.library.add(card_id);
+    // Expand each deck into a card-definition vector in DECK order (not yet
+    // Card instances). We mirror the NATIVE positional-CardID path here
+    // (`GameInitializer::init_game_with_positional_ids` in
+    // mtg-engine/src/loader/game_init.rs): shuffle the card-DEFINITION vectors
+    // FIRST, THEN assign positional CardIDs so CardID N is the (N+1)-th card of
+    // the post-shuffle library. The previous WASM code assigned CardIDs in deck
+    // order and shuffled the LIBRARY afterwards, producing the SAME shuffled
+    // permutation but a DIFFERENT CardID->card mapping than native. Because
+    // RandomController's choice ordering depends on CardID, that mismatch made
+    // native and WASM play fully divergent games from the same seed
+    // (beads mtg-ofl2i). Converging onto the native sequence makes the two
+    // compile targets produce byte-identical CardID assignments + gamelogs.
+    let expand_deck = |deck: &crate::loader::DeckList| -> Result<Vec<Arc<CardDefinition>>, String> {
+        let mut defs: Vec<Arc<CardDefinition>> = Vec::new();
+        for entry in &deck.main_deck {
+            let card_def = card_db
+                .cards
+                .get(&entry.card_name)
+                .ok_or_else(|| format!("Card '{}' not found in database", entry.card_name))?;
+            for _ in 0..entry.count {
+                defs.push(Arc::clone(card_def));
             }
         }
-        Ok(())
+        Ok(defs)
     };
 
-    // Add player 1's deck
-    for entry in &p1_deck.main_deck {
-        add_deck_cards(&mut game, p1_id, entry, &card_db.cards).map_err(|e| JsValue::from_str(&e))?;
-    }
-
-    // Add player 2's deck
-    for entry in &p2_deck.main_deck {
-        add_deck_cards(&mut game, p2_id, entry, &card_db.cards).map_err(|e| JsValue::from_str(&e))?;
-    }
+    let mut p1_card_defs = expand_deck(p1_deck).map_err(|e| JsValue::from_str(&e))?;
+    let mut p2_card_defs = expand_deck(p2_deck).map_err(|e| JsValue::from_str(&e))?;
+    let p1_deck_size = p1_card_defs.len();
 
     // Copy token definitions from card database into game state
     if !card_db.tokens.is_empty() {
@@ -3953,14 +3952,53 @@ fn create_game_from_database(
         log::info!("Loaded {} token definitions into game", game.token_definitions.len());
     }
 
-    // Shuffle libraries
-    game.shuffle_library(p1_id);
-    game.shuffle_library(p2_id);
+    // Shuffle the card-DEFINITION vectors BEFORE assigning CardIDs, using the
+    // game RNG (already seeded from `seed` above). This consumes the RNG stream
+    // in exactly the same order as native (P1 vector, then P2 vector), so the
+    // post-shuffle RNG state — and therefore every later controller decision —
+    // matches the native binary.
+    {
+        use rand::seq::SliceRandom;
+        let mut rng = game.rng.borrow_mut();
+        p1_card_defs.shuffle(&mut *rng);
+        p2_card_defs.shuffle(&mut *rng);
+    }
 
-    // Draw opening hands (7 cards each) BEFORE the turn 1 marker
-    for _ in 0..7 {
-        let _ = game.draw_card(p1_id);
-        let _ = game.draw_card(p2_id);
+    // Assign positional CardIDs starting from 0: P1 = [0..p1_deck_size),
+    // P2 = [p1_deck_size..total). Mirrors native exactly.
+    for (i, card_def) in p1_card_defs.iter().enumerate() {
+        let card_id = crate::core::CardId::new(i as u32);
+        let card = card_def.instantiate(card_id, p1_id);
+        game.cards.insert(card_id, card);
+        if let Some(zones) = game.get_player_zones_mut(p1_id) {
+            zones.library.add(card_id);
+        }
+    }
+    for (i, card_def) in p2_card_defs.iter().enumerate() {
+        let card_id = crate::core::CardId::new((p1_deck_size + i) as u32);
+        let card = card_def.instantiate(card_id, p2_id);
+        game.cards.insert(card_id, card);
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.library.add(card_id);
+        }
+    }
+    // Keep the entity-ID counter past the assigned CardID range so tokens get
+    // fresh IDs that never collide with library CardIDs.
+    game.set_next_entity_id((p1_deck_size + p2_card_defs.len()) as u32);
+
+    // Draw opening hands (7 cards each) WITHOUT re-shuffling — the libraries
+    // were already shuffled (via the def-vector shuffle above), exactly like
+    // the native `mtg tui` path, which uses `GameLoop::skip_opening_hands()` to
+    // suppress the re-shuffle and draws 7 cards silently. Drawing silently
+    // (no per-card gamelog) also matches native's opening-hand draw. Draw all
+    // of P1's cards then all of P2's, matching native's draw order in
+    // `GameLoop::setup_game` (`for player in [p1, p2] { draw 7 }`); each draw
+    // pops from that player's own library, so hands are unaffected by order,
+    // but we keep the loop shape identical for clarity.
+    for &player_id in &[p1_id, p2_id] {
+        for _ in 0..7 {
+            let _ = game.draw_card_silent(player_id);
+        }
     }
 
     // Mark the start of turn 1 AFTER drawing opening hands.

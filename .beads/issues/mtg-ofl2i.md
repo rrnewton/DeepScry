@@ -4,84 +4,63 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T06:32:43.753296370+00:00
-updated_at: 2026-05-30T06:33:12.217630203+00:00
+updated_at: 2026-05-30T13:10:46.838292113+00:00
+closed_at: 2026-05-30T12:26:50.807448634+00:00
 ---
 
 # Description
 
-## Summary
+## Native-vs-WASM determinism divergence — PARTIAL (CardID mapping converged; controller-seed divergence remains)
 
-The mtg-forge-rs engine compiles to BOTH native and WASM and MUST produce the
-SAME game for the SAME seed in either target (controllers are information- and
-target-independent; see docs/NETWORK_ARCHITECTURE.md). A new native-vs-WASM
-equivalence fuzz sweep (scripts/native_wasm_equiv_sweep.py) shows **100%
-divergence**: every random-vs-random (seed, deck) combo plays a DIFFERENT game
-in WASM than native, despite identical opening hands and identical library
-order.
+The mtg-forge-rs engine compiles to BOTH a native binary and a WASM module and
+MUST produce the SAME game for the SAME seed in either target. The fuzz sweep
+(scripts/native_wasm_equiv_sweep.py) showed 100% divergence.
 
-## Reproducer
+## Root cause #1 (CardID assignment order) — FIXED
+- NATIVE (mtg-engine/src/loader/game_init.rs::init_game_with_positional_ids,
+  ~L211-238): shuffles the card-DEFINITION vectors FIRST (P1 then P2 via the
+  game RNG), THEN assigns positional CardIDs (CardID N == post-shuffle library
+  position). `mtg tui` uses this + GameLoop::skip_opening_hands().
+- WASM (mtg-engine/src/wasm/fancy_tui.rs::create_game_from_database):
+  instantiated CardIDs in DECK order then shuffle_library() permuted the Vec.
+  Same permutation, DIFFERENT CardID->card mapping.
 
-    ./scripts/native_wasm_equiv_sweep.sh --seeds 3 \
-        --decks 'decks/old_school/*.dck,decks/old_school2/*.dck' --max-turns 20
+Fixed by converging create_game_from_database onto the native sequence (shuffle
+def-vectors, assign positional CardIDs, draw 7 silently without re-shuffle).
+VERIFIED in the saved divergence diffs: native and WASM now assign IDENTICAL
+CardIDs (e.g. Scrubland=57, Strip Mine=56, Sedge Troll=52, Mox Ruby=49, Animate
+Dead=48, Shivan Dragon=47 in BOTH targets) and draw identical opening hands.
 
-18/18 combos diverged. Divergent gamelogs + per-combo reproducers are written
-under the gitignored debug/native_wasm_equiv/. Example (seed=1 ur_burn): both
-targets agree on the opening line-up, then at Turn2 native casts Lightning Bolt
-in Beginning-of-Combat targeting its own controller while WASM casts it in
-Main1 targeting the opponent. Seed=2 ur_burn: Chain Lightning targets P1
-(native) vs P2 (wasm).
+## Root cause #2 (controller seed derivation) — STILL OPEN
+Even with identical CardIDs and opening hands, the games still diverge at the
+FIRST controller decision (e.g. native P1 plays Scrubland(57) first, WASM P1
+plays Strip Mine(56) first — same hand, different pick). The native `mtg tui`
+path seeds each controller with `derive_player_seed(game_seed, PlayerSlot::P1/P2)`
+(see mtg-engine/src/game/seed_derivation.rs). The local WASM path used by the
+sweep — `launch_game_session` -> `WasmFancyTuiState::new` (fancy_tui.rs L3632,
+L1468) — does NOT apply `derive_player_seed` per slot; it uses the default
+`controller_seed` so the RandomController's RNG stream starts from a different
+state than native. (The WASM *network* / ai_harness paths DO use
+derive_player_seed — see wasm/mod.rs L682, wasm/network/ai_harness.rs L150 — so
+this is specific to the single-player `launch_game_session` entry point.)
 
-## Root cause
+Fix direction: make `launch_game_session`/`WasmFancyTuiState::new` derive
+per-slot controller seeds with `derive_player_seed(seed, P1/P2)` exactly as
+native does, so the RandomController RNG streams match. This is a SEPARATE fix
+from the CardID convergence above and was not completed in this pass.
 
-Two DIVERGENT game-setup implementations (a DRY violation):
+## Current sweep status (after CardID fix, fresh WASM bundle)
+scripts/native_wasm_equiv_sweep.sh STRICT: still 9/9 DIVERGED (3 decks x 3
+seeds), all at the first controller pick. The validate-wired bounded leg
+(Makefile validate-wasm-e2e-step) therefore REMAINS on --expect-divergence; do
+NOT flip it to STRICT until root cause #2 is fixed and the sweep shows equality.
 
-* **native** — `mtg-engine/src/loader/game_init.rs` (~line 211):
-    1. build per-player Vec<Arc<CardDefinition>> in deck order,
-    2. SHUFFLE the card-def lists FIRST (`p1_card_defs.shuffle(&mut rng)`),
-    3. THEN assign positional CardIDs 0..N to the *shuffled* order
-       (CardID == library position).
+## MTG rules review (CardID-fix portion)
+PASS. The CardID-assignment change is init-only: same cards, same shuffle
+distribution (CR 103.2), same 7-card opening hand (CR 103.4); only CardID
+assignment order canonicalized to match native. No game-visible semantics change,
+no information-hiding regression.
 
-* **wasm** — `mtg-engine/src/wasm/fancy_tui.rs::create_game_from_database`
-  (~line 3890):
-    1. instantiate cards via `next_entity_id()` in DECK ORDER (unshuffled),
-       assigning CardIDs as they are added to the library,
-    2. THEN `game.shuffle_library(p1_id)` / `shuffle_library(p2_id)`.
-
-Fisher-Yates depends only on length, so both targets shuffle to the SAME
-permutation (hence identical opening CARDS and identical post-opening draw
-order — both draw Sol Ring on Turn3). But the **CardID -> card mapping is
-different** (native ID follows shuffled position; WASM ID follows deck order:
-e.g. native Sol Ring=52 vs WASM Sol Ring=16). The RandomController enumerates /
-orders its candidate choices (and consumes RNG) in a way that depends on
-CardID, so the SAME RNG stream picks a DIFFERENT card / target in each target.
-
-WASM also hand-rolls the opening-hand draw as an INTERLEAVED p1/p2/p1/p2 loop,
-whereas the shared `mtg-engine/src/game/hand_setup.rs::setup_opening_hands`
-draws all 7 for player 0 then all 7 for player 1. Draws do not consume RNG so
-this does not change the cards, but it is the same drift symptom — WASM does
-not reuse the shared setup helper.
-
-## Fix direction (NOT done here — harness + bug only)
-
-Unify the two paths so WASM game creation reuses the SAME shuffle-then-assign-
-positional-CardID sequence (and `setup_opening_hands`) that native uses, OR
-make the RandomController's choice ordering CardID-independent. Either makes the
-two compile targets play identical games. Requires an MTG-rules-review per
-CLAUDE.md before merge. The CardID-positional scheme in game_init.rs is also
-what the network late-binding path relies on, so the WASM single-player path
-should converge on it rather than the reverse.
-
-## Relationship to existing issues
-
-Distinct from mtg-sfihb (WASM network-E2E ActionLog push desync in multi-Shivan
-combat) and mtg-yulth (heuristic local-vs-network Demonic Tutor search): this is
-the RANDOM controller, SINGLE-player (non-network) WASM-vs-native axis, rooted
-in game-setup CardID assignment, not network sync or heuristic info-leak.
-
-## Detection harness
-
-scripts/native_wasm_equiv_sweep.py + .sh (seed-range x deck-sample sweep,
-exit 1 on any divergence). A bounded leg is wired into `make validate`
-(validate-agentplay-step) gated by MTG_EQUIV_REQUIRE_WASM. Once this bug is
-fixed the bounded leg flips from "documents the known divergence" to
-"regression guard".
+## Relationship to Java Forge
+N/A — Rust-only cross-compile-target determinism issue; Java Forge has no WASM
+target.
