@@ -1,0 +1,35 @@
+---
+title: Card-image fallback chain (local->scryfall->gatherer) doesn't recover when local 404s
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-05-30T19:49:14.635219739+00:00
+updated_at: 2026-05-30T19:49:14.635219739+00:00
+---
+
+# Description
+
+User report (2026-05-30): with multiple image sources enabled (local + Scryfall + Gatherer) and allow_local_img_load=true, when the local /images/ files are MISSING (404), card detail images often don't load at all — the Scryfall/Gatherer fallback doesn't recover. Battlefield looks OK but card details don't always load.
+
+## Mechanism (code map)
+- URL list built in `mtg-engine/src/wasm/fancy_tui.rs:245 tui_get_image_urls()` → returns [local_image_url, scryfall_url_by_name, gatherer_url] (priority order), via helpers in `mtg-engine/src/wasm/image_overlay.rs` (scryfall_url_by_name:85, gatherer_url:42).
+- JS cascade in `web/native_game.html`: two render paths —
+  - inline onerror at ~line 1864: `<img src=urls[0] data-fallbacks=...> onerror` shifts to next fallback, else hides.
+  - JS onerror at ~line 1927-1936: `img.onerror` shifts `fallbacks`, sets img.src.
+- Local gating at native_game.html:1307 (allow_local_img_load) controls whether the LOCAL source is *used*, but the Rust list still puts local at urls[0].
+
+## Hypotheses to confirm via Playwright + browser network tab (this is the investigation)
+1. Does onerror actually ADVANCE to scryfall when urls[0] (local) 404s? Check both render paths (1864 inline vs 1927 JS) — possible index/ordering bug or one path not cascading. Possibly local is urls[0] even when local source is unchecked/disabled, wasting the first slot or short-circuiting.
+2. Scryfall: scryfall_url_by_name hits `https://api.scryfall.com/cards/named?exact=NAME&format=image` which 302-redirects + is RATE-LIMITED (429 on bursts) + asks ~50-100ms between requests + CORS/referrer rules. A burst of card images may get throttled → those onerror too. Check Network tab for 429/blocked scryfall responses.
+3. Gatherer: gatherer.wizards.com Image.ashx is frequently unreliable/down → last-resort fallback often fails too.
+4. Name-based scryfall exact-match may 404 for some old-school card names (double-faced, split, punctuation, alt spellings) → confirm a few of the failing cards (e.g. Bazaar of Baghdad) resolve at the scryfall named endpoint.
+
+## Fix direction (after confirming which link fails)
+- Ensure the onerror cascade reliably walks ALL sources regardless of which are local; unify the two render paths (DRY).
+- For scryfall: prefer the set/collector-number endpoint (scryfall_url, deterministic, cacheable) over named-exact where the card's set+number is known; throttle/stagger requests; consider Scryfall's documented image CDN URLs instead of the redirecting API endpoint.
+- Graceful final fallback (clean placeholder, no console spam) when all sources fail.
+
+## Evidence required
+Playwright run with Network capture showing the cascade (local 404 -> scryfall result -> gatherer result) for a few failing cards; screenshots to gitignored debug/, cite paths. NEVER commit images.
+
+Owner: web-ui-agentplay stream (card-image loading surface — same files as graveyard + agentplay work). Group with mtg-0sm9a + graveyard tasks. Related: deploy now non-destructive to web/images (deploy-cloud.sh @31379f84) + the one-time manual image rsync.
