@@ -11,7 +11,7 @@
 #   2. equivalence  -- same game LOCAL vs NETWORK (server + 2 loopback clients)
 #                      => identical [GAMELOG ...] streams.
 #
-# The HEAVY standalone sweep lives in scripts/fuzz_determinism_netequiv.sh; this
+# The HEAVY standalone sweep lives in bug_finding/fuzz_determinism_netequiv.sh; this
 # wrapper just calls it with a bounded corpus tuned to stay well under ~60s so
 # it does not bloat `make validate`. It HARD-FAILS (exit 1) on ANY divergence
 # and NEVER soft-skips: a missing binary / cardsfolder is a hard error (exit 2),
@@ -45,7 +45,7 @@ OUT_DIR="$WORKSPACE_ROOT/debug/fuzz_validate_$$"
 
 # --- Part 1: determinism (cheap; wider net: 3 pairs x 4 seeds x 2 ctrls) ----
 echo "--- Invariant 1: native determinism (heuristic + random) ---"
-MTG_BIN="$MTG_BIN" bash "$WORKSPACE_ROOT/scripts/fuzz_determinism_netequiv.sh" \
+MTG_BIN="$MTG_BIN" bash "$WORKSPACE_ROOT/bug_finding/fuzz_determinism_netequiv.sh" \
     --invariant determinism \
     --pair-mode chain --max-pairs 3 \
     --start-seed 1 --seeds 4 \
@@ -63,7 +63,7 @@ MTG_BIN="$MTG_BIN" bash "$WORKSPACE_ROOT/scripts/fuzz_determinism_netequiv.sh" \
 # keep validate green on the passing slice and let heavy mode track the bug.
 echo
 echo "--- Invariant 2: local-vs-network equivalence (random) ---"
-MTG_BIN="$MTG_BIN" bash "$WORKSPACE_ROOT/scripts/fuzz_determinism_netequiv.sh" \
+MTG_BIN="$MTG_BIN" bash "$WORKSPACE_ROOT/bug_finding/fuzz_determinism_netequiv.sh" \
     --invariant equivalence \
     --pair-mode chain --max-pairs 1 \
     --start-seed 1 --seeds 2 \

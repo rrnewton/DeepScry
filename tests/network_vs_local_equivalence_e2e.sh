@@ -40,6 +40,9 @@ set -euo pipefail
 # Get script directory and source shared test helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib/test_helpers.sh"
+# Shared gamelog filter — single source of truth (no inline sed/grep copies).
+# shellcheck source=../bug_finding/lib/gamelog_filter.sh
+source "$WORKSPACE_ROOT/bug_finding/lib/gamelog_filter.sh"
 
 # Colors for output
 RED='\033[0;31m'
@@ -114,10 +117,11 @@ CONTROLLER_SEED=3
 # `printf '%u'` performs the signed→unsigned 64-bit reinterpretation we need
 # (it converts negative bash integers back into their u64 bit-pattern as a
 # decimal string), giving the exact value `derive_player_seed` produces.
-P1_SALT=$((0x123456789ABCDEF0))
-P2_SALT=$((0xFEDCBA9876543210))
-P1_DERIVED_SEED="$(printf '%u' $((CONTROLLER_SEED + P1_SALT)))"
-P2_DERIVED_SEED="$(printf '%u' $((CONTROLLER_SEED + P2_SALT)))"
+# Seed salts come from the shared bug_finding/lib/seed_salts.sh — the ONE bash
+# mirror of mtg-engine/src/game/seed_derivation.rs. No hand-copied hex here.
+source "$WORKSPACE_ROOT/bug_finding/lib/seed_salts.sh"
+P1_DERIVED_SEED="$(derive_p1_seed "$CONTROLLER_SEED")"
+P2_DERIVED_SEED="$(derive_p2_seed "$CONTROLLER_SEED")"
 
 # Validate controller types
 for ctrl in "$CONTROLLER_P1" "$CONTROLLER_P2"; do

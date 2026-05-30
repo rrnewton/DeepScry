@@ -139,7 +139,7 @@ echo "Total test cases: $TOTAL"
 echo ""
 
 # Make test script executable
-chmod +x scripts/snapshot_stress_test_single.py
+chmod +x bug_finding/snapshot_stress_test_single.py
 
 # Function to print summary and exit with appropriate status
 print_summary_and_exit() {
@@ -190,7 +190,7 @@ run_test() {
     fi
 
     # Build command with optional flags
-    local cmd="./scripts/snapshot_stress_test_single.py $deck_path $p1 $p2 --quiet"
+    local cmd="./bug_finding/snapshot_stress_test_single.py $deck_path $p1 $p2 --quiet"
     if [ "$KEEP_ARTIFACTS" = true ]; then
         cmd="$cmd --keep"
     fi
@@ -218,7 +218,7 @@ run_test() {
             echo "=========================================="
             echo ""
             echo "Reproduce with:"
-            local repro_cmd="  ./scripts/snapshot_stress_test_single.py $deck_path $p1 $p2 --verbose"
+            local repro_cmd="  ./bug_finding/snapshot_stress_test_single.py $deck_path $p1 $p2 --verbose"
             if [ "$KEEP_ARTIFACTS" = true ]; then
                 repro_cmd="$repro_cmd --keep"
             fi

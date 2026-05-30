@@ -89,6 +89,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Shared helpers — single source of truth (no inline reimplementations).
+# shellcheck source=lib/gamelog_filter.sh
+source "$SCRIPT_DIR/lib/gamelog_filter.sh"
+# shellcheck source=lib/seed_salts.sh
+source "$SCRIPT_DIR/lib/seed_salts.sh"
+
 # ----- Defaults -------------------------------------------------------------
 N_SEEDS=5
 START_SEED=1
@@ -160,17 +166,13 @@ mkdir -p "$OUT_DIR"
 SUMMARY_CSV="$OUT_DIR/summary.csv"
 echo "invariant,deck1,deck2,seed,controller,result,detail" > "$SUMMARY_CSV"
 
-# ----- Seed derivation (must match game::seed_derivation::derive_player_seed)
+# ----- Seed derivation -------------------------------------------------------
 # Local TUI is given pre-derived --seed-p1/--seed-p2; network clients are given
 # the MASTER controller seed via --seed-player and derive per-slot internally.
 # To make LOCAL and NETWORK RandomController RNG streams identical we pre-derive
-# here using the SAME salts as seed_derivation.rs. bash arithmetic is signed
-# 64-bit; printf '%u' reinterprets the wrapped value as the u64 bit-pattern Rust
-# expects. See tests/network_vs_local_equivalence_e2e.sh for the original note.
-P1_SALT=$((0x123456789ABCDEF0))
-P2_SALT=$((0xFEDCBA9876543210))
-derive_p1_seed() { printf '%u' $(( $1 + P1_SALT )); }
-derive_p2_seed() { printf '%u' $(( $1 + P2_SALT )); }
+# here using the SAME salts as seed_derivation.rs. derive_p1_seed/derive_p2_seed
+# come from the shared bug_finding/lib/seed_salts.sh (sourced above) — the ONE
+# bash mirror of the canonical Rust salts.
 
 # ----- Build deck corpus ----------------------------------------------------
 # Expand the (possibly multi-) glob into an array of existing .dck files, sorted
@@ -233,22 +235,14 @@ echo "  out          : $OUT_DIR"
 echo "------------------------------------------------------------"
 
 # Extract canonical, comparable GAMELOG lines from a raw log file.
-# Mirrors the filtering in tests/network_vs_local_equivalence_e2e.sh:
-#   - strip ANSI (local logs may be colorized)
-#   - keep [GAMELOG ...] lines
-#   - drop noise that is known to differ in timing between server/client damage
-#     accounting (Tap-for-mana, bare "resolves", per-event damage life deltas).
-# For the DETERMINISM invariant both runs are identical mode so we keep the SAME
-# filter (it only removes lines, symmetrically) to compare apples-to-apples.
+# Delegates to the shared bug_finding/lib/gamelog_filter.sh (sourced above) so
+# the ANSI-strip + [GAMELOG ...] keep + known-noise filter lives in exactly one
+# place (also mirrored by network_test_lib.py::extract_gamelog and reused by
+# tests/network_vs_local_equivalence_e2e.sh).
+# For the DETERMINISM invariant both runs are identical mode so the SAME filter
+# (it only removes lines, symmetrically) compares apples-to-apples.
 extract_gamelog() {
-    local src="$1" dst="$2"
-    sed -E 's/\x1b\[[0-9;]*m//g' "$src" 2>/dev/null \
-        | grep '\[GAMELOG' \
-        | grep -v 'Tap.*for {' \
-        | grep -v 'resolves$' \
-        | grep -v 'takes.*damage.*life:' \
-        | grep -v 'deals.*damage.*life:' \
-        > "$dst" || true
+    gamelog_filter_file "$1" "$2"
 }
 
 # Run a single LOCAL game; writes raw log to $1, args follow.

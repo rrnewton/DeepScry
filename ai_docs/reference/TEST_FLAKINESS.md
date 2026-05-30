@@ -57,26 +57,26 @@ Notes on each kind:
 - **examples**: discovered by `scripts/run_examples.sh` / `cargo run --example`.
 
 A canonical name is parsed back into a runnable command by the stress harness
-(`scripts/flakiness_stress.py`); see `KIND_RUNNERS` there for the authoritative
+(`bug_finding/flakiness_stress.py`); see `KIND_RUNNERS` there for the authoritative
 name -> command mapping.
 
 ---
 
 ## 2. Stress harness
 
-`scripts/flakiness_stress.py` runs a single canonical test **in isolation** N
+`bug_finding/flakiness_stress.py` runs a single canonical test **in isolation** N
 times and records pass/fail per run, yielding a flakiness rate.
 
 ```
 # Stress one test 20 times, 4 at a time, append result to the DB:
-scripts/flakiness_stress.py one validate.shell_script_tests.commander_e2e \
+bug_finding/flakiness_stress.py one validate.shell_script_tests.commander_e2e \
     --runs 20 --concurrency 4 --record
 
 # Stress every known test once (cheap suite smoke), bounded concurrency:
-scripts/flakiness_stress.py stress-all --runs 3 --concurrency 4 --record
+bug_finding/flakiness_stress.py stress-all --runs 3 --concurrency 4 --record
 
 # List the canonical names the harness currently knows about:
-scripts/flakiness_stress.py list
+bug_finding/flakiness_stress.py list
 ```
 
 Key flags:
@@ -171,7 +171,7 @@ To turn a registry entry into real DB data, stress it and record with the
 matching `--classify`/`--issue`, e.g.:
 
 ```
-scripts/flakiness_stress.py one validate.network_e2e.01_rogue_rogerbrand.3 \
+bug_finding/flakiness_stress.py one validate.network_e2e.01_rogue_rogerbrand.3 \
     --runs 20 --concurrency 1 --classify known-desync --issue mtg-589 --record
 ```
 
@@ -185,3 +185,8 @@ scripts/flakiness_stress.py one validate.network_e2e.01_rogue_rogerbrand.3 \
 The last row is the important one: those determinism_e2e SIGTERMs were being
 counted as failures. Classifying them as `timeout-under-load` stops them from
 masquerading as real flakes.
+
+See also [docs/FUZZ_AND_STRESS_TESTING_STRATEGY.md](../../docs/FUZZ_AND_STRESS_TESTING_STRATEGY.md)
+for the overall fuzz/stress/determinism harness inventory and the
+bug-finding-vs-regression policy. `flakiness_stress.py` (now under
+`bug_finding/`) records to the flakiness DB tracked here.

@@ -287,7 +287,7 @@ validate-wasm-e2e-step: validate-wasm-step
 	@echo "    HARD FAIL here (never a silent green-skip). --expect-divergence is the"
 	@echo "    known-divergence tripwire for beads mtg-ofl2i: green while that bug is"
 	@echo "    open, fails the moment native+WASM agree (telling you to drop the flag)."
-	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./scripts/native_wasm_equiv_sweep.sh \
+	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
 		--seeds 1 --decks 'decks/old_school2/ur_burn.dck' --max-turns 8 --expect-divergence
 	@echo "✓ wasm-e2e tests completed"
 
@@ -329,7 +329,7 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "=== Running bounded randomized determinism + equivalence fuzz ==="
 	@echo "    Sweeps seeds x old-school deck pairs for native determinism AND"
 	@echo "    local-vs-network gamelog identity. Heavy mode:"
-	@echo "    scripts/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all"
+	@echo "    bug_finding/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all"
 	@MTG_REUSE_PREBUILT=1 bash tests/fuzz_determinism_netequiv_e2e.sh
 	@echo "✓ network-e2e tests completed"
 
