@@ -1,0 +1,22 @@
+[metadata]
+Name:Earthquake Dragon Flying
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Earthquake Dragon (10/10 Flying Trample) attacks; a ground blocker (Grizzly Bears) cannot block the flyer, so its combat damage hits the defending player.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest; Forest; Forest; Forest
+p0battlefield=Earthquake Dragon; Forest; Forest; Forest
+p0graveyard=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain
+p1battlefield=Grizzly Bears
+p1graveyard=

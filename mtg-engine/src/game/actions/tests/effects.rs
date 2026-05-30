@@ -3159,6 +3159,57 @@ mod tests {
         }
     }
 
+    /// Card compat: Earthquake Dragon (cardsfolder/e/earthquake_dragon.txt)
+    ///
+    /// Script:
+    ///   ManaCost:14 G
+    ///   Types:Creature Elemental Dragon
+    ///   PT:10/10
+    ///   K:Flying
+    ///   K:Trample
+    ///   S:Mode$ ReduceCost | ValidCard$ Card.Self | Type$ Spell | Amount$ X ...
+    ///   A:AB$ ChangeZone | Cost$ 2 G Sac<1/Land> | Origin$ Graveyard
+    ///                    | Destination$ Hand | ActivationZone$ Graveyard ...
+    ///
+    /// Verifies the parsed static side: {14}{G} 10/10 with Flying + Trample.
+    /// Cast/flying/combat are verified end-to-end by
+    /// tests/earthquake_dragon_flying_e2e.sh.
+    ///
+    /// KNOWN GAP (mtg-d8zuh): the graveyard-return activated ability
+    /// (ActivationZone$ Graveyard) is never offered — ActivatedAbility has no
+    /// activation_zone field, so it is implicitly battlefield-only. CARD
+    /// STATUS therefore remains PARTIAL (mtg-502).
+    #[test]
+    fn test_card_compat_earthquake_dragon() {
+        use crate::core::Keyword;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/e/earthquake_dragon.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Earthquake Dragon should load");
+        assert_eq!(def.name.as_str(), "Earthquake Dragon");
+        assert_eq!(def.mana_cost.generic, 14, "Cost generic should be 14");
+        assert_eq!(def.mana_cost.green, 1, "Cost should require {{G}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(10));
+        assert_eq!(def.toughness, Some(10));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        assert!(
+            card.keywords.contains(Keyword::Flying),
+            "Earthquake Dragon must have Flying. Keywords: {:?}",
+            card.keywords
+        );
+        assert!(
+            card.keywords.contains(Keyword::Trample),
+            "Earthquake Dragon must have Trample. Keywords: {:?}",
+            card.keywords
+        );
+    }
+
     /// Card compat: Concordant Crossroads (cardsfolder/c/concordant_crossroads.txt)
     ///
     /// Script:

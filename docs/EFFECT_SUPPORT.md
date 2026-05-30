@@ -59,6 +59,7 @@ workflow, row format, and update rules.
 | Mode$ TgtChoose (controller picks discard) | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | AB$ Pump Cost$ R NumAtt$ +1 (firebreathing) | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Shivan Dragon       |
 | SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
+| AB$ ChangeZone ActivationZone$ Graveyard   | BROKEN  | 2026-05-30_#2488(f9fcef95) | mtg-d8zuh  | Earthquake Dragon   |
 | AB$ Destroy Cost$ T ValidTgts$ Creature.tapped | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Royal Assassin      |
 | AB$ Regenerate Cost$ B (self)              | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Will-o'-the-Wisp    |
 | SP$ Mana Produced$ B Amount$ 3 (ritual)    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)    | Dark Ritual         |
