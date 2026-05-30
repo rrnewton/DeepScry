@@ -4,63 +4,89 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T06:32:43.753296370+00:00
-updated_at: 2026-05-30T13:10:46.838292113+00:00
+updated_at: 2026-05-30T21:53:57.737429718+00:00
 closed_at: 2026-05-30T12:26:50.807448634+00:00
 ---
 
 # Description
 
-## Native-vs-WASM determinism divergence — PARTIAL (CardID mapping converged; controller-seed divergence remains)
+## Native-vs-WASM determinism divergence — root causes #1 & #2 FIXED; THIRD residual (trigger/life-drift) remains OPEN
 
 The mtg-forge-rs engine compiles to BOTH a native binary and a WASM module and
-MUST produce the SAME game for the SAME seed in either target. The fuzz sweep
-(scripts/native_wasm_equiv_sweep.py) showed 100% divergence.
+MUST produce the SAME game for the SAME seed in either target.
 
-## Root cause #1 (CardID assignment order) — FIXED
-- NATIVE (mtg-engine/src/loader/game_init.rs::init_game_with_positional_ids,
-  ~L211-238): shuffles the card-DEFINITION vectors FIRST (P1 then P2 via the
-  game RNG), THEN assigns positional CardIDs (CardID N == post-shuffle library
-  position). `mtg tui` uses this + GameLoop::skip_opening_hands().
-- WASM (mtg-engine/src/wasm/fancy_tui.rs::create_game_from_database):
-  instantiated CardIDs in DECK order then shuffle_library() permuted the Vec.
-  Same permutation, DIFFERENT CardID->card mapping.
+## Root cause #1 (CardID assignment order) — FIXED (d4adbb77, was a2c95308)
+WASM create_game_from_database now mirrors native init_game_with_positional_ids:
+shuffle card-DEFINITION vectors first (P1 then P2 via game RNG), THEN assign
+positional CardIDs, draw 7 silently without re-shuffle. Verified: identical
+CardIDs + opening hands native vs WASM.
 
-Fixed by converging create_game_from_database onto the native sequence (shuffle
-def-vectors, assign positional CardIDs, draw 7 silently without re-shuffle).
-VERIFIED in the saved divergence diffs: native and WASM now assign IDENTICAL
-CardIDs (e.g. Scrubland=57, Strip Mine=56, Sedge Troll=52, Mox Ruby=49, Animate
-Dead=48, Shivan Dragon=47 in BOTH targets) and draw identical opening hands.
+## Root cause #2 (controller seed derivation) — FIXED (301c4a3f)
+The local WASM launch path (launch_game_session -> WasmFancyTuiState::new) used
+a hardcoded controller seed (42) for both players instead of the canonical
+derive_player_seed(master_seed, P1/P2) that native `mtg tui` uses. Fixed:
+- WasmFancyTuiState::new now takes the master seed; create_ai_controller derives
+  per-slot seeds via derive_player_seed (mtg-engine/src/wasm/fancy_tui.rs).
+- Persistent p1/p2 AI controllers carried across turns (RNG advances
+  continuously, mirroring native's single run_game() call).
+- DRY: reuses crate::game::seed_derivation::derive_player_seed; no duplicated
+  salt logic.
+Also fixed a WASM gamelog-gating bug: log_effect_execution gated gamelog() lines
+on should_print_to_stdout() (stdout-only), silently dropping
+exiles/destroys/counters lines in WASM Memory mode. New logger_captures_or_prints()
+(Stdout|Both|Memory) is the correct gate (mtg-engine/src/game/game_loop/logging.rs).
 
-## Root cause #2 (controller seed derivation) — STILL OPEN
-Even with identical CardIDs and opening hands, the games still diverge at the
-FIRST controller decision (e.g. native P1 plays Scrubland(57) first, WASM P1
-plays Strip Mine(56) first — same hand, different pick). The native `mtg tui`
-path seeds each controller with `derive_player_seed(game_seed, PlayerSlot::P1/P2)`
-(see mtg-engine/src/game/seed_derivation.rs). The local WASM path used by the
-sweep — `launch_game_session` -> `WasmFancyTuiState::new` (fancy_tui.rs L3632,
-L1468) — does NOT apply `derive_player_seed` per slot; it uses the default
-`controller_seed` so the RandomController's RNG stream starts from a different
-state than native. (The WASM *network* / ai_harness paths DO use
-derive_player_seed — see wasm/mod.rs L682, wasm/network/ai_harness.rs L150 — so
-this is specific to the single-player `launch_game_session` entry point.)
+## Sweep result after #1+#2 (FRESH `make wasm-dev` bundle), 2026-05-30_#2523(301c4a3f)
+bug_finding/native_wasm_equiv_sweep.sh STRICT, decks/old_school2/*.dck x seeds 1-3,
+max-turns 8: **28/36 PASS** (was 0/9 = 100% diverged before the fix). The action
+SEQUENCE is now byte-identical for the vast majority of games — the seeding +
+CardID convergence is confirmed working. Deterministic (re-run reproduces).
 
-Fix direction: make `launch_game_session`/`WasmFancyTuiState::new` derive
-per-slot controller seeds with `derive_player_seed(seed, P1/P2)` exactly as
-native does, so the RandomController RNG streams match. This is a SEPARATE fix
-from the CardID convergence above and was not completed in this pass.
+## THIRD residual (still OPEN) — trigger-processing / silent-life divergence
+8/36 combos still diverge. NOT a seeding/RNG-start issue (early actions match
+byte-for-byte). Two sub-buckets, both genuine engine-behavior divergence between
+native `run_game` (continuous) and the WASM `run_one_turn` step loop:
 
-## Current sweep status (after CardID fix, fresh WASM bundle)
-scripts/native_wasm_equiv_sweep.sh STRICT: still 9/9 DIVERGED (3 decks x 3
-seeds), all at the first controller pick. The validate-wired bounded leg
-(Makefile validate-wasm-e2e-step) therefore REMAINS on --expect-divergence; do
-NOT flip it to STRICT until root cause #2 is fixed and the sweep shows equality.
+(A) SILENT LIFE-TOTAL DRIFT — action sequence identical, accumulated life differs:
+  - ur_burn seed1 @#52: City of Brass `Taps` trigger (deals 1 dmg to controller
+    on tap) applied a different number of times in WASM vs native. No gamelog
+    line either side (self-damage is silent); only the life delta diverges.
+  - artifact_aggro s3 @#42, erhnamgeddon_gw s1/s3, lestree_zoo s2 @#67
+    (native P1=12 vs WASM P1=16 — 4 missed pings). Same family: pain-land /
+    tap-trigger self-damage count mismatch.
 
-## MTG rules review (CardID-fix portion)
-PASS. The CardID-assignment change is init-only: same cards, same shuffle
-distribution (CR 103.2), same 7-card opening hand (CR 103.4); only CardID
-assignment order canonicalized to match native. No game-visible semantics change,
-no information-hiding regression.
+(B) DECISION / TRIGGER-SEQUENCE DRIFT — action sequence itself diverges:
+  - triple_s_sage seed2 @#61: Su-Chi "when dies, add {C}{C}{C}{C}" death trigger
+    FIRES + logs in native (actions/mod.rs:7040-7050, ungated gamelog) but does
+    NOT fire in WASM (the trigger line + mana-pool line are absent → the trigger
+    did not execute, not merely log-suppressed).
+  - white_weenie seed2 @#28: native plays an extra Plains before casting Balance;
+    WASM casts Balance without it (controller decision drift downstream of (A)'s
+    silent state difference perturbing later picks).
+  - mono_black_control seed2 @#44: turn-boundary / discard-vs-draw ordering.
+
+ROOT-CAUSE HYPOTHESIS for the residual: the WASM AI-vs-AI path drives the game
+one turn at a time via GameLoop::run_one_turn, whereas native runs the whole
+game through a single GameLoop::run_game. Triggered abilities that fire at turn
+boundaries / on tap / on death are processed differently across the per-turn
+re-entry, causing (A) different self-damage trigger counts and (B) some triggers
+(Su-Chi death) not firing. This is a SEPARATE root cause from CardID assignment
+(#1) and controller seeding (#2) and needs its own fix: converge the WASM
+run_one_turn trigger/SBA processing onto native run_game semantics.
+
+## Tripwire status — NOT flipped (correct per process)
+The validate-wired leg (Makefile validate-wasm-e2e-step: --seeds 1
+--decks ur_burn --max-turns 8 --expect-divergence) STILL diverges (ur_burn @#52),
+so --expect-divergence stays GREEN and is left in place. Do NOT flip to STRICT
+until the THIRD residual (trigger-processing convergence) is fixed and the sweep
+shows full equality. Keep this issue OPEN.
+
+## MTG rules review (this pass: seeding + log-gate)
+PASS. Changes are init-time RNG seed derivation + gamelog line-gating only; no
+game-visible rule semantics changed; controllers remain information-independent
+(CR 103/130; docs/NETWORK_ARCHITECTURE.md determinism invariant). The residual
+(A)/(B) divergences are PRE-EXISTING engine bugs newly EXPOSED by the now-aligned
+seeds, not introduced by this change.
 
 ## Relationship to Java Forge
-N/A — Rust-only cross-compile-target determinism issue; Java Forge has no WASM
-target.
+N/A — Rust-only cross-compile-target determinism issue; Java Forge has no WASM target.
