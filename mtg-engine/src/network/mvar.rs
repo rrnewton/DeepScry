@@ -97,7 +97,13 @@ impl<T> MVar<T> {
         self.ready.notify_all();
     }
 
-    /// Check if exit has been signaled
+    /// Check if exit has been signaled.
+    ///
+    /// Part of the generic MVar primitive's public API. As of netarch Phase 2
+    /// Step 3, `SharedNetworkState::should_exit` reads the dedicated `terminal`
+    /// flag instead of this, so this accessor currently has no in-tree caller
+    /// outside the mvar unit tests.
+    #[allow(dead_code)]
     pub fn is_exit_signaled(&self) -> bool {
         self.exit_flag.load(Ordering::Relaxed)
     }

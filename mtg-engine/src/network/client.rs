@@ -23,6 +23,7 @@ use crate::core::{CardId, PlayerId};
 use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
 use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
+use crate::network::{ActionLog, ChoiceEntry, StateSyncEntry};
 use anyhow::{anyhow, Result};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -85,6 +86,9 @@ pub enum NetworkMessage {
     /// Opponent made a choice
     OpponentChoice {
         action_count: u64,
+        /// Server-assigned sequence number (the `ActionLog<ChoiceEntry>` key
+        /// — strictly unique/monotonic per choice, unlike `action_count`).
+        choice_seq: u32,
         choice_indices: Vec<usize>,
         description: String,
         spell_ability: Option<crate::core::SpellAbility>,
@@ -147,6 +151,7 @@ impl NetworkMessage {
                 library_search_result,
             }),
             ServerMessage::OpponentChoice {
+                choice_seq,
                 choice_indices,
                 description,
                 spell_ability,
@@ -156,6 +161,7 @@ impl NetworkMessage {
                 ..
             } => Some(NetworkMessage::OpponentChoice {
                 action_count,
+                choice_seq,
                 choice_indices,
                 description,
                 spell_ability,
@@ -221,80 +227,13 @@ pub enum LocalChoiceInfo {
     Error { message: String },
 }
 
-/// Choice information from the network for the REMOTE player (opponent)
-///
-/// Represents an OpponentChoice (server telling us what opponent chose).
-/// Used by RemoteController via the remote_choice_mvar.
-#[derive(Debug, Clone)]
-pub enum RemoteChoiceInfo {
-    /// Opponent made a choice - use these indices
-    Opponent {
-        action_count: u64,
-        indices: Vec<usize>,
-        spell_ability: Option<crate::core::SpellAbility>,
-        /// The CardId chosen for library search operations
-        library_search_result: Option<CardId>,
-        /// Actual target CardIds (if this was a target choice)
-        target_card_ids: Option<Vec<CardId>>,
-    },
-    /// Game ended - exit the game loop
-    Exit { winner: Option<PlayerId> },
-    /// Fatal error - exit with error
-    Error { message: String },
-}
-
-/// ChoiceAccepted information for library search result synchronization
-///
-/// When the local player makes a LibrarySearchByName choice, the server responds
-/// with ChoiceAccepted containing the actual CardId chosen. This allows the
-/// client's shadow game to know which specific card was moved.
-#[derive(Debug, Clone)]
-pub enum ChoiceAcceptedInfo {
-    /// Server accepted our choice, optionally with library search result
-    Accepted {
-        choice_seq: u32,
-        /// The CardId chosen for library search operations (only set for LibrarySearchByName)
-        library_search_result: Option<CardId>,
-    },
-    /// Game ended while waiting for ChoiceAccepted
-    Exit { winner: Option<PlayerId> },
-    /// Fatal error while waiting for ChoiceAccepted
-    Error { message: String },
-}
-
-/// Legacy ChoiceInfo for backward compatibility
-///
-/// DEPRECATED: Use LocalChoiceInfo and RemoteChoiceInfo instead.
-/// This enum is kept for the transition period.
-#[derive(Debug, Clone)]
-pub enum ChoiceInfo {
-    /// Server is requesting a choice from us
-    Request { action_count: u64, choice_seq: u32 },
-    /// Opponent made a choice - use these indices
-    Opponent {
-        action_count: u64,
-        indices: Vec<usize>,
-        spell_ability: Option<crate::core::SpellAbility>,
-        library_search_result: Option<CardId>,
-        target_card_ids: Option<Vec<CardId>>,
-    },
-    /// Game ended - exit the game loop
-    Exit { winner: Option<PlayerId> },
-    /// Fatal error - exit with error
-    Error { message: String },
-}
-
-/// Pending reveal for sync callback processing
-///
-/// Contains a CardRevealed message along with its associated action count
-/// for deterministic processing.
-#[derive(Debug, Clone)]
-pub struct PendingReveal {
-    pub action_count: u64,
-    pub owner: PlayerId,
-    pub card: CardReveal,
-    pub reason: RevealReason,
-}
+// Phase 2 step 3 (mtg-i2x3r / netarch): the legacy `RemoteChoiceInfo`,
+// `ChoiceAcceptedInfo`, and the deprecated `ChoiceInfo` enums, plus the
+// `PendingReveal` struct, are GONE. Opponent choices and ChoiceAccepted
+// acks now flow through the shared `ActionLog<ChoiceEntry>` buffers, and
+// reveals through `ActionLog<StateSyncEntry>`. Only `LocalChoiceInfo`
+// (still on the local-choice MVar) and `PendingLibraryReorder` (the
+// pre-game-loop initial-reorder carrier) remain.
 
 /// Pending library reorder for sync callback processing
 ///
@@ -307,12 +246,71 @@ pub struct PendingLibraryReorder {
     pub new_order: Vec<CardId>,
 }
 
+/// Shadow state-sync log + apply cursor (Phase 2 step 3a).
+///
+/// Wraps the SHARED `ActionLog<StateSyncEntry>` primitive plus the two
+/// pieces of consumer-owned bookkeeping the sync callback needs: the
+/// monotonic `action_count` allocator used when appending, and the
+/// `last_applied_ac` cursor that records how far the shadow `GameState`
+/// has been advanced. The whole struct lives behind one `Mutex` in
+/// `SharedNetworkState` (the lock wraps the owner, not the log —
+/// docs/NETWORK_ACTION_LOG.md § 3.3).
+#[derive(Default)]
+struct StateSyncBuffer {
+    /// Append-only, `action_count`-indexed shadow state-sync log. Shared
+    /// primitive (`crate::network::ActionLog<StateSyncEntry>`), identical
+    /// to the WASM client's `state_sync` field.
+    log: ActionLog<StateSyncEntry>,
+    /// Synthetic `action_count` allocator for pushes. The wire messages
+    /// (`CardRevealed` / `LibraryReordered`) do not currently carry a
+    /// server `action_count`, so the appender bumps this counter to keep
+    /// the log strictly monotonic. Mirrors the WASM `next_state_sync_ac`.
+    next_ac: u64,
+    /// Cursor: highest `action_count` whose entry has been applied to the
+    /// shadow `GameState`. `apply_up_to_frontier` walks entries with
+    /// `last_applied_ac < ac <= frontier()` and bumps this.
+    last_applied_ac: u64,
+}
+
+/// Opponent-choice buffer + FIFO read cursor (Phase 2 step 3b).
+///
+/// Wraps the SHARED `ActionLog<ChoiceEntry>` primitive keyed by the
+/// server `choice_seq`, plus the engine-side read cursor that hands out
+/// choices in `choice_seq` order (the native equivalent of the WASM
+/// `next_opponent_choice_cursor`). Reads are non-destructive; only the
+/// cursor advances, so a rewind/replay re-hands the same choices.
+#[derive(Default)]
+struct OpponentChoiceBuffer {
+    log: ActionLog<ChoiceEntry>,
+    /// Highest `choice_seq` already handed to the controller. The next
+    /// read returns the first entry with `choice_seq > cursor`.
+    cursor: u64,
+}
+
+/// Local ChoiceAccepted buffer + read cursor (Phase 2 step 3c).
+///
+/// Wraps a SHARED `ActionLog<ChoiceEntry>` keyed by the server
+/// `choice_seq`. Only the `choice_seq` + `library_search_result` fields
+/// of `ChoiceEntry` are meaningful here (the rest are unused for accepted
+/// acks); reusing `ChoiceEntry` keeps native + WASM on one payload set
+/// rather than introducing a parallel native-only struct. Read
+/// non-destructively by `choice_seq`.
+#[derive(Default)]
+struct ChoiceAcceptedBuffer {
+    log: ActionLog<ChoiceEntry>,
+    /// Highest `choice_seq` already consumed by the local controller.
+    cursor: u64,
+}
+
 /// Shared network state for synchronization between network loop and game loop
 ///
-/// This structure implements queued choice synchronization using the MVar pattern:
-/// - `pending_reveals`: Queue of CardRevealed messages keyed by action count
+/// This structure implements choice + state synchronization using the
+/// shared `ActionLog` primitive (Phase 2 step 3) plus an MVar for local
+/// ChoiceRequests:
+/// - `state_sync`: `ActionLog<StateSyncEntry>` of CardRevealed / LibraryReordered
 /// - `local_choice_mvar`: MVar for ChoiceRequest messages (local player)
-/// - `remote_choice_mvar`: MVar for OpponentChoice messages (remote player)
+/// - `opponent_choices`: `ActionLog<ChoiceEntry>` of OpponentChoice (remote player)
+/// - `choice_accepted`: `ActionLog<ChoiceEntry>` of ChoiceAccepted (local acks)
 /// - `server_action_count`: Latest action count from server (for sync targeting)
 ///
 /// The network event loop populates these, and the game loop/controllers consume them.
@@ -337,43 +335,74 @@ pub struct PendingLibraryReorder {
 /// The sync_callback should sync reveals up to this value (not the client's current count)
 /// to ensure the client's game state matches the server's before making choices.
 pub struct SharedNetworkState {
-    /// Pending reveals for sync callback processing
-    /// Keyed by action count for deterministic processing
-    pending_reveals: std::sync::Mutex<std::collections::VecDeque<PendingReveal>>,
+    /// Shadow state-sync log + apply cursor, behind one lock.
+    ///
+    /// Phase 2 step 3a (mtg-i2x3r / netarch): this REPLACES the legacy
+    /// `pending_reveals` / `pending_library_reorders` VecDeques, the
+    /// `library_reorder_condvar`, and the `choice_pending` race-fixer flag.
+    /// `CardRevealed` and `LibraryReordered` are now appended to a single
+    /// `ActionLog<StateSyncEntry>` keyed by a monotonic `action_count`, and
+    /// the sync callback walks unapplied entries up to the frontier with
+    /// reorder-before-reveal ordering (mtg-589). Reads are non-destructive
+    /// (the log is append-only; only the cursor moves), which is what gives
+    /// native the same rewind/replay property the WASM client already has —
+    /// and it reuses the SAME shared `ActionLog<StateSyncEntry>` primitive
+    /// (invariant #10: one primitive, native + WASM).
+    state_sync: std::sync::Mutex<StateSyncBuffer>,
 
-    /// Pending library reorders for sync callback processing
-    /// Library reorders are processed BEFORE reveals to ensure libraries are in sync
-    /// before cards are drawn from them.
-    pending_library_reorders: std::sync::Mutex<std::collections::VecDeque<PendingLibraryReorder>>,
-
-    /// Condvar for waiting on library reorders to arrive
-    /// Used to synchronize between async WS reader and blocking game loop
-    library_reorder_condvar: std::sync::Condvar,
+    /// Condvar notified on every `state_sync` push. The blocking game-loop
+    /// thread waits on this (NO timeout) until the state-sync frontier
+    /// reaches the count it needs — the native trampoline-equivalent of the
+    /// WASM "return `NeedsInput` and unwind" path
+    /// (docs/NETWORK_ACTION_LOG.md § 4). A timeout here would mean "proceed
+    /// with stale data" = silent desync, which is exactly the bug the old
+    /// `wait_for_library_reorders` timeout introduced; data arrival or a
+    /// fatal disconnect are the only things that release the wait.
+    state_sync_notify: std::sync::Condvar,
 
     /// MVar for local player choice requests (ChoiceRequest messages)
     local_choice_mvar: super::mvar::MVar<LocalChoiceInfo>,
 
-    /// MVar for remote player choices (OpponentChoice messages)
-    remote_choice_mvar: super::mvar::MVar<RemoteChoiceInfo>,
+    /// Opponent-choice buffer (`ActionLog<ChoiceEntry>`) + FIFO read cursor,
+    /// behind one lock. Phase 2 step 3b: REPLACES the legacy
+    /// `remote_choice_mvar`. The WS reader appends each `OpponentChoice`
+    /// keyed by its server-assigned `choice_seq` (strictly unique/monotonic
+    /// per choice — `action_count` is NOT unique, mtg-sfihb); the
+    /// `RemoteController` reads in `choice_seq` order via a non-destructive
+    /// cursor, mirroring the WASM `opponent_choices` log + cursor shim.
+    opponent_choices: std::sync::Mutex<OpponentChoiceBuffer>,
 
-    /// MVar for ChoiceAccepted responses (for library search result synchronization)
-    /// Used by NetworkLocalController to receive library_search_result after LibrarySearchByName
-    choice_accepted_mvar: super::mvar::MVar<ChoiceAcceptedInfo>,
+    /// Condvar notified on every `opponent_choices` push, plus on
+    /// exit/end/error signalling. The blocking `RemoteController` waits on
+    /// this (NO timeout) until an unconsumed opponent choice is available,
+    /// or a terminal (exit/error) state is set.
+    opponent_choices_notify: std::sync::Condvar,
+
+    /// Local ChoiceAccepted buffer (`ActionLog<ChoiceEntry>`) + read cursor,
+    /// behind one lock. Phase 2 step 3c: REPLACES the legacy
+    /// `choice_accepted_mvar` + `take_choice_accepted_for_seq`. Keyed by the
+    /// server `choice_seq` (the value `NetworkLocalController` already waits
+    /// for), read non-destructively so a rewind/replay re-reads the same
+    /// authoritative library-search result.
+    choice_accepted: std::sync::Mutex<ChoiceAcceptedBuffer>,
+
+    /// Condvar notified on every `choice_accepted` push, plus on
+    /// exit/end/error signalling. `NetworkLocalController::choose_from_library`
+    /// waits on this (NO timeout) for the ChoiceAccepted matching its
+    /// `choice_seq`.
+    choice_accepted_notify: std::sync::Condvar,
 
     /// Latest action count from server (updated on ChoiceRequest/OpponentChoice)
     /// Used as sync target to ensure client processes all reveals before choices
     server_action_count: std::sync::atomic::AtomicU64,
 
-    /// Flag indicating a choice is pending (ChoiceRequest or OpponentChoice has been received)
-    ///
-    /// This solves a race condition between the WS reader and sync_callback:
-    /// - WS reader pushes CardRevealed to pending_reveals, then pushes ChoiceRequest to MVar
-    /// - sync_callback might run BEFORE WS reader processes messages (sees empty queue)
-    /// - By checking this flag, sync_callback only drains reveals when ChoiceRequest is ready
-    ///
-    /// Set to true when push_local_choice/push_remote_choice is called.
-    /// Cleared when drain_all_reveals_if_ready returns reveals.
-    choice_pending: std::sync::atomic::AtomicBool,
+    /// Terminal flag: set once a `GameEnded`/fatal `Error`/socket close has
+    /// been observed by the WS reader. Releases the no-timeout Condvar waits
+    /// (state-sync frontier, opponent-choice, choice-accepted) so they
+    /// return a terminal result instead of blocking forever. This is the
+    /// "fatal disconnect" half of the "data arrival OR fatal disconnect"
+    /// wait-release condition (docs/NETWORK_ACTION_LOG.md § 4).
+    terminal: std::sync::atomic::AtomicBool,
 
     /// Server-authoritative game winner, captured from the `GameEnded` message.
     ///
@@ -405,14 +434,15 @@ impl SharedNetworkState {
     /// Create a new shared network state
     pub fn new() -> Self {
         Self {
-            pending_reveals: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            pending_library_reorders: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            library_reorder_condvar: std::sync::Condvar::new(),
+            state_sync: std::sync::Mutex::new(StateSyncBuffer::default()),
+            state_sync_notify: std::sync::Condvar::new(),
             local_choice_mvar: super::mvar::MVar::new(),
-            remote_choice_mvar: super::mvar::MVar::new(),
-            choice_accepted_mvar: super::mvar::MVar::new(),
+            opponent_choices: std::sync::Mutex::new(OpponentChoiceBuffer::default()),
+            opponent_choices_notify: std::sync::Condvar::new(),
+            choice_accepted: std::sync::Mutex::new(ChoiceAcceptedBuffer::default()),
+            choice_accepted_notify: std::sync::Condvar::new(),
             server_action_count: std::sync::atomic::AtomicU64::new(0),
-            choice_pending: std::sync::atomic::AtomicBool::new(false),
+            terminal: std::sync::atomic::AtomicBool::new(false),
             server_winner: std::sync::Mutex::new(None),
             game_ended_notify: tokio::sync::Notify::new(),
         }
@@ -476,156 +506,161 @@ impl SharedNetworkState {
             .store(action_count, std::sync::atomic::Ordering::Release);
     }
 
-    /// Push a pending reveal (called by network loop)
-    pub fn push_reveal(&self, action_count: u64, owner: PlayerId, card: CardReveal, reason: RevealReason) {
-        let mut queue = self.pending_reveals.lock().unwrap();
-        queue.push_back(PendingReveal {
-            action_count,
+    // ─────────────────────────────────────────────────────────────────────
+    // STATE-SYNC LOG (Phase 2 step 3a — reveal/reorder via ActionLog<StateSyncEntry>)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Append a `StateSyncEntry` to the shadow state-sync log at the next
+    /// synthetic `action_count`, then notify the frontier-wait Condvar.
+    ///
+    /// Sole appenders: the WS reader (`run_ws_reader_shared`) for live
+    /// reveals/reorders, and `run_game` for the initial reorders captured
+    /// during `wait_for_game_start`. Append-only / strictly monotonic by
+    /// construction (invariant #2 of docs/NETWORK_ACTION_LOG.md § 8).
+    fn push_state_sync(&self, entry: StateSyncEntry) {
+        let mut buf = self.state_sync.lock().unwrap();
+        buf.next_ac += 1;
+        let ac = buf.next_ac;
+        buf.log.push(ac, entry);
+        drop(buf);
+        self.state_sync_notify.notify_all();
+    }
+
+    /// Append a `CardRevealed` to the shadow state-sync log (WS reader).
+    pub fn push_reveal(&self, owner: PlayerId, card: CardReveal, reason: RevealReason) {
+        self.push_state_sync(StateSyncEntry::RevealCard {
             owner,
-            card,
+            card: Box::new(card),
             reason,
         });
     }
 
-    /// Process pending reveals up to target action count (called by sync callback)
-    ///
-    /// Returns reveals that should be processed, removing them from the queue.
-    /// Only returns reveals with action_count <= target.
-    #[allow(dead_code)] // May be used for stricter sync validation in the future
-    pub fn drain_reveals_up_to(&self, target: u64) -> Vec<PendingReveal> {
-        let mut queue = self.pending_reveals.lock().unwrap();
-        let mut result = Vec::new();
-
-        // Drain all reveals up to target action count
-        while queue.front().map(|r| r.action_count <= target).unwrap_or(false) {
-            result.push(queue.pop_front().unwrap());
-        }
-
-        result
-    }
-
-    /// Drain ALL pending reveals (greedy mode)
-    ///
-    /// Used when we need to process all reveals regardless of action_count.
-    /// This avoids race conditions where the WS reader hasn't yet updated
-    /// server_action_count when sync_callback is called.
-    ///
-    /// Safe because:
-    /// - Server sends CardRevealed BEFORE ChoiceRequest
-    /// - Client shadow game runs deterministically, reaching the same game states
-    /// - Reveals only arrive when they're actually needed
-    pub fn drain_all_reveals(&self) -> Vec<PendingReveal> {
-        let mut queue = self.pending_reveals.lock().unwrap();
-        queue.drain(..).collect()
-    }
-
-    /// Drain ALL pending reveals, but ONLY if a choice is pending
-    ///
-    /// This solves the race condition between WS reader and sync_callback:
-    /// 1. WS reader pushes CardRevealed to pending_reveals
-    /// 2. WS reader pushes ChoiceRequest to MVar (sets choice_pending = true)
-    /// 3. sync_callback calls this method
-    ///
-    /// If sync_callback runs BEFORE step 2, choice_pending is false, so we return empty.
-    /// The reveals will be processed on the NEXT sync_callback call after the controller
-    /// has blocked on MVar (which guarantees step 2 has completed).
-    ///
-    /// Returns (reveals, processed) where processed is true if we actually drained.
-    pub fn drain_all_reveals_if_ready(&self) -> (Vec<PendingReveal>, bool) {
-        // Check if a choice is pending (ChoiceRequest/OpponentChoice has been pushed)
-        if !self.choice_pending.load(std::sync::atomic::Ordering::Acquire) {
-            // No choice pending yet - WS reader might not have processed messages
-            // Skip draining to avoid processing reveals too early
-            return (Vec::new(), false);
-        }
-
-        // Choice is pending - safe to drain reveals
-        // Clear the flag so the next sync won't re-drain
-        self.choice_pending.store(false, std::sync::atomic::Ordering::Release);
-
-        let mut queue = self.pending_reveals.lock().unwrap();
-        (queue.drain(..).collect(), true)
-    }
-
-    /// Push a pending library reorder (called by network loop)
-    ///
-    /// Library reorders are sent after GameStarted to sync the initial shuffled
-    /// library order between server and client. The server uses positional CardIDs
-    /// (CardID 0 = top of shuffled library) but clients don't know the shuffle.
+    /// Append a `LibraryReordered` to the shadow state-sync log (WS reader
+    /// for in-game shuffles, and `run_game` for initial reorders).
     pub fn push_library_reorder(&self, player: PlayerId, new_order: Vec<CardId>) {
-        let mut queue = self.pending_library_reorders.lock().unwrap();
-        queue.push_back(PendingLibraryReorder { player, new_order });
-        // Notify any waiting threads that a library reorder is available
-        self.library_reorder_condvar.notify_all();
+        self.push_state_sync(StateSyncEntry::LibraryReorder { player, new_order });
     }
 
-    /// Wait until at least `count` library reorders have been received
+    /// Apply every state-sync entry received but not yet applied to the
+    /// shadow `game`, up to the current frontier. **Non-destructive read**
+    /// of the log — only the per-consumer cursor advances; the log itself is
+    /// untouched, so a rewind/replay can re-apply from `reset_state_sync_cursor`.
     ///
-    /// Used to synchronize the blocking game loop with the async WS reader.
-    /// The game loop needs library reorders to be applied BEFORE the first
-    /// DrawCard action, but the WS reader runs concurrently.
+    /// CRITICAL ORDERING (mtg-589): within each apply batch, `LibraryReorder`
+    /// entries are applied BEFORE `RevealCard` entries (even when a reveal
+    /// arrived earlier on the wire), because the server guarantees the
+    /// library order before any draw. The legacy two-step
+    /// `drain_all_library_reorders → drain_all_reveals` preserved this; the
+    /// log preserves it via a two-pass apply over the same cursor window.
+    /// The cursor advances over BOTH passes' entries so re-runs after a
+    /// rewind replay them in the same per-pass order (bit-identical shadow).
     ///
-    /// Returns true if enough reorders arrived, false on timeout.
-    pub fn wait_for_library_reorders(&self, count: usize, timeout: std::time::Duration) -> bool {
-        let start = std::time::Instant::now();
-        let mut queue = self.pending_library_reorders.lock().unwrap();
+    /// Returns the number of entries applied (diagnostics).
+    pub fn apply_state_sync_up_to_frontier(
+        &self,
+        game: &mut GameState,
+        card_db: &AsyncCardDatabase,
+        local_player: PlayerId,
+    ) -> usize {
+        let mut buf = self.state_sync.lock().unwrap();
+        let frontier = match buf.log.frontier() {
+            Some(f) => f,
+            None => return 0,
+        };
+        if frontier <= buf.last_applied_ac {
+            return 0;
+        }
 
-        while queue.len() < count {
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                log::warn!(
-                    "wait_for_library_reorders: timeout after {:?}, only got {} of {} reorders",
-                    elapsed,
-                    queue.len(),
-                    count
+        // Snapshot the cursor window once (apply-by-index would still need a
+        // clone to release the lock before touching `game`; the window is
+        // tiny — one reveal/reorder per sync point).
+        let last_applied = buf.last_applied_ac;
+        let to_apply: Vec<(u64, StateSyncEntry)> = buf
+            .log
+            .iter()
+            .filter(|(ac, _)| *ac > last_applied && *ac <= frontier)
+            .map(|(ac, entry)| (ac, entry.clone()))
+            .collect();
+        // Advance the cursor and release the lock before mutating `game`
+        // (the WS reader must stay able to append while we apply).
+        buf.last_applied_ac = frontier;
+        drop(buf);
+
+        // Pass 1: library reorders. Protocol sends top-to-bottom; the shadow
+        // library Vec is bottom-to-top (draw pops the last element).
+        for (ac, entry) in &to_apply {
+            if let StateSyncEntry::LibraryReorder { player, new_order } = entry {
+                log::debug!(
+                    "apply_state_sync: library reorder ac={} player={:?} ({} cards)",
+                    ac,
+                    player,
+                    new_order.len()
                 );
-                return false;
-            }
-
-            let remaining = timeout - elapsed;
-            let result = self.library_reorder_condvar.wait_timeout(queue, remaining).unwrap();
-            queue = result.0;
-
-            if result.1.timed_out() {
-                log::warn!(
-                    "wait_for_library_reorders: condvar timed out, got {} of {} reorders",
-                    queue.len(),
-                    count
-                );
-                return false;
+                if let Some(zones) = game.get_player_zones_mut(*player) {
+                    zones.library.cards = new_order.iter().rev().copied().collect();
+                }
             }
         }
 
-        log::debug!(
-            "wait_for_library_reorders: received {} reorders in {:?}",
-            queue.len(),
-            start.elapsed()
-        );
-        true
+        // Pass 2: card reveals (library order is now server-authoritative).
+        let mut applied = 0;
+        for (ac, entry) in to_apply {
+            if let StateSyncEntry::RevealCard { owner, card, reason } = entry {
+                log::debug!(
+                    "apply_state_sync: reveal ac={} owner={:?} card={}",
+                    ac,
+                    owner,
+                    card.name
+                );
+                process_card_reveal(game, card_db, owner, *card, reason, local_player);
+            }
+            applied += 1;
+        }
+        applied
     }
 
-    /// Drain ALL pending library reorders (greedy mode)
-    ///
-    /// Library reorders must be processed BEFORE reveals to ensure the library
-    /// is in the correct order before cards are drawn.
-    pub fn drain_all_library_reorders(&self) -> Vec<PendingLibraryReorder> {
-        let mut queue = self.pending_library_reorders.lock().unwrap();
-        queue.drain(..).collect()
+    /// Reset the state-sync apply cursor so the next
+    /// `apply_state_sync_up_to_frontier` re-applies every entry. Used by
+    /// snapshot-resume / rewind: when the engine rewinds `action_count`, the
+    /// shadow mutations rewind too and must be re-applied on the forward
+    /// replay. The log itself stays intact (non-destructive reads).
+    pub fn reset_state_sync_cursor(&self) {
+        self.state_sync.lock().unwrap().last_applied_ac = 0;
     }
+
+    /// Block (NO timeout) until the state-sync frontier reaches at least
+    /// `count` entries, i.e. until `count` reveals/reorders have arrived.
+    ///
+    /// This is the native frontier-wait — the blocking-thread equivalent of
+    /// the WASM "return `NeedsInput` and unwind" path
+    /// (docs/NETWORK_ACTION_LOG.md § 4). It releases ONLY on data arrival
+    /// (frontier ≥ `count`) or a terminal disconnect (`terminal` set);
+    /// there is deliberately NO timeout, because a timeout would mean
+    /// "proceed with stale data" = silent desync (the exact bug the old
+    /// `wait_for_library_reorders` timeout caused).
+    ///
+    /// Returns `true` if the frontier reached `count`, `false` if the wait
+    /// was released by a terminal disconnect first.
+    pub fn wait_for_state_sync_frontier(&self, count: u64) -> bool {
+        let mut buf = self.state_sync.lock().unwrap();
+        loop {
+            if buf.log.frontier().unwrap_or(0) >= count {
+                return true;
+            }
+            if self.terminal.load(std::sync::atomic::Ordering::Acquire) {
+                return buf.log.frontier().unwrap_or(0) >= count;
+            }
+            buf = self.state_sync_notify.wait(buf).unwrap();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // LOCAL CHOICE MVar (ChoiceRequest stays on the MVar)
+    // ─────────────────────────────────────────────────────────────────────
 
     /// Push a local choice request (ChoiceRequest from server)
     pub fn push_local_choice(&self, choice: LocalChoiceInfo) {
-        // Set choice_pending BEFORE pushing to MVar
-        // This ensures sync_callback can see the flag after controller takes from MVar
-        self.choice_pending.store(true, std::sync::atomic::Ordering::Release);
         self.local_choice_mvar.put(choice);
-    }
-
-    /// Push a remote choice (OpponentChoice from server)
-    pub fn push_remote_choice(&self, choice: RemoteChoiceInfo) {
-        // Set choice_pending BEFORE pushing to MVar
-        self.choice_pending.store(true, std::sync::atomic::Ordering::Release);
-        self.remote_choice_mvar.put(choice);
     }
 
     /// Take the next local choice from MVar (called by NetworkLocalController)
@@ -636,147 +671,134 @@ impl SharedNetworkState {
         self.local_choice_mvar.take()
     }
 
-    /// Take the next remote choice from MVar (called by RemoteController)
+    // ─────────────────────────────────────────────────────────────────────
+    // OPPONENT-CHOICE BUFFER (Phase 2 step 3b — ActionLog<ChoiceEntry>)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Append an `OpponentChoice` to the per-controller choice buffer, keyed
+    /// by the server `choice_seq` (strictly unique/monotonic per choice;
+    /// `action_count` is NOT unique — mtg-sfihb). Notifies the Condvar.
     ///
-    /// Blocks until a choice is available, then consumes it.
-    /// Returns None only if exit has been signaled and MVar is empty.
-    pub fn take_remote_choice(&self) -> Option<RemoteChoiceInfo> {
-        self.remote_choice_mvar.take()
+    /// Sole appender: the WS reader. Append-only / strictly monotonic; a
+    /// stale or out-of-order `choice_seq` makes `ActionLog::push` panic,
+    /// which is the correct fatal response (NETWORK_ARCHITECTURE.md
+    /// § "Desync is ALWAYS a Fatal Error").
+    pub fn push_opponent_choice(&self, entry: ChoiceEntry) {
+        let mut buf = self.opponent_choices.lock().unwrap();
+        buf.log.push(u64::from(entry.choice_seq), entry);
+        drop(buf);
+        self.opponent_choices_notify.notify_all();
     }
 
-    /// Push a ChoiceAccepted response (called by WS reader)
+    /// Block (NO timeout) for the next unconsumed opponent choice in
+    /// `choice_seq` order, advancing the read cursor. Non-destructive: the
+    /// entry stays in the log for replay. Releases on data arrival or a
+    /// terminal disconnect (the native frontier-wait — § 4).
     ///
-    /// Used to communicate library_search_result back to NetworkLocalController
-    /// after a LibrarySearchByName choice.
-    pub fn push_choice_accepted(&self, info: ChoiceAcceptedInfo) {
-        self.choice_accepted_mvar.put(info);
-    }
-
-    /// Take the next ChoiceAccepted response (called by NetworkLocalController)
-    ///
-    /// Blocks until ChoiceAccepted is available, then consumes it.
-    /// Returns None only if exit has been signaled and MVar is empty.
-    pub fn take_choice_accepted(&self) -> Option<ChoiceAcceptedInfo> {
-        self.choice_accepted_mvar.take()
-    }
-
-    /// Take ChoiceAccepted for a specific choice_seq, discarding stale messages
-    ///
-    /// The MVar may contain ChoiceAccepted messages from previous choices that weren't
-    /// consumed (because only library searches need to wait for ChoiceAccepted).
-    /// This method loops until it finds the matching choice_seq or encounters Exit/Error.
-    pub fn take_choice_accepted_for_seq(&self, expected_seq: u32) -> Option<ChoiceAcceptedInfo> {
+    /// Returns `Some(entry)` on a buffered choice, or `None` if a terminal
+    /// disconnect was signalled before one arrived (caller treats as exit).
+    pub fn take_opponent_choice(&self) -> Option<ChoiceEntry> {
+        let mut buf = self.opponent_choices.lock().unwrap();
         loop {
-            match self.choice_accepted_mvar.take() {
-                Some(ChoiceAcceptedInfo::Accepted {
-                    choice_seq,
-                    library_search_result,
-                }) => {
-                    if choice_seq == expected_seq {
-                        // Found the matching ChoiceAccepted
-                        return Some(ChoiceAcceptedInfo::Accepted {
-                            choice_seq,
-                            library_search_result,
-                        });
-                    }
-                    // Stale message from previous choice - discard and continue
-                    log::debug!(
-                        "[ClientSharedState] Discarding stale ChoiceAccepted: got seq={}, expected seq={}",
-                        choice_seq,
-                        expected_seq
-                    );
-                }
-                Some(exit_or_error) => {
-                    // Exit or Error - return immediately
-                    return Some(exit_or_error);
-                }
-                None => {
-                    // MVar returned None (exit signaled and empty)
-                    return None;
-                }
+            let next = buf
+                .log
+                .iter()
+                .find(|(seq, _)| *seq > buf.cursor)
+                .map(|(seq, e)| (seq, e.clone()));
+            if let Some((seq, entry)) = next {
+                buf.cursor = seq;
+                return Some(entry);
             }
+            if self.terminal.load(std::sync::atomic::Ordering::Acquire) {
+                return None;
+            }
+            buf = self.opponent_choices_notify.wait(buf).unwrap();
         }
     }
 
-    /// Signal that the game should exit (notifies ALL MVars)
+    /// Reset the opponent-choice read cursor to 0 so a replay re-hands out
+    /// every buffered choice (rewind/snapshot-resume support).
+    pub fn reset_opponent_choice_cursor(&self) {
+        self.opponent_choices.lock().unwrap().cursor = 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // LOCAL CHOICE-ACCEPTED BUFFER (Phase 2 step 3c — ActionLog<ChoiceEntry>)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Append a `ChoiceAccepted` ack to the local choice-accepted buffer,
+    /// keyed by `choice_seq`. Only `choice_seq` + `library_search_result`
+    /// carry meaning here; the other `ChoiceEntry` fields are unused. Reuses
+    /// `ChoiceEntry` so native + WASM share one payload set. Notifies.
+    ///
+    /// Sole appender: the WS reader.
+    pub fn push_choice_accepted(&self, choice_seq: u32, library_search_result: Option<CardId>) {
+        let mut buf = self.choice_accepted.lock().unwrap();
+        buf.log.push(
+            u64::from(choice_seq),
+            ChoiceEntry {
+                choice_seq,
+                action_count: 0,
+                choice_indices: Vec::new(),
+                description: String::new(),
+                spell_ability: None,
+                library_search_result,
+                target_card_ids: None,
+            },
+        );
+        drop(buf);
+        self.choice_accepted_notify.notify_all();
+    }
+
+    /// Block (NO timeout) for the ChoiceAccepted matching `expected_seq`,
+    /// reading it non-destructively (cursor advances to it). The
+    /// library-search-result for `expected_seq` is returned. Releases on the
+    /// matching entry arriving or a terminal disconnect.
+    ///
+    /// Returns `Some(library_search_result)` (inner may be `None` for a
+    /// non-search accept) when matched, or `None` on terminal disconnect.
+    pub fn wait_for_choice_accepted(&self, expected_seq: u32) -> Option<Option<CardId>> {
+        let key = u64::from(expected_seq);
+        let mut buf = self.choice_accepted.lock().unwrap();
+        loop {
+            if let Some(entry) = buf.log.get(key) {
+                let result = entry.library_search_result;
+                if buf.cursor < key {
+                    buf.cursor = key;
+                }
+                return Some(result);
+            }
+            if self.terminal.load(std::sync::atomic::Ordering::Acquire) {
+                return None;
+            }
+            buf = self.choice_accepted_notify.wait(buf).unwrap();
+        }
+    }
+
+    /// Reset the choice-accepted read cursor to 0 (rewind/replay support).
+    pub fn reset_choice_accepted_cursor(&self) {
+        self.choice_accepted.lock().unwrap().cursor = 0;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // TERMINAL / EXIT SIGNALLING
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// Signal that the game should exit. Sets the terminal flag (releasing
+    /// every no-timeout Condvar wait), signals the local-choice MVar, and
+    /// notifies the state-sync / opponent-choice / choice-accepted Condvars
+    /// so any blocked waiter wakes and observes the terminal state.
     pub fn signal_exit(&self) {
+        self.terminal.store(true, std::sync::atomic::Ordering::Release);
         self.local_choice_mvar.signal_exit();
-        self.remote_choice_mvar.signal_exit();
-        self.choice_accepted_mvar.signal_exit();
+        self.state_sync_notify.notify_all();
+        self.opponent_choices_notify.notify_all();
+        self.choice_accepted_notify.notify_all();
     }
 
     /// Check if exit has been signaled
     pub fn should_exit(&self) -> bool {
-        // Check either MVar - they should be in sync
-        self.local_choice_mvar.is_exit_signaled()
-    }
-
-    // Legacy methods for backward compatibility (DEPRECATED)
-
-    /// Push a choice to the MVar (called by network loop)
-    ///
-    /// DEPRECATED: Use push_local_choice or push_remote_choice instead.
-    #[allow(dead_code)]
-    pub fn push_choice(&self, choice: ChoiceInfo) {
-        match choice {
-            ChoiceInfo::Request {
-                action_count,
-                choice_seq,
-            } => {
-                self.push_local_choice(LocalChoiceInfo::Request {
-                    action_count,
-                    choice_seq,
-                    abilities: None,             // Legacy path doesn't have abilities
-                    library_search_names: None,  // Legacy path doesn't have library search names
-                    library_search_counts: None, // Legacy path doesn't have counts
-                });
-            }
-            ChoiceInfo::Opponent {
-                action_count,
-                indices,
-                spell_ability,
-                library_search_result,
-                target_card_ids,
-            } => {
-                self.push_remote_choice(RemoteChoiceInfo::Opponent {
-                    action_count,
-                    indices,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
-                });
-            }
-            ChoiceInfo::Exit { winner } => {
-                self.push_local_choice(LocalChoiceInfo::Exit { winner });
-                self.push_remote_choice(RemoteChoiceInfo::Exit { winner });
-            }
-            ChoiceInfo::Error { message } => {
-                self.push_local_choice(LocalChoiceInfo::Error {
-                    message: message.clone(),
-                });
-                self.push_remote_choice(RemoteChoiceInfo::Error { message });
-            }
-        }
-    }
-
-    /// Take the next choice from MVar (called by controller)
-    ///
-    /// DEPRECATED: Use take_local_choice or take_remote_choice instead.
-    /// This method only returns local choices for backward compatibility.
-    #[allow(dead_code)]
-    pub fn take_choice(&self) -> Option<ChoiceInfo> {
-        self.take_local_choice().map(|local| match local {
-            LocalChoiceInfo::Request {
-                action_count,
-                choice_seq,
-                ..  // Ignore abilities and library_search_names for legacy ChoiceInfo
-            } => ChoiceInfo::Request {
-                action_count,
-                choice_seq,
-            },
-            LocalChoiceInfo::Exit { winner } => ChoiceInfo::Exit { winner },
-            LocalChoiceInfo::Error { message } => ChoiceInfo::Error { message },
-        })
+        self.terminal.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -1779,9 +1801,10 @@ impl NetworkClient {
         // Spawn writer task: send_rx → WebSocket
         let writer_handle = tokio::spawn(run_ws_writer(ws_sink, send_rx));
 
-        // Clone for sync callback and controllers
+        // Clone for sync callback, controllers, and initial-reorder seeding
         let sync_state = shared_state.clone();
         let controller_state = shared_state.clone();
+        let seed_state = shared_state.clone();
         let card_db_for_sync = card_db.clone();
 
         // Run game loop in spawn_blocking (works with both single and multi-threaded runtimes)
@@ -1815,92 +1838,41 @@ impl NetworkClient {
             // - Client shadow game runs deterministically, reaching the same game states
             // - Reveals only arrive when they're actually needed
             let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                let game_action = game.undo_log.len() as u64;
-
-                // FIRST: Apply library reorders BEFORE reveals
-                // This ensures libraries are in the correct server-shuffled order
-                // before cards are drawn from them.
-                let reorders = sync_state.drain_all_library_reorders();
-                for reorder in reorders {
+                // Phase 2 step 3a: non-destructively apply every unapplied
+                // state-sync entry (reorders BEFORE reveals, mtg-589) up to
+                // the current frontier. Replaces the legacy
+                // drain_all_library_reorders + drain_all_reveals two-step;
+                // the log is keyed by action_count so arrival races no longer
+                // hand the wrong subset to a given sync point, and reads are
+                // non-destructive (enabling rewind/replay).
+                let applied = sync_state.apply_state_sync_up_to_frontier(game, &card_db_for_sync, our_player_id);
+                if applied > 0 {
                     log::debug!(
-                        "sync_callback: applying library reorder for {:?}, {} cards",
-                        reorder.player,
-                        reorder.new_order.len()
-                    );
-                    if let Some(zones) = game.get_player_zones_mut(reorder.player) {
-                        // Protocol sends top-to-bottom, but library Vec is bottom-to-top
-                        // (index 0 = bottom, last = top; draw_top uses pop())
-                        // So we reverse to convert top-to-bottom -> bottom-to-top
-                        zones.library.cards = reorder.new_order.into_iter().rev().collect();
-                        log::trace!(
-                            "sync_callback: library reordered for {:?}, new top={}",
-                            reorder.player,
-                            zones.library.cards.last().map(|c| c.as_u32()).unwrap_or(0)
-                        );
-                    }
-                }
-
-                // SECOND: Process reveals
-                // Greedy: drain ALL pending reveals
-                let reveals = sync_state.drain_all_reveals();
-
-                if !reveals.is_empty() {
-                    log::debug!(
-                        "sync_callback: processing {} reveals (greedy mode, game_action={})",
-                        reveals.len(),
-                        game_action
-                    );
-                }
-
-                for reveal in reveals {
-                    log::trace!(
-                        "sync_callback: processing reveal {} at tagged_action={} (game={})",
-                        reveal.card.name,
-                        reveal.action_count,
-                        game_action
-                    );
-                    process_card_reveal(
-                        game,
-                        &card_db_for_sync,
-                        reveal.owner,
-                        reveal.card,
-                        reveal.reason,
-                        our_player_id,
+                        "sync_callback: applied {} state-sync entries (game_action={})",
+                        applied,
+                        game.undo_log.len()
                     );
                 }
             };
 
-            // IMMEDIATE LIBRARY REORDER: Apply pending library reorders NOW, before GameLoop starts.
-            //
-            // CRITICAL: These were captured during wait_for_game_start() BEFORE the WS reader
-            // task was spawned. The server sends LibraryReordered messages right after GameStarted
-            // to sync the initial shuffled library order. These MUST be applied before the first
-            // action (DrawCard for opening hands) or the client will draw from the wrong position.
-            //
-            // The sync_callback also handles library reorders for any that arrive later during
-            // the game (e.g., from tutor shuffles), but initial reorders come before the game loop.
+            // IMMEDIATE LIBRARY REORDER: Fold the initial library reorders
+            // (captured during wait_for_game_start, BEFORE the WS reader task
+            // spawned) into the SAME state-sync log at their action_count, so
+            // the first sync_callback applies them before any draw. This
+            // unifies the initial-reorder path with the in-game path on one
+            // log (no separate pre-loop application).
             if !pending_library_reorders.is_empty() {
                 log::info!(
-                    "run_game: applying {} pending library reorders BEFORE GameLoop starts",
+                    "run_game: seeding {} initial library reorders into state-sync log BEFORE GameLoop starts",
                     pending_library_reorders.len()
                 );
                 for reorder in pending_library_reorders {
                     log::debug!(
-                        "run_game: applying library reorder for {:?}, {} cards",
+                        "run_game: seeding library reorder for {:?}, {} cards",
                         reorder.player,
                         reorder.new_order.len()
                     );
-                    if let Some(zones) = game.get_player_zones_mut(reorder.player) {
-                        // Protocol sends top-to-bottom, but library Vec is bottom-to-top
-                        // (index 0 = bottom, last = top; draw_top uses pop())
-                        // So we reverse to convert top-to-bottom -> bottom-to-top
-                        zones.library.cards = reorder.new_order.into_iter().rev().collect();
-                        log::debug!(
-                            "run_game: library reordered for {:?}, new top={}",
-                            reorder.player,
-                            zones.library.cards.last().map(|c| c.as_u32()).unwrap_or(0)
-                        );
-                    }
+                    seed_state.push_library_reorder(reorder.player, reorder.new_order);
                 }
             } else {
                 log::warn!("run_game: no pending library reorders - library order may be wrong!");
@@ -2009,16 +1981,14 @@ async fn run_ws_reader_shared(
                     if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
                         match network_msg {
                             NetworkMessage::CardRevealed { owner, card, reason } => {
-                                // Route to pending reveals queue
-                                let action = current_action_count.load(std::sync::atomic::Ordering::Relaxed);
+                                // Append to the shadow state-sync log (Phase 2 step 3a).
                                 log::debug!(
-                                    "WsReaderShared: buffering reveal {} (id={}) for {:?} at action {}",
+                                    "WsReaderShared: buffering reveal {} (id={}) for {:?}",
                                     card.name,
                                     card.card_id.as_u32(),
-                                    owner,
-                                    action
+                                    owner
                                 );
-                                shared_state.push_reveal(action, owner, card, reason);
+                                shared_state.push_reveal(owner, card, reason);
                             }
                             NetworkMessage::ChoiceRequest {
                                 action_count,
@@ -2059,33 +2029,36 @@ async fn run_ws_reader_shared(
                                     action_count,
                                     library_search_result
                                 );
-                                // Push to choice_accepted_mvar for library search synchronization
-                                shared_state.push_choice_accepted(ChoiceAcceptedInfo::Accepted {
-                                    choice_seq,
-                                    library_search_result,
-                                });
+                                // Append to the local choice-accepted buffer
+                                // (Phase 2 step 3c), keyed by choice_seq.
+                                shared_state.push_choice_accepted(choice_seq, library_search_result);
                             }
                             NetworkMessage::OpponentChoice {
                                 action_count,
+                                choice_seq,
                                 choice_indices,
-                                description: _,
+                                description,
                                 spell_ability,
                                 library_search_result,
                                 target_card_ids,
                             } => {
                                 // Update tracked action count (for sync targeting)
                                 shared_state.update_server_action_count(action_count);
-                                // Push to REMOTE choice MVar (for RemoteController)
+                                // Append to the per-controller opponent-choice
+                                // buffer (Phase 2 step 3b), keyed by choice_seq.
                                 log::debug!(
-                                    "WsReaderShared: OpponentChoice indices={:?} action={} lib_search={:?} targets={:?} -> remote_mvar",
+                                    "WsReaderShared: OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?} -> opponent_choices",
+                                    choice_seq,
                                     choice_indices,
                                     action_count,
                                     library_search_result,
                                     target_card_ids
                                 );
-                                shared_state.push_remote_choice(RemoteChoiceInfo::Opponent {
+                                shared_state.push_opponent_choice(ChoiceEntry {
+                                    choice_seq,
                                     action_count,
-                                    indices: choice_indices,
+                                    choice_indices,
+                                    description,
                                     spell_ability,
                                     library_search_result,
                                     target_card_ids,
@@ -2102,25 +2075,24 @@ async fn run_ws_reader_shared(
                                 // same verdict on both clients regardless of
                                 // which controller exit path fires first.
                                 shared_state.set_server_winner(winner);
-                                // Push to ALL MVars (any controller might be waiting)
+                                // signal_exit() sets the terminal flag and
+                                // notifies the state-sync / opponent-choice /
+                                // choice-accepted Condvars so any blocked
+                                // waiter wakes and observes the terminal state.
+                                // The local ChoiceRequest path is still on the
+                                // MVar, so push its Exit explicitly.
                                 shared_state.signal_exit();
                                 shared_state.push_local_choice(LocalChoiceInfo::Exit { winner });
-                                shared_state.push_remote_choice(RemoteChoiceInfo::Exit { winner });
-                                shared_state.push_choice_accepted(ChoiceAcceptedInfo::Exit { winner });
                                 return;
                             }
                             NetworkMessage::Error { message, fatal } => {
                                 if fatal {
                                     log::error!("WsReaderShared: Fatal error: {}", message);
-                                    // Push to ALL MVars (any controller might be waiting)
+                                    // Terminal: release all waiters (terminal
+                                    // flag + Condvar notify) and push the
+                                    // local-choice MVar's Error explicitly.
                                     shared_state.signal_exit();
-                                    shared_state.push_local_choice(LocalChoiceInfo::Error {
-                                        message: message.clone(),
-                                    });
-                                    shared_state.push_remote_choice(RemoteChoiceInfo::Error {
-                                        message: message.clone(),
-                                    });
-                                    shared_state.push_choice_accepted(ChoiceAcceptedInfo::Error { message });
+                                    shared_state.push_local_choice(LocalChoiceInfo::Error { message });
                                     return;
                                 }
                                 log::warn!("WsReaderShared: Non-fatal error: {}", message);
@@ -2145,7 +2117,6 @@ async fn run_ws_reader_shared(
                 log::debug!("WsReaderShared: WebSocket closed by server");
                 shared_state.signal_exit();
                 shared_state.push_local_choice(LocalChoiceInfo::Exit { winner: None });
-                shared_state.push_remote_choice(RemoteChoiceInfo::Exit { winner: None });
                 return;
             }
             Ok(_) => {
@@ -2155,7 +2126,6 @@ async fn run_ws_reader_shared(
                 log::error!("WsReaderShared: WebSocket error: {}", e);
                 shared_state.signal_exit();
                 shared_state.push_local_choice(LocalChoiceInfo::Error { message: e.to_string() });
-                shared_state.push_remote_choice(RemoteChoiceInfo::Error { message: e.to_string() });
                 return;
             }
         }

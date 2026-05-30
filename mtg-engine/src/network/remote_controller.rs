@@ -15,7 +15,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::network::client::{RemoteChoiceInfo, SharedNetworkState};
+use crate::network::client::SharedNetworkState;
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -91,45 +91,33 @@ impl RemoteController {
             return true;
         }
 
-        // Only relevant for MVar mode
+        // Only relevant for shared-state (network) mode
         let Some(ref state) = self.shared_state else {
             return true; // Legacy mode always proceeds
         };
 
-        // Block on MVar to receive OpponentChoice
-        match state.take_remote_choice() {
-            Some(RemoteChoiceInfo::Opponent {
-                action_count,
-                indices,
-                spell_ability,
-                library_search_result,
-                target_card_ids,
-            }) => {
+        // Block (NO timeout) for the next unconsumed opponent choice in the
+        // choice buffer (Phase 2 step 3b). Returns None only on terminal
+        // disconnect (game ended / fatal error).
+        match state.take_opponent_choice() {
+            Some(entry) => {
                 log::debug!(
-                    "RemoteController::prepare_choice_info: got OpponentChoice action={} indices={:?}",
-                    action_count,
-                    indices
+                    "RemoteController::prepare_choice_info: got OpponentChoice seq={} action={} indices={:?}",
+                    entry.choice_seq,
+                    entry.action_count,
+                    entry.choice_indices
                 );
-                // Cache the choice info for later use
                 self.pending_choice = Some(CachedOpponentChoice {
-                    action_count,
-                    indices,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
+                    action_count: entry.action_count,
+                    indices: entry.choice_indices,
+                    spell_ability: entry.spell_ability,
+                    library_search_result: entry.library_search_result,
+                    target_card_ids: entry.target_card_ids,
                 });
                 true
             }
-            Some(RemoteChoiceInfo::Exit { winner }) => {
-                log::info!("RemoteController::prepare_choice_info: game ended, winner={:?}", winner);
-                false
-            }
-            Some(RemoteChoiceInfo::Error { message }) => {
-                log::error!("RemoteController::prepare_choice_info: error from server: {}", message);
-                false
-            }
             None => {
-                log::debug!("RemoteController::prepare_choice_info: MVar returned None (exit signaled)");
+                log::debug!("RemoteController::prepare_choice_info: opponent-choice buffer signaled exit");
                 false
             }
         }
@@ -207,44 +195,37 @@ impl RemoteController {
         }
 
         if let Some(ref state) = self.shared_state {
-            // MVar mode: take from REMOTE choice MVar (dedicated for this controller)
-            match state.take_remote_choice() {
-                Some(RemoteChoiceInfo::Opponent {
-                    action_count,
-                    indices,
-                    spell_ability,
-                    library_search_result,
-                    target_card_ids,
-                }) => {
+            // Network mode: read the next unconsumed opponent choice from the
+            // buffer (Phase 2 step 3b), keyed by choice_seq, non-destructive.
+            match state.take_opponent_choice() {
+                Some(entry) => {
                     // Validate action count ordering
-                    if action_count != expected_action {
+                    if entry.action_count != expected_action {
                         log::warn!(
                             "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
                             expected_action,
-                            action_count,
-                            indices
+                            entry.action_count,
+                            entry.choice_indices
                         );
                         // Continue anyway - server is authoritative, but log the discrepancy
                     }
                     log::debug!(
-                        "RemoteController: got OpponentChoice indices={:?} action={} lib_search={:?} targets={:?}",
-                        indices,
-                        action_count,
-                        library_search_result,
-                        target_card_ids
+                        "RemoteController: got OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?}",
+                        entry.choice_seq,
+                        entry.choice_indices,
+                        entry.action_count,
+                        entry.library_search_result,
+                        entry.target_card_ids
                     );
-                    ChoiceResult::Ok((indices, spell_ability, library_search_result, target_card_ids))
-                }
-                Some(RemoteChoiceInfo::Exit { winner }) => {
-                    log::info!("RemoteController: game ended, winner={:?}", winner);
-                    ChoiceResult::ExitGame
-                }
-                Some(RemoteChoiceInfo::Error { message }) => {
-                    log::error!("RemoteController: error from server: {}", message);
-                    ChoiceResult::ExitGame
+                    ChoiceResult::Ok((
+                        entry.choice_indices,
+                        entry.spell_ability,
+                        entry.library_search_result,
+                        entry.target_card_ids,
+                    ))
                 }
                 None => {
-                    log::debug!("RemoteController: MVar returned None (exit signaled)");
+                    log::debug!("RemoteController: opponent-choice buffer signaled exit");
                     ChoiceResult::ExitGame
                 }
             }

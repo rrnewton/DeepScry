@@ -21,7 +21,7 @@
 use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use crate::game::snapshot::ControllerType;
-use crate::network::client::{ChoiceAcceptedInfo, LocalChoiceInfo, SharedNetworkState};
+use crate::network::client::{LocalChoiceInfo, SharedNetworkState};
 use crate::network::protocol::ClientMessage;
 use crate::network::ClientMessageSender;
 use smallvec::SmallVec;
@@ -836,31 +836,21 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         // Wait for ChoiceAccepted to confirm the server processed our choice
         // The server returns the index it used, which should match what we sent
         if let Some(ref state) = self.shared_state {
-            match state.take_choice_accepted_for_seq(choice_seq) {
-                Some(ChoiceAcceptedInfo::Accepted {
-                    library_search_result, ..
-                }) => {
+            // Phase 2 step 3c: block (NO timeout) for the ChoiceAccepted
+            // matching this choice_seq in the local choice-accepted buffer.
+            // Non-destructive read by choice_seq; None means terminal exit.
+            match state.wait_for_choice_accepted(choice_seq) {
+                Some(library_search_result) => {
                     log::info!("[NetworkLocalController] choose_from_library: ChoiceAccepted received, library_search_result={:?}", library_search_result);
                     // Store the server-authoritative CardId so game loop can use it
                     self.last_library_search_result = library_search_result;
                     // Return the index we chose (0-based for the trait interface)
                     return inner_result;
                 }
-                Some(ChoiceAcceptedInfo::Exit { .. }) => {
-                    log::info!(
-                        "[NetworkLocalController] choose_from_library: game ended while waiting for ChoiceAccepted"
-                    );
-                    return ChoiceResult::ExitGame;
-                }
-                Some(ChoiceAcceptedInfo::Error { message }) => {
-                    log::error!(
-                        "[NetworkLocalController] choose_from_library: error while waiting for ChoiceAccepted: {}",
-                        message
-                    );
-                    return ChoiceResult::ExitGame;
-                }
                 None => {
-                    log::warn!("[NetworkLocalController] choose_from_library: take_choice_accepted returned None (exit signaled)");
+                    log::info!(
+                        "[NetworkLocalController] choose_from_library: game ended/exit while waiting for ChoiceAccepted"
+                    );
                     return ChoiceResult::ExitGame;
                 }
             }
