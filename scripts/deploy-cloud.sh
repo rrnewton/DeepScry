@@ -512,7 +512,17 @@ PYGC
     # rsync --delete prunes; today the staging copy + manifest sweep + delete
     # achieve the same pruning.
     echo "→ rsyncing web/ (content-addressed) with --delete"
-    rsync -avh --delete "$web_stage/" "$REMOTE_SSH:$REMOTE_DIR/web/"
+    # NON-DESTRUCTIVE to web/images/ (mtg image-deploy policy): card-image
+    # JPEGs are NOT part of the normal deploy (they are excluded from the
+    # web_stage population above and from version control). They are pushed to
+    # the VM out-of-band via a one-time manual rsync. Without the exclude here,
+    # this --delete rsync from an images-less staging dir would WIPE the remote
+    # web/images/ tree on every deploy. The exclude makes --delete skip that
+    # directory entirely: every OTHER web/ dir is still destructively synced
+    # (hashed pkg/bin GC works), but web/images/ on the VM is left untouched.
+    rsync -avh --delete \
+        --exclude='images/' --exclude='images' \
+        "$web_stage/" "$REMOTE_SSH:$REMOTE_DIR/web/"
 
     # --- 6. Rsync cardsfolder/ ---
     local cards_src=""
