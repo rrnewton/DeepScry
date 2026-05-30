@@ -2206,6 +2206,70 @@ pub enum StaticCondition {
     },
 }
 
+/// Comparison operator for `PresentCompare$` activation/static conditions.
+///
+/// Forge encodes these as `EQ7`, `GE2`, `LE3`, etc. — a two-letter operator
+/// followed by a count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CompareOp {
+    /// `EQ` — equal to.
+    Equal,
+    /// `GE` — greater than or equal to.
+    GreaterEqual,
+    /// `LE` — less than or equal to.
+    LessEqual,
+    /// `GT` — strictly greater than.
+    Greater,
+    /// `LT` — strictly less than.
+    Less,
+}
+
+impl CompareOp {
+    /// Parse the two-letter Forge operator prefix (`EQ`/`GE`/`LE`/`GT`/`LT`).
+    pub fn parse(prefix: &str) -> Option<Self> {
+        match prefix {
+            "EQ" => Some(CompareOp::Equal),
+            "GE" => Some(CompareOp::GreaterEqual),
+            "LE" => Some(CompareOp::LessEqual),
+            "GT" => Some(CompareOp::Greater),
+            "LT" => Some(CompareOp::Less),
+            _ => None,
+        }
+    }
+
+    /// Evaluate `actual <op> threshold`.
+    pub fn matches(self, actual: usize, threshold: usize) -> bool {
+        match self {
+            CompareOp::Equal => actual == threshold,
+            CompareOp::GreaterEqual => actual >= threshold,
+            CompareOp::LessEqual => actual <= threshold,
+            CompareOp::Greater => actual > threshold,
+            CompareOp::Less => actual < threshold,
+        }
+    }
+}
+
+/// Restriction on when an activated ability may be activated, derived from
+/// `IsPresent$ <filter> | PresentZone$ <zone> | PresentCompare$ <op><n>`.
+///
+/// "Activate only if you have exactly seven cards in hand" (Library of
+/// Alexandria, Magus of the Library), "Activate only if you control two or
+/// more white permanents" (Mistveil Plains), "...five or more lands"
+/// (Cryptic Caves), etc. The count is over cards in `zone` matching `filter`
+/// from the activating player's perspective, compared to `count` via `op`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivationCondition {
+    /// Forge `IsPresent$` filter, e.g. `"Card.YouOwn"`, `"Land.YouCtrl"`,
+    /// `"Permanent.White+YouCtrl"`.
+    pub filter: String,
+    /// Zone to count in (default Battlefield; Hand for Library of Alexandria).
+    pub zone: crate::zones::Zone,
+    /// Comparison operator.
+    pub op: CompareOp,
+    /// Threshold count.
+    pub count: u8,
+}
+
 /// Selector for which cards are affected by a static ability
 ///
 /// Parsed from the `Affected$` parameter in card scripts.
@@ -3037,6 +3101,14 @@ pub struct ActivatedAbility {
     /// "Exhaust$ True" - activate each exhaust ability only once
     pub exhaust: bool,
 
+    /// Optional "Activate only if ..." restriction from
+    /// `IsPresent$ | PresentZone$ | PresentCompare$` (Library of Alexandria's
+    /// "exactly seven cards in hand", Cryptic Caves' "five or more lands", ...).
+    /// `None` = no extra restriction. Checked in `can_activate` alongside the
+    /// other timing/cost gates.
+    #[serde(default)]
+    pub activation_condition: Option<crate::core::ActivationCondition>,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
 }
@@ -3054,6 +3126,7 @@ impl ActivatedAbility {
             sorcery_speed: false,  // Default to instant speed
             your_turn_only: false, // Default to any turn
             exhaust: false,        // Default to non-exhaust
+            activation_condition: None,
             cache,
         }
     }
@@ -3070,6 +3143,7 @@ impl ActivatedAbility {
             sorcery_speed: true,
             your_turn_only: false, // sorcery_speed implies your turn already
             exhaust: false,
+            activation_condition: None,
             cache,
         }
     }
@@ -3092,6 +3166,7 @@ impl ActivatedAbility {
             sorcery_speed: false, // Not sorcery speed
             your_turn_only: true, // Your turn only
             exhaust: false,
+            activation_condition: None,
             cache,
         }
     }

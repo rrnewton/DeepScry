@@ -1110,6 +1110,20 @@ impl<'a> GameLoop<'a> {
                         can_activate = false;
                     }
 
+                    // Check "Activate only if ..." restriction (IsPresent$ /
+                    // PresentZone$ / PresentCompare$). Library of Alexandria's
+                    // draw ability is gated on "exactly seven cards in hand".
+                    if can_activate {
+                        if let Some(cond) = &ability.activation_condition {
+                            let actual = self
+                                .game
+                                .count_cards_matching_filter(player_id, &cond.filter, cond.zone);
+                            if !cond.op.matches(actual, cond.count as usize) {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
                     // TODO(mtg-70): Check if ability has valid targets
                     // For targeting abilities, check that there's at least one valid target
                     //

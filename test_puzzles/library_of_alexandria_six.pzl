@@ -1,0 +1,24 @@
+[metadata]
+Name:Library of Alexandria No Draw At Six
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P1 has Library of Alexandria and only six cards in hand. The {T}: Draw ability must NOT be activatable (PresentCompare$ EQ7 fails). Tracks mtg-517.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Island; Island; Island; Island; Island; Island
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Library of Alexandria
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

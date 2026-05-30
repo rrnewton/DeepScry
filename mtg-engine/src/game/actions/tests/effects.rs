@@ -5049,6 +5049,48 @@ mod tests {
         );
     }
 
+    /// Card compat: Library of Alexandria (cardsfolder/l/library_of_alexandria.txt) — mtg-517
+    ///
+    /// Script:
+    ///   A:AB$ Mana | Cost$ T | Produced$ C
+    ///   A:AB$ Draw | Cost$ T | PresentZone$ Hand | IsPresent$ Card.YouOwn
+    ///                | PresentCompare$ EQ7
+    ///
+    /// Parser-shape regression: the draw ability's "Activate only if you have
+    /// exactly seven cards in hand" restriction (`IsPresent$ | PresentZone$ |
+    /// PresentCompare$ EQ7`) must parse into an ActivationCondition with
+    /// CompareOp::Equal and count 7 in the Hand zone. Previously the restriction
+    /// was dropped, so the draw could be activated at any hand size.
+    #[test]
+    fn test_card_compat_library_of_alexandria() {
+        use crate::core::CompareOp;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/l/library_of_alexandria.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Library of Alexandria should load");
+        assert_eq!(def.name.as_str(), "Library of Alexandria");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        // Two activated abilities: mana ({T}: Add {C}) and the gated draw.
+        let draw_with_cond = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.activation_condition.is_some());
+        let cond = draw_with_cond.and_then(|a| a.activation_condition.as_ref()).expect(
+            "Library of Alexandria's draw ability must parse its \
+                 `IsPresent$ Card.YouOwn | PresentZone$ Hand | PresentCompare$ EQ7` \
+                 activation restriction into an ActivationCondition.",
+        );
+        assert_eq!(cond.op, CompareOp::Equal, "EQ7 must be CompareOp::Equal");
+        assert_eq!(cond.count, 7, "EQ7 must be count 7");
+        assert_eq!(cond.zone, crate::zones::Zone::Hand, "PresentZone$ Hand");
+    }
+
     /// Card compat: Maze of Ith (cardsfolder/m/maze_of_ith.txt) — mtg-520
     ///
     /// Script:

@@ -81,6 +81,7 @@ workflow, row format, and update rules.
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
+| AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |
 
 ## Static abilities (S:)
 

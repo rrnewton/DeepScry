@@ -1,0 +1,24 @@
+[metadata]
+Name:Library of Alexandria Draw At Seven
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P1 has Library of Alexandria and exactly seven cards in hand. The {T}: Draw ability is activatable (IsPresent$ Card.YouOwn | PresentZone$ Hand | PresentCompare$ EQ7). Tracks mtg-517.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Island; Island; Island; Island; Island; Island; Island
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Library of Alexandria
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

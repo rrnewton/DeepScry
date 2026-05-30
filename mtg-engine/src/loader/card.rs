@@ -2845,6 +2845,12 @@ impl CardDefinition {
                 .map(|s| s.eq_ignore_ascii_case("True"))
                 .unwrap_or(false);
 
+            // Parse "Activate only if ..." restriction:
+            //   IsPresent$ <filter> | PresentZone$ <zone> | PresentCompare$ <op><n>
+            // e.g. Library of Alexandria: IsPresent$ Card.YouOwn | PresentZone$ Hand
+            //      | PresentCompare$ EQ7 ("exactly seven cards in hand").
+            let activation_condition = Self::parse_activation_condition(&params);
+
             // Only add if we have effects
             if !effects.is_empty() {
                 let mut ability = if is_sorcery_speed {
@@ -2858,11 +2864,58 @@ impl CardDefinition {
                 if is_exhaust {
                     ability.exhaust = true;
                 }
+                ability.activation_condition = activation_condition;
                 abilities.push(ability);
             }
         }
 
         abilities
+    }
+
+    /// Parse an "Activate only if ..." restriction from an activated ability's
+    /// `IsPresent$ | PresentZone$ | PresentCompare$` parameters.
+    ///
+    /// Returns `None` when the ability has no such restriction (the common case)
+    /// or when the `PresentCompare$` operator/count cannot be parsed. Examples:
+    /// - Library of Alexandria: `IsPresent$ Card.YouOwn | PresentZone$ Hand |
+    ///   PresentCompare$ EQ7` → exactly 7 cards in hand.
+    /// - Cryptic Caves: `IsPresent$ Land.YouCtrl | PresentCompare$ GE5` → 5+
+    ///   lands on the battlefield (zone defaults to Battlefield).
+    fn parse_activation_condition(
+        params: &super::ability_parser::AbilityParams,
+    ) -> Option<crate::core::ActivationCondition> {
+        use crate::core::{ActivationCondition, CompareOp};
+
+        let filter = params.get("IsPresent")?;
+        let compare = params.get("PresentCompare")?;
+
+        // PresentCompare is "<OP><N>", e.g. "EQ7", "GE5". Split the 2-char op.
+        if compare.len() < 3 {
+            return None;
+        }
+        let (op_str, n_str) = compare.split_at(2);
+        let op = CompareOp::parse(op_str)?;
+        let count: u8 = n_str.parse().ok()?;
+
+        // PresentZone defaults to Battlefield when absent.
+        let zone = params
+            .get("PresentZone")
+            .and_then(|z| match z {
+                "Hand" => Some(crate::zones::Zone::Hand),
+                "Graveyard" => Some(crate::zones::Zone::Graveyard),
+                "Battlefield" => Some(crate::zones::Zone::Battlefield),
+                "Exile" => Some(crate::zones::Zone::Exile),
+                "Library" => Some(crate::zones::Zone::Library),
+                _ => None,
+            })
+            .unwrap_or(crate::zones::Zone::Battlefield);
+
+        Some(ActivationCondition {
+            filter: filter.to_string(),
+            zone,
+            op,
+            count,
+        })
     }
 
     /// Parse static abilities (S: lines) that create continuous effects

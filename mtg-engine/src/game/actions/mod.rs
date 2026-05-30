@@ -1434,10 +1434,19 @@ impl GameState {
     ) -> usize {
         use crate::zones::Zone;
 
-        // Parse filter: "Lesson.YouOwn" -> type="Lesson", ownership="YouOwn"
-        let parts: Vec<&str> = filter.split('.').collect();
-        let type_filter = parts.first().copied().unwrap_or("");
-        let ownership = parts.get(1).copied().unwrap_or("YouOwn");
+        // Parse filter: "Lesson.YouOwn" -> type="Lesson", quals=["YouOwn"].
+        // Qualifiers after the first '.' are '+'-joined, e.g.
+        // "Permanent.White+YouCtrl" -> type="Permanent", quals=["White","YouCtrl"].
+        let mut sections = filter.splitn(2, '.');
+        let type_filter = sections.next().unwrap_or("");
+        let quals: Vec<&str> = sections.next().map(|q| q.split('+').collect()).unwrap_or_default();
+        // Default ownership/control qualifier is "YouOwn" if none of the
+        // ownership-style qualifiers is present.
+        let ownership = quals
+            .iter()
+            .copied()
+            .find(|q| matches!(*q, "YouOwn" | "OppOwn" | "YouCtrl" | "OppCtrl"))
+            .unwrap_or("YouOwn");
 
         // Get the appropriate zone's cards
         let zone_cards: &[CardId] = match zone {
@@ -1500,14 +1509,34 @@ impl GameState {
                     return false;
                 }
 
-                // Check type filter (subtype match)
-                if type_filter.is_empty() {
-                    return true;
+                // Check the base type filter. "Card"/"Permanent" are wildcards;
+                // card types (Land/Artifact/Creature/Enchantment/...) match
+                // c.types; otherwise treat as a creature subtype.
+                let type_ok = match type_filter {
+                    "" | "Card" | "Permanent" => true,
+                    "Land" => c.is_land(),
+                    "Artifact" => c.is_artifact(),
+                    "Creature" => c.is_creature(),
+                    "Enchantment" => c.is_enchantment(),
+                    "Planeswalker" => c.types.contains(&crate::core::CardType::Planeswalker),
+                    other => c.subtypes.contains(&crate::core::Subtype::new(other)),
+                };
+                if !type_ok {
+                    return false;
                 }
 
-                // Check if card has the specified subtype
-                let subtype = crate::core::Subtype::new(type_filter);
-                c.subtypes.contains(&subtype)
+                // Check any color qualifiers (e.g. "White" in
+                // "Permanent.White+YouCtrl"). All present color quals must hold.
+                quals.iter().all(|q| match *q {
+                    "White" => c.colors.contains(&crate::core::Color::White),
+                    "Blue" => c.colors.contains(&crate::core::Color::Blue),
+                    "Black" => c.colors.contains(&crate::core::Color::Black),
+                    "Red" => c.colors.contains(&crate::core::Color::Red),
+                    "Green" => c.colors.contains(&crate::core::Color::Green),
+                    // Ownership/control quals already handled above; everything
+                    // else is ignored (best-effort) rather than failing the match.
+                    _ => true,
+                })
             })
             .count()
     }
