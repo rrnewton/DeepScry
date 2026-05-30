@@ -1728,6 +1728,29 @@ pub trait PlayerController {
         }
     }
 
+    /// Checkpoint the controller's choice-consumption position so a later
+    /// [`restore_choice_checkpoint`] can rewind back to exactly here.
+    ///
+    /// This exists for the multi-step combat damage assignment path
+    /// (mtg-sfihb). `assign_combat_damage` asks the attacking player for a
+    /// sequence of damage-assignment sub-choices
+    /// (`choose_blocker_for_lethal_damage` then
+    /// `choose_blocker_for_remaining_damage`) inside a SYNCHRONOUS first pass
+    /// that cannot yield mid-loop. On a network shadow client those
+    /// sub-choices are server-pushed `OpponentChoice`s consumed from a buffer;
+    /// when the engine has consumed the first but the second has not yet
+    /// arrived over the wire, the controller must signal `NeedInput`. To make
+    /// that re-entrant safely, the engine checkpoints BEFORE the first
+    /// sub-choice and restores on `NeedInput`, so the whole first pass re-runs
+    /// idempotently (it mutates no game state, only the local damage plan and
+    /// the consumption cursor). For non-network controllers (local AI /
+    /// human) there is no consumption cursor, so the default is a no-op.
+    fn mark_choice_checkpoint(&mut self) {}
+
+    /// Restore the choice-consumption position saved by the most recent
+    /// [`mark_choice_checkpoint`]. Default no-op (see that method).
+    fn restore_choice_checkpoint(&mut self) {}
+
     /// Choose cards to discard to maximum hand size
     ///
     /// Called during cleanup step if hand size exceeds maximum.

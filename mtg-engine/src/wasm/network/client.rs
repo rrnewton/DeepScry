@@ -73,18 +73,21 @@ pub struct OpponentChoiceData {
 }
 
 impl OpponentChoiceData {
-    /// Materialise the `ActionLog`-stored `(action_count, ChoiceEntry)`
+    /// Materialise the `ActionLog`-stored `(choice_seq, ChoiceEntry)`
     /// pair back into the legacy `OpponentChoiceData` shape that
     /// `WasmRemoteController` (and the SMART damage-assignment overrides)
     /// consume. Cheap clone of the structured payload — the same allocation
     /// the old `VecDeque` consumed when it `push_back`ed.
-    fn from_log_entry(action_count: u64, entry: &ChoiceEntry) -> Self {
+    ///
+    /// The log key is `choice_seq` (mtg-sfihb), but `action_count` is still
+    /// surfaced for diagnostics from the payload field.
+    fn from_log_entry(entry: &ChoiceEntry) -> Self {
         Self {
             choice_seq: entry.choice_seq,
             choice_indices: entry.choice_indices.clone(),
             description: entry.description.clone(),
             spell_ability: entry.spell_ability.clone(),
-            action_count,
+            action_count: entry.action_count,
             library_search_result: entry.library_search_result,
             target_card_ids: entry.target_card_ids.clone(),
         }
@@ -160,28 +163,39 @@ pub struct WasmNetworkClient {
     /// of `docs/NETWORK_ACTION_LOG.md` § 8.
     last_applied_state_sync_ac: u64,
 
-    /// Append-only, `action_count`-indexed per-controller choice buffer for
+    /// Append-only, `choice_seq`-indexed per-controller choice buffer for
     /// opponent (remote) choices.
     ///
     /// Backs the Phase 2 step 2 migration described in
     /// `docs/NETWORK_ACTION_LOG.md` § 3.1 / `NETWORK_ACTION_LOG_MIGRATION.md`
     /// § 2.1. The WS receive handler pushes `ServerMessage::OpponentChoice`
-    /// here keyed by the server-reported `action_count`. Reads are
-    /// non-destructive: a per-client cursor
+    /// here keyed by the server-reported **`choice_seq`** (NOT `action_count`).
+    ///
+    /// `choice_seq` is the only strictly-unique, strictly-monotonic per-choice
+    /// key: the server bumps it exactly once per `ChoiceRequest`. `action_count`
+    /// (= `undo_log.len()`) is NOT unique per choice — during multi-step combat
+    /// damage assignment the server emits two choices
+    /// (`choose_blocker_for_lethal_damage` then
+    /// `choose_blocker_for_remaining_damage` for the same attacker) with no
+    /// undoable action between them, so both carry the same `action_count`.
+    /// Keying by `action_count` made the second `ActionLog::push` panic with
+    /// "action_count must be strictly increasing" (mtg-sfihb). Keying by
+    /// `choice_seq` is correct by construction.
+    ///
+    /// Reads are non-destructive: a per-client cursor
     /// (`next_opponent_choice_cursor`) records how far the controller has
     /// consumed, and a snapshot rewind resets the cursor without touching
     /// the log itself (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
     ///
     /// Replaces the legacy `VecDeque<OpponentChoiceData>` queue and its
-    /// destructive `pop_front` semantics. The wire-level `action_count` is
-    /// the log's key; the structured payload is `ChoiceEntry`. See the
-    /// "STATE-SYNC LOG" parallel for the same shape applied to reveals /
-    /// reorders in step 1.
+    /// destructive `pop_front` semantics. The structured payload is
+    /// `ChoiceEntry`. See the "STATE-SYNC LOG" parallel for the same shape
+    /// applied to reveals / reorders in step 1.
     pub opponent_choices: ActionLog<ChoiceEntry>,
 
     /// Read cursor into `opponent_choices`. The next `pop_opponent_choice`
-    /// returns the first entry whose `action_count > next_opponent_choice_cursor`;
-    /// the cursor then advances to that entry's `action_count`.
+    /// returns the first entry whose `choice_seq > next_opponent_choice_cursor`;
+    /// the cursor then advances to that entry's `choice_seq`.
     ///
     /// This preserves the existing FIFO consume semantics that
     /// `WasmRemoteController` relies on while the underlying storage moves
@@ -761,18 +775,24 @@ impl WasmNetworkClient {
                     description
                 );
                 // Phase 2 step 2: append to the per-controller choice
-                // buffer keyed by the server-reported `action_count`.
-                // The wire-protocol `action_count` is server-authoritative
-                // and strictly monotonic across choices, so it directly
-                // satisfies `ActionLog::push`'s monotonicity invariant
-                // (docs/NETWORK_ACTION_LOG.md § 8 invariant #2). If the
-                // server ever sends a stale or out-of-order ac, the push
-                // will panic — which is the correct response per
+                // buffer keyed by the server-reported `choice_seq`.
+                //
+                // `choice_seq` (NOT `action_count`) is the log key: the server
+                // bumps it exactly once per ChoiceRequest, so it is strictly
+                // unique and monotonic per choice and directly satisfies
+                // `ActionLog::push`'s strict-monotonicity invariant
+                // (docs/NETWORK_ACTION_LOG.md § 8 invariant #2). `action_count`
+                // (= undo_log.len()) is NOT unique: multi-step combat damage
+                // assignment emits two choices at the same action_count
+                // (mtg-sfihb), which made keying by action_count panic on the
+                // second push. If the server ever sends a stale or out-of-order
+                // choice_seq, the push will panic — the correct response per
                 // NETWORK_ARCHITECTURE.md § "Desync is ALWAYS a Fatal Error".
                 self.opponent_choices.push(
-                    action_count,
+                    u64::from(choice_seq),
                     ChoiceEntry {
                         choice_seq,
+                        action_count,
                         choice_indices,
                         description,
                         spell_ability,
@@ -929,7 +949,7 @@ impl WasmNetworkClient {
     }
 
     /// Consume the next buffered `OpponentChoice` (the smallest
-    /// `action_count` strictly greater than the read cursor).
+    /// `choice_seq` strictly greater than the read cursor).
     ///
     /// **Non-destructive read.** The underlying `ActionLog` is
     /// untouched; only the per-controller cursor advances. A subsequent
@@ -937,11 +957,11 @@ impl WasmNetworkClient {
     /// replay pass without re-fetching from the server (invariant #3 of
     /// `docs/NETWORK_ACTION_LOG.md` § 8).
     pub fn pop_opponent_choice(&mut self) -> Option<OpponentChoiceData> {
-        let (ac, entry) = self.next_opponent_choice_unconsumed()?;
+        let (key, entry) = self.next_opponent_choice_unconsumed()?;
         // Clone before bumping the cursor — entry borrows `&self`, so we
         // materialise it BEFORE the `&mut self` cursor mutation below.
-        let materialised = OpponentChoiceData::from_log_entry(ac, entry);
-        self.next_opponent_choice_cursor = ac;
+        let materialised = OpponentChoiceData::from_log_entry(entry);
+        self.next_opponent_choice_cursor = key;
         Some(materialised)
     }
 
@@ -959,18 +979,20 @@ impl WasmNetworkClient {
     /// payload (the wire `OpponentChoiceData` shape persists across the
     /// refactor).
     pub fn peek_opponent_choice(&self) -> Option<OpponentChoiceData> {
-        let (ac, entry) = self.next_opponent_choice_unconsumed()?;
-        Some(OpponentChoiceData::from_log_entry(ac, entry))
+        let (_key, entry) = self.next_opponent_choice_unconsumed()?;
+        Some(OpponentChoiceData::from_log_entry(entry))
     }
 
-    /// Internal helper: find the first `(action_count, &ChoiceEntry)` in
-    /// `opponent_choices` with `action_count > next_opponent_choice_cursor`.
+    /// Internal helper: find the first `(choice_seq, &ChoiceEntry)` in
+    /// `opponent_choices` with `choice_seq > next_opponent_choice_cursor`.
     /// Returns `None` if no unconsumed entry is available.
     ///
-    /// Linear scan over the unconsumed suffix — in practice <= 1 entry at
-    /// a time (the WS reader pushes exactly one OpponentChoice per remote
-    /// turn). The `ActionLog::iter` impl yields in ascending `ac` order,
-    /// so the first match is the correct next entry.
+    /// Linear scan over the unconsumed suffix. The `ActionLog::iter` impl
+    /// yields in ascending key (`choice_seq`) order, so the first match is the
+    /// correct next entry. Several entries can be buffered at once: during
+    /// multi-step combat damage assignment the server emits several
+    /// OpponentChoices in a row (each its own `choice_seq`), so the cursor
+    /// walks them one per consume.
     fn next_opponent_choice_unconsumed(&self) -> Option<(u64, &ChoiceEntry)> {
         self.opponent_choices
             .iter()
@@ -988,6 +1010,23 @@ impl WasmNetworkClient {
     /// (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
     pub fn reset_opponent_choice_cursor(&mut self) {
         self.next_opponent_choice_cursor = 0;
+    }
+
+    /// Current opponent-choice read cursor (highest consumed `choice_seq`).
+    ///
+    /// Paired with [`set_opponent_choice_cursor`] to support the multi-step
+    /// combat damage assignment checkpoint/restore (mtg-sfihb): the engine
+    /// snapshots this value before the synchronous first pass and restores it
+    /// if a mid-pass sub-choice has not yet arrived, so the re-run re-consumes
+    /// the buffered sub-choices from the same starting point.
+    pub fn opponent_choice_cursor(&self) -> u64 {
+        self.next_opponent_choice_cursor
+    }
+
+    /// Restore the opponent-choice read cursor to a value previously obtained
+    /// from [`opponent_choice_cursor`]. See that method (mtg-sfihb).
+    pub fn set_opponent_choice_cursor(&mut self, cursor: u64) {
+        self.next_opponent_choice_cursor = cursor;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1413,7 +1452,8 @@ mod tests {
 
     /// Drive the on_message OpponentChoice path. Bypasses JSON parsing by
     /// directly calling the private handler; verifies the message lands in
-    /// `opponent_choices` keyed by the wire `action_count`.
+    /// `opponent_choices` keyed by the wire `choice_seq` (mtg-sfihb), while
+    /// the wire `action_count` is carried on the payload.
     fn push_opponent_choice(client: &mut WasmNetworkClient, ac: u64, choice_seq: u32, desc: &str) {
         client.handle_server_message(crate::network::ServerMessage::OpponentChoice {
             choice_seq,
@@ -1432,22 +1472,94 @@ mod tests {
     }
 
     #[test]
-    fn opponent_choice_appended_to_action_log_by_wire_action_count() {
-        // Wire-protocol `action_count` is the ActionLog key; pushes in
-        // strictly-increasing order satisfy ActionLog::push's monotonicity
-        // invariant. This replaces the legacy VecDeque::push_back.
+    fn opponent_choice_appended_to_action_log_by_wire_choice_seq() {
+        // Wire-protocol `choice_seq` is the ActionLog key (NOT action_count);
+        // pushes in strictly-increasing choice_seq order satisfy
+        // ActionLog::push's monotonicity invariant. This replaces the legacy
+        // VecDeque::push_back.
         let mut c = WasmNetworkClient::new();
         push_opponent_choice(&mut c, 5, 1, "first");
         push_opponent_choice(&mut c, 12, 2, "second");
         push_opponent_choice(&mut c, 100, 3, "third");
 
         assert_eq!(c.opponent_choices.len(), 3);
-        assert_eq!(c.opponent_choices.frontier(), Some(100));
-        // Non-destructive: same look-up returns the same payload twice.
-        let a = c.opponent_choices.get(12).unwrap().description.clone();
-        let b = c.opponent_choices.get(12).unwrap().description.clone();
-        assert_eq!(a, "second");
-        assert_eq!(b, "second");
+        // Frontier is the highest choice_seq (3), not the highest action_count.
+        assert_eq!(c.opponent_choices.frontier(), Some(3));
+        // Non-destructive: same look-up (by choice_seq) returns the same
+        // payload twice; the carried action_count is preserved.
+        let a = c.opponent_choices.get(2).unwrap();
+        assert_eq!(a.description, "second");
+        assert_eq!(a.action_count, 12);
+        let b = c.opponent_choices.get(2).unwrap();
+        assert_eq!(b.description, "second");
+    }
+
+    #[test]
+    fn opponent_choices_sharing_one_action_count_do_not_panic() {
+        // mtg-sfihb regression: during multi-step combat damage assignment
+        // the server emits two OpponentChoices
+        // (choose_blocker_for_lethal_damage then
+        // choose_blocker_for_remaining_damage for the same attacker) with NO
+        // undoable action between them, so BOTH carry the same action_count.
+        // Keying the log by action_count made the second push panic with
+        // "action_count must be strictly increasing". Keying by choice_seq
+        // (strictly unique per choice) is correct. This is the exact shape
+        // observed at action_count=978, choice_seq 181 then 182.
+        let mut c = WasmNetworkClient::new();
+        push_opponent_choice(&mut c, 978, 181, "lethal damage assignment");
+        push_opponent_choice(&mut c, 978, 182, "remaining damage assignment");
+
+        assert_eq!(c.opponent_choices.len(), 2);
+        assert_eq!(c.opponent_choices.frontier(), Some(182));
+
+        // Both are consumable in choice_seq order, each carrying ac=978.
+        let first = c.pop_opponent_choice().unwrap();
+        assert_eq!(first.choice_seq, 181);
+        assert_eq!(first.action_count, 978);
+        let second = c.pop_opponent_choice().unwrap();
+        assert_eq!(second.choice_seq, 182);
+        assert_eq!(second.action_count, 978);
+        assert!(c.pop_opponent_choice().is_none());
+    }
+
+    #[test]
+    fn cursor_checkpoint_restore_re_consumes_combat_damage_subchoices() {
+        // mtg-sfihb layer 2: multi-step combat damage assignment runs in a
+        // SYNCHRONOUS first pass that cannot yield mid-loop. On a shadow
+        // client, when the engine has consumed the FIRST sub-choice but the
+        // SECOND has not yet arrived over the wire, the controller signals
+        // NeedInput; `assign_combat_damage` then restores the choice cursor to
+        // the pre-pass checkpoint so the re-entry re-consumes BOTH sub-choices
+        // from the start. This test exercises the cursor get/set that
+        // `WasmRemoteController::{mark,restore}_choice_checkpoint` use.
+        let mut c = WasmNetworkClient::new();
+        // The opponent's lethal-damage sub-choice arrives first; the
+        // remaining-damage sub-choice is still in flight.
+        push_opponent_choice(&mut c, 978, 181, "lethal damage assignment");
+
+        // Engine begins the synchronous first pass: checkpoint, then consume
+        // the first sub-choice.
+        let checkpoint = c.opponent_choice_cursor();
+        let first = c.pop_opponent_choice().unwrap();
+        assert_eq!(first.choice_seq, 181);
+        // Second sub-choice not yet buffered -> the controller would NeedInput.
+        assert!(c.pop_opponent_choice().is_none());
+
+        // Restore the cursor (what restore_choice_checkpoint does) and re-raise
+        // NeedInput. The first sub-choice is exposed again for the re-run.
+        c.set_opponent_choice_cursor(checkpoint);
+        assert!(c.has_opponent_choice());
+
+        // The remaining-damage sub-choice now arrives.
+        push_opponent_choice(&mut c, 978, 182, "remaining damage assignment");
+
+        // Re-entry: the first pass re-runs and re-consumes BOTH sub-choices in
+        // order from the restored checkpoint — no double-consume, no skip.
+        let re_first = c.pop_opponent_choice().unwrap();
+        assert_eq!(re_first.choice_seq, 181);
+        let re_second = c.pop_opponent_choice().unwrap();
+        assert_eq!(re_second.choice_seq, 182);
+        assert!(c.pop_opponent_choice().is_none());
     }
 
     #[test]
@@ -1535,14 +1647,15 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "strictly increasing")]
-    fn duplicate_opponent_choice_action_count_panics() {
-        // Wire-protocol guarantee: choice action_counts are strictly
-        // monotonic per session. A duplicate is a protocol bug; per
-        // NETWORK_ARCHITECTURE.md "Desync is ALWAYS a Fatal Error" we
-        // crash rather than silently accept it. ActionLog::push provides
-        // the panic; this test verifies the wiring forwards it.
+    fn duplicate_opponent_choice_seq_panics() {
+        // Wire-protocol guarantee: choice_seq is strictly monotonic per
+        // session (the server bumps it once per ChoiceRequest). A duplicate
+        // choice_seq is a protocol bug; per NETWORK_ARCHITECTURE.md "Desync
+        // is ALWAYS a Fatal Error" we crash rather than silently accept it.
+        // ActionLog::push provides the panic; this test verifies the wiring
+        // forwards it on the NEW (choice_seq) key.
         let mut c = WasmNetworkClient::new();
         push_opponent_choice(&mut c, 5, 1, "first");
-        push_opponent_choice(&mut c, 5, 2, "duplicate");
+        push_opponent_choice(&mut c, 9, 1, "duplicate choice_seq");
     }
 }

@@ -41,11 +41,22 @@ use crate::core::{CardId, SpellAbility};
 /// `WasmNetworkClient::opponent_choices` VecDeque in particular).
 #[derive(Debug, Clone)]
 pub struct ChoiceEntry {
-    /// Server-assigned choice sequence number. Kept on the payload (not
-    /// the log key) so duplicate-suppression and diagnostic logging still
-    /// see the wire-protocol value, even after a rewind / replay re-reads
-    /// the entry by `action_count`.
+    /// Server-assigned choice sequence number. This is ALSO the
+    /// `ActionLog<ChoiceEntry>` key for the opponent-choice buffer
+    /// (`WasmNetworkClient::opponent_choices`): unlike `action_count`,
+    /// `choice_seq` is strictly unique and monotonic per choice by
+    /// construction (the server bumps it once per `ChoiceRequest`), so it
+    /// satisfies `ActionLog::push`'s strict-monotonicity invariant even when
+    /// several choices share one `action_count` (mtg-sfihb: multi-step
+    /// combat damage assignment — `choose_blocker_for_lethal_damage` then
+    /// `choose_blocker_for_remaining_damage` for the same attacker — emits
+    /// two choices before any undoable action advances `undo_log.len()`).
     pub choice_seq: u32,
+    /// Server-reported `action_count` (= `undo_log.len()` at the moment the
+    /// choice was requested). Carried on the payload for diagnostics /
+    /// display only. It is NOT the log key, because `action_count` is not
+    /// unique per choice (see `choice_seq` above).
+    pub action_count: u64,
     /// The choice as a sequence of integer indices into the controller's
     /// option list. Multi-index choices (mana payment, attackers,
     /// blockers, modes) carry multiple entries.
@@ -79,12 +90,52 @@ mod tests {
     fn mk_entry(seq: u32, desc: &str) -> ChoiceEntry {
         ChoiceEntry {
             choice_seq: seq,
+            action_count: 0,
             choice_indices: vec![seq as usize],
             description: desc.into(),
             spell_ability: None,
             library_search_result: None,
             target_card_ids: None,
         }
+    }
+
+    fn mk_entry_ac(seq: u32, action_count: u64, desc: &str) -> ChoiceEntry {
+        ChoiceEntry {
+            choice_seq: seq,
+            action_count,
+            choice_indices: vec![seq as usize],
+            description: desc.into(),
+            spell_ability: None,
+            library_search_result: None,
+            target_card_ids: None,
+        }
+    }
+
+    #[test]
+    fn choice_seq_key_tolerates_duplicate_action_counts() {
+        // mtg-sfihb regression (native, target-independent mirror of the
+        // wasm-only WasmNetworkClient test): the opponent-choice buffer is
+        // keyed by `choice_seq`, NOT `action_count`. During multi-step combat
+        // damage assignment the server emits two OpponentChoices
+        // (choose_blocker_for_lethal_damage then
+        // choose_blocker_for_remaining_damage for the same attacker) with no
+        // undoable action between them, so BOTH carry the same action_count.
+        // The previously-used `action_count` key made the second push panic
+        // with "action_count must be strictly increasing". Keying by
+        // `choice_seq` (strictly unique per choice) must NOT panic and must
+        // keep the duplicated action_count on each payload.
+        //
+        // Exact shape observed in the rogerbrand seed-3 mirror at the failing
+        // run: action_count=978, choice_seq 181 then 182.
+        let mut log: ActionLog<ChoiceEntry> = ActionLog::new();
+        log.push(181, mk_entry_ac(181, 978, "lethal damage assignment"));
+        log.push(182, mk_entry_ac(182, 978, "remaining damage assignment"));
+
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.frontier(), Some(182));
+        assert_eq!(log.get(181).unwrap().action_count, 978);
+        assert_eq!(log.get(182).unwrap().action_count, 978);
+        assert_eq!(log.get(181).unwrap().description, "lethal damage assignment");
     }
 
     #[test]

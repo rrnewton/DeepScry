@@ -1,0 +1,36 @@
+---
+title: 'mtg-sfihb: WASM opponent-choice ActionLog dup-push during multi-step combat damage assignment'
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-05-30T08:44:58.538545079+00:00
+updated_at: 2026-05-30T09:39:35.582422725+00:00
+---
+
+# Description
+
+WASM network client desync in the rogue_rogerbrand mirror (decks/old_school/01_rogue_rogerbrand.dck vs itself, seed 3), during multi-Shivan-Dragon combat damage assignment following All Hallow's Eve reanimation. Two layers:
+
+## Layer 1 — push panic (the reported symptom), FIXED
+mtg-engine/src/wasm/network/client.rs: the opponent-choice buffer
+`opponent_choices: ActionLog<ChoiceEntry>` was keyed by the server-reported `action_count` (= GameState undo_log.len()). action_count is NOT unique per choice: during MULTI-STEP COMBAT DAMAGE ASSIGNMENT (mtg-engine/src/game/actions/combat.rs `smart_damage_assignment`, called from `assign_combat_damage`) the server asks the SAME attacker for choose_blocker_for_lethal_damage then choose_blocker_for_remaining_damage with NO undoable action between them (the damage plan is accumulated locally and applied to the undo log only after all sub-choices are gathered; these sub-choices do not call log_choice_point). Both ChoiceRequests capture the same action_count (view.action_count() in mtg-engine/src/network/controller.rs). The server emits two OpponentChoice messages with identical action_count; the WASM client's second `opponent_choices.push(action_count, ...)` violated ActionLog's strict-monotonic invariant and panicked ("action_count must be strictly increasing (last==new)"). Desync is fatal -> game dies.
+Captured: attacker 58 (Shivan Dragon), action_count=978, choice_seq 181 (lethal) then 182 (remaining); also seen at ac=950 seq 178/179.
+FIX: re-key `opponent_choices` and its read cursor by `choice_seq` (mtg-engine/src/network/controller.rs bumps it once per ChoiceRequest -> strictly unique & monotonic). action_count retained as a ChoiceEntry payload field for diagnostics.
+
+## Layer 2 — in-loop NeedInput in the synchronous combat-damage first pass, FIXED
+Once layer 1 buffers both sub-choices, the SHADOW engine runs `assign_combat_damage`'s synchronous first pass. If it has consumed the first sub-choice but the second has not yet arrived over the wire, the WasmRemoteController returns ChoiceResult::NeedInput from choose_blocker_for_lethal/remaining_damage. The old code converted that to a HARD error "NeedInput returned in synchronous game loop" -> fatal "GAME OVER due to error". (Previously masked by the layer-1 push panic, which killed the game first.)
+FIX: `smart_damage_assignment`'s NeedInput arms now return Err(MtgError::NeedInput) to YIELD up to the harness (run_until_input). `assign_combat_damage` checkpoints both controllers' opponent-choice cursors (new PlayerController::mark_choice_checkpoint / restore_choice_checkpoint; no-op default for local AI/human, cursor save/restore on WasmRemoteController) before the first pass and restores them on NeedInput, so the re-entry re-runs the entire first pass idempotently (it mutates NO game state there — only the local damage plan and the consumption cursor — so the cursor rewind makes the re-run produce the identical plan, then re-consume both sub-choices in order). Native server path is unaffected: its RemoteController blocks on MVars and maps NeedInput->ExitGame in these methods, so the new arm is unreachable there.
+
+## Classification
+This is the bounded COMBAT-path variant the mtg-609/mtg-joosa per-turn upkeep re-entry guard does NOT cover. It is DISTINCT from mtg-559 (in-stack spell-resolution re-entry): the combat first pass mutates no game state, so a cursor checkpoint/restore suffices — no effect-resume index needed.
+
+## Regression (deterministic, non-flaky)
+- mtg-engine/src/network/choice_entry.rs::tests::choice_seq_key_tolerates_duplicate_action_counts (layer 1, native).
+- mtg-engine/src/wasm/network/client.rs::tests::opponent_choices_sharing_one_action_count_do_not_panic, duplicate_opponent_choice_seq_panics (layer 1, wasm).
+- mtg-engine/src/wasm/network/client.rs::tests::cursor_checkpoint_restore_re_consumes_combat_damage_subchoices (layer 2 cursor checkpoint, wasm).
+Did NOT add a repeated rogerbrand browser e2e: that mirror is independently flaky on UNRELATED late-game desyncs (mtg-586 / mtg-589, P2 state-hash mismatch ~choice_seq 216-278), so repeating it would make validate red on those, not on sfihb. The existing single rogerbrand seed-3 run in test_network_multideck.js remains as integration coverage.
+
+## Verification
+Across many browser repros of rogerbrand seed 3 with the full fix: ZERO mtg-sfihb failures (no "strictly increasing" panic, no "NeedInput returned in synchronous game loop"). Multiple runs exercised the exact dup-action_count combat line (e.g. ac=950 seq178/179, ac=978 seq181/182) and PASSED. The only observed failures were the pre-existing UNRELATED mtg-586/589 state-hash mismatch (~1/24, at a non-combat priority pass, turn ~23). Pre-fix this scenario was ~1/6 FATAL on the push panic.
+
+STATUS: FIXED on branch fix-mtg-sfihb-rogerbrand-desync. Related pre-existing flake: mtg-586, mtg-589.

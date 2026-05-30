@@ -362,10 +362,16 @@ impl GameState {
                         ChoiceResult::Error(msg) => {
                             return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
                         }
-                        ChoiceResult::NeedInput(_) => {
-                            return Err(MtgError::InvalidAction(
-                                "NeedInput returned in synchronous game loop".to_string(),
-                            ));
+                        ChoiceResult::NeedInput(ctx) => {
+                            // The opponent's next combat-damage sub-choice has
+                            // not arrived over the wire yet (mtg-sfihb). Yield
+                            // up the stack as a proper NeedInput so the harness
+                            // re-enters when it does; the caller
+                            // (`assign_combat_damage`) has checkpointed the
+                            // choice cursor and restores it on this error, so the
+                            // re-run re-consumes from the first sub-choice
+                            // idempotently.
+                            return Err(MtgError::NeedInput(Box::new(ctx)));
                         }
                     }
                 }
@@ -404,10 +410,12 @@ impl GameState {
                 ChoiceResult::Error(msg) => {
                     return Err(MtgError::InvalidAction(format!("Controller error: {}", msg)));
                 }
-                ChoiceResult::NeedInput(_) => {
-                    return Err(MtgError::InvalidAction(
-                        "NeedInput returned in synchronous game loop".to_string(),
-                    ));
+                ChoiceResult::NeedInput(ctx) => {
+                    // See the matching arm above: yield NeedInput so the
+                    // harness re-enters once the opponent's sub-choice arrives;
+                    // the cursor checkpoint in `assign_combat_damage` makes the
+                    // re-run idempotent (mtg-sfihb).
+                    return Err(MtgError::NeedInput(Box::new(ctx)));
                 }
             }
         }
@@ -465,6 +473,20 @@ impl GameState {
         // First pass: collect SMART damage assignments for attackers with multiple blockers
         let mut damage_assignments: BTreeMap<CardId, SmallVec<[(CardId, i32); 4]>> = BTreeMap::new();
 
+        // Checkpoint both controllers' choice-consumption cursors BEFORE the
+        // first damage-assignment sub-choice (mtg-sfihb). This first pass is
+        // synchronous and cannot yield mid-loop, but on a network shadow client
+        // the opponent's sub-choices are server-pushed `OpponentChoice`s that
+        // may not all have arrived yet. `smart_damage_assignment` propagates
+        // `MtgError::NeedInput` when a sub-choice is missing; we restore the
+        // cursors and re-raise so the harness re-enters and the WHOLE first
+        // pass re-runs idempotently (it mutates no game state here — only the
+        // local `damage_assignments` plan and the consumption cursor — so a
+        // cursor rewind makes the re-run produce the identical plan). For
+        // non-network controllers the checkpoint/restore are no-ops.
+        attacker_controller.mark_choice_checkpoint();
+        blocker_controller.mark_choice_checkpoint();
+
         // Collect attackers to avoid borrow conflict
         let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
         for attacker_id in attackers {
@@ -484,8 +506,19 @@ impl GameState {
                             blocker_controller
                         };
 
-                    // Use SMART assignment
-                    let assignment = self.smart_damage_assignment(attacker_id, &blockers, controller)?;
+                    // Use SMART assignment. On NeedInput (a network shadow
+                    // awaiting the next server-pushed sub-choice), rewind BOTH
+                    // cursors to the pre-pass checkpoint and re-raise so the
+                    // re-entry re-runs this entire first pass from scratch.
+                    let assignment = match self.smart_damage_assignment(attacker_id, &blockers, controller) {
+                        Ok(a) => a,
+                        Err(MtgError::NeedInput(ctx)) => {
+                            attacker_controller.restore_choice_checkpoint();
+                            blocker_controller.restore_choice_checkpoint();
+                            return Err(MtgError::NeedInput(ctx));
+                        }
+                        Err(e) => return Err(e),
+                    };
                     if !assignment.is_empty() {
                         damage_assignments.insert(attacker_id, assignment);
                     }

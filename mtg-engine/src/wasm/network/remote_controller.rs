@@ -48,6 +48,10 @@ pub struct WasmRemoteController {
     last_library_search_result: Option<CardId>,
     /// Whether the game has ended
     game_ended: bool,
+    /// Saved opponent-choice cursor for the multi-step combat damage
+    /// assignment checkpoint/restore (mtg-sfihb). See
+    /// `PlayerController::mark_choice_checkpoint`.
+    choice_checkpoint: Option<u64>,
 }
 
 impl WasmRemoteController {
@@ -59,6 +63,7 @@ impl WasmRemoteController {
             last_spell_ability: None,
             last_library_search_result: None,
             game_ended: false,
+            choice_checkpoint: None,
         }
     }
 
@@ -119,6 +124,19 @@ impl WasmRemoteController {
 impl PlayerController for WasmRemoteController {
     fn player_id(&self) -> PlayerId {
         self.player_id
+    }
+
+    fn mark_choice_checkpoint(&mut self) {
+        // Save the current opponent-choice consumption cursor so a mid-pass
+        // NeedInput during combat damage assignment can rewind to here
+        // (mtg-sfihb).
+        self.choice_checkpoint = Some(self.network_client.borrow().opponent_choice_cursor());
+    }
+
+    fn restore_choice_checkpoint(&mut self) {
+        if let Some(saved) = self.choice_checkpoint.take() {
+            self.network_client.borrow_mut().set_opponent_choice_cursor(saved);
+        }
     }
 
     fn choose_spell_ability_to_play(
