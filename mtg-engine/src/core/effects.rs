@@ -1,6 +1,6 @@
 //! Card effects and ability system
 
-use crate::core::{CardId, Keyword, PlayerId};
+use crate::core::{CardId, Color, Keyword, PlayerId};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -1339,6 +1339,26 @@ pub enum Effect {
         amount: i32,
     },
 
+    /// Create a *source-filtered* damage-prevention replacement effect on a
+    /// player (CR 615.1, 615.6) — the general construct behind the Circles of
+    /// Protection. Unlike [`Effect::PreventDamage`] (a blanket amount counter),
+    /// this shield only prevents damage from a matching *source* (e.g. a chosen
+    /// red source for Circle of Protection: Red) and lasts until end of turn.
+    ///
+    /// `protected` is the player the shield guards (resolved to the ability's
+    /// controller at activation). `color` is the source-color filter; the
+    /// chosen source `CardId` is filled in from the activated ability's target
+    /// at resolution (placeholder until then). See [`crate::core::prevention`].
+    PreventDamageFromSource {
+        /// Player protected by the shield (CR 615 affected player).
+        protected: PlayerId,
+        /// Required color of the chosen source (Red for Circle of Protection: Red).
+        color: Color,
+        /// The chosen source permanent/spell. Placeholder until the ability's
+        /// target is resolved at activation/resolution.
+        source: CardId,
+    },
+
     /// Modal spell choice - player selects modes from multiple predefined effects.
     ///
     /// Example: Heartless Act - "Choose one — Destroy target creature with no counters on it;
@@ -1721,6 +1741,7 @@ impl Effect {
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
             | Effect::PreventDamage { .. }
+            | Effect::PreventDamageFromSource { .. }
             | Effect::CreateDelayedTrigger { .. }
             | Effect::PumpCreatureVariable { .. } => EffectTargetCategory::RequiresTarget,
         }

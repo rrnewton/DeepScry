@@ -627,9 +627,11 @@ impl<'a> GameLoop<'a> {
             }
         }
 
-        // Clear player damage prevention shields at end of turn
+        // Clear player damage prevention shields at end of turn (CR 514.2),
+        // including source-filtered shields (Circle of Protection).
         for player in &mut self.game.players {
             player.damage_prevention = 0;
+            player.source_prevention_shields.clear();
         }
 
         Ok(None)

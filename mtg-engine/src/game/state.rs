@@ -133,6 +133,17 @@ pub struct GameState {
     /// zones or when their source permanents leave the battlefield.
     pub persistent_effects: PersistentEffectStore,
 
+    /// Source of the damage currently being dealt by a resolving spell or
+    /// ability, used by source-filtered damage prevention (Circle of
+    /// Protection, CR 615.6). Set transiently around effect resolution in
+    /// `resolve_spell_execute_effects` and read by `deal_damage`; `None`
+    /// outside of resolution. Not part of persistent game state (it is always
+    /// cleared back to `None` before control returns to the game loop), so it
+    /// is skipped during serialization/snapshots — keeping save/restore and
+    /// network shadow state identical.
+    #[serde(skip)]
+    pub current_damage_source: Option<CardId>,
+
     /// Delayed triggers waiting to fire on specific events.
     ///
     /// Delayed triggers are created by effects and fire when conditions are met:
@@ -376,6 +387,7 @@ impl GameState {
             mana_state_version: 0,
             skip_reveals: true, // Default: skip reveals for local games
             persistent_effects: PersistentEffectStore::new(),
+            current_damage_source: None,
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
@@ -3558,6 +3570,7 @@ impl GameState {
                     | crate::core::Effect::GrantCantBeBlocked { .. }
                     | crate::core::Effect::Regenerate { .. }
                     | crate::core::Effect::PreventDamage { .. }
+                    | crate::core::Effect::PreventDamageFromSource { .. }
                     | crate::core::Effect::LoseLife { .. }
                     | crate::core::Effect::DestroyAll { .. }
                     | crate::core::Effect::SacrificeAll { .. }
@@ -3678,6 +3691,7 @@ impl Clone for GameState {
             mana_state_version: self.mana_state_version,
             skip_reveals: self.skip_reveals,
             persistent_effects: self.persistent_effects.clone(),
+            current_damage_source: self.current_damage_source,
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),

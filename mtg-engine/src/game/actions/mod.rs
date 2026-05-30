@@ -68,6 +68,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::GrantCantBeBlocked { .. }
         | Effect::Regenerate { .. }
         | Effect::PreventDamage { .. }
+        | Effect::PreventDamageFromSource { .. }
         | Effect::ModalChoice { .. }
         | Effect::Dig { .. }
         | Effect::CreateDelayedTrigger { .. }
@@ -181,6 +182,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
             | Effect::PreventDamage { .. }
+            | Effect::PreventDamageFromSource { .. }
             | Effect::ModalChoice { .. }
             | Effect::Dig { .. }
             | Effect::CreateDelayedTrigger { .. }
@@ -446,9 +448,19 @@ impl GameState {
                     // Expand "all players" effects (e.g., Wheel of Fortune: each player discards/draws)
                     let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                     let expanded = expand_all_players_effect(&resolved, &player_ids);
+                    // The resolving spell is the source of any damage it deals,
+                    // so source-filtered prevention (Circle of Protection) can
+                    // match it (CR 609.7, 615.6). Cleared after execution.
+                    self.current_damage_source = Some(card_id);
+                    let mut exec_result = Ok(());
                     for e in &expanded {
-                        self.execute_effect(e)?;
+                        if let Err(err) = self.execute_effect(e) {
+                            exec_result = Err(err);
+                            break;
+                        }
                     }
+                    self.current_damage_source = None;
+                    exec_result?;
                 }
             }
         }
@@ -4593,6 +4605,33 @@ impl GameState {
                 }
             }
 
+            Effect::PreventDamageFromSource {
+                protected,
+                color,
+                source,
+            } => {
+                // Circle of Protection: install a source-filtered prevention
+                // shield protecting `protected` from the chosen colored
+                // `source` for the rest of the turn (CR 615.1, 615.6). The
+                // shield is consumed by the next matching damage event.
+                if protected.is_placeholder() || source.is_placeholder() {
+                    log::debug!("PreventDamageFromSource unresolved (placeholder), skipping");
+                    return Ok(());
+                }
+                let shield = crate::core::DamagePreventionShield::colored_source_next_event(*color, *source);
+                let source_name = self.cards.get(*source).map(|c| c.name.to_string()).unwrap_or_default();
+                let player = self.get_player_mut(*protected)?;
+                player.source_prevention_shields.push(shield);
+                let player_name = self
+                    .get_player(*protected)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_else(|_| "Unknown".to_string());
+                self.logger.gamelog(&format!(
+                    "The next time {} ({}) would deal damage to {} this turn, prevent that damage",
+                    source_name, source, player_name
+                ));
+            }
+
             Effect::DestroyAll {
                 restriction,
                 no_regenerate,
@@ -7413,9 +7452,68 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if the target player does not exist.
+    /// Apply any source-filtered damage-prevention shields on `target_id` to a
+    /// would-be damage event of `amount` from `source` (CR 615.1, 615.6).
+    ///
+    /// Returns the damage remaining after prevention. Matching shields are
+    /// consumed (a `NextEvent` shield prevents the whole event then expires);
+    /// spent shields are removed eagerly. Prevention is logged. Uses only
+    /// public card colors, so it is identical on server and client.
+    ///
+    /// `source == None` means the damage has no tracked source (e.g. a few
+    /// internal/test paths) and no source-filtered shield can match.
+    fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
+        let Some(source) = source else { return amount };
+        if amount <= 0 {
+            return amount;
+        }
+        // Snapshot the source's colors up front (immutable borrow) so the
+        // shield closure does not borrow the card store while we mutate the
+        // player's shield list.
+        let source_colors = self.cards.get(source).map(|c| c.colors.clone()).unwrap_or_default();
+        let Ok(player) = self.get_player_mut(target_id) else {
+            return amount;
+        };
+
+        let mut remaining = amount as u32;
+        let mut total_prevented = 0u32;
+        for shield in &mut player.source_prevention_shields {
+            if remaining == 0 {
+                break;
+            }
+            let prevented = shield.apply(source, remaining, |c| source_colors.contains(&c));
+            remaining -= prevented;
+            total_prevented += prevented;
+        }
+        // Drop spent shields (NextEvent shields that fired).
+        player.source_prevention_shields.retain(|s| !s.is_spent());
+
+        if total_prevented > 0 {
+            let player_name = player.name.to_string();
+            let source_name = self.cards.get(source).map(|c| c.name.to_string()).unwrap_or_default();
+            self.logger.gamelog(&format!(
+                "Prevented {} damage to {} from {} ({})",
+                total_prevented, player_name, source_name, source
+            ));
+        }
+        remaining as i32
+    }
+
+    /// Deal damage to a player target
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target player does not exist.
     pub fn deal_damage(&mut self, target_id: PlayerId, amount: i32) -> Result<()> {
         // Check if target is a player
         if self.players.iter().any(|p| p.id == target_id) {
+            // Source-filtered prevention shields first (Circle of Protection,
+            // CR 615.6): prevent matching damage before the blanket shield.
+            let source = self.current_damage_source;
+            let amount = self.apply_source_prevention_shields(target_id, source, amount);
+            if amount <= 0 {
+                return Ok(());
+            }
             // Apply damage prevention shield (CR 615.1)
             let (actual_amount, prevented) = {
                 let player = self.get_player_mut(target_id)?;

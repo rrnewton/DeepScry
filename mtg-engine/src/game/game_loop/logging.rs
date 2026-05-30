@@ -661,6 +661,10 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::PreventDamageFromSource { .. } => {
+                // The shield-installation line is emitted by execute_effect (it
+                // needs the resolved source/player names); nothing to add here.
+            }
             Effect::Firebend { controller, amount } => {
                 let player_name = self.get_player_name(*controller);
                 let message = format!(

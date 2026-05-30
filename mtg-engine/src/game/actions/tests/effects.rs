@@ -1977,6 +1977,64 @@ mod tests {
     }
 
     #[test]
+    fn test_source_prevention_shield_matches_only_chosen_red_source() {
+        // Circle of Protection: Red construct — a source-filtered shield only
+        // prevents damage from the chosen red source, and only its next event
+        // (CR 615.6). Damage from a different source is unaffected.
+        use crate::core::{CardType, Color, DamagePreventionShield};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+
+        // A red source (the chosen one) and an unrelated source.
+        let red_src = game.next_entity_id();
+        let mut red_card = Card::new(red_src, "Ironclaw Orcs".to_string(), game.players[1].id);
+        red_card.add_type(CardType::Creature);
+        red_card.colors = smallvec::smallvec![Color::Red];
+        game.cards.insert(red_src, red_card);
+
+        let other_src = game.next_entity_id();
+        let mut other_card = Card::new(other_src, "Grizzly Bears".to_string(), game.players[1].id);
+        other_card.add_type(CardType::Creature);
+        other_card.colors = smallvec::smallvec![Color::Green];
+        game.cards.insert(other_src, other_card);
+
+        // Install the shield protecting P1 from the chosen red source.
+        game.get_player_mut(p1_id)
+            .unwrap()
+            .source_prevention_shields
+            .push(DamagePreventionShield::colored_source_next_event(Color::Red, red_src));
+
+        // Damage from the chosen red source is fully prevented (any magnitude).
+        game.current_damage_source = Some(red_src);
+        game.deal_damage(p1_id, 4).unwrap();
+        assert_eq!(game.get_player(p1_id).unwrap().life, 20, "red source damage prevented");
+
+        // Shield is spent: a second red event is NOT prevented.
+        game.current_damage_source = Some(red_src);
+        game.deal_damage(p1_id, 3).unwrap();
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            17,
+            "shield expired after one event (CR 615.1)"
+        );
+
+        // Reinstall and confirm a non-red source is never prevented.
+        game.get_player_mut(p1_id)
+            .unwrap()
+            .source_prevention_shields
+            .push(DamagePreventionShield::colored_source_next_event(Color::Red, red_src));
+        game.current_damage_source = Some(other_src);
+        game.deal_damage(p1_id, 2).unwrap();
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            15,
+            "green source damage not prevented by CoP:Red"
+        );
+        game.current_damage_source = None;
+    }
+
+    #[test]
     fn test_put_counter_all() {
         use crate::core::{CardType, CounterType};
 

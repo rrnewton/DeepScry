@@ -2652,9 +2652,13 @@ impl HeuristicController {
             }
         }
 
-        // Check for damage prevention effects (Militant Monk, Master Healer, etc.)
+        // Check for damage prevention effects (Militant Monk, Master Healer,
+        // and the source-filtered Circles of Protection).
         for effect in &ability.effects {
-            if matches!(effect, crate::core::Effect::PreventDamage { .. }) {
+            if matches!(
+                effect,
+                crate::core::Effect::PreventDamage { .. } | crate::core::Effect::PreventDamageFromSource { .. }
+            ) {
                 return ActivatedAbilityType::PreventDamage;
             }
         }

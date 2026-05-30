@@ -544,6 +544,7 @@ impl GameState {
                             | Effect::GrantCantBeBlocked { .. }
                             | Effect::Regenerate { .. }
                             | Effect::PreventDamage { .. }
+                            | Effect::PreventDamageFromSource { .. }
                             | Effect::RemoveCounter { .. }
                             | Effect::PutCounter { .. }
                             | Effect::MultiplyCounter { .. }
@@ -644,6 +645,10 @@ impl GameState {
                 Effect::PreventDamage { .. } => {
                     // PreventDamage with Defined$ Self or Defined$ You - target already specified
                     // TargetRef::None case handled above
+                }
+                Effect::PreventDamageFromSource { .. } => {
+                    // Circle of Protection is an activated ability, not a spell;
+                    // its source is chosen via get_valid_targets_for_ability.
                 }
                 Effect::DestroyPermanent { .. }
                 | Effect::GainControl { .. }
@@ -1055,6 +1060,38 @@ impl GameState {
                         }
                     }
                 }
+                Effect::PreventDamageFromSource { color, source, .. } if source.is_placeholder() => {
+                    // Circle of Protection: choose a source of the shield's
+                    // colour. Chooseable sources are matching-colour objects
+                    // that could actually deal damage to the controller —
+                    // creatures on the battlefield and spells on the stack
+                    // (e.g. a red burn spell). We exclude the Circle's own
+                    // enchantment (it is itself a coloured permanent for the
+                    // self-coloured CoPs but deals no damage, so choosing it is
+                    // never useful) and other non-damaging permanents, which
+                    // keeps the auto-chooser pointed at real threats. The
+                    // colour test uses public characteristics only.
+                    for &card_id in &self.battlefield.cards {
+                        if card_id == source_card_id {
+                            continue;
+                        }
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if card.is_creature()
+                                && card.is_color(*color)
+                                && is_legal_target(card, ability_controller, &source_colors)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                    for &card_id in &self.stack.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if card.is_color(*color) {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 // ===== EXHAUSTIVE EFFECT HANDLING FOR ABILITY TARGETING =====
                 // Effects that don't need targets or have targets pre-specified
                 Effect::DrawCards { .. }
@@ -1122,6 +1159,7 @@ impl GameState {
                 | Effect::GrantCantBeBlocked { .. }
                 | Effect::Regenerate { .. }
                 | Effect::PreventDamage { .. }
+                | Effect::PreventDamageFromSource { .. }
                 | Effect::RemoveCounter { .. }
                 | Effect::PutCounter { .. }
                 | Effect::MultiplyCounter { .. }
@@ -1266,6 +1304,24 @@ impl GameState {
                         false
                     }
                 })
+            }
+            Effect::PreventDamageFromSource { color, source, .. } if source.is_placeholder() => {
+                // Circle of Protection needs at least one matching-colour
+                // damage source to choose: a creature on the battlefield or a
+                // spell on the stack (mirrors get_valid_targets_for_ability).
+                let creature_source = self.battlefield.cards.iter().any(|&card_id| {
+                    self.cards
+                        .get(card_id)
+                        .map(|card| card.is_creature() && card.is_color(*color))
+                        .unwrap_or(false)
+                });
+                let stack_source = self.stack.cards.iter().any(|&card_id| {
+                    self.cards
+                        .get(card_id)
+                        .map(|card| card.is_color(*color))
+                        .unwrap_or(false)
+                });
+                creature_source || stack_source
             }
             Effect::PumpCreature { target, .. } if target.is_placeholder() => {
                 // Pump requires a creature target
@@ -1413,6 +1469,7 @@ impl GameState {
             | Effect::GrantCantBeBlocked { .. }
             | Effect::Regenerate { .. }
             | Effect::PreventDamage { .. }
+            | Effect::PreventDamageFromSource { .. }
             | Effect::RemoveCounter { .. }
             | Effect::PutCounter { .. }
             | Effect::MultiplyCounter { .. }

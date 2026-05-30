@@ -553,8 +553,12 @@ impl GameState {
         // so we compute life_after = initial_life - cumulative_damage_to_players[player].
         let initial_player_lives: BTreeMap<PlayerId, i32> = self.players.iter().map(|p| (p.id, p.life)).collect();
 
-        // Use iterator again for second pass (zero allocation)
-        for attacker_id in self.combat.attackers_iter() {
+        // Second pass: snapshot the attacker list up front so the loop body is
+        // free to take a `&mut self` borrow (needed to consume source-filtered
+        // damage-prevention shields, CR 615.6) without holding the immutable
+        // `self.combat.attackers_iter()` borrow across it.
+        let attacker_ids: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
+        for attacker_id in attacker_ids {
             // Skip creatures that are no longer on the battlefield
             // (e.g., died in first strike damage step)
             if !self.battlefield.contains(attacker_id) {
@@ -622,6 +626,17 @@ impl GameState {
                     // Trample: remaining damage goes to defending player
                     if has_trample && remaining_power > 0 {
                         if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
+                            // Source-filtered prevention (Circle of Protection,
+                            // CR 615.6): prevent matching combat damage from
+                            // this attacker before it reaches the player.
+                            let remaining_power = self.apply_source_prevention_shields(
+                                defending_player,
+                                Some(attacker_id),
+                                remaining_power,
+                            );
+                            if remaining_power <= 0 {
+                                continue;
+                            }
                             *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                             *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;
                             // Log per-direction damage: attacker -> player (with running life)
@@ -758,6 +773,14 @@ impl GameState {
             } else {
                 // Unblocked attacker deals damage to defending player
                 if let Some(defending_player) = self.combat.get_defending_player(attacker_id) {
+                    // Source-filtered prevention (Circle of Protection,
+                    // CR 615.6): prevent matching combat damage from this
+                    // attacker before it reaches the player.
+                    let remaining_power =
+                        self.apply_source_prevention_shields(defending_player, Some(attacker_id), remaining_power);
+                    if remaining_power <= 0 {
+                        continue;
+                    }
                     *damage_to_players.entry(defending_player).or_insert(0) += remaining_power;
                     // Track damage for lifelink
                     *damage_dealt_by_creature.entry(attacker_id).or_insert(0) += remaining_power;

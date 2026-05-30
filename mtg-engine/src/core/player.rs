@@ -64,6 +64,15 @@ pub struct Player {
     #[serde(default)]
     pub damage_prevention: i32,
 
+    /// Source-filtered damage-prevention replacement effects protecting this
+    /// player until end of turn (CR 615.1, 615.6). Unlike `damage_prevention`
+    /// (a blanket amount counter), each shield only prevents damage from a
+    /// *matching source* (e.g. Circle of Protection: Red — a chosen red
+    /// source). Cleared in the cleanup step (CR 514.2). Public game state, so
+    /// prevention is identical on server and client (network/WASM safe).
+    #[serde(default)]
+    pub source_prevention_shields: Vec<crate::core::DamagePreventionShield>,
+
     /// Number of spells cast this turn (for storm-like effects and spell counting)
     #[serde(default)]
     pub spells_cast_this_turn: u8,
@@ -86,6 +95,7 @@ impl Player {
             commander_cast_count: 0,
             commander_damage_taken: Vec::new(),
             damage_prevention: 0,
+            source_prevention_shields: Vec::new(),
             spells_cast_this_turn: 0,
         }
     }

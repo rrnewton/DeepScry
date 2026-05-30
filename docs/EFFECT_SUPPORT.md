@@ -96,6 +96,28 @@ workflow, row format, and update rules.
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 | AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |
+| AB$ ChooseSource Choices$ Card.<Color>Source (source-filtered damage prevention, Circle of Protection) | WORKING | 2026-05-30_#2491(compat-damage-prevention-cop) | (fixed mtg-490) | Circle of Protection: Red |
+  - 2026-05-30: New general damage-prevention construct (CR 615.1/615.6).
+    `core/prevention.rs` adds strong-typed `DamageSourceFilter` (Color /
+    SpecificSource / ColoredSource) + `DamagePreventionShield` (scope
+    AllThisTurn / NextEvent / NextPoints) stored per-player in
+    `Player::source_prevention_shields`. `Effect::PreventDamageFromSource
+    { protected, color, source }` is produced from the CoP card shape
+    (`AB$ ChooseSource | Choices$ Card.<Color>Source | SubAbility$ DBEffect`)
+    by reading the colour from the tokenized `Choices$` filter (NOT
+    substring-matched), generalizing across all five Circles of Protection.
+    The shield is consulted on the damage path in BOTH combat attribution
+    (`actions/combat.rs`) and direct/burn damage (`deal_damage` via the
+    transient `GameState::current_damage_source`), preventing the chosen
+    source's next damage event and expiring at cleanup (CR 514.2).
+    CoP:Red is verified end-to-end (primary target, mtg-490). The chooser
+    offers matching-colour creatures (battlefield) + spells (stack) and
+    excludes the Circle's own enchantment, so all five Circles
+    (White/Blue/Black/Green) work via the identical colour-filter path —
+    CoP:White verified preventing a white attacker in the same way. The only
+    intentional gap is non-creature damaging permanents (e.g. a coloured
+    damage artifact) as a chosen source, which the current chooser omits to
+    keep the AS auto-pick aimed at real threats (heuristic follow-up).
 
 ## Static abilities (S:)
 

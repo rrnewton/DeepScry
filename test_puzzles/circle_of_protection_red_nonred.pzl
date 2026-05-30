@@ -1,0 +1,24 @@
+[metadata]
+Name:Circle of Protection: Red does not prevent non-red damage
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P0 attacks with Grizzly Bears (2/2 green). P1 controls Circle of Protection: Red but a green source is not a legal choice, so the damage is NOT prevented and P1 drops to 18 (CR 615.6 only applies to the matching source colour).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Forest; Forest; Grizzly Bears
+p0library=Forest; Forest; Forest
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Plains; Circle of Protection: Red
+p1library=Plains; Plains; Plains
+p1graveyard=
+p1exile=

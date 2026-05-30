@@ -10,6 +10,7 @@ pub mod mana;
 pub mod mana_production;
 pub mod persistent_effect;
 pub mod player;
+pub mod prevention;
 pub mod spell_ability;
 pub mod types;
 
@@ -33,6 +34,7 @@ pub use persistent_effect::{
     CleanupCondition, PersistentEffect, PersistentEffectId, PersistentEffectKind, PersistentEffectStore,
 };
 pub use player::Player;
+pub use prevention::{DamagePreventionShield, DamageSourceFilter, PreventionScope};
 pub use spell_ability::SpellAbility;
 pub use types::{CardName, CounterType, PlayerName, Subtype};
 

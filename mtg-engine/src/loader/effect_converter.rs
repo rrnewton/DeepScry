@@ -8,6 +8,35 @@ use crate::core::{CardId, ControllerRestriction, Effect, Keyword, PlayerId, Targ
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
+/// Extract the source color of a Circle-of-Protection-style `ChooseSource`
+/// ability from its tokenized `Choices$ Card.<Color>Source` filter.
+///
+/// The `Choices$` value is a comma-separated list of card filters; for the
+/// Circles of Protection it is exactly `Card.<Color>Source` (e.g.
+/// `Card.RedSource`). We split on `.` (NOT substring-match) and read the
+/// `<Color>Source` qualifier, mapping the colour word to a [`Color`]. Returns
+/// `None` for any other `ChooseSource` shape (Martyr's Cause' `Card,Emblem`,
+/// colourless choosers, …) so only the CoP family is converted here.
+fn choose_source_color(params: &AbilityParams) -> Option<crate::core::Color> {
+    use crate::core::Color;
+    let choices = params.get("Choices")?;
+    // CoP uses a single `Card.<Color>Source` choice; bail on multi-filter lists.
+    if choices.contains(',') {
+        return None;
+    }
+    // Tokenize `Card.<qualifier>` and read the qualifier (e.g. "RedSource").
+    let qualifier = choices.split('.').nth(1)?;
+    let color_word = qualifier.strip_suffix("Source")?;
+    match color_word {
+        "White" => Some(Color::White),
+        "Blue" => Some(Color::Blue),
+        "Black" => Some(Color::Black),
+        "Red" => Some(Color::Red),
+        "Green" => Some(Color::Green),
+        _ => None,
+    }
+}
+
 /// Convert ability parameters to an Effect
 ///
 /// This replaces the unsafe substring matching in parse_effects() with
@@ -1305,6 +1334,31 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             Some(Effect::PreventDamage { target, amount })
         }
 
+        ApiType::ChooseSource => {
+            // Circle-of-Protection family: choose a source of a given color and
+            // create a source-filtered damage-prevention shield protecting the
+            // controller this turn (CR 615.1, 615.6). The whole CoP card shape
+            // is:
+            //   A:AB$ ChooseSource | Cost$ 1 | Choices$ Card.RedSource
+            //         | AILogic$ NeedsPrevention | SubAbility$ DBEffect | ...
+            //   SVar:DBEffect:DB$ Effect | ReplacementEffects$ RPreventNextFromSource | ...
+            //   SVar:RPreventNextFromSource:Event$ DamageDone
+            //         | ValidSource$ Card.ChosenCardStrict+<Color>Source
+            //         | ValidTarget$ You | PreventionEffect$ True | ...
+            //
+            // We collapse this into a single Effect::PreventDamageFromSource.
+            // The source color is read from the `Choices$ Card.<Color>Source`
+            // filter (tokenized, NOT substring-matched), generalizing across all
+            // five Circles of Protection. The chosen source CardId is a
+            // placeholder resolved from the ability's target at activation.
+            let color = choose_source_color(params)?;
+            Some(Effect::PreventDamageFromSource {
+                protected: PlayerId::new(0), // Placeholder - resolved to controller at activation
+                color,
+                source: CardId::new(0), // Placeholder - resolved from chosen target
+            })
+        }
+
         ApiType::LoseLife => {
             // LoseLife: Target player or defined players lose life
             // Examples: "AB$ LoseLife | LifeAmount$ 2 | Defined$ Opponent"
@@ -1988,6 +2042,7 @@ pub fn wrap_with_unless_cost(effect: Effect, params: &AbilityParams) -> Effect {
 #[allow(clippy::wildcard_enum_match_arm)] // Tests use wildcards in panic branches
 mod tests {
     use super::*;
+    use crate::core::Color;
 
     #[test]
     fn test_convert_deal_damage() {
@@ -3148,6 +3203,80 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
             matches!(effect, Effect::PreventDamage { amount: 4, .. }),
             "Expected PreventDamage with amount 4, got {:?}",
             effect
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // AB$ ChooseSource (Circle of Protection family) parsing tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_card_compat_circle_of_protection_red() {
+        // Circle of Protection: Red — the source-filtered prevention construct.
+        // "A:AB$ ChooseSource | Cost$ 1 | Choices$ Card.RedSource | ... | SubAbility$ DBEffect"
+        // collapses to a single Effect::PreventDamageFromSource whose colour is
+        // read (tokenized, not substring-matched) from `Choices$ Card.RedSource`.
+        let params = AbilityParams::parse(
+            "A:AB$ ChooseSource | Cost$ 1 | Choices$ Card.RedSource | AILogic$ NeedsPrevention \
+             | SubAbility$ DBEffect | SpellDescription$ The next time a red source of your choice \
+             would deal damage to you this turn, prevent that damage.",
+        )
+        .unwrap();
+        assert_eq!(params.api_type, ApiType::ChooseSource);
+        let effect = params_to_effect(&params).expect("CoP:Red should produce an effect");
+        match effect {
+            Effect::PreventDamageFromSource {
+                color,
+                source,
+                protected,
+            } => {
+                assert_eq!(color, Color::Red, "CoP:Red filters on red sources");
+                assert!(source.is_placeholder(), "chosen source resolved at activation");
+                assert!(protected.is_placeholder(), "protected player resolved at activation");
+            }
+            other => panic!("Expected PreventDamageFromSource, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_choose_source_all_circle_colors() {
+        // The construct generalizes across the whole Circle-of-Protection
+        // family: each colour's `Choices$ Card.<Color>Source` maps to the
+        // matching PreventDamageFromSource colour filter.
+        for (filter, expected) in [
+            ("Card.WhiteSource", Color::White),
+            ("Card.BlueSource", Color::Blue),
+            ("Card.BlackSource", Color::Black),
+            ("Card.RedSource", Color::Red),
+            ("Card.GreenSource", Color::Green),
+        ] {
+            let ability = format!(
+                "A:AB$ ChooseSource | Cost$ 1 | Choices$ {} | SubAbility$ DBEffect",
+                filter
+            );
+            let params = AbilityParams::parse(&ability).unwrap();
+            let effect = params_to_effect(&params).unwrap_or_else(|| panic!("{} should parse", filter));
+            match effect {
+                Effect::PreventDamageFromSource { color, .. } => {
+                    assert_eq!(color, expected, "{} → {:?}", filter, expected);
+                }
+                other => panic!("Expected PreventDamageFromSource for {}, got {:?}", filter, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_choose_source_non_cop_returns_none() {
+        // Martyr's Cause-style multi-filter chooser (`Choices$ Card,Emblem`) is
+        // NOT the single-colour CoP shape, so this arm declines to convert it
+        // (returns None) rather than mis-modelling it.
+        let params = AbilityParams::parse(
+            "A:AB$ ChooseSource | Cost$ Sac<1/Creature> | Choices$ Card,Emblem | SubAbility$ DBEffect",
+        )
+        .unwrap();
+        assert!(
+            params_to_effect(&params).is_none(),
+            "non-CoP ChooseSource shapes should not convert to PreventDamageFromSource"
         );
     }
 

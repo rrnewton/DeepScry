@@ -1577,6 +1577,18 @@ impl<'a> GameLoop<'a> {
                                                     count: *count,
                                                 }
                                             }
+                                            // Circle of Protection: resolve the protected player to
+                                            // the ability's controller and the chosen source to the
+                                            // selected red (etc.) permanent/spell. (CR 615.1)
+                                            crate::core::Effect::PreventDamageFromSource { color, source, .. }
+                                                if source.is_placeholder() && !chosen_targets_vec.is_empty() =>
+                                            {
+                                                crate::core::Effect::PreventDamageFromSource {
+                                                    protected: current_priority,
+                                                    color: *color,
+                                                    source: chosen_targets_vec[0],
+                                                }
+                                            }
                                             // Replace placeholder targets with chosen targets
                                             crate::core::Effect::DestroyPermanent {
                                                 target,
