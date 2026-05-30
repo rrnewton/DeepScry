@@ -18,6 +18,62 @@ impl<'a> GameInitializer<'a> {
         GameInitializer { card_db }
     }
 
+    /// Populate `game.card_definitions` with the public `CardDefinition` of every
+    /// card that can appear in either deck, keyed by `CardName`.
+    ///
+    /// Card *definitions* (rules text, types, P/T, mana cost) are PUBLIC, view-
+    /// independent data — they are not hidden information like library order or
+    /// hand contents. Both the network server (`init_game_with_positional_ids`)
+    /// and the shadow client (`init_game_reserve_only` + this call) build the
+    /// SAME map from the SAME two public deck lists, so any controller that
+    /// reasons about a card by name (e.g. the heuristic's
+    /// `choose_from_library_by_names`) sees identical data on server and client.
+    /// This is the information-independence guarantee from
+    /// `docs/NETWORK_ARCHITECTURE.md`; without it the shadow client's map is
+    /// empty and library-search decisions diverge from the full-info server
+    /// (mtg-yulth).
+    ///
+    /// Token definitions already present in `game.token_definitions` are also
+    /// indexed by their card name (a token revealed by name must resolve too).
+    ///
+    /// # Errors
+    /// Returns an error if a card definition cannot be loaded from the database.
+    pub async fn populate_card_definitions(
+        &self,
+        game: &mut GameState,
+        player1_deck: &DeckList,
+        player2_deck: &DeckList,
+    ) -> Result<()> {
+        use std::sync::Arc;
+
+        let mut unique_cards = std::collections::HashSet::new();
+        for entry in player1_deck.main_deck.iter().chain(player1_deck.commanders.iter()) {
+            unique_cards.insert(entry.card_name.clone());
+        }
+        for entry in player2_deck.main_deck.iter().chain(player2_deck.commanders.iter()) {
+            unique_cards.insert(entry.card_name.clone());
+        }
+
+        // Build card_definitions map keyed by CardName for name-based lookups.
+        let mut card_defs_map = std::collections::HashMap::with_capacity(unique_cards.len());
+        for card_name in &unique_cards {
+            if let Some(card_def) = self.card_db.get_card(card_name).await? {
+                let card_name_typed = crate::core::CardName::from(card_name.as_str());
+                card_defs_map.insert(card_name_typed, (*card_def).clone());
+            }
+        }
+
+        // Also index token definitions by their (public) card name: when a token
+        // is revealed it is looked up by name, not by token script name.
+        for token_def in game.token_definitions.values() {
+            let token_name = crate::core::CardName::from(token_def.name.as_str());
+            card_defs_map.insert(token_name, (**token_def).clone());
+        }
+
+        game.card_definitions = Arc::new(card_defs_map);
+        Ok(())
+    }
+
     /// Initialize a two-player game with reserve-only CardIDs (for network clients)
     ///
     /// This creates the game structure without instantiating any cards. Instead, it:
@@ -162,26 +218,11 @@ impl<'a> GameInitializer<'a> {
             }
         }
 
-        // Build card_definitions map for network transmission
-        // Maps CardName -> CardDefinition for looking up definitions when revealing cards
-        let mut card_defs_map = std::collections::HashMap::new();
-        for card_name in &card_names {
-            if let Some(card_def) = self.card_db.get_card(card_name).await? {
-                let card_name_typed = crate::core::CardName::from(card_name.as_str());
-                // Clone the CardDefinition from the Arc
-                card_defs_map.insert(card_name_typed, (*card_def).clone());
-            }
-        }
-
-        // Also add token definitions to card_definitions (keyed by token's actual CardName)
-        // Token definitions are stored in game.token_definitions by script name (e.g., "c_a_food_sac")
-        // but when revealing a token, we look up by card.name (e.g., "Food Token")
-        for token_def in game.token_definitions.values() {
-            let token_name = crate::core::CardName::from(token_def.name.as_str());
-            card_defs_map.insert(token_name, (**token_def).clone());
-        }
-
-        game.card_definitions = Arc::new(card_defs_map);
+        // Build card_definitions map (CardName -> public CardDefinition) for
+        // network transmission and name-based lookups. Shared with the shadow
+        // client's init path so both sides hold the identical public map.
+        self.populate_card_definitions(&mut game, player1_deck, player2_deck)
+            .await?;
 
         // Expand deck entries into card definition vectors (not yet Card instances)
         let mut p1_card_defs: Vec<Arc<CardDefinition>> = Vec::with_capacity(p1_deck_size);

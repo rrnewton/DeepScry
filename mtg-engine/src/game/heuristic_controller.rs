@@ -5990,6 +5990,73 @@ impl PlayerController for HeuristicController {
         ChoiceResult::Ok(Some(best_index))
     }
 
+    /// Network-mode counterpart of [`choose_from_library`].
+    ///
+    /// In network mode the authoritative library-search decision is made by the
+    /// shadow CLIENT, which cannot see the hidden library card identities. The
+    /// server therefore sends the candidate card *names* (built in
+    /// `network::controller::NetworkController::choose_from_library` as
+    /// `valid_cards.iter().map(|def| def.name)`, so this name list is index-aligned
+    /// 1:1 with the server's `valid_cards` CardId slice). The server maps the index
+    /// we return back to the concrete CardId.
+    ///
+    /// To honour the information-independence invariant (CLAUDE.md /
+    /// docs/NETWORK_ARCHITECTURE.md), this MUST pick the identical index that
+    /// [`choose_from_library`] would pick on the server's full-info view. We do that
+    /// by looking up each name's public `CardDefinition` from the shared card
+    /// definitions map (`view.game().card_definitions`) and scoring it with the exact
+    /// same [`evaluate_card_definition_for_library`] used by `choose_from_library`,
+    /// choosing the first-max index (matching the strict `score > best_score`
+    /// tiebreak there). Card *names* are public, view-independent data — no hidden
+    /// library order or zone contents are read. The previous trait default returned
+    /// `Some(0)` (the first name), which disagreed with the full-info
+    /// `choose_from_library` and caused the mtg-yulth desync.
+    fn choose_from_library_by_names(
+        &mut self,
+        view: &GameStateView,
+        card_names: &[String],
+    ) -> ChoiceResult<Option<usize>> {
+        if card_names.is_empty() {
+            view.logger()
+                .controller_choice("HEURISTIC", "Library search (by name): fail to find (no valid names)");
+            return ChoiceResult::Ok(None);
+        }
+
+        // Score each candidate by its public CardDefinition with the SAME scoring
+        // as choose_from_library; first-max wins (strict `>`), mirroring the
+        // server-side index selection exactly.
+        let mut best_index = 0;
+        let mut best_score = i32::MIN;
+        for (idx, name) in card_names.iter().enumerate() {
+            let Some(card_def) = view.game().card_definitions.get(&crate::core::CardName::new(name)) else {
+                // Every real library card is in the shared definitions map. A miss
+                // would silently diverge server/client decisions, so treat it as a
+                // fatal info-independence hazard rather than guessing.
+                panic!(
+                    "FATAL: heuristic choose_from_library_by_names could not resolve \
+                     card name '{name}' in the card definitions map. This breaks \
+                     server/client decision parity for library search (see \
+                     docs/NETWORK_ARCHITECTURE.md)."
+                );
+            };
+            let score = self.evaluate_card_definition_for_library(view, card_def);
+            if score > best_score {
+                best_score = score;
+                best_index = idx;
+            }
+        }
+
+        view.logger().controller_choice(
+            "HEURISTIC",
+            &format!(
+                "Library search (by name): found {} (score: {})",
+                card_names[best_index], best_score
+            ),
+        );
+
+        ChoiceResult::Ok(Some(best_index))
+    }
+
     fn choose_permanents_to_sacrifice(
         &mut self,
         view: &GameStateView,

@@ -1018,6 +1018,21 @@ impl ClientGameState {
         if let Some(card_def) = Self::card_from_reveal(&card, card_db) {
             self.known_cards.insert(card.card_id, card_def.clone());
 
+            // mtg-yulth: also record the definition in the shadow game's public
+            // `card_definitions` map (keyed by CardName). The server reveals the
+            // CardDefinition of every publicly-known card (drawn, played, and -- via
+            // the mtg-253 fix -- every searchable library card) BEFORE any choice
+            // that depends on it, so this map ends up containing exactly the cards a
+            // controller may legally reason about by name. Info-independent AI
+            // decisions (e.g. heuristic library search via
+            // choose_from_library_by_names) can then look up CardDefinitions by name
+            // and get the SAME data the full-info server has, instead of an empty map.
+            {
+                let key = crate::core::CardName::from(card.name.as_str());
+                let defs = std::sync::Arc::make_mut(&mut self.game.card_definitions);
+                defs.entry(key).or_insert_with(|| card_def.clone());
+            }
+
             // If this is a token definition with script_name, add to token_definitions
             // This allows the client to create tokens without local card database
             if let Some(script_name) = &card_def.script_name {
@@ -1502,7 +1517,18 @@ impl NetworkClient {
                 ranges.p2_start,
                 ranges.p2_end
             );
-            initializer.init_game_reserve_only(p1_name, p2_name, starting_life, ranges)
+            let mut game = initializer.init_game_reserve_only(p1_name, p2_name, starting_life, ranges);
+            // mtg-yulth: populate the shadow game's public card_definitions map from
+            // BOTH (public) deck lists, identically to the server's
+            // init_game_with_positional_ids. Card *definitions* are public data;
+            // without this the shadow map is empty and name-based controller
+            // decisions (heuristic library search) diverge from the full-info
+            // server, breaking the information-independence invariant
+            // (docs/NETWORK_ARCHITECTURE.md).
+            initializer
+                .populate_card_definitions(&mut game, p1_deck, p2_deck)
+                .await?;
+            game
         } else {
             // Fallback: instantiate cards locally (legacy mode, may cause ID mismatches)
             log::warn!("Server did not provide DeckCardIdRanges - using legacy initialization");
