@@ -358,3 +358,13 @@ If you find an existing script without it, that's a bug — fix it.
 4. **Linear control transfer** - one active party at a time
 5. **No sleeps, retries, or selects** - each party waits for its turn
 6. **Reveals are core game actions** - not server handler logic
+
+## Fuzz & stress harnesses
+
+The randomized harnesses that exercise this loopback model (native
+determinism, local-vs-network equivalence, native-vs-WASM equivalence,
+snapshot/resume) and the deterministic validate legs that guard them are
+inventoried in
+[../docs/FUZZ_AND_STRESS_TESTING_STRATEGY.md](FUZZ_AND_STRESS_TESTING_STRATEGY.md).
+Validate = deterministic fixed-seed legs; unbounded random sweeps live in
+`bug_finding/`.
