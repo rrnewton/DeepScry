@@ -76,7 +76,7 @@ workflow, row format, and update rules.
 | AB$ Draw Cost$ 2 T NumCards$ 1 + SubAbility$ DBDiscard | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Jalum Tome |
 | AB$ DestroyAll ValidCards$ Artifact,Creature,Enchantment | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
 | R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped (enters tapped) | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
-| SP$ Charm modes enforce per-mode ValidTgts$ restriction | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-af24s | Red Elemental Blast |
+| SP$ Charm modes enforce per-mode ValidTgts$ color restriction | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-af24s) | Red/Blue Elemental Blast |
 | DB$ GainLife LifeAmount$ X (X = Targeted$CardManaCost / dynamic) | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-297 | Divine Offering, Swords to Plowshares |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |

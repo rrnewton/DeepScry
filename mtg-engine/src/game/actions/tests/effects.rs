@@ -385,7 +385,10 @@ mod tests {
         let mut counterspell = Card::new(counter_id, "Counterspell".to_string(), p2_id);
         counterspell.add_type(CardType::Instant);
         counterspell.mana_cost = ManaCost::from_string("UU");
-        counterspell.effects.push(Effect::CounterSpell { target: bolt_id });
+        counterspell.effects.push(Effect::CounterSpell {
+            target: bolt_id,
+            required_color: None,
+        });
         game.cards.insert(counter_id, counterspell);
         game.stack.add(counter_id);
 
@@ -444,6 +447,7 @@ mod tests {
         // Use placeholder target - should automatically target opponent's spell
         counterspell.effects.push(Effect::CounterSpell {
             target: crate::core::CardId::new(0),
+            required_color: None,
         });
         game.cards.insert(counter_id, counterspell);
         game.stack.add(counter_id);
@@ -808,7 +812,7 @@ mod tests {
         let counter_id = game.next_card_id();
         let mut counterspell = counter_def.instantiate(counter_id, bob_id);
         // Manually set the target since we're bypassing the full casting process
-        if let Some(Effect::CounterSpell { target }) = counterspell.effects.get_mut(0) {
+        if let Some(Effect::CounterSpell { target, .. }) = counterspell.effects.get_mut(0) {
             *target = bolt_id;
         }
         game.cards.insert(counter_id, counterspell);
@@ -4998,6 +5002,76 @@ mod tests {
              Silent-drop of either half makes Gloom strictly weaker. \
              Got: {:?}",
             card.static_abilities
+        );
+    }
+
+    /// Card compat: Red Elemental Blast / Blue Elemental Blast — mtg-536 / mtg-487
+    ///
+    /// Script (REBL):
+    ///   A:SP$ Charm | Choices$ DBCounter,DBDestroy
+    ///   SVar:DBCounter:DB$ Counter | TargetType$ Spell | ValidTgts$ Card.Blue
+    ///   SVar:DBDestroy:DB$ Destroy | ValidTgts$ Permanent.Blue
+    ///
+    /// Parser-shape regression for the Charm per-mode color restriction
+    /// (mtg-af24s): the Counter mode must carry `required_color = Blue` on its
+    /// CounterSpell, and the Destroy mode must carry `required_color = Blue` on
+    /// its DestroyPermanent restriction. Previously the color was dropped, so
+    /// REBL could destroy/counter objects of any color (illegal targeting,
+    /// CR 115.4). BEBL is the mirror with Red.
+    #[test]
+    fn test_card_compat_elemental_blasts() {
+        use crate::core::{Color, Effect};
+        use std::path::PathBuf;
+
+        let check = |path: &str, name: &str, color: Color| {
+            let p = PathBuf::from(path);
+            if !p.exists() {
+                eprintln!("Skipping: cardsfolder not present at {:?}", p);
+                return;
+            }
+            let def = crate::loader::CardLoader::load_from_file(&p).unwrap_or_else(|_| panic!("{} should load", name));
+            assert_eq!(def.name.as_str(), name);
+            assert!(def.types.contains(&CardType::Instant));
+            let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+            // The single SP$ Charm ability holds a ModalChoice with two modes.
+            let modal = card
+                .effects
+                .iter()
+                .find_map(|e| {
+                    if let Effect::ModalChoice { modes, .. } = e {
+                        Some(modes)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| panic!("{} must parse a ModalChoice", name));
+
+            let mut saw_counter_color = false;
+            let mut saw_destroy_color = false;
+            for mode in modal {
+                if let Effect::CounterSpell { required_color, .. } = mode.effect.as_ref() {
+                    assert_eq!(*required_color, Some(color), "{}: counter mode color", name);
+                    saw_counter_color = true;
+                }
+                if let Effect::DestroyPermanent { restriction, .. } = mode.effect.as_ref() {
+                    assert_eq!(restriction.required_color, Some(color), "{}: destroy mode color", name);
+                    saw_destroy_color = true;
+                }
+            }
+            assert!(saw_counter_color, "{}: must have a color-restricted Counter mode", name);
+            assert!(saw_destroy_color, "{}: must have a color-restricted Destroy mode", name);
+        };
+
+        check(
+            "../cardsfolder/r/red_elemental_blast.txt",
+            "Red Elemental Blast",
+            Color::Blue,
+        );
+        check(
+            "../cardsfolder/b/blue_elemental_blast.txt",
+            "Blue Elemental Blast",
+            Color::Red,
         );
     }
 

@@ -1,0 +1,24 @@
+[metadata]
+Name:Red Elemental Blast Only Hits Blue
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:P1 casts Red Elemental Blast. Its "Destroy target blue permanent" mode may only target the opponent's BLUE creature (Phantom Monster), NOT P1's own red Mountain. Tracks mtg-536 / mtg-af24s (Charm per-mode ValidTgts color restriction).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Red Elemental Blast
+p0library=Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Phantom Monster
+p1exile=

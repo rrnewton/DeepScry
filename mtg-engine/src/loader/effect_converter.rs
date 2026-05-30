@@ -342,8 +342,15 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Counter => {
+            // ValidTgts$ may carry a color qualifier (e.g. Red Elemental Blast's
+            // `Card.Blue` => only blue spells). Reuse TargetRestriction::parse to
+            // extract the color, then keep just that restriction on CounterSpell.
+            let required_color = params
+                .get("ValidTgts")
+                .and_then(|v| TargetRestriction::parse(v).required_color);
             Some(Effect::CounterSpell {
                 target: CardId::new(0), // Placeholder
+                required_color,
             })
         }
 

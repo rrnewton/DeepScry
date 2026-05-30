@@ -1314,7 +1314,7 @@ impl<'a> GameLoop<'a> {
         // Placeholder target (CardId(0)) means the spell needs to choose a target when cast
         card.effects
             .iter()
-            .any(|effect| matches!(effect, Effect::CounterSpell { target } if target.is_placeholder()))
+            .any(|effect| matches!(effect, Effect::CounterSpell { target, .. } if target.is_placeholder()))
     }
 
     /// Check if a spell requires a battlefield target (e.g., Disenchant, Terror)

@@ -357,7 +357,7 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) grants {player_name} {num_turns} extra turn(s)");
                 self.game.logger.gamelog(&message);
             }
-            Effect::CounterSpell { target } => {
+            Effect::CounterSpell { target, .. } => {
                 let target_name = self
                     .game
                     .cards

@@ -2390,12 +2390,13 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::CounterSpell { target } if target.is_placeholder() => {
+            Effect::CounterSpell { target, required_color } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
                     Effect::CounterSpell {
                         target: resolved_target,
+                        required_color: *required_color,
                     }
                 } else {
                     effect.clone()
@@ -3537,7 +3538,7 @@ impl GameState {
                     player_name, num_turns
                 ));
             }
-            Effect::CounterSpell { target } => {
+            Effect::CounterSpell { target, .. } => {
                 // Counter a spell on the stack
                 // Fizzle if target is placeholder (no valid target found) or not on stack
                 // This happens when triggered counter effects (e.g., Ulamog's Nullifier ETB)

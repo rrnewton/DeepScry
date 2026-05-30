@@ -128,9 +128,12 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::CounterSpell { target } if target.is_placeholder() && target_index < targets.len() => {
+                    Effect::CounterSpell { target, required_color }
+                        if target.is_placeholder() && target_index < targets.len() =>
+                    {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
+                            required_color: *required_color,
                         };
                         target_index += 1;
                         replaced
@@ -3871,9 +3874,12 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
-                    Effect::CounterSpell { target } if target.is_placeholder() && target_index < targets.len() => {
+                    Effect::CounterSpell { target, required_color }
+                        if target.is_placeholder() && target_index < targets.len() =>
+                    {
                         let replaced = Effect::CounterSpell {
                             target: targets[target_index],
+                            required_color: *required_color,
                         };
                         target_index += 1;
                         replaced

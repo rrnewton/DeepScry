@@ -268,12 +268,25 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CounterSpell { target } if target.is_placeholder() => {
-                    // Counter can target spells on the stack (except self)
+                Effect::CounterSpell { target, required_color } if target.is_placeholder() => {
+                    // Counter can target spells on the stack (except self).
+                    // A color-restricted counter (Red Elemental Blast's "blue
+                    // spell") only sees spells of the required color.
                     for &card_id in &self.stack.cards {
-                        if card_id != spell_card_id {
-                            valid_targets.push(card_id);
+                        if card_id == spell_card_id {
+                            continue;
                         }
+                        if let Some(color) = required_color {
+                            let color_ok = self
+                                .cards
+                                .get(card_id)
+                                .map(|c| c.colors.contains(color))
+                                .unwrap_or(false);
+                            if !color_ok {
+                                continue;
+                            }
+                        }
+                        valid_targets.push(card_id);
                     }
                 }
                 Effect::ExilePermanent { target } if target.is_placeholder() => {
@@ -1316,7 +1329,7 @@ impl GameState {
                     }
                 })
             }
-            Effect::CounterSpell { target } if target.is_placeholder() => {
+            Effect::CounterSpell { target, .. } if target.is_placeholder() => {
                 // Counter requires a spell on the stack
                 !self.stack.is_empty()
             }

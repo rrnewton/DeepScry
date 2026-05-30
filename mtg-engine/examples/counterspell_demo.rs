@@ -56,7 +56,10 @@ fn main() -> Result<()> {
     counterspell.add_type(CardType::Instant);
     counterspell.mana_cost = ManaCost::from_string("UU");
     // Target Lightning Bolt
-    counterspell.effects.push(Effect::CounterSpell { target: bolt_id });
+    counterspell.effects.push(Effect::CounterSpell {
+        target: bolt_id,
+        required_color: None,
+    });
     game.cards.insert(counter_id, counterspell);
 
     // Put Counterspell on the stack (on top of Lightning Bolt)

@@ -336,6 +336,11 @@ pub struct TargetRestriction {
     /// `Creature.nonArtifact`). Artifact creatures are excluded.
     #[serde(default)]
     pub requires_nonartifact: bool,
+    /// Required color of the target, from a color qualifier in `ValidTgts$`
+    /// (e.g. `Permanent.Blue`, `Card.Red`). `None` = no color restriction.
+    /// Used by Red/Blue Elemental Blast, Pyroblast, Hydroblast, and color-hosers.
+    #[serde(default)]
+    pub required_color: Option<crate::core::Color>,
 }
 
 impl TargetRestriction {
@@ -350,6 +355,7 @@ impl TargetRestriction {
             requires_nontoken: false,
             requires_remembered: false,
             requires_nonartifact: false,
+            required_color: None,
         }
     }
 
@@ -364,6 +370,7 @@ impl TargetRestriction {
             requires_nontoken: false,
             requires_remembered: false,
             requires_nonartifact: false,
+            required_color: None,
         }
     }
 
@@ -391,6 +398,14 @@ impl TargetRestriction {
         // Check nonartifact restriction (e.g. The Abyss targets nonartifact creatures)
         if self.requires_nonartifact && card.is_artifact() {
             return false;
+        }
+
+        // Check color restriction (e.g. Red Elemental Blast's `Permanent.Blue`
+        // destroy mode may only hit BLUE permanents).
+        if let Some(color) = self.required_color {
+            if !card.colors.contains(&color) {
+                return false;
+            }
         }
 
         // Check counter restriction
@@ -475,6 +490,7 @@ impl TargetRestriction {
         let mut controller = ControllerRestriction::Any;
         let mut power_ge = None;
         let mut power_le = None;
+        let mut required_color = None;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
@@ -494,6 +510,11 @@ impl TargetRestriction {
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
                         "nonArtifact" => requires_nonartifact = true,
+                        "White" => required_color = Some(crate::core::Color::White),
+                        "Blue" => required_color = Some(crate::core::Color::Blue),
+                        "Black" => required_color = Some(crate::core::Color::Black),
+                        "Red" => required_color = Some(crate::core::Color::Red),
+                        "Green" => required_color = Some(crate::core::Color::Green),
                         m if m.starts_with("powerGE") => {
                             // Parse powerGE4 -> power_ge = 4
                             if let Ok(n) = m.trim_start_matches("powerGE").parse::<i32>() {
@@ -531,6 +552,7 @@ impl TargetRestriction {
             requires_nontoken,
             requires_remembered,
             requires_nonartifact,
+            required_color,
         }
     }
 }
@@ -802,7 +824,15 @@ pub enum Effect {
 
     /// Counter a spell on the stack
     /// Example: "Counter target spell"
-    CounterSpell { target: CardId },
+    ///
+    /// `required_color` restricts which spells are legal targets, from a color
+    /// qualifier in `ValidTgts$` (e.g. Red Elemental Blast's `Card.Blue` =
+    /// "counter target blue spell"). `None` = any spell (plain Counterspell).
+    CounterSpell {
+        target: CardId,
+        #[serde(default)]
+        required_color: Option<crate::core::Color>,
+    },
 
     /// Add mana to a player's mana pool
     /// Example: "Add {G}" or "Add {C}{C}"

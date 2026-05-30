@@ -1,73 +1,40 @@
 ---
 title: 'Bug: Charm modal spell modes ignore ValidTgts target restriction'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-29T18:26:42.574449507+00:00
-updated_at: 2026-05-29T18:26:42.574449507+00:00
+updated_at: 2026-05-30T05:25:16.545609590+00:00
 ---
 
 # Description
 
-SP$ Charm modal spells do not enforce the per-mode ValidTgts$ target
-restriction defined on the chosen mode's SVar sub-ability. The target
-selector falls back to a broad category (any permanent/spell), letting the
-spell illegally target objects outside the printed restriction.
+Bug: Charm modal spell modes ignored the per-mode ValidTgts$ COLOR restriction.
 
-Discovered (2026-05-29_#2461(53f1d817), compat-oldschool-wave6) on:
-- Red Elemental Blast (cardsfolder/r/red_elemental_blast.txt), mtg-536
-    A:SP$ Charm | Choices$ DBCounter,DBDestroy
-    SVar:DBCounter:DB$ Counter | TargetType$ Spell | ValidTgts$ Card.Blue
-    SVar:DBDestroy:DB$ Destroy | ValidTgts$ Permanent.Blue
+FIXED 2026-05-29_#2470(be2f61b4), compat-oldschool-wave10.
 
-Reproducer:
+Root cause: TargetRestriction had no color field, so a Destroy mode with
+`ValidTgts$ Permanent.Blue` lost the color qualifier and matched any
+permanent. Likewise Effect::CounterSpell carried no color, so a Counter mode
+with `ValidTgts$ Card.Blue` could counter any spell.
 
-```sh
-cat > /tmp/rebl.pzl <<'P'
-[metadata]
-Name:REBL Destroy Blue Permanent
-Goal:Win
-Turns:3
-Difficulty:Easy
-Description:REBL should only target BLUE permanents.
-[state]
-turn=1
-activeplayer=p0
-activephase=MAIN1
-p0life=20
-p0hand=Red Elemental Blast
-p0library=Mountain; Mountain; Mountain; Mountain
-p0graveyard=
-p0battlefield=Mountain
-p0exile=
-p1life=20
-p1hand=
-p1library=Island; Island; Island; Island
-p1graveyard=
-p1battlefield=Phantom Monster
-p1exile=
-P
-./target/release/mtg tui --start-state /tmp/rebl.pzl --p1=fixed --p2=zero \
-  --p1-fixed-inputs="cast Red Elemental Blast;*;*;*" --p2-fixed-inputs="" \
-  --stop-on-choice=8 --seed 42 --verbosity 3
-```
+Fix:
+- TargetRestriction gains `required_color: Option<Color>`, parsed from a color
+  qualifier (White/Blue/Black/Red/Green) in ValidTgts$ and enforced in
+  TargetRestriction::matches. This covers the Destroy/Permanent modes and any
+  other effect that uses TargetRestriction.
+- Effect::CounterSpell gains `required_color: Option<Color>`, parsed in the
+  ApiType::Counter converter (reusing TargetRestriction::parse), and the
+  counter-target enumeration in targeting.rs filters stack spells by color.
 
-Observed (WRONG): the "Destroy target blue permanent" mode targeted the
-caster's own RED Mountain and destroyed it:
-    Player 1 chooses mode: Destroy target blue permanent.
-      -> targeting Mountain (4)
-    Red Elemental Blast (3) destroys Mountain (4)
+Verified:
+- Red Elemental Blast destroy mode targets only the opponent's BLUE creature,
+  not the caster's red Mountain (tests/red_elemental_blast_color_e2e.sh).
+- Blue Elemental Blast destroy mode targets a red permanent, not own blue
+  Island (manual puzzle).
+- Parser shape: both modes carry the correct required_color
+  (test_card_compat_elemental_blasts).
 
-Expected: the only legal target is the opponent's blue creature
-(Phantom Monster). A red Mountain is not a blue permanent and is an illegal
-target (CR 115.4 / 608.2b).
-
-Root cause (suspected): params_to_charm_effect_with_svars() in
-mtg-engine/src/loader/effect_converter.rs builds each ModalMode via
-params_to_effect() on the mode's SVar, but the resulting target selection
-does not carry the mode's ValidTgts$ colour qualifier into the
-target-legality check; the selector defaults to the broad category.
-
-Impact: every modal Charm spell whose modes carry a ValidTgts$ qualifier
-(REBL mtg-536, Blue Elemental Blast mtg-487, Pyroblast, Hydroblast, many
-Charms). Until fixed these are BROKEN (can hit illegal targets).
+Affected cards now correct: Red Elemental Blast (mtg-536), Blue Elemental Blast
+(mtg-487), and any Charm/targeted effect with a color qualifier (Pyroblast,
+Hydroblast, color hosers).
