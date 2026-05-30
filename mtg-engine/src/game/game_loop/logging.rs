@@ -88,6 +88,26 @@ impl<'a> GameLoop<'a> {
         matches!(self.game.logger.output_mode(), OutputMode::Stdout | OutputMode::Both)
     }
 
+    /// Returns whether the logger will USE a `gamelog()` line at all — i.e. it
+    /// either prints to stdout (native CLI) OR captures to the in-memory buffer
+    /// (WASM / replay comparison). This is the correct gate for official
+    /// game-action logging (`gamelog()` calls), as opposed to
+    /// [`Self::should_print_to_stdout`], which is stdout-only and is the right
+    /// gate only for `println!`-style writes.
+    ///
+    /// Gating effect-execution `gamelog()` lines on `should_print_to_stdout()`
+    /// silently dropped every "exiles / destroys / counters / returns-to-hand"
+    /// line in WASM's Memory output mode while native (stdout) emitted them,
+    /// diverging the two gamelog streams (mtg-ofl2i: native-vs-WASM
+    /// determinism). Effect logging must use THIS predicate instead.
+    pub(super) fn logger_captures_or_prints(&self) -> bool {
+        use crate::game::logger::OutputMode;
+        matches!(
+            self.game.logger.output_mode(),
+            OutputMode::Stdout | OutputMode::Both | OutputMode::Memory
+        )
+    }
+
     /// Log a message at Normal verbosity level (with lazy step header)
     /// Most game events use this level
     pub(super) fn log_normal(&mut self, message: &str) {
@@ -140,7 +160,15 @@ impl<'a> GameLoop<'a> {
     ) {
         use crate::core::{Effect, TargetRef};
 
-        if !self.should_print_to_stdout() {
+        // Gate on captures-OR-prints, NOT stdout-only: every line below is a
+        // gamelog() call that must be captured in WASM (Memory output mode) as
+        // well as printed on native. The old `!should_print_to_stdout()`
+        // early-return suppressed all effect-execution gamelog lines (exiles /
+        // destroys / counters / ...) in WASM, diverging it from the
+        // byte-identical native run (mtg-ofl2i). gamelog() itself short-circuits
+        // when neither capture nor stdout is active, so Silent mode stays
+        // allocation-free.
+        if !self.logger_captures_or_prints() {
             return;
         }
 

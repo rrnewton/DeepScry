@@ -20,6 +20,7 @@ use crate::game::fancy_tui_events::{
 };
 use crate::game::logger::OutputMode;
 use crate::game::PlayerController;
+use crate::game::{derive_player_seed, PlayerSlot};
 use crate::game::{FancyTuiRenderer, GameLoop, GameLoopState, GameState, VerbosityLevel};
 #[cfg(feature = "wasm-network")]
 use crate::game::{HeuristicController, RandomController, ZeroController};
@@ -1330,6 +1331,24 @@ struct WasmFancyTuiState {
     /// See mtg-254 for WASM/native behavioral identity requirements.
     #[cfg(feature = "wasm-network")]
     controller_seed: u64,
+    /// Master RNG seed for this game (the `--seed` value passed to
+    /// `launch_game_session`). Per-player controller seeds are derived from
+    /// this via [`derive_player_seed`] EXACTLY as native `mtg tui` does (see
+    /// `main.rs` controller construction + `game::seed_derivation`), so the
+    /// local WASM AI-vs-AI path produces byte-identical gamelogs to native
+    /// for the same seed. See mtg-ofl2i.
+    master_seed: u64,
+    /// Persistent AI controller for P1 in local AI-vs-AI games. Created ONCE
+    /// (lazily, on the first `tui_run_turn`) and reused across every turn so
+    /// its RandomController/HeuristicController RNG state carries forward,
+    /// mirroring native's single `run_game(&mut controller1, &mut controller2)`
+    /// call. Re-creating the controller per turn would reset the RNG and
+    /// diverge from native. `None` until the first AI turn / when P1 is
+    /// Human or Fixed (those use dedicated controller fields).
+    p1_ai_controller: Option<Box<dyn PlayerController>>,
+    /// Persistent AI controller for P2 in local games. Same lifecycle as
+    /// [`Self::p1_ai_controller`].
+    p2_ai_controller: Option<Box<dyn PlayerController>>,
     /// High-water mark for action count (for monotonicity invariant checking)
     /// This tracks the maximum action count seen during FORWARD progress.
     /// During rewind/replay, action count is allowed to decrease, but after
@@ -1464,9 +1483,20 @@ fn renderer_choice_category(context: &ChoiceContext) -> crate::game::fancy_tui_r
 }
 
 impl WasmFancyTuiState {
-    /// Create a new WASM fancy TUI state from a GameState (local game mode)
-    fn new(game: GameState, p1_controller_type: WasmControllerType, p2_controller_type: WasmControllerType) -> Self {
-        Self::new_with_network_mode(game, p1_controller_type, p2_controller_type, false, 0)
+    /// Create a new WASM fancy TUI state from a GameState (local game mode).
+    ///
+    /// `master_seed` is the `--seed` value; per-player controller seeds are
+    /// derived from it via [`derive_player_seed`] so local AI-vs-AI games are
+    /// byte-identical to native `mtg tui` for the same seed (mtg-ofl2i). In
+    /// local mode `controller_seed` (network-only field) is unused, so we pass
+    /// the master seed through that slot too for builds that carry it.
+    fn new(
+        game: GameState,
+        p1_controller_type: WasmControllerType,
+        p2_controller_type: WasmControllerType,
+        master_seed: u64,
+    ) -> Self {
+        Self::new_with_network_mode(game, p1_controller_type, p2_controller_type, false, master_seed)
     }
 
     /// Create a new WASM fancy TUI state with explicit network mode flag
@@ -1479,7 +1509,7 @@ impl WasmFancyTuiState {
         p1_controller_type: WasmControllerType,
         p2_controller_type: WasmControllerType,
         #[allow(unused_variables)] is_network_mode: bool,
-        #[allow(unused_variables)] controller_seed: u64,
+        controller_seed: u64,
     ) -> Self {
         // In network mode, determine which player we control.
         // The non-Remote controller is ours; Remote is the opponent.
@@ -1554,6 +1584,9 @@ impl WasmFancyTuiState {
             is_network_mode,
             #[cfg(feature = "wasm-network")]
             controller_seed,
+            master_seed: controller_seed,
+            p1_ai_controller: None,
+            p2_ai_controller: None,
             high_water_action_count: 0,
             high_water_log_count: 0,
             in_rewind_replay: false,
@@ -1850,8 +1883,12 @@ impl WasmFancyTuiState {
             return;
         }
 
-        // Create P2 controller (for local games)
-        let mut p2_controller = self.create_ai_controller(self.p2_controller_type, p2_id);
+        // Create P2 controller (for local games). For Human/Fixed games P1
+        // uses the rewind/replay pattern and P2's choices are replayed from
+        // saved logs, so a fresh per-slot-seeded controller each tick is
+        // fine. The AI-vs-AI branch below instead uses the PERSISTENT
+        // controllers so RNG state carries across turns (native parity).
+        let mut p2_controller = self.create_ai_controller(self.p2_controller_type, p2_id, PlayerSlot::P2);
 
         if self.p1_controller_type == WasmControllerType::Human {
             // Human player - use rewind/replay pattern
@@ -2069,14 +2106,34 @@ impl WasmFancyTuiState {
                 self.needs_redraw = true; // Error message changed, need redraw
             }
         } else {
-            // AI vs AI - run one turn at a time for step-through mode
-            let mut p1_controller = self.create_ai_controller(self.p1_controller_type, p1_id);
+            // AI vs AI - run one turn at a time for step-through mode.
+            //
+            // Use the PERSISTENT controllers (created once, lazily, with
+            // per-slot `derive_player_seed` seeds) so each controller's RNG
+            // state carries across turns. This mirrors native `mtg tui`, which
+            // runs the whole game through a single
+            // `run_game(&mut controller1, &mut controller2)` call — the RNG
+            // advances continuously rather than resetting every turn. The
+            // `p2_controller` built above (a fresh, non-persistent instance)
+            // is intentionally NOT used here; the Human/Fixed replay paths use
+            // it instead. We `take()` the persistent controllers out of `self`
+            // so the `GameLoop` can hold `&mut self.game` simultaneously, then
+            // store them back afterwards.
+            let _ = p2_controller; // not used on the AI-vs-AI path
+            let mut p1_controller = self.take_or_create_p1_ai_controller();
+            let mut p2_controller = self.take_or_create_p2_ai_controller();
 
             // Scope game_loop tightly so self.game can be accessed in match arms
             let result = {
                 let mut game_loop = GameLoop::new(&mut self.game).with_verbosity(VerbosityLevel::Normal);
                 game_loop.run_one_turn(p1_controller.as_mut(), p2_controller.as_mut())
             };
+
+            // Return the controllers to `self` so their RNG state persists
+            // into the next turn.
+            self.p1_ai_controller = Some(p1_controller);
+            self.p2_ai_controller = Some(p2_controller);
+
             match result {
                 Ok(Some(game_result)) => {
                     // Game ended
@@ -3095,6 +3152,7 @@ impl WasmFancyTuiState {
         &self,
         controller_type: WasmControllerType,
         player_id: PlayerId,
+        slot: PlayerSlot,
     ) -> Box<dyn PlayerController> {
         match controller_type {
             #[cfg(feature = "wasm-network")]
@@ -3103,8 +3161,35 @@ impl WasmFancyTuiState {
                 let client = ensure_client();
                 Box::new(WasmRemoteController::new(player_id, client))
             }
-            _ => super::create_ai_controller(controller_type, player_id, 42),
+            // Derive the per-player controller seed from the master seed via
+            // the canonical `derive_player_seed` helper, EXACTLY as native
+            // `mtg tui` does (see `main.rs` controller construction). This is
+            // what makes a `--seed=N` local WASM game byte-identical to a
+            // `--seed=N` native game (mtg-ofl2i). The previous hardcoded `42`
+            // for both players diverged from native at the first RNG pick.
+            _ => super::create_ai_controller(controller_type, player_id, derive_player_seed(self.master_seed, slot)),
         }
+    }
+
+    /// Borrow P1's persistent AI controller, creating it on first use with a
+    /// per-slot seed derived from the master seed. Reusing one controller
+    /// across turns is required for native parity: native runs the whole game
+    /// with a single `controller1`, so its RandomController RNG advances
+    /// continuously. Re-creating per turn would reset the RNG every turn.
+    fn take_or_create_p1_ai_controller(&mut self) -> Box<dyn PlayerController> {
+        let p1_id = self.game.players[0].id;
+        self.p1_ai_controller
+            .take()
+            .unwrap_or_else(|| self.create_ai_controller(self.p1_controller_type, p1_id, PlayerSlot::P1))
+    }
+
+    /// Borrow P2's persistent AI controller. See
+    /// [`Self::take_or_create_p1_ai_controller`].
+    fn take_or_create_p2_ai_controller(&mut self) -> Box<dyn PlayerController> {
+        let p2_id = self.game.players[1].id;
+        self.p2_ai_controller
+            .take()
+            .unwrap_or_else(|| self.create_ai_controller(self.p2_controller_type, p2_id, PlayerSlot::P2))
     }
 }
 
@@ -3629,7 +3714,15 @@ pub fn launch_game_session(
 ) -> Result<(), JsValue> {
     let game = create_game_from_database(card_db, p1_deck_name, p2_deck_name, starting_life, seed)?;
 
-    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(game, p1_controller, p2_controller)));
+    // Pass the master `seed` through so the local AI controllers are seeded
+    // via `derive_player_seed(seed, P1/P2)` — byte-identical to native `mtg
+    // tui --seed=<seed>` (mtg-ofl2i).
+    let state = Rc::new(RefCell::new(WasmFancyTuiState::new(
+        game,
+        p1_controller,
+        p2_controller,
+        seed,
+    )));
 
     // For human / fixed controller games, run until the first choice point
     // so the initial choice list is populated for the human's first decision
