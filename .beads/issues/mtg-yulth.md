@@ -1,10 +1,10 @@
 ---
 title: 'Local-vs-network gamelog divergence: heuristic Demonic Tutor library-search picks different card on server vs local'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T05:33:11.396423426+00:00
-updated_at: 2026-05-30T05:40:55.813341938+00:00
+updated_at: 2026-05-30T14:00:32.331641444+00:00
 ---
 
 # Description
@@ -43,3 +43,5 @@ Both identically-seeded LOCAL runs are byte-identical and both NETWORK runs are 
 
 ## Relationship to Java Forge
 Forge-Java runs a single authoritative game model (no separate client shadow game replaying server choices) so it cannot exhibit a local-vs-network search-result divergence; this is a Rust-reimplementation-specific invariant (two-store ActionLog<T> netarch) that must hold for the deterministic-sequential-simulation network model. Demonic Tutor MTG rules (CR 701.19 search) are mode-independent; the bug is purely in how the Rust engine replays the heuristic search choice over the network.
+
+RESOLVED 2026-05-30 (commit on fix-mtg-yulth-heuristic-tutor-desync): the shadow client scored Demonic Tutor candidates by name against an EMPTY game.card_definitions map (init_game_reserve_only never populated it), so it panicked / picked a different index than the full-info server. Fix: (1) HeuristicController::choose_from_library_by_names scores each public CardDefinition by name with the same evaluate_card_definition_for_library + strict > first-max tiebreak as server choose_from_library, over the index-aligned name list; (2) client populates game.card_definitions from both public deck lists at init via shared GameInitializer::populate_card_definitions (identical to server). Verified byte-identical local==network gamelogs: seed 6 PASS, seeds 1-10 PASS=10/10, bounded slice 5x stable. tests/fuzz_determinism_netequiv_e2e.sh equivalence sweep now includes heuristic as the regression guard. MTG rules review: PASS (CR 701.19 search / CR 401.2 hidden library; reads only public names+definitions).
