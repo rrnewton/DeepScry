@@ -27,7 +27,7 @@
 # ----------------------------------------------------------------------------
 # USAGE
 #
-#   scripts/fuzz_determinism_netequiv.sh [OPTIONS]
+#   bug_finding/fuzz_determinism_netequiv.sh [OPTIONS]
 #
 # OPTIONS:
 #   --seeds N            Number of seeds per deck pair (default: 5). Seeds are
@@ -71,15 +71,15 @@
 #
 # EXAMPLES:
 #   # Fast bounded run (what the validate-wired wrapper uses):
-#   scripts/fuzz_determinism_netequiv.sh --seeds 4 --pair-mode chain \
+#   bug_finding/fuzz_determinism_netequiv.sh --seeds 4 --pair-mode chain \
 #       --max-pairs 2 --controllers "heuristic random"
 #
 #   # Heavy overnight aggressive sweep (hundreds of game-pairs):
-#   scripts/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all \
+#   bug_finding/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all \
 #       --controllers "heuristic random zero" --invariant both
 #
 #   # Determinism only, on a custom deck glob:
-#   scripts/fuzz_determinism_netequiv.sh --invariant determinism \
+#   bug_finding/fuzz_determinism_netequiv.sh --invariant determinism \
 #       --decks "decks/old_school2/*.dck" --seeds 20
 #
 # ----------------------------------------------------------------------------
@@ -455,7 +455,7 @@ _capture_failure() {
         echo
         echo "# Reproduce (local-vs-network single seed):"
         echo "MTG_BIN=$MTG_BIN bash tests/fuzz_determinism_netequiv_e2e.sh   # bounded"
-        echo "scripts/fuzz_determinism_netequiv.sh --invariant $inv --decks \"$d1 $d2\" --pair-mode all --start-seed $seed --seeds 1 --controllers $ctrl --keep-logs"
+        echo "bug_finding/fuzz_determinism_netequiv.sh --invariant $inv --decks \"$d1 $d2\" --pair-mode all --start-seed $seed --seeds 1 --controllers $ctrl --keep-logs"
     } > "$dir/REPRODUCER.txt"
     # If both gamelog files were passed first, drop a diff in too.
     if [ -f "$1" ] && [ -f "${2:-}" ]; then

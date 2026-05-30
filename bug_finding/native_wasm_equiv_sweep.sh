@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Native-vs-WASM engine-equivalence fuzz sweep wrapper.
 #
-# Runs `scripts/native_wasm_equiv_sweep.py` over a seed-range x deck-sample
+# Runs `bug_finding/native_wasm_equiv_sweep.py` over a seed-range x deck-sample
 # sweep, asserting the engine produces the SAME random-vs-random game in the
 # native binary and the WASM module for every (seed, deck) combo. Exits 1 on
 # ANY divergence (a real cross-compile-target determinism bug).
 #
 # Usage:
-#   ./scripts/native_wasm_equiv_sweep.sh                       # default sweep
-#   ./scripts/native_wasm_equiv_sweep.sh --seeds 10 --decks 'decks/old_school/*.dck'
-#   ./scripts/native_wasm_equiv_sweep.sh --max-turns 40 --seeds 50   # heavy mode
+#   ./bug_finding/native_wasm_equiv_sweep.sh                       # default sweep
+#   ./bug_finding/native_wasm_equiv_sweep.sh --seeds 10 --decks 'decks/old_school/*.dck'
+#   ./bug_finding/native_wasm_equiv_sweep.sh --max-turns 40 --seeds 50   # heavy mode
 #
 # Any extra args are forwarded verbatim to the Python harness (see its --help).
 #
@@ -110,4 +110,4 @@ echo "=== native-vs-WASM equivalence sweep ===" >&2
 echo "  CARDSFOLDER=$CARDSFOLDER" >&2
 echo "  args: $* " >&2
 
-exec python3 "$REPO_ROOT/scripts/native_wasm_equiv_sweep.py" "$@"
+exec python3 "$REPO_ROOT/bug_finding/native_wasm_equiv_sweep.py" "$@"

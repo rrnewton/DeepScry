@@ -43,13 +43,13 @@ Usage
 -----
 
     # Bounded (the make-validate leg uses this with --seeds 1 --decks 1):
-    python3 scripts/native_wasm_equiv_sweep.py --seeds 3 --decks 2 --max-turns 12
+    python3 bug_finding/native_wasm_equiv_sweep.py --seeds 3 --decks 2 --max-turns 12
 
     # Heavy overnight run over the full old-school corpus:
-    python3 scripts/native_wasm_equiv_sweep.py --seeds 50 \
+    python3 bug_finding/native_wasm_equiv_sweep.py --seeds 50 \
         --decks 'decks/old_school/*.dck,decks/old_school2/*.dck' --max-turns 40
 
-The shell wrapper `scripts/native_wasm_equiv_sweep.sh` resolves CARDSFOLDER and
+The shell wrapper `bug_finding/native_wasm_equiv_sweep.sh` resolves CARDSFOLDER and
 handles the WASM-toolchain gating; prefer it for CLI use.
 """
 
@@ -440,7 +440,7 @@ def save_divergence(div: Divergence, native: GameResult, wasm: GameResult, debug
         f"    --p1=random --p2=random --seed={div.combo.seed} \\\n"
         f"    --tag-gamelogs --p1-name=P1 --p2-name=P2 --no-color-logs --verbosity=2\n\n"
         f"# Reproduce the WASM leg + compare:\n"
-        f"./scripts/native_wasm_equiv_sweep.sh --seeds 1 --decks '{div.combo.deck_path}' "
+        f"./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --decks '{div.combo.deck_path}' "
         f"--seed-base {div.combo.seed}\n"
     )
     repro_path = debug_dir / f"{stem}.reproducer.sh"
