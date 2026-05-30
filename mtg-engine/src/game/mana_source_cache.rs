@@ -273,44 +273,57 @@ impl ManaSourceCache {
         let was_untapped = !card.tapped;
         let n = u32::from(card.definition.cache.mana_production.amount.max(1));
 
+        // IMPORTANT: use order-preserving `remove`, NOT `swap_remove`. The
+        // per-color source order is observable: the mana resolver taps sources
+        // in this order (mana_payment.rs::compute_tap_order), so *which*
+        // physical land is tapped for a cost depends on it. `swap_remove`
+        // reorders the surviving sources, which makes the incrementally-
+        // maintained order diverge from the order produced by a from-scratch
+        // `rebuild_from_battlefield` (which scans `battlefield.cards`, itself
+        // order-preserving — see zones.rs::CardZone::remove). That divergence
+        // caused a snapshot/undo-rewind replay to tap a *different* source than
+        // the uninterrupted run, yielding two equivalent-but-distinct game
+        // states (swapped `tapped` flags) and a state-hash mismatch
+        // (mtg-640ot). Order-preserving removal keeps the incremental order
+        // identical to the rebuilt order, so rewind+replay is faithful.
         if let Some(pos) = self.white_sources.iter().position(|&id| id == card_id) {
-            self.white_sources.swap_remove(pos);
+            self.white_sources.remove(pos);
             if was_untapped {
                 self.untapped_white = self.untapped_white.saturating_sub(n);
             }
         }
         if let Some(pos) = self.blue_sources.iter().position(|&id| id == card_id) {
-            self.blue_sources.swap_remove(pos);
+            self.blue_sources.remove(pos);
             if was_untapped {
                 self.untapped_blue = self.untapped_blue.saturating_sub(n);
             }
         }
         if let Some(pos) = self.black_sources.iter().position(|&id| id == card_id) {
-            self.black_sources.swap_remove(pos);
+            self.black_sources.remove(pos);
             if was_untapped {
                 self.untapped_black = self.untapped_black.saturating_sub(n);
             }
         }
         if let Some(pos) = self.red_sources.iter().position(|&id| id == card_id) {
-            self.red_sources.swap_remove(pos);
+            self.red_sources.remove(pos);
             if was_untapped {
                 self.untapped_red = self.untapped_red.saturating_sub(n);
             }
         }
         if let Some(pos) = self.green_sources.iter().position(|&id| id == card_id) {
-            self.green_sources.swap_remove(pos);
+            self.green_sources.remove(pos);
             if was_untapped {
                 self.untapped_green = self.untapped_green.saturating_sub(n);
             }
         }
         if let Some(pos) = self.colorless_sources.iter().position(|&id| id == card_id) {
-            self.colorless_sources.swap_remove(pos);
+            self.colorless_sources.remove(pos);
             if was_untapped {
                 self.untapped_colorless = self.untapped_colorless.saturating_sub(n);
             }
         }
         if let Some(pos) = self.complex_sources.iter().position(|&id| id == card_id) {
-            self.complex_sources.swap_remove(pos);
+            self.complex_sources.remove(pos);
             // Complex sources don't track untapped counts
         }
     }
@@ -487,5 +500,46 @@ mod tests {
         cache.on_card_left(card_id, &card);
         assert_eq!(cache.white_sources().len(), 0);
         assert_eq!(cache.untapped_white(), 0);
+    }
+
+    /// Regression for mtg-640ot: removing a *middle* source must NOT reorder
+    /// the surviving sources. The mana resolver taps sources in this order
+    /// (mana_payment.rs::compute_tap_order), so the incrementally-maintained
+    /// order must equal the order produced by a from-scratch rebuild
+    /// (`rebuild_from_battlefield`, which scans the order-preserving
+    /// `battlefield.cards`). A `swap_remove` would move the last element into
+    /// the removed slot, permuting the survivors — making a snapshot/undo-rewind
+    /// replay tap a *different* land than the uninterrupted run and producing a
+    /// divergent (equivalent-but-distinct) game state / state-hash mismatch.
+    #[test]
+    fn test_on_card_left_preserves_order_mtg640ot() {
+        let player_id = PlayerId::new(1);
+        let mut cache = ManaSourceCache::new(player_id);
+
+        // Three red sources entered in id order 1,2,3 (mirrors battlefield order).
+        let ids = [CardId::new(1), CardId::new(2), CardId::new(3)];
+        let cards: Vec<Card> = ids
+            .iter()
+            .map(|&id| {
+                let mut c = Card::new(id, "Mountain", player_id);
+                c.set_text("{T}: Add {R}.".to_string());
+                c
+            })
+            .collect();
+        for (id, c) in ids.iter().zip(&cards) {
+            cache.on_card_entered(*id, c);
+        }
+        assert_eq!(cache.red_sources(), &ids[..], "enter order is battlefield order");
+
+        // Remove the MIDDLE source (id 2). Survivors must stay [1, 3] in order,
+        // NOT [3] swapped into the middle (which `swap_remove` would yield).
+        cache.on_card_left(ids[1], &cards[1]);
+        assert_eq!(
+            cache.red_sources(),
+            &[ids[0], ids[2]],
+            "removing the middle source must preserve the order of survivors \
+             (swap_remove would have produced [3] in slot 0)"
+        );
+        assert_eq!(cache.untapped_red(), 2);
     }
 }

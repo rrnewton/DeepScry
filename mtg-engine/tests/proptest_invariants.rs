@@ -577,3 +577,79 @@ proptest! {
         }
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// mtg-640ot deterministic reproducer / diagnosis (Phase 2)
+// ════════════════════════════════════════════════════════════════════════
+//
+// The pinned-seed proptest config explores its own case set, so it does not by
+// itself surface the remaining rewind divergence. This standalone brute-force
+// reproducer sweeps EVERY deck pair over a range of game seeds and reports the
+// FIRST case whose rewind-to-turn-start + replay diverges from the
+// uninterrupted run, dumping a line-by-line gamelog diff (REPRO_DUMP=1) to
+// localize the first diverging action. Kept `#[ignore]`'d (run with
+// `--run-ignored`) so it is a one-flag-away diagnostic for the OPEN portion of
+// mtg-640ot, not part of CI.
+//
+// The mana-source tap-order class of this divergence is FIXED (see
+// ManaSourceCache::on_card_left order-preservation + regression test
+// test_on_card_left_preserves_order_mtg640ot). The class this reproducer still
+// finds is the deeper X-spell / replayed-vs-recomputed-mana-availability family
+// (e.g. a Fireball whose X — chosen from live `max_x` — differs after rewind,
+// changing combat outcomes), the mtg-559 effect-resume family; see mtg-640ot.
+//
+// TODO(mtg-640ot): remove once the remaining rewind divergence is fixed.
+#[ignore = "mtg-640ot: diagnostic reproducer for undo-rewind divergence"]
+#[test]
+fn repro_mtg640ot_rewind_divergence() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+
+    let seed_hi: u64 = std::env::var("REPRO_SEED_HI")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400);
+    let dump = std::env::var("REPRO_DUMP").is_ok();
+    let mut found = false;
+    'outer: for (d1, &name1) in DECK_CORPUS.iter().enumerate() {
+        for (d2, &name2) in DECK_CORPUS.iter().enumerate() {
+            let deck1 = load_deck(name1);
+            let deck2 = load_deck(name2);
+            for seed in 0u64..seed_hi {
+                // Fresh snapshot path per case: a stale file from a prior,
+                // longer game would otherwise be loaded when this case's game
+                // ends before choice n.
+                let snap_path = dir.path().join(format!("snap_{d1}_{d2}_{seed}.bin"));
+                let total = total_choice_points(&deck1, &deck2, seed);
+                if total < 2 {
+                    continue;
+                }
+                let n = total - 1;
+                let full = run_full_game(&deck1, &deck2, seed);
+                let Some(resumed) = run_snapshot_resume(&deck1, &deck2, seed, n, &snap_path) else {
+                    continue;
+                };
+                if full.state_hash != resumed.state_hash {
+                    found = true;
+                    eprintln!(
+                        "DIVERGENCE: decks={}/{} seed={seed} full.hash={} resumed.hash={} (rewind_choice={n}/{total})",
+                        DECK_CORPUS[d1], DECK_CORPUS[d2], full.state_hash, resumed.state_hash
+                    );
+                    if dump {
+                        eprintln!("===== FULL GAMELOG ({} lines) =====", full.gamelog.len());
+                        for (i, l) in full.gamelog.iter().enumerate() {
+                            eprintln!("F[{i}] {l}");
+                        }
+                        eprintln!("===== RESUMED GAMELOG ({} lines) =====", resumed.gamelog.len());
+                        for (i, l) in resumed.gamelog.iter().enumerate() {
+                            eprintln!("R[{i}] {l}");
+                        }
+                    }
+                    break 'outer;
+                }
+            }
+        }
+    }
+    if !found {
+        eprintln!("no divergence found across all deck pairs, seeds 0..{seed_hi}");
+    }
+}
