@@ -317,6 +317,11 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "    Locks in the ActionLog<StateSyncEntry> reveal/reorder path"
 	@echo "    that replaces WasmNetworkClient's destructive drain_* helpers."
 	@bash tests/robots42_state_sync_e2e.sh
+	@echo "=== Running bounded randomized determinism + equivalence fuzz ==="
+	@echo "    Sweeps seeds x old-school deck pairs for native determinism AND"
+	@echo "    local-vs-network gamelog identity. Heavy mode:"
+	@echo "    scripts/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all"
+	@MTG_REUSE_PREBUILT=1 bash tests/fuzz_determinism_netequiv_e2e.sh
 	@echo "✓ network-e2e tests completed"
 
 # Generate documentation and open in browser

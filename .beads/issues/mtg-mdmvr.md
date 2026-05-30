@@ -1,0 +1,44 @@
+---
+title: zero controller infinite-loops on Maze of Ith free untap ability (priority guard trips)
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-05-30T05:28:41.075781706+00:00
+updated_at: 2026-05-30T05:28:41.075781706+00:00
+---
+
+# Description
+
+Found by the randomized determinism fuzz sweep (scripts/fuzz_determinism_netequiv.sh).
+
+## Symptom
+A game where either player runs the `zero` controller and Maze of Ith is on the battlefield deterministically errors out with:
+
+    Error: InvalidAction("Priority round exceeded max actions (1000), possible infinite loop")
+
+This is NOT a determinism divergence (both identically-seeded runs error identically -> determinism HOLDS; the fuzz harness classifies it as PASS-CRASH, not FAIL). It is a separate engine/AI interaction bug surfaced by the sweep.
+
+## Minimal reproducer
+    target/release/mtg tui decks/old_school/01_rogue_rogerbrand.dck decks/old_school2/ur_burn.dck \
+        --p1 zero --p2 zero --seed 3 --tag-gamelogs --no-color-logs --verbosity normal
+
+Tail of the gamelog before the error:
+
+    [GAMELOG Turn8 M1] Maze of Ith activates ability: Untap target attacking creature.
+    [GAMELOG Turn8 M1]   -> targeting Maze of Ith (113)
+    [GAMELOG Turn8 M1] Maze of Ith activates ability: Untap target attacking creature.
+    [GAMELOG Turn8 M1]   -> targeting Maze of Ith (110)
+    ... (repeats until the 1000-action guard fires)
+
+Also reproduces with deck pairs 02_thedeck_peterschnidrig + ur_burn and 03_robots_jesseisbak + ur_burn at seed 3, zero controller. ur_burn (decks/old_school2/ur_burn.dck) carries the Maze of Ith copies.
+
+## Root cause
+The `zero` controller always picks available-action index 0. Maze of Ith's activated ability ('Untap target attacking creature', `{0}: ...`, free and repeatable) is offered as a priority choice during combat. The zero controller re-activates it every time instead of ever passing priority, so `consecutive_passes` never reaches 2 and the inner priority loop in mtg-engine/src/game/game_loop/priority.rs (MAX_ACTIONS_PER_PRIORITY = 1000, line ~411) trips and returns InvalidAction.
+
+Note the gamelog also shows Maze of Ith targeting *itself* / another Maze (e.g. targeting Maze of Ith (113)) rather than an attacking creature -- the 'target attacking creature' restriction may not be enforced on the ability's targets, which is a second issue worth checking (a Maze is not an attacking creature).
+
+## Severity / scope
+Low gameplay impact (heuristic and random controllers both avoid the loop -- they passed all 1517+ sweep combos cleanly). But (a) the zero controller is used as a deterministic baseline in tests, and (b) the apparent illegal self-target on Maze of Ith's untap ability could indicate a missing 'attacking creature' target filter that would also affect real play. Worth a look as part of network-determinism hardening.
+
+## Relationship to Java Forge
+Forge-Java's AI would never sit in this loop (its zero-equivalent baseline still respects pass priority); the Rust `zero` controller is a Rust-only deterministic test controller, so the loop is a Rust-engine + Rust-controller interaction with no direct Java analogue. The target-restriction question (untap only an *attacking* creature) is shared MTG rules (CR 508/702) and should match Java behavior.
