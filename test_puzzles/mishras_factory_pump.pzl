@@ -1,0 +1,28 @@
+[metadata]
+Name:Mishra's Factory pump ability offered after animate
+Goal:Win
+Difficulty:Easy
+
+# Regression for mtg-522: the third activated ability of Mishra's Factory —
+# `{T}: Target Assembly-Worker creature gets +1/+1 until end of turn` — was
+# parsed but never OFFERED at the action menu. The activated-ability target
+# enumerator (get_valid_targets_for_ability) had no placeholder arm for
+# Effect::PumpCreature, so the targeting pre-check found zero valid targets
+# and the ability was filtered out of the available-action list.
+#
+# Setup: P0 controls two Mishra's Factories (so once one animates into an
+# Assembly-Worker, the other can pump it — and the animated one can pump
+# itself). Swamps provide mana so the resolver does not pick a Factory for
+# its {1} animate cost.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Swamp; Swamp; Mishra's Factory; Mishra's Factory
+p0library=Swamp; Swamp; Swamp; Swamp
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest

@@ -58,6 +58,7 @@ workflow, row format, and update rules.
 | Cost$ T (tap as cost)                      | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | Mode$ TgtChoose (controller picks discard) | WORKING | 2026-05-12_#2226(928ec99f) | (none)     | Bazaar of Baghdad   |
 | AB$ Pump Cost$ R NumAtt$ +1 (firebreathing) | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Shivan Dragon       |
+| AB$ Pump Cost$ T ValidTgts$ Creature.X (targeted activated pump) | WORKING | 2026-05-30_#2525(d40c4206) | (fixed) | Mishra's Factory |
 | SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
 | AB$ ChangeZone ActivationZone$ Graveyard   | BROKEN  | 2026-05-30_#2488(f9fcef95) | mtg-d8zuh  | Earthquake Dragon   |
 | AB$ Destroy Cost$ T ValidTgts$ Creature.tapped | WORKING | 2026-05-29_#2449(b5fd60b7) | (none) | Royal Assassin      |

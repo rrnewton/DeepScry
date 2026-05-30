@@ -3404,6 +3404,142 @@ async fn test_mishras_factory_animates_and_is_eligible_attacker() -> Result<()> 
     Ok(())
 }
 
+/// Regression (mtg-522): Mishra's Factory's third activated ability —
+/// `{T}: Target Assembly-Worker creature gets +1/+1 until end of turn` —
+/// must be OFFERED at the action menu once a valid Assembly-Worker target
+/// exists (i.e. after a Factory animates).
+///
+/// Root cause fixed: `get_valid_targets_for_ability` had no placeholder arm
+/// for `Effect::PumpCreature`/`DebuffCreature`/`PumpCreatureVariable`; those
+/// fell through to the "target already specified" catch-all and returned an
+/// empty target list, so `push_activatable_abilities` filtered the pump
+/// ability out (the targeting pre-check at the bottom of that loop drops any
+/// targeting ability with zero valid targets). The fix enumerates creature
+/// targets for activated pump abilities, honoring the tapped/untapped cache
+/// flags. This generalizes to every `AB$ Pump`/`AB$ Debuff` activated ability
+/// with a placeholder target, not just Mishra's Factory.
+#[tokio::test]
+async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
+    use mtg_engine::core::{CardType, Effect, SpellAbility, Subtype};
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/mishras_factory_pump.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+
+    // Two Factories are on the battlefield; grab both ids.
+    let factory_ids: Vec<_> = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .filter(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Mishra's Factory" && c.controller == p0_id)
+        })
+        .collect();
+    assert_eq!(factory_ids.len(), 2, "puzzle must place two Mishra's Factories");
+    let (factory_a, factory_b) = (factory_ids[0], factory_ids[1]);
+
+    // Backdate ETB so neither Factory is summoning-sick.
+    for &id in &factory_ids {
+        game.cards.get_mut(id)?.turn_entered_battlefield = Some(0);
+    }
+
+    // Locate the pump ability index (the one resolving to Effect::PumpCreature).
+    let pump_index = {
+        let factory = game.cards.get(factory_a)?;
+        factory
+            .activated_abilities
+            .iter()
+            .position(|a| a.effects.iter().any(|e| matches!(e, Effect::PumpCreature { .. })))
+            .expect("Mishra's Factory must have a PumpCreature ability")
+    };
+
+    // Before animate there is no Assembly-Worker, so the pump targets nothing.
+    let pre = game.get_valid_targets_for_ability(factory_a, pump_index)?;
+    assert!(
+        pre.is_empty(),
+        "pump must have no legal targets before any Factory animates, got {:?}",
+        pre
+    );
+
+    // Animate Factory A into a 2/2 Assembly-Worker (the {1} ability's effect).
+    let animate = Effect::SetBasePowerToughness {
+        target: factory_a,
+        power: Some(2),
+        toughness: Some(2),
+        keywords_granted: smallvec::SmallVec::new(),
+        types_added: smallvec::smallvec![CardType::Artifact, CardType::Creature],
+        subtypes_added: smallvec::smallvec![Subtype::new("Assembly-Worker")],
+        remove_creature_subtypes: true,
+    };
+    game.execute_effect(&animate)?;
+
+    // Now Factory A is a legal pump target for BOTH Factories' pump abilities.
+    let targets_a = game.get_valid_targets_for_ability(factory_a, pump_index)?;
+    assert!(
+        targets_a.contains(&factory_a),
+        "after animate, Factory A's pump must be able to target the animated Factory A, got {:?}",
+        targets_a
+    );
+    let targets_b = game.get_valid_targets_for_ability(factory_b, pump_index)?;
+    assert!(
+        targets_b.contains(&factory_a),
+        "Factory B's pump must be able to target the animated Assembly-Worker Factory A, got {:?}",
+        targets_b
+    );
+
+    // The action menu must now actually OFFER the pump ability. Enumerate the
+    // activatable abilities the same way the priority loop does.
+    let mut game_loop = GameLoop::new(&mut game);
+    game_loop.push_activatable_abilities_for_test(p0_id);
+    let offered_pumps = game_loop
+        .get_abilities_buffer()
+        .iter()
+        .filter(|sa| matches!(sa, SpellAbility::ActivateAbility { ability_index, .. } if *ability_index == pump_index))
+        .count();
+    assert!(
+        offered_pumps >= 1,
+        "the pump ability ({{T}}: target Assembly-Worker gets +1/+1) must be offered \
+         at the action menu after a Factory animates (mtg-522). Buffer: {:?}",
+        game_loop.get_abilities_buffer()
+    );
+    drop(game_loop);
+
+    // Resolve the pump on the animated Factory A and confirm +1/+1 applies.
+    let pump = Effect::PumpCreature {
+        target: factory_a,
+        power_bonus: 1,
+        toughness_bonus: 1,
+        keywords_granted: smallvec::SmallVec::new(),
+    };
+    game.execute_effect(&pump)?;
+    {
+        let factory = game.cards.get(factory_a)?;
+        assert_eq!(
+            i32::from(factory.current_power()),
+            3,
+            "animated 2/2 Factory pumped +1/+1 must be 3/3 (power)"
+        );
+        assert_eq!(
+            i32::from(factory.current_toughness()),
+            3,
+            "animated 2/2 Factory pumped +1/+1 must be 3/3 (toughness)"
+        );
+    }
+
+    println!("✓ Mishra's Factory pump ability is offered and applies +1/+1 (mtg-522)");
+    Ok(())
+}
+
 /// Regression: action menu must surface predicted side costs for cast actions
 /// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
 /// sees them before accepting.

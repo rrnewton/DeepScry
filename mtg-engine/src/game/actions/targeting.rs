@@ -1044,6 +1044,70 @@ impl GameState {
                         }
                     }
                 }
+                Effect::PumpCreature { target, .. } if target.is_placeholder() => {
+                    // Pump / Debuff targeting a creature from an *activated* ability
+                    // (e.g. Mishra's Factory's `{T}: Target Assembly-Worker
+                    // creature gets +1/+1`). The spell-cast path already enumerates
+                    // these via effect_has_valid_targets; the activated-ability path
+                    // previously fell through to the "target already specified"
+                    // catch-all and offered NO targets, so any tap/mana-cost pump
+                    // ability with a placeholder target was silently never offered
+                    // at the action menu. Enumerate creatures honoring the ability's
+                    // cached tapped/untapped restriction (mtg-522).
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            let mut is_valid =
+                                card.is_creature() && is_legal_target(card, ability_controller, &source_colors);
+                            if requires_tapped && !card.tapped {
+                                is_valid = false;
+                            }
+                            if requires_untapped && card.tapped {
+                                is_valid = false;
+                            }
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
+                Effect::DebuffCreature { target, .. } if target.is_placeholder() => {
+                    // Debuff (keyword removal) targeting a creature from an activated
+                    // ability — same enumeration gap as PumpCreature above (mtg-522).
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            let mut is_valid =
+                                card.is_creature() && is_legal_target(card, ability_controller, &source_colors);
+                            if requires_tapped && !card.tapped {
+                                is_valid = false;
+                            }
+                            if requires_untapped && card.tapped {
+                                is_valid = false;
+                            }
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
+                Effect::PumpCreatureVariable { target, .. } if target.is_placeholder() => {
+                    // Variable pump (+X/+X) targeting a creature from an activated
+                    // ability — same enumeration gap as PumpCreature above (mtg-522).
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            let mut is_valid =
+                                card.is_creature() && is_legal_target(card, ability_controller, &source_colors);
+                            if requires_tapped && !card.tapped {
+                                is_valid = false;
+                            }
+                            if requires_untapped && card.tapped {
+                                is_valid = false;
+                            }
+                            if is_valid {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::Earthbend { target, .. } if target.is_placeholder() => {
                     // Earthbend targets lands you control
                     // CR 701.65: Earthbend makes a land into a creature with counters
