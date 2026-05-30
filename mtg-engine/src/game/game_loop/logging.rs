@@ -233,6 +233,15 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
+            Effect::GainLifeDynamic { .. } => {
+                // Intentionally no log here. This pre-resolution logging hook
+                // sees the card's stored effect with an UNRESOLVED player /
+                // reference (e.g. the `TargetedController` sentinel), so it
+                // cannot name the recipient or amount. The GainLifeDynamic
+                // execution path (`execute_effect`) emits the precise
+                // "<player> gains <N> life" gamelog line after resolving the
+                // amount from last-known game state.
+            }
             Effect::DestroyPermanent { target, .. } => {
                 let target_name = self
                     .game

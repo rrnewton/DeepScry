@@ -87,6 +87,13 @@ pub const PLACEHOLDER_ID: u32 = 0;
 /// sole opponent without going through the targeting UI; tracked in mtg-564.
 pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
 
+/// Sentinel value indicating "the controller of the targeted permanent"
+/// (Forge `Defined$ TargetedController`). Resolved at effect-resolution time
+/// to the controller of the spell/ability's targeted permanent — e.g. Swords
+/// to Plowshares' chained GainLife gives life to the exiled creature's
+/// controller, not to the Swords caster.
+pub const TARGET_CONTROLLER_ID: u32 = u32::MAX - 6;
+
 /// Sentinel range for encoding a Player as a CardId inside the
 /// `valid_targets` slice returned to `Controller::choose_targets`. We do
 /// this so controllers can offer Players as targets for `ValidTgts$ Any`
@@ -203,6 +210,19 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn target_opponent() -> Self {
         EntityId::new(TARGET_OPPONENT_ID)
+    }
+
+    /// Check if this ID is the "controller of the targeted permanent" sentinel
+    /// (Forge `Defined$ TargetedController`).
+    #[inline]
+    pub fn is_target_controller(&self) -> bool {
+        self.id == TARGET_CONTROLLER_ID
+    }
+
+    /// Create the "controller of the targeted permanent" sentinel.
+    #[inline]
+    pub fn target_controller() -> Self {
+        EntityId::new(TARGET_CONTROLLER_ID)
     }
 }
 

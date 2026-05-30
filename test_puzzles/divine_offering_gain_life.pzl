@@ -1,0 +1,24 @@
+[metadata]
+Name:Divine Offering Gains Life
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Divine Offering ({1}{W} Instant: destroy target artifact; you gain life equal to its mana value). P1 casts it on the opponent's Jalum Tome (a {3} artifact, mana value 3). The artifact is destroyed and the caster (P1) gains 3 life.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Divine Offering
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Jalum Tome
+p1exile=

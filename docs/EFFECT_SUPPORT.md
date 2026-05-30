@@ -78,7 +78,20 @@ workflow, row format, and update rules.
 | AB$ DestroyAll ValidCards$ Artifact,Creature,Enchantment | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
 | R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped (enters tapped) | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
 | SP$ Charm modes enforce per-mode ValidTgts$ color restriction | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-af24s) | Red/Blue Elemental Blast |
-| DB$ GainLife LifeAmount$ X (X = Targeted$CardManaCost / dynamic) | BROKEN | 2026-05-29_#2461(53f1d817) | mtg-297 | Divine Offering, Swords to Plowshares |
+| DB$ GainLife LifeAmount$ X (X = Targeted$CardPower / Targeted$CardManaCost; dynamic-amount life gain) | WORKING | 2026-05-30_#2489(1db3e6c7) | (fixed mtg-297) | Swords to Plowshares, Divine Offering |
+  - 2026-05-30_#2489(1db3e6c7): BROKEN→WORKING. Added the general
+    `DynamicAmount` construct (`core/effects.rs`) and `Effect::GainLifeDynamic
+    { player, amount, reference }`. The amount source is a strong-typed enum
+    (`TargetPower` / `TargetManaValue` / `DamageDealt`) parsed from the
+    `Targeted$<Characteristic>` SVar, NOT a stringly amount. The recipient is
+    resolved from `Defined$` (`TargetedController` → new `PlayerId::target_controller()`
+    sentinel; `You` → caster). Amount captured as last-known information
+    (CR 608.2g/2h) via a pre-resolution power/mana-value snapshot using the
+    CR 613 layer system, so continuous static buffs (e.g. Sedge Troll +1/+1
+    while controlling a Swamp) are counted before the exile/destroy strips
+    them. Info-independent / deterministic (public state only). `DamageDealt`
+    (Drain Life) is enum-reserved but NOT yet wired — see the Drain Life row.
+| DB$ GainLife LifeAmount$ <SVar with Count$TotalDamageDoneByThisTurn + LimitMax cap> (damage-dealt drain) | BROKEN | 2026-05-30_#2489(1db3e6c7) | mtg-501 | Drain Life |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |

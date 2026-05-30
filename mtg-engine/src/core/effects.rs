@@ -131,6 +131,76 @@ impl DigFilter {
     }
 }
 
+/// A dynamic numeric amount whose value is computed from game state at the
+/// moment an effect resolves, rather than being a fixed literal.
+///
+/// This is the general construct behind effects such as:
+/// - Swords to Plowshares — "gains life equal to its power" (`TargetPower`)
+/// - Divine Offering — "gain life equal to its mana value" (`TargetManaValue`)
+/// - Drain Life — "gain life equal to the damage dealt" (`DamageDealt`)
+///
+/// The amount is derived purely from **public** game state (a card's last-known
+/// power / printed mana value, or damage already dealt this resolution), so it
+/// is information-independent and produces identical results on the server and
+/// every client / WASM shadow game. See `docs/NETWORK_ARCHITECTURE.md`.
+///
+/// Timing (CR 608.2g/2h): for `TargetPower` / `TargetManaValue` the referenced
+/// card may already have left the battlefield earlier in the same resolution
+/// (e.g. Swords exiles the creature, then the chained GainLife runs). The
+/// engine reads the card's retained characteristics — its **last-known
+/// information** — because zone moves do not reset a `Card`'s power / counters /
+/// mana cost in the entity store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DynamicAmount {
+    /// A fixed literal amount (degenerate case; lets a dynamic-amount effect
+    /// also carry a plain number without a separate variant).
+    Fixed(i32),
+
+    /// The referenced card's power, captured via last-known information
+    /// (CR 608.2g). Used by Swords to Plowshares.
+    TargetPower,
+
+    /// The referenced card's mana value (converted mana cost). Used by Divine
+    /// Offering ("gain life equal to its mana value").
+    TargetManaValue,
+
+    /// The amount of damage actually dealt earlier in this same effect
+    /// resolution (read from the spell's damage bookkeeping). Used by Drain
+    /// Life ("you gain life equal to the damage dealt").
+    DamageDealt,
+}
+
+impl DynamicAmount {
+    /// Parse a `LifeAmount$ <expr>` value, resolving an `X`/`Y`/`Z` reference
+    /// through the card's SVars, into a `DynamicAmount`.
+    ///
+    /// Recognised SVar bodies (tokenized, never substring-matched):
+    /// - `Targeted$CardPower`    -> `TargetPower`
+    /// - `Targeted$CardManaCost` -> `TargetManaValue`
+    ///
+    /// A literal integer parses to `Fixed`. Anything unrecognised returns
+    /// `None` so the caller can fall back to the existing fixed-amount path.
+    pub fn parse(value: &str, svars: &std::collections::HashMap<String, String>) -> Option<Self> {
+        let trimmed = value.trim();
+        if let Ok(n) = trimmed.parse::<i32>() {
+            return Some(DynamicAmount::Fixed(n));
+        }
+
+        // Variable reference (X / Y / Z). Resolve through the card's SVars.
+        let svar_body = svars.get(trimmed)?;
+        // SVar bodies for these references are `Targeted$<Characteristic>`.
+        let (selector, characteristic) = svar_body.split_once('$')?;
+        if selector.trim() != "Targeted" {
+            return None;
+        }
+        match characteristic.trim() {
+            "CardPower" => Some(DynamicAmount::TargetPower),
+            "CardManaCost" => Some(DynamicAmount::TargetManaValue),
+            _ => None,
+        }
+    }
+}
+
 /// Count expression for variable effects
 ///
 /// Used by effects that depend on counting game state, like:
@@ -636,6 +706,24 @@ pub enum Effect {
     /// Gain life
     /// Example: "You gain 3 life"
     GainLife { player: PlayerId, amount: i32 },
+
+    /// Gain life by a dynamic amount computed from game state at resolution.
+    ///
+    /// Example: Swords to Plowshares — "Its controller gains life equal to its
+    /// power" (`amount = TargetPower`, `reference` = the exiled creature);
+    /// Divine Offering — "you gain life equal to its mana value"
+    /// (`amount = TargetManaValue`, `reference` = the destroyed artifact).
+    ///
+    /// `reference` names the card the amount is read from (filled in at
+    /// resolution from the spell's targeted permanent). For `DamageDealt` the
+    /// reference is unused and may be a placeholder. The amount is resolved by
+    /// `execute_effect` reading public, last-known game state, keeping the
+    /// effect information-independent (network + WASM safe).
+    GainLifeDynamic {
+        player: PlayerId,
+        amount: DynamicAmount,
+        reference: CardId,
+    },
 
     /// Lose life
     /// Example: "Target player loses 2 life"
@@ -1560,6 +1648,7 @@ impl Effect {
             | Effect::DiscardCards { .. }
             | Effect::DiscardCardsXPaid { .. }
             | Effect::GainLife { .. }
+            | Effect::GainLifeDynamic { .. }
             | Effect::LoseLife { .. }
             | Effect::ForceSacrifice { .. }
             | Effect::SetLife { .. }

@@ -3586,6 +3586,7 @@ impl GameState {
                     | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
+                    | crate::core::Effect::GainLifeDynamic { .. }
                     | crate::core::Effect::DiscardCardsXPaid { .. } => {
                         // Other effect types not yet implemented for delayed triggers
                         // Note: CopySpellAbility inside ExecuteEffect is unusual;

@@ -1,0 +1,24 @@
+[metadata]
+Name:Swords LKI with Static Buff
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Last-known-information regression (CR 608.2h). P2 controls Sedge Troll (2/2 base) and a Swamp, so the Troll is a 3/3 via its continuous static buff. P1 casts Swords to Plowshares on it: the Troll is exiled and P2 gains 3 life — the Troll's power AS IT LAST EXISTED on the battlefield (with the Swamp buff), captured before the exile strips the static. A naive post-exile read would wrongly yield 2.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Swords to Plowshares
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Sedge Troll; Swamp
+p1exile=

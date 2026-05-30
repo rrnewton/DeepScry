@@ -520,6 +520,7 @@ impl GameState {
                             | Effect::DiscardCardsXPaid { .. }
                             | Effect::Loot { .. }
                             | Effect::GainLife { .. }
+                            | Effect::GainLifeDynamic { .. }
                             | Effect::Mill { .. }
                             | Effect::Scry { .. }
                             | Effect::Surveil { .. }
@@ -602,6 +603,7 @@ impl GameState {
                 | Effect::DiscardCardsXPaid { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
+                | Effect::GainLifeDynamic { .. }
                 | Effect::Mill { .. }
                 | Effect::Scry { .. }
                 | Effect::Surveil { .. }
@@ -1061,6 +1063,7 @@ impl GameState {
                 | Effect::DiscardCardsXPaid { .. }
                 | Effect::Loot { .. }
                 | Effect::GainLife { .. }
+                | Effect::GainLifeDynamic { .. }
                 | Effect::Mill { .. }
                 | Effect::Scry { .. }
                 | Effect::Surveil { .. }
@@ -1350,6 +1353,7 @@ impl GameState {
             | Effect::DiscardCardsXPaid { .. }
             | Effect::Loot { .. }
             | Effect::GainLife { .. }
+            | Effect::GainLifeDynamic { .. }
             | Effect::Mill { .. }
             | Effect::Scry { .. }
             | Effect::Surveil { .. }

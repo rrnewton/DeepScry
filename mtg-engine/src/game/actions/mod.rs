@@ -82,6 +82,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::MoveSelfBetweenZones { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
+        | Effect::GainLifeDynamic { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -194,6 +195,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
+            | Effect::GainLifeDynamic { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -398,6 +400,15 @@ impl GameState {
             // Read x_paid once for resolving XPaid effect variants
             let x_paid = self.cards.get(card_id).map(|c| c.x_paid).unwrap_or(0);
 
+            // Snapshot each target's dynamic characteristics (power / mana value)
+            // BEFORE any effect runs (CR 608.2g/2h). A chained GainLifeDynamic
+            // (Swords to Plowshares, Divine Offering) must use the targeted
+            // permanent's power / mana value *as it last existed on the
+            // battlefield* — i.e. with its continuous buffs still applied —
+            // even though the preceding exile/destroy effect removes those
+            // buffs by the time GainLifeDynamic resolves.
+            let target_snapshots = self.snapshot_target_amounts(chosen_targets);
+
             // Execute effects by index, resolving targets at execution time
             // This avoids cloning the entire Vec<Effect>
             let mut target_index = 0;
@@ -427,6 +438,10 @@ impl GameState {
 
                     // Resolve Defined$ Self sentinels to the source card
                     let resolved = Self::resolve_self_target(resolved, card_id);
+
+                    // Lock a GainLifeDynamic's amount to the pre-resolution
+                    // snapshot of its reference card (last-known information).
+                    let resolved = Self::resolve_dynamic_gainlife_snapshot(resolved, &target_snapshots);
 
                     // Expand "all players" effects (e.g., Wheel of Fortune: each player discards/draws)
                     let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
@@ -701,6 +716,16 @@ impl GameState {
             return Ok(None);
         }
 
+        // Snapshot target characteristics now, while every target is still on
+        // the battlefield (this collect phase runs before ANY effect executes).
+        // The caller (the interactive game loop's choice-routing resolver)
+        // executes the returned effects later, by which point a preceding
+        // exile/destroy has stripped continuous buffs — so we must lock any
+        // GainLifeDynamic amount to last-known information here (CR 608.2h),
+        // mirroring resolve_spell_execute_effects. Keeping both paths identical
+        // is required for network determinism.
+        let target_snapshots = self.snapshot_target_amounts(chosen_targets);
+
         let mut result = Vec::new();
         let mut target_index = 0;
         let mut last_resolved_target: Option<CardId> = None;
@@ -717,6 +742,7 @@ impl GameState {
                 );
                 let resolved = Self::resolve_choose_color_source(resolved, card_id);
                 let resolved = Self::resolve_self_target(resolved, card_id);
+                let resolved = Self::resolve_dynamic_gainlife_snapshot(resolved, &target_snapshots);
                 let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                 let expanded = expand_all_players_effect(&resolved, &player_ids);
                 result.extend(expanded.into_iter());
@@ -2406,6 +2432,11 @@ impl GameState {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
+                    // Record the exiled permanent so a chained SubAbility that
+                    // refers to it (e.g. Swords to Plowshares' `Defined$
+                    // TargetedController` GainLife) can resolve against it via
+                    // last-known information.
+                    *last_resolved_target = Some(resolved_target);
                     Effect::ExilePermanent {
                         target: resolved_target,
                     }
@@ -2466,6 +2497,39 @@ impl GameState {
                 player: card_owner,
                 amount: *amount,
             },
+            // Dynamic-amount life gain (Swords to Plowshares, Divine Offering).
+            // Fill the `reference` card from the spell's targeted permanent and
+            // the `player` from its `Defined$` selector:
+            //   - placeholder            => `Defined$ You` (the spell's controller)
+            //   - target_controller()    => `Defined$ TargetedController`
+            // The referenced card comes from the most recently resolved target
+            // (the exile/destroy effect that precedes this GainLife in the chain).
+            Effect::GainLifeDynamic {
+                player,
+                amount,
+                reference,
+            } => {
+                let resolved_reference = if reference.is_reuse_previous() || reference.is_placeholder() {
+                    last_resolved_target.unwrap_or(*reference)
+                } else {
+                    *reference
+                };
+                let resolved_player = if player.is_target_controller() {
+                    self.cards
+                        .try_get(resolved_reference)
+                        .map(|c| c.controller)
+                        .unwrap_or(card_owner)
+                } else if player.is_placeholder() {
+                    card_owner
+                } else {
+                    *player
+                };
+                Effect::GainLifeDynamic {
+                    player: resolved_player,
+                    amount: amount.clone(),
+                    reference: resolved_reference,
+                }
+            }
             Effect::LoseLife { player, amount } if player.is_placeholder() => Effect::LoseLife {
                 // LoseLife defaults to opponent (most common: "each opponent loses N life")
                 player: opponent_id.unwrap_or(card_owner),
@@ -3055,6 +3119,37 @@ impl GameState {
                     crate::undo::GameAction::ModifyLife {
                         player_id: *player,
                         delta: *amount,
+                    },
+                    prior_log_size,
+                );
+            }
+            Effect::GainLifeDynamic {
+                player,
+                amount,
+                reference,
+            } => {
+                // Resolve the dynamic amount from public, last-known game state
+                // at resolution time (CR 608.2g). The referenced card may already
+                // have left the battlefield earlier in this resolution (e.g.
+                // Swords exiled the creature) — its retained characteristics in
+                // the entity store are its last-known information.
+                let resolved_amount = self.resolve_dynamic_amount(amount, *reference);
+                let prior_log_size = self.logger.log_count();
+
+                let p = self.get_player_mut(*player)?;
+                let player_name = p.name.clone();
+                p.gain_life(resolved_amount);
+                let new_life = p.life;
+
+                self.logger.gamelog(&format!(
+                    "{} gains {} life (life: {})",
+                    player_name, resolved_amount, new_life
+                ));
+
+                self.undo_log.log(
+                    crate::undo::GameAction::ModifyLife {
+                        player_id: *player,
+                        delta: resolved_amount,
                     },
                     prior_log_size,
                 );
@@ -8440,6 +8535,106 @@ impl GameState {
     ///
     /// This function is infallible and always returns `Ok`. The Result type is used
     /// for consistency with other effect evaluation methods.
+    /// Snapshot the dynamic characteristics (power and mana value) of each
+    /// chosen target at the start of spell resolution, keyed by `CardId`.
+    ///
+    /// This captures **last-known information** (CR 608.2g/2h) so a chained
+    /// `GainLifeDynamic` reads the targeted permanent's power / mana value *as
+    /// it existed on the battlefield with its continuous buffs applied*, before
+    /// a preceding exile/destroy effect strips those buffs.
+    fn snapshot_target_amounts(&self, chosen_targets: &[CardId]) -> std::collections::HashMap<CardId, (i32, i32)> {
+        let mut snapshots = std::collections::HashMap::with_capacity(chosen_targets.len());
+        for &target in chosen_targets {
+            if let Some(card) = self.cards.try_get(target) {
+                // Use the CR 613 layer system (effective power) so continuous
+                // static buffs that apply while on the battlefield are counted
+                // (e.g. Sedge Troll's "+1/+1 while you control a Swamp"). Fall
+                // back to the raw current power if the breakdown is unavailable.
+                let power = self
+                    .get_effective_power(target)
+                    .unwrap_or_else(|_| i32::from(card.current_power()));
+                let mana_value = i32::from(card.mana_cost.cmc());
+                snapshots.insert(target, (power, mana_value));
+            }
+        }
+        snapshots
+    }
+
+    /// Lock a `GainLifeDynamic` effect's amount to the pre-resolution snapshot
+    /// of its `reference` card. Non-`GainLifeDynamic` effects (and dynamic
+    /// amounts not derived from a target characteristic, e.g. `DamageDealt`)
+    /// pass through unchanged.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn resolve_dynamic_gainlife_snapshot(
+        effect: Effect,
+        snapshots: &std::collections::HashMap<CardId, (i32, i32)>,
+    ) -> Effect {
+        use crate::core::DynamicAmount;
+        match effect {
+            Effect::GainLifeDynamic {
+                player,
+                amount,
+                reference,
+            } => {
+                let locked = match (&amount, snapshots.get(&reference)) {
+                    (DynamicAmount::TargetPower, Some((power, _))) => DynamicAmount::Fixed((*power).max(0)),
+                    (DynamicAmount::TargetManaValue, Some((_, mana_value))) => DynamicAmount::Fixed(*mana_value),
+                    // No snapshot (reference not a chosen target) or DamageDealt:
+                    // keep the dynamic amount for execute-time resolution.
+                    _ => amount,
+                };
+                Effect::GainLifeDynamic {
+                    player,
+                    amount: locked,
+                    reference,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Resolve a [`DynamicAmount`](crate::core::DynamicAmount) to a concrete
+    /// life amount, reading public game state at resolution time.
+    ///
+    /// For `TargetPower` / `TargetManaValue` the `reference` card is read via
+    /// last-known information (CR 608.2g): the card object persists in the
+    /// entity store after a zone move, so its power / mana value reflect its
+    /// last existence on the battlefield. A negative power yields 0 life
+    /// (you cannot "gain" negative life; CR 119.4 — a player gains 0 life).
+    ///
+    /// This is information-independent (uses only public characteristics), so
+    /// it produces identical results on the server and every client / WASM
+    /// shadow game.
+    fn resolve_dynamic_amount(&self, amount: &crate::core::DynamicAmount, reference: CardId) -> i32 {
+        use crate::core::DynamicAmount;
+        match amount {
+            DynamicAmount::Fixed(n) => *n,
+            DynamicAmount::TargetPower => self
+                .cards
+                .try_get(reference)
+                .map(|c| i32::from(c.current_power()).max(0))
+                .unwrap_or(0),
+            DynamicAmount::TargetManaValue => self
+                .cards
+                .try_get(reference)
+                .map(|c| i32::from(c.mana_cost.cmc()))
+                .unwrap_or(0),
+            DynamicAmount::DamageDealt => {
+                // Damage-dealt-driven life gain (Drain Life) is resolved by the
+                // damage effect path, which fills in a concrete amount before
+                // this effect runs; if it reaches here unresolved, gain 0.
+                log::debug!("resolve_dynamic_amount: DamageDealt reached with no concrete value; using 0");
+                0
+            }
+        }
+    }
+
+    /// Evaluate a [`CountExpression`](crate::core::CountExpression) to a
+    /// concrete integer against the current game state for `controller`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a nested lookup (e.g. a referenced player) fails.
     pub fn evaluate_count_expression(&self, expr: &crate::core::CountExpression, controller: PlayerId) -> Result<i32> {
         use crate::core::CountExpression;
         match expr {

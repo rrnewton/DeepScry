@@ -1,0 +1,24 @@
+[metadata]
+Name:Swords to Plowshares Gains Life
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Swords to Plowshares ({W} Instant: exile target creature; its controller gains life equal to its power). P1 casts it on the opponent's Hill Giant (a 3/3). The creature is exiled and its controller (P2) gains 3 life (CR 608.2g/2h last-known information).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Swords to Plowshares
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Hill Giant
+p1exile=

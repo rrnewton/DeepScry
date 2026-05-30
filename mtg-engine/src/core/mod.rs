@@ -21,9 +21,9 @@ pub use delayed_trigger::{
 };
 pub use effects::{
     AbilityCache, ActivatedAbility, ActivationCondition, AffectedSelector, CompareOp, ControllerRestriction,
-    CostReductionCondition, CostReductionTarget, CountExpression, DigFilter, Effect, ImmediateTriggerCondition,
-    ModalMode, RaisedCost, RaisedCostAmount, SelfCounterCondition, StaticAbility, StaticCondition, TargetRef,
-    TargetRestriction, TargetType, Trigger, TriggerEvent,
+    CostReductionCondition, CostReductionTarget, CountExpression, DigFilter, DynamicAmount, Effect,
+    ImmediateTriggerCondition, ModalMode, RaisedCost, RaisedCostAmount, SelfCounterCondition, StaticAbility,
+    StaticCondition, TargetRef, TargetRestriction, TargetType, Trigger, TriggerEvent,
 };
 pub use entity::{EntityId, EntityStore, GameEntity};
 pub use keyword_set::{Keyword, KeywordArgs, KeywordSet};

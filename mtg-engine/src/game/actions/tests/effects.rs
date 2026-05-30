@@ -1286,6 +1286,19 @@ mod tests {
             "Swords to Plowshares should have ExilePermanent effect. Effects: {:?}",
             swords.effects
         );
+        // And the chained dynamic life gain (= targeted creature's power, given
+        // to its controller). Parser-shape check for the general construct.
+        assert!(
+            swords.effects.iter().any(|e| matches!(
+                e,
+                Effect::GainLifeDynamic {
+                    amount: crate::core::DynamicAmount::TargetPower,
+                    ..
+                }
+            )),
+            "Swords to Plowshares should have GainLifeDynamic(TargetPower). Effects: {:?}",
+            swords.effects
+        );
 
         // Create a 3/3 creature controlled by P2
         let creature_id = game.next_entity_id();
@@ -1323,13 +1336,96 @@ mod tests {
             "Creature should not be on battlefield"
         );
 
-        // Verify P2 gained life equal to creature's power (3)
+        // Verify P2 (the exiled creature's controller, per Defined$
+        // TargetedController) gained life equal to the creature's power (3),
+        // captured via last-known information before the exile (CR 608.2g/2h).
         let life_after = game.get_player(p2_id).unwrap().life;
-        // Note: The GainLife effect from SubAbility is not yet implemented
-        // so we just verify the exile worked for now
         assert_eq!(
-            life_after, life_before,
-            "Life gain not yet implemented for SubAbility$ DBGainLife"
+            life_after,
+            life_before + 3,
+            "Swords' controller-of-target should gain life equal to the exiled creature's power (3)"
+        );
+        // The Swords caster (P1) gains nothing.
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            20,
+            "Swords caster should not gain life"
+        );
+    }
+
+    /// Test Divine Offering: destroy target artifact, you gain life equal to
+    /// its mana value (the dynamic-amount GainLife construct, `TargetManaValue`).
+    #[test]
+    fn test_divine_offering_destroy_gain_mana_value() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let offering_id = match load_test_card(&mut game, "Divine Offering", p1_id) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to load Divine Offering: {e}"),
+        };
+
+        // Parser-shape: Destroy + dynamic GainLife (= target's mana value).
+        let offering = game.cards.get(offering_id).unwrap();
+        assert!(
+            offering
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::DestroyPermanent { .. })),
+            "Divine Offering should have DestroyPermanent. Effects: {:?}",
+            offering.effects
+        );
+        assert!(
+            offering.effects.iter().any(|e| matches!(
+                e,
+                Effect::GainLifeDynamic {
+                    amount: crate::core::DynamicAmount::TargetManaValue,
+                    ..
+                }
+            )),
+            "Divine Offering should have GainLifeDynamic(TargetManaValue). Effects: {:?}",
+            offering.effects
+        );
+
+        // A {4}-cost artifact controlled by P2 (mana value 4).
+        let artifact_id = game.next_entity_id();
+        let mut artifact = Card::new(artifact_id, "Test Artifact".to_string(), p2_id);
+        artifact.add_type(CardType::Artifact);
+        artifact.mana_cost = crate::core::ManaCost::from_string("4");
+        artifact.controller = p2_id;
+        game.cards.insert(artifact_id, artifact);
+        game.battlefield.add(artifact_id);
+
+        let valid_targets = game.get_valid_targets_for_spell(offering_id).unwrap();
+        assert!(
+            valid_targets.contains(&artifact_id),
+            "Artifact should be targetable by Divine Offering. Valid: {:?}",
+            valid_targets
+        );
+
+        game.stack.add(offering_id);
+        let p1_life_before = game.get_player(p1_id).unwrap().life;
+
+        let result = game.resolve_spell(offering_id, &[artifact_id]);
+        assert!(result.is_ok(), "Failed to resolve Divine Offering: {:?}", result);
+
+        // Artifact destroyed.
+        assert!(
+            !game.battlefield.contains(artifact_id),
+            "Artifact should be destroyed (off battlefield)"
+        );
+        // The caster (Defined$ You) gains life equal to the artifact's mana value (4).
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            p1_life_before + 4,
+            "Divine Offering caster should gain life equal to the destroyed artifact's mana value (4)"
+        );
+        // The artifact's controller gains nothing.
+        assert_eq!(
+            game.get_player(p2_id).unwrap().life,
+            20,
+            "Artifact controller should not gain life from Divine Offering"
         );
     }
 
@@ -3308,6 +3404,106 @@ mod tests {
             "Disenchant must be able to target BOTH Artifact and Enchantment (CR 608); \
              a narrower ValidTgts silently drops one mode. Got: {:?}",
             tgts
+        );
+    }
+
+    /// Card compat: Swords to Plowshares (cardsfolder/s/swords_to_plowshares.txt)
+    /// — mtg-297 / mtg-547.
+    ///
+    /// Script: A:SP$ ChangeZone (Battlefield->Exile) | SubAbility$ DBGainLife
+    ///   SVar:DBGainLife:DB$ GainLife | Defined$ TargetedController | LifeAmount$ X
+    ///   SVar:X:Targeted$CardPower
+    ///
+    /// Parser shape: the instantiated card must carry BOTH the exile effect and
+    /// the dynamic `GainLifeDynamic(TargetPower)` for the exiled creature's
+    /// controller. Runtime life gain is verified by the in-game resolution test
+    /// `test_swords_to_plowshares_exile`.
+    #[test]
+    fn test_card_compat_swords_to_plowshares() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/swords_to_plowshares.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Swords to Plowshares should load");
+        assert_eq!(def.name.as_str(), "Swords to Plowshares");
+        assert!(def.types.contains(&CardType::Instant), "Swords must be an Instant");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let effects = &card.effects;
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::ExilePermanent { .. })),
+            "Swords must exile its target. Effects: {:?}",
+            effects
+        );
+        let gainlife = effects.iter().find_map(|e| {
+            if let Effect::GainLifeDynamic { amount, player, .. } = e {
+                Some((amount.clone(), *player))
+            } else {
+                None
+            }
+        });
+        let (amount, player) = gainlife.expect("Swords must have a GainLifeDynamic sub-effect");
+        assert_eq!(
+            amount,
+            crate::core::DynamicAmount::TargetPower,
+            "Swords' life amount must be the target's power"
+        );
+        assert!(
+            player.is_target_controller(),
+            "Swords' life goes to the targeted creature's controller (Defined$ TargetedController)"
+        );
+    }
+
+    /// Card compat: Divine Offering (cardsfolder/d/divine_offering.txt) — mtg-500.
+    ///
+    /// Script: A:SP$ Destroy | ValidTgts$ Artifact | SubAbility$ DBGainLife
+    ///   SVar:DBGainLife:DB$ GainLife | Defined$ You | LifeAmount$ X
+    ///   SVar:X:Targeted$CardManaCost
+    ///
+    /// Parser shape: destroy + dynamic `GainLifeDynamic(TargetManaValue)` for
+    /// the caster. Runtime verified by `test_divine_offering_destroy_gain_mana_value`.
+    #[test]
+    fn test_card_compat_divine_offering() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/divine_offering.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Divine Offering should load");
+        assert_eq!(def.name.as_str(), "Divine Offering");
+        assert!(
+            def.types.contains(&CardType::Instant),
+            "Divine Offering must be an Instant"
+        );
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let effects = &card.effects;
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::DestroyPermanent { .. })),
+            "Divine Offering must destroy its target. Effects: {:?}",
+            effects
+        );
+        let gainlife = effects.iter().find_map(|e| {
+            if let Effect::GainLifeDynamic { amount, player, .. } = e {
+                Some((amount.clone(), *player))
+            } else {
+                None
+            }
+        });
+        let (amount, player) = gainlife.expect("Divine Offering must have a GainLifeDynamic sub-effect");
+        assert_eq!(
+            amount,
+            crate::core::DynamicAmount::TargetManaValue,
+            "Divine Offering's life amount must be the target's mana value"
+        );
+        assert!(
+            player.is_placeholder(),
+            "Divine Offering's life goes to the caster (Defined$ You)"
         );
     }
 

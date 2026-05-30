@@ -1716,13 +1716,67 @@ impl CardDefinition {
             }
         };
 
-        // Convert to effect
-        if let Some(effect) = params_to_effect(&sub_params) {
+        // Convert to effect. A `DB$ GainLife` with a dynamic `LifeAmount$`
+        // (e.g. Swords to Plowshares `LifeAmount$ X` / `SVar:X:Targeted$CardPower`)
+        // is not expressible as a fixed-amount `Effect::GainLife`, so route it
+        // through the SVar-aware dynamic builder first.
+        if let Some(effect) = self.gain_life_dynamic_from_params(&sub_params) {
+            effects.push(effect);
+        } else if let Some(effect) = params_to_effect(&sub_params) {
             effects.push(effect);
         }
 
         // Recursively follow further SubAbility chains
         self.follow_sub_ability_chain(&sub_params, effects);
+    }
+
+    /// Build an [`Effect::GainLifeDynamic`](crate::core::Effect::GainLifeDynamic)
+    /// from a `DB$ GainLife` ability whose `LifeAmount$` is a dynamic value
+    /// reference resolved through the card's SVars.
+    ///
+    /// Returns `None` for non-GainLife abilities or fixed-amount GainLife (which
+    /// the standard `params_to_effect` path already handles as `Effect::GainLife`).
+    /// Recognised dynamic amounts (see [`crate::core::DynamicAmount::parse`]):
+    /// - `LifeAmount$ X` with `SVar:X:Targeted$CardPower`    -> `TargetPower`
+    /// - `LifeAmount$ X` with `SVar:X:Targeted$CardManaCost` -> `TargetManaValue`
+    ///
+    /// The `Defined$` selector picks who gains the life:
+    /// - `TargetedController` -> the targeted permanent's controller (Swords)
+    /// - `You` / absent       -> the spell's controller (Divine Offering)
+    fn gain_life_dynamic_from_params(
+        &self,
+        params: &super::ability_parser::AbilityParams,
+    ) -> Option<crate::core::Effect> {
+        use super::ability_parser::ApiType;
+        use crate::core::{CardId, DynamicAmount, Effect, PlayerId};
+
+        if params.api_type != ApiType::GainLife {
+            return None;
+        }
+        let life_amount = params.get("LifeAmount")?;
+        // A plain integer is the fixed-amount case — let params_to_effect handle it.
+        let amount = match DynamicAmount::parse(life_amount, &self.svars)? {
+            DynamicAmount::Fixed(_) => return None,
+            dynamic @ (DynamicAmount::TargetPower | DynamicAmount::TargetManaValue | DynamicAmount::DamageDealt) => {
+                dynamic
+            }
+        };
+
+        // Resolve the recipient placeholder from the Defined$ selector. The
+        // concrete player/reference are filled at resolution time in
+        // resolve_effect_target.
+        let player = match params.get("Defined") {
+            Some("TargetedController") => PlayerId::target_controller(),
+            _ => PlayerId::placeholder(), // You / unspecified -> spell controller
+        };
+        // The referenced card (whose power / mana value we read) is the spell's
+        // current target; "reuse previous" tells the resolver to pull it from
+        // the most recently resolved target (the preceding exile/destroy).
+        Some(Effect::GainLifeDynamic {
+            player,
+            amount,
+            reference: CardId::reuse_previous(),
+        })
     }
 
     /// Wrap an effect in `Effect::ConditionalSelfCounter` when the SVar carries a
