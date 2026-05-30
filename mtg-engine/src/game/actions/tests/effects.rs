@@ -5001,6 +5001,44 @@ mod tests {
         );
     }
 
+    /// Card compat: Balance (cardsfolder/b/balance.txt) — mtg-483
+    ///
+    /// Script:
+    ///   ManaCost:1 W
+    ///   Types:Sorcery
+    ///   A:SP$ Balance | Valid$ Land | SubAbility$ BalanceHands
+    ///   SVar:BalanceHands:DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures
+    ///   SVar:BalanceCreatures:DB$ Balance | Valid$ Creature
+    ///
+    /// Parser-shape regression: Balance must parse as a {1}{W} Sorcery whose
+    /// spell ability carries an Effect::Balance (the lands pass). The full
+    /// land/hand/creature equalize chain is exercised by
+    /// tests/balance_equalize_e2e.sh and test_balance_creature_sacrifice.
+    #[test]
+    fn test_card_compat_balance() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/balance.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Balance should load");
+        assert_eq!(def.name.as_str(), "Balance");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{W}}");
+        assert_eq!(def.mana_cost.white, 1, "Cost should be {{1}}{{W}}");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let has_balance = card.effects.iter().any(|e| matches!(e, Effect::Balance { .. }));
+        assert!(
+            has_balance,
+            "Balance must parse its `SP$ Balance` ability into an Effect::Balance. Got: {:?}",
+            card.effects
+        );
+    }
+
     /// Card compat: Control Magic (cardsfolder/c/control_magic.txt) — mtg-493
     ///
     /// Script:
