@@ -168,6 +168,14 @@ pub enum Keyword {
     /// Controller chooses during untap whether to leave this permanent tapped.
     MayNotUntap,
 
+    /// "{This permanent} doesn't untap during its controller's untap step."
+    /// FORCED (unlike `MayNotUntap`, which is the controller's option). Used
+    /// by Paralyze, Exhaustion, Sleep, Tangle Wire-style locks. Typically
+    /// granted to the enchanted/affected permanent via a `GrantKeyword`
+    /// static (the host Aura carries the static; the affected creature
+    /// receives the keyword), so the untap step skips it.
+    DoesNotUntap,
+
     // ===== COMPLEX KEYWORDS (with arguments stored separately in KeywordArgs) =====
     // Keywords with cost parameters
     Madness,

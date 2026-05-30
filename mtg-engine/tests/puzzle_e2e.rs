@@ -3540,6 +3540,89 @@ async fn test_mishras_factory_pump_ability_is_offered() -> Result<()> {
     Ok(())
 }
 
+/// Regression (mtg-529): Paralyze's "Enchanted creature doesn't untap during
+/// its controller's untap step." The `R:Event$ Untap | Layer$ CantHappen`
+/// replacement is lowered into a continuous `GrantKeyword(DoesNotUntap)` on
+/// the enchanted creature; the untap step must skip any permanent that has the
+/// keyword (printed or granted). This generalizes to every doesn't-untap lock
+/// expressed as `Event$ Untap | Layer$ CantHappen`.
+#[tokio::test]
+async fn test_paralyze_keeps_enchanted_creature_tapped() -> Result<()> {
+    use mtg_engine::core::Keyword;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/paralyze_doesnt_untap.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+
+    let find = |game: &mtg_engine::game::GameState, name: &str| -> mtg_engine::core::CardId {
+        game.battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| {
+                game.cards
+                    .try_get(id)
+                    .is_some_and(|c| c.name.as_str() == name && c.controller == p0_id)
+            })
+            .unwrap_or_else(|| panic!("{} should be on the battlefield", name))
+    };
+    let bears = find(&game, "Grizzly Bears");
+    let paralyze = find(&game, "Paralyze");
+
+    // Puzzle attachment isn't supported by the loader yet, so wire the Aura to
+    // the creature directly and tap the creature (as Paralyze's ETB would).
+    game.cards.get_mut(paralyze)?.attached_to = Some(bears);
+    game.cards.get_mut(bears)?.tapped = true;
+
+    // The enchanted creature must now have the granted DoesNotUntap keyword.
+    assert!(
+        game.has_keyword_with_effects(bears, Keyword::DoesNotUntap),
+        "Paralyze must grant DoesNotUntap to the enchanted Grizzly Bears"
+    );
+
+    // Run P0's untap step. Grizzly Bears must remain tapped.
+    let p1_id = game.players[1].id;
+    let mut c1 = ZeroController::new(p0_id);
+    let mut c2 = ZeroController::new(p1_id);
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.untap_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "untap step should not end the game");
+    }
+    assert!(
+        game.cards.get(bears)?.tapped,
+        "Grizzly Bears must STAY tapped through its controller's untap step \
+         while enchanted by Paralyze (mtg-529)"
+    );
+
+    // Detach Paralyze (e.g. it was destroyed): the lock is gone, so a normal
+    // untap step now untaps the creature — confirms the effect is continuous,
+    // not a permanent state change.
+    game.cards.get_mut(paralyze)?.attached_to = None;
+    assert!(
+        !game.has_keyword_with_effects(bears, Keyword::DoesNotUntap),
+        "removing Paralyze must remove the DoesNotUntap lock"
+    );
+    {
+        let mut game_loop = GameLoop::new(&mut game);
+        let _ = game_loop.untap_step_for_test(&mut c1, &mut c2)?;
+    }
+    assert!(
+        !game.cards.get(bears)?.tapped,
+        "after Paralyze is removed, the creature untaps normally"
+    );
+
+    println!("✓ Paralyze keeps the enchanted creature tapped; untaps once removed (mtg-529)");
+    Ok(())
+}
+
 /// Regression: action menu must surface predicted side costs for cast actions
 /// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
 /// sees them before accepting.

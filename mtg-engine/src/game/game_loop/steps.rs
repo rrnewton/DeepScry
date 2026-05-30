@@ -46,14 +46,35 @@ impl<'a> GameLoop<'a> {
         let mut normal_to_untap: SmallVec<[CardId; 8]> = SmallVec::new();
         let mut may_not_untap: SmallVec<[CardId; 8]> = SmallVec::new();
 
+        // Permanents that are forced to stay tapped (CR 302.6 doesn't-untap
+        // effects: Paralyze, Exhaustion, ...). The keyword may be printed or,
+        // far more commonly, granted to the affected creature by a host Aura's
+        // GrantKeyword(DoesNotUntap) static — so consult granted keywords too.
+        let mut forced_stay_tapped: SmallVec<[CardId; 8]> = SmallVec::new();
+
         for &card_id in &self.game.battlefield.cards {
             if let Some(card) = self.game.cards.try_get(card_id) {
                 if card.controller == active_player && card.tapped {
-                    if card.keywords.contains(Keyword::MayNotUntap) {
+                    if self.game.has_keyword_with_effects(card_id, Keyword::DoesNotUntap) {
+                        // Forced not to untap — does not even reach the
+                        // MayNotUntap optional-choice path.
+                        forced_stay_tapped.push(card_id);
+                    } else if card.keywords.contains(Keyword::MayNotUntap) {
                         may_not_untap.push(card_id);
                     } else {
                         normal_to_untap.push(card_id);
                     }
+                }
+            }
+        }
+
+        // Log the forced-tapped permanents (for game-log evidence) but do not
+        // untap them.
+        if !forced_stay_tapped.is_empty() && self.verbosity >= VerbosityLevel::Normal {
+            for &card_id in &forced_stay_tapped {
+                if let Some(card) = self.game.cards.try_get(card_id) {
+                    let name = card.name.clone();
+                    self.log_normal(&format!("{} doesn't untap (locked tapped)", name));
                 }
             }
         }

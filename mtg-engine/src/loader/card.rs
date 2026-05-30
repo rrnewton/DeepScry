@@ -171,8 +171,18 @@ impl CardLoader {
                             etb_choose_color = true;
                         }
                     }
-                    // Ability lines (A:, S:, T: lines)
-                    "A" | "S" | "T" => {
+                    // Ability lines (A:, S:, T:, R: lines)
+                    // R: (replacement effects) are retained so
+                    // parse_static_abilities can lower untap-prevention locks
+                    // (`R:Event$ Untap | Layer$ CantHappen`) into a continuous
+                    // GrantKeyword(DoesNotUntap) static (Paralyze, Exhaustion, ...).
+                    "A" | "S" | "T" | "R" => {
+                        // ETB-tapped replacement: "ReplaceWith$ ETBTapped" enters
+                        // the battlefield tapped (handled via the `enters_tapped`
+                        // flag rather than as a generic replacement).
+                        if key == "R" && value.contains("ReplaceWith$ ETBTapped") {
+                            enters_tapped = true;
+                        }
                         raw_abilities.push(format!("{key}:{value}"));
                     }
                     // Script variables (SVar:NAME:body)
@@ -205,13 +215,6 @@ impl CardLoader {
                                     }
                                 }
                             }
-                        }
-                    }
-                    // Replacement effects (R: lines)
-                    // Check for ETB tapped replacement: "ReplaceWith$ ETBTapped"
-                    "R" => {
-                        if value.contains("ReplaceWith$ ETBTapped") {
-                            enters_tapped = true;
                         }
                     }
                     _ => {} // Ignore other fields for now
@@ -4096,6 +4099,48 @@ impl CardDefinition {
                     description: description.clone(),
                 });
             }
+        }
+
+        // Replacement effects (R: lines) that act as continuous "doesn't untap"
+        // locks. Paralyze (and other Auras / permanents) print
+        //   R:Event$ Untap | Layer$ CantHappen | ValidCard$ Creature.EnchantedBy
+        //     | ValidStepTurnToController$ You | ...
+        // i.e. "Enchanted creature doesn't untap during its controller's untap
+        // step." We model this as a continuous GrantKeyword(DoesNotUntap) on the
+        // affected permanent: the host carries the static, the affected creature
+        // receives the keyword, and the untap step skips any permanent that has
+        // it. This generalizes to every `Event$ Untap | Layer$ CantHappen`
+        // replacement, not just Paralyze.
+        for ability in &self.raw_abilities {
+            let Some(body) = ability.strip_prefix("R:") else {
+                continue;
+            };
+            // Tokenized parse: split on `|`, then `$` (no substring matching).
+            let mut params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+            for param in body.split('|') {
+                if let Some((k, v)) = param.split_once('$') {
+                    params.insert(k.trim(), v.trim());
+                }
+            }
+            if params.get("Event") != Some(&"Untap") || params.get("Layer") != Some(&"CantHappen") {
+                continue;
+            }
+            // Which permanents are locked? Default to the enchanted creature
+            // (the overwhelmingly common case); honor an explicit ValidCard$.
+            let affected = params
+                .get("ValidCard")
+                .and_then(|v| parse_single_affected_selector(v))
+                .unwrap_or(AffectedSelector::CreatureEnchantedBy);
+            let description = params
+                .get("Description")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "Doesn't untap during its controller's untap step.".to_string());
+            abilities.push(StaticAbility::GrantKeyword {
+                affected,
+                keyword: Keyword::DoesNotUntap,
+                description,
+                condition: None,
+            });
         }
 
         abilities

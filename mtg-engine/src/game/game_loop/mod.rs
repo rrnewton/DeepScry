@@ -1507,6 +1507,19 @@ impl<'a> GameLoop<'a> {
         &self.abilities_buffer
     }
 
+    /// Expose the untap step for testing "doesn't untap" locks (Paralyze,
+    /// Exhaustion, ...). Runs the same untap_step the turn loop runs.
+    ///
+    /// # Errors
+    /// Returns an error if the untap step encounters an invalid game state.
+    pub fn untap_step_for_test(
+        &mut self,
+        controller1: &mut dyn crate::game::controller::PlayerController,
+        controller2: &mut dyn crate::game::controller::PlayerController,
+    ) -> crate::Result<Option<crate::game::GameResult>> {
+        self.untap_step(controller1, controller2)
+    }
+
     /// Expose cleanup_step for testing discard logic
     ///
     /// # Errors

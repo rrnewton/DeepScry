@@ -1,0 +1,24 @@
+[metadata]
+Name:Paralyze keeps the enchanted creature tapped
+Goal:Win
+Difficulty:Easy
+
+# Regression for mtg-529: Paralyze's "Enchanted creature doesn't untap during
+# its controller's untap step." The R:Event$ Untap | Layer$ CantHappen
+# replacement is lowered into a continuous GrantKeyword(DoesNotUntap) on the
+# enchanted creature; the untap step must skip it.
+#
+# P0 (active) controls a Grizzly Bears (tapped) and a Paralyze on the
+# battlefield. The e2e test attaches the Paralyze to the Bears, then runs
+# P0's untap step and asserts the Bears stays tapped.
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Grizzly Bears; Paralyze; Swamp
+p0library=Swamp; Swamp; Swamp
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest

@@ -5212,6 +5212,54 @@ mod tests {
         );
     }
 
+    /// Card compat: Paralyze (cardsfolder/p/paralyze.txt) — mtg-529
+    ///
+    /// Script (relevant lines):
+    ///   K:Enchant:Creature
+    ///   T:Mode$ ChangesZone | ... | Execute$ TrigTap        (ETB: tap enchanted)
+    ///   R:Event$ Untap | Layer$ CantHappen
+    ///     | ValidCard$ Creature.EnchantedBy ...             (doesn't untap)
+    ///
+    /// Parser-shape guard for the "doesn't untap" lock: the `R:Event$ Untap |
+    /// Layer$ CantHappen` replacement must be lowered into a continuous
+    /// GrantKeyword(DoesNotUntap) static targeting the enchanted creature. The
+    /// untap step consults `has_keyword_with_effects(.., DoesNotUntap)` so the
+    /// enchanted creature stays tapped on its controller's untap step.
+    #[test]
+    fn test_card_compat_paralyze() {
+        use crate::core::{AffectedSelector, Keyword, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/p/paralyze.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Paralyze should load");
+        assert_eq!(def.name.as_str(), "Paralyze");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The R:Event$ Untap | Layer$ CantHappen replacement must lower into a
+        // GrantKeyword(DoesNotUntap) on the enchanted creature.
+        let has_doesnt_untap = card.static_abilities.iter().any(|s| {
+            matches!(
+                s,
+                StaticAbility::GrantKeyword {
+                    keyword: Keyword::DoesNotUntap,
+                    affected: AffectedSelector::CreatureEnchantedBy,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_doesnt_untap,
+            "Paralyze must grant DoesNotUntap to the enchanted creature \
+             (R:Event$ Untap | Layer$ CantHappen). Statics: {:?}",
+            card.static_abilities
+        );
+    }
+
     /// Card compat: Juzám Djinn (cardsfolder/j/juzam_djinn.txt) — mtg-515
     ///
     /// Script:
