@@ -113,6 +113,41 @@ In bug-detection mode the agent can either put a choice number on the final line
 or write `STOP` with a `BUG_REPORT` section describing the suspected rules or
 engine bug. Use `--no-bug-detection` or `--pure-play` for choice-only play.
 
+## WASM-game CLI (drop-in for `mtg tui`, with screenshots)
+
+`scripts/mtg_wasm_game.py` runs a game in the **headless WASM build** (the
+same `web/pkg/mtg_engine.js` the website uses, driven through the page's own
+launcher UI in headless Chromium) as easily as `mtg tui`, capturing a
+**gamelog + per-turn screenshots** for visual inspection. It is a thin
+wrapper over the shared driver `agentplay/lib/wasm_process.py` and the shared
+`mtg tui` arg/seed infra in `agentplay/lib/web_game_common.py` (the same
+infra `scripts/mtg_tui_networked.py` uses — DRY).
+
+```bash
+# Random vs random WASM game (fancy terminal-style page), screenshots+gamelog:
+scripts/mtg_wasm_game.py --p1 random --p2 random --seed 42 --max-turns 25 \
+    decks/old_school2/the_deck_classic.dck
+
+# Heuristic mirror match against the card-style GUI page (native_game.html):
+scripts/mtg_wasm_game.py --page game --seed 7 --max-turns 30 \
+    decks/white_weenie.dck
+
+# Networked variant (native `mtg server` + WASM client over WebSocket):
+scripts/mtg_wasm_game.py --networked --p1 random --p2 random --seed 42 \
+    decks/old_school2/the_deck_classic.dck
+```
+
+Flags mirror `mtg tui`: positional `PLAYER1_DECK [PLAYER2_DECK]`, `--p1`/`--p2`
+controller (`zero`/`random`/`heuristic`), `--seed`, `--max-turns`. Plus
+`--page {fancy,game}`, `--out-dir DIR`, `--headed`, `--networked`. Artifacts
+land in `--out-dir` (default `debug/wasm_game_<timestamp>/`): `game.log`,
+`snapshot.json`, `wasm_transcript.log`, and `screenshots/turn_NNNN.png` +
+`final.png`. Decks must be in the WASM-exported set (`web/data/decks.bin`);
+build prerequisites with `make wasm-dev` + `mtg export-wasm`.
+
+For **human / LLM-directed** WASM play, use `agent_game.py --driver=wasm`
+instead (it drives per-choice decisions through the WASM bridge).
+
 ## Documentation
 
 For detailed documentation, see:

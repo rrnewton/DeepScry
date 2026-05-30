@@ -42,7 +42,6 @@ that flow; an async loop would just add ceremony with no benefit.
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -53,6 +52,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .game_process import ChoicePoint, GameOver
+from .web_game_common import deck_path_to_wasm_name, find_free_port
 from .text_formatter import (
     strip_menu_prefix,
     view_model_choices,
@@ -68,6 +68,18 @@ from .text_formatter import (
 WASM_PAGE_FANCY = "fancy"
 WASM_PAGE_GAME = "game"
 WASM_PAGES = (WASM_PAGE_FANCY, WASM_PAGE_GAME)
+
+# Map the logical page name → its actual HTML filename. The pages were
+# renamed (fancy.html → tui_game.html, game.html → native_game.html; see the
+# parent CLAUDE.md "Web Frontend Layout") but the logical names are kept as
+# the stable agentplay API. Navigating to the wrong filename 404s the tab —
+# the engine still runs (the WASM bridge imports /pkg/mtg_engine.js by
+# absolute path) but every screenshot captures the 404 error page, which is
+# the historical "WASM driver screenshots are blank" bug.
+WASM_PAGE_FILES = {
+    WASM_PAGE_FANCY: "tui_game.html",
+    WASM_PAGE_GAME: "native_game.html",
+}
 
 # Default poll interval used while waiting for the WASM session to surface
 # the next choice point. Kept short because the WASM TUI runs heuristics
@@ -96,6 +108,11 @@ class WasmLaunchConfig:
     page: str = WASM_PAGE_FANCY
     headless: bool = True
     starting_life: int = 20
+    # Optional turn cap for engine-vs-engine runs (no human ChoicePoints to
+    # break the poll loop). `None` ⇒ run to natural game over. When the turn
+    # number exceeds this, `_wait_for_next_event` returns a GameOver with a
+    # "turn cap reached" reason.
+    max_turns: int | None = None
 
 
 class WasmPlaywrightProcess:
@@ -161,7 +178,7 @@ class WasmPlaywrightProcess:
         self._launch_browser()
         self._navigate_and_init()
         self._launch_game_session()
-        return self._wait_for_next_event()
+        return self._wait_for_next_event(timeout_s=self._event_timeout_s())
 
     def send_choice(self, expected_player: str, choice_text: str) -> ChoicePoint | GameOver:
         if self._page is None:
@@ -227,12 +244,128 @@ class WasmPlaywrightProcess:
             self._http_proc = None
 
     # ------------------------------------------------------------------
+    # UI-driven auto-play (engine-vs-engine; visual screenshots)
+    # ------------------------------------------------------------------
+
+    def run_autoplay_ui(self, max_turns: int) -> dict[str, Any]:
+        """Drive an engine-vs-engine game through the PAGE'S OWN launcher UI
+        (deck/controller selectors + Launch button + per-turn `Space`), so
+        the captured screenshots show the real, rendered game — not the idle
+        launcher. This is the reliable path for `scripts/mtg_wasm_game.py`
+        random/heuristic auto-play.
+
+        Unlike `start()`/`send_choice()` (which drive the WASM exports via a
+        bridge and leave the page UI un-rendered), this method launches the
+        game the same way a human clicking the page would, then reads the
+        same live game instance's view model for the gamelog.
+
+        Returns a dict: {final_turn, game_over, log_lines}.
+        """
+        if self.config.page not in WASM_PAGES:
+            raise ValueError(f"unknown WASM page: {self.config.page!r}")
+        self.game_dir.mkdir(parents=True, exist_ok=True)
+        if self.screenshot_dir is not None:
+            self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+
+        self._start_http_server()
+        self._launch_browser()
+        page_file = WASM_PAGE_FILES[self.config.page]
+        url = f"http://127.0.0.1:{self._port}/{page_file}"
+        if self.verbose:
+            print(f"[wasm] (ui) navigating to {url}", file=sys.stderr)
+        self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+        # Wait for the launcher (deck dropdowns populated).
+        self._page.wait_for_function(
+            "() => { const s = document.getElementById('p1-deck'); return s && s.options.length > 0; }",
+            timeout=30_000,
+        )
+
+        cfg = self.config
+        # Verify both decks are present; surface a clear error otherwise.
+        avail = self._page.evaluate(
+            "() => Array.from(document.getElementById('p1-deck').options).map(o => o.value)"
+        )
+        for want in (cfg.p1_deck, cfg.p2_deck):
+            if want not in avail:
+                raise RuntimeError(
+                    f"WASM driver (ui): deck {want!r} not in exported set. Available: {avail}"
+                )
+
+        self._page.select_option("#p1-deck", cfg.p1_deck)
+        self._page.select_option("#p2-deck", cfg.p2_deck)
+        self._page.select_option("#p1-controller", cfg.p1_controller)
+        self._page.select_option("#p2-controller", cfg.p2_controller)
+        with suppress(Exception):
+            self._page.fill("#game-seed", str(cfg.seed))
+        self._page.click("#btn-launch")
+
+        # Wait for the game surface (the RatZilla terminal exists on both
+        # pages; native_game.html also renders DOM panes).
+        self._page.wait_for_selector("#game-controls", state="visible", timeout=15_000)
+        with suppress(Exception):
+            # Expand controls so #btn-run-turn is clickable (tui_game.html
+            # starts collapsed); harmless on native_game.html.
+            self._page.click("#btn-toggle-controls")
+            self._page.wait_for_selector("#controls-panel", state="visible", timeout=5_000)
+        self._page.wait_for_timeout(400)
+
+        # Install the bridge shim so `_read_view_model` can read the LIVE
+        # game instance the page just launched. The page launched the game
+        # via its own module import; the bridge re-imports the same module,
+        # so `tui_get_gui_view_model_json()` reflects that same session.
+        self._install_bridge()
+
+        last_turn = None
+        game_over = False
+        for _ in range(max_turns + 2):
+            # Advance one turn. Prefer the explicit button; fall back to the
+            # Space key binding both pages honor for "AI: run one turn".
+            advanced = False
+            with suppress(Exception):
+                self._page.click("#btn-run-turn", timeout=3_000)
+                advanced = True
+            if not advanced:
+                with suppress(Exception):
+                    self._page.keyboard.press("Space")
+            self._page.wait_for_timeout(200)
+
+            view = self._read_view_model()
+            turn = view_model_turn_number(view)
+            if turn is not None and turn != last_turn:
+                last_turn = turn
+                if self.screenshot_dir is not None:
+                    with suppress(Exception):
+                        self._page.screenshot(
+                            path=str(self.screenshot_dir / f"turn_{turn:04d}.png"),
+                            full_page=True,
+                        )
+            if view_model_is_game_over(view):
+                game_over = True
+                break
+            if turn is not None and turn > max_turns:
+                break
+
+        # Final snapshot + screenshot + gamelog.
+        view = self._read_view_model()
+        if self.screenshot_dir is not None:
+            with suppress(Exception):
+                self._page.screenshot(
+                    path=str(self.screenshot_dir / "final.png"), full_page=True
+                )
+        return {
+            "final_turn": view_model_turn_number(view),
+            "game_over": game_over or view_model_is_game_over(view),
+            "log_lines": view_model_log_lines(view),
+        }
+
+    # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
 
     def _start_http_server(self) -> None:
         if self._port is None:
-            self._port = _pick_free_port()
+            self._port = find_free_port()
         cmd = ["python3", "-m", "http.server", str(self._port)]
         if self.verbose:
             print(f"[wasm] http server: $ {' '.join(cmd)} (cwd={self.web_dir})", file=sys.stderr)
@@ -291,18 +424,19 @@ class WasmPlaywrightProcess:
             print(line, file=sys.stderr)
 
     def _navigate_and_init(self) -> None:
-        url = f"http://127.0.0.1:{self._port}/{self.config.page}.html"
+        page_file = WASM_PAGE_FILES[self.config.page]
+        url = f"http://127.0.0.1:{self._port}/{page_file}"
         if self.verbose:
             print(f"[wasm] navigating to {url}", file=sys.stderr)
         self._page.goto(url, wait_until="networkidle", timeout=60_000)
+        self._install_bridge()
 
-        # Install a tiny shim on `window` that exposes (or lazily imports)
-        # the WASM module bindings every page.evaluate call needs. This
-        # avoids requiring tui_game.html / native_game.html to have specific
-        # `window.__mtg` exports — we go straight to the JS module.
-        #
-        # We cache the imported module on `window.__mtgBridge` so subsequent
-        # calls don't re-import.
+    def _install_bridge(self) -> None:
+        """Install a tiny shim on `window` that lazily imports the WASM
+        module bindings every `page.evaluate` call needs, then eagerly run
+        WASM init so later calls don't race with compilation. Shared by the
+        bridge-driven path (`_navigate_and_init`) and the UI-driven
+        auto-play path (`run_autoplay_ui`)."""
         self._page.evaluate(
             """
             window.__mtgEnsureBridge = async () => {
@@ -313,9 +447,6 @@ class WasmPlaywrightProcess:
             };
             """
         )
-        # Wait for WASM init to finish (the bridge module's `init()` runs
-        # at first call). We invoke it eagerly so subsequent waits aren't
-        # racing with WASM compilation.
         self._page.evaluate(
             """
             async () => {
@@ -419,6 +550,16 @@ class WasmPlaywrightProcess:
     # Polling / event loop
     # ------------------------------------------------------------------
 
+    def _event_timeout_s(self) -> float:
+        """For engine-vs-engine runs the FIRST `_wait_for_next_event` drives
+        the entire game to completion in one call (no human ChoicePoints),
+        so the timeout must cover the whole game. Scale it with `max_turns`
+        when set (capped sensibly); otherwise use the default."""
+        if self.config.max_turns is not None:
+            # ~2s/turn budget incl. per-turn screenshots, min 60s, max 600s.
+            return float(min(600, max(60, self.config.max_turns * 2)))
+        return _DEFAULT_TIMEOUT_S
+
     def _wait_for_next_event(self, timeout_s: float = _DEFAULT_TIMEOUT_S) -> ChoicePoint | GameOver:
         """Poll the WASM view model until either there's a pending choice we
         need to resolve OR the game is over."""
@@ -428,6 +569,15 @@ class WasmPlaywrightProcess:
             view = self._read_view_model()
             if view_model_is_game_over(view):
                 return self._build_game_over(view)
+            # Honor an optional turn cap (engine-vs-engine games have no human
+            # ChoicePoints, so this is the only way to bound a non-terminating
+            # or very long auto-play run).
+            if self.config.max_turns is not None:
+                turn = view_model_turn_number(view)
+                if turn is not None and turn > self.config.max_turns:
+                    go = self._build_game_over(view)
+                    go.reason = f"turn cap reached ({self.config.max_turns})"
+                    return go
             choices = view_model_choices(view)
             if choices:
                 return self._build_choice_point(view, choices)
@@ -580,16 +730,6 @@ class WasmPlaywrightProcess:
 # ---------------------------------------------------------------------------
 
 
-def _pick_free_port() -> int:
-    """Bind to port 0 to let the OS hand us a free ephemeral port, then
-    release it. There's a TOCTOU race between release-and-rebind, but it's
-    short enough for our purposes (test runs, not production)."""
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 def _diff_after(current: list[str], previous: list[str]) -> list[str]:
     """Return the suffix of `current` that doesn't overlap with the tail of
     `previous` — used for incremental log delta extraction.
@@ -630,9 +770,14 @@ def _diff_after(current: list[str], previous: list[str]) -> list[str]:
     return list(current)
 
 
-def deck_path_to_wasm_name(path: str | os.PathLike[str]) -> str:
-    """Map "decks/foo_bar.dck" → "foo_bar" — the WASM data uses bare deck
-    names while agent_game.py CLI consumers always pass `.dck` paths."""
-
-    name = Path(path).stem
-    return name
+# `deck_path_to_wasm_name` is imported from `web_game_common` above and
+# re-exported here for backwards compatibility (agent_game.py imports it
+# from this module).
+__all__ = [
+    "WasmLaunchConfig",
+    "WasmPlaywrightProcess",
+    "WASM_PAGE_FANCY",
+    "WASM_PAGE_GAME",
+    "WASM_PAGES",
+    "deck_path_to_wasm_name",
+]

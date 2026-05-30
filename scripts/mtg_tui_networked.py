@@ -55,6 +55,15 @@ import sys
 import time
 from pathlib import Path
 
+# Shared web/networked/WASM game infra (DRY): free-port picker + the
+# `mtg tui --seed` → per-controller-seed derivation live in one place so the
+# networked and WASM runners agree on seed semantics.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from agentplay.lib.web_game_common import (  # noqa: E402
+    derive_controller_seeds,
+    find_free_port,
+)
+
 
 def merge_logs(gamelog_dir: str, output_file=None):
     """
@@ -169,15 +178,6 @@ def merge_logs(gamelog_dir: str, output_file=None):
         print(f"Merged logs written to: {output_file}", file=sys.stderr)
     else:
         print(f"\n--- End of merged logs ({len(entries)} lines) ---", file=sys.stderr)
-
-
-def find_free_port():
-    """Find a free port to use for the server."""
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('', 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
 
 
 def parse_args():
@@ -322,24 +322,18 @@ def main():
     p2_deck = args.player2_deck or args.player1_deck  # Default to mirror match
 
     # Derive per-controller seeds from --seed using the SAME formula as
-    # `mtg tui` (see mtg-engine/src/main.rs around line 1556):
-    #   p1_seed = master_seed.wrapping_add(0x1234_5678_9ABC_DEF0)
-    #   p2_seed = master_seed.wrapping_add(0xFEDC_BA98_7654_3210)
-    # Without this, controllers seed from entropy and the network run is not
-    # a drop-in replacement for `mtg tui --seed N` — it produces a different
-    # (non-deterministic) game log.
-    # Explicit --seed-p1 / --seed-p2 flags still take precedence.
-    P1_SEED_SALT = 0x1234_5678_9ABC_DEF0
-    P2_SEED_SALT = 0xFEDC_BA98_7654_3210
-    U64_MASK = 0xFFFF_FFFF_FFFF_FFFF
+    # `mtg tui` (shared helper in agentplay.lib.web_game_common). Without
+    # this, controllers seed from entropy and the network run is not a
+    # drop-in replacement for `mtg tui --seed N`. Explicit --seed-p1 /
+    # --seed-p2 flags still take precedence.
     if args.seed and args.seed != 'from_entropy':
         try:
-            master_seed_u64 = int(args.seed) & U64_MASK
+            p1_seed, p2_seed = derive_controller_seeds(int(args.seed))
             if args.seed_p1 is None:
-                args.seed_p1 = str((master_seed_u64 + P1_SEED_SALT) & U64_MASK)
+                args.seed_p1 = str(p1_seed)
                 print(f"[mtg_tui_networked] Derived P1 controller seed from --seed: {args.seed_p1}")
             if args.seed_p2 is None:
-                args.seed_p2 = str((master_seed_u64 + P2_SEED_SALT) & U64_MASK)
+                args.seed_p2 = str(p2_seed)
                 print(f"[mtg_tui_networked] Derived P2 controller seed from --seed: {args.seed_p2}")
         except ValueError:
             print(f"[mtg_tui_networked] WARNING: --seed={args.seed!r} is not a u64; "
