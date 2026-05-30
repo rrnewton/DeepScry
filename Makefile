@@ -280,6 +280,15 @@ validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
 	@cd web && $(NPM) install --silent 2>/dev/null
 	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js
+	@echo "=== Running bounded native-vs-WASM equivalence sweep ==="
+	@cargo build --release --bin mtg --features network
+	@echo "    Hermetic: local WASM bundle (built by validate-wasm-step) + headless"
+	@echo "    Chromium. MTG_EQUIV_REQUIRE_WASM=1 => absent browser/toolchain is a"
+	@echo "    HARD FAIL here (never a silent green-skip). --expect-divergence is the"
+	@echo "    known-divergence tripwire for beads mtg-ofl2i: green while that bug is"
+	@echo "    open, fails the moment native+WASM agree (telling you to drop the flag)."
+	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./scripts/native_wasm_equiv_sweep.sh \
+		--seeds 1 --decks 'decks/old_school2/ur_burn.dck' --max-turns 8 --expect-divergence
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games

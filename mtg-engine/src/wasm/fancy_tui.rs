@@ -748,6 +748,28 @@ pub fn tui_clear_logs() {
     });
 }
 
+/// Enable or disable `[GAMELOG TurnN STEP]` action tagging on the active
+/// session's logger.
+///
+/// This mirrors the native `mtg tui --tag-gamelogs` flag. The
+/// native-vs-WASM equivalence sweep (`scripts/native_wasm_equiv_sweep.py`)
+/// turns this on right after `launch_game_session` so that
+/// `tui_get_logs_json()` yields the SAME tagged action stream the native
+/// engine writes — making the two compile targets directly diffable.
+///
+/// Returns `true` if a session was present and the flag was applied.
+#[wasm_bindgen]
+pub fn tui_set_tag_gamelogs(enabled: bool) -> bool {
+    GLOBAL_TUI_STATE.with(|state| {
+        if let Some(ref state) = *state.borrow() {
+            state.borrow_mut().game.logger.set_tag_gamelogs(enabled);
+            true
+        } else {
+            false
+        }
+    })
+}
+
 /// Get the structured GUI view model as JSON.
 ///
 /// This is the new entry point for `web/native_game.html`'s thin DOM renderer:
