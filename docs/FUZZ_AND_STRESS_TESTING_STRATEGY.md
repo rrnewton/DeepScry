@@ -50,7 +50,7 @@ bug_finding/                       # expeditions (NOT in validate / CI)
     └── seed_salts.sh              # SHARED bash mirror of the Rust seed salts
 
 tests/                             # validate legs (deterministic, short)
-├── fuzz_determinism_netequiv_e2e.sh    # fixed seeds 1..4 / 1..2 -> sweep driver
+├── fuzz_determinism_netequiv_e2e.sh    # DETERMINISM only (fixed seeds 1..4, local) -> sweep driver
 ├── network_vs_local_equivalence_e2e.sh # fixed seed (3) local-vs-network
 ├── network_vs_local_equivalence.py     # Python equivalent (uses shared lib)
 └── snapshot_resume_e2e.sh              # fixed seed 42 + fixed stop points
@@ -66,7 +66,7 @@ mtg-engine/tests/proptest_invariants.rs  # fixed-seed proptest (validate)
 | Harness | Invariant guarded | Kind | Lives in | How to run |
 |---------|-------------------|------|----------|------------|
 | `proptest_invariants.rs` | core game invariants under proptest | regression (validate) | `mtg-engine/tests/` | `cargo test` path; proptest pinned to a FIXED seed/cases budget |
-| `fuzz_determinism_netequiv_e2e.sh` | native determinism + local==network | regression (validate) | `tests/` | `bash tests/fuzz_determinism_netequiv_e2e.sh` (fixed seeds, bounded) |
+| `fuzz_determinism_netequiv_e2e.sh` | native **determinism** (same-seed→identical gamelog, local-only) | regression (validate) | `tests/` | `bash tests/fuzz_determinism_netequiv_e2e.sh` (fixed seeds 1..4, bounded) |
 | `native_wasm_equiv_sweep` (validate leg) | native==WASM (known-divergence tripwire, **mtg-ofl2i**) | regression (validate) | Makefile → `bug_finding/native_wasm_equiv_sweep.sh` | `--seeds 1 --decks 1 --max-turns 8 --expect-divergence` |
 | `network_vs_local_equivalence_e2e.sh` | local==network gamelog identity | regression (validate) | `tests/` | `bash tests/network_vs_local_equivalence_e2e.sh 3 random` |
 | `snapshot_resume_e2e.sh` | snapshot resume == uninterrupted run | regression (validate) | `tests/` | `bash tests/snapshot_resume_e2e.sh` (seed 42, stops 3/8/25) |
@@ -80,12 +80,39 @@ mtg-engine/tests/proptest_invariants.rs  # fixed-seed proptest (validate)
 Every expedition has a deterministic validate counterpart guarding the same
 invariant with pinned seed(s):
 
-- determinism + local-vs-network: `fuzz_determinism_netequiv.sh` (expedition) ↔
-  `tests/fuzz_determinism_netequiv_e2e.sh` + `tests/network_vs_local_equivalence_e2e.sh` (validate).
+- **determinism** (same-seed→identical gamelog, local): `fuzz_determinism_netequiv.sh
+  --invariant determinism` (expedition) ↔ `tests/fuzz_determinism_netequiv_e2e.sh`
+  (validate; local-only, sub-second, reliably green).
+- **local-vs-network equivalence**: `fuzz_determinism_netequiv.sh --invariant
+  equivalence` heavy random×old-school-pair sweep (**expedition ONLY**) ↔
+  `tests/network_vs_local_equivalence_e2e.sh 3 random` + `... 3 zero` (validate;
+  a SINGLE pinned seed, deterministic, stable). The bounded random *equivalence
+  sweep* is deliberately NOT in validate — see the split note below.
 - native-vs-WASM: `bug_finding/native_wasm_equiv_sweep.sh` heavy sweep
   (expedition) ↔ the Makefile's bounded `--expect-divergence` leg (validate).
 - snapshot/resume: `snapshot_stress_test_single.py` random stop points
   (expedition) ↔ `tests/snapshot_resume_e2e.sh` fixed stops (validate).
+
+### Why the network EQUIVALENCE *sweep* is expedition-only (not in validate)
+
+The network local-vs-network equivalence path has open **intermittent**
+desyncs on the old-school "rogerbrand" deck family (mtg-586 for the native
+validate-network-e2e flake; the mtg-589 WASM-shadow family). The bounded
+equivalence sweep that briefly lived in `tests/fuzz_determinism_netequiv_e2e.sh`
+(`--invariant equivalence --controllers random`, 1 pair × 2 seeds) PASSES in
+isolation but FAILS under full concurrent `make validate` load — e.g.
+`random, 01_rogue_rogerbrand vs 02_thedeck_peterschnidrig, seed=1` diverged
+(~641-line gamelog diff) only under load, while passing standalone on clean
+integration. A randomized validate leg that is green only when the machine is
+quiet violates the policy above (validate's randomized legs must be
+deterministically green). So:
+
+- validate keeps the cheap, robust local-only **determinism** sweep
+  (`fuzz_determinism_netequiv_e2e.sh`) plus the SINGLE-pinned-seed deterministic
+  equivalence check (`network_vs_local_equivalence_e2e.sh`).
+- the random×old-school-pair **equivalence sweep** stays a `bug_finding/`
+  expedition until the mtg-586 / mtg-589 intermittent desyncs are root-caused
+  (desync is always fatal; the fix must eliminate the race, not paper it over).
 
 ### Why `flakiness_stress.py` lives in `bug_finding/`
 
