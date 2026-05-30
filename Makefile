@@ -322,6 +322,11 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."
 	@bash tests/network_vs_local_equivalence_e2e.sh 3 random
 	@bash tests/network_vs_local_equivalence_e2e.sh 3 zero
+	@echo "    + heuristic leg (mtg-yulth): the heuristic controller's name-based"
+	@echo "    library search (e.g. Demonic Tutor) must be info-independent, so"
+	@echo "    local and network gamelogs stay byte-identical. Single pinned seed"
+	@echo "    on the avatar draft decks (deterministic, not a load-flaky sweep)."
+	@bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic
 	@echo "=== Running robots42 state-sync regression (Phase 2 step 1 / mtg-559) ==="
 	@echo "    Locks in the ActionLog<StateSyncEntry> reveal/reorder path"
 	@echo "    that replaces WasmNetworkClient's destructive drain_* helpers."
