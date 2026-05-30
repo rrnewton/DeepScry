@@ -151,6 +151,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg"], optio
 dir-test = "0.4"
 similar-asserts = "1.5"
 tempfile = "3.10.1"
+# Property-based randomized invariant testing (dev-only; never linked into
+# the release or WASM builds — see `tests/proptest_invariants.rs`).
+proptest = "1"
 
 # WASM-specific dependencies (only for wasm32 target)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
