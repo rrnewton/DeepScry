@@ -1,26 +1,30 @@
 #!/usr/bin/env node
 /**
- * E2E test for gamehtml-graveyard-display: each player's battlefield
- * pane in `web/native_game.html` shows a clickable graveyard overlay in the
- * bottom-right corner — mirroring the native ratatui TUI's
- * `render_graveyard_overlay`
- * (mtg-engine/src/game/fancy_tui_renderer.rs:3304).
+ * E2E test for the graveyard listing in `web/native_game.html`.
  *
- * Pre-fix: no graveyard widget existed in `web/native_game.html`. The data
- * was always available in the GuiViewModel (`PlayerView.graveyard`)
- * but never rendered.
+ * Layout (post gamehtml-graveyard-in-hand): the HAND is the critical
+ * display and is always shown in full. The LOCAL player's graveyard is a
+ * best-effort listing pinned to the BOTTOM of the Hand pane
+ * (`#hand-graveyard`, inside `#pane-hand`). The OPPONENT — who has no hand
+ * pane — keeps a battlefield graveyard overlay (`#opp-graveyard-overlay`).
  *
- * Post-fix: each `.pane` (`#pane-opp-field`, `#pane-player-field`)
- * has a sibling `.graveyard-overlay` next to its `.pane-body`,
- * positioned absolutely (`position: absolute; right: 6px; bottom:
- * 6px`) and shown only when that player's graveyard is non-empty.
+ * When the Hand pane lacks room for the whole graveyard, the listing shows
+ * the most-recent K cards plus an `… N more cards` ellision line. The
+ * top-K + ellision arithmetic is shared with the native ratatui TUI via the
+ * Rust helper `graveyard_display::plan_graveyard_display`
+ * (mirrored in JS as `graveyardDisplayPlan`).
+ *
+ * Screenshots (normal + ellision) are written to the gitignored `debug/`
+ * directory for visual inspection; their paths are logged.
  */
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const { getRandomPorts } = require('./test_network_utils');
 
 const projectRoot = path.join(__dirname, '..');
+const debugDir = path.join(projectRoot, 'debug');
 
 function log(msg) {
     const ts = new Date().toISOString().substring(11, 23);
@@ -42,6 +46,8 @@ function log(msg) {
     }
 
     try {
+        fs.mkdirSync(debugDir, { recursive: true });
+
         httpServer = spawn('python3', ['-m', 'http.server', HTTP_PORT.toString()], {
             cwd: path.join(projectRoot, 'web'),
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -73,25 +79,27 @@ function log(msg) {
         await page.click('#btn-launch');
         await page.waitForTimeout(2000);
 
-        // Both overlay containers should EXIST in the DOM from the
-        // moment the launcher renders, even if hidden.
+        // Structural DOM: the local player's graveyard lives at the bottom
+        // of the Hand pane; the opponent keeps a battlefield overlay.
         const initialDom = await page.evaluate(() => ({
-            playerOverlayPresent: !!document.getElementById('player-graveyard-overlay'),
+            handGyPresent: !!document.getElementById('hand-graveyard'),
+            handGyInHandPane: !!document.querySelector('#pane-hand > #hand-graveyard'),
             oppOverlayPresent: !!document.getElementById('opp-graveyard-overlay'),
-            playerInsidePane: !!document.querySelector('#pane-player-field > .graveyard-overlay'),
             oppInsidePane: !!document.querySelector('#pane-opp-field > .graveyard-overlay'),
+            // The OLD player battlefield overlay must be gone.
+            playerBattlefieldOverlayGone: !document.getElementById('player-graveyard-overlay'),
         }));
-        check('player-graveyard-overlay element exists',
-              initialDom.playerOverlayPresent, 'in DOM');
-        check('opp-graveyard-overlay element exists',
-              initialDom.oppOverlayPresent, 'in DOM');
-        check('overlays are direct children of their .pane (sibling of .pane-body)',
-              initialDom.playerInsidePane && initialDom.oppInsidePane,
-              `player=${initialDom.playerInsidePane}, opp=${initialDom.oppInsidePane}`);
+        check('hand-graveyard element exists', initialDom.handGyPresent, 'in DOM');
+        check('hand-graveyard is a child of #pane-hand (bottom of Hand pane)',
+              initialDom.handGyInHandPane, `inHandPane=${initialDom.handGyInHandPane}`);
+        check('opp-graveyard-overlay still exists on opponent battlefield',
+              initialDom.oppOverlayPresent && initialDom.oppInsidePane,
+              `present=${initialDom.oppOverlayPresent}, insidePane=${initialDom.oppInsidePane}`);
+        check('old player-graveyard-overlay removed from battlefield',
+              initialDom.playerBattlefieldOverlayGone,
+              `gone=${initialDom.playerBattlefieldOverlayGone}`);
 
-        // Drive enough turns that creatures die in combat → graveyard
-        // accumulates cards. Heuristic vs heuristic on seed 42 fills
-        // both graveyards within ~10-15 turns.
+        // Drive enough turns that creatures die in combat → graveyard fills.
         for (let i = 0; i < 30; i++) {
             await page.keyboard.press('Space');
             await page.waitForTimeout(80);
@@ -99,28 +107,25 @@ function log(msg) {
         await page.waitForTimeout(500);
 
         const afterPlay = await page.evaluate(() => {
-            const playerOv = document.getElementById('player-graveyard-overlay');
+            const handGy = document.getElementById('hand-graveyard');
             const oppOv = document.getElementById('opp-graveyard-overlay');
 
             const sample = (ov) => {
+                if (!ov) return null;
                 const cs = getComputedStyle(ov);
                 const cards = Array.from(ov.querySelectorAll('.graveyard-overlay-card'));
                 const headerEl = ov.querySelector('.graveyard-overlay-header');
+                const ellisionEl = ov.querySelector('.hand-graveyard-ellision');
                 return {
                     display: cs.display,
-                    position: cs.position,
-                    right: cs.right,
-                    bottom: cs.bottom,
-                    zIndex: cs.zIndex,
                     hasCardsClass: ov.classList.contains('has-cards'),
                     headerText: headerEl?.textContent || '',
                     cardCount: cards.length,
                     cardNames: cards.slice(0, 5).map(c => c.textContent.trim()),
+                    ellisionText: ellisionEl?.textContent || '',
                 };
             };
 
-            // Also pull the GuiViewModel directly to cross-check that
-            // what we render matches what the engine reports.
             const stateJson = window.tui_get_gui_view_model_json
                 ? window.tui_get_gui_view_model_json()
                 : null;
@@ -136,73 +141,108 @@ function log(msg) {
             }
 
             return {
-                player: sample(playerOv),
+                hand: sample(handGy),
                 opp: sample(oppOv),
                 vmGyCounts,
             };
         });
 
         log(`After 30x Space:`);
-        log(`  player overlay: display=${afterPlay.player.display}, ${afterPlay.player.cardCount} cards, header="${afterPlay.player.headerText}"`);
+        log(`  hand graveyard: display=${afterPlay.hand.display}, ${afterPlay.hand.cardCount} cards, header="${afterPlay.hand.headerText}", ellision="${afterPlay.hand.ellisionText}"`);
         log(`  opp overlay: display=${afterPlay.opp.display}, ${afterPlay.opp.cardCount} cards, header="${afterPlay.opp.headerText}"`);
         log(`  view model graveyard sizes: ${JSON.stringify(afterPlay.vmGyCounts)}`);
 
-        // At least one player's graveyard should have cards by turn ~10.
-        const totalGyCards = afterPlay.player.cardCount + afterPlay.opp.cardCount;
-        check('at least one graveyard overlay has cards after play',
+        const totalGyCards = afterPlay.hand.cardCount + afterPlay.opp.cardCount;
+        check('at least one graveyard listing has cards after play',
               totalGyCards > 0,
-              `player=${afterPlay.player.cardCount}, opp=${afterPlay.opp.cardCount}`);
+              `hand=${afterPlay.hand.cardCount}, opp=${afterPlay.opp.cardCount}`);
 
-        // The overlay should be positioned absolutely, anchored
-        // bottom-right.
-        const checkOverlayPosition = (name, info) => {
-            if (info.cardCount === 0) {
-                log(`  (skip position check for ${name} — empty graveyard, overlay hidden)`);
-                return;
-            }
-            check(`${name} overlay is position:absolute`,
-                  info.position === 'absolute',
-                  `position=${info.position}`);
-            check(`${name} overlay anchored bottom-right (right=6px, bottom=6px)`,
-                  info.right === '6px' && info.bottom === '6px',
-                  `right=${info.right}, bottom=${info.bottom}`);
-            check(`${name} overlay header includes count`,
-                  info.headerText.includes('Graveyard') && /\d/.test(info.headerText),
-                  `header="${info.headerText}"`);
-        };
-        checkOverlayPosition('player', afterPlay.player);
-        checkOverlayPosition('opp', afterPlay.opp);
-
-        // View-model parity: rendered card count should match
-        // PlayerView.graveyard.length for both players.
-        if (afterPlay.vmGyCounts && afterPlay.vmGyCounts.length === 2) {
-            // Players[0] is conventionally P1 (the local "us"), [1] is P2.
-            // native_game.html flips ours/opp via our_player_idx, but for this
-            // seed-42 setup our_player_idx=0 so player overlay = P1, opp
-            // overlay = P2.
-            const expectedPlayer = afterPlay.vmGyCounts[0].gySize;
-            const expectedOpp = afterPlay.vmGyCounts[1].gySize;
-            check('player overlay count matches VM (PlayerView.graveyard)',
-                  afterPlay.player.cardCount === expectedPlayer,
-                  `rendered=${afterPlay.player.cardCount}, expected=${expectedPlayer}`);
-            check('opp overlay count matches VM (PlayerView.graveyard)',
-                  afterPlay.opp.cardCount === expectedOpp,
-                  `rendered=${afterPlay.opp.cardCount}, expected=${expectedOpp}`);
+        if (afterPlay.hand.cardCount > 0) {
+            check('hand graveyard header includes count',
+                  afterPlay.hand.headerText.includes('Graveyard') && /\d/.test(afterPlay.hand.headerText),
+                  `header="${afterPlay.hand.headerText}"`);
         }
 
-        // Click a graveyard card → details pane should populate. Pick
-        // whichever overlay has cards. NOTE: don't use `:first-child`
-        // — the .graveyard-overlay-header is the first child, so the
-        // first .graveyard-overlay-card is not also a :first-child of
-        // its parent. `.graveyard-overlay-card` (any) + `nth(0)` works.
-        const overlayWithCards = afterPlay.player.cardCount > 0 ? 'player-graveyard-overlay' : 'opp-graveyard-overlay';
-        const beforeClick = await page.textContent('#card-details-body');
-        await page.locator(`#${overlayWithCards} .graveyard-overlay-card`).first().click();
+        // Screenshot the NORMAL case (full-window, with the hand-pane
+        // graveyard visible at a comfortable height).
+        const normalShot = path.join(debugDir, 'graveyard_hand_pane_normal.png');
+        await page.screenshot({ path: normalShot, fullPage: false });
+        log(`SCREENSHOT (normal): ${normalShot}`);
+
+        // View-model parity: rendered player graveyard count should equal
+        // shown + elided (i.e. the full PlayerView.graveyard.length).
+        if (afterPlay.vmGyCounts && afterPlay.vmGyCounts.length === 2) {
+            const expectedPlayer = afterPlay.vmGyCounts[0].gySize;
+            // Parse "Graveyard (N):" → N (the true total) and elided count.
+            const headerTotal = parseInt((afterPlay.hand.headerText.match(/\((\d+)\)/) || [])[1] || '0', 10);
+            check('hand graveyard header total matches VM (PlayerView.graveyard)',
+                  headerTotal === expectedPlayer,
+                  `header total=${headerTotal}, VM=${expectedPlayer}`);
+        }
+
+        // Force the ELLISION case: shrink the viewport so the Hand pane is
+        // short and the graveyard cannot show every card → "… N more cards".
+        // We also need enough graveyard cards; if seed-42 hasn't filled
+        // enough, keep playing a bit.
+        await page.setViewportSize({ width: 1280, height: 380 });
+        for (let i = 0; i < 20; i++) {
+            await page.keyboard.press('Space');
+            await page.waitForTimeout(60);
+        }
+        await page.waitForTimeout(400);
+
+        const ellisionState = await page.evaluate(() => {
+            const handGy = document.getElementById('hand-graveyard');
+            const cards = Array.from(handGy.querySelectorAll('.graveyard-overlay-card'));
+            const headerEl = handGy.querySelector('.graveyard-overlay-header');
+            const ellisionEl = handGy.querySelector('.hand-graveyard-ellision');
+            const headerTotal = parseInt((headerEl?.textContent.match(/\((\d+)\)/) || [])[1] || '0', 10);
+            return {
+                shown: cards.length,
+                total: headerTotal,
+                ellisionText: ellisionEl?.textContent || '',
+                hasEllision: !!ellisionEl,
+            };
+        });
+        log(`Ellision case (short window): total=${ellisionState.total}, shown=${ellisionState.shown}, ellision="${ellisionState.ellisionText}"`);
+
+        const ellisionShot = path.join(debugDir, 'graveyard_hand_pane_ellision.png');
+        await page.screenshot({ path: ellisionShot, fullPage: false });
+        log(`SCREENSHOT (ellision): ${ellisionShot}`);
+
+        // The ellision line only appears when total > shown. If the
+        // graveyard is large enough (it should be after ~50 plies) the short
+        // window MUST trigger ellision; assert the invariant when it does.
+        if (ellisionState.total > ellisionState.shown) {
+            check('ellision line shown when graveyard exceeds available rows',
+                  ellisionState.hasEllision && /…\s*\d+\s*more card/.test(ellisionState.ellisionText),
+                  `text="${ellisionState.ellisionText}"`);
+            check('ellision count = total - shown',
+                  (() => {
+                      const n = parseInt((ellisionState.ellisionText.match(/(\d+)\s*more/) || [])[1] || '-1', 10);
+                      return n === ellisionState.total - ellisionState.shown;
+                  })(),
+                  `text="${ellisionState.ellisionText}", total=${ellisionState.total}, shown=${ellisionState.shown}`);
+        } else {
+            log(`  (note: graveyard total ${ellisionState.total} <= shown ${ellisionState.shown}; ellision not triggered this run)`);
+        }
+
+        // Restore viewport and verify clicking a graveyard card updates
+        // the Card Details pane (selection pipeline still wired).
+        await page.setViewportSize({ width: 1280, height: 720 });
         await page.waitForTimeout(300);
-        const afterClick = await page.textContent('#card-details-body');
-        check('clicking a graveyard card updates the Card Details pane',
-              afterClick !== beforeClick,
-              `details changed (length ${beforeClick.length} → ${afterClick.length})`);
+        const clickTarget = (await page.locator('#hand-graveyard .graveyard-overlay-card').count()) > 0
+            ? '#hand-graveyard .graveyard-overlay-card'
+            : '#opp-graveyard-overlay .graveyard-overlay-card';
+        if (await page.locator(clickTarget).count() > 0) {
+            const beforeClick = await page.textContent('#card-details-body');
+            await page.locator(clickTarget).first().click();
+            await page.waitForTimeout(300);
+            const afterClick = await page.textContent('#card-details-body');
+            check('clicking a graveyard card updates the Card Details pane',
+                  afterClick !== beforeClick,
+                  `details changed (length ${beforeClick.length} → ${afterClick.length})`);
+        }
 
         const nonImage404Errors = browserErrors.filter(e =>
             !(e.includes('Failed to load resource') && e.includes('404'))

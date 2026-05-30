@@ -21,6 +21,7 @@ pub mod fancy_tui_renderer;
 pub mod fixed_script_controller;
 pub mod game_loop;
 pub mod game_state_evaluator;
+pub mod graveyard_display;
 pub mod hand_setup;
 pub mod heuristic_controller;
 #[cfg(feature = "native-tui")]

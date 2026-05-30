@@ -3298,14 +3298,24 @@ impl FancyTuiRenderer {
             secs
         };
 
-        // Compute graveyard bounds first so battlefield can avoid collision
-        let graveyard_bounds = Self::compute_graveyard_bounds(inner_area, view, owner_id);
+        // Compute graveyard bounds first so battlefield can avoid collision.
+        // The LOCAL player's graveyard now lives at the bottom of the Hand
+        // pane (see `draw_hand`), so only the opponent's graveyard is still
+        // overlaid on the battlefield and needs collision avoidance.
+        let graveyard_bounds = if is_player_bf {
+            None
+        } else {
+            Self::compute_graveyard_bounds(inner_area, view, owner_id)
+        };
 
         // Render battlefield with inline section labels, centered and avoiding graveyard
         self.render_battlefield_inline(f, inner_area, view, &sections, graveyard_bounds);
 
-        // Render graveyard overlay in bottom-right corner
-        self.render_graveyard_overlay(f, inner_area, view, owner_id);
+        // Render graveyard overlay in bottom-right corner — opponent only.
+        // The local player's graveyard is rendered in the Hand pane.
+        if !is_player_bf {
+            self.render_graveyard_overlay(f, inner_area, view, owner_id);
+        }
 
         // Render command zone overlay in bottom-left corner (Commander format)
         self.render_command_zone_overlay(f, inner_area, view, owner_id);
@@ -3666,8 +3676,101 @@ impl FancyTuiRenderer {
             })
             .collect();
 
+        // Reserve space at the BOTTOM of the Hand pane for the graveyard
+        // listing (best-effort). The Hand is the critical thing to display
+        // in full, so the hand list always gets the top of the pane; the
+        // graveyard only consumes the lines left over below the hand.
+        let hand_lines = sorted_hand.len() as u16;
+        let graveyard = view.player_graveyard(view.player_id());
+        let gy_total = graveyard.len();
+
+        // Lines available below the hand for a graveyard listing.
+        let leftover = inner_area.height.saturating_sub(hand_lines);
+        let plan = crate::game::graveyard_display::plan_graveyard_display(gy_total, leftover as usize);
+
+        // Hand occupies the top; render it in the area above the graveyard.
+        let hand_area = Rect {
+            height: inner_area.height.saturating_sub(plan.line_count() as u16),
+            ..inner_area
+        };
         let list = List::new(items);
-        f.render_widget(list, inner_area);
+        f.render_widget(list, hand_area);
+
+        // Render the graveyard listing flush at the bottom of the pane.
+        if gy_total > 0 && plan.line_count() > 0 && plan.line_count() as u16 <= inner_area.height {
+            self.draw_hand_graveyard(f, inner_area, view, graveyard, &plan);
+        }
+    }
+
+    /// Render the local player's graveyard as a best-effort text listing
+    /// flush against the bottom of the Hand pane. Shows the most-recent
+    /// `plan.shown` cards (the tail of the zone) and, when space-constrained,
+    /// a `… N more cards` ellision line. The top-K + ellision arithmetic
+    /// lives in the shared `graveyard_display` helper so the TUI and the
+    /// WASM GUI agree exactly.
+    fn draw_hand_graveyard(
+        &mut self,
+        f: &mut Frame,
+        inner_area: Rect,
+        view: &GameStateView,
+        graveyard: &[CardId],
+        plan: &crate::game::graveyard_display::GraveyardDisplayPlan,
+    ) {
+        use crate::game::graveyard_display::visible_recent;
+
+        let block_height = plan.line_count() as u16;
+        let y_start = inner_area.y + inner_area.height - block_height;
+        let style = Style::default().fg(Color::DarkGray);
+
+        // Header line: "Graveyard (N):"
+        let header = format!("Graveyard ({}):", plan.total);
+        f.render_widget(
+            Paragraph::new(header).style(style),
+            Rect {
+                x: inner_area.x,
+                y: y_start,
+                width: inner_area.width,
+                height: 1,
+            },
+        );
+
+        // The most-recent `plan.shown` cards (tail of the zone), preserving
+        // oldest-of-visible → newest order for a stable list.
+        let visible = visible_recent(graveyard, plan);
+        // Map each visible entry back to its absolute index in the full
+        // graveyard so click detection stays correct.
+        let first_visible_index = graveyard.len() - visible.len();
+        let owner_id = view.player_id();
+        for (row, &card_id) in visible.iter().enumerate() {
+            let name = view.card_name(card_id).unwrap_or_else(|| "Unknown".to_string());
+            let card_area = Rect {
+                x: inner_area.x,
+                y: y_start + 1 + row as u16,
+                width: inner_area.width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(name).style(style), card_area);
+            self.state.view.entity_positions.push(EntityPosition {
+                entity: Entity::GraveyardCard {
+                    card_id,
+                    index: first_visible_index + row,
+                    owner: owner_id,
+                },
+                area: card_area,
+                layout_area_px: None,
+            });
+        }
+
+        // Optional ellision line at the very bottom.
+        if let Some(ellision) = plan.ellision_line() {
+            let ellision_area = Rect {
+                x: inner_area.x,
+                y: y_start + 1 + plan.shown as u16,
+                width: inner_area.width,
+                height: 1,
+            };
+            f.render_widget(Paragraph::new(ellision).style(style), ellision_area);
+        }
     }
 
     /// Draw player info bar (life, zones, etc.)

@@ -584,6 +584,34 @@
             color: #ffd700;
         }
 
+        /* Graveyard listing pinned to the BOTTOM of the Hand pane. The
+           Hand pane is a flex column: #hand-body flexes to fill and
+           scrolls, while #hand-graveyard takes only the room it needs at
+           the bottom (capped at ~45% so the hand always stays readable).
+           Best-effort: when there isn't room for the full graveyard,
+           renderHandGraveyard shows the most-recent K cards + an
+           "… N more cards" line (see graveyardDisplayPlan). */
+        #pane-hand { display: flex; flex-direction: column; }
+        #pane-hand #hand-body { flex: 1 1 auto; overflow-y: auto; }
+        .hand-graveyard {
+            flex: 0 0 auto;
+            max-height: 45%;
+            overflow-y: auto;
+            border-top: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 4px 6px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.35;
+            display: none; /* shown by JS when graveyard is non-empty */
+        }
+        .hand-graveyard.has-cards { display: block; }
+        .hand-graveyard-ellision {
+            color: #666;
+            font-style: italic;
+            padding: 1px 2px;
+            white-space: nowrap;
+        }
+
         /* Player info */
         .player-info-block {
             padding: 8px 10px;
@@ -870,7 +898,10 @@
                 <div class="pane-body">
                     <div class="card-grid" id="player-field-cards"></div>
                 </div>
-                <div class="graveyard-overlay" id="player-graveyard-overlay"></div>
+                <!-- The local player's graveyard now lives at the bottom of
+                     the Hand pane (see #hand-graveyard), so no overlay here.
+                     Only the opponent (who has no hand pane) keeps a
+                     battlefield graveyard overlay. -->
             </div>
             <div id="pane-player-info" class="pane info-bar">
                 <div class="info-bar-content" id="player-info-body"></div>
@@ -886,7 +917,12 @@
             </div>
             <div id="pane-hand" class="pane">
                 <div class="pane-header" id="hand-header">Hand</div>
+                <!-- Hand is the critical display and always shown in full at
+                     the top; the graveyard listing is best-effort and pinned
+                     to the bottom of this pane (with most-recent-K + an
+                     "… N more cards" ellision line when space-constrained). -->
                 <div class="pane-body" id="hand-body"></div>
+                <div class="hand-graveyard" id="hand-graveyard"></div>
             </div>
         </div>
 
@@ -1693,9 +1729,12 @@
 
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
             renderBattlefield(oppPlayer, 'opp-field-cards',    cardSizes.opp);
-            renderGraveyard(ourPlayer, 'player-graveyard-overlay', state.selected_card?.card_id);
+            // Opponent has no Hand pane, so their graveyard stays as a
+            // battlefield overlay. The local player's graveyard is rendered
+            // at the bottom of the Hand pane (renderHand → renderHandGraveyard).
             renderGraveyard(oppPlayer,  'opp-graveyard-overlay',    state.selected_card?.card_id);
             renderHand(ourPlayer);
+            renderHandGraveyard(ourPlayer, state.selected_card?.card_id);
             renderStack(state.stack || []);
             renderActions(state.current_prompt, state.choices || [], state.selected_choice_idx || 0, state.choice_context);
             renderLog(state.logs || []);
@@ -1834,6 +1873,74 @@
                     : '';
                 return `<div class="${classes.join(' ')}" data-card-id="${card.card_id}" data-idx="${i}">${escapeHtml(card.name)}${mana}</div>`;
             }).join('');
+        }
+
+        /// Best-effort graveyard top-K + ellision plan. Mirrors the shared
+        /// Rust helper `plan_graveyard_display`
+        /// (mtg-engine/src/game/graveyard_display.rs) EXACTLY — keep the two
+        /// in sync. `lineBudget` is the number of rows available for the
+        /// listing (header + card rows + optional ellision line).
+        const GRAVEYARD_HEADER_LINES = 1;
+        function graveyardDisplayPlan(total, lineBudget) {
+            if (lineBudget < GRAVEYARD_HEADER_LINES || total === 0) {
+                return { total, shown: 0, elided: total };
+            }
+            const cardLines = lineBudget - GRAVEYARD_HEADER_LINES;
+            if (total <= cardLines) {
+                return { total, shown: total, elided: 0 };
+            }
+            const shown = Math.max(0, cardLines - 1); // reserve a line for ellision
+            return { total, shown, elided: total - shown };
+        }
+
+        /// Render the local player's graveyard at the BOTTOM of the Hand
+        /// pane (best-effort). The Hand always renders in full above; the
+        /// graveyard only consumes leftover vertical room. When constrained,
+        /// shows the most-recent K cards (tail of the zone) + an
+        /// "… N more cards" line. Rows remain clickable (same selection
+        /// pipeline as before).
+        function renderHandGraveyard(player, selectedCardId) {
+            const el = document.getElementById('hand-graveyard');
+            if (!el) return;
+            const graveyard = player?.graveyard || [];
+            const total = graveyard.length;
+            if (total === 0) {
+                el.classList.remove('has-cards');
+                el.innerHTML = '';
+                return;
+            }
+
+            // Compute how many rows fit. The CSS caps #hand-graveyard at
+            // 45% of the pane and the hand-body flexes above it; we estimate
+            // a per-row line height (~18px incl. line-height) against the
+            // pane's height to get a budget, so the listing degrades
+            // gracefully on short windows.
+            const pane = document.getElementById('pane-hand');
+            const rowPx = 18;
+            const capPx = pane ? pane.clientHeight * 0.45 : 200;
+            const lineBudget = Math.max(0, Math.floor(capPx / rowPx));
+            const plan = graveyardDisplayPlan(total, lineBudget);
+
+            // Most-recent `plan.shown` cards = tail of the zone.
+            const start = total - plan.shown;
+            const visible = graveyard.slice(start);
+            const headerHtml =
+                `<div class="graveyard-overlay-header">Graveyard (${total}):</div>`;
+            const rowsHtml = visible.map(card => {
+                const cls = 'graveyard-overlay-card' +
+                    (card.card_id === selectedCardId ? ' selected-card' : '');
+                return `<div class="${cls}" data-card-id="${card.card_id}" ` +
+                    `title="${escapeAttr(card.name)}">${escapeHtml(card.name)}</div>`;
+            }).join('');
+            let ellisionHtml = '';
+            if (plan.elided > 0) {
+                const noun = plan.elided === 1 ? 'card' : 'cards';
+                ellisionHtml =
+                    `<div class="hand-graveyard-ellision">… ${plan.elided} more ${noun}</div>`;
+            }
+
+            el.innerHTML = headerHtml + rowsHtml + ellisionHtml;
+            el.classList.add('has-cards');
         }
 
         /// Build a battlefield/hand card tile. CSS classes, formatted P/T,
@@ -2319,8 +2426,13 @@
             // data-card-id and routes through the same selection
             // pipeline as hand/battlefield clicks (mirrors the native
             // ratatui TUI's clickable graveyard list).
-            for (const overlayId of ['player-graveyard-overlay', 'opp-graveyard-overlay']) {
-                document.getElementById(overlayId).addEventListener('click', (e) => {
+            // The local player's graveyard now lives in #hand-graveyard
+            // (bottom of the Hand pane); the opponent's stays as a
+            // battlefield overlay. Both use .graveyard-overlay-card rows.
+            for (const overlayId of ['hand-graveyard', 'opp-graveyard-overlay']) {
+                const node = document.getElementById(overlayId);
+                if (!node) continue;
+                node.addEventListener('click', (e) => {
                     const item = e.target.closest('.graveyard-overlay-card');
                     if (!item) return;
                     selectCardById(parseInt(item.dataset.cardId, 10), `gy:${overlayId}`);
