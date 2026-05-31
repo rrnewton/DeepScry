@@ -3912,6 +3912,10 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         /// Content-addressed name of the decks bin, RELATIVE TO `data/`
         /// (i.e. `decks.<hash>.bin`, fetched as `./data/<this>`). See `tokens`.
         decks: String,
+        /// Sorted list of available built-in deck names, mirrored from the
+        /// binary decks bin. Allows the lobby page (index.html) to populate a
+        /// deck picker without loading WASM or parsing the binary.
+        deck_names: Vec<String>,
     }
 
     let mut sets_manifest: Vec<SetManifestEntry> = Vec::with_capacity(buckets.len());
@@ -4119,12 +4123,17 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
 
     // ── Write index.json LAST: it now records the content-addressed tokens +
     //    decks names (relative to `data/`) alongside the per-set bins. ──
+    // Sorted deck names included so the lobby page (index.html) can populate
+    // a deck picker from a single lightweight JSON fetch without WASM/binary.
+    let mut deck_names_sorted: Vec<String> = decks.keys().cloned().collect();
+    deck_names_sorted.sort();
     let index = SetIndex {
         version: 1,
         sets: sets_manifest,
         cards: cards_to_file,
         tokens: tokens_file_name.clone(),
         decks: decks_file_name.clone(),
+        deck_names: deck_names_sorted,
     };
     let index_path = sets_dir.join("index.json");
     let index_json = serde_json::to_string(&index)

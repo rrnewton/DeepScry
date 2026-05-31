@@ -86,17 +86,49 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // NEW (mtg-474): Create no longer pairs in-place. It closes the
-    // browse-WS and REDIRECTS to tui_game.html?lobby_create=NAME so the game
-    // page can open its own fresh WS, dispatch CreateGame via the new WASM
-    // lobby-action exports, and run the real network-mode game. We verify
-    // the redirect happened and the WASM page is loading.
+    // Phase 1 deck-picker (mtg-465): wait for the Create button to become
+    // enabled (deck list loads asynchronously from data/sets/index.json; in
+    // the validate environment the fetch may 404 and enablement comes from the
+    // fallback path — either way the button must not stay permanently disabled).
+    await alice.waitForFunction(
+        () => !document.getElementById('btn-create').disabled,
+        null,
+        { timeout: 5000 },
+    ).catch(() => record('blocking', 'deck picker', 'btn-create stayed disabled — deck list never loaded'));
+
+    // Phase 1 waiting room (mtg-465): clicking "Create & Wait" now shows the
+    // waiting-room pane with game details (name, passcode, deck, invite text)
+    // BEFORE redirecting. The user reviews the info, copies the invite, then
+    // clicks "Launch Game" to go to tui_game.html. We verify the waiting pane
+    // appears with the right content, then click Launch to do the redirect.
     await alice.click('#btn-create');
+    await alice.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'create flow', 'waiting-room pane never appeared after alice clicked Create'),
+    );
+
+    // Verify waiting-room detail fields.
+    const wrGameName = await alice.textContent('#wr-game-name').catch(() => '');
+    if (!wrGameName.includes('qa-test-game')) {
+        record('major', 'waiting room', 'wr-game-name missing game name: ' + wrGameName);
+    }
+    const wrPasscode = await alice.textContent('#wr-passcode').catch(() => '');
+    if (!wrPasscode.includes('secret')) {
+        record('major', 'waiting room', 'wr-passcode missing passcode: ' + wrPasscode);
+    }
+    const inviteText = await alice.textContent('#wr-invite-text').catch(() => '');
+    if (!inviteText.includes('qa-test-game')) {
+        record('minor', 'waiting room', 'invite text missing game name: ' + inviteText);
+    }
+
+    await shot(alice, 'landing_03_waiting_room.png');
+
+    // Now alice clicks "Launch Game" → redirect to tui_game.html.
+    await alice.click('#btn-launch-game');
     await alice.waitForFunction(
         () => /tui_game\.html/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'create flow', 'alice never redirected to tui_game.html'));
+    ).catch(() => record('blocking', 'create flow', 'alice never redirected to tui_game.html after Launch Game'));
     const aliceUrl = alice.url();
     console.log('  alice redirected to:', aliceUrl);
     if (!aliceUrl.includes('lobby_create=qa-test-game')) {
@@ -169,15 +201,34 @@ async function scenarioFullFlow() {
     await bob.fill('#create-pass', '');
     await bob.click('#btn-create');
     await bob.waitForTimeout(300);
+    // Should still be on lobby (validation blocks empty name before showing waiting room).
     const stillOnLobby = !bob.url().includes('native_game.html') && !bob.url().includes('tui_game.html');
-    if (!stillOnLobby) {
-        record('major', 'create empty name', 'empty game name allowed (should be blocked)');
+    const waitingVisible = await bob.evaluate(() => !document.getElementById('pane-waiting').classList.contains('hidden'));
+    if (!stillOnLobby || waitingVisible) {
+        record('major', 'create empty name', 'empty game name allowed (should be blocked by validation, not show waiting room)');
     }
 
-    // --- Try create with valid name but NO passcode (this redirects) ---
+    // --- Try create with valid name but NO passcode: shows waiting room then redirects ---
     await bob.fill('#create-game', 'open-game');
     await bob.fill('#create-pass', '');
+    await bob.waitForFunction(
+        () => !document.getElementById('btn-create').disabled,
+        null,
+        { timeout: 5000 },
+    ).catch(() => record('minor', 'deck picker bob', 'btn-create stayed disabled for bob'));
     await bob.click('#btn-create');
+    // Waiting room appears first.
+    await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'create no-pass', 'bob waiting-room pane never appeared'),
+    );
+    // Verify no passcode shown in details (open game).
+    const wrPassBob = await bob.textContent('#wr-passcode').catch(() => '');
+    if (wrPassBob.includes('secret') || (wrPassBob.trim() !== '' && !/none/i.test(wrPassBob) && !wrPassBob.includes('(none'))) {
+        record('minor', 'create no-pass', 'unexpected passcode in waiting room for open game: ' + wrPassBob);
+    }
+    await shot(bob, 'landing_04b_waiting_room_open_game.png');
+    // Click Launch Game to do the actual redirect.
+    await bob.click('#btn-launch-game');
     await bob.waitForFunction(
         () => /tui_game\.html/.test(window.location.href) &&
               /lobby_create=open-game/.test(window.location.href),
