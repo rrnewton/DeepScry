@@ -1,13 +1,14 @@
 ---
 title: Card-image fallback chain (local->scryfall->gatherer) doesn't recover when local 404s
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-05-30T19:49:14.635219739+00:00
-updated_at: 2026-05-30T19:49:14.635219739+00:00
+updated_at: 2026-05-31T00:11:08.192126841+00:00
 ---
 
 # Description
+
 
 User report (2026-05-30): with multiple image sources enabled (local + Scryfall + Gatherer) and allow_local_img_load=true, when the local /images/ files are MISSING (404), card detail images often don't load at all — the Scryfall/Gatherer fallback doesn't recover. Battlefield looks OK but card details don't always load.
 
@@ -33,3 +34,12 @@ User report (2026-05-30): with multiple image sources enabled (local + Scryfall 
 Playwright run with Network capture showing the cascade (local 404 -> scryfall result -> gatherer result) for a few failing cards; screenshots to gitignored debug/, cite paths. NEVER commit images.
 
 Owner: web-ui-agentplay stream (card-image loading surface — same files as graveyard + agentplay work). Group with mtg-0sm9a + graveyard tasks. Related: deploy now non-destructive to web/images (deploy-cloud.sh @31379f84) + the one-time manual image rsync.
+
+## RESOLUTION (2026-05-30, branch web-ui-img-help)
+Root cause: the Card Details pane (`renderCardDetails` in web/native_game.html) rebuilds `body.innerHTML` on EVERY 30ms updateUI tick, destroying the image slot. The old code had a 'same card_id' fast-path branch that re-attached a fresh <img> with `img.src = urls[0]` (the LOCAL url) but attached NO onerror handler. So whenever the details image was redrawn (which is constantly), a local 404 was set with no way to cascade — even if the first-load branch had already fallen through to scryfall, the redraw clobbered it back to the broken local source. Battlefield tiles cascaded correctly (inline onerror) which is why only card details visibly failed.
+
+Fix: introduced two DRY shared helpers (single source of truth for the cascade): `attachImageCascade(img, urls)` for live <img> elements (card details) and `cardImageHtml(urls, className, alt)` for the innerHTML battlefield path. Both walk the FULL [local, scryfall, gatherer] list, advancing on each load failure and hiding cleanly only after the last source fails. Collapsed the card-details first-load + same-card branches into one path that always (re)attaches the cascade; browser HTTP cache makes re-requesting the working source free.
+
+Verification: debug/test_cascade_mtg_m9znz.mjs (gitignored) simulates a fake <img> and proves: local 404 -> scryfall; local+scryfall fail -> gatherer; all fail -> hidden; local ok -> stays local. All PASS. Web E2E smoke (web/test_web_server_smoke.js) runs in make validate.
+
+CLOSED.

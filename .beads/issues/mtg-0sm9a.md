@@ -1,13 +1,14 @@
 ---
 title: 'WASM GUI: ''?'' help popup too short — enlarge (less scrolling)'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-05-30T19:33:38.447279252+00:00
-updated_at: 2026-05-30T19:33:38.447279252+00:00
+updated_at: 2026-05-31T00:11:15.985228503+00:00
 ---
 
 # Description
+
 
 UI bug (user-reported 2026-05-30). In the WASM GUI, pressing '?' opens an "OK"-dismissable help pop-up that is very short in height and forces a lot of scrolling to read the keybindings/help text. Make the popup taller (and/or scroll-free for typical content).
 
@@ -19,3 +20,12 @@ Locations:
 Fix: enlarge the help modal so the full keybinding list is visible without (or with minimal) scrolling; cap at a sane viewport fraction. Verify with a Playwright screenshot of the '?' help open in each affected UI (screenshots to gitignored debug/, cite paths — NEVER commit images).
 
 Owner: web-ui-agentplay stream (same surface as the graveyard-relocation + web-agentplay work). Group with other UI polish.
+
+## RESOLUTION (2026-05-30, branch web-ui-img-help)
+Root cause: native_game.html's '?' help used a native browser `alert()` (two callsites: the keydown 'case ?' handler + window.showHelpDialog). A browser alert cannot be CSS-styled and the OS renders it small with heavy scrolling.
+
+Fix: replaced alert() with a styled modal mirroring tui_game.html's #help-dialog (shared look across the two web GUIs). Sizing: `width: min(720px, 92vw); max-width: 92vw; max-height: 80vh; overflow-y: auto` — full keybinding list readable without scrolling on a normal screen, still responsive on small viewports (only scrolls if content genuinely overflows the 80vh cap). Centered via fixed + translate(-50%,-50%), dimmed overlay, closes on any key (capture-phase keydown + stopPropagation so the close keystroke isn't also a game command) or click. Help text still sourced from Rust tui_get_help_text().
+
+Verification: web/native_game.html module script parses clean (node Function check); web smoke test runs in make validate.
+
+CLOSED.

@@ -757,6 +757,59 @@
             font-size: 10px;
             margin-top: 6px;
         }
+
+        /* Help dialog (mtg-0sm9a). Mirrors tui_game.html's #help-dialog so
+           the two web GUIs share one look. The native GUI previously used a
+           browser alert() for '?' help — un-styleable, cramped, and forcing
+           a lot of scrolling. This modal uses up to 80vh / 92vw so the full
+           keybinding list is readable without scrolling on a normal screen,
+           while staying responsive on small viewports (it only scrolls if
+           the content genuinely overflows the cap). */
+        #help-dialog {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #16213e;
+            border: 2px solid #4361ee;
+            border-radius: 8px;
+            padding: 24px 32px;
+            z-index: 1000;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.75);
+            width: min(720px, 92vw);
+            max-width: 92vw;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #help-dialog.show { display: block; }
+        #help-dialog-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+        }
+        #help-dialog-overlay.show { display: block; }
+        .help-dialog-title {
+            color: #ffd700;
+            font-size: 22px;
+            margin-bottom: 16px;
+            font-weight: bold;
+        }
+        .help-dialog-content {
+            color: #eee;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+        }
+        .help-dialog-close {
+            color: #888;
+            font-size: 12px;
+            margin-top: 18px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -968,6 +1021,14 @@
         </div>
     </div>
 
+    <!-- Help dialog (mtg-0sm9a) — replaces the cramped browser alert(). -->
+    <div id="help-dialog-overlay"></div>
+    <div id="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title">
+        <div class="help-dialog-title" id="help-dialog-title">Keyboard Shortcuts</div>
+        <div class="help-dialog-content" id="help-dialog-content"></div>
+        <div class="help-dialog-close">Press any key (or click) to close</div>
+    </div>
+
     <!-- JS Error Banner -->
     <div id="js-error-banner" style="display: none; position: fixed; bottom: 0; left: 0; right: 0; background: #8b0000; color: white; padding: 10px 15px; font-family: monospace; font-size: 13px; z-index: 9999; max-height: 30vh; overflow-y: auto;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
@@ -1077,6 +1138,54 @@
             try {
                 return filterImageUrls(JSON.parse(tui_get_image_urls(cardName, heightPx)));
             } catch (e) { return []; }
+        }
+
+        // Shared image-fallback cascade (mtg-m9znz). Both render paths
+        // (battlefield card tiles via innerHTML, and the Card Details pane
+        // via a live <img> element) MUST walk the FULL [local, scryfall,
+        // gatherer] list, advancing on every load failure and only hiding
+        // after the last source fails. Previously the card-details
+        // "same card redraw" branch attached NO onerror handler and reset
+        // src to urls[0] (local) on every 30ms updateUI tick — so a local
+        // 404 that had already cascaded to scryfall was clobbered back to
+        // the broken local URL with no way to recover. These two helpers
+        // are the single source of truth for the cascade so the two paths
+        // can never drift again.
+        //
+        // attachImageCascade: wire `src` + cascading `onerror` onto a live
+        // <img> element (Card Details pane path).
+        function attachImageCascade(img, urls) {
+            if (!Array.isArray(urls) || urls.length === 0) {
+                img.style.display = 'none';
+                return;
+            }
+            // Remaining sources to try after the current one fails.
+            const fallbacks = urls.slice(1);
+            img.onerror = function() {
+                if (fallbacks.length > 0) {
+                    img.style.display = '';
+                    img.src = fallbacks.shift();
+                } else {
+                    // All sources exhausted — hide cleanly (placeholder bg
+                    // shows through) instead of a broken-image glyph.
+                    img.onerror = null;
+                    img.style.display = 'none';
+                }
+            };
+            img.src = urls[0];
+        }
+
+        // cardImageHtml: build an <img> HTML string with a cascading inline
+        // onerror (battlefield tile path, which renders via innerHTML).
+        // The onerror walks `data-fallbacks` (comma-joined remaining URLs)
+        // exactly like attachImageCascade walks its array.
+        function cardImageHtml(urls, className, alt) {
+            if (!Array.isArray(urls) || urls.length === 0) return '';
+            const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
+            const onerr = "var f=this.dataset.fallbacks;"
+                + "if(f){var a=f.split(',');this.style.display='';this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}"
+                + "else{this.onerror=null;this.style.display='none'}";
+            return `<img class="${escapeAttr(className)}" src="${escapeAttr(urls[0])}" alt="${escapeAttr(alt)}" loading="lazy" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}">`;
         }
 
         // ==================== DECK COLLECTIONS ====================
@@ -1966,10 +2075,7 @@
                     ? imgHeightPx
                     : 106;
                 const urls = getCardImageFallbackUrls(card.name, heightPx);
-                if (urls.length > 0) {
-                    const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
-                    imgHtml = `<img class="card-image" src="${escapeAttr(urls[0])}" alt="${escapeAttr(card.name)}" loading="lazy" data-fallbacks="${fallbacks}" onerror="var f=this.dataset.fallbacks;if(f){var a=f.split(',');this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}else this.style.display='none'">`;
-                }
+                imgHtml = cardImageHtml(urls, 'card-image', card.name);
             }
 
             const ptHtml = card.formatted_pt
@@ -2021,41 +2127,26 @@
             segments.push(oracleHtml);
             body.innerHTML = segments.join('');
 
-            // Load the image asynchronously into the top slot. Skip if we
-            // already loaded it for this card_id this session — avoids
-            // flicker on every 30ms updateUI tick.
-            if (showImages && detail.card_id !== _detailsImageCardId) {
+            // Load the image into the top slot. `body.innerHTML` above
+            // destroys the previous slot on EVERY 30ms updateUI tick, so we
+            // must (re)build the <img> with a fresh cascading onerror every
+            // time — there is no live element to preserve. The old
+            // "same card → re-attach without onerror" branch (mtg-m9znz)
+            // reset src to the local URL with NO fallback handler, so a
+            // local 404 that had cascaded to scryfall was clobbered back to
+            // the broken local source every redraw. attachImageCascade
+            // guarantees the full local→scryfall→gatherer walk each time.
+            // The browser HTTP cache means re-requesting the working source
+            // is cheap and does not re-hit the network.
+            if (showImages) {
                 _detailsImageCardId = detail.card_id;
                 const urls = getCardImageFallbackUrls(detail.name, 310);
-                if (urls.length > 0) {
-                    const slot = document.getElementById('card-detail-img-slot');
-                    if (slot) {
-                        const img = new Image();
-                        const fallbacks = urls.slice(1);
-                        img.alt = detail.name;
-                        img.onerror = function() {
-                            if (fallbacks.length > 0) {
-                                img.src = fallbacks.shift();
-                            } else {
-                                img.style.display = 'none';
-                            }
-                        };
-                        img.src = urls[0];
-                        slot.appendChild(img);
-                    }
-                }
-            } else if (showImages && detail.card_id === _detailsImageCardId) {
-                // Same card, but we just rebuilt the slot — re-attach the
-                // already-cached image so it still shows.
-                const urls = getCardImageFallbackUrls(detail.name, 310);
-                if (urls.length > 0) {
-                    const slot = document.getElementById('card-detail-img-slot');
-                    if (slot) {
-                        const img = new Image();
-                        img.alt = detail.name;
-                        img.src = urls[0];
-                        slot.appendChild(img);
-                    }
+                const slot = document.getElementById('card-detail-img-slot');
+                if (slot && urls.length > 0) {
+                    const img = new Image();
+                    img.alt = detail.name;
+                    attachImageCascade(img, urls);
+                    slot.appendChild(img);
                 }
             }
         }
@@ -2246,7 +2337,8 @@
                     toggleControls();
                     break;
                 case '?':
-                    alert((typeof tui_get_help_text === 'function') ? tui_get_help_text() : 'Help not available');
+                    e.preventDefault();
+                    window.showHelpDialog();
                     break;
                 default:
                     // 1-9 quick select
@@ -2340,9 +2432,48 @@
         // The TUI exit/help callbacks (called by WASM key handler)
         window.exitFancyTui = function() { exitGame(); };
         window.showExitConfirmation = function() { exitGame(); };
+        // mtg-0sm9a: styled help modal (mirrors tui_game.html). Exposed on
+        // window because the WASM key handler calls window.showHelpDialog().
         window.showHelpDialog = function() {
-            alert((typeof tui_get_help_text === 'function') ? tui_get_help_text() : 'Help not available');
+            const dialog = document.getElementById('help-dialog');
+            const overlay = document.getElementById('help-dialog-overlay');
+            const content = document.getElementById('help-dialog-content');
+            if (!dialog || !overlay || !content) return;
+
+            content.textContent = (typeof tui_get_help_text === 'function')
+                ? tui_get_help_text()
+                : 'Help text not available (WASM not loaded)';
+
+            dialog.classList.add('show');
+            overlay.classList.add('show');
+
+            // Close on any key or on click of the overlay/dialog. Capture
+            // phase + stopPropagation so the close keystroke doesn't also
+            // get interpreted as a game command.
+            const handleHelpKey = function(e) {
+                hideHelpDialog();
+                e.preventDefault();
+                e.stopPropagation();
+            };
+            dialog._helpKeyHandler = handleHelpKey;
+            document.addEventListener('keydown', handleHelpKey, true);
+            overlay.onclick = hideHelpDialog;
+            dialog.onclick = hideHelpDialog;
         };
+
+        function hideHelpDialog() {
+            const dialog = document.getElementById('help-dialog');
+            const overlay = document.getElementById('help-dialog-overlay');
+            if (!dialog || !overlay) return;
+            dialog.classList.remove('show');
+            overlay.classList.remove('show');
+            if (dialog._helpKeyHandler) {
+                document.removeEventListener('keydown', dialog._helpKeyHandler, true);
+                dialog._helpKeyHandler = null;
+            }
+            overlay.onclick = null;
+            dialog.onclick = null;
+        }
         window.toggleCardImages = function() {
             showImages = !showImages;
             updateUI();
