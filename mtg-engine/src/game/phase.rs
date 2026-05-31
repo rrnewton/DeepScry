@@ -252,6 +252,15 @@ pub struct TurnStructure {
     /// Not serialized - this is transient within a single game session.
     #[serde(skip)]
     pub end_step_triggers_checked_turn: Option<u32>,
+
+    /// Tracks which turn the beginning-of-draw-step phase triggers were already
+    /// fired. Same WASM re-entry hazard as `upkeep_triggers_checked_turn`:
+    /// draw_step fires check_phase_triggers(BeginningOfDraw) then a blocking
+    /// priority_round, so re-entry would double-fire draw-step triggers (e.g.
+    /// Grafted Skullcap drawing an extra card twice). Auto-invalidates per turn.
+    /// Not serialized - this is transient within a single game session.
+    #[serde(skip)]
+    pub draw_triggers_checked_turn: Option<u32>,
 }
 
 impl TurnStructure {
@@ -272,6 +281,7 @@ impl TurnStructure {
             combat_damage_dealt_turn: None,
             upkeep_triggers_checked_turn: None,
             end_step_triggers_checked_turn: None,
+            draw_triggers_checked_turn: None,
         }
     }
 
@@ -292,6 +302,7 @@ impl TurnStructure {
             combat_damage_dealt_turn: None,
             upkeep_triggers_checked_turn: None,
             end_step_triggers_checked_turn: None,
+            draw_triggers_checked_turn: None,
         }
     }
 
@@ -334,6 +345,7 @@ impl TurnStructure {
         self.combat_damage_dealt_turn = None;
         self.upkeep_triggers_checked_turn = None;
         self.end_step_triggers_checked_turn = None;
+        self.draw_triggers_checked_turn = None;
     }
 }
 

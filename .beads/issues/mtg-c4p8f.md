@@ -1,0 +1,29 @@
+---
+title: 'Bug: Sylvan Library full draw-choose-pay chain (ChooseCard / RepeatEach / UnlessCost PayLife) not implemented'
+status: open
+priority: 3
+issue_type: bug
+created_at: 2026-05-31T01:01:18.826289612+00:00
+updated_at: 2026-05-31T01:01:18.826289612+00:00
+---
+
+# Description
+
+Sylvan Library (cardsfolder/s/sylvan_library.txt) is PARTIAL after the general BeginningOfDraw trigger fix (compat-wave15-rogue, 2026-05-30_#2532(4646ddd1)). Its Phase$ Draw trigger now PARSES to TriggerEvent::BeginningOfDraw and fires from the battlefield on the controller's draw step. But the trigger's execute SVar is the full optional draw-then-choose-then-pay chain, none of which is implemented yet, so the trigger currently fires as a no-op (no extra draw, no choice).
+
+Script:
+  T:Mode$ Phase | Phase$ Draw | ValidPlayer$ You | TriggerZones$ Battlefield | Execute$ TrigDraw | TriggerDescription$ At the beginning of your draw step, you may draw two additional cards. If you do, choose two cards in your hand drawn this turn. For each of those cards, pay 4 life or put the card on top of your library.
+  SVar:TrigDraw:AB$ ChooseCard | ChoiceZone$ Hand | Choices$ Card.YouOwn+DrawnThisTurn | Cost$ Draw<2/You> | Amount$ 2 | Mandatory$ True | AILogic$ WorstCard | SubAbility$ DBPayOrReturn | NoReveal$ True
+  SVar:DBPayOrReturn:DB$ RepeatEach | RepeatCards$ Card.ChosenCard | Zone$ Hand | RepeatSubAbility$ DBReplace | SubAbility$ DBCleanup | ChooseOrder$ True
+  SVar:DBReplace:DB$ ChangeZone | Origin$ Hand | Destination$ Library | ChangeType$ Card.ChosenCard | UnlessCost$ PayLife<4> | Mandatory$ True | UnlessPayer$ TriggeredPlayer | NoReveal$ True
+  SVar:DBCleanup:DB$ Cleanup | ClearChosenCard$ True
+
+Missing engine machinery (each is general, lifts sibling cards):
+1. AB$ ChooseCard effect + controller "choose N cards from a zone matching a filter" API. No Effect::ChooseCard variant exists; controller only has choose_cards_to_discard. This covers the optional "you may draw two additional cards" (Cost$ Draw<2/You> is the as-a-cost draw) plus "choose two cards in hand drawn this turn".
+2. DrawnThisTurn per-card tracking. The engine tracks player.cards_drawn_this_turn as a COUNT (u8) only, not WHICH card instances were drawn this turn. Card.YouOwn+DrawnThisTurn needs a per-card drawn-this-turn flag/set.
+3. DB$ RepeatEach over a chosen set (RepeatCards$ Card.ChosenCard) with ChooseOrder. No Effect::RepeatEach.
+4. Per-card UnlessCost$ PayLife<4> choice that, on decline, moves the card Hand->top of Library. UnlessCostWrapper exists for some shapes but not the hand->library-top move; there is no "put from hand onto top of library" effect.
+
+Until these land, Sylvan Library is strictly WEAKER than printed (no extra cards drawn) but no longer silently dropped/crashing. Tracked under per-card mtg-548.
+
+Cross-deck: Sylvan Library appears in old_school/01_rogue_rogerbrand (mtg-387) and old_school2/erhnamgeddon_gw.

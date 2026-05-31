@@ -1823,6 +1823,13 @@ pub enum TriggerEvent {
     /// Corresponds to: T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You
     BeginningOfUpkeep,
 
+    /// At the beginning of the draw step
+    /// Corresponds to: T:Mode$ Phase | Phase$ Draw | ValidPlayer$ You
+    /// Example: Grafted Skullcap / Sylvan Library / Yawgmoth's Bargain —
+    /// "At the beginning of your draw step, draw an additional card."
+    /// Fires from the battlefield after the active player's mandatory draw.
+    BeginningOfDraw,
+
     /// At the beginning of end step
     /// Corresponds to: T:Mode$ Phase | Phase$ EndOfTurn | ValidPlayer$ You
     BeginningOfEndStep,

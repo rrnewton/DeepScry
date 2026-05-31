@@ -151,6 +151,7 @@ impl<'a> GameLoop<'a> {
         let guard_slot: Option<&mut Option<u32>> = match trigger_event {
             TriggerEvent::BeginningOfUpkeep => Some(&mut self.game.turn.upkeep_triggers_checked_turn),
             TriggerEvent::BeginningOfEndStep => Some(&mut self.game.turn.end_step_triggers_checked_turn),
+            TriggerEvent::BeginningOfDraw => Some(&mut self.game.turn.draw_triggers_checked_turn),
             TriggerEvent::EntersBattlefield
             | TriggerEvent::LeavesBattlefield
             | TriggerEvent::BeginningOfCombat
@@ -447,6 +448,14 @@ impl<'a> GameLoop<'a> {
             // log. The `already_drew` guard above already prevents re-drawing
             // (and therefore re-logging) on WASM GameLoop re-entry.
         }
+
+        // CR 504.1: the turn-based mandatory draw happens first; THEN any
+        // "at the beginning of your draw step" triggered abilities are put on
+        // the stack (CR 603.3). Fire them after the draw above so an extra-draw
+        // trigger (Grafted Skullcap, Sylvan Library, Yawgmoth's Bargain) sees
+        // the post-mandatory-draw state. Guarded against WASM re-entry the same
+        // way as the upkeep/end-step phase triggers (see check_phase_triggers).
+        self.check_phase_triggers(TriggerEvent::BeginningOfDraw)?;
 
         // Print battlefield state AFTER draw step completes
         // This ensures the active player's hand shows the newly drawn card

@@ -1,0 +1,50 @@
+---
+title: 'Card Compatibility: Grafted Skullcap'
+status: closed
+priority: 3
+issue_type: task
+created_at: 2026-05-31T01:01:33.678541814+00:00
+updated_at: 2026-05-31T01:01:40.672425165+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Grafted Skullcap in MTG Forge-rs.
+
+Card: cardsfolder/g/grafted_skullcap.txt
+Set: MIR (also exercises the general draw-step-trigger infrastructure for the 1994 Old School playtest, mtg-387 Sylvan Library family)
+
+Card text:
+  {4} Artifact
+  At the beginning of your draw step, draw an additional card.
+  At the beginning of your end step, discard your hand.
+
+Findings (2026-05-30_#2532(4646ddd1), compat-wave15-rogue):
+
+1. [x] Parses as {4} Artifact.
+2. [x] BeginningOfDraw trigger (Phase$ Draw | ValidPlayer$ You): controller_turn_only=true, executes DrawCards(1) with placeholder player resolved to the active player. PREVIOUSLY this whole trigger was SILENTLY DROPPED — the phase-trigger parser only mapped Upkeep/EndOfTurn/BeginCombat and let Phase$ Draw fall into `_ => None`.
+3. [x] Extra-draw fires after the mandatory turn-based draw (CR 504.1 + CR 603.3): on the controller's draw step the controller draws 2 cards (mandatory + Skullcap), and the opponent (no Skullcap) draws only 1.
+4. [N/A] End-step "discard your hand" (Phase$ End of Turn) — already-supported path; not the focus of this fix.
+5. [N/A] Targeting / costs / X / modal / tokens / copying: card has none.
+
+Expected log evidence (verbosity 3):
+  Player 1 draws Swamp (14)
+  Trigger: Grafted Skullcap - At the beginning of your draw step, draw an additional card.
+  Player 1 draws Plains (13)
+
+Reproducer:
+
+```sh
+./target/release/mtg tui --start-state test_puzzles/grafted_skullcap_extra_draw.pzl \
+  --p1=zero --p2=zero --seed 42 --verbosity 3
+```
+
+Unit test:  test_card_compat_grafted_skullcap in mtg-engine/src/game/actions/tests/effects.rs
+E2E test:   tests/grafted_skullcap_extra_draw_e2e.sh
+
+General engine work (lifts ~56 cards with Phase$ Draw triggers):
+- New TriggerEvent::BeginningOfDraw; Phase$ Draw -> BeginningOfDraw in loader/card.rs.
+- draw_step fires check_phase_triggers(BeginningOfDraw) after the mandatory draw, guarded by turn.draw_triggers_checked_turn (WASM re-entry).
+- DB$ Draw on phase triggers converted to Effect::DrawCards (NumCards/Amount, default 1, placeholder player).
+
+CARD STATUS: WORKING — draw-step "draw an additional card" trigger verified with game-log evidence.

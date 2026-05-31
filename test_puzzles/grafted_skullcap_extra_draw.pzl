@@ -1,0 +1,23 @@
+[metadata]
+Name:Grafted Skullcap Extra Draw
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Grafted Skullcap is on P0's battlefield. At the beginning of P0's draw step, the BeginningOfDraw phase trigger (Phase$ Draw) fires and draws an additional card, so P0 draws TWO cards on its draw step (one mandatory + one from Skullcap). Regression for the previously silently-dropped Phase$ Draw trigger.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=UPKEEP
+p0life=20
+p0hand=
+p0library=Forest; Mountain; Island; Plains; Swamp; Forest; Mountain; Island; Plains; Swamp
+p0graveyard=
+p0battlefield=Grafted Skullcap; Forest
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p1battlefield=Mountain
+p1exile=

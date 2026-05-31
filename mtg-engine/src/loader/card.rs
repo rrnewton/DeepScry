@@ -2161,6 +2161,7 @@ impl CardDefinition {
                     Some("Upkeep") => Some(TriggerEvent::BeginningOfUpkeep),
                     Some("EndOfTurn" | "End") => Some(TriggerEvent::BeginningOfEndStep),
                     Some("BeginCombat") => Some(TriggerEvent::BeginningOfCombat),
+                    Some("Draw") => Some(TriggerEvent::BeginningOfDraw),
                     _ => None, // Other phases not supported yet
                 };
 
@@ -2244,6 +2245,26 @@ impl CardDefinition {
                                         amount: life_amount,
                                     });
                                 }
+                            }
+                            // DB$ Draw effects on a draw-step (or other phase)
+                            // trigger. Example: Grafted Skullcap / Sylvan Library /
+                            // Yawgmoth's Bargain — "At the beginning of your draw
+                            // step, draw an additional card." (SVar:TrigDraw:DB$ Draw).
+                            // ValidPlayer$ You makes the trigger controller-only, so
+                            // the placeholder player resolves to the trigger source's
+                            // owner (= active player whose draw step it is) in
+                            // check_triggers_for_controller. NumCards$ (Forge) or
+                            // Amount$ default to 1.
+                            if svar_params.api_type == ApiType::Draw {
+                                let num_cards = svar_params
+                                    .get("NumCards")
+                                    .or_else(|| svar_params.get("Amount"))
+                                    .and_then(|s| s.parse::<u8>().ok())
+                                    .unwrap_or(1);
+                                effects.push(Effect::DrawCards {
+                                    player: PlayerId::placeholder(),
+                                    count: num_cards,
+                                });
                             }
                             // DB$ Earthbend effects
                             // Example: "DB$ Earthbend | Num$ 8"

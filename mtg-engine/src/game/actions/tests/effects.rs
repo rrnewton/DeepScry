@@ -6051,4 +6051,101 @@ mod tests {
         // TODO(mtg-r9po1): once DamageDealtOnce + Card.AttachedBy + TriggerCount$DamageAmount
         // are supported, assert the card has the lifegain trigger here.
     }
+
+    /// Card compat: Grafted Skullcap (cardsfolder/g/grafted_skullcap.txt)
+    ///
+    /// Script:
+    ///   ManaCost:4
+    ///   Types:Artifact
+    ///   T:Mode$ Phase | Phase$ Draw | ValidPlayer$ You | TriggerZones$ Battlefield
+    ///     | Execute$ TrigDraw | TriggerDescription$ At the beginning of your draw
+    ///     step, draw an additional card.
+    ///   T:Mode$ Phase | Phase$ End of Turn | ... discard your hand.
+    ///   SVar:TrigDraw:DB$ Draw
+    ///
+    /// Verifies the general `Phase$ Draw` → TriggerEvent::BeginningOfDraw mapping
+    /// and that the `DB$ Draw` execute body is converted into a DrawCards effect
+    /// on the trigger (previously the whole trigger was silently dropped because
+    /// `Phase$ Draw` fell into the `_ => None` arm of the phase parser).
+    #[test]
+    fn test_card_compat_grafted_skullcap() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/g/grafted_skullcap.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Grafted Skullcap should load");
+        assert_eq!(def.name.as_str(), "Grafted Skullcap");
+        assert_eq!(def.mana_cost.generic, 4, "Grafted Skullcap costs {{4}}");
+        assert!(def.types.contains(&CardType::Artifact));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The draw-step trigger must be present with the new BeginningOfDraw event.
+        let draw_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfDraw)
+            .expect("Grafted Skullcap must have a BeginningOfDraw trigger (Phase$ Draw)");
+
+        // It must be controller-only (ValidPlayer$ You).
+        assert!(
+            draw_trigger.controller_turn_only,
+            "ValidPlayer$ You draw-step trigger must be controller_turn_only"
+        );
+
+        // And it must carry a DrawCards effect (DB$ Draw), count 1, placeholder
+        // player (resolved to the active player at fire time).
+        assert!(
+            draw_trigger
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::DrawCards { count: 1, player } if player.is_placeholder())),
+            "BeginningOfDraw trigger must execute DrawCards(1) for the active player. Got: {:?}",
+            draw_trigger.effects
+        );
+    }
+
+    /// Card compat: Sylvan Library (cardsfolder/s/sylvan_library.txt)
+    ///
+    /// Script (relevant line):
+    ///   T:Mode$ Phase | Phase$ Draw | ValidPlayer$ You | TriggerZones$ Battlefield
+    ///     | Execute$ TrigDraw | ...
+    ///   SVar:TrigDraw:AB$ ChooseCard | ... | Cost$ Draw<2/You> | ...
+    ///
+    /// Verifies the draw-step trigger now PARSES (BeginningOfDraw) rather than
+    /// being silently dropped. Sylvan Library's full effect (the optional
+    /// draw-two + choose-two + pay-4-life-or-return chain via AB$ ChooseCard /
+    /// DB$ RepeatEach / UnlessCost$ PayLife) is NOT yet implemented — tracked as
+    /// a follow-up. So we assert the trigger shape only (the card is PARTIAL).
+    #[test]
+    fn test_card_compat_sylvan_library() {
+        use crate::core::TriggerEvent;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/s/sylvan_library.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Sylvan Library should load");
+        assert_eq!(def.name.as_str(), "Sylvan Library");
+        assert_eq!(def.mana_cost.generic, 1, "Sylvan Library costs {{1}}{{G}}");
+        assert_eq!(def.mana_cost.green, 1, "Sylvan Library costs {{1}}{{G}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The draw-step trigger must now be recognised (not silently dropped).
+        assert!(
+            card.triggers.iter().any(|t| t.event == TriggerEvent::BeginningOfDraw),
+            "Sylvan Library's Phase$ Draw trigger must map to BeginningOfDraw. Got: {:?}",
+            card.triggers
+        );
+        // TODO(mtg-548): the ChooseCard / RepeatEach / pay-4-life-or-return chain
+        // is not yet implemented — see follow-up issue. Card is PARTIAL until then.
+    }
 }

@@ -717,6 +717,12 @@ impl HeuristicController {
                     // attacking and trading favorably.
                     value += 15;
                 }
+                crate::core::TriggerEvent::BeginningOfDraw => {
+                    // Draw-step triggers are usually card advantage (Grafted
+                    // Skullcap, Sylvan Library, Yawgmoth's Bargain): "draw an
+                    // additional card." Reward the extra draw.
+                    value += 10;
+                }
                 crate::core::TriggerEvent::BeginningOfEndStep
                 | crate::core::TriggerEvent::BeginningOfCombat
                 | crate::core::TriggerEvent::SpellCast
