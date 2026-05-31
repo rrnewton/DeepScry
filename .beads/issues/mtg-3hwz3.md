@@ -1,10 +1,10 @@
 ---
 title: 'Bug: setARN set-origin matching + Mode$ Always state-trigger + CantBeCast/CantPlayLand statics unimplemented'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-05-31T01:49:00.357649793+00:00
-updated_at: 2026-05-31T09:34:16.292142317+00:00
+updated_at: 2026-05-31T09:46:45.401390997+00:00
 ---
 
 # Description
