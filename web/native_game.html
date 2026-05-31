@@ -1274,16 +1274,20 @@
 
                 cardDb = new WasmCardDatabase();
 
-                // Load decks metadata
-                const decksResp = await fetch('./data/decks.bin');
-                if (!decksResp.ok) throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
-                const decksData = new Uint8Array(await decksResp.arrayBuffer());
-                const deckCount = cardDb.load_decks(decksData);
-
-                // Load per-set card index (mtg-464).
+                // Load per-set card index (mtg-464) FIRST: it is the manifest
+                // that resolves the content-addressed tokens/decks bin names
+                // (tokens+decks cache-skew fix). The hashed names guarantee a
+                // cache-miss whenever their content changes, so a stale browser
+                // copy can never be paired with new WASM.
                 const setIndexResp = await fetch('./data/sets/index.json');
                 if (!setIndexResp.ok) throw new Error(`Failed to load sets/index.json: ${setIndexResp.status}. Run 'mtg export-wasm' first.`);
                 setIndex = await setIndexResp.json();
+
+                // Load decks metadata via the manifest-resolved hashed name.
+                const decksResp = await fetch(`./data/${setIndex.decks}`);
+                if (!decksResp.ok) throw new Error(`Failed to load ${setIndex.decks}: ${decksResp.status}. Run 'mtg export-wasm' first.`);
+                const decksData = new Uint8Array(await decksResp.arrayBuffer());
+                const deckCount = cardDb.load_decks(decksData);
 
                 allDeckNames = JSON.parse(cardDb.get_deck_names_json());
                 allDeckNames.sort();
@@ -1488,9 +1492,10 @@
         async function ensureTokensLoaded(status) {
             if (fullTokensLoaded) return;
             if (status) status.textContent = 'Loading token definitions...';
-            const tokensResp = await fetch('./data/tokens.bin');
+            // Manifest-resolved content-addressed name (tokens+decks cache-skew fix).
+            const tokensResp = await fetch(`./data/${setIndex.tokens}`);
             if (!tokensResp.ok) {
-                console.warn(`tokens.bin not available (${tokensResp.status}); token creation may fail`);
+                console.warn(`${setIndex.tokens} not available (${tokensResp.status}); token creation may fail`);
                 return;
             }
             cardDb.load_tokens(new Uint8Array(await tokensResp.arrayBuffer()));

@@ -3902,6 +3902,16 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         sets: Vec<SetManifestEntry>,
         /// canonical card name -> "<YYYY>-<CODE>.bin"
         cards: std::collections::BTreeMap<&'a str, String>,
+        /// Content-addressed name of the tokens bin, RELATIVE TO `data/`
+        /// (i.e. `tokens.<hash>.bin`, fetched as `./data/<this>`). Like the
+        /// per-set bins, the hash busts the cache on every content change so
+        /// a stale browser copy can never be paired with new WASM (mtg-571 /
+        /// the tokens+decks cache-skew fix). The browser resolves the name
+        /// out of this manifest instead of the old fixed `data/tokens.bin`.
+        tokens: String,
+        /// Content-addressed name of the decks bin, RELATIVE TO `data/`
+        /// (i.e. `decks.<hash>.bin`, fetched as `./data/<this>`). See `tokens`.
+        decks: String,
     }
 
     let mut sets_manifest: Vec<SetManifestEntry> = Vec::with_capacity(buckets.len());
@@ -3940,20 +3950,14 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         }
     }
 
-    let index = SetIndex {
-        version: 1,
-        sets: sets_manifest,
-        cards: cards_to_file,
-    };
-    let index_path = sets_dir.join("index.json");
-    let index_json = serde_json::to_string(&index)
-        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize sets index: {}", e)))?;
-    fs::write(&index_path, &index_json).map_err(mtg_engine::MtgError::IoError)?;
+    // NOTE: index.json is written AFTER tokens.bin + decks.bin are
+    // content-addressed below, because the manifest now records their hashed
+    // names too (the tokens/decks cache-skew fix). See the index write further
+    // down for the `tokens` / `decks` fields.
     println!(
-        "\nWrote {} per-set bins ({} bytes total) + index.json ({} bytes)",
+        "\nWrote {} per-set bins ({} bytes total)",
         buckets.len(),
         total_sets_bytes,
-        index_json.len()
     );
 
     // Export tokens (single file, partitioning out of scope — see mtg-464 Q10).
@@ -4009,15 +4013,38 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         }
     }
 
-    let tokens_path = output.join("tokens.bin");
     // DETERMINISM (mtg-571): sort by script name before serializing so the
-    // bytes (and any future content hash) are a stable function of the token
+    // bytes (and the content hash) are a stable function of the token
     // scripts. BTreeMap shares bincode's map wire format with the HashMap the
     // WASM loader deserializes into.
     let tokens_ordered: std::collections::BTreeMap<&str, &mtg_engine::loader::CardDefinition> =
         token_definitions.iter().map(|(k, v)| (k.as_str(), v)).collect();
     let tokens_data = bincode::serialize(&tokens_ordered)
         .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize tokens: {}", e)))?;
+    // CONTENT-ADDRESSED (tokens+decks cache-skew fix): emit `tokens.<hash>.bin`
+    // and record the hashed name in index.json (RELATIVE TO `data/`). The
+    // browser resolves the name from the manifest, so a content change yields a
+    // new URL → guaranteed cache-miss → no stale-vs-new WASM deserialize crash.
+    // Hash through the SAME `asset_hash_hex` (blake3) that names the per-set
+    // bins and the wasm pkg pair, so the web server's `is_content_addressed`
+    // predicate marks it `immutable` automatically.
+    // Sweep stale tokens/decks bins (prior hashed names + the legacy fixed
+    // `tokens.bin`/`decks.bin`) so the data/ dir doesn't accumulate orphans
+    // across exports. The set bins get this for free (their `sets/` dir is
+    // wiped above); tokens/decks live one level up so sweep them by prefix.
+    for entry in fs::read_dir(&output).map_err(mtg_engine::MtgError::IoError)? {
+        let path = entry.map_err(mtg_engine::MtgError::IoError)?.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let is_stale_bin = (name.starts_with("tokens.") || name.starts_with("decks.")) && name.ends_with(".bin");
+        if is_stale_bin {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    let tokens_hash = mtg_engine::asset_hash::asset_hash_hex(&tokens_data);
+    let tokens_file_name = format!("tokens.{}.bin", tokens_hash);
+    let tokens_path = output.join(&tokens_file_name);
     fs::write(&tokens_path, &tokens_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "Exported {} token definitions to {} ({} bytes)",
@@ -4069,8 +4096,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         eprintln!("Warning: No decks found matching patterns: {:?}", deck_globs);
     }
 
-    // Serialize decks to bincode
-    let decks_path = output.join("decks.bin");
+    // Serialize decks to bincode.
     // DETERMINISM (mtg-571): sort by deck name before serializing (see the
     // tokens/per-set bins above). BTreeMap shares bincode's map wire format
     // with the HashMap the WASM loader deserializes into.
@@ -4078,6 +4104,11 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks.iter().map(|(k, v)| (k.as_str(), v)).collect();
     let decks_data = bincode::serialize(&decks_ordered)
         .map_err(|e| mtg_engine::MtgError::InvalidDeckFormat(format!("Failed to serialize decks: {}", e)))?;
+    // CONTENT-ADDRESSED (tokens+decks cache-skew fix): `decks.<hash>.bin`,
+    // recorded in index.json. Same rationale as tokens above.
+    let decks_hash = mtg_engine::asset_hash::asset_hash_hex(&decks_data);
+    let decks_file_name = format!("decks.{}.bin", decks_hash);
+    let decks_path = output.join(&decks_file_name);
     fs::write(&decks_path, &decks_data).map_err(mtg_engine::MtgError::IoError)?;
     println!(
         "\nExported {} decks to {} ({} bytes)",
@@ -4085,6 +4116,21 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks_path.display(),
         decks_data.len()
     );
+
+    // ── Write index.json LAST: it now records the content-addressed tokens +
+    //    decks names (relative to `data/`) alongside the per-set bins. ──
+    let index = SetIndex {
+        version: 1,
+        sets: sets_manifest,
+        cards: cards_to_file,
+        tokens: tokens_file_name.clone(),
+        decks: decks_file_name.clone(),
+    };
+    let index_path = sets_dir.join("index.json");
+    let index_json = serde_json::to_string(&index)
+        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize sets index: {}", e)))?;
+    fs::write(&index_path, &index_json).map_err(mtg_engine::MtgError::IoError)?;
+    println!("Wrote index.json ({} bytes)", index_json.len());
 
     // Sanity check: every card referenced by a deck must be reachable through
     // the per-set index (otherwise the browser would 404 trying to load it).
@@ -4119,12 +4165,14 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         index_json.len()
     );
     println!(
-        "  tokens.bin       - {} token definitions ({} bytes)",
+        "  {:<16} - {} token definitions ({} bytes)",
+        tokens_file_name,
         token_definitions.len(),
         tokens_data.len()
     );
     println!(
-        "  decks.bin        - {} decks ({} bytes)",
+        "  {:<16} - {} decks ({} bytes)",
+        decks_file_name,
         decks.len(),
         decks_data.len()
     );

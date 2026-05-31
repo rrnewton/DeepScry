@@ -245,13 +245,28 @@ async function main() {
     check(!!networkJsHashed, 'network.js is hashed');
 
     // First hashed bin from the HASHED index.json (logical→hashed resolution for bins).
+    // ALSO resolve the content-addressed tokens/decks bin names recorded in the
+    // manifest (tokens+decks cache-skew fix): they must be hashed (so the server
+    // serves them immutable) and there must be NO fixed-name `data/decks.bin` /
+    // `data/tokens.bin` left in the staged tree.
     let firstBin = null;
+    let tokensBin = null;
+    let decksBin = null;
     if (dataIndexHashed) {
         const idxPath = path.join(stage, 'data', 'sets', dataIndexHashed);
         const idx = JSON.parse(fs.readFileSync(idxPath, 'utf8'));
         check(Array.isArray(idx.sets) && idx.sets.length > 0, 'hashed index.json has sets[]');
         firstBin = idx.sets[0].file;
         check(/^[0-9-]+[A-Z]+\.[0-9a-f]+\.bin$/.test(firstBin), `first bin is content-addressed: ${firstBin}`);
+
+        tokensBin = idx.tokens;
+        decksBin = idx.decks;
+        check(/^tokens\.[0-9a-f]{16}\.bin$/.test(tokensBin || ''), `index.json tokens is content-addressed: ${tokensBin}`);
+        check(/^decks\.[0-9a-f]{16}\.bin$/.test(decksBin || ''), `index.json decks is content-addressed: ${decksBin}`);
+        check(fs.existsSync(path.join(stage, 'data', tokensBin)), `hashed tokens bin exists on disk: ${tokensBin}`);
+        check(fs.existsSync(path.join(stage, 'data', decksBin)), `hashed decks bin exists on disk: ${decksBin}`);
+        check(!fs.existsSync(path.join(stage, 'data', 'tokens.bin')), 'no fixed-name data/tokens.bin left in staged tree');
+        check(!fs.existsSync(path.join(stage, 'data', 'decks.bin')), 'no fixed-name data/decks.bin left in staged tree');
     }
 
     // --- 2. Launch mtg server-web against the staged hashed tree ---
@@ -323,6 +338,23 @@ async function main() {
                 isImmutable(di.headers['cache-control']),
                 `hashed index.json is IMMUTABLE (got "${di.headers['cache-control']}")`,
             );
+        }
+
+        // d2. hashed tokens/decks bins: 200 + IMMUTABLE, and the retired
+        //     fixed names must 404 (tokens+decks cache-skew fix). This proves a
+        //     content change → new hash → new URL → guaranteed cache-miss, so a
+        //     stale browser copy can never be paired with new WASM.
+        for (const [label, name] of [['tokens', tokensBin], ['decks', decksBin]]) {
+            if (!name) continue;
+            const r = await httpGet(base + '/data/' + name);
+            check(r.status === 200, `/data/${name} → 200 (got ${r.status})`);
+            check(r.body.length > 100, `hashed ${label} bin has bytes (${r.body.length})`);
+            check(
+                isImmutable(r.headers['cache-control']),
+                `hashed ${label} bin is IMMUTABLE (got "${r.headers['cache-control']}")`,
+            );
+            const fixed = await httpGet(base + `/data/${label}.bin`);
+            check(fixed.status === 404, `fixed-name /data/${label}.bin → 404 on hashed tree (got ${fixed.status})`);
         }
 
         // e. hashed wasm: 200 + immutable.

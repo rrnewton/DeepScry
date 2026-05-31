@@ -370,8 +370,18 @@ cmd_deploy() {
     else
         echo "→ WASM artefacts present (or --skip-wasm); not rebuilding"
     fi
-    for f in web/pkg/mtg_engine_bg.wasm web/data/decks.bin web/data/sets/index.json; do
+    for f in web/pkg/mtg_engine_bg.wasm web/data/sets/index.json; do
         [[ -f "$f" ]] || { echo "error: missing required artefact: $f (run 'cargo run --bin mtg -- export-wasm' to (re)generate)" >&2; exit 1; }
+    done
+    # tokens.bin + decks.bin are now content-addressed (tokens+decks cache-skew
+    # fix): their hashed names live in index.json, so resolve+verify via the
+    # manifest instead of the retired fixed `web/data/decks.bin` path.
+    for key in decks tokens; do
+        rel="$(python3 -c "import json,sys; print(json.load(open('web/data/sets/index.json'))['$key'])" 2>/dev/null || true)"
+        [[ -n "$rel" && -f "web/data/$rel" ]] || {
+            echo "error: index.json '$key' bin missing or unresolved (got '${rel:-<none>}'); run 'cargo run --bin mtg -- export-wasm'" >&2
+            exit 1
+        }
     done
 
     # --- 2. Local native release binary ---
@@ -431,9 +441,36 @@ EOF
             echo "✗ PRE-DEPLOY GATE FAILED: web-asset smoke test did not pass; ABORTING deploy (nothing rsynced to the VM)." >&2
             exit 1
         }
-        echo "✓ pre-deploy gate passed"
+        echo "✓ web-asset smoke passed"
     else
         echo "warning: node not found; SKIPPING pre-deploy web-asset smoke test (install Node to enable the gate)" >&2
+    fi
+
+    # --- 4c. PRE-RSYNC WASM-BOOT SMOKE (tokens+decks cache-skew fix) ---
+    # The web-asset smoke above only checks HTTP status + cache headers; it
+    # never boots the WASM and DESERIALIZES tokens.bin + decks.bin + the set
+    # bins against the freshly-built glue. That gap let a code-vs-data enum-tag
+    # skew ship undetected ("tag for enum is not valid, found 16"). This boot
+    # smoke drives the actual WASM build headlessly: loads index.json → resolves
+    # + deserializes the content-addressed decks/tokens/set bins → launches a
+    # game. Any deserialize error fails LOUDLY and aborts the deploy.
+    #
+    # Chromium-gated like the e2e steps: if Playwright/Chromium is unavailable
+    # in this environment it SKIPS with a loud warning (the same env-gated
+    # pattern used by make validate's browser steps) rather than hard-failing.
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import playwright' >/dev/null 2>&1; then
+        echo "→ PRE-DEPLOY GATE: headless WASM-boot smoke (deserialize tokens+decks+sets, launch a game)"
+        local boot_deck="decks/old_school2/the_deck_classic.dck"
+        [[ -f "$boot_deck" ]] || boot_deck="$(ls decks/*.dck decks/**/*.dck 2>/dev/null | head -n1)"
+        if python3 scripts/mtg_wasm_game.py --p1 random --p2 random --seed 42 --max-turns 3 \
+                --out-dir "$(mktemp -d)/wasm_boot_smoke" "$boot_deck"; then
+            echo "✓ WASM-boot smoke passed (tokens+decks+sets deserialized, game launched)"
+        else
+            echo "✗ PRE-DEPLOY GATE FAILED: WASM-boot smoke could not deserialize bins / launch a game; ABORTING deploy." >&2
+            exit 1
+        fi
+    else
+        echo "warning: python3+playwright not available; SKIPPING WASM-boot smoke (install: pip install playwright && playwright install chromium)" >&2
     fi
 
     # --- 5. Rsync web/ (content-addressed, mtg-571) ---

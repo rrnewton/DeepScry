@@ -296,10 +296,11 @@
                 const cardCount = cardDb.card_count();
                 progress.textContent = `Loaded ${cardCount} cards. Loading decks...`;
 
-                // Load decks
-                const decksResp = await fetch('./data/decks.bin');
+                // Load decks via manifest-resolved content-addressed name
+                // (tokens+decks cache-skew fix).
+                const decksResp = await fetch(`./data/${setIndex.decks}`);
                 if (!decksResp.ok) {
-                    throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
+                    throw new Error(`Failed to load ${setIndex.decks}: ${decksResp.status}. Run 'mtg export-wasm' first.`);
                 }
                 const decksData = new Uint8Array(await decksResp.arrayBuffer());
                 const deckCount = cardDb.load_decks(decksData);

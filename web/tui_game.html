@@ -1212,22 +1212,24 @@ Name=My Deck
                 progress.textContent = 'Loading deck list...';
                 cardDb = new WasmCardDatabase();
 
-                // Load decks metadata (small file, ~18KB)
-                const decksResp = await fetch('./data/decks.bin');
-                if (!decksResp.ok) {
-                    throw new Error(`Failed to load decks.bin: ${decksResp.status}. Run 'mtg export-wasm' first.`);
-                }
-                const decksData = new Uint8Array(await decksResp.arrayBuffer());
-                const deckCount = cardDb.load_decks(decksData);
-
-                // Load the per-set card index (mtg-464). Required: without
-                // it we cannot map deck card names -> the right set bin.
+                // Load the per-set card index (mtg-464) FIRST. Required: it
+                // maps deck card names -> the right set bin AND resolves the
+                // content-addressed tokens/decks bin names (tokens+decks
+                // cache-skew fix) so a content change busts the browser cache.
                 const indexResp = await fetch('./data/sets/index.json');
                 if (!indexResp.ok) {
                     throw new Error(`Failed to load sets/index.json: ${indexResp.status}. Run 'mtg export-wasm' first.`);
                 }
                 setIndex = await indexResp.json();
                 console.log(`Loaded per-set index: ${setIndex.sets.length} sets, ${Object.keys(setIndex.cards).length} cards`);
+
+                // Load decks metadata (small file, ~18KB) via manifest-resolved name.
+                const decksResp = await fetch(`./data/${setIndex.decks}`);
+                if (!decksResp.ok) {
+                    throw new Error(`Failed to load ${setIndex.decks}: ${decksResp.status}. Run 'mtg export-wasm' first.`);
+                }
+                const decksData = new Uint8Array(await decksResp.arrayBuffer());
+                const deckCount = cardDb.load_decks(decksData);
 
                 // Store deck names for filtering by collection
                 window.allDeckNames = JSON.parse(cardDb.get_deck_names_json());
@@ -1357,14 +1359,16 @@ Name=My Deck
         }
 
         /**
-         * Ensure the tokens.bin global is loaded (small, ~270 KB).
+         * Ensure the tokens bin is loaded (small, ~270 KB; manifest-resolved
+         * content-addressed name from setIndex.tokens).
          */
         async function ensureTokensLoaded(status) {
             if (fullTokensLoaded) return;
             if (status) status.textContent = 'Loading token definitions...';
-            const tokensResp = await fetch('./data/tokens.bin');
+            // Manifest-resolved content-addressed name (tokens+decks cache-skew fix).
+            const tokensResp = await fetch(`./data/${setIndex.tokens}`);
             if (!tokensResp.ok) {
-                console.warn(`tokens.bin not available (${tokensResp.status}); token creation may fail`);
+                console.warn(`${setIndex.tokens} not available (${tokensResp.status}); token creation may fail`);
                 return;
             }
             const tokenCount = cardDb.load_tokens(new Uint8Array(await tokensResp.arrayBuffer()));
@@ -1419,7 +1423,7 @@ Name=My Deck
          * 1. Register any custom decks (from localStorage) with the WASM card DB.
          * 2. Walk every deck's unique card names, look each up in setIndex.cards
          *    to find its owning per-set bin, and Promise.all-fetch the union.
-         * 3. Always load tokens.bin (small).
+         * 3. Always load the tokens bin (small; manifest-resolved name).
          *
          * Custom decks no longer need to trigger a full-database fallback —
          * their card names get looked up in the same per-set index.

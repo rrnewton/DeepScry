@@ -135,8 +135,23 @@ def main() -> int:
     if not (web_dir / "pkg" / "mtg_engine.js").exists():
         print(f"ERROR: WASM build missing at {web_dir/'pkg'}. Run: make wasm-dev", file=sys.stderr)
         return 1
-    if not (web_dir / "data" / "decks.bin").exists():
+    # tokens.bin + decks.bin are content-addressed (tokens+decks cache-skew
+    # fix): their hashed names live in data/sets/index.json. Verify the manifest
+    # resolves the decks bin to an on-disk file rather than the retired fixed
+    # `data/decks.bin` path.
+    import json as _json
+
+    index_path = web_dir / "data" / "sets" / "index.json"
+    if not index_path.exists():
         print(f"ERROR: WASM data missing at {web_dir/'data'}. Run: mtg export-wasm", file=sys.stderr)
+        return 1
+    try:
+        _decks_rel = _json.loads(index_path.read_text())["decks"]
+    except (KeyError, ValueError) as e:
+        print(f"ERROR: index.json missing 'decks' entry ({e}). Re-run: mtg export-wasm", file=sys.stderr)
+        return 1
+    if not (web_dir / "data" / _decks_rel).exists():
+        print(f"ERROR: decks bin {_decks_rel} missing under {web_dir/'data'}. Run: mtg export-wasm", file=sys.stderr)
         return 1
 
     p1_name = deck_path_to_wasm_name(common.p1_deck)

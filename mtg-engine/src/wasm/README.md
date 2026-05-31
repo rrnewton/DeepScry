@@ -48,13 +48,15 @@ async function main() {
     await init();
     console.log("MTG Forge version:", version());
 
-    // Load card and deck data (fetch from server)
-    const cardsData = await fetch('/data/cards.bin').then(r => r.arrayBuffer());
-    const decksData = await fetch('/data/decks.bin').then(r => r.arrayBuffer());
+    // Load card + deck data. Card data lives in per-set bins (mtg-464) and the
+    // decks/tokens bins are content-addressed: resolve their hashed names from
+    // the manifest (tokens+decks cache-skew fix) instead of a fixed URL.
+    const setIndex  = await fetch('/data/sets/index.json').then(r => r.json());
+    const decksData = await fetch(`/data/${setIndex.decks}`).then(r => r.arrayBuffer());
 
     const cardDb = new WasmCardDatabase();
-    cardDb.load_cards(new Uint8Array(cardsData));
     cardDb.load_decks(new Uint8Array(decksData));
+    // Load only the per-set bins a deck needs, via setIndex.cards (see lib.rs docs).
 
     // Create a game with loaded decks
     const game = WasmGame.from_database(
@@ -73,7 +75,9 @@ Use the CLI to generate bincode data files for WASM:
 mtg export-wasm --output-dir ./web/data
 ```
 
-This creates `cards.bin` and `decks.bin` for loading in the browser.
+This creates the per-set `data/sets/<YYYY>-<CODE>.<hash>.bin` bins,
+`data/sets/index.json` (the resolver manifest), and the content-addressed
+`data/tokens.<hash>.bin` + `data/decks.<hash>.bin` for loading in the browser.
 
 ## Limitations (vs. Native)
 

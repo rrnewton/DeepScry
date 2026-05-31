@@ -19,9 +19,11 @@
 //!     await init();
 //!     console.log("MTG Forge version:", version());
 //!
-//!     // Load deck list + per-set card bins on demand (mtg-464).
-//!     const decksData = await fetch('/data/decks.bin').then(r => r.arrayBuffer());
+//!     // Load deck list + per-set card bins on demand (mtg-464). The decks
+//!     // and tokens bins are content-addressed: resolve their hashed names
+//!     // from the manifest (tokens+decks cache-skew fix) instead of a fixed URL.
 //!     const setIndex  = await fetch('/data/sets/index.json').then(r => r.json());
+//!     const decksData = await fetch(`/data/${setIndex.decks}`).then(r => r.arrayBuffer());
 //!     const cardDb = new WasmCardDatabase();
 //!     cardDb.load_decks(new Uint8Array(decksData));
 //!     // Fetch only the sets a deck needs:

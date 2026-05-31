@@ -136,23 +136,25 @@ function log(msg) {
 
                 const cardDb = new mod.WasmCardDatabase();
 
-                // Load deck index (deck names + metadata).
-                const decksResp = await fetch('./data/decks.bin');
-                if (!decksResp.ok) {
-                    return { ok: false, error: `decks.bin fetch failed: ${decksResp.status}` };
-                }
-                cardDb.load_decks(new Uint8Array(await decksResp.arrayBuffer()));
-
-                // Load full card definitions so any deck works.
-                // mtg-464 split the monolithic cards.bin into per-set bins
-                // at `./data/sets/<YYYY>-<CODE>.bin`. For this isolated smoke
-                // test we eagerly fetch every set bin in parallel — the wire
-                // size is the same as the old single fetch.
+                // Load the per-set index FIRST: it resolves the content-addressed
+                // tokens/decks bin names (tokens+decks cache-skew fix) plus maps
+                // card names to set bins. mtg-464 split the monolithic cards.bin
+                // into per-set bins at `./data/sets/<YYYY>-<CODE>.<hash>.bin`.
                 const idxResp = await fetch('./data/sets/index.json');
                 if (!idxResp.ok) {
                     return { ok: false, error: `sets/index.json fetch failed: ${idxResp.status}` };
                 }
                 const setIndex = await idxResp.json();
+
+                // Load deck index (deck names + metadata) via manifest-resolved name.
+                const decksResp = await fetch(`./data/${setIndex.decks}`);
+                if (!decksResp.ok) {
+                    return { ok: false, error: `${setIndex.decks} fetch failed: ${decksResp.status}` };
+                }
+                cardDb.load_decks(new Uint8Array(await decksResp.arrayBuffer()));
+
+                // Load full card definitions so any deck works. For this
+                // isolated smoke test we eagerly fetch every set bin in parallel.
                 const setLoads = setIndex.sets.map(async s => {
                     const r = await fetch(`./data/sets/${s.file}`);
                     if (!r.ok) throw new Error(`set ${s.file} fetch failed: ${r.status}`);
@@ -167,7 +169,7 @@ function log(msg) {
                 // Tokens too — some decks (avatar set) create clue/food
                 // tokens at run-time and the game crashes without these.
                 try {
-                    const tokensResp = await fetch('./data/tokens.bin');
+                    const tokensResp = await fetch(`./data/${setIndex.tokens}`);
                     if (tokensResp.ok) {
                         cardDb.load_tokens(new Uint8Array(await tokensResp.arrayBuffer()));
                     }
