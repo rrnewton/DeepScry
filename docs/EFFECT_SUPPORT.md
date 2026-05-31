@@ -50,7 +50,8 @@ workflow, row format, and update rules.
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ DealDamage Defined$ TriggeredPlayer NumDmg$ X (variable damage to active player, counted against that player) | WORKING | 2026-05-30_#2530(f7a005ca) | (fixed)   | Karma            |
 | Phase Upkeep ValidPlayer$ Player.Chosen Execute$ DB$ DealDamage Defined$ ChosenPlayer NumDmg$ X (fires only on the ETB-chosen player's upkeep; chosen_player_turn_only gate) | WORKING | 2026-05-31_#2546(34f76ca3) | (fixed) | Black Vise |
 | Discarded ValidCard$ Card.Self ValidCause$ SpellAbility.OppCtrl Execute$ DB$ LoseLife (opponent-forced-discard punisher) | BROKEN | 2026-05-30_#2530(f7a005ca) | mtg-czz3f | Psychic Purge |
-| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura; fires on combat damage to players AND creatures) | WORKING | 2026-05-31_#2539(05d48a7b) | (fixed) | Spirit Link |
+| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura; fires on COMBAT **and NON-combat** damage to players AND creatures — e.g. an enchanted pinger's {T}: deal 1, CR 119.3) | WORKING | 2026-05-31_#2548(255267ac) | (fixed) | Spirit Link (+ Prodigal Sorcerer) |
+| CombatDamage$ True gating: a "deals COMBAT damage" trigger must NOT fire on non-combat damage (requires_combat_damage flag, consulted at the non-combat deal_damage firing site) | WORKING | 2026-05-31_#2548(255267ac) | (fixed) | Hypnotic Specter |
 | Phase Draw ValidPlayer$ You Execute$ DB$ Draw (beginning-of-your-draw-step: draw an additional card) | WORKING | 2026-05-30_#2532(4646ddd1) | (fixed) | Grafted Skullcap |
 | Phase Draw ValidPlayer$ You Execute$ AB$ ChooseCard Cost$ Draw<N/You> + RepeatEach + UnlessCost$ PayLife (draw-then-choose-then-pay-or-return) | PARTIAL | 2026-05-30_#2532(4646ddd1) | mtg-548 | Sylvan Library |
 

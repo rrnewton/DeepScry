@@ -4444,6 +4444,106 @@ async fn test_spirit_link_lifelink_on_combat_damage_to_creature() -> Result<()> 
     Ok(())
 }
 
+/// e2e (mtg-r9po1): Spirit Link's triggered lifelink fires on NON-combat damage
+/// (CR 119.3 — "gain that much life" triggers on ANY damage the source deals,
+/// not only combat damage).
+///
+/// Board (test_puzzles/spirit_link_noncombat_pinger.pzl): P0 has a Prodigal
+/// Sorcerer (the classic `{T}: deal 1 damage to any target` pinger) enchanted
+/// with Spirit Link (attached programmatically — the puzzle loader does not yet
+/// support attachment). The pinger's damage ability is resolved from the stack
+/// via the SAME shared non-combat `resolve_spell_execute_effects` ->
+/// `deal_damage` path real activated abilities use, dealing 1 non-combat damage
+/// to Player 2. Spirit Link's any-recipient deals-damage trigger must fire on
+/// that non-combat damage, gaining P0 exactly 1 life. Player 2 loses 1.
+#[tokio::test]
+async fn test_spirit_link_lifelink_on_noncombat_damage() -> Result<()> {
+    use mtg_engine::core::{Effect, TargetRef};
+
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/spirit_link_noncombat_pinger.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    let find = |g: &mtg_engine::game::GameState, name: &str| -> Option<mtg_engine::core::CardId> {
+        g.battlefield
+            .cards
+            .iter()
+            .filter_map(|&id| g.cards.try_get(id).map(|c| (id, c)))
+            .find(|(_, c)| c.name.as_str() == name)
+            .map(|(id, _)| id)
+    };
+    let pinger = find(&game, "Prodigal Sorcerer").expect("Prodigal Sorcerer on battlefield");
+    let spirit_link = find(&game, "Spirit Link").expect("Spirit Link on battlefield");
+
+    // Attach Spirit Link to the pinger (puzzle attachment unsupported).
+    {
+        let aura = game.cards.get_mut(spirit_link)?;
+        aura.attached_to = Some(pinger);
+        aura.controller = p0_id;
+    }
+
+    // Drive the pinger's NON-combat damage deterministically: place the
+    // `deal 1 to Player 2` effect on the pinger and resolve it from the stack.
+    // This is the exact shared resolution path Prodigal Sorcerer's real
+    // `{T}: deal 1` activated ability flows through (resolve_spell_execute_effects
+    // -> deal_damage -> the per-resolution accumulator -> the deals-damage
+    // trigger), without depending on the AI choosing to activate.
+    {
+        let p = game.cards.get_mut(pinger)?;
+        p.effects = vec![Effect::DealDamage {
+            target: TargetRef::Player(p1_id),
+            amount: 1,
+        }];
+    }
+
+    let p0_life_before = game.get_player(p0_id)?.life;
+    let p1_life_before = game.get_player(p1_id)?.life;
+    assert_eq!(p0_life_before, 10, "P0 starts at 10 life");
+
+    game.resolve_spell(pinger, &[]).expect("pinger ability should resolve");
+
+    let p0_life_after = game.get_player(p0_id)?.life;
+    let p1_life_after = game.get_player(p1_id)?.life;
+
+    // Player 2 took 1 non-combat damage.
+    assert_eq!(
+        p1_life_after,
+        p1_life_before - 1,
+        "Player 2 should take 1 non-combat damage from the pinger"
+    );
+
+    // Spirit Link fired on the NON-combat damage: P0 gains exactly 1 life.
+    assert_eq!(
+        p0_life_after,
+        p0_life_before + 1,
+        "Spirit Link must gain 1 life when the enchanted pinger deals 1 NON-combat damage \
+         (before={p0_life_before}, after={p0_life_after}); the deals-damage trigger must fire \
+         off the general deal_damage path, not only combat (mtg-r9po1, CR 119.3)"
+    );
+
+    // Game-log evidence: a "gains 1 life" line from the trigger.
+    let logs = game.logger.logs();
+    let gained_line = logs.iter().any(|l| l.message.contains("gains 1 life"));
+    assert!(
+        gained_line,
+        "Expected a 'gains 1 life' log line from Spirit Link's trigger firing on non-combat damage. Logs:\n{}",
+        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+    );
+
+    Ok(())
+}
+
 /// mtg-3hwz3: City in a Bottle — the set-origin hoser. Verifies all three
 /// general constructs end-to-end against a real game:
 ///

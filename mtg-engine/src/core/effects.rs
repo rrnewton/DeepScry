@@ -2264,6 +2264,20 @@ pub struct Trigger {
     #[serde(default)]
     pub combat_damage_target: CombatDamageTarget,
 
+    /// For `DealsCombatDamage` triggers: when true, the trigger fires ONLY on
+    /// combat damage, never on non-combat damage (`CombatDamage$ True`, e.g.
+    /// Hypnotic Specter "deals COMBAT damage to a player").
+    ///
+    /// `DealsCombatDamage` is the shared event for both combat and non-combat
+    /// "deals damage" triggers; the two have distinct firing sites
+    /// (`resolve_combat_damage` for combat, `resolve_spell_execute_effects` for
+    /// non-combat). The non-combat firing site (mtg-r9po1) consults this flag to
+    /// skip combat-only triggers, while the combat site fires all of them.
+    /// "Whenever ~ deals damage" (no COMBAT qualifier, e.g. Spirit Link's
+    /// `DamageDealtOnce`) leaves this `false` so it fires on either kind.
+    #[serde(default)]
+    pub requires_combat_damage: bool,
+
     /// For AttackersDeclared triggers: keyword required on attacking creatures
     /// Corresponds to ValidAttackers$ Creature.withFlying (or other keywords)
     /// None means any attacking creature triggers it
@@ -2310,6 +2324,7 @@ impl Trigger {
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
+            requires_combat_damage: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2334,6 +2349,7 @@ impl Trigger {
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
+            requires_combat_damage: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2364,6 +2380,7 @@ impl Trigger {
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
+            requires_combat_damage: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2389,6 +2406,7 @@ impl Trigger {
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
+            requires_combat_damage: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,

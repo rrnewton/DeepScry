@@ -314,6 +314,17 @@ validate-wasm-e2e-step: validate-wasm-step
 	@echo "    hidden information leaks across the engine boundary. 0 diverged."
 	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
 		--seeds 1 --seed-base 3 --decks 'decks/old_school2/black_vise_punisher.dck' --max-turns 10
+	@echo "=== Native-vs-WASM equivalence: Spirit Link NON-COMBAT lifelink (STRICT, mtg-r9po1) ==="
+	@echo "    Pins seed=26 on decks/old_school2/spirit_link_pinger.dck. Random-vs-random"
+	@echo "    play enchants a Prodigal Sorcerer (the {T}: deal 1 pinger) with Spirit Link,"
+	@echo "    then activates the pinger. The NON-combat damage fires Spirit Link's"
+	@echo "    'whenever enchanted creature deals damage, you gain that much life' trigger"
+	@echo "    (CR 119.3) via the general deal_damage path (mtg-r9po1). At Turn15 the pinger"
+	@echo "    deals 1 non-combat damage and the controller gains 1 life per attached Spirit"
+	@echo "    Link. The lifegain is a pure function of the PUBLIC damage event, so it must"
+	@echo "    replay BYTE-IDENTICALLY on native and WASM. 0 diverged."
+	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
+		--seeds 1 --seed-base 26 --decks 'decks/old_school2/spirit_link_pinger.dck' --max-turns 16
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games

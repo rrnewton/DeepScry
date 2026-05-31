@@ -1,0 +1,24 @@
+[metadata]
+Name:Spirit Link lifelink fires on NON-combat damage (mtg-r9po1)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:Regression for mtg-r9po1 (CR 119.3). A creature enchanted with Spirit Link deals NON-combat damage via its activated pinger ability ({T}: deal 1 damage to any target). Spirit Link's "whenever enchanted creature deals damage, you gain that much life" trigger must fire on this non-combat damage, not only on combat damage: the controller gains life equal to the damage dealt. Board: P0 has Prodigal Sorcerer (a 1/1 with {T}: deal 1) enchanted with Spirit Link; the pinger pings Player 2 for 1, so Player 1 gains 1 life (10 -> 11) and Player 2 loses 1 (20 -> 19). The e2e test attaches Spirit Link and resolves the pinger ability explicitly (puzzle attachment is not yet supported by the loader). The fix fires the deals-damage trigger off the general non-combat deal_damage path, deduped against the combat path so combat damage still fires exactly once.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=
+p0battlefield=Prodigal Sorcerer; Spirit Link
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

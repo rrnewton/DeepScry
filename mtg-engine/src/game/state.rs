@@ -144,6 +144,21 @@ pub struct GameState {
     #[serde(skip)]
     pub current_damage_source: Option<CardId>,
 
+    /// Total non-combat damage the [`current_damage_source`] has dealt during
+    /// the in-progress effect resolution, used to fire the "whenever ~ deals
+    /// damage" trigger (Spirit Link's `DamageDealtOnce`, CR 119.3) ONCE per
+    /// resolution with the aggregated amount — never per individual target —
+    /// matching the combat path which fires once per creature-damage event.
+    ///
+    /// `Some(n)` only between `resolve_spell_execute_effects` setting up the
+    /// source and firing the deals-damage trigger at the end of that
+    /// synchronous window; `None` everywhere else. Like `current_damage_source`
+    /// it is purely transient resolution scratch (always cleared back to `None`
+    /// before control returns to the game loop), so it is `#[serde(skip)]` —
+    /// snapshots, save/restore, and network shadow state stay identical.
+    #[serde(skip)]
+    pub damage_dealt_by_source: Option<i32>,
+
     /// Delayed triggers waiting to fire on specific events.
     ///
     /// Delayed triggers are created by effects and fire when conditions are met:
@@ -398,6 +413,7 @@ impl GameState {
             skip_reveals: true, // Default: skip reveals for local games
             persistent_effects: PersistentEffectStore::new(),
             current_damage_source: None,
+            damage_dealt_by_source: None,
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
@@ -4002,6 +4018,7 @@ impl Clone for GameState {
             skip_reveals: self.skip_reveals,
             persistent_effects: self.persistent_effects.clone(),
             current_damage_source: self.current_damage_source,
+            damage_dealt_by_source: self.damage_dealt_by_source,
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),

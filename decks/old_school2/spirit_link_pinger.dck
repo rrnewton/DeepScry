@@ -1,0 +1,12 @@
+[metadata]
+Name=Spirit Link Pinger
+Description=WU deck stuffed with Prodigal Sorcerer (the classic {T}: deal 1 damage to any target pinger) and Spirit Link so random-vs-random play enchants a pinger and activates its NON-combat damage ability. Used by the native-vs-WASM equivalence sweep to prove that Spirit Link's "whenever enchanted creature deals damage, you gain that much life" trigger firing on NON-combat damage (mtg-r9po1, CR 119.3) replays BYTE-IDENTICALLY across compile targets. The lifegain amount is a pure function of the public damage event, so no hidden information leaks across the engine boundary. Mirror match maximizes the chance both players get a pinger enchanted and ping each turn.
+
+[Main]
+10 Plains
+10 Island
+12 Prodigal Sorcerer
+12 Spirit Link
+4 Sol Ring
+4 Mox Pearl
+4 Mox Sapphire

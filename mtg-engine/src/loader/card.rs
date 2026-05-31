@@ -2992,12 +2992,13 @@ impl CardDefinition {
                 // `[damages-creature]` description markers that had no consumer).
                 trigger.combat_damage_target = combat_damage_target;
 
-                // `combat_damage_only` (CombatDamage$ True) is intentionally not
-                // gated here: the DealsCombatDamage firing site only fires for
-                // combat damage, so a combat-only trigger never sees non-combat
-                // damage anyway. Non-combat damage triggers are tracked
-                // separately (mtg-r9po1) and remain out of scope.
-                let _ = combat_damage_only;
+                // `combat_damage_only` (CombatDamage$ True, e.g. Hypnotic
+                // Specter "deals COMBAT damage to a player") records that this
+                // trigger must NOT fire on non-combat damage. Both kinds share
+                // the `DealsCombatDamage` event but have distinct firing sites;
+                // the non-combat site (mtg-r9po1) consults this flag to skip
+                // combat-only triggers, while the combat site fires them all.
+                trigger.requires_combat_damage = combat_damage_only;
 
                 triggers.push(trigger);
             }

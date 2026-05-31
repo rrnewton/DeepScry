@@ -321,6 +321,141 @@ mod tests {
         );
     }
 
+    /// mtg-r9po1: Spirit Link must fire on NON-combat damage too (CR 119.3 —
+    /// lifelink-style "gain that much life" triggers on ANY damage the source
+    /// deals). Scenario: an enchanted pinger creature whose activated ability
+    /// (`DealDamage` resolving from the stack) deals 1 non-combat damage to the
+    /// opponent. P0 must gain 1 life from Spirit Link, via the SAME shared
+    /// `DealsCombatDamage` trigger path the combat site uses (no Spirit-Link
+    /// hack, no platform branch).
+    #[test]
+    fn test_spirit_link_fires_on_noncombat_damage() {
+        use crate::core::{Effect, TargetRef};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // P0's "pinger": a creature whose ability deals 1 non-combat damage to
+        // the opponent. Modelled by putting a DealDamage effect on the card and
+        // resolving it from the stack (the exact shared resolution path a real
+        // `{T}: deal 1` activated ability — Prodigal Sorcerer — flows through).
+        let pinger_id = game.next_card_id();
+        let mut pinger = Card::new(pinger_id, "Prodigal Sorcerer".to_string(), p1_id);
+        pinger.add_type(CardType::Creature);
+        pinger.set_base_power(Some(1));
+        pinger.set_base_toughness(Some(1));
+        pinger.controller = p1_id;
+        pinger.effects = vec![Effect::DealDamage {
+            target: TargetRef::Player(p2_id),
+            amount: 1,
+        }];
+        game.cards.insert(pinger_id, pinger);
+        game.battlefield.add(pinger_id);
+
+        // Spirit Link enchanting the pinger (real card -> parsed DamageDealtOnce
+        // trigger with ValidSource$ Card.AttachedBy + TriggerCount$DamageAmount).
+        let aura_id = match load_test_card(&mut game, "Spirit Link", p1_id) {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("Skipping: Spirit Link not present in cardsfolder");
+                return;
+            }
+        };
+        {
+            let aura = game.cards.get_mut(aura_id).unwrap();
+            aura.attached_to = Some(pinger_id);
+            aura.controller = p1_id;
+        }
+        game.battlefield.add(aura_id);
+
+        let p0_life_before = game.get_player(p1_id).unwrap().life;
+        let p1_life_before = game.get_player(p2_id).unwrap().life;
+
+        // Resolve the pinger's damage ability from the stack (shared non-combat
+        // damage path -> deal_damage -> accumulator -> deals-damage trigger).
+        game.resolve_spell(pinger_id, &[])
+            .expect("pinger ability should resolve");
+
+        // Opponent took 1 non-combat damage.
+        assert_eq!(
+            game.get_player(p2_id).unwrap().life,
+            p1_life_before - 1,
+            "opponent should take 1 non-combat damage from the pinger"
+        );
+
+        // Spirit Link fired on the NON-combat damage: P0 gains exactly 1 life.
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            p0_life_before + 1,
+            "Spirit Link must gain 1 life when the enchanted creature deals 1 NON-combat damage \
+             (before={p0_life_before}); the deals-damage trigger must fire off the general \
+             deal_damage path, not only combat (mtg-r9po1, CR 119.3)"
+        );
+
+        // The transient per-resolution accumulator is cleared back to None after
+        // resolution (no leaked un-serialized state).
+        assert_eq!(
+            game.damage_dealt_by_source, None,
+            "damage_dealt_by_source must be cleared after resolution"
+        );
+    }
+
+    /// mtg-r9po1 de-dup guard: a single COMBAT-damage event must still fire
+    /// Spirit Link exactly ONCE (not twice). The non-combat firing site keys off
+    /// the per-resolution accumulator, which combat never sets, so combat damage
+    /// fires only via its own per-creature path.
+    #[test]
+    fn test_spirit_link_combat_damage_not_double_counted() {
+        use crate::game::zero_controller::ZeroController;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // P0's 3/3 attacker, enchanted with Spirit Link, attacking an open P1.
+        let attacker_id = game.next_card_id();
+        let mut attacker = Card::new(attacker_id, "Bear".to_string(), p1_id);
+        attacker.add_type(CardType::Creature);
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
+        attacker.controller = p1_id;
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        let aura_id = match load_test_card(&mut game, "Spirit Link", p1_id) {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("Skipping: Spirit Link not present in cardsfolder");
+                return;
+            }
+        };
+        {
+            let aura = game.cards.get_mut(aura_id).unwrap();
+            aura.attached_to = Some(attacker_id);
+            aura.controller = p1_id;
+        }
+        game.battlefield.add(aura_id);
+
+        let p0_life_before = game.get_player(p1_id).unwrap().life;
+
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+        game.assign_combat_damage(&mut controller1, &mut controller2, false)
+            .expect("combat damage should resolve");
+
+        // P0 gains EXACTLY 3 (the combat damage), not 6 (double-fire).
+        assert_eq!(
+            game.get_player(p1_id).unwrap().life,
+            p0_life_before + 3,
+            "Spirit Link must fire exactly ONCE for a single combat-damage event (gain 3, not 6); \
+             the non-combat firing site must not double-count combat damage (mtg-r9po1)"
+        );
+    }
+
     #[test]
     fn test_combat_damage_multiple_blockers() {
         use crate::game::zero_controller::ZeroController;

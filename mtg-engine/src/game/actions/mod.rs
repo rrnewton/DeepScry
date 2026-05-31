@@ -419,6 +419,13 @@ impl GameState {
             // buffs by the time GainLifeDynamic resolves.
             let target_snapshots = self.snapshot_target_amounts(chosen_targets);
 
+            // Begin accumulating non-combat damage dealt by THIS source across
+            // all of its effects, so the "whenever ~ deals damage" trigger
+            // (Spirit Link, CR 119.3) fires once with the aggregated total
+            // rather than once per target (mtg-r9po1). Mirrors the combat path,
+            // which fires once per creature-damage event.
+            self.damage_dealt_by_source = Some(0);
+
             // Execute effects by index, resolving targets at execution time
             // This avoids cloning the entire Vec<Effect>
             let mut target_index = 0;
@@ -470,6 +477,23 @@ impl GameState {
                     self.current_damage_source = None;
                     exec_result?;
                 }
+            }
+
+            // Fire the non-combat "whenever ~ deals damage" trigger ONCE for the
+            // whole resolution with the aggregated amount (Spirit Link's
+            // DamageDealtOnce, CR 119.3). `card_id` is the source on the stack
+            // (the resolving spell, or the creature whose activated/triggered
+            // ability is resolving — e.g. an enchanted pinger). The trigger is
+            // the SAME DealsCombatDamage event the combat path uses and routes
+            // through the shared check_triggers_with_damage -> check_triggers_inner
+            // path, so the trigger-filter machinery (requires_attached_source for
+            // Spirit Link, requires_combat_damage gating, TriggerCount$DamageAmount)
+            // is identical on native, WASM, and network. Combat damage does NOT
+            // double-fire here because it sets no source accumulator (the field is
+            // cleared to None below before control returns).
+            let dealt = self.damage_dealt_by_source.take().unwrap_or(0);
+            if dealt > 0 {
+                self.check_triggers_with_damage(TriggerEvent::DealsCombatDamage, card_id, Some(dealt))?;
             }
         }
 
@@ -6500,10 +6524,21 @@ impl GameState {
                     // amount and are not gated.
                     let damage_amount = match damage {
                         None => None,
-                        Some(d) => match d.amount_for(trigger.combat_damage_target) {
-                            Some(amount) => Some(amount),
-                            None => return None,
-                        },
+                        Some(d) => {
+                            // Combat-only triggers (CombatDamage$ True, e.g.
+                            // Hypnotic Specter) must NOT fire on non-combat
+                            // damage (the Fixed variant). The combat path uses
+                            // the Combat variant and fires them normally.
+                            if trigger.requires_combat_damage
+                                && matches!(d, crate::game::actions::triggers::DamageForTrigger::Fixed(_))
+                            {
+                                return None;
+                            }
+                            match d.amount_for(trigger.combat_damage_target) {
+                                Some(amount) => Some(amount),
+                                None => return None,
+                            }
+                        }
                     };
 
                     Some(TriggerInfo {
@@ -7915,6 +7950,21 @@ impl GameState {
         remaining as i32
     }
 
+    /// Accumulate damage dealt by the current non-combat damage source into the
+    /// per-resolution running total ([`GameState::damage_dealt_by_source`]),
+    /// used to fire the "whenever ~ deals damage" trigger once at the end of the
+    /// resolution (CR 119.3 lifelink-style aggregation, Spirit Link).
+    ///
+    /// A no-op when no resolution is in progress (`damage_dealt_by_source` is
+    /// `None`) — in particular combat damage is applied with no active source
+    /// accumulator, so it never double-fires here; combat fires the same
+    /// trigger via its own per-creature path in `resolve_combat_damage`.
+    fn accumulate_source_damage(&mut self, amount: i32) {
+        if let Some(total) = self.damage_dealt_by_source.as_mut() {
+            *total += amount;
+        }
+    }
+
     /// Deal damage to a player target
     ///
     /// # Errors
@@ -7968,6 +8018,11 @@ impl GameState {
                 },
                 prior_log_size,
             );
+
+            // Accumulate for the non-combat "deals damage" trigger (Spirit Link,
+            // CR 119.3). Fired once per resolution at the end of
+            // resolve_spell_execute_effects with the aggregated total.
+            self.accumulate_source_damage(actual_amount);
 
             return Ok(());
         }
@@ -8024,6 +8079,11 @@ impl GameState {
                 creature_name, target_id, actual_amount, card.damage
             );
             self.logger.normal(&message);
+
+            // Accumulate for the non-combat "deals damage" trigger (Spirit Link,
+            // CR 119.3): damage dealt to creatures counts too. Fired once per
+            // resolution at the end of resolve_spell_execute_effects.
+            self.accumulate_source_damage(actual_amount);
 
             // Note: We don't destroy the creature here - that happens in state-based actions
             // This allows multiple damage sources to accumulate before checking lethal damage

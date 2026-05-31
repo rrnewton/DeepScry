@@ -1,40 +1,38 @@
 ---
 title: 'Bug: T:Mode$ DamageDealtOnce + ValidSource$ Card.AttachedBy + TriggerCount$DamageAmount (triggered pseudo-lifelink) unsupported'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T23:35:49.101624331+00:00
-updated_at: 2026-05-31T08:12:55.178751710+00:00
+updated_at: 2026-05-31T12:24:28.706311652+00:00
 ---
 
 # Description
 
-PARTIAL -> combat damage now FULLY WORKING; only non-COMBAT damage remains.
-Updated 2026-05-31 (fix-mtg-m43mc-creature-dmg-trigger).
+FULLY WORKING (combat AND non-combat). Closed 2026-05-31 (fix-mtg-r9po1-spirit-link-noncombat).
 
-Spirit Link's triggered pseudo-lifelink now fires for ALL COMBAT damage the
-enchanted creature deals -- to a PLAYER (was already working, mtg-r9po1 wave-18)
-AND now to a CREATURE (blocker/attacker), via the general combat-damage trigger
-fix in mtg-m43mc (CLOSED). The DealsCombatDamage firing site now iterates every
-creature that dealt combat damage this step (deterministic damage_dealt_by_creature
-BTreeMap order) and Spirit Link's any-recipient trigger observes the total combat
-damage, matching the Lifelink keyword (CR 510.2 / 119.3).
+Spirit Link's triggered pseudo-lifelink ("whenever enchanted creature deals damage, you gain that much life", CR 119.3) now fires on BOTH combat and non-combat damage the enchanted creature deals.
 
-Evidence (combat damage to a creature):
-- Unit: game::actions::tests::combat::test_spirit_link_fires_on_combat_damage_to_creature
-  -- enchanted 3/3 blocked by a 4/4: defending player takes 0, P0 gains 3.
-- E2E: puzzle_e2e::test_spirit_link_lifelink_on_combat_damage_to_creature
-  (test_puzzles/spirit_link_blocked_creature_damage.pzl) -- enchanted Hill Giant
-  (3/3) blocked by Wall of Stone (0/8): P1 life unchanged (20), P0 gains 3 (10->13),
-  with a 'gains 3 life' gamelog line.
-- Existing player-damage E2E test_spirit_link_aura_targeting still green.
+COMBAT (mtg-m43mc, prior): fires via resolve_combat_damage's per-creature damage_dealt_by_creature BTreeMap path, recipient-class gated (CR 510.2).
 
-REMAINING GAP (still PARTIAL): non-COMBAT damage (e.g. an enchanted PINGER's
-'{T}: deal 1 damage' activated ability, or any non-combat damage source the host
-deals) does NOT yet fire the DealsCombatDamage trigger -- the trigger is only
-fired from the combat-damage step. Real Spirit Link gains life on that damage too
-(CR 119.3). Wiring a non-combat damage-dealt trigger hook (deal_damage path)
-is the remaining work to mark Spirit Link fully WORKING. Keep this issue OPEN
-for that residual; combat lifelink is complete.
+NON-COMBAT (this change): the general non-combat damage path now fires the same DealsCombatDamage trigger. Mechanism (DRY, single shared site, no Spirit-Link hack, no platform branch):
+- resolve_spell_execute_effects (the stack-resolution site shared by spells AND activated/triggered abilities) sets a transient per-resolution accumulator GameState::damage_dealt_by_source = Some(0) before running the source's effects.
+- deal_damage / deal_damage_to_creature (the two functions that actually apply non-combat damage) add the applied amount via accumulate_source_damage().
+- After the resolution's effects run, it fires check_triggers_with_damage(DealsCombatDamage, card_id, Some(total)) ONCE with the aggregated amount (DamageDealtOnce aggregation, CR 119.3), then clears the accumulator. Routes through the shared check_triggers_inner, so requires_attached_source (Spirit Link's ValidSource$ Card.AttachedBy) + TriggerCount$DamageAmount work identically on native/WASM/network.
 
-MTG Rules Review: PASS (CR 510.2 / 119.3 / 603.2).
+DE-DUP (no double-count): combat damage applies via its own path and never sets damage_dealt_by_source, so combat-damage events fire the trigger exactly once (via the combat per-creature path only). Verified by test_spirit_link_combat_damage_not_double_counted (gain 3, not 6).
+
+COMBAT-ONLY GATE: added Trigger::requires_combat_damage (set from CombatDamage$ True at parse, e.g. Hypnotic Specter). The non-combat firing site skips combat-only triggers (DamageForTrigger::Fixed); the combat site fires them. Prevents a 'deals COMBAT damage to a player' trigger from firing on non-combat damage.
+
+Determinism: damage_dealt_by_source is #[serde(skip)] transient resolution scratch (always None outside resolution, exactly like current_damage_source); no new persistent/serialized state; deterministic order (no HashMap/HashSet in firing path).
+
+Evidence:
+- Unit: combat::test_spirit_link_fires_on_noncombat_damage (enchanted pinger deals 1 non-combat -> P0 gains 1; accumulator cleared to None after).
+- Unit: combat::test_spirit_link_combat_damage_not_double_counted (combat still fires exactly once).
+- E2E: puzzle_e2e::test_spirit_link_lifelink_on_noncombat_damage (test_puzzles/spirit_link_noncombat_pinger.pzl; gamelog 'gains 1 life').
+- Native-vs-WASM STRICT equivalence: decks/old_school2/spirit_link_pinger.dck seed=26 (Makefile leg). Turn15: 'Prodigal Sorcerer (52) deals 1 damage to Random2 (life: 19)' then 'Random2 gains 1 life' x2 (two Spirit Links on the pinger) -- byte-identical native vs WASM, 0 diverged.
+- Existing combat tests + test_spirit_link_aura_targeting still green.
+
+KNOWN LIMITATION (out of scope, follow-up): Effect::DamageAll (Earthquake/Pestilence mass damage) bypasses deal_damage and mutates card.damage/lose_life directly, so it does not feed the accumulator. Its source is normally the resolving spell, not an enchanted creature, so Spirit Link is unaffected in practice. See follow-up issue.
+
+MTG Rules Review: PASS (CR 119.3 damage event lifegain, CR 603.2 trigger on damage event, CR 510.2 combat, CR 615 prevention unaffected).
