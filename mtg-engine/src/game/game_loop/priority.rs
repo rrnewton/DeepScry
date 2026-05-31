@@ -121,6 +121,7 @@ impl<'a> GameLoop<'a> {
                         // become TargetRef::Player; everything else is a
                         // permanent CardId.
                         let raw = targets[target_index];
+                        last_resolved_target = Some(raw);
                         let replaced = Effect::DealDamage {
                             target: crate::core::target_ref_from_chosen_target(raw),
                             amount: *amount,
@@ -299,10 +300,40 @@ impl<'a> GameLoop<'a> {
                             count: card_x_paid,
                         }
                     }
+                    // X-damage at a chosen target (Disintegrate, Fireball, Blaze,
+                    // ...): NumDmg$ X parses to DealDamageXPaid with target None.
+                    // It must consume the next chosen target for display exactly
+                    // like the fixed-amount DealDamage { None } arm above —
+                    // otherwise the target stays None and log_effect_execution's
+                    // None branch invents a phantom "deals N damage to <opponent>"
+                    // line even though the real damage went to the creature
+                    // (display-only double-resolution, mtg-ioesm). Player-target
+                    // sentinels decode to TargetRef::Player here.
+                    Effect::DealDamageXPaid {
+                        target: TargetRef::None,
+                    } if target_index < targets.len() => {
+                        let raw = targets[target_index];
+                        last_resolved_target = Some(raw);
+                        target_index += 1;
+                        Effect::DealDamage {
+                            target: crate::core::target_ref_from_chosen_target(raw),
+                            amount: i32::from(card_x_paid),
+                        }
+                    }
                     Effect::DealDamageXPaid { target } => Effect::DealDamage {
                         target: target.clone(),
                         amount: i32::from(card_x_paid),
                     },
+                    // Disintegrate's exile-instead-of-dying marker binds to the
+                    // parent DealDamage's target (reuse_previous) for the log.
+                    Effect::ExileIfWouldDieThisTurn { target }
+                        if target.is_reuse_previous() || target.is_placeholder() =>
+                    {
+                        match last_resolved_target {
+                            Some(prev) => Effect::ExileIfWouldDieThisTurn { target: prev },
+                            None => effect.clone(),
+                        }
+                    }
                     _ => effect.clone(),
                 };
 

@@ -1603,6 +1603,18 @@ impl CardDefinition {
                 // the main ability is unsupported but SubAbility is supported
                 self.follow_sub_ability_chain(&params, &mut effects);
             }
+
+            // Disintegrate: `... | ReplaceDyingDefined$ ThisTargetedCard.Creature`
+            // means "if the targeted creature would die this turn, exile it
+            // instead" (CR 614). Append an ExileIfWouldDieThisTurn that binds to
+            // the just-resolved DealDamage target (reuse_previous). This is
+            // queried structurally from the tokenized params, never via substring
+            // matching on the script body.
+            if params.contains_key("ReplaceDyingDefined") {
+                effects.push(crate::core::Effect::ExileIfWouldDieThisTurn {
+                    target: crate::core::CardId::reuse_previous(),
+                });
+            }
             // Note: Unsupported API types are silently skipped (returns None)
             // This is intentional - we don't want to spam warnings for every unsupported ability
         }

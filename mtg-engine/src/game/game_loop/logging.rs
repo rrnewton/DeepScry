@@ -535,6 +535,20 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) exiles {target_name} ({target})");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ExileIfWouldDieThisTurn { target } => {
+                // Disintegrate: log the "if it would die this turn, exile it
+                // instead" marking only when bound to a real creature (the
+                // parent DealDamage may have hit a player, leaving a sentinel).
+                if let Some(card) = self.game.cards.try_get(*target) {
+                    if card.is_creature() {
+                        let message = format!(
+                            "{source_name} ({source_id}): {} ({target}) will be exiled if it would die this turn",
+                            card.name
+                        );
+                        self.game.logger.gamelog(&message);
+                    }
+                }
+            }
             Effect::SearchLibrary {
                 player,
                 card_type_filter,

@@ -1070,6 +1070,18 @@ pub enum Effect {
     /// Moves a card from the battlefield to the exile zone
     ExilePermanent { target: CardId },
 
+    /// Mark a creature so that, if it would die this turn, it is exiled
+    /// instead of going to the graveyard (CR 614 zone-change replacement,
+    /// duration "this turn"). Used by Disintegrate's
+    /// `ReplaceDyingDefined$ ThisTargetedCard.Creature` clause: "If the
+    /// creature would die this turn, exile it instead." The flag lives on
+    /// the creature and is cleared at end of turn; the death-destination
+    /// chokepoint (`death_destination_for_card`) honors it alongside the
+    /// finality-counter exile-instead rule. `target` is a placeholder /
+    /// reuse-previous sentinel until resolution binds it to the chosen
+    /// creature.
+    ExileIfWouldDieThisTurn { target: CardId },
+
     /// Self-exile from the stack (override default sorcery → graveyard).
     ///
     /// Corresponds to `A:SP$ ChangeZone | Origin$ Stack | Destination$ Exile`,
@@ -1794,6 +1806,10 @@ impl Effect {
             // replacement), routed through the controller — there is no
             // cast-time target on the Copy Artifact spell itself.
             | Effect::Clone { .. }
+            // ExileIfWouldDieThisTurn rides on the parent DealDamage's chosen
+            // target (Disintegrate's ReplaceDyingDefined clause); it never
+            // collects its own cast-time target.
+            | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)

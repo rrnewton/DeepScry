@@ -3812,6 +3812,74 @@ mod tests {
         assert_eq!(dmg.get("ValidTgts"), Some("Any"), "Lightning Bolt targets any target");
     }
 
+    /// Card compat: Disintegrate (mtg-ioesm; cardsfolder/d/disintegrate.txt)
+    ///
+    /// Script: ManaCost:X R / Types:Sorcery
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ X | SubAbility$ DBEffect
+    ///       | ReplaceDyingDefined$ ThisTargetedCard.Creature
+    ///   SVar:X:Count$xPaid
+    ///
+    /// Parser shape: {X}{R} Sorcery, X damage to any target (DealDamageXPaid),
+    /// PLUS an ExileIfWouldDieThisTurn rider synthesized from the
+    /// `ReplaceDyingDefined$` clause ("if it would die this turn, exile it
+    /// instead"). The rider must bind to the parent target via the
+    /// reuse-previous sentinel so it never collects its own cast-time target.
+    #[test]
+    fn test_card_compat_disintegrate() {
+        use crate::core::Effect;
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/d/disintegrate.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Disintegrate should load");
+        assert_eq!(def.name.as_str(), "Disintegrate");
+        assert_eq!(def.mana_cost.red, 1, "Cost should require {{R}}");
+        assert!(def.types.contains(&CardType::Sorcery), "must be a Sorcery");
+
+        // Primary SP$ DealDamage: X to any target, carrying the
+        // ReplaceDyingDefined clause (tokenized, never substring-matched).
+        let dmg = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage).then_some(p)
+            })
+            .expect("Disintegrate must have an SP$ DealDamage spell ability");
+        assert_eq!(dmg.get("NumDmg"), Some("X"), "Disintegrate deals X");
+        assert_eq!(dmg.get("ValidTgts"), Some("Any"), "Disintegrate targets any target");
+        assert_eq!(
+            dmg.get("ReplaceDyingDefined"),
+            Some("ThisTargetedCard.Creature"),
+            "Disintegrate must carry the exile-instead-of-dying clause"
+        );
+
+        // The synthesized effect list must contain BOTH the X-damage
+        // (DealDamageXPaid, target None) and the ExileIfWouldDieThisTurn rider
+        // bound to the reuse-previous sentinel. Instantiate to materialize the
+        // parsed `effects` vec on the Card.
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+        let effects = &card.effects;
+        assert!(
+            effects.iter().any(
+                |e| matches!(e, Effect::DealDamageXPaid { target } if matches!(target, crate::core::TargetRef::None))
+            ),
+            "Disintegrate must produce a DealDamageXPaid (X to chosen target). Got: {:?}",
+            effects
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ExileIfWouldDieThisTurn { target } if target.is_reuse_previous())),
+            "Disintegrate must produce an ExileIfWouldDieThisTurn rider bound to the parent target. Got: {:?}",
+            effects
+        );
+    }
+
     /// Card compat: Psionic Blast (cardsfolder/p/psionic_blast.txt)
     ///
     /// Script: ManaCost:2 U / Types:Instant

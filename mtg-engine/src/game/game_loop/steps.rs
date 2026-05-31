@@ -653,6 +653,9 @@ impl<'a> GameLoop<'a> {
                     card.regeneration_shields = 0;
                 }
                 card.damage_prevention = 0;
+                // Disintegrate-style "exile instead of dying" lasts only this
+                // turn (CR 614, duration "this turn"); clear at cleanup.
+                card.exile_if_would_die_this_turn = false;
                 card.damaged_by_this_turn.clear();
             }
         }

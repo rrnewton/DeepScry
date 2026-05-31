@@ -1,0 +1,24 @@
+[metadata]
+Name:Disintegrate Exiles Lethal Creature
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Disintegrate for X=3 at Grizzly Bears (2/2). The 3 damage is lethal; per the ReplaceDyingDefined clause the creature is exiled instead of going to the graveyard, and NO phantom damage is dealt to the opponent player (regression for the DealDamageXPaid display double-resolution, mtg-ioesm).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Disintegrate
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Grizzly Bears
+p1exile=

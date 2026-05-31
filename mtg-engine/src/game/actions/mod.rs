@@ -58,6 +58,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::ChangeZoneAll { .. }
         | Effect::RemoveCounter { .. }
         | Effect::ExilePermanent { .. }
+        | Effect::ExileIfWouldDieThisTurn { .. }
         | Effect::SearchLibrary { .. }
         | Effect::AttachEquipment { .. }
         | Effect::CreateToken { .. }
@@ -174,6 +175,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::ChangeZoneAll { .. }
             | Effect::RemoveCounter { .. }
             | Effect::ExilePermanent { .. }
+            | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::SearchLibrary { .. }
             | Effect::AttachEquipment { .. }
             | Effect::CreateToken { .. }
@@ -2460,6 +2462,23 @@ impl GameState {
                     effect.clone()
                 }
             }
+            // Disintegrate's ReplaceDyingDefined clause rides on the parent
+            // DealDamage's target. The parent set last_resolved_target when it
+            // resolved; bind to it here (reuse_previous sentinel). If the parent
+            // targeted a player, last_resolved_target is a player sentinel —
+            // execute_effect's is_creature() guard makes this a safe no-op.
+            Effect::ExileIfWouldDieThisTurn { target } if target.is_reuse_previous() || target.is_placeholder() => {
+                if let Some(prev) = *last_resolved_target {
+                    Effect::ExileIfWouldDieThisTurn { target: prev }
+                } else if *target_index < chosen_targets.len() {
+                    let resolved_target = chosen_targets[*target_index];
+                    Effect::ExileIfWouldDieThisTurn {
+                        target: resolved_target,
+                    }
+                } else {
+                    effect.clone()
+                }
+            }
             // Player ID resolution for player-targeting effects
             Effect::DrawCards { player, count } if player.is_placeholder() => Effect::DrawCards {
                 player: card_owner,
@@ -4012,6 +4031,21 @@ impl GameState {
                 // Exile the permanent by moving it from battlefield to exile
                 let owner = self.cards.get(*target)?.owner;
                 self.move_card(*target, Zone::Battlefield, Zone::Exile, owner)?;
+            }
+            Effect::ExileIfWouldDieThisTurn { target } => {
+                // Disintegrate's ReplaceDyingDefined clause: mark the targeted
+                // creature so that, if it would die this turn, it is exiled
+                // instead (CR 614). The flag is consulted by
+                // death_destination_for_card and cleared at cleanup. Skip if the
+                // target failed to resolve to a concrete creature.
+                if target.is_placeholder() || target.is_reuse_previous() {
+                    return Ok(());
+                }
+                if let Ok(card) = self.cards.get_mut(*target) {
+                    if card.is_creature() {
+                        card.exile_if_would_die_this_turn = true;
+                    }
+                }
             }
             Effect::SelfExileFromStack {
                 source,

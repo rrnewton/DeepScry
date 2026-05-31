@@ -1844,7 +1844,10 @@ impl GameState {
     /// (MTG CR 122.1c: "If a permanent with a finality counter on it would die, exile it instead.")
     pub fn death_destination_for_card(&self, card_id: CardId) -> Zone {
         if let Ok(card) = self.cards.get(card_id) {
-            if card.get_counter(crate::core::CounterType::Finality) > 0 {
+            // CR 122.1c: finality counter exiles instead of dying.
+            // CR 614: Disintegrate-style "if it would die this turn, exile it
+            // instead" zone-change replacement (exile_if_would_die_this_turn).
+            if card.get_counter(crate::core::CounterType::Finality) > 0 || card.exile_if_would_die_this_turn {
                 return Zone::Exile;
             }
         }
@@ -1922,10 +1925,8 @@ impl GameState {
             self.move_card(card_id, Zone::Battlefield, dest, owner)?;
             if let Some(name) = card_name {
                 if dest == Zone::Exile {
-                    self.logger.gamelog(&format!(
-                        "{} ({}) exiled from lethal damage (finality counter)",
-                        name, card_id
-                    ));
+                    self.logger
+                        .gamelog(&format!("{} ({}) exiled instead of dying", name, card_id));
                 } else {
                     self.logger
                         .gamelog(&format!("{} ({}) dies from lethal damage", name, card_id));
@@ -3561,6 +3562,7 @@ impl GameState {
                     | crate::core::Effect::ChangeZoneAll { .. }
                     | crate::core::Effect::RemoveCounter { .. }
                     | crate::core::Effect::ExilePermanent { .. }
+                    | crate::core::Effect::ExileIfWouldDieThisTurn { .. }
                     | crate::core::Effect::SearchLibrary { .. }
                     | crate::core::Effect::AttachEquipment { .. }
                     | crate::core::Effect::CreateToken { .. }

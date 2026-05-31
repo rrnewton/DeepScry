@@ -118,7 +118,11 @@ workflow, row format, and update rules.
     ("moves all cards from Hand+Graveyard to Library").
 | SP$ ChangeZoneAll ChangeType$ Artifact Origin$ Battlefield Destination$ Hand (mass owner-filtered bounce) | WORKING | 2026-05-30_#2533(b052ce01) | (none) | Hurkyl's Recall |
 | AB$ ManaReflected (reflected/filter mana, ReflectProperty$ Produce) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-ontwf | Fellwar Stone |
-| SP$ DealDamage + SubAbility$ Effect chain + ReplaceDyingDefined$ (exile instead) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-ioesm | Disintegrate |
+| SP$ DealDamage + SubAbility$ Effect chain + ReplaceDyingDefined$ (exile instead) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
+| SP$ DealDamage NumDmg$ X (DealDamageXPaid) at a creature — display target binding | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate, Blaze |
+| ReplaceDyingDefined$ ThisTargetedCard.Creature (exile if would die this turn) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
+| SP$ DealDamage DivideEvenly$ RoundedDown + TargetMax$ <SVar> (multi-target X-burn) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
+| S:Mode$ RaiseCost Relative$ True Amount$ <TargetedObjects-derived> (per-target cost) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
 | T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-3hwz3 | City in a Bottle |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 | AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |

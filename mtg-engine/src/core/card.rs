@@ -818,6 +818,14 @@ pub struct Card {
     #[serde(default)]
     pub x_paid: u8,
 
+    /// If set, a zone-change replacement applies: should this creature die this
+    /// turn, it is exiled instead of going to the graveyard (CR 614). Set by
+    /// `Effect::ExileIfWouldDieThisTurn` (Disintegrate's
+    /// `ReplaceDyingDefined$ ThisTargetedCard.Creature` clause) and cleared at
+    /// the cleanup step. Honored by `GameState::death_destination_for_card`.
+    #[serde(default)]
+    pub exile_if_would_die_this_turn: bool,
+
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
@@ -887,6 +895,7 @@ impl Card {
             regeneration_shields: 0,
             damage_prevention: 0,
             x_paid: 0,
+            exile_if_would_die_this_turn: false,
             exhausted_abilities: SmallVec::new(),
             definition,
         }

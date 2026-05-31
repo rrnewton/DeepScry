@@ -579,6 +579,7 @@ impl GameState {
                             | Effect::Fight { .. }
                             | Effect::SelfExileFromStack { .. }
                             | Effect::MoveSelfBetweenZones { .. }
+                            | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. } => {
                                 // Non-Destroy/Copy modes in modal spells
                                 // TODO(mtg-30): Add handlers for targeting modes that need them
@@ -666,6 +667,9 @@ impl GameState {
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
                 | Effect::ExilePermanent { .. }
+                // ExileIfWouldDieThisTurn rides on the parent DealDamage's
+                // target (no independent targeting); nothing to enumerate here.
+                | Effect::ExileIfWouldDieThisTurn { .. }
                 | Effect::Airbend { .. }
                 | Effect::GrantCantBeBlocked { .. }
                 | Effect::Regenerate { .. }
@@ -1227,6 +1231,7 @@ impl GameState {
                 | Effect::TapOrUntapPermanent { .. }
                 | Effect::CounterSpell { .. }
                 | Effect::ExilePermanent { .. }
+                | Effect::ExileIfWouldDieThisTurn { .. }
                 | Effect::Airbend { .. }
                 | Effect::GrantCantBeBlocked { .. }
                 | Effect::Regenerate { .. }
@@ -1524,6 +1529,9 @@ impl GameState {
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ConditionalSelfCounter { .. }
+            // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so
+            // it never needs its own target check.
+            | Effect::ExileIfWouldDieThisTurn { .. }
             | Effect::Fight { .. } => true, // Filter-based / no-target effects
 
             // ===== EXHAUSTIVE EFFECT HANDLING =====
