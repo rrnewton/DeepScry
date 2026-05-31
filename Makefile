@@ -293,6 +293,16 @@ validate-wasm-e2e-step: validate-wasm-step
 	@echo "    parsed to zero effects) was fixed; old_school2 now passes 36/36."
 	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
 		--seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
+	@echo "=== Native-vs-WASM equivalence: MULTI-TARGET Fireball (STRICT, mtg-tyvcn) ==="
+	@echo "    The default --max-turns 8 leg above does not run long enough to reach a"
+	@echo "    Fireball cast that hits 2+ targets (DivideEvenly). This dedicated leg pins"
+	@echo "    seed=15 on decks/old_school2/fireball_multitarget.dck with a turn cap past"
+	@echo "    the multi-target cast at Turn11: random-vs-random play casts Fireball at"
+	@echo "    TWO distinct Ironclaw Orcs, X=2 divided evenly => '1 damage' to each. This"
+	@echo "    proves the variable-target-count + DivideEvenly + per-target-cost path"
+	@echo "    (mtg-tyvcn) replays BYTE-IDENTICALLY on native and WASM. 0 diverged."
+	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
+		--seeds 1 --seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games

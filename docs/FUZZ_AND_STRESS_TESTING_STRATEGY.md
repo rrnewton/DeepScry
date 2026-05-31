@@ -56,7 +56,11 @@ tests/                             # validate legs (deterministic, short)
 └── snapshot_resume_e2e.sh              # fixed seed 42 + fixed stop points
 # native-vs-WASM validate leg is invoked inline in the Makefile
 #   (validate-wasm-e2e-step) calling bug_finding/native_wasm_equiv_sweep.sh
-#   with --seeds 1 --decks 1 --expect-divergence (tripwire for mtg-ofl2i).
+#   STRICT twice: (1) --seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
+#   (broad old-school coverage), and (2) --seed-base 15 --max-turns 25 on
+#   decks/old_school2/fireball_multitarget.dck (pins the MULTI-TARGET Fireball
+#   DivideEvenly cast at Turn11 — 2 distinct targets — as a strict native==WASM
+#   regression guard for mtg-tyvcn). Both assert 0 diverged.
 
 mtg-engine/tests/proptest_invariants.rs  # fixed-seed proptest (validate)
 ```
@@ -67,7 +71,7 @@ mtg-engine/tests/proptest_invariants.rs  # fixed-seed proptest (validate)
 |---------|-------------------|------|----------|------------|
 | `proptest_invariants.rs` | core game invariants under proptest | regression (validate) | `mtg-engine/tests/` | `cargo test` path; proptest pinned to a FIXED seed/cases budget |
 | `fuzz_determinism_netequiv_e2e.sh` | native **determinism** (same-seed→identical gamelog, local-only) | regression (validate) | `tests/` | `bash tests/fuzz_determinism_netequiv_e2e.sh` (fixed seeds 1..4, bounded) |
-| `native_wasm_equiv_sweep` (validate leg) | native==WASM (known-divergence tripwire, **mtg-ofl2i**) | regression (validate) | Makefile → `bug_finding/native_wasm_equiv_sweep.sh` | `--seeds 1 --decks 1 --max-turns 8 --expect-divergence` |
+| `native_wasm_equiv_sweep` (validate leg) | native==WASM (STRICT, byte-identical); incl. **multi-target Fireball DivideEvenly** guard (mtg-tyvcn) | regression (validate) | Makefile → `bug_finding/native_wasm_equiv_sweep.sh` | `--seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8` + `--seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25` |
 | `network_vs_local_equivalence_e2e.sh` | local==network gamelog identity | regression (validate) | `tests/` | `bash tests/network_vs_local_equivalence_e2e.sh 3 random` |
 | `snapshot_resume_e2e.sh` | snapshot resume == uninterrupted run | regression (validate) | `tests/` | `bash tests/snapshot_resume_e2e.sh` (seed 42, stops 3/8/25) |
 | `fuzz_determinism_netequiv.sh` | native determinism + local==network | **expedition** | `bug_finding/` | `bash bug_finding/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all` |

@@ -1,0 +1,16 @@
+[metadata]
+Name=Fireball Multitarget
+Description=Red burn deck curated so random-vs-random play casts Fireball at 2+ targets (DivideEvenly). Used by the native-vs-WASM equivalence sweep to prove the multi-target Fireball cast is byte-identical across compile targets (mtg-tyvcn evidence). Mirror match with creatures gives Fireball multiple permanent targets; the seeded RandomController picks 2+ targets and divides X evenly.
+
+[Main]
+16 Mountain
+4 Lightning Bolt
+4 Chain Lightning
+4 Incinerate
+4 Fireball
+4 Ironclaw Orcs
+4 Shivan Dragon
+4 Earthquake
+4 Sol Ring
+4 Mox Ruby
+4 Strip Mine
