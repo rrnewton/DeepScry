@@ -3958,6 +3958,79 @@ mod tests {
         );
     }
 
+    /// Card compat: Chain Lightning (cardsfolder/c/chain_lightning.txt) — mtg-489
+    ///
+    /// Script: ManaCost:R / Types:Sorcery
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ 3 | SubAbility$ DBCopy1
+    ///   SVar:DBCopy1:DB$ CopySpellAbility | Defined$ Parent
+    ///     | Controller$ TargetedOrController | UnlessPayer$ TargetedOrController
+    ///     | UnlessCost$ R R | MayChooseTarget$ True
+    ///
+    /// Parser shape: {R} Sorcery whose PRIMARY mode is a fixed 3-damage
+    /// `SP$ DealDamage | ValidTgts$ Any` (lowered to Effect::DealDamage), with a
+    /// chained `DB$ CopySpellAbility | Defined$ Parent` SubAbility (lowered to
+    /// Effect::CopySpellAbility { defined_source: CopySpellSource::Parent }).
+    /// The Parent-source copy is the unimplemented optional "pay {R}{R} to copy"
+    /// chain (engine gap mtg-152); the primary 3-damage burn is fully WORKING.
+    /// All queries are tokenized AbilityParams lookups, never substring matching.
+    #[test]
+    fn test_card_compat_chain_lightning() {
+        use crate::core::effects::CopySpellSource;
+        use crate::core::Effect;
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/chain_lightning.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Chain Lightning should load");
+        assert_eq!(def.name.as_str(), "Chain Lightning");
+        assert_eq!(def.mana_cost.red, 1, "Chain Lightning cost should require {{R}}");
+        assert!(
+            def.types.contains(&CardType::Sorcery),
+            "Chain Lightning must be a Sorcery"
+        );
+
+        // PRIMARY: SP$ DealDamage dealing a FIXED 3 to any target.
+        let dmg = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage).then_some(p)
+            })
+            .expect("Chain Lightning must have an SP$ DealDamage spell ability");
+        assert_eq!(dmg.get("NumDmg"), Some("3"), "Chain Lightning deals 3");
+        assert_eq!(dmg.get("ValidTgts"), Some("Any"), "Chain Lightning targets any target");
+
+        // Instantiate to materialize the parsed effects.
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+        // Primary 3-damage effect (the WORKING mode).
+        assert!(
+            card.effects
+                .iter()
+                .any(|e| matches!(e, Effect::DealDamage { amount: 3, .. })),
+            "Chain Lightning must produce a fixed 3-damage DealDamage. Got: {:?}",
+            card.effects
+        );
+        // The optional copy chain lowers to a Parent-source CopySpellAbility.
+        // (Copy itself is the documented engine gap mtg-152; the misleading
+        // "copies spell" gamelog is suppressed for the Parent path in logging.rs.)
+        assert!(
+            card.effects.iter().any(|e| matches!(
+                e,
+                Effect::CopySpellAbility {
+                    defined_source: CopySpellSource::Parent,
+                    ..
+                }
+            )),
+            "Chain Lightning must chain a CopySpellAbility {{ defined_source: Parent }}. Got: {:?}",
+            card.effects
+        );
+    }
+
     #[test]
     fn test_card_compat_disintegrate() {
         use crate::core::Effect;

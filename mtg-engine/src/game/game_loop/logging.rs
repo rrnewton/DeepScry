@@ -177,8 +177,12 @@ impl<'a> GameLoop<'a> {
             Effect::DealDamage { target, amount } => match target {
                 TargetRef::Player(target_player_id) => {
                     let target_name = self.get_player_name(*target_player_id);
-                    let current_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
-                    let life_after = current_life - *amount;
+                    // This logging hook runs AFTER resolve_spell has already applied
+                    // the damage, so the player's stored life is the post-damage
+                    // total. Do NOT subtract `amount` again (that double-counted,
+                    // e.g. Lightning Bolt / Chain Lightning at a 20-life player
+                    // logged "(life: 14)" instead of 17).
+                    let life_after = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
                     let message = format!(
                         "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                     );
@@ -197,11 +201,13 @@ impl<'a> GameLoop<'a> {
                     self.game.logger.gamelog(&message);
                 }
                 TargetRef::None => {
-                    // Target will be filled in by resolve_spell - log against opponent
+                    // Target will be filled in by resolve_spell - log against opponent.
+                    // Post-resolution: the opponent's stored life is already the
+                    // post-damage total (see the Player arm above), so do not
+                    // subtract `amount` again.
                     if let Some(opponent_id) = self.game.players.iter().map(|p| p.id).find(|id| *id != _source_owner) {
                         let target_name = self.get_player_name(opponent_id);
-                        let current_life = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
-                        let life_after = current_life - *amount;
+                        let life_after = self.game.get_player(opponent_id).map(|p| p.life).unwrap_or(0);
                         let message = format!(
                             "{source_name} ({source_id}) deals {amount} damage to {target_name} (life: {life_after})"
                         );
@@ -222,8 +228,9 @@ impl<'a> GameLoop<'a> {
                     match target {
                         TargetRef::Player(target_player_id) => {
                             let target_name = self.get_player_name(*target_player_id);
-                            let current_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
-                            let life_after = current_life - *amount_each;
+                            // Post-resolution: stored life already reflects this
+                            // player's divided share (do not subtract again).
+                            let life_after = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
                             let message = format!(
                                 "{source_name} ({source_id}) deals {amount_each} damage to {target_name} (life: {life_after})"
                             );
@@ -919,16 +926,30 @@ impl<'a> GameLoop<'a> {
                 );
                 self.game.logger.gamelog(&message);
             }
-            Effect::CopySpellAbility { may_choose_targets, .. } => {
-                let message = format!(
-                    "{source_name} ({source_id}) copies spell{}",
-                    if *may_choose_targets {
-                        " (may choose new targets)"
-                    } else {
-                        ""
-                    }
-                );
-                self.game.logger.gamelog(&message);
+            Effect::CopySpellAbility {
+                may_choose_targets,
+                defined_source,
+                ..
+            } => {
+                // Only log a copy for the implemented TriggeredSpellAbility path
+                // (e.g. Jeong Jeong via a delayed SpellCast trigger). The
+                // SubAbility `Defined$ Parent` path (e.g. Chain Lightning) is not
+                // yet implemented (mtg-152) and creates no copy, so claiming a
+                // copy here would be a misleading sentinel gamelog
+                // (compatibility_tracking SKILL §2.2). Suppress it until the copy
+                // actually lands on the stack.
+                use crate::core::effects::CopySpellSource;
+                if matches!(defined_source, CopySpellSource::TriggeredSpellAbility) {
+                    let message = format!(
+                        "{source_name} ({source_id}) copies spell{}",
+                        if *may_choose_targets {
+                            " (may choose new targets)"
+                        } else {
+                            ""
+                        }
+                    );
+                    self.game.logger.gamelog(&message);
+                }
             }
             Effect::ImmediateTrigger { condition, .. } => {
                 let message = format!(

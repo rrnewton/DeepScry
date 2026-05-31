@@ -4804,6 +4804,80 @@ async fn test_fireball_divides_x_among_two_targets() -> Result<()> {
     Ok(())
 }
 
+/// Chain Lightning ({R} Sorcery, mtg-489): PRIMARY mode "deals 3 damage to any
+/// target" (CR 601.2c). P0 casts it at Player 2 (20 -> 17). The optional "then
+/// that player may pay {R}{R} to copy this spell" chain (DB$ CopySpellAbility |
+/// Defined$ Parent) is the documented engine gap mtg-152 and creates no copy.
+///
+/// This test guards two things:
+///   1. The primary 3-damage burn resolves and the life total is correct
+///      (regression for the post-resolution double-subtract that logged
+///      "(life: 14)" instead of 17).
+///   2. NO misleading "copies spell" gamelog line is emitted for the
+///      unimplemented Parent-source copy (compatibility_tracking SKILL §2.2).
+#[tokio::test]
+async fn test_chain_lightning_deals_three_to_player() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/chain_lightning_three_damage.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    game.logger.enable_capture();
+
+    // Script: cast Chain Lightning (1), choose target index 0 (Player 2 — no
+    // creatures on the battlefield, so the only "any target" choices are the
+    // two players; the opponent is offered first for the AI/fixed path).
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 0]);
+    let mut controller1 = ZeroController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    println!("\n=== Chain Lightning Test logs ===");
+    for log in logs.iter() {
+        if log.message.contains("Chain Lightning") || log.message.contains("damage") || log.message.contains("copies") {
+            println!("{}", log.message);
+        }
+    }
+    println!("=== end logs ===\n");
+
+    assert!(
+        logs.iter().any(|e| e.message.contains("casts Chain Lightning")),
+        "Chain Lightning should have been cast"
+    );
+    // Primary mode: exactly 3 damage to Player 2, with the CORRECT post-damage
+    // life total (17, not the old double-subtracted 14).
+    assert!(
+        logs.iter()
+            .any(|e| e.message.contains("deals 3 damage to Player 2 (life: 17)")),
+        "Chain Lightning must deal 3 to Player 2 leaving life 17 (20-3). Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    // The optional copy chain is unimplemented (mtg-152); NO copy line may leak.
+    assert!(
+        !logs.iter().any(|e| e.message.contains("copies spell")),
+        "Chain Lightning must NOT log a misleading 'copies spell' line for the \
+         unimplemented Defined$ Parent copy (mtg-152). Logs: {:?}",
+        logs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    // Player 2 ends at 17 life.
+    let p1_life = game_loop.game.get_player(p1_id)?.life;
+    assert_eq!(p1_life, 17, "Player 2 must be at 17 life after 3 damage");
+
+    Ok(())
+}
+
 /// Black Vise (mtg-cuf0e): at the beginning of the CHOSEN player's upkeep,
 /// deals max(0, hand-4) damage to that player; nothing on the non-chosen
 /// player's upkeep.

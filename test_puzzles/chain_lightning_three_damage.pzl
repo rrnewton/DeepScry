@@ -1,0 +1,24 @@
+[metadata]
+Name:Chain Lightning deals 3 to any target
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:P0 casts Chain Lightning ({R}) at Player 2. Chain Lightning "deals 3 damage to any target" (CR 601.2c). With a single Mountain the spell is castable and Player 2 goes from 20 to 17. The optional "then that player may pay {R}{R} to copy this spell" chain (DB$ CopySpellAbility | Defined$ Parent) is the documented engine gap mtg-152 and creates no copy; this puzzle asserts the PRIMARY 3-damage mode resolves and that NO misleading "copies spell" gamelog line is emitted for the unimplemented Parent-source copy.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Chain Lightning
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

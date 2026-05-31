@@ -128,6 +128,8 @@ workflow, row format, and update rules.
 | ReplaceDyingDefined$ ThisTargetedCard.Creature (exile if would die this turn) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
 | SP$ DealDamage DivideEvenly$ RoundedDown + TargetMin/TargetMax (variable-count multi-target X-burn) | WORKING | 2026-05-31_#2542(348be74e) | (fixed mtg-tyvcn) | Fireball |
 | S:Mode$ RaiseCost Relative$ True (per-target {1} surcharge, cost computed after target selection) | WORKING | 2026-05-31_#2542(348be74e) | (fixed mtg-tyvcn) | Fireball |
+| SP$ DealDamage ValidTgts$ Any NumDmg$ N at a PLAYER — gamelog `(life: X)` post-damage total (no double-subtract) | WORKING | 2026-05-31_#2549(221c7867) | (fixed mtg-489 display) | Lightning Bolt, Chain Lightning, Psionic Blast |
+| SP$ DealDamage + SubAbility$ DB$ CopySpellAbility \| Defined$ Parent \| UnlessCost$ R R (primary burn WORKS; optional pay-to-copy chain UNIMPLEMENTED, misleading "copies spell" gamelog now suppressed) | PARTIAL | 2026-05-31_#2549(221c7867) | mtg-152 | Chain Lightning |
 | T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
 | Valid filter `set<CODE>` set-origin qualifier (e.g. `setARN`) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
 | Valid filter `Other` self-exclusion qualifier (matches_excluding) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
