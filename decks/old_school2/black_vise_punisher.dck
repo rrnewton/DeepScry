@@ -1,0 +1,12 @@
+[metadata]
+Name=Black Vise Punisher
+Description=Mono-artifact deck stuffed with Black Vise so random-vs-random play casts it early. On cast, Black Vise's ETB ChoosePlayer replacement picks the opponent (deterministic public-state pick: most cards in hand, then lowest PlayerId); at the beginning of the CHOSEN player's upkeep it deals max(0, handsize - 4) damage to that player (mtg-cuf0e). Used by the native-vs-WASM equivalence sweep to prove the ETB choose-player + the Count$ValidHand-4 upkeep damage replay BYTE-IDENTICALLY across compile targets. Mountains supply the {1} for the {1} Black Vise; Sol Ring / Mox Ruby accelerate. Mirror match guarantees both players cast Black Vise and choose each other.
+
+[Main]
+12 Mountain
+8 Black Vise
+4 Sol Ring
+4 Mox Ruby
+4 Ornithopter
+4 Lightning Bolt
+4 Shivan Dragon

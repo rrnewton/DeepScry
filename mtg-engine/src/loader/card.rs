@@ -124,6 +124,12 @@ impl CardLoader {
         let mut enters_tapped = false;
         let mut etb_choose_color = false;
         let mut etb_exclude_colors = Vec::new();
+        // SVar name referenced by a `K:ETBReplacement:Other:<SVar>` line whose
+        // body is a `DB$ ChoosePlayer` (Black Vise's `ChooseP`). Resolved to the
+        // `etb_choose_player` flag AFTER all SVars are parsed (so we can confirm
+        // the referenced SVar's api_type structurally rather than string-matching
+        // the K-line text).
+        let mut etb_choose_player_svar: Option<String> = None;
         let mut is_legendary = false;
         let mut loyalty: Option<u8> = None;
 
@@ -189,6 +195,21 @@ impl CardLoader {
                         // Format: K:ETBReplacement:Other:ChooseColor
                         if value.contains("ETBReplacement") && value.contains("ChooseColor") {
                             etb_choose_color = true;
+                        }
+                        // ETB replacement that references an SVar (e.g. Black Vise's
+                        // `K:ETBReplacement:Other:ChooseP`). The third `:`-token is
+                        // the SVar name to execute as the replacement. Record it and
+                        // confirm it is a `DB$ ChoosePlayer` once SVars are parsed —
+                        // we do NOT string-match "ChoosePlayer" against the K-line.
+                        if let Some(rest) = value.strip_prefix("ETBReplacement:") {
+                            // rest = "Other:ChooseP" → take the LAST `:`-segment as
+                            // the SVar name (the middle is the replacement layer).
+                            if let Some(svar_name) = rest.rsplit(':').next() {
+                                let svar_name = svar_name.trim();
+                                if !svar_name.is_empty() && svar_name != "ChooseColor" {
+                                    etb_choose_player_svar = Some(svar_name.to_string());
+                                }
+                            }
                         }
                     }
                     // Ability lines (A:, S:, T:, R: lines)
@@ -281,6 +302,14 @@ impl CardLoader {
             }
         }
 
+        // Resolve the ETB ChoosePlayer replacement: the K-line referenced an
+        // SVar (e.g. ChooseP); confirm its parsed api_type is ChoosePlayer
+        // before flagging (structured check, not a string match on the K-line).
+        let etb_choose_player = etb_choose_player_svar
+            .as_deref()
+            .and_then(|svar_name| parsed_svars.get(svar_name))
+            .is_some_and(|p| p.api_type == super::ability_parser::ApiType::ChoosePlayer);
+
         // Build cache BEFORE constructing struct (avoids borrow-after-move)
         let cache = CardCache::new(&oracle, name.as_str());
 
@@ -300,6 +329,7 @@ impl CardLoader {
             enters_tapped,
             etb_choose_color,
             etb_exclude_colors,
+            etb_choose_player,
             script_name: None, // Set by token loader
             is_legendary,
             loyalty,
@@ -376,6 +406,12 @@ pub struct CardDefinition {
     pub etb_choose_color: bool,
     /// Colors to exclude from the choice (from SVar:ChooseColor Exclude$ parameter)
     pub etb_exclude_colors: Vec<Color>,
+    /// Does this card require choosing a player when it enters the battlefield?
+    /// Derived from `K:ETBReplacement:Other:<SVar>` where the SVar is a
+    /// `DB$ ChoosePlayer` (Black Vise). Serialized so the WASM per-set `.bin`
+    /// carries it and the choice fires identically on both engines.
+    #[serde(default)]
+    pub etb_choose_player: bool,
     /// Script name (for tokens only). Used to look up token definitions.
     /// For tokens loaded from tokenscripts/, this is the filename without extension
     /// (e.g., "c_a_food_sac" for tokenscripts/c_a_food_sac.txt).
@@ -429,6 +465,7 @@ impl Default for CardDefinition {
             enters_tapped: false,
             etb_choose_color: false,
             etb_exclude_colors: Vec::new(),
+            etb_choose_player: false,
             script_name: None,
             is_legendary: false,
             loyalty: None,
@@ -524,6 +561,7 @@ impl CardDefinition {
         card.definition.cache.enters_tapped = self.enters_tapped;
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
+        card.definition.cache.etb_choose_player = self.etb_choose_player;
         // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
         card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
 
@@ -2262,6 +2300,9 @@ impl CardDefinition {
                     // "You" means only triggers on the controller's upkeep
                     let valid_player = params.get("ValidPlayer").map(|s| s.as_str());
                     let is_controller_only = valid_player == Some("You");
+                    // ValidPlayer$ Player.Chosen (Black Vise): fires only on the
+                    // turn of the player chosen by the ETB ChoosePlayer replacement.
+                    let is_chosen_player_only = valid_player == Some("Player.Chosen");
 
                     // Check if we have Execute$ parameter (references a SVar with effects)
                     // Use pre-parsed SVars for O(1) lookup
@@ -2479,6 +2520,9 @@ impl CardDefinition {
                     let mut trigger = Trigger::new(event, effects, desc_with_flag);
                     if is_controller_only {
                         trigger.controller_turn_only = true;
+                    }
+                    if is_chosen_player_only {
+                        trigger.chosen_player_turn_only = true;
                     }
                     trigger.trigger_zones = trigger_zones;
                     trigger.present_self_condition = present_self_condition;

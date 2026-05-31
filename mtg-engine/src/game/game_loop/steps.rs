@@ -202,6 +202,13 @@ impl<'a> GameLoop<'a> {
                 if t.controller_turn_only && card.controller != active_player {
                     return false;
                 }
+                // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
+                // chosen player's turn. If no player has been chosen yet (card
+                // not yet ETB'd through the ChoosePlayer replacement), it cannot
+                // fire.
+                if t.chosen_player_turn_only && card.chosen_player != Some(active_player) {
+                    return false;
+                }
                 // Intervening-if condition (CR 603.4): the source must satisfy the
                 // counter condition right now (All Hallow's Eve: >= 1 scream).
                 if let Some(cond) = &t.present_self_condition {

@@ -4703,3 +4703,76 @@ async fn test_fireball_divides_x_among_two_targets() -> Result<()> {
 
     Ok(())
 }
+
+/// Black Vise (mtg-cuf0e): at the beginning of the CHOSEN player's upkeep,
+/// deals max(0, hand-4) damage to that player; nothing on the non-chosen
+/// player's upkeep.
+///
+/// Puzzle: P1 (Player 2) controls Black Vise (chosen opponent = P0, set by the
+/// loader's ETB ChoosePlayer pass); P0 holds 6 cards -> 6-4 = 2 damage on each
+/// of P0's upkeeps. Starts in P1's MAIN1 (turn 1), so P0's upkeep (turn 2) is
+/// the first trigger. Running through turn 4 gives P0 two upkeeps (turns 2, 4)
+/// => 4 total damage to P0 (20 -> 16); P1 takes none (its upkeeps are not the
+/// chosen player's). Proves the ValidPlayer$ Player.Chosen gate + the
+/// Count$ValidHand-4 damage.
+#[tokio::test]
+async fn test_black_vise_chosen_upkeep_damage() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/black_vise_chosen_upkeep_damage.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // chosen opponent (holds 6 cards)
+    let p1_id = players[1]; // controls Black Vise
+
+    // The ETB ChoosePlayer pass must have recorded P0 as Black Vise's chosen
+    // player (the single opponent of its controller P1).
+    let vise = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game.cards.try_get(id))
+        .find(|c| c.name.as_str() == "Black Vise")
+        .expect("Black Vise on battlefield");
+    assert_eq!(
+        vise.chosen_player,
+        Some(p0_id),
+        "Black Vise must choose the single opponent (P0) at ETB"
+    );
+
+    let p0_before = game.get_player(p0_id)?.life;
+    let p1_before = game.get_player(p1_id)?.life;
+    assert_eq!(p0_before, 20);
+    assert_eq!(p1_before, 20);
+
+    let mut c0 = ZeroController::new(p0_id);
+    let mut c1 = ZeroController::new(p1_id);
+    // Advance turns from the puzzle's current state (run_turns does NOT call
+    // setup_game, so the mid-game puzzle state is preserved). The puzzle starts
+    // in P1's MAIN1 (turn 1); advancing 4 turns reaches P0's upkeeps on turns 2
+    // and 4 (P0 = the chosen player).
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    let _ = game_loop.run_turns(&mut c0, &mut c1, 4);
+
+    let p0_after = game_loop.game.get_player(p0_id)?.life;
+    let p1_after = game_loop.game.get_player(p1_id)?.life;
+
+    // P0 (chosen) took 2 damage per upkeep on turns 2 and 4 = 4 total.
+    assert_eq!(
+        p0_after, 16,
+        "chosen player P0 (hand 6 -> 2 dmg/upkeep) should take 4 over two upkeeps (20 -> 16)"
+    );
+    // P1 (controller, not chosen) takes nothing from Black Vise.
+    assert_eq!(
+        p1_after, p1_before,
+        "non-chosen player P1 must take no Black Vise damage (ValidPlayer$ Player.Chosen gate)"
+    );
+
+    Ok(())
+}

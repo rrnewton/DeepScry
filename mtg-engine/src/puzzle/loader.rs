@@ -196,6 +196,33 @@ pub async fn load_puzzle_into_game(puzzle: &PuzzleFile, card_db: &AsyncCardDatab
     // Second pass: apply modifiers that depend on card IDs or need card refs
     apply_card_modifiers(&mut game, state_def, &id_map)?;
 
+    // Resolve ETB "choose a player" for battlefield permanents (Black Vise).
+    // Puzzle battlefield cards are placed directly (they never "enter" through
+    // set_card_zone, which is where the ChoosePlayer replacement normally
+    // fires), so a puzzle-placed Black Vise would have no chosen player and its
+    // upkeep trigger could never fire. Resolve it here, AFTER all zones are
+    // loaded, using the same deterministic public-state pick the live ETB path
+    // uses (most cards in hand, tie-break low PlayerId). Pre-compute to avoid a
+    // simultaneous mutable+immutable borrow of `game`.
+    let chosen: Vec<(CardId, Option<PlayerId>)> = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&cid| {
+            let card = game.cards.try_get(cid)?;
+            if card.definition.cache.etb_choose_player && card.chosen_player.is_none() {
+                Some((cid, game.pick_chosen_opponent(card.controller)))
+            } else {
+                None
+            }
+        })
+        .collect();
+    for (cid, chosen_player) in chosen {
+        if let Ok(card_mut) = game.cards.get_mut(cid) {
+            card_mut.chosen_player = chosen_player;
+        }
+    }
+
     Ok(game)
 }
 

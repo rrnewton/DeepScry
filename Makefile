@@ -303,6 +303,17 @@ validate-wasm-e2e-step: validate-wasm-step
 	@echo "    (mtg-tyvcn) replays BYTE-IDENTICALLY on native and WASM. 0 diverged."
 	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
 		--seeds 1 --seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25
+	@echo "=== Native-vs-WASM equivalence: Black Vise ETB ChoosePlayer + upkeep damage (STRICT, mtg-cuf0e) ==="
+	@echo "    Pins seed=3 on decks/old_school2/black_vise_punisher.dck. Random-vs-random"
+	@echo "    play casts Black Vise; its ETB ChoosePlayer replacement picks the opponent"
+	@echo "    (deterministic public-state pick), and at the chosen player's upkeep it deals"
+	@echo "    max(0, handsize - 4) damage (Count\$$ValidHand-4). This proves the NEW"
+	@echo "    choose-player ETB path + the ValidPlayer\$$ Player.Chosen trigger gate +"
+	@echo "    Count\$$ValidHand-4 damage all replay BYTE-IDENTICALLY on native and WASM."
+	@echo "    The chosen player + the count are pure functions of PUBLIC state, so no"
+	@echo "    hidden information leaks across the engine boundary. 0 diverged."
+	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
+		--seeds 1 --seed-base 3 --decks 'decks/old_school2/black_vise_punisher.dck' --max-turns 10
 	@echo "✓ wasm-e2e tests completed"
 
 # Network E2E test: builds native server + WASM client, runs networked games

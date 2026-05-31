@@ -223,6 +223,29 @@ pub enum CountExpression {
     /// Count cards drawn this turn (Count$YouDrewThisTurn)
     CardsDrawnThisTurn,
 
+    /// Count cards in a player's HAND, with an optional arithmetic post-modifier.
+    ///
+    /// Corresponds to Forge's `Count$ValidHand <selector>/Minus.N` (and the
+    /// symmetric `/Plus.N`). Example — Black Vise:
+    /// `SVar:X:Count$ValidHand Card.ChosenCtrl/Minus.4` = "cards in the chosen
+    /// player's hand minus 4". The hand owner is resolved at evaluation time
+    /// from the player the count is being evaluated *for* (the trigger's
+    /// triggered/chosen player), so the engine never needs hidden card
+    /// identities — only the public hand SIZE — which keeps the result
+    /// information-independent (network determinism) and a pure function of
+    /// public state (CR 119: damage = max(0, handsize - 4)).
+    CardsInHand {
+        /// The raw selector that preceded the `/Modifier` (e.g.
+        /// `Card.ChosenCtrl`). Retained for diagnostics / future selector
+        /// widening; the current evaluator counts the player the expression is
+        /// evaluated for (see `evaluate_count_expression`).
+        selector: String,
+        /// Arithmetic post-modifier applied to the raw hand size. `Minus(4)`
+        /// for Black Vise's `/Minus.4`. The evaluated value is NOT clamped here
+        /// (callers clamp to >= 0 where MTG requires it, e.g. damage).
+        modifier: CountModifier,
+    },
+
     /// The value of X paid when casting this spell (Count$xPaid)
     /// Resolved at effect execution time by reading Card::x_paid
     XPaid,
@@ -290,6 +313,52 @@ impl CompareCondition {
     }
 }
 
+/// Arithmetic post-modifier on a `Count$...` expression.
+///
+/// Forge appends `/Minus.N`, `/Plus.N`, etc. to a count to shift the raw value
+/// (e.g. Black Vise's `Count$ValidHand Card.ChosenCtrl/Minus.4`). We model the
+/// two arithmetic forms we need today; `None` is the identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CountModifier {
+    /// No modifier — the raw count is used as-is.
+    #[default]
+    None,
+    /// Subtract N from the raw count (`/Minus.N`).
+    Minus(i32),
+    /// Add N to the raw count (`/Plus.N`).
+    Plus(i32),
+}
+
+impl CountModifier {
+    /// Parse the suffix after the `/` in a `Count$...` value (e.g. `Minus.4`).
+    /// Returns `None` (the variant) for unrecognized suffixes so the count is
+    /// left unmodified rather than silently zeroed.
+    pub fn parse(suffix: &str) -> Self {
+        if let Some(rest) = suffix.strip_prefix("Minus.") {
+            rest.parse()
+                .ok()
+                .map(CountModifier::Minus)
+                .unwrap_or(CountModifier::None)
+        } else if let Some(rest) = suffix.strip_prefix("Plus.") {
+            rest.parse()
+                .ok()
+                .map(CountModifier::Plus)
+                .unwrap_or(CountModifier::None)
+        } else {
+            CountModifier::None
+        }
+    }
+
+    /// Apply the modifier to a raw count value.
+    pub fn apply(self, value: i32) -> i32 {
+        match self {
+            CountModifier::None => value,
+            CountModifier::Minus(n) => value - n,
+            CountModifier::Plus(n) => value + n,
+        }
+    }
+}
+
 impl Default for CountExpression {
     fn default() -> Self {
         CountExpression::Fixed(0)
@@ -330,6 +399,17 @@ impl CountExpression {
             if let Some(rest) = svar_value.strip_prefix("Count$") {
                 if rest == "xPaid" {
                     return CountExpression::XPaid;
+                } else if let Some(hand_rest) = rest.strip_prefix("ValidHand ") {
+                    // Count$ValidHand <selector>[/Modifier]
+                    // (Black Vise: "Count$ValidHand Card.ChosenCtrl/Minus.4").
+                    // Split the optional "/Modifier" arithmetic suffix off the
+                    // selector. The selector keeps any inner dots (Card.ChosenCtrl);
+                    // only the FIRST "/" introduces the modifier.
+                    let (selector, modifier) = match hand_rest.split_once('/') {
+                        Some((sel, suffix)) => (sel.to_string(), CountModifier::parse(suffix)),
+                        None => (hand_rest.to_string(), CountModifier::None),
+                    };
+                    return CountExpression::CardsInHand { selector, modifier };
                 } else if rest.starts_with("Valid ") {
                     // Count$Valid filter
                     let filter = rest.strip_prefix("Valid ").unwrap_or(rest).to_string();
@@ -2150,6 +2230,16 @@ pub struct Trigger {
     #[serde(default)]
     pub controller_turn_only: bool,
 
+    /// When true, the trigger only fires on the turn of the player CHOSEN by the
+    /// source's ETB ChoosePlayer replacement (`ValidPlayer$ Player.Chosen`).
+    /// Black Vise's upkeep trigger fires only on the chosen player's upkeep.
+    /// The chosen player is stored in `Card::chosen_player`; the firing sites
+    /// gate on `active_player == card.chosen_player`. Mutually exclusive with
+    /// `controller_turn_only` in practice (a trigger is either "your" or
+    /// "chosen player's" turn, not both).
+    #[serde(default)]
+    pub chosen_player_turn_only: bool,
+
     /// When true, trigger only fires if event source is NOT a creature
     /// Replaces "[noncreature]" marker in description
     /// Example: "Whenever you cast a noncreature spell"
@@ -2216,6 +2306,7 @@ impl Trigger {
             requires_other: false,
             requires_landfall: false,
             controller_turn_only: false,
+            chosen_player_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
@@ -2239,6 +2330,7 @@ impl Trigger {
             requires_other: false,
             requires_landfall: false,
             controller_turn_only: false,
+            chosen_player_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
@@ -2268,6 +2360,7 @@ impl Trigger {
             requires_other: false,
             requires_landfall: false,
             controller_turn_only: false,
+            chosen_player_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
@@ -2292,6 +2385,7 @@ impl Trigger {
             requires_other: false,
             requires_landfall: false,
             controller_turn_only: false,
+            chosen_player_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
@@ -3742,6 +3836,54 @@ mod tests {
     }
 
     #[test]
+    fn test_count_expression_parse_valid_hand_minus() {
+        // Black Vise (mtg-cuf0e): Count$ValidHand Card.ChosenCtrl/Minus.4 must
+        // parse to CardsInHand{ selector: "Card.ChosenCtrl", modifier: Minus(4) }.
+        // Before the fix this hit no `Count$ValidHand` arm and fell through to
+        // Fixed(0), making Black Vise deal 0 damage.
+        let mut svars = std::collections::HashMap::new();
+        svars.insert("X".to_string(), "Count$ValidHand Card.ChosenCtrl/Minus.4".to_string());
+
+        let expr = CountExpression::parse("X", &svars);
+        match &expr {
+            CountExpression::CardsInHand { selector, modifier } => {
+                assert_eq!(selector, "Card.ChosenCtrl");
+                assert_eq!(*modifier, CountModifier::Minus(4));
+            }
+            CountExpression::Fixed(_)
+            | CountExpression::ValidPermanents { .. }
+            | CountExpression::CardsDrawnThisTurn
+            | CountExpression::XPaid
+            | CountExpression::SpellsCastThisTurn
+            | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
+        }
+
+        // No modifier and a Plus modifier round-trip too.
+        svars.insert("Y".to_string(), "Count$ValidHand Card.YouCtrl".to_string());
+        assert!(matches!(
+            CountExpression::parse("Y", &svars),
+            CountExpression::CardsInHand {
+                modifier: CountModifier::None,
+                ..
+            }
+        ));
+        svars.insert("Z".to_string(), "Count$ValidHand Card.YouCtrl/Plus.2".to_string());
+        assert!(matches!(
+            CountExpression::parse("Z", &svars),
+            CountExpression::CardsInHand {
+                modifier: CountModifier::Plus(2),
+                ..
+            }
+        ));
+
+        // CountModifier arithmetic.
+        assert_eq!(CountModifier::Minus(4).apply(6), 2);
+        assert_eq!(CountModifier::Minus(4).apply(3), -1); // unclamped; caller clamps
+        assert_eq!(CountModifier::None.apply(5), 5);
+        assert_eq!(CountModifier::Plus(2).apply(5), 7);
+    }
+
+    #[test]
     fn test_count_expression_parse_compare() {
         // Test Count$Compare parsing (Raucous Audience pattern)
         // X = "Count$Compare Y GE1.2.1" means: if Y >= 1 then 2 else 1
@@ -3765,6 +3907,7 @@ mod tests {
                     }
                     CountExpression::Fixed(_)
                     | CountExpression::CardsDrawnThisTurn
+                    | CountExpression::CardsInHand { .. }
                     | CountExpression::XPaid
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::Compare { .. } => {
@@ -3780,6 +3923,7 @@ mod tests {
             CountExpression::Fixed(_)
             | CountExpression::ValidPermanents { .. }
             | CountExpression::CardsDrawnThisTurn
+            | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn => panic!("Expected Compare, got {:?}", expr),
         }

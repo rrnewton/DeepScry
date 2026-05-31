@@ -1638,6 +1638,31 @@ pub trait PlayerController {
         ChoiceResult::Ok(max_x)
     }
 
+    /// Choose a player from a list of valid choices (single-choice shape).
+    ///
+    /// Used by "choose a player/opponent" effects (Black Vise's
+    /// `DB$ ChoosePlayer | Choices$ Player.Opponent`). The return value is an
+    /// INDEX into `valid_players` (the single chosen player), mirroring the
+    /// other single-choice methods (`choose_from_library`) so it round-trips the
+    /// existing `choice_indices: Vec` logged path with exactly ONE index.
+    ///
+    /// DETERMINISM: the default implementation picks the FIRST valid player
+    /// (index 0) — a deterministic, view-only decision that depends on no hidden
+    /// information. Black Vise's *ETB* choice is resolved at the engine level
+    /// (`GameState::pick_chosen_opponent`, a pure function of public hand sizes)
+    /// because the as-enters replacement fires deep in `set_card_zone` where no
+    /// controller is in scope — consistent with the sibling ETB ChooseColor
+    /// path. This trait method exists for controller-driven ChoosePlayer
+    /// choices (future interactive UX / activated abilities); a richer
+    /// interactive prompt is tracked as a follow-up.
+    fn choose_player(&mut self, _view: &GameStateView, valid_players: &[PlayerId]) -> ChoiceResult<usize> {
+        if valid_players.is_empty() {
+            ChoiceResult::Error("choose_player called with no valid players".to_string())
+        } else {
+            ChoiceResult::Ok(0)
+        }
+    }
+
     /// Choose which creatures to declare as attackers
     ///
     /// Called during the declare attackers step.

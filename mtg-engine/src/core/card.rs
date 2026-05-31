@@ -174,6 +174,13 @@ pub struct CardCache {
     /// Colors to exclude from the choice (e.g., "green" for Thriving Grove)
     /// Derived from SVar:ChooseColor with Exclude$ parameter
     pub etb_exclude_colors: SmallVec<[Color; 1]>,
+
+    /// Precomputed: Does this card require choosing a player on ETB?
+    /// Derived from `K:ETBReplacement:Other:ChooseP` + an `SVar:ChooseP:DB$
+    /// ChoosePlayer | Choices$ Player.Opponent` body (Black Vise). When set, the
+    /// engine picks the chosen player deterministically at ETB (see
+    /// `GameState::set_card_zone`) and stores it in `Card::chosen_player`.
+    pub etb_choose_player: bool,
 }
 
 impl Default for CardCache {
@@ -241,6 +248,7 @@ impl CardCache {
             enters_tapped: false,
             etb_choose_color: false,
             etb_exclude_colors: SmallVec::new(),
+            etb_choose_player: false,
         }
     }
 
@@ -777,6 +785,17 @@ pub struct Card {
     /// Set when the card enters the battlefield, affects what mana it can produce
     pub chosen_color: Option<Color>,
 
+    /// Chosen player for cards with an "as ~ enters, choose a player" replacement
+    /// effect (Black Vise: `K:ETBReplacement:Other:ChooseP` +
+    /// `DB$ ChoosePlayer | Choices$ Player.Opponent`). Set when the card enters
+    /// the battlefield (see `GameState::set_card_zone`), part of serialized game
+    /// state (snapshot/resume + undo + state hash), and read by the
+    /// `ValidPlayer$ Player.Chosen` trigger gate and `Defined$ ChosenPlayer`
+    /// damage resolution. `None` for cards without such a replacement, or before
+    /// the card has entered the battlefield.
+    #[serde(default)]
+    pub chosen_player: Option<PlayerId>,
+
     /// Script variables (SVars) for SubAbility chaining
     /// Key: SVar name (e.g., "BalanceHands")
     /// Value: SVar body (e.g., "DB$ Balance | Zone$ Hand | SubAbility$ BalanceCreatures")
@@ -898,6 +917,7 @@ impl Card {
             attached_to: None,
             control_from_aura: None,
             chosen_color: None,
+            chosen_player: None,
             svars: std::collections::HashMap::new(),
             revealed_to_mask: 0,
             is_legendary: false,

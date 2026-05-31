@@ -7044,6 +7044,11 @@ impl GameState {
                     if trigger.controller_turn_only {
                         return card.controller == active_player;
                     }
+                    // ValidPlayer$ Player.Chosen (Black Vise): fire only on the
+                    // chosen player's turn (and only once a player was chosen).
+                    if trigger.chosen_player_turn_only {
+                        return card.chosen_player == Some(active_player);
+                    }
                     true
                 })
                 .flat_map(|trigger| trigger.effects.clone())
@@ -9288,6 +9293,22 @@ impl GameState {
                 } else {
                     Ok(0)
                 }
+            }
+            CountExpression::CardsInHand { selector: _, modifier } => {
+                // Count cards in the hand of the player we are evaluating FOR.
+                // Black Vise's `Count$ValidHand Card.ChosenCtrl/Minus.4` is
+                // evaluated against the chosen (triggered/active) player passed
+                // in `controller` by Effect::DealDamageToTriggeredPlayer, so the
+                // hand owner is exactly that player. Only the public hand SIZE is
+                // read (never card identities) — information-independent for
+                // network determinism. The /Minus.N modifier is applied raw; the
+                // caller clamps to >= 0 where MTG requires it (damage: CR 119.4).
+                let hand_size = self
+                    .get_player_zones(controller)
+                    .map(|z| z.hand.cards.len())
+                    .unwrap_or(0);
+                let raw = i32::try_from(hand_size).unwrap_or(i32::MAX);
+                Ok(modifier.apply(raw))
             }
             CountExpression::XPaid => {
                 // XPaid is typically resolved during spell resolution via

@@ -1,0 +1,24 @@
+[metadata]
+Name:Black Vise — chosen opponent's upkeep, damage = max(0, hand - 4)
+Goal:Survive
+Turns:6
+Difficulty:Easy
+Description:P1 (Player 2) controls Black Vise; its ETB ChoosePlayer replacement chose the single opponent P0 (Player 1). At the beginning of the CHOSEN player's upkeep, Black Vise deals damage to that player equal to the number of cards in their hand minus 4 (CR 603 triggered ability, CR 119 damage). P0 holds 6 cards, so 6 - 4 = 2 damage. The puzzle starts in P1's MAIN1 (turn 1, active=p1), so the first upkeep reached is P0's upkeep on turn 2: 2 damage to Player 1 (20 -> 18). The trigger is gated by ValidPlayer$ Player.Chosen, so it does NOT fire on P1's own upkeep (P1 was not chosen).
+
+[state]
+turn=1
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=Plains; Plains; Plains; Plains; Plains; Plains
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Plains; Plains
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island; Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Black Vise; Island; Island
+p1exile=

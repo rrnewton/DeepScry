@@ -1158,6 +1158,34 @@ impl GameState {
                     }
                 }
             }
+
+            // Handle ETB "as ~ enters, choose a player" replacement (Black Vise:
+            // `K:ETBReplacement:Other:ChooseP` → `DB$ ChoosePlayer | Choices$
+            // Player.Opponent`). Modeled like the color choice above: a
+            // deterministic engine computation (NOT a hidden-information or
+            // RNG-dependent decision), so it is byte-identical on native and
+            // WASM and needs no choice-log round-trip. The chosen player is
+            // stored in serialized state (`Card::chosen_player`) and read by the
+            // `ValidPlayer$ Player.Chosen` trigger gate. CR 614 (replacement
+            // effect applied as the object enters).
+            if let Some(card) = self.cards.try_get(card_id) {
+                if card.definition.cache.etb_choose_player {
+                    let controller = card.controller;
+                    let card_name = card.name.clone();
+                    let chosen = self.pick_chosen_opponent(controller);
+                    if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                        card_mut.chosen_player = chosen;
+                        if let Some(p) = chosen {
+                            let player_name = self
+                                .get_player(p)
+                                .map(|pl| pl.name.as_str().to_string())
+                                .unwrap_or_else(|_| format!("P{}", p.as_u32()));
+                            self.logger
+                                .normal(&format!("{} ({}) - chose {}", card_name, card_id, player_name));
+                        }
+                    }
+                }
+            }
         }
 
         // Log the action with prior log size for undo synchronization
@@ -1251,6 +1279,33 @@ impl GameState {
     ///
     /// Used for "choose a color" ETB abilities like Thriving lands.
     /// Analyzes mana costs in hand, library, and graveyard to find the most needed color.
+    /// Deterministically choose an opponent for an "as ~ enters, choose an
+    /// opponent" replacement effect (Black Vise's `Choices$ Player.Opponent`
+    /// with `AILogic$ MostCardsInHand`).
+    ///
+    /// The choice is a pure function of PUBLIC state — each opponent's hand
+    /// SIZE (a public count, never the card identities) — so it produces the
+    /// same result on the server, the native shadow, and the WASM shadow
+    /// (information-independent; see NETWORK_ARCHITECTURE.md). In the common
+    /// two-player game there is exactly one opponent, so the choice is forced.
+    /// For 3+ players we pick the opponent with the most cards in hand, breaking
+    /// ties by lowest `PlayerId` (a stable, deterministic order — never HashMap
+    /// iteration). Returns `None` only if `chooser` has no opponents.
+    pub(crate) fn pick_chosen_opponent(&self, chooser: PlayerId) -> Option<PlayerId> {
+        // Players are stored in a Vec (stable order); iterate it directly so the
+        // tie-break is deterministic across engines.
+        self.players
+            .iter()
+            .map(|p| p.id)
+            .filter(|&pid| pid != chooser)
+            .max_by(|&a, &b| {
+                let hand = |pid: PlayerId| self.get_player_zones(pid).map(|z| z.hand.cards.len()).unwrap_or(0);
+                // Most cards in hand wins; on a tie, prefer the LOWER PlayerId
+                // (so reverse the id comparison since max_by keeps the greatest).
+                hand(a).cmp(&hand(b)).then_with(|| b.as_u32().cmp(&a.as_u32()))
+            })
+    }
+
     pub(crate) fn pick_prominent_color(&self, player_id: PlayerId, exclude: &[Color]) -> Color {
         use std::collections::BTreeMap;
 

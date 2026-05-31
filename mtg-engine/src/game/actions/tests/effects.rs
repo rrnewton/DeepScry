@@ -5592,6 +5592,95 @@ mod tests {
         );
     }
 
+    /// Card compat: Black Vise (cardsfolder/b/black_vise.txt) — mtg-cuf0e
+    ///
+    /// Script:
+    ///   ManaCost:1
+    ///   Types:Artifact
+    ///   K:ETBReplacement:Other:ChooseP
+    ///   SVar:ChooseP:DB$ ChoosePlayer | Defined$ You | Choices$ Player.Opponent | ...
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player.Chosen | TriggerZones$ Battlefield | Execute$ TrigDamage
+    ///   SVar:TrigDamage:DB$ DealDamage | Defined$ ChosenPlayer | NumDmg$ X
+    ///   SVar:X:Count$ValidHand Card.ChosenCtrl/Minus.4
+    ///
+    /// Asserts the parsed shape: a {1} Artifact that (a) flags the ETB
+    /// ChoosePlayer replacement (`cache.etb_choose_player`), and (b) carries a
+    /// BeginningOfUpkeep trigger that is `chosen_player_turn_only` (the
+    /// `ValidPlayer$ Player.Chosen` gate) whose effect is the variable
+    /// DealDamageToTriggeredPlayer counting `Count$ValidHand .../Minus.4`. Before
+    /// the fix the count parsed to Fixed(0) and there was no chosen-player slot,
+    /// so Black Vise was a silent 0-damage no-op. Gameplay behavior (damage =
+    /// max(0, hand-4) on the chosen player's upkeep only) is covered by
+    /// tests/black_vise_chosen_upkeep_damage_e2e.sh and the native-vs-WASM leg.
+    #[test]
+    fn test_card_compat_black_vise() {
+        use crate::core::{CountExpression, CountModifier, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/b/black_vise.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Black Vise should load");
+
+        assert_eq!(def.name.as_str(), "Black Vise");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}");
+        assert!(def.types.contains(&CardType::Artifact));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // (a) ETB ChoosePlayer replacement flagged (drives the per-permanent
+        // chosen-player slot at ETB).
+        assert!(
+            card.definition.cache.etb_choose_player,
+            "Black Vise must flag its ETB ChoosePlayer replacement; without it no \
+             chosen player is recorded and the upkeep trigger can never fire."
+        );
+
+        // (b) Upkeep trigger gated to the chosen player's turn.
+        let upkeep_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect("Black Vise must have a BeginningOfUpkeep trigger.");
+        assert!(
+            upkeep_trigger.chosen_player_turn_only,
+            "Black Vise's upkeep trigger fires only on the CHOSEN player's turn \
+             (ValidPlayer$ Player.Chosen), so it must be chosen_player_turn_only."
+        );
+        assert!(
+            !upkeep_trigger.controller_turn_only,
+            "Black Vise fires on the chosen player's upkeep, not the controller's."
+        );
+
+        let damage_effect = upkeep_trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::DealDamageToTriggeredPlayer { .. }))
+            .expect("Black Vise's upkeep trigger must deal variable damage to the chosen player");
+        let Effect::DealDamageToTriggeredPlayer { count, target_self } = damage_effect else {
+            unreachable!("matched DealDamageToTriggeredPlayer above");
+        };
+        assert!(
+            !*target_self,
+            "Black Vise damages the chosen (triggered/active) player, not its own controller."
+        );
+        // Count$ValidHand Card.ChosenCtrl/Minus.4 -> CardsInHand{ minus: 4 }.
+        assert!(
+            matches!(
+                count,
+                CountExpression::CardsInHand {
+                    modifier: CountModifier::Minus(4),
+                    ..
+                }
+            ),
+            "Black Vise's damage count must be Count$ValidHand .../Minus.4 \
+             (CardsInHand with Minus(4)). Got: {:?}",
+            count
+        );
+    }
+
     /// Card compat: Swamp (cardsfolder/s/swamp.txt) — mtg-546
     ///
     /// Script:
