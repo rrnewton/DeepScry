@@ -657,6 +657,77 @@ async function scenarioGameListFilterAndPager() {
     await new Promise((r) => setTimeout(r, 300));
 }
 
+// Phase 2 / mtg-phase2-native-network: test that the lobby-ui radio picker
+// correctly sends the user to native_game.html when "Native GUI" is selected.
+async function scenarioNativeGuiLaunch() {
+    console.log('\n=== Scenario: native GUI launch via lobby-ui picker (Phase 2) ===');
+    const browser = await chromium.launch();
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => record('major', 'native-gui-launch pageerror', e.message));
+
+    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.waitForLoadState('domcontentloaded');
+    try { await waitForLobbyConnected(page); } catch (e) {
+        record('blocking', 'native-gui-launch ws', e.message);
+    }
+
+    // Enter the lobby.
+    await page.fill('#username', 'native-tester');
+    await page.click('#btn-name');
+    await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'native-gui-launch lobby', 'lobby pane never revealed'),
+    );
+
+    // Select "Native GUI" from the new lobby-ui picker (Phase 2).
+    const nativeRadio = await page.$('#lobby-ui-native');
+    if (!nativeRadio) {
+        record('major', 'native-gui-launch', '#lobby-ui-native radio not found (Phase 2 picker missing)');
+    } else {
+        await page.click('#lobby-ui-native');
+        const checked = await page.evaluate(() => {
+            const r = document.getElementById('lobby-ui-native');
+            return r ? r.checked : false;
+        });
+        if (!checked) record('major', 'native-gui-launch', '#lobby-ui-native radio not checked after click');
+    }
+
+    // Fill game name and wait for deck list.
+    await page.fill('#create-game', 'native-launch-test');
+    await page.fill('#create-pass', '');
+    await page.waitForFunction(
+        () => !document.getElementById('btn-create').disabled,
+        null,
+        { timeout: 5000 },
+    ).catch(() => record('minor', 'native-gui-launch deck', 'btn-create stayed disabled'));
+
+    // Create + show waiting room.
+    await page.click('#btn-create');
+    await page.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
+        record('blocking', 'native-gui-launch', 'waiting room never appeared'),
+    );
+    await shot(page, 'landing_16_native_gui_waiting.png');
+
+    // Click "Launch Game" — should redirect to native_game.html (not tui_game.html).
+    await page.click('#btn-launch-game');
+    await page.waitForFunction(
+        () => /native_game\.html/.test(window.location.href) &&
+              /lobby_create=native-launch-test/.test(window.location.href),
+        null,
+        { timeout: 4000 },
+    ).catch(() => record('blocking', 'native-gui-launch', 'not redirected to native_game.html with lobby_create param'));
+
+    const finalUrl = page.url();
+    console.log('  native-gui final URL:', finalUrl);
+    if (!/ui=native/.test(finalUrl)) {
+        record('minor', 'native-gui-launch', 'ui=native param missing from redirect URL: ' + finalUrl);
+    }
+    await shot(page, 'landing_17_native_gui_redirect.png');
+
+    await ctx.close();
+    await browser.close();
+}
+
 async function scenarioAccessibility() {
     console.log('\n=== Scenario: accessibility / form labels ===');
     const browser = await chromium.launch();
@@ -760,6 +831,7 @@ async function startSelfManagedServers() {
         await scenarioStickyLocalImageUnlock();
         await scenarioPasscodeEyeballToggle();
         await scenarioGameListFilterAndPager();
+        await scenarioNativeGuiLaunch();
         await scenarioAccessibility();
     } catch (e) {
         console.error('UNCAUGHT', e);

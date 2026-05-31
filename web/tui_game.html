@@ -757,7 +757,7 @@
                     <label>Game Mode</label>
                     <select id="game-mode" style="min-width: 180px;">
                         <option value="local">Local Game (vs AI)</option>
-                        <option value="network">Remote Network Game</option>
+                        <option value="network">Custom Network Game</option>
                     </select>
                 </div>
 
@@ -1096,6 +1096,9 @@ Name=My Deck
         // Shared bug-report dialog (mtg-587/596/597) — one implementation reused
         // by tui_game.html and native_game.html.
         import { initBugReport } from './bug_report.js';
+
+        // Shared lobby-redirect + param-plumbing (Phase 2 / mtg-phase2-native-network).
+        import { consumeLobbyParams, applyLobbyParamsToForm, buildLobbyAction } from './lobby_launcher.js';
 
         // Deck builder imports - optional (only available when built with wasm-tui feature)
         let deckBuilderEnabled = false;
@@ -2694,67 +2697,27 @@ Name=My Deck
         // network mode targeting the specified named slot. The lobby closes
         // its own WS before redirect so there is no second-pairing race.
         function maybeAutoLaunchFromLobby() {
-            const qs = new URLSearchParams(window.location.search);
-            const createName = qs.get('lobby_create');
-            const joinName = qs.get('lobby_join');
-            if (!createName && !joinName) return;
-
-            const pass = qs.get('lobby_pass') || '';
-            const playerName = qs.get('name') || '';
-            const wsUrl = qs.get('ws') || '';
-            const serverPassword = qs.get('server_pass') || '';
-            const deckOverride = qs.get('deck') || '';
+            // Use the shared lobby_launcher.js module so both tui_game.html
+            // and native_game.html consume the exact same param contract.
+            const params = consumeLobbyParams();
+            if (!params) return;
 
             // Stash the lobby action on window so launchTui's
-            // networkClient.connect(...) picks it up.
-            window.__mtg_lobby_action = createName
-                ? { kind: 'create', gameName: createName, gamePassword: pass }
-                : { kind: 'join',   gameName: joinName,   gamePassword: pass };
+            // networkClient.connect(...) picks it up via buildLobbyAction.
+            window.__mtg_lobby_action = buildLobbyAction(params);
 
-            // Pre-fill the network-mode form fields the launcher reads.
-            const gameMode = document.getElementById('game-mode');
-            if (gameMode) {
-                gameMode.value = 'network';
-                if (typeof updateGameModeUI === 'function') updateGameModeUI();
-            }
-            const wsField = document.getElementById('server-url');
-            if (wsField && wsUrl) wsField.value = wsUrl;
-            const pwField = document.getElementById('server-password');
-            if (pwField) pwField.value = serverPassword;
-            const nameField = document.getElementById('player-name');
-            if (nameField && playerName) nameField.value = playerName;
-
-            // Pick a deck. The lobby's hardcoded placeholder deck is "Forest
-            // Bears Plains Angels" (see DEFAULT_DECK in web/index.html). If
-            // the URL specifies one, prefer that. Otherwise fall back to the
-            // first available deck name — the user can still override before
-            // we fire launchTui via the launcher UI if they want.
-            const p1Deck = document.getElementById('p1-deck');
-            if (p1Deck) {
-                if (deckOverride && Array.from(p1Deck.options).some(o => o.value === deckOverride)) {
-                    p1Deck.value = deckOverride;
-                } else if (!p1Deck.value && p1Deck.options.length > 0) {
-                    p1Deck.value = p1Deck.options[0].value;
-                }
-            }
-
-            // Make sure controller is Human so the user can actually play.
-            const p1Ctrl = document.getElementById('p1-controller');
-            if (p1Ctrl) {
-                const hasHuman = Array.from(p1Ctrl.options).some(o => o.value === 'human');
-                if (hasHuman) p1Ctrl.value = 'human';
-            }
+            // Pre-fill form fields using the shared helper.
+            applyLobbyParamsToForm(params, {
+                gameModeSelectId:     'game-mode',
+                serverUrlInputId:     'server-url',
+                serverPassInputId:    'server-password',
+                playerNameInputId:    'player-name',
+                p1DeckSelectId:       'p1-deck',
+                p1ControllerSelectId: 'p1-controller',
+                networkStatusId:      'network-status',
+            }, typeof updateGameModeUI === 'function' ? updateGameModeUI : undefined);
 
             // Auto-fire the launch button after a tick so the UI updates settle.
-            // We surface the action visually first so the user knows what is
-            // happening (and can intervene if e.g. their WS URL is wrong).
-            const status = document.getElementById('network-status');
-            if (status) {
-                status.textContent = createName
-                    ? `Auto-creating "${createName}"…`
-                    : `Auto-joining "${joinName}"…`;
-                status.style.color = '#4cc9f0';
-            }
             setTimeout(() => {
                 const btn = document.getElementById('btn-launch');
                 if (btn && !btn.disabled) btn.click();

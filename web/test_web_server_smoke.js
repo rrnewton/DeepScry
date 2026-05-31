@@ -180,7 +180,7 @@ async function main() {
     // hashing, so all three JS leaves must be staged.
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
-    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js'];
+    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js', 'lobby_launcher.js'];
     for (const f of fs.readdirSync(WEB_SRC)) {
         if (f.endsWith('.html') || JS_LEAVES.includes(f)) {
             fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
@@ -239,10 +239,21 @@ async function main() {
         const ni = tuiHtml.match(/(network\.[0-9a-f]{16}\.js)/);
         if (ni) networkJsHashed = ni[1];
     }
+    let lobbyLauncherJsHashed = null;
+    // lobby_launcher.js is imported by both game pages; check native_game.html.
+    if (nativeHashedName) {
+        const nativePath = path.join(stage, nativeHashedName);
+        if (fs.existsSync(nativePath)) {
+            const nativeHtml = fs.readFileSync(nativePath, 'utf8');
+            const li = nativeHtml.match(/(lobby_launcher\.[0-9a-f]{16}\.js)/);
+            if (li) lobbyLauncherJsHashed = li[1];
+        }
+    }
     check(!!hashedJs, 'pkg JS glue is hashed');
     check(!!hashedWasm, 'pkg wasm is hashed');
     check(!!dataIndexHashed, 'data/sets/index.json is hashed');
     check(!!networkJsHashed, 'network.js is hashed');
+    check(!!lobbyLauncherJsHashed, 'lobby_launcher.js is hashed');
 
     // First hashed bin from the HASHED index.json (logical→hashed resolution for bins).
     // ALSO resolve the content-addressed tokens/decks bin names recorded in the
@@ -309,6 +320,7 @@ async function main() {
             '/server-config.js',
             '/network.js',
             '/bug_report.js',
+            '/lobby_launcher.js',
             '/data/sets/index.json',
             '/native_game.html',
             '/tui_game.html',
@@ -383,6 +395,7 @@ async function main() {
         const moreImmutable = [
             serverCfgHashed && '/' + serverCfgHashed,
             networkJsHashed && '/' + networkJsHashed,
+            lobbyLauncherJsHashed && '/' + lobbyLauncherJsHashed,
             tuiHashedName && '/' + tuiHashedName,
             nativeHashedName && '/' + nativeHashedName,
         ].filter(Boolean);

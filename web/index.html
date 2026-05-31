@@ -330,7 +330,18 @@
                         <select id="create-deck">
                             <option value="">Loading decks&hellip;</option>
                         </select>
-                        <div style="height: 12px;"></div>
+                        <div style="height: 8px;"></div>
+                        <label>Game Interface</label>
+                        <div style="display: flex; gap: 12px; align-items: center; padding: 2px 0 6px;">
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px;">
+                                <input type="radio" name="lobby-ui" id="lobby-ui-tui" value="tui" checked>
+                                Web TUI <span style="color: var(--muted); font-size: 11px;">(terminal)</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px;">
+                                <input type="radio" name="lobby-ui" id="lobby-ui-native" value="native">
+                                Native GUI <span style="color: var(--muted); font-size: 11px;">(card-style)</span>
+                            </label>
+                        </div>
                         <div class="row">
                             <button type="submit" id="btn-create" disabled>Create &amp; Wait</button>
                             <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
@@ -895,14 +906,23 @@
         document.getElementById('pane-lobby').classList.remove('hidden');
     }
 
-    // ----- create / join redirect to tui_game.html --------------------------
+    // ----- create / join redirect to game page ---------------------------------
 
-    // mtg-474 + mtg-465 (Phase 1 deck-picker):
-    // Close the browse-only lobby WS and redirect to tui_game.html, which opens
-    // its own fresh WS and handles the server-side CreateGame/JoinGame flow. The
-    // deck name is passed as ?deck=<name> so tui_game can pre-select it; the
-    // game page falls back to its first available deck if the name is unknown.
-    function redirectToGamePage(action, gameName, gamePass, deckName) {
+    // mtg-474 + mtg-465 (Phase 1 deck-picker) + Phase 2 (shared launcher):
+    // Close the browse-only lobby WS and redirect to the chosen game page (TUI
+    // or native GUI), which opens its own fresh WS and handles the server-side
+    // CreateGame/JoinGame flow.  The redirect URL is constructed by the shared
+    // lobby_launcher.js module so that both game pages consume the same param
+    // contract without duplication.
+    //
+    // `ui` is 'tui' or 'native'; when omitted, the currently-selected radio
+    // in the waiting-room UI picker is used (defaulting to 'tui').
+    function redirectToGamePage(action, gameName, gamePass, deckName, ui) {
+        var selectedUi = ui || (function () {
+            var r = document.querySelector('input[name="lobby-ui"]:checked');
+            return r ? r.value : 'tui';
+        })();
+        var page = selectedUi === 'native' ? 'native_game.html' : 'tui_game.html';
         var qp = new URLSearchParams();
         qp.set(action === 'create' ? 'lobby_create' : 'lobby_join', gameName);
         if (gamePass) qp.set('lobby_pass', gamePass);
@@ -911,6 +931,9 @@
         if (wsUrl) qp.set('ws', wsUrl);
         // Carry the sticky local-image unlock into the game page (mtg-477).
         if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+        // Carry the selected UI so each game page knows which UI was requested
+        // (useful for "back to lobby" links + the test harness).
+        qp.set('ui', selectedUi);
         // Close our own browse-WS so the server cleanly drops the lobby task
         // and we never accidentally race the new tab's CreateGame against a
         // stale lobby-mode connection from this tab.
@@ -919,10 +942,10 @@
             try { ws.close(1000, 'redirect-to-game'); } catch (e) { /* ignore */ }
             ws = null;
         }
-        // Same-tab navigation (full reload of tui_game.html). We do NOT use
-        // window.open() — operators may have popup blockers, and the user's
-        // intent on clicking Create/Join is "play this game now".
-        window.location.href = 'tui_game.html?' + qp.toString();
+        // Same-tab navigation (full reload). We do NOT use window.open() —
+        // operators may have popup blockers, and the user's intent on clicking
+        // Create/Join is "play this game now".
+        window.location.href = page + '?' + qp.toString();
     }
 
     function createGame() {

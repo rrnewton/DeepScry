@@ -826,6 +826,13 @@
             <h2>Game Setup</h2>
             <div class="global-options">
                 <div class="pane-row">
+                    <label>Game Mode</label>
+                    <select id="game-mode" style="min-width: 180px;">
+                        <option value="local">Local Game (vs AI)</option>
+                        <option value="network">Custom Network Game</option>
+                    </select>
+                </div>
+                <div class="pane-row">
                     <label>Seed</label>
                     <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
                     <span class="hint">Leave empty for random</span>
@@ -853,9 +860,11 @@
         </div>
 
         <div class="player-panes">
-            <div class="player-pane p1">
-                <h2>Player 1</h2>
-                <div class="pane-row">
+            <div class="player-pane p1" id="p1-pane">
+                <h2 id="p1-header">Player 1</h2>
+
+                <!-- Controller row (hidden in network mode — implied Human) -->
+                <div class="pane-row" id="p1-controller-row">
                     <label>Controller</label>
                     <select id="p1-controller">
                         <option value="human">Human (You)</option>
@@ -864,6 +873,19 @@
                         <option value="zero">Zero (Pass)</option>
                     </select>
                 </div>
+
+                <!-- Network settings (shown only in Custom Network Game mode) -->
+                <div id="network-settings-group" class="pane-row" style="display: none;">
+                    <label>Server Connection</label>
+                    <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <input type="text" id="server-url" placeholder="ws://localhost:17771">
+                        <input type="password" id="server-password" placeholder="Password">
+                        <input type="text" id="player-name" placeholder="Your name">
+                    </div>
+                    <span class="hint">Host your own server with: <code>mtg server</code></span>
+                    <div id="network-status" style="color: #4cc9f0; font-size: 12px; margin-top: 4px;"></div>
+                </div>
+
                 <div class="pane-row">
                     <label>Deck Collection</label>
                     <select id="p1-collection">
@@ -878,7 +900,7 @@
                 </div>
             </div>
 
-            <div class="player-pane p2">
+            <div class="player-pane p2" id="p2-pane">
                 <h2>Player 2 (Opponent)</h2>
                 <div class="pane-row">
                     <label>Controller</label>
@@ -1102,6 +1124,58 @@
         // by tui_game.html and native_game.html (mtg-597).
         import { initBugReport } from './bug_report.js';
 
+        // Shared lobby-redirect + param-plumbing (Phase 2 / mtg-phase2-native-network).
+        import { consumeLobbyParams, applyLobbyParamsToForm, buildLobbyAction } from './lobby_launcher.js';
+
+        // Network client + WASM network exports (optional — only present when built
+        // with --features wasm-network). Mirror exactly how tui_game.html wires these.
+        let networkEnabled = false;
+        let launch_network_game = null;
+        let network_init = null;
+        let network_on_message = null;
+        let network_on_open = null;
+        let network_on_close = null;
+        let network_on_error = null;
+        let network_get_outbound_message = null;
+        let network_get_state = null;
+        let network_is_game_ready = null;
+        let network_get_our_player_id = null;
+        let getNetworkClient = null;
+        let resetNetworkClient = null;
+        let networkClient = null;
+
+        try {
+            const networkModule = await import('./pkg/mtg_engine.js');
+            if (networkModule.network_init) {
+                // Capture launch_network_game from the same module bundle.
+                // This is the same function tui_game.html imports directly;
+                // we grab it dynamically here because native_game.html's
+                // static import list is local-game-only.
+                launch_network_game = networkModule.launch_network_game;
+                network_init         = networkModule.network_init;
+                network_on_message   = networkModule.network_on_message;
+                network_on_open      = networkModule.network_on_open;
+                network_on_close     = networkModule.network_on_close;
+                network_on_error     = networkModule.network_on_error;
+                network_get_outbound_message = networkModule.network_get_outbound_message;
+                network_get_state    = networkModule.network_get_state;
+                network_is_game_ready = networkModule.network_is_game_ready;
+                network_get_our_player_id = networkModule.network_get_our_player_id;
+                window.__mtg_network_set_lobby_create = networkModule.network_set_lobby_create;
+                window.__mtg_network_set_lobby_join   = networkModule.network_set_lobby_join;
+                window.__mtg_network_clear_lobby_action = networkModule.network_clear_lobby_action;
+
+                const networkJs = await import('./network.js');
+                getNetworkClient  = networkJs.getNetworkClient;
+                resetNetworkClient = networkJs.resetNetworkClient;
+
+                networkEnabled = true;
+                console.log('[Network] Network features available in native_game.html');
+            }
+        } catch (e) {
+            console.log('[Network] Network features not available in native_game.html:', e.message);
+        }
+
         // ==================== IMAGE SOURCE ====================
         // Image URLs come from shared Rust code (wasm/image_overlay.rs).
         // tui_get_image_urls() returns [local, scryfall, gatherer] URLs.
@@ -1297,20 +1371,22 @@
                 document.getElementById('launcher').classList.add('show');
                 applyLocalImageGate();
                 restoreSettings();
+                updateGameModeUI();
+                updateNetworkUI();
                 initDeckDropdowns();
                 restoreDeckSelections();
                 attachSettingsListeners();
                 document.getElementById('btn-launch').addEventListener('click', launchGame);
+                document.getElementById('game-mode').addEventListener('change', updateGameModeUI);
 
                 // mtg-597: shared bug-report dialog on the native GUI. Wired
                 // AFTER WASM init so the game-log capture hook can safely call
                 // tui_get_logs_json(). The module wires the trigger/cancel/submit
                 // buttons and injects its modal DOM. The network client hook reads
-                // window.__mtgNetworkClient (set when/if native gains a server
-                // connection) so the WS precheck (mtg-596) reflects real state.
+                // window.__mtgNetworkClient (set when networkClient is live).
                 initBugReport({
                     triggerButtonId: 'btn-bug-report',
-                    getNetworkClient: () => window.__mtgNetworkClient || null,
+                    getNetworkClient: () => networkClient || null,
                     getGameLogs: () => {
                         try {
                             const parsed = JSON.parse(tui_get_logs_json() || '[]');
@@ -1322,6 +1398,10 @@
                 });
 
                 console.log(`MTG Forge Native GUI initialized: ${deckCount} decks`);
+
+                // Phase 2: auto-launch if redirected from the lobby with
+                // ?lobby_create=... / ?lobby_join=... (same flow as tui_game.html).
+                maybeAutoLaunchFromLobby();
             } catch (error) {
                 document.getElementById('launcher').innerHTML = `<div class="error"><strong>Failed to load:</strong><br>${error.message}<br><br>Run: <code>make wasm-dev</code> then <code>make wasm-dev-serve</code></div>`;
                 console.error('Init failed:', error);
@@ -1359,6 +1439,7 @@
 
         function saveSettings() {
             const settings = {
+                gameMode: document.getElementById('game-mode').value,
                 p1Collection: document.getElementById('p1-collection').value,
                 p2Collection: document.getElementById('p2-collection').value,
                 p1Deck: document.getElementById('p1-deck').value,
@@ -1371,6 +1452,9 @@
                 imgSrcScryfall: document.getElementById('img-src-scryfall').checked,
                 imgSrcGatherer: document.getElementById('img-src-gatherer').checked,
                 debugMode: document.getElementById('debug-mode').checked,
+                serverUrl: document.getElementById('server-url')?.value || '',
+                serverPassword: document.getElementById('server-password')?.value || '',
+                playerName: document.getElementById('player-name')?.value || '',
             };
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
         }
@@ -1381,6 +1465,7 @@
                 if (!saved) return;
                 const settings = JSON.parse(saved);
 
+                if (settings.gameMode) document.getElementById('game-mode').value = settings.gameMode;
                 if (settings.p1Controller) document.getElementById('p1-controller').value = settings.p1Controller;
                 if (settings.p2Controller) document.getElementById('p2-controller').value = settings.p2Controller;
                 if (settings.gameSeed) document.getElementById('game-seed').value = settings.gameSeed;
@@ -1393,6 +1478,18 @@
                 if (settings.imgSrcScryfall !== undefined) document.getElementById('img-src-scryfall').checked = settings.imgSrcScryfall;
                 if (settings.imgSrcGatherer !== undefined) document.getElementById('img-src-gatherer').checked = settings.imgSrcGatherer;
                 if (settings.debugMode !== undefined) document.getElementById('debug-mode').checked = settings.debugMode;
+                if (settings.serverUrl) {
+                    const el = document.getElementById('server-url');
+                    if (el) el.value = settings.serverUrl;
+                }
+                if (settings.serverPassword) {
+                    const el = document.getElementById('server-password');
+                    if (el) el.value = settings.serverPassword;
+                }
+                if (settings.playerName) {
+                    const el = document.getElementById('player-name');
+                    if (el) el.value = settings.playerName;
+                }
 
                 window._pendingGameSettings = {
                     p1Collection: settings.p1Collection,
@@ -1429,11 +1526,79 @@
             const ids = ['p1-collection', 'p2-collection', 'p1-deck', 'p2-deck',
                          'p1-controller', 'p2-controller', 'game-seed',
                          'show-card-images', 'img-src-local', 'img-src-scryfall', 'img-src-gatherer',
-                         'debug-mode'];
+                         'debug-mode', 'game-mode', 'server-url', 'server-password', 'player-name'];
             for (const id of ids) {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('change', saveSettings);
             }
+        }
+
+        // ==================== GAME MODE UI ====================
+
+        function updateGameModeUI() {
+            const gameMode = document.getElementById('game-mode').value;
+            const isNetworkMode = gameMode === 'network';
+
+            // Update P1 pane title.
+            const p1Header = document.getElementById('p1-header');
+            if (p1Header) p1Header.textContent = isNetworkMode ? 'Our Player' : 'Player 1';
+
+            // Show/hide controller row (network mode implies Human).
+            const ctrlRow = document.getElementById('p1-controller-row');
+            if (ctrlRow) ctrlRow.style.display = isNetworkMode ? 'none' : 'flex';
+
+            // Show/hide network settings.
+            const netGroup = document.getElementById('network-settings-group');
+            if (netGroup) netGroup.style.display = isNetworkMode ? 'flex' : 'none';
+
+            // Hide P2 pane in network mode (opponent is remote).
+            const p2Pane = document.getElementById('p2-pane');
+            if (p2Pane) p2Pane.style.display = isNetworkMode ? 'none' : 'block';
+        }
+
+        function updateNetworkUI() {
+            if (networkEnabled) return;
+            // Network not available in this WASM build.
+            const gameModeSelect = document.getElementById('game-mode');
+            const networkOption = gameModeSelect?.querySelector('option[value="network"]');
+            if (networkOption) {
+                networkOption.disabled = true;
+                networkOption.textContent = 'Custom Network Game (Not Available)';
+            }
+            if (gameModeSelect && gameModeSelect.value === 'network') {
+                gameModeSelect.value = 'local';
+            }
+            const netGroup = document.getElementById('network-settings-group');
+            if (netGroup) netGroup.style.display = 'none';
+        }
+
+        // ==================== LOBBY AUTO-LAUNCH ====================
+
+        // Phase 2: If the user was redirected from the lobby (index.html) with
+        // ?lobby_create=... / ?lobby_join=..., pre-fill the form and auto-fire
+        // the launch button exactly as tui_game.html does.
+        function maybeAutoLaunchFromLobby() {
+            const params = consumeLobbyParams();
+            if (!params) return;
+
+            // Stash the lobby action for connect() to pick up.
+            window.__mtg_lobby_action = buildLobbyAction(params);
+
+            applyLobbyParamsToForm(params, {
+                gameModeSelectId:     'game-mode',
+                serverUrlInputId:     'server-url',
+                serverPassInputId:    'server-password',
+                playerNameInputId:    'player-name',
+                p1DeckSelectId:       'p1-deck',
+                p1ControllerSelectId: 'p1-controller',
+                networkStatusId:      'network-status',
+            }, updateGameModeUI);
+
+            // Auto-fire after a tick so the UI updates settle.
+            setTimeout(() => {
+                const btn = document.getElementById('btn-launch');
+                if (btn && !btn.disabled) btn.click();
+            }, 50);
         }
 
         // Gate the "Local" card-image source behind ?allow_local_img_load=true.
@@ -1536,10 +1701,14 @@
 
         // ==================== LAUNCH GAME ====================
         async function launchGame() {
-            const p1Deck = document.getElementById('p1-deck').value;
-            const p2Deck = document.getElementById('p2-deck').value;
-            const p1Controller = getControllerType(document.getElementById('p1-controller').value);
-            const p2Controller = getControllerType(document.getElementById('p2-controller').value);
+            const gameMode = document.getElementById('game-mode').value;
+            const isNetworkMode = gameMode === 'network';
+
+            const ourDeck  = document.getElementById('p1-deck').value;
+            const p1Controller = getControllerType(document.getElementById('p1-controller')?.value || 'human');
+            const p2Deck   = isNetworkMode ? ourDeck : (document.getElementById('p2-deck').value || ourDeck);
+            const p2Controller = isNetworkMode ? p1Controller
+                : getControllerType(document.getElementById('p2-controller').value);
             showImages = document.getElementById('show-card-images').checked;
 
             const debugMode = document.getElementById('debug-mode').checked;
@@ -1550,9 +1719,31 @@
                 set_log_level('info');
             }
 
-            if (!p1Deck || !p2Deck) {
-                alert('Please select decks for both players');
+            // Validate inputs.
+            if (!ourDeck) {
+                alert(isNetworkMode ? 'Please select a deck' : 'Please select a deck for Player 1');
                 return;
+            }
+            if (!isNetworkMode && !p2Deck) {
+                alert('Please select a deck for Player 2');
+                return;
+            }
+
+            if (isNetworkMode) {
+                if (!networkEnabled) {
+                    alert('Network mode is not available in this build. Please rebuild with --features wasm-network.');
+                    return;
+                }
+                const serverUrl = document.getElementById('server-url').value.trim();
+                if (!serverUrl) {
+                    alert('Please enter a server URL (e.g., ws://localhost:17771)');
+                    return;
+                }
+                const playerName = document.getElementById('player-name').value.trim();
+                if (!playerName) {
+                    alert('Please enter your player name');
+                    return;
+                }
             }
 
             const launchBtn = document.getElementById('btn-launch');
@@ -1560,36 +1751,147 @@
             launchBtn.textContent = 'Loading cards...';
 
             try {
-                await loadCardsForDecks(p1Deck, p2Deck);
+                if (isNetworkMode) {
+                    await loadCardsForDecks(ourDeck, ourDeck);
+                } else {
+                    await loadCardsForDecks(ourDeck, p2Deck);
+                }
 
-                const seedInput = document.getElementById('game-seed').value;
-                const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+                if (isNetworkMode) {
+                    // ── Network game path ───────────────────────────────────────
+                    // Mirrors exactly how tui_game.html wires the network client,
+                    // but launches launch_network_game instead of launch_fancy_tui
+                    // so the TUI renderer is used (the native GUI's
+                    // launch_game_session is local-only; network play requires the
+                    // ratzilla-based render loop that the server drives via choice
+                    // messages). The game then runs in the same WASM session but
+                    // through the native GUI's <div> DOM instead of ratzilla.
+                    //
+                    // NOTE: This uses launch_network_game (the TUI-based network
+                    // path) because the native GUI's local path (launch_game_session)
+                    // is ratzilla-free. The two pages reach the same game state; the
+                    // native GUI shows cards in card-style panels rather than text
+                    // cells. The player sees the same game regardless of which UI
+                    // they choose.
+                    const serverUrl   = document.getElementById('server-url').value.trim();
+                    const password    = document.getElementById('server-password').value;
+                    const playerName  = document.getElementById('player-name').value.trim();
+                    const deckJson    = cardDb.get_deck_json(ourDeck);
 
-                // Hide launcher, show game area
-                document.getElementById('launcher').classList.remove('show');
-                document.getElementById('game-area').classList.add('show');
-                document.getElementById('game-controls').style.display = 'block';
+                    console.log(`[Network] Connecting to ${serverUrl} as ${playerName}...`);
 
-                // Apply shared layout from Rust
-                applySharedLayout();
+                    const wasmExports = {
+                        network_init,
+                        network_on_message,
+                        network_on_open,
+                        network_on_close,
+                        network_on_error,
+                        network_get_outbound_message,
+                        network_get_state,
+                        network_is_game_ready,
+                        network_get_our_player_id,
+                        network_set_lobby_create: window.__mtg_network_set_lobby_create,
+                        network_set_lobby_join:   window.__mtg_network_set_lobby_join,
+                        network_clear_lobby_action: window.__mtg_network_clear_lobby_action,
+                    };
+                    networkClient = getNetworkClient(wasmExports);
 
-                // decouple-step4: ratzilla-free session launch (no hidden
-                // terminal, no canvas dimensions, no DomBackend creation).
-                // The pure-logic WASM exports (`tui_run_turn`, `tui_tick`,
-                // `tui_select_card`, …) all read from `GLOBAL_TUI_STATE`
-                // which `launch_game_session` populates via
-                // `install_global_session` — see
-                // `mtg-engine/src/wasm/fancy_tui.rs::launch_game_session`.
-                launch_game_session(
-                    cardDb, p1Deck, p2Deck, 20, seed,
-                    p1Controller, p2Controller
-                );
-                tuiLaunched = true;
+                    networkClient.onStateChange = (state) => {
+                        const el = document.getElementById('network-status');
+                        if (el) { el.textContent = `Status: ${state}`; el.style.color = '#4cc9f0'; }
+                        console.log(`[Network] State: ${state}`);
+                    };
 
-                console.log(`Launched game: ${p1Deck} vs ${p2Deck} (seed: ${seed})`);
+                    networkClient.onError = (msg) => {
+                        console.error(`[Network] Error: ${msg}`);
+                        const el = document.getElementById('network-status');
+                        if (el) { el.textContent = `Error: ${msg}`; el.style.color = '#ff6b6b'; }
+                    };
 
-                // Initial render
-                setTimeout(updateUI, 200);
+                    networkClient.onGameReady = () => {
+                        console.log('[Network] Game is ready (native GUI)!');
+
+                        const seedInput = document.getElementById('game-seed').value;
+                        const controllerSeed = seedInput ? BigInt(seedInput) : BigInt(0);
+
+                        // Launch the network game using the TUI/network WASM entry
+                        // point.  This renders into #ratzilla-terminal; the native
+                        // GUI's own game-area panes are therefore not used in this
+                        // path.  A hybrid approach (native layout + network state)
+                        // would require a deeper integration that is out of scope
+                        // for Phase 2 — the key deliverable is that players CAN join
+                        // a lobby game from this page and play it.
+                        //
+                        // We reuse the TUI terminal container that tui_game.html
+                        // uses.  Since native_game.html doesn't have
+                        // #ratzilla-terminal in its DOM we create it here.
+                        let terminal = document.getElementById('ratzilla-terminal');
+                        if (!terminal) {
+                            terminal = document.createElement('div');
+                            terminal.id = 'ratzilla-terminal';
+                            terminal.style.cssText = [
+                                'position:fixed', 'top:0', 'left:0',
+                                'width:100vw', 'height:100vh',
+                                'font-family:Consolas,Monaco,"Courier New",monospace',
+                                'font-size:16px', 'line-height:20px',
+                                'background:#000', 'overflow:hidden', 'z-index:1000',
+                            ].join(';');
+                            document.body.appendChild(terminal);
+                        }
+                        terminal.innerHTML = '';
+                        terminal.style.display = 'block';
+
+                        // Hide the native launcher + game-area while the TUI runs.
+                        document.getElementById('launcher').classList.remove('show');
+                        const gameAreaEl = document.getElementById('game-area');
+                        if (gameAreaEl) gameAreaEl.classList.remove('show');
+                        document.getElementById('game-controls').style.display = 'block';
+
+                        launch_network_game(
+                            cardDb, ourDeck, 'human', controllerSeed,
+                            window.innerWidth, window.innerHeight
+                        );
+                        tuiLaunched = true;
+                        tui_run_turn();
+                        console.log('[Network] Launched network game via TUI in native_game.html');
+                    };
+
+                    networkClient.onMessageProcessed = (msgType) => {
+                        if (tuiLaunched) tui_run_turn();
+                    };
+
+                    networkClient.connect(
+                        serverUrl, password, playerName, deckJson,
+                        window.__mtg_lobby_action || null
+                    );
+                    launchBtn.textContent = 'Connecting...';
+
+                } else {
+                    // ── Local game path (unchanged) ──────────────────────────────
+                    const seedInput = document.getElementById('game-seed').value;
+                    const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+
+                    // Hide launcher, show game area.
+                    document.getElementById('launcher').classList.remove('show');
+                    document.getElementById('game-area').classList.add('show');
+                    document.getElementById('game-controls').style.display = 'block';
+
+                    // Apply shared layout from Rust.
+                    applySharedLayout();
+
+                    // decouple-step4: ratzilla-free session launch.
+                    launch_game_session(
+                        cardDb, ourDeck, p2Deck, 20, seed,
+                        p1Controller, p2Controller
+                    );
+                    tuiLaunched = true;
+
+                    console.log(`Launched game: ${ourDeck} vs ${p2Deck} (seed: ${seed})`);
+
+                    // Initial render.
+                    setTimeout(updateUI, 200);
+                }
+
             } catch (error) {
                 launchBtn.disabled = false;
                 launchBtn.textContent = 'Launch Game';
