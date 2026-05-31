@@ -42,13 +42,13 @@ workflow, row format, and update rules.
 |----------------------------------------------------------------------------------|---------|----------------------------|-------------|------------------|
 | ChangesZone B→Gy ValidCard$ Card.Self                                            | WORKING | 2026-05-29_#2440(00e22751) | (none)      | Su-Chi, (multiple) |
 | ChangesZone B→Gy ValidCard$ Creature.DamagedBy                                   | WORKING | 2026-05-28_#2360(897881c9) | (fixed)     | Sengir Vampire   |
-| DamageDoneOnce by ~ to creature/player                                           | WORKING | 2026-05-12_#2226(928ec99f) | (none)      | Hypnotic Specter |
+| DamageDone/DamageDealtOnce ValidTarget gating (player-only vs creature vs any) at combat-damage firing site | WORKING | 2026-05-31_#2539(05d48a7b) | (fixed)   | Spirit Link, Hypnotic Specter |
 | DamageDone Execute$ DB$ Discard Defined$ TriggeredTarget (damaged player discards)| WORKING | 2026-05-29_#2449(b5fd60b7) | (fixed)     | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
 | Drawn ValidCard$ Card.OppOwn Execute$ DB$ DealDamage Defined$ TriggeredPlayer    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)      | Underworld Dreams |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ DealDamage Defined$ TriggeredPlayer NumDmg$ X (variable damage to active player, counted against that player) | WORKING | 2026-05-30_#2530(f7a005ca) | (fixed)   | Karma            |
 | Discarded ValidCard$ Card.Self ValidCause$ SpellAbility.OppCtrl Execute$ DB$ LoseLife (opponent-forced-discard punisher) | BROKEN | 2026-05-30_#2530(f7a005ca) | mtg-czz3f | Psychic Purge |
-| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura) | WORKING | 2026-05-30_#2536(compat-wave18) | (fixed) | Spirit Link |
+| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura; fires on combat damage to players AND creatures) | WORKING | 2026-05-31_#2539(05d48a7b) | (fixed) | Spirit Link |
 | Phase Draw ValidPlayer$ You Execute$ DB$ Draw (beginning-of-your-draw-step: draw an additional card) | WORKING | 2026-05-30_#2532(4646ddd1) | (fixed) | Grafted Skullcap |
 | Phase Draw ValidPlayer$ You Execute$ AB$ ChooseCard Cost$ Draw<N/You> + RepeatEach + UnlessCost$ PayLife (draw-then-choose-then-pay-or-return) | PARTIAL | 2026-05-30_#2532(4646ddd1) | mtg-548 | Sylvan Library |
 

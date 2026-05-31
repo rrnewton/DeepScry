@@ -6249,25 +6249,75 @@ impl GameState {
     ///
     /// Returns an error if effect execution fails.
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
-        self.check_triggers_with_damage(event, source_card_id, None)
+        self.check_triggers_inner(event, source_card_id, None)
     }
 
-    /// Like [`check_triggers`](Self::check_triggers) but carries the amount of
-    /// damage the event source just dealt, for damage-driven triggers such as
-    /// Spirit Link's "you gain that much life" (`TriggerCount$DamageAmount`).
-    ///
-    /// `damage_amount` is `None` for non-damage events; the combat
-    /// `DealsCombatDamage` firing site passes the aggregated per-creature damage.
+    /// Like [`check_triggers`](Self::check_triggers) but carries a single fixed
+    /// damage amount for non-combat damage-driven triggers.
     ///
     /// # Errors
     ///
     /// Returns an error if effect execution fails.
-    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers_with_damage(
         &mut self,
         event: TriggerEvent,
         source_card_id: CardId,
         damage_amount: Option<i32>,
+    ) -> Result<()> {
+        let damage = damage_amount.map(crate::game::actions::triggers::DamageForTrigger::Fixed);
+        self.check_triggers_inner(event, source_card_id, damage)
+    }
+
+    /// Fire `DealsCombatDamage` triggers for a creature that dealt combat damage
+    /// this step, gating each trigger on its recipient class
+    /// ([`CombatDamageTarget`](crate::core::CombatDamageTarget)) and threading
+    /// the correct per-trigger amount (CR 510.2 -- combat damage is one
+    /// simultaneous event; players AND creatures are valid recipients).
+    ///
+    /// This is the SINGLE shared firing path used by native, WASM, and network
+    /// (shadow) execution -- combat damage is recorded once per creature in the
+    /// deterministic `damage_dealt_by_creature` BTreeMap order, and every
+    /// platform routes through here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    pub fn check_combat_damage_triggers(
+        &mut self,
+        source_card_id: CardId,
+        breakdown: crate::game::actions::triggers::CombatDamageBreakdown,
+    ) -> Result<()> {
+        self.check_triggers_inner(
+            TriggerEvent::DealsCombatDamage,
+            source_card_id,
+            Some(crate::game::actions::triggers::DamageForTrigger::Combat(breakdown)),
+        )
+    }
+
+    /// Shared trigger-firing implementation for [`check_triggers`],
+    /// [`check_triggers_with_damage`], and [`check_combat_damage_triggers`].
+    ///
+    /// `damage` carries the amount each fired trigger observes
+    /// (`TriggerCount$DamageAmount`): `None` for non-damage events,
+    /// `Some(Fixed(n))` for a single fixed amount (non-combat damage), or
+    /// `Some(Combat(breakdown))` for combat damage, where each
+    /// `DealsCombatDamage` trigger is additionally gated on its
+    /// [`CombatDamageTarget`](crate::core::CombatDamageTarget) recipient class
+    /// and observes the matching slice of the breakdown.
+    ///
+    /// [`check_triggers`]: Self::check_triggers
+    /// [`check_triggers_with_damage`]: Self::check_triggers_with_damage
+    /// [`check_combat_damage_triggers`]: Self::check_combat_damage_triggers
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn check_triggers_inner(
+        &mut self,
+        event: TriggerEvent,
+        source_card_id: CardId,
+        damage: Option<crate::game::actions::triggers::DamageForTrigger>,
     ) -> Result<()> {
         use crate::core::Trigger;
 
@@ -6277,6 +6327,8 @@ impl GameState {
             card_name: crate::core::types::CardName, // Use Arc<str> instead of String to avoid heap allocation
             controller: PlayerId,
             trigger: Trigger,
+            /// Per-trigger damage amount observed (after recipient-class gating).
+            damage_amount: Option<i32>,
         }
 
         // Collected trigger with cost info for execution
@@ -6285,6 +6337,8 @@ impl GameState {
             effects: Vec<Effect>,
             sacrifice_target: Option<CardId>, // Card to sacrifice for the cost
             sacrificed_power: u8,             // Power of sacrifice target (for Firebend effects)
+            /// Per-trigger damage amount observed (after recipient-class gating).
+            damage_amount: Option<i32>,
         }
 
         // Pre-compute source card info for trigger filtering (landfall check, etc.)
@@ -6304,54 +6358,68 @@ impl GameState {
                 let card_name = &card.name;
                 let attached_to = card.attached_to;
 
-                card.triggers
-                    .iter()
-                    .filter(move |trigger| {
-                        // Check event type matches
-                        if trigger.event != event {
-                            return false;
-                        }
+                card.triggers.iter().filter_map(move |trigger| {
+                    // Check event type matches
+                    if trigger.event != event {
+                        return None;
+                    }
 
-                        // Self-only triggers only fire when the trigger source is the event source
-                        if trigger.trigger_self_only && card_id != source_card_id {
-                            return false;
-                        }
+                    // Self-only triggers only fire when the trigger source is the event source
+                    if trigger.trigger_self_only && card_id != source_card_id {
+                        return None;
+                    }
 
-                        // Attached-source triggers (Aura/Equipment watching its host,
-                        // e.g. Spirit Link `ValidSource$ Card.AttachedBy`) only fire
-                        // when the event source is the permanent this card is attached to.
-                        if trigger.requires_attached_source && attached_to != Some(source_card_id) {
-                            return false;
-                        }
+                    // Attached-source triggers (Aura/Equipment watching its host,
+                    // e.g. Spirit Link `ValidSource$ Card.AttachedBy`) only fire
+                    // when the event source is the permanent this card is attached to.
+                    if trigger.requires_attached_source && attached_to != Some(source_card_id) {
+                        return None;
+                    }
 
-                        // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
-                        // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
-                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
-                        if trigger.requires_other && card_id == source_card_id {
-                            return false;
-                        }
+                    // "[other]" triggers only fire when the event source is DIFFERENT from trigger source
+                    // (e.g., "whenever you sacrifice another permanent" on Pirate Peddlers)
+                    // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                    if trigger.requires_other && card_id == source_card_id {
+                        return None;
+                    }
 
-                        // "[landfall]" triggers only fire when:
-                        // 1. The entering card is a Land
-                        // 2. The entering card is controlled by the trigger's controller
-                        // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
-                        if trigger.requires_landfall {
-                            if !source_card_is_land {
-                                return false;
-                            }
-                            if source_card_controller != Some(controller) {
-                                return false;
-                            }
+                    // "[landfall]" triggers only fire when:
+                    // 1. The entering card is a Land
+                    // 2. The entering card is controlled by the trigger's controller
+                    // OPTIMIZATION: Use pre-parsed boolean flag instead of runtime .contains()
+                    if trigger.requires_landfall {
+                        if !source_card_is_land {
+                            return None;
                         }
+                        if source_card_controller != Some(controller) {
+                            return None;
+                        }
+                    }
 
-                        true
-                    })
-                    .map(move |trigger| TriggerInfo {
+                    // Damage-amount + combat recipient-class gate (CR 510.2).
+                    // For combat damage, a player-only trigger (e.g. Hypnotic
+                    // Specter) must NOT fire when the creature only damaged a
+                    // blocker, while an Any trigger (Spirit Link lifelink)
+                    // fires on damage to players AND creatures. `amount_for`
+                    // returns `None` to skip when the recipient class wasn't
+                    // hit. Non-damage events (`damage == None`) carry no
+                    // amount and are not gated.
+                    let damage_amount = match damage {
+                        None => None,
+                        Some(d) => match d.amount_for(trigger.combat_damage_target) {
+                            Some(amount) => Some(amount),
+                            None => return None,
+                        },
+                    };
+
+                    Some(TriggerInfo {
                         card_id,
                         card_name: card_name.clone(), // Clone Arc<str> only for matching triggers
                         controller,
                         trigger: trigger.clone(),
+                        damage_amount,
                     })
+                })
             })
             .collect();
 
@@ -6417,6 +6485,7 @@ impl GameState {
                         effects: info.trigger.effects,
                         sacrifice_target,
                         sacrificed_power,
+                        damage_amount: info.damage_amount,
                     })
                 } else {
                     None
@@ -6456,8 +6525,11 @@ impl GameState {
             } else {
                 ctx
             };
-            // Thread the damage amount for damage-driven triggers (Spirit Link).
-            let ctx = if let Some(dmg) = damage_amount {
+            // Thread the per-trigger damage amount for damage-driven triggers
+            // (Spirit Link's "gain that much life", Mark of Sakiko's "add that
+            // much {G}"). For combat damage this is the recipient-class slice
+            // selected during filtering (total / to-player / to-creature).
+            let ctx = if let Some(dmg) = trigger_to_exec.damage_amount {
                 ctx.with_damage_amount(dmg)
             } else {
                 ctx

@@ -19,6 +19,72 @@
 use crate::core::{CardId, Effect, PlayerId, TargetRef};
 use crate::game::GameState;
 
+/// Per-creature breakdown of combat damage dealt in a single combat-damage step,
+/// used to fire `DealsCombatDamage` triggers and select the amount each trigger
+/// observes (CR 510.2: combat damage is dealt as one simultaneous event).
+///
+/// Combat damage is recorded once per creature at the single firing site in
+/// `resolve_combat_damage`; this struct lets that one event drive triggers with
+/// the correct recipient-class gate and amount:
+///
+/// - An `Any` trigger (Spirit Link's lifelink) fires whenever `total > 0` and
+///   observes `total` (damage to players AND creatures), matching Lifelink.
+/// - A `Player` trigger (Hypnotic Specter, Mark of Sakiko) fires only when
+///   `to_player > 0` and observes `to_player`.
+/// - A `Creature` trigger fires only when `to_creature > 0` and observes
+///   `to_creature`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CombatDamageBreakdown {
+    /// Total combat damage this creature dealt to all recipients this step.
+    pub total: i32,
+    /// Combat damage this creature dealt to players/planeswalkers this step.
+    pub to_player: i32,
+    /// Combat damage this creature dealt to creatures this step.
+    pub to_creature: i32,
+}
+
+/// How a damage-driven trigger pass computes the amount each trigger observes
+/// (`TriggerCount$DamageAmount`) and whether recipient-class gating applies.
+#[derive(Debug, Clone, Copy)]
+pub enum DamageForTrigger {
+    /// A single fixed amount that every matching trigger observes (non-combat
+    /// damage paths). No recipient-class gating.
+    Fixed(i32),
+    /// A combat-damage breakdown: each trigger is gated by its
+    /// [`CombatDamageTarget`](crate::core::CombatDamageTarget) and observes the
+    /// matching slice of the breakdown.
+    Combat(CombatDamageBreakdown),
+}
+
+impl DamageForTrigger {
+    /// Resolve the amount a trigger with the given recipient filter observes,
+    /// returning `None` to indicate the trigger must NOT fire (recipient-class
+    /// gate failed -- e.g. a player-only trigger when only a creature was hit).
+    pub fn amount_for(&self, target: crate::core::CombatDamageTarget) -> Option<i32> {
+        match self {
+            DamageForTrigger::Fixed(amount) => Some(*amount),
+            DamageForTrigger::Combat(breakdown) => breakdown.amount_for(target),
+        }
+    }
+}
+
+impl CombatDamageBreakdown {
+    /// The amount a trigger with the given recipient filter observes, and
+    /// whether it should fire (`Some(amount)` to fire, `None` to skip).
+    ///
+    /// Keeps recipient-class gating + amount selection in one place so the
+    /// firing site and the trigger filter cannot drift apart.
+    pub fn amount_for(&self, target: crate::core::CombatDamageTarget) -> Option<i32> {
+        use crate::core::CombatDamageTarget;
+        let amount = match target {
+            CombatDamageTarget::Any => self.total,
+            CombatDamageTarget::Player => self.to_player,
+            CombatDamageTarget::Creature => self.to_creature,
+        };
+        (amount > 0).then_some(amount)
+    }
+}
+
 /// Context for resolving placeholder values in triggered effects
 ///
 /// This struct captures all the information needed to resolve placeholders

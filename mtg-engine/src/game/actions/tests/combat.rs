@@ -170,6 +170,157 @@ mod tests {
         assert!(game.battlefield.contains(attacker_id));
     }
 
+    /// mtg-m43mc / mtg-r9po1: a "deals combat damage" trigger (here Spirit
+    /// Link's pseudo-lifelink) must fire when the source deals combat damage to
+    /// a CREATURE, not only to a player. Combat damage is one simultaneous event
+    /// (CR 510.2); the Aura's any-recipient trigger watches damage to all
+    /// recipients (CR 119.3-style, matching Lifelink). Before the fix, the
+    /// firing site only iterated creatures that dealt damage to a PLAYER, so a
+    /// blocked enchanted creature never fired the trigger.
+    ///
+    /// Scenario: P0's 3/3 attacker is enchanted with Spirit Link and is BLOCKED
+    /// by a P1 4/4. The attacker deals 3 combat damage to the blocker (none to a
+    /// player); P0 must still gain 3 life from Spirit Link's trigger.
+    #[test]
+    fn test_spirit_link_fires_on_combat_damage_to_creature() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // P0's 3/3 attacker.
+        let attacker_id = game.next_card_id();
+        let mut attacker = Card::new(attacker_id, "Bear".to_string(), p1_id);
+        attacker.add_type(CardType::Creature);
+        attacker.set_base_power(Some(3));
+        attacker.set_base_toughness(Some(3));
+        attacker.controller = p1_id;
+        game.cards.insert(attacker_id, attacker);
+        game.battlefield.add(attacker_id);
+
+        // P1's 4/4 blocker (survives, so the attacker only ever damages a
+        // creature -- never a player -- isolating the bug).
+        let blocker_id = game.next_card_id();
+        let mut blocker = Card::new(blocker_id, "Wall".to_string(), p2_id);
+        blocker.add_type(CardType::Creature);
+        blocker.set_base_power(Some(4));
+        blocker.set_base_toughness(Some(4));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        // Spirit Link enchanting P0's attacker (real card from cardsfolder so we
+        // exercise the parsed DamageDealtOnce -> any-recipient trigger).
+        let aura_id = match load_test_card(&mut game, "Spirit Link", p1_id) {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("Skipping: Spirit Link not present in cardsfolder");
+                return;
+            }
+        };
+        {
+            let aura = game.cards.get_mut(aura_id).unwrap();
+            aura.attached_to = Some(attacker_id);
+            aura.controller = p1_id;
+        }
+        game.battlefield.add(aura_id);
+
+        let p0_life_before = game.get_player(p1_id).unwrap().life;
+        let p1_life_before = game.get_player(p2_id).unwrap().life;
+
+        // Declare attacker + block.
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let blocker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, blocker_vec);
+
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+        game.assign_combat_damage(&mut controller1, &mut controller2, false)
+            .expect("combat damage should resolve");
+
+        // The defending player took NO damage (attacker was blocked), proving the
+        // lifegain comes from combat damage dealt to the CREATURE, not a player.
+        let p1_life_after = game.get_player(p2_id).unwrap().life;
+        assert_eq!(
+            p1_life_after, p1_life_before,
+            "defending player should take no combat damage (attacker was blocked)"
+        );
+
+        // Spirit Link's trigger must have fired for the 3 damage dealt to the
+        // blocker: P0 gains 3 life.
+        let p0_life_after = game.get_player(p1_id).unwrap().life;
+        assert_eq!(
+            p0_life_after,
+            p0_life_before + 3,
+            "Spirit Link must gain 3 life when the enchanted creature deals 3 combat damage to a blocker \
+             (before={p0_life_before}, after={p0_life_after}); the DealsCombatDamage trigger must fire on \
+             damage to a creature, not only to a player (mtg-m43mc)"
+        );
+    }
+
+    /// mtg-m43mc: a player-only "deals combat damage to a player" trigger must
+    /// NOT fire when the creature only deals combat damage to a blocker. Uses
+    /// Hypnotic Specter (random discard on combat damage to a player). The
+    /// recipient-class gate (`CombatDamageTarget::Player`) must suppress it.
+    #[test]
+    fn test_player_only_trigger_does_not_fire_on_creature_damage() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+        let p1_id = players[0];
+        let p2_id = players[1];
+
+        // P0 attacker = Hypnotic Specter (2/2 flyer with the player-only trigger).
+        let attacker_id = match load_test_card(&mut game, "Hypnotic Specter", p1_id) {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("Skipping: Hypnotic Specter not present in cardsfolder");
+                return;
+            }
+        };
+        {
+            let a = game.cards.get_mut(attacker_id).unwrap();
+            a.controller = p1_id;
+        }
+        game.battlefield.add(attacker_id);
+
+        // P1 blocker (4/4) and a card in P1's hand that would be discarded if the
+        // trigger erroneously fired.
+        let blocker_id = game.next_card_id();
+        let mut blocker = Card::new(blocker_id, "Wall".to_string(), p2_id);
+        blocker.add_type(CardType::Creature);
+        blocker.set_base_power(Some(4));
+        blocker.set_base_toughness(Some(4));
+        blocker.controller = p2_id;
+        game.cards.insert(blocker_id, blocker);
+        game.battlefield.add(blocker_id);
+
+        let hand_card_id = game.next_card_id();
+        let mut hand_card = Card::new(hand_card_id, "Forest".to_string(), p2_id);
+        hand_card.add_type(CardType::Land);
+        game.cards.insert(hand_card_id, hand_card);
+        if let Some(zones) = game.get_player_zones_mut(p2_id) {
+            zones.hand.add(hand_card_id);
+        }
+        let p1_hand_before = game.get_player_zones(p2_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+
+        game.combat.declare_attacker(attacker_id, p2_id);
+        let blocker_vec = smallvec::smallvec![attacker_id];
+        game.combat.declare_blocker(blocker_id, blocker_vec);
+
+        let mut controller1 = ZeroController::new(p1_id);
+        let mut controller2 = ZeroController::new(p2_id);
+        game.assign_combat_damage(&mut controller1, &mut controller2, false)
+            .expect("combat damage should resolve");
+
+        // Player-only trigger must NOT have fired: P1's hand is unchanged.
+        let p1_hand_after = game.get_player_zones(p2_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+        assert_eq!(
+            p1_hand_after, p1_hand_before,
+            "Hypnotic Specter's 'deals combat damage to a player' trigger must NOT fire when it only \
+             damages a blocker (recipient-class gate); P1 should not have discarded (mtg-m43mc)"
+        );
+    }
+
     #[test]
     fn test_combat_damage_multiple_blockers() {
         use crate::game::zero_controller::ZeroController;

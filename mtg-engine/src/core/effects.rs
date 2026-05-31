@@ -1891,6 +1891,37 @@ pub struct ModalMode {
     pub svar_name: String,
 }
 
+/// Which combat-damage recipient class a `DealsCombatDamage` trigger watches.
+///
+/// Combat damage is dealt as one simultaneous event (CR 510.2). A creature's
+/// `DealsCombatDamage` trigger sees that one event, but the trigger's
+/// `ValidTarget$` clause restricts *which* recipients count:
+///
+/// - `ValidTarget$ Player` / `Opponent` / `Player,Planeswalker` -> [`Player`](Self::Player):
+///   fire only when the source dealt combat damage to a player (or
+///   planeswalker), amount = damage dealt to players. (Hypnotic Specter,
+///   Mark of Sakiko.)
+/// - `ValidTarget$ Creature` -> [`Creature`](Self::Creature): fire only when
+///   the source dealt combat damage to a creature, amount = damage to
+///   creatures.
+/// - no `ValidTarget$` restriction (or an aggregating `DamageDealtOnce`) ->
+///   [`Any`](Self::Any): fire whenever the source dealt ANY combat damage,
+///   amount = total combat damage dealt to all recipients (Spirit Link's
+///   lifelink, CR 119.3-style).
+///
+/// Replaces the dead `[any-damage]` / `[damages-creature]` description markers
+/// with a structured filter consumed at the single combat-damage firing site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CombatDamageTarget {
+    /// Fire only on combat damage dealt to a player/planeswalker.
+    Player,
+    /// Fire only on combat damage dealt to a creature.
+    Creature,
+    /// Fire on any combat damage dealt (default; matches Lifelink semantics).
+    #[default]
+    Any,
+}
+
 /// Events that can trigger abilities
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TriggerEvent {
@@ -2041,6 +2072,16 @@ pub struct Trigger {
     #[serde(default)]
     pub requires_attached_source: bool,
 
+    /// For `DealsCombatDamage` triggers: which combat-damage recipient class
+    /// (player vs. creature vs. any) this trigger fires on. Derived from the
+    /// `ValidTarget$` clause at parse time and consumed at the single
+    /// combat-damage firing site (`resolve_combat_damage`), so a player-only
+    /// trigger does NOT fire when the creature only damages a blocker, while
+    /// Spirit Link's any-damage lifelink fires for damage to players AND
+    /// creatures. Ignored for non-`DealsCombatDamage` events.
+    #[serde(default)]
+    pub combat_damage_target: CombatDamageTarget,
+
     /// For AttackersDeclared triggers: keyword required on attacking creatures
     /// Corresponds to ValidAttackers$ Creature.withFlying (or other keywords)
     /// None means any attacking creature triggers it
@@ -2085,6 +2126,7 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
+            combat_damage_target: CombatDamageTarget::Any,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2107,6 +2149,7 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
+            combat_damage_target: CombatDamageTarget::Any,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2135,6 +2178,7 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
+            combat_damage_target: CombatDamageTarget::Any,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2158,6 +2202,7 @@ impl Trigger {
             controller_turn_only: false,
             requires_noncreature: false,
             requires_attached_source: false,
+            combat_damage_target: CombatDamageTarget::Any,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,

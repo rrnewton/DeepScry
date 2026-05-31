@@ -2835,15 +2835,34 @@ impl CardDefinition {
                     _ => false, // Other ValidSource patterns trigger on other creatures
                 };
 
-                // Check ValidTarget$ to determine what damage triggers this
-                // Player = triggers when dealing damage to a player
-                // Opponent = triggers when dealing damage to opponent specifically
-                // Creature = triggers when dealing damage to creatures
+                // Check ValidTarget$ to determine which combat-damage recipient
+                // class fires this trigger (CR 510.2: combat damage is one
+                // simultaneous event; ValidTarget$ restricts which recipients
+                // the trigger watches).
+                //   Player / Opponent / Planeswalker / Battle  -> Player
+                //   Creature (and only Creature)               -> Creature
+                //   absent                                     -> Any (default)
+                // Complex sub-filters (e.g. ValidTarget$
+                // Player.withMoreLandsThanYou) collapse to the coarse
+                // player/creature class here; their finer predicate is not yet
+                // enforced (matches prior behavior -- see mtg-m43mc).
                 let valid_target = params.get("ValidTarget").map(|s| s.as_str());
-                let damages_player = match valid_target {
-                    Some(t) if t.contains("Player") || t.contains("Opponent") => true,
-                    None => true, // Default: assume player damage
-                    _ => false,
+                let combat_damage_target = match valid_target {
+                    None => crate::core::CombatDamageTarget::Any,
+                    Some(t)
+                        if t.contains("Player")
+                            || t.contains("Opponent")
+                            || t.contains("Planeswalker")
+                            || t.contains("Battle") =>
+                    {
+                        // Mixed "Creature,Player" targets still reach a player;
+                        // treat as Player so player damage fires it.
+                        crate::core::CombatDamageTarget::Player
+                    }
+                    Some(t) if t.contains("Creature") => crate::core::CombatDamageTarget::Creature,
+                    // Other patterns (You, Card.Self, ...): default to Any so the
+                    // trigger is not silently suppressed.
+                    Some(_) => crate::core::CombatDamageTarget::Any,
                 };
 
                 // Check CombatDamage$ to determine if this requires combat damage only
@@ -2882,14 +2901,17 @@ impl CardDefinition {
                     t
                 };
 
-                // Store combat_damage_only and damages_player in description markers
-                // This allows runtime filtering without adding new fields
-                if !combat_damage_only && !trigger.description.contains("[any-damage]") {
-                    trigger.description = format!("[any-damage] {}", trigger.description);
-                }
-                if !damages_player && !trigger.description.contains("[damages-creature]") {
-                    trigger.description = format!("[damages-creature] {}", trigger.description);
-                }
+                // Structured recipient-class filter consumed at the combat-damage
+                // firing site (replaces the former dead `[any-damage]` /
+                // `[damages-creature]` description markers that had no consumer).
+                trigger.combat_damage_target = combat_damage_target;
+
+                // `combat_damage_only` (CombatDamage$ True) is intentionally not
+                // gated here: the DealsCombatDamage firing site only fires for
+                // combat damage, so a combat-only trigger never sees non-combat
+                // damage anyway. Non-combat damage triggers are tracked
+                // separately (mtg-r9po1) and remain out of scope.
+                let _ = combat_damage_only;
 
                 triggers.push(trigger);
             }
@@ -5168,11 +5190,13 @@ Oracle:Flying\nWhenever Hypnotic Specter deals damage to an opponent, that playe
             TriggerEvent::DealsCombatDamage,
             "Trigger should be DealsCombatDamage event"
         );
-        // Not combat-damage-only, so should have [any-damage] marker
-        assert!(
-            trigger.description.contains("[any-damage]"),
-            "Non-combat-damage-only trigger should have [any-damage] marker. Description: {}",
-            trigger.description
+        // ValidTarget$ Opponent -> player-class recipient filter: this trigger
+        // fires only on combat damage dealt to a player, not to a creature.
+        assert_eq!(
+            trigger.combat_damage_target,
+            crate::core::CombatDamageTarget::Player,
+            "ValidTarget$ Opponent should set combat_damage_target = Player. Got: {:?}",
+            trigger.combat_damage_target
         );
         // Self-only trigger (ValidSource$ Card.Self)
         assert!(
@@ -5210,11 +5234,12 @@ Oracle:Double strike\nWhenever Markov Blademaster deals combat damage to a playe
             TriggerEvent::DealsCombatDamage,
             "Trigger should be DealsCombatDamage event"
         );
-        // Combat-damage-only, so should NOT have [any-damage] marker
-        assert!(
-            !trigger.description.contains("[any-damage]"),
-            "Combat-damage-only trigger should NOT have [any-damage] marker. Description: {}",
-            trigger.description
+        // ValidTarget$ Player -> player-class recipient filter (combat-damage-only).
+        assert_eq!(
+            trigger.combat_damage_target,
+            crate::core::CombatDamageTarget::Player,
+            "ValidTarget$ Player should set combat_damage_target = Player. Got: {:?}",
+            trigger.combat_damage_target
         );
         // Self-only trigger (ValidSource$ Card.Self)
         assert!(

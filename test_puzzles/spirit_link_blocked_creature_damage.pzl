@@ -1,0 +1,24 @@
+[metadata]
+Name:Spirit Link lifelink fires on combat damage to a creature (mtg-m43mc)
+Goal:Win
+Turns:2
+Difficulty:Easy
+Description:Regression for mtg-m43mc / mtg-r9po1. A creature enchanted with Spirit Link is BLOCKED, so it deals combat damage only to a creature (the blocker), never to a player. Spirit Link's "whenever enchanted creature deals damage, you gain that much life" trigger must still fire (CR 510.2 / 119.3): the controller gains life equal to the combat damage dealt to the blocker. Board: P0 has a 3/3 Hill Giant enchanted with Spirit Link; P1 has a 0/8 Wall of Stone blocker that survives, so the Hill Giant deals 3 to the Wall and 0 to any player. P0 must gain 3 life. The e2e test attaches Spirit Link and declares the block explicitly (puzzle attachment is not yet supported by the loader).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=10
+p0hand=
+p0battlefield=Hill Giant; Spirit Link
+p0library=Mountain; Mountain; Mountain
+p0graveyard=
+p0exile=
+
+p1life=20
+p1hand=
+p1battlefield=Wall of Stone
+p1library=Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1exile=

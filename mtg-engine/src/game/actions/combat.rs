@@ -861,17 +861,47 @@ impl GameState {
             }
         }
 
-        // Fire DealsCombatDamage triggers for creatures that dealt combat damage to players
-        // MTG Rule 702.18: "Whenever this creature deals combat damage to a player..."
-        // Sort by card ID for deterministic trigger ordering
-        creatures_that_dealt_player_damage.sort_by_key(|(card_id, _, _)| card_id.as_u32());
-        for (creature_id, _target_player, damage) in creatures_that_dealt_player_damage {
-            // Only fire if creature is still on the battlefield
-            if self.battlefield.contains(creature_id) {
-                // Thread the damage amount so damage-driven triggers (Spirit
-                // Link's "you gain that much life") read TriggerCount$DamageAmount.
-                self.check_triggers_with_damage(TriggerEvent::DealsCombatDamage, creature_id, Some(damage))?;
+        // Fire DealsCombatDamage triggers for EVERY creature that dealt combat
+        // damage this step -- to players AND to creatures (CR 510.2: combat
+        // damage is dealt as one simultaneous event; both players and creatures
+        // are valid recipients). Previously this fired only for damage to a
+        // player, so e.g. Spirit Link's lifelink and any "deals combat damage"
+        // trigger never fired when the creature was blocked / blocking (mtg-m43mc).
+        //
+        // `damage_dealt_by_creature` is the SAME deterministic BTreeMap the
+        // Lifelink keyword consumes above -- it already aggregates each
+        // creature's total combat damage to all recipients. Iterating it (in
+        // CardId order) is the single shared firing path for native, WASM, and
+        // network play, so trigger detection keys off the one recorded event
+        // consistently on every platform. Each trigger is gated by its
+        // recipient class (player / creature / any) inside
+        // `check_combat_damage_triggers`, which also selects the per-trigger
+        // amount (player-only triggers observe the player-damage slice; Spirit
+        // Link's any-damage lifelink observes the total).
+        //
+        // Build the per-creature player-damage slice (the remainder is creature
+        // damage). `creatures_that_dealt_player_damage` may carry multiple
+        // entries per creature (e.g. trample to multiple defending players in
+        // multiplayer), so sum them.
+        let mut player_damage_by_creature: BTreeMap<CardId, i32> = BTreeMap::new();
+        for (creature_id, _target_player, damage) in &creatures_that_dealt_player_damage {
+            *player_damage_by_creature.entry(*creature_id).or_insert(0) += damage;
+        }
+        // BTreeMap iterates in CardId order -- deterministic for network play.
+        for (&creature_id, &total_damage) in &damage_dealt_by_creature {
+            // Only fire if creature is still on the battlefield (CR 603.10: the
+            // trigger source must still exist to put the ability on the stack).
+            if !self.battlefield.contains(creature_id) {
+                continue;
             }
+            let to_player = player_damage_by_creature.get(&creature_id).copied().unwrap_or(0);
+            let breakdown = crate::game::actions::triggers::CombatDamageBreakdown {
+                total: total_damage,
+                to_player,
+                // Damage not dealt to a player was dealt to a creature.
+                to_creature: total_damage - to_player,
+            };
+            self.check_combat_damage_triggers(creature_id, breakdown)?;
         }
 
         // Persist damage source tracking on each target so death triggers like

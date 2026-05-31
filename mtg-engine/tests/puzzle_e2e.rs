@@ -4347,3 +4347,99 @@ fn test_mana_drain_deferred_mana() {
          at the controller's next main phase. stdout:\n{stdout}"
     );
 }
+
+/// e2e (mtg-m43mc / mtg-r9po1): Spirit Link's triggered lifelink fires when the
+/// enchanted creature deals combat damage to a CREATURE (a blocker), not only
+/// to a player.
+///
+/// Board (test_puzzles/spirit_link_blocked_creature_damage.pzl): P0 has a 3/3
+/// Hill Giant and Spirit Link on the battlefield (Spirit Link is attached
+/// programmatically because the puzzle loader does not yet support attachment),
+/// P1 has a 0/8 Wall of Stone. The Ogre attacks and is blocked by the Wall, so
+/// it deals 3 combat damage to the Wall (which survives) and 0 to any player.
+/// Per CR 510.2 / 119.3, Spirit Link's any-recipient trigger must fire on that
+/// combat damage to a creature, gaining P0 exactly 3 life. The defending
+/// player's life is unchanged, proving the gain came from creature damage.
+#[tokio::test]
+async fn test_spirit_link_lifelink_on_combat_damage_to_creature() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/spirit_link_blocked_creature_damage.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    // Locate the cards by name.
+    let find = |g: &mtg_engine::game::GameState, name: &str| -> Option<mtg_engine::core::CardId> {
+        g.battlefield
+            .cards
+            .iter()
+            .filter_map(|&id| g.cards.try_get(id).map(|c| (id, c)))
+            .find(|(_, c)| c.name.as_str() == name)
+            .map(|(id, _)| id)
+    };
+    let ogre = find(&game, "Hill Giant").expect("Hill Giant on battlefield");
+    let spirit_link = find(&game, "Spirit Link").expect("Spirit Link on battlefield");
+    let wall = find(&game, "Wall of Stone").expect("Wall of Stone on battlefield");
+
+    // Attach Spirit Link to the Hill Giant (puzzle attachment unsupported).
+    {
+        let aura = game.cards.get_mut(spirit_link)?;
+        aura.attached_to = Some(ogre);
+        aura.controller = p0_id;
+    }
+
+    let p0_life_before = game.get_player(p0_id)?.life;
+    let p1_life_before = game.get_player(p1_id)?.life;
+    assert_eq!(p0_life_before, 10, "P0 starts at 10 life");
+
+    // Declare the Ogre as attacker and the Wall as its blocker, then resolve the
+    // combat damage step deterministically (no AI block heuristic involved).
+    game.combat.declare_attacker(ogre, p1_id);
+    let blockers: smallvec::SmallVec<[mtg_engine::core::CardId; 2]> = smallvec::smallvec![ogre];
+    game.combat.declare_blocker(wall, blockers);
+
+    let mut c0 = ZeroController::new(p0_id);
+    let mut c1 = ZeroController::new(p1_id);
+    game.assign_combat_damage(&mut c0, &mut c1, false)?;
+
+    let p0_life_after = game.get_player(p0_id)?.life;
+    let p1_life_after = game.get_player(p1_id)?.life;
+
+    // Defending player took no combat damage (attacker was blocked).
+    assert_eq!(
+        p1_life_after, p1_life_before,
+        "defending player should take no combat damage (Hill Giant was blocked)"
+    );
+
+    // Spirit Link must have gained P0 exactly 3 life from the 3 combat damage
+    // dealt to the Wall of Stone.
+    assert_eq!(
+        p0_life_after,
+        p0_life_before + 3,
+        "Spirit Link must gain 3 life when the enchanted Hill Giant deals 3 combat damage to the \
+         blocking Wall (before={p0_life_before}, after={p0_life_after}); the DealsCombatDamage \
+         trigger must fire on damage to a creature, not only to a player (mtg-m43mc)"
+    );
+
+    // Game-log evidence: a "Player 1 gains 3 life" line from the trigger.
+    let logs = game.logger.logs();
+    let gained_line = logs
+        .iter()
+        .any(|l| l.message.contains("gains 3 life") || (l.message.contains("gains") && l.message.contains("3")));
+    assert!(
+        gained_line,
+        "Expected a 'gains 3 life' log line from Spirit Link's trigger firing on creature combat damage. Logs:\n{}",
+        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+    );
+
+    Ok(())
+}
