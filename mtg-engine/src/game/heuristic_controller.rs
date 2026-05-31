@@ -75,6 +75,10 @@ enum ActivatedAbilityType {
     /// Example: Icy Manipulator "{1}, {T}: Tap target artifact, creature, or land"
     /// Reference: TapAi.java in forge-ai
     TapTarget,
+    /// Zone-return ability — moves the card itself from one zone to another.
+    /// Example: Earthquake Dragon "{2}{G}, Sac a land: Return CARDNAME from
+    /// your graveyard to your hand." (ActivationZone$ Graveyard)
+    ZoneReturn,
     /// Other abilities not yet categorized
     Other,
 }
@@ -662,6 +666,10 @@ impl HeuristicController {
                 ActivatedAbilityType::TapTarget => {
                     // Tap-target abilities (Icy Manipulator) provide repeatable control
                     value += 25;
+                }
+                ActivatedAbilityType::ZoneReturn => {
+                    // Zone-return from graveyard: moderate value — allows recursion
+                    value += 15;
                 }
                 ActivatedAbilityType::Other => {}
             }
@@ -2620,6 +2628,20 @@ impl HeuristicController {
                         }
                     }
                 }
+                ActivatedAbilityType::ZoneReturn => {
+                    // Zone-return from graveyard (e.g. Earthquake Dragon).
+                    // Activate during our main phase when the stack is empty —
+                    // there's no reason to delay returning a powerful threat.
+                    // CR 602.1: any player can activate at instant speed unless
+                    // the ability says otherwise; for graveyard returns with no
+                    // timing restriction, main phase is fine and avoids
+                    // spurious activations during opponent turns.
+                    let current_step = view.current_step();
+                    let is_main = matches!(current_step, crate::game::Step::Main1 | crate::game::Step::Main2);
+                    if is_main && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2693,6 +2715,14 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::TapPermanent { .. }) {
                 return ActivatedAbilityType::TapTarget;
+            }
+        }
+
+        // Check for zone-return self-move (graveyard→hand, etc.)
+        // E.g. Earthquake Dragon's ActivationZone$ Graveyard ability.
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::MoveSelfBetweenZones { .. }) {
+                return ActivatedAbilityType::ZoneReturn;
             }
         }
 

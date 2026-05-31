@@ -1,0 +1,22 @@
+[metadata]
+Name:Earthquake Dragon Graveyard Return
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Earthquake Dragon is in P1's graveyard. P1 has {2}{G} mana available plus a Forest to sacrifice. P1 should be able to activate the graveyard-return ability ({2}{G}, Sac a land: return from graveyard to hand).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Forest; Forest; Forest; Forest
+p0battlefield=Forest; Forest; Forest; Forest
+p0graveyard=Earthquake Dragon
+
+p1life=20
+p1hand=
+p1library=Mountain; Mountain; Mountain; Mountain
+p1battlefield=Grizzly Bears
+p1graveyard=

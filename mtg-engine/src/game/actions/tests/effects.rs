@@ -3453,17 +3453,18 @@ mod tests {
     ///   A:AB$ ChangeZone | Cost$ 2 G Sac<1/Land> | Origin$ Graveyard
     ///                    | Destination$ Hand | ActivationZone$ Graveyard ...
     ///
-    /// Verifies the parsed static side: {14}{G} 10/10 with Flying + Trample.
-    /// Cast/flying/combat are verified end-to-end by
-    /// tests/earthquake_dragon_flying_e2e.sh.
+    /// Verifies:
+    /// - Static side: {14}{G} 10/10 with Flying + Trample.
+    /// - Graveyard-return activated ability parses with `activation_zone ==
+    ///   Zone::Graveyard` (fix for mtg-d8zuh).
     ///
-    /// KNOWN GAP (mtg-d8zuh): the graveyard-return activated ability
-    /// (ActivationZone$ Graveyard) is never offered — ActivatedAbility has no
-    /// activation_zone field, so it is implicitly battlefield-only. CARD
-    /// STATUS therefore remains PARTIAL (mtg-502).
+    /// Cast/flying/combat: tests/earthquake_dragon_flying_e2e.sh
+    /// Graveyard return: tests/earthquake_dragon_graveyard_return_e2e.sh
+    /// Beads: mtg-502, mtg-d8zuh.
     #[test]
     fn test_card_compat_earthquake_dragon() {
         use crate::core::Keyword;
+        use crate::zones::Zone;
         use std::path::PathBuf;
 
         let path = PathBuf::from("../cardsfolder/e/earthquake_dragon.txt");
@@ -3489,6 +3490,22 @@ mod tests {
             card.keywords.contains(Keyword::Trample),
             "Earthquake Dragon must have Trample. Keywords: {:?}",
             card.keywords
+        );
+
+        // Verify the graveyard-return activated ability parses with Zone::Graveyard
+        // (fix for mtg-d8zuh: ActivationZone$ Graveyard now stored on the ability).
+        let graveyard_ab = card
+            .activated_abilities
+            .iter()
+            .find(|ab| ab.activation_zone == Zone::Graveyard);
+        assert!(
+            graveyard_ab.is_some(),
+            "Earthquake Dragon must have a graveyard-activated ability (ActivationZone$ Graveyard). \
+             Abilities: {:?}",
+            card.activated_abilities
+                .iter()
+                .map(|ab| (ab.description.as_str(), &ab.activation_zone))
+                .collect::<Vec<_>>()
         );
     }
 

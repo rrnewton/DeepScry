@@ -1,10 +1,10 @@
 ---
 title: 'Bug: ActivationZone$ Graveyard activated abilities never offered'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-05-30T07:46:56.135746562+00:00
-updated_at: 2026-05-30T07:46:56.135746562+00:00
+updated_at: 2026-05-31T19:09:23.644975103+00:00
 ---
 
 # Description
@@ -26,3 +26,16 @@ activated, graveyard recursion engines). Fix needs:
    abilities whose activation_zone matches.
 
 Affects: Earthquake Dragon (mtg-502, rogerbrand mtg-387).
+
+## FIXED (2026-05-31_#2558(7af638d8), compat-finish-rogue)
+
+Added activation_zone: Zone field to ActivatedAbility (default Battlefield).
+Parsed ActivationZone$ in card.rs via Zone::from_str_lenient.
+Extended push_activatable_abilities to walk player graveyard for abilities
+with activation_zone == Zone::Graveyard, checking mana/sacrifice/sorcery-speed
+costs. effect_converter.rs: AB$ ChangeZone | Origin$ Graveyard | Destination$
+Hand now maps to MoveSelfBetweenZones. priority.rs: new match arm for
+MoveSelfBetweenZones { source: self_target() } patches source to card_id.
+HeuristicController: ZoneReturn ability type activates during main phase.
+
+Verified via Earthquake Dragon (mtg-502).

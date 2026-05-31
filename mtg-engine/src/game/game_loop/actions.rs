@@ -1162,6 +1162,89 @@ impl<'a> GameLoop<'a> {
                 }
             }
         }
+
+        // Also enumerate graveyard-activated abilities (ActivationZone$ Graveyard).
+        // CR 602.1: an activated ability's activation zone is declared on the card;
+        // if it says Graveyard the card activates from its owner's graveyard.
+        // This enables e.g. Earthquake Dragon's {2}{G}, Sac a land: return to hand.
+        let graveyard_cards: smallvec::SmallVec<[CardId; 8]> = self
+            .game
+            .get_player_zones(player_id)
+            .map(|z| z.graveyard.cards.iter().copied().collect())
+            .unwrap_or_default();
+
+        for card_id in graveyard_cards {
+            if let Some(card) = self.game.cards.try_get(card_id) {
+                // The card must be owned by this player (graveyards are owner-based).
+                if card.owner != player_id {
+                    continue;
+                }
+
+                for (ability_index, ability) in card.activated_abilities.iter().enumerate() {
+                    // Only graveyard-zone abilities
+                    if ability.activation_zone != crate::zones::Zone::Graveyard {
+                        continue;
+                    }
+                    // Mana abilities are never graveyard-activated in practice, but guard anyway.
+                    if ability.is_mana_ability {
+                        continue;
+                    }
+
+                    let mut can_activate = true;
+
+                    // Mana cost check (same as battlefield path, but card is never a mana source here)
+                    if let Some(mana_cost) = ability.cost.get_mana_cost() {
+                        if !self.mana_engine.can_pay_with_pool(mana_cost, &mana_pool) {
+                            can_activate = false;
+                        }
+                    }
+
+                    // Sacrifice cost check (e.g., Sac<1/Land> for Earthquake Dragon)
+                    if can_activate {
+                        if let Some((sac_count, sac_pattern)) = ability.cost.get_sacrifice_pattern() {
+                            if !self
+                                .game
+                                .can_pay_sacrifice_pattern(sac_pattern, sac_count, card_id, player_id)
+                            {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    // Sorcery-speed timing check
+                    if can_activate && ability.sorcery_speed {
+                        let is_main_phase = self.game.turn.current_step.is_sorcery_speed();
+                        let is_your_turn = self.game.turn.active_player == player_id;
+                        let stack_empty = self.game.stack.is_empty();
+                        if !is_main_phase || !is_your_turn || !stack_empty {
+                            can_activate = false;
+                        }
+                    }
+
+                    // Your-turn-only check
+                    if can_activate && ability.your_turn_only && self.game.turn.active_player != player_id {
+                        can_activate = false;
+                    }
+
+                    // Activation condition (IsPresent$) check
+                    if can_activate {
+                        if let Some(cond) = &ability.activation_condition {
+                            let actual = self
+                                .game
+                                .count_cards_matching_filter(player_id, &cond.filter, cond.zone);
+                            if !cond.op.matches(actual, cond.count as usize) {
+                                can_activate = false;
+                            }
+                        }
+                    }
+
+                    if can_activate {
+                        self.abilities_buffer
+                            .push(SpellAbility::ActivateAbility { card_id, ability_index });
+                    }
+                }
+            }
+        }
     }
 
     /// Push cycling abilities for cards in hand

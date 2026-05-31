@@ -5018,3 +5018,97 @@ async fn test_black_vise_chosen_upkeep_damage() -> Result<()> {
 
     Ok(())
 }
+
+/// Earthquake Dragon (mtg-502, mtg-d8zuh): graveyard-return activated ability
+/// ({2}{G}, Sacrifice a land: Return Earthquake Dragon from your graveyard to
+/// your hand) is offered and resolves correctly when the card is in the
+/// owner's graveyard (ActivationZone$ Graveyard fix).
+///
+/// Puzzle (earthquake_dragon_graveyard_return.pzl):
+/// - P0 graveyard: Earthquake Dragon. P0 battlefield: 4× Forest.
+/// - P0 (heuristic) should activate the ability in Main1 of turn 1,
+///   sacrificing one Forest and returning the dragon to hand.
+///
+/// Asserts:
+/// 1. The log contains "Earthquake Dragon activates ability: Return Earthquake
+///    Dragon from your graveyard to your hand."
+/// 2. After activation, the dragon is in P0's hand (and no longer in graveyard).
+#[tokio::test]
+async fn test_earthquake_dragon_graveyard_return() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/earthquake_dragon_graveyard_return.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(3);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // has Earthquake Dragon in graveyard
+    let p1_id = players[1]; // has Grizzly Bears on battlefield
+
+    // Confirm initial state: dragon in p0 graveyard
+    let p0_graveyard_before = game.get_player_zones(p0_id).expect("p0 zones").graveyard.cards.len();
+    assert_eq!(
+        p0_graveyard_before, 1,
+        "P0 graveyard should start with 1 card (Earthquake Dragon)"
+    );
+
+    // Enable capture so we can inspect the game log after the run.
+    game.logger.enable_capture();
+
+    let mut c0 = HeuristicController::new(p0_id);
+    let mut c1 = HeuristicController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    // Run 1 turn — P0 should activate during Main1.
+    let _ = game_loop.run_turns(&mut c0, &mut c1, 1);
+
+    let logs = game_loop.game.logger.logs();
+
+    // Assert: the graveyard-return ability was activated.
+    assert!(
+        logs.iter()
+            .any(|e| e.message.contains("Earthquake Dragon activates ability")),
+        "Earthquake Dragon graveyard-return ability must be logged as activated. \
+         Relevant logs: {:?}",
+        logs.iter()
+            .filter(|e| e.message.to_lowercase().contains("earthquake") || e.message.to_lowercase().contains("activat"))
+            .map(|e| &e.message)
+            .collect::<Vec<_>>()
+    );
+
+    // Assert: Earthquake Dragon is no longer in P0's graveyard (it moved to hand).
+    // Note: a sacrificed Forest will also be in the graveyard, so we check by name,
+    // not by count.
+    let p0_zones = game_loop.game.get_player_zones(p0_id).expect("p0 zones");
+    let dragon_still_in_graveyard = p0_zones.graveyard.cards.iter().any(|&id| {
+        game_loop
+            .game
+            .cards
+            .try_get(id)
+            .is_some_and(|c| c.name.as_str() == "Earthquake Dragon")
+    });
+    assert!(
+        !dragon_still_in_graveyard,
+        "Earthquake Dragon must NOT be in P0's graveyard after the return-to-hand activation"
+    );
+
+    // Verify the dragon reached P0's hand (it was returned there, not cast yet in 1 turn).
+    // The dragon costs {14}{G} which P0 can't pay with 3 remaining lands, so it stays in hand.
+    let dragon_in_hand = p0_zones.hand.cards.iter().any(|&id| {
+        game_loop
+            .game
+            .cards
+            .try_get(id)
+            .is_some_and(|c| c.name.as_str() == "Earthquake Dragon")
+    });
+    assert!(
+        dragon_in_hand,
+        "Earthquake Dragon must be in P0's hand after the graveyard-return activation"
+    );
+
+    Ok(())
+}

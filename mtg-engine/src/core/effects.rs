@@ -3710,8 +3710,27 @@ pub struct ActivatedAbility {
     #[serde(default)]
     pub produces_reflected_mana: bool,
 
+    /// The zone in which this ability can be activated (default: Battlefield).
+    ///
+    /// Parsed from `ActivationZone$` in the card script, e.g.:
+    ///   `ActivationZone$ Graveyard` — activatable while the card is in the
+    ///   owner's graveyard (CR 702.25b unearth, graveyard-recursion engines).
+    ///   `ActivationZone$ Hand`      — activatable from hand (cycling uses a
+    ///   dedicated SpellAbility::Cycle variant, but this field handles any
+    ///   future hand-activated non-cycle abilities).
+    ///
+    /// The action enumerator uses this to walk the correct zone when building
+    /// the list of available actions (see `push_activatable_abilities`).
+    #[serde(default = "default_activation_zone")]
+    pub activation_zone: crate::zones::Zone,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
+}
+
+/// Serde default helper — `Zone::Battlefield` is the overwhelmingly common case.
+fn default_activation_zone() -> crate::zones::Zone {
+    crate::zones::Zone::Battlefield
 }
 
 impl ActivatedAbility {
@@ -3729,6 +3748,7 @@ impl ActivatedAbility {
             exhaust: false,        // Default to non-exhaust
             activation_condition: None,
             produces_reflected_mana: false,
+            activation_zone: crate::zones::Zone::Battlefield,
             cache,
         }
     }
@@ -3747,12 +3767,13 @@ impl ActivatedAbility {
             exhaust: false,
             activation_condition: None,
             produces_reflected_mana: false,
+            activation_zone: crate::zones::Zone::Battlefield,
             cache,
         }
     }
 
     /// Create a new your-turn-only activated ability
-    /// Less restrictive than sorcery speed - can be activated any time during your turn
+    /// Less restrictive than sorcery speed - can be activated any time during my turn
     pub fn new_your_turn_only(
         cost: crate::core::Cost,
         effects: Vec<Effect>,
@@ -3771,6 +3792,7 @@ impl ActivatedAbility {
             exhaust: false,
             activation_condition: None,
             produces_reflected_mana: false,
+            activation_zone: crate::zones::Zone::Battlefield,
             cache,
         }
     }

@@ -460,6 +460,27 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     enters_tapped,
                     shuffle: true, // Library searches always shuffle (MTG Rules 701.19b)
                 })
+            }
+            // Return-self from a non-battlefield, non-stack zone to another zone.
+            // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
+            //        | ActivationZone$ Graveyard
+            // (Earthquake Dragon: "Return CARDNAME from your graveyard to your hand.")
+            // The card source is implicit (the ability's host card); use self_target()
+            // so MoveSelfBetweenZones patches it to the real CardId at resolve time.
+            else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
+                && params.get("Destination").is_some()
+                && params.get("Defined").is_none()
+            {
+                let origin = params.get("Origin").and_then(crate::zones::Zone::from_str_lenient);
+                let destination = params.get("Destination").and_then(crate::zones::Zone::from_str_lenient);
+                match (origin, destination) {
+                    (Some(origin), Some(destination)) => Some(Effect::MoveSelfBetweenZones {
+                        source: CardId::self_target(),
+                        origin,
+                        destination,
+                    }),
+                    _ => None,
+                }
             } else {
                 None // Other ChangeZone variants not yet supported
             }

@@ -3174,6 +3174,15 @@ impl CardDefinition {
             //      | PresentCompare$ EQ7 ("exactly seven cards in hand").
             let activation_condition = Self::parse_activation_condition(&params);
 
+            // Parse ActivationZone$ — zone in which this ability may be activated.
+            // Defaults to Battlefield when absent (the common case, CR 602.1).
+            // E.g. "ActivationZone$ Graveyard" allows activation while the card is
+            // in the owner's graveyard (unearth, graveyard-recursion).
+            let activation_zone = params
+                .get("ActivationZone")
+                .and_then(crate::zones::Zone::from_str_lenient)
+                .unwrap_or(crate::zones::Zone::Battlefield);
+
             // Only add if we have effects
             if !effects.is_empty() {
                 let mut ability = if is_sorcery_speed {
@@ -3193,6 +3202,7 @@ impl CardDefinition {
                     ability.produces_reflected_mana = true;
                 }
                 ability.activation_condition = activation_condition;
+                ability.activation_zone = activation_zone;
                 abilities.push(ability);
             }
         }

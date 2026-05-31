@@ -2324,6 +2324,19 @@ impl<'a> GameLoop<'a> {
                                                 }
                                                 continue;
                                             }
+                                            // MoveSelfBetweenZones with self_target source: patch to
+                                            // the actual card_id (e.g. Earthquake Dragon's graveyard→hand
+                                            // activated ability; AB$ ChangeZone | Origin$ Graveyard |
+                                            // Destination$ Hand | ActivationZone$ Graveyard).
+                                            crate::core::Effect::MoveSelfBetweenZones {
+                                                source,
+                                                origin,
+                                                destination,
+                                            } if source.is_self_target() => crate::core::Effect::MoveSelfBetweenZones {
+                                                source: card_id,
+                                                origin: *origin,
+                                                destination: *destination,
+                                            },
                                             _ => effect.clone(),
                                         };
 
