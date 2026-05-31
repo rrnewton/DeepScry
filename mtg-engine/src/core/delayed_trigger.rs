@@ -51,6 +51,15 @@ pub struct DelayedTrigger {
     pub effect: DelayedEffect,
     /// When to remove this trigger (even if not fired)
     pub expiry: Option<DelayedTriggerExpiry>,
+    /// Numeric value remembered at registration time (`RememberNumber$ True`).
+    ///
+    /// Used by cards like Mana Drain whose delayed trigger adds an amount of
+    /// mana equal to a value computed when the trigger was created (the
+    /// countered spell's mana value). Captured into the trigger so it survives
+    /// the `DB$ Cleanup | ClearRemembered$ True` that runs in the same
+    /// resolution, and so it is part of serialized game state.
+    #[serde(default)]
+    pub remembered_amount: Option<u32>,
 }
 
 impl DelayedTrigger {
@@ -71,12 +80,19 @@ impl DelayedTrigger {
             trigger_condition,
             effect,
             expiry: None,
+            remembered_amount: None,
         }
     }
 
     /// Add an expiry condition
     pub fn with_expiry(mut self, expiry: DelayedTriggerExpiry) -> Self {
         self.expiry = Some(expiry);
+        self
+    }
+
+    /// Attach a remembered numeric value (`RememberNumber$ True`).
+    pub fn with_remembered_amount(mut self, amount: Option<u32>) -> Self {
+        self.remembered_amount = amount;
         self
     }
 
@@ -131,6 +147,29 @@ impl DelayedTrigger {
             | DelayedTriggerCondition::LastCounterRemoved { .. } => false,
         }
     }
+
+    /// Check if this trigger should fire at the beginning of `phase`.
+    ///
+    /// # Parameters
+    /// - `phase`: the phase whose beginning we just reached
+    /// - `active_player`: the player whose turn it is right now
+    pub fn matches_phase(&self, phase: TriggerPhase, active_player: super::PlayerId) -> bool {
+        match &self.trigger_condition {
+            DelayedTriggerCondition::Phase { phases, whose_turn } => {
+                if !phases.contains(&phase) {
+                    return false;
+                }
+                match whose_turn {
+                    TurnOwner::You => active_player == self.controller,
+                    TurnOwner::Opponent => active_player != self.controller,
+                    TurnOwner::Any => true,
+                }
+            }
+            DelayedTriggerCondition::ZoneChange { .. }
+            | DelayedTriggerCondition::SpellCast { .. }
+            | DelayedTriggerCondition::LastCounterRemoved { .. } => false,
+        }
+    }
 }
 
 /// What event triggers a delayed trigger
@@ -145,11 +184,16 @@ pub enum DelayedTriggerCondition {
         to_zones: SmallVec<[Zone; 2]>,
     },
 
-    /// Fire at the beginning of a phase
-    /// Example: "At the beginning of the next end step"
+    /// Fire at the beginning of one of a set of phases.
+    ///
+    /// Example: Mana Drain's "At the beginning of your next main phase"
+    /// (`Phase$ Main1,Main2`) fires at whichever main phase comes first.
     Phase {
-        phase: TriggerPhase,
-        /// Whose turn? (owner, opponent, or any)
+        /// Phases that fire the trigger (the trigger fires at the first one
+        /// reached that also satisfies `whose_turn`). A set rather than a
+        /// single phase so `Main1,Main2` = "your next main phase, either one".
+        phases: SmallVec<[TriggerPhase; 2]>,
+        /// Whose turn? (controller, opponent, or any)
         whose_turn: TurnOwner,
     },
 
@@ -172,10 +216,36 @@ pub enum DelayedTriggerCondition {
 pub enum TriggerPhase {
     Upkeep,
     Draw,
+    /// Pre-combat main phase (Main1).
+    Main1,
     BeginCombat,
     EndCombat,
+    /// Post-combat main phase (Main2).
+    Main2,
     EndStep,
     Cleanup,
+}
+
+impl TriggerPhase {
+    /// Parse a Forge card-script phase name (`Phase$ ...`) into a [`TriggerPhase`].
+    ///
+    /// Accepts the script spellings used in `cardsfolder` (`Main1`, `Main2`,
+    /// `BeginCombat`, `EndCombat`, `End`, `Cleanup`, `Upkeep`, `Draw`).
+    /// Returns `None` for unrecognized names so callers can skip the trigger
+    /// rather than silently mapping to the wrong phase.
+    pub fn from_script_name(name: &str) -> Option<Self> {
+        match name {
+            "Upkeep" => Some(Self::Upkeep),
+            "Draw" => Some(Self::Draw),
+            "Main1" => Some(Self::Main1),
+            "BeginCombat" => Some(Self::BeginCombat),
+            "EndCombat" => Some(Self::EndCombat),
+            "Main2" => Some(Self::Main2),
+            "End" | "EndStep" => Some(Self::EndStep),
+            "Cleanup" => Some(Self::Cleanup),
+            _ => None,
+        }
+    }
 }
 
 /// Whose turn the phase trigger fires on
@@ -271,6 +341,19 @@ impl DelayedTriggerStore {
         id
     }
 
+    /// Reverse an `add`: remove the trigger and roll `next_id` back to the
+    /// freed id, so a subsequent re-`add` (replay after rewind) assigns the
+    /// SAME id the original `add` did. Keeping ids stable across rewind/replay
+    /// is required for byte-identical state hashes (snapshot/resume, undo
+    /// search). Only valid for the most-recently-added trigger.
+    pub fn undo_add(&mut self, id: DelayedTriggerId) -> Option<DelayedTrigger> {
+        let removed = self.remove(id);
+        if removed.is_some() && id.as_u32() + 1 == self.next_id {
+            self.next_id = id.as_u32();
+        }
+        removed
+    }
+
     /// Remove a trigger by ID (e.g., when it fires)
     pub fn remove(&mut self, id: DelayedTriggerId) -> Option<DelayedTrigger> {
         if let Some(pos) = self.triggers.iter().position(|t| t.id == id) {
@@ -285,6 +368,18 @@ impl DelayedTriggerStore {
         self.triggers
             .iter()
             .filter(|t| t.matches_zone_change(card, from_zone, to_zone))
+            .map(|t| t.id)
+            .collect()
+    }
+
+    /// Find triggers that fire at the beginning of `phase` on `active_player`'s turn.
+    ///
+    /// Used by the turn machinery to fire "at the beginning of your next
+    /// [main] phase" delayed triggers (e.g. Mana Drain).
+    pub fn find_phase_triggers(&self, phase: TriggerPhase, active_player: PlayerId) -> Vec<DelayedTriggerId> {
+        self.triggers
+            .iter()
+            .filter(|t| t.matches_phase(phase, active_player))
             .map(|t| t.id)
             .collect()
     }
@@ -413,6 +508,53 @@ mod tests {
         let removed = store.remove(id);
         assert!(removed.is_some());
         assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_undo_add_restores_next_id() {
+        // mtg-519: rewind/replay determinism. undo_add must roll next_id back so
+        // a replay re-add assigns the SAME DelayedTriggerId (stable state hash).
+        let mut store = DelayedTriggerStore::new();
+        let card = CardId::new(1);
+        let id1 = store.add(make_test_trigger(card, smallvec::smallvec![Zone::Graveyard]));
+        assert_eq!(id1, DelayedTriggerId::new(1));
+
+        // Reverse the add (as undo of RegisterDelayedTrigger does).
+        store.undo_add(id1);
+        assert_eq!(store.len(), 0);
+
+        // A re-add during replay must reuse id 1, not bump to 2.
+        let id1_again = store.add(make_test_trigger(card, smallvec::smallvec![Zone::Graveyard]));
+        assert_eq!(
+            id1_again,
+            DelayedTriggerId::new(1),
+            "replay re-add must reuse the freed id"
+        );
+    }
+
+    #[test]
+    fn test_phase_trigger_matches_main_phases() {
+        // mtg-519: Mana Drain's `Phase$ Main1,Main2 | ValidPlayer$ You`.
+        let controller = crate::core::PlayerId::new(0);
+        let opponent = crate::core::PlayerId::new(1);
+        let trigger = DelayedTrigger::new(
+            DelayedTriggerId::new(0),
+            CardId::new(0),
+            CardId::new(0),
+            controller,
+            DelayedTriggerCondition::Phase {
+                phases: smallvec::smallvec![TriggerPhase::Main1, TriggerPhase::Main2],
+                whose_turn: TurnOwner::You,
+            },
+            DelayedEffect::Sacrifice,
+        );
+        // Fires at the controller's main phases (either one)...
+        assert!(trigger.matches_phase(TriggerPhase::Main1, controller));
+        assert!(trigger.matches_phase(TriggerPhase::Main2, controller));
+        // ...but NOT on the opponent's turn (ValidPlayer$ You)...
+        assert!(!trigger.matches_phase(TriggerPhase::Main1, opponent));
+        // ...nor at a non-main phase.
+        assert!(!trigger.matches_phase(TriggerPhase::Upkeep, controller));
     }
 
     #[test]

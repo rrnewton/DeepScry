@@ -1009,6 +1009,11 @@ pub enum Effect {
         target: CardId,
         #[serde(default)]
         required_color: Option<crate::core::Color>,
+        /// `RememberCounteredCMC$ True` — record the countered spell's mana
+        /// value into `GameState::remembered_amount` so a chained delayed
+        /// trigger (Mana Drain) can add that much mana later.
+        #[serde(default)]
+        remember_mana_value: bool,
     },
 
     /// Add mana to a player's mana pool

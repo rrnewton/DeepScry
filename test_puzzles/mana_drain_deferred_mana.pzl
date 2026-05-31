@@ -1,0 +1,16 @@
+[metadata]
+Name:Mana Drain Deferred Mana
+Goal:Win
+Turns:3
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Hill Giant
+p0library=Plains; Plains; Plains; Plains
+p0battlefield=Mountain; Mountain; Mountain; Mountain
+p1life=20
+p1hand=Mana Drain
+p1library=Plains; Plains; Plains; Plains
+p1battlefield=Island; Island

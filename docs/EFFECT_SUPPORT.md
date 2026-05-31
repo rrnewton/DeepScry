@@ -83,6 +83,8 @@ workflow, row format, and update rules.
 | SP$ Draw NumCards$ N/X ValidTgts$ Player      | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Ancestral Recall, Braingeyser |
 | SP$ Counter TargetType$ Spell                 | WORKING | 2026-05-29_#2456(e30f4ce1) | (none)     | Counterspell        |
 | SP$ Counter UnlessCost$ X + SubAbility$ TapAll → DB$ DrainMana Defined$ TargetedController | WORKING | 2026-05-30_#2530(199b91e1) | (fixed mtg-532) | Power Sink |
+| SP$ Counter RememberCounteredCMC$ True (record countered spell's mana value for a chained effect) | WORKING | 2026-05-30_#2538(58715f3f) | (fixed mtg-519) | Mana Drain |
+| DB$ DelayedTrigger Mode$ Phase Phase$ Main1,Main2 ValidPlayer$ You Execute$ DB$ Mana (one-shot "at the beginning of your next main phase, add {C}×rememberedNumber"; general phase-delayed-trigger construct) | WORKING | 2026-05-30_#2538(58715f3f) | (fixed mtg-519) | Mana Drain |
 | DB$ DrainMana Defined$ TargetedController (empty a player's unspent mana pool, CR 106.4/500.4) | WORKING | 2026-05-30_#2530(199b91e1) | (fixed mtg-532) | Power Sink |
 | SP$ Destroy ValidTgts$ Creature.nonArtifact+nonBlack NoRegen$ True | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Terror |
 | AB$ Draw Cost$ 2 T NumCards$ 1 + SubAbility$ DBDiscard | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Jalum Tome |

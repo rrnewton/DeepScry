@@ -4258,3 +4258,92 @@ async fn test_fellwar_stone_reflected_mana() -> Result<()> {
 
     Ok(())
 }
+
+/// E2E (mtg-519): Mana Drain's delayed triggered ability — "At the beginning
+/// of your next main phase, add an amount of {C} equal to that spell's mana
+/// value." This is a general `DB$ DelayedTrigger | Mode$ Phase` construct:
+/// the counter half registers a one-shot Phase delayed trigger that fires at
+/// the controller's next Main1/Main2 and adds {C}×(countered mana value).
+///
+/// Drives the real game loop through the `mtg tui` binary (the deferred
+/// trigger fires a full turn later, after a phase advance, so a direct
+/// `resolve_spell` cannot exercise it). P1 casts Hill Giant ({3}{G}, mana
+/// value 4); P2 counters with Mana Drain. The {C}×4 must appear at P2's next
+/// main phase, not P1's (ValidPlayer$ You).
+///
+/// Reproducer:
+/// ```sh
+/// ./target/release/mtg tui --start-state test_puzzles/mana_drain_deferred_mana.pzl \
+///   --p1=fixed --p2=fixed --p1-fixed-inputs='cast Hill Giant;*;*' \
+///   --p2-fixed-inputs='cast Mana Drain;*;*' --stop-on-choice=30 --seed 42 --verbosity 3
+/// ```
+/// Expected log: `Mana Drain (..) counters Hill Giant (..)` then
+/// `Player 2 adds {C}×4 to mana pool (delayed trigger)`.
+#[test]
+fn test_mana_drain_deferred_mana() {
+    use std::process::Command;
+
+    // Resolve the prebuilt release binary (built by make validate / CI; built
+    // once here for a bare `cargo test`). Mirrors determinism_e2e.rs.
+    let bin = std::env::var_os("MTG_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../target/release/mtg")));
+    if !bin.exists() {
+        let reuse = std::env::var("MTG_REUSE_PREBUILT").as_deref() == Ok("1");
+        assert!(
+            !reuse,
+            "MTG_REUSE_PREBUILT=1 but prebuilt binary missing at {}",
+            bin.display()
+        );
+        let status = Command::new("cargo")
+            .args(["build", "--release", "--bin", "mtg", "--features", "network"])
+            .status()
+            .expect("cargo build for mtg release binary");
+        assert!(
+            status.success(),
+            "cargo build --release --bin mtg --features network failed"
+        );
+    }
+
+    let puzzle = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../test_puzzles/mana_drain_deferred_mana.pzl"
+    );
+    if !PathBuf::from(puzzle).exists() {
+        eprintln!("Skipping: puzzle not present at {puzzle}");
+        return;
+    }
+
+    let output = Command::new(&bin)
+        .args([
+            "tui",
+            "--start-state",
+            puzzle,
+            "--p1=fixed",
+            "--p2=fixed",
+            "--p1-fixed-inputs=cast Hill Giant;*;*",
+            "--p2-fixed-inputs=cast Mana Drain;*;*",
+            "--stop-on-choice=30",
+            "--seed",
+            "42",
+            "--verbosity",
+            "3",
+        ])
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run mtg binary {}: {e}", bin.display()));
+    let stdout = String::from_utf8(output.stdout).expect("Invalid UTF-8 in stdout");
+
+    // Counter half: Mana Drain counters Hill Giant.
+    assert!(
+        stdout.contains("counters Hill Giant"),
+        "Mana Drain must counter Hill Giant. stdout:\n{stdout}"
+    );
+
+    // Deferred rider: {C}×4 (Hill Giant's mana value = {3}{G} = 4) appears at
+    // the controller's next main phase via the delayed trigger.
+    assert!(
+        stdout.contains("adds {C}\u{d7}4 to mana pool (delayed trigger)"),
+        "Mana Drain's delayed trigger must add {{C}}\u{d7}4 (Hill Giant mana value) \
+         at the controller's next main phase. stdout:\n{stdout}"
+    );
+}

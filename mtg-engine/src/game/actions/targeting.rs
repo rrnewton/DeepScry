@@ -268,7 +268,9 @@ impl GameState {
                         }
                     }
                 }
-                Effect::CounterSpell { target, required_color } if target.is_placeholder() => {
+                Effect::CounterSpell {
+                    target, required_color, ..
+                } if target.is_placeholder() => {
                     // Counter can target spells on the stack (except self).
                     // A color-restricted counter (Red Elemental Blast's "blue
                     // spell") only sees spells of the required color.

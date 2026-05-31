@@ -302,6 +302,29 @@ pub enum GameAction {
         /// Stored as Vec since library size varies and SmallVec wouldn't help
         previous_order: Vec<CardId>,
     },
+
+    /// Register a delayed trigger in the delayed-trigger store.
+    ///
+    /// Undo removes the trigger with this id from the store. Required so
+    /// rewind-to-turn-start (snapshot/resume, undo search) reverses a delayed
+    /// trigger created during the turn — otherwise the rewound "turn start"
+    /// state retains it and the replay double-registers it (mtg-519).
+    RegisterDelayedTrigger { id: crate::core::DelayedTriggerId },
+
+    /// Fire (remove + execute) a delayed trigger.
+    ///
+    /// Stores the full trigger so undo can restore it via the store's
+    /// `restore`. The mutating effects of firing (e.g. AddMana) are logged as
+    /// their own actions, so undo of those is handled separately.
+    FireDelayedTrigger { trigger: Box<crate::core::DelayedTrigger> },
+
+    /// Set `GameState::remembered_amount` (RememberCounteredCMC$ / RememberNumber$).
+    ///
+    /// Stores the previous value so undo restores it.
+    SetRememberedAmount {
+        #[serde(default)]
+        previous: Option<u32>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -475,6 +498,15 @@ impl fmt::Display for GameAction {
                 from_player.as_u32(),
                 new_damage
             ),
+            GameAction::RegisterDelayedTrigger { id } => {
+                write!(f, "RegisterDelayedTrigger(#{})", id.as_u32())
+            }
+            GameAction::FireDelayedTrigger { trigger } => {
+                write!(f, "FireDelayedTrigger(#{})", trigger.id.as_u32())
+            }
+            GameAction::SetRememberedAmount { previous } => {
+                write!(f, "SetRememberedAmount(prev={:?})", previous)
+            }
         }
     }
 }
@@ -901,6 +933,23 @@ impl GameAction {
                         player_id.as_u32()
                     ));
                 }
+            }
+
+            GameAction::RegisterDelayedTrigger { id } => {
+                // Undo registration: remove the trigger AND roll next_id back so
+                // a replay re-add reuses the same id (stable state hash).
+                game.delayed_triggers.undo_add(*id);
+            }
+
+            GameAction::FireDelayedTrigger { trigger } => {
+                // Undo firing: restore the removed trigger. (The mana/effects
+                // produced by firing are logged as their own actions and undone
+                // separately.)
+                game.delayed_triggers.restore((**trigger).clone());
+            }
+
+            GameAction::SetRememberedAmount { previous } => {
+                game.remembered_amount = *previous;
             }
         }
 

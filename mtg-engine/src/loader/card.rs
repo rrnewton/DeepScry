@@ -1694,8 +1694,11 @@ impl CardDefinition {
         params: &super::ability_parser::AbilityParams,
         effects: &mut Vec<crate::core::Effect>,
     ) {
-        use super::ability_parser::AbilityParams;
-        use super::effect_converter::params_to_effect;
+        use super::ability_parser::{AbilityParams, ApiType};
+        use super::effect_converter::{
+            params_to_charm_effect_with_svars, params_to_delayed_trigger_with_svars, params_to_effect,
+            params_to_immediate_trigger_with_svars,
+        };
 
         // Check if there's a SubAbility$ reference
         let sub_ability_name = match params.get("SubAbility") {
@@ -1735,9 +1738,23 @@ impl CardDefinition {
         // (e.g. Swords to Plowshares `LifeAmount$ X` / `SVar:X:Targeted$CardPower`)
         // is not expressible as a fixed-amount `Effect::GainLife`, so route it
         // through the SVar-aware dynamic builder first.
+        //
+        // DelayedTrigger / ImmediateTrigger / Charm sub-abilities need the
+        // SVar-aware converters (mirroring `parse_effects`) so their `Execute$`
+        // / mode SVars resolve — e.g. Mana Drain's `SubAbility$ DBDelTrig`
+        // (`DB$ DelayedTrigger | Mode$ Phase | ... | Execute$ AddMana`).
+        // Most ApiTypes use the plain converter; only the three SVar-resolving
+        // shapes need their specialized builders. The wildcard is intentional.
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let sub_effect = match sub_params.api_type {
+            ApiType::Charm => params_to_charm_effect_with_svars(&sub_params, &self.svars),
+            ApiType::DelayedTrigger => params_to_delayed_trigger_with_svars(&sub_params, &self.svars),
+            ApiType::ImmediateTrigger => params_to_immediate_trigger_with_svars(&sub_params, &self.svars),
+            _ => params_to_effect(&sub_params),
+        };
         if let Some(effect) = self.gain_life_dynamic_from_params(&sub_params) {
             effects.push(effect);
-        } else if let Some(effect) = params_to_effect(&sub_params) {
+        } else if let Some(effect) = sub_effect {
             effects.push(effect);
         }
 

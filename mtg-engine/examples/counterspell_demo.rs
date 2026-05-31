@@ -59,6 +59,7 @@ fn main() -> Result<()> {
     counterspell.effects.push(Effect::CounterSpell {
         target: bolt_id,
         required_color: None,
+        remember_mana_value: false,
     });
     game.cards.insert(counter_id, counterspell);
 

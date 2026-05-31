@@ -377,9 +377,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             let required_color = params
                 .get("ValidTgts")
                 .and_then(|v| TargetRestriction::parse(v).required_color);
+            // RememberCounteredCMC$ True (Mana Drain): record the countered
+            // spell's mana value so a chained delayed trigger can use it.
+            let remember_mana_value = params.get("RememberCounteredCMC") == Some("True");
             Some(Effect::CounterSpell {
                 target: CardId::new(0), // Placeholder
                 required_color,
+                remember_mana_value,
             })
         }
 
@@ -1937,6 +1941,34 @@ pub fn params_to_delayed_trigger_with_svars(params: &AbilityParams, svars: &Hash
             valid_card_type,
             you_only,
         }
+    } else if mode == "Phase" {
+        // Phase trigger: fires at the beginning of one of a set of phases.
+        // Example: Mana Drain's "At the beginning of your next main phase"
+        //   DB$ DelayedTrigger | Mode$ Phase | Phase$ Main1,Main2 | ValidPlayer$ You
+        // Parameters:
+        // - Phase$: comma-separated phase names (Upkeep, Draw, Main1, Main2,
+        //   BeginCombat, EndCombat, End/EndStep, Cleanup)
+        // - ValidPlayer$: Whose turn fires it (You, Opponent, Any)
+        let phases: smallvec::SmallVec<[crate::core::TriggerPhase; 2]> = params
+            .get("Phase")
+            .into_iter()
+            .flat_map(|spec| spec.split(','))
+            .filter_map(|name| crate::core::TriggerPhase::from_script_name(name.trim()))
+            .collect();
+        if phases.is_empty() {
+            log::debug!(
+                target: "effect_converter",
+                "DelayedTrigger Mode$ Phase with no recognized Phase$ value: {:?}",
+                params.get("Phase")
+            );
+            return None;
+        }
+        let whose_turn = match params.get("ValidPlayer") {
+            Some("You") => crate::core::TurnOwner::You,
+            Some("Opponent") => crate::core::TurnOwner::Opponent,
+            _ => crate::core::TurnOwner::Any,
+        };
+        crate::core::DelayedTriggerCondition::Phase { phases, whose_turn }
     } else {
         log::debug!(
             target: "effect_converter",

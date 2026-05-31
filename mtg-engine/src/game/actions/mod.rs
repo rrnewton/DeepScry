@@ -2434,13 +2434,18 @@ impl GameState {
                     effect.clone()
                 }
             }
-            Effect::CounterSpell { target, required_color } if target.is_placeholder() => {
+            Effect::CounterSpell {
+                target,
+                required_color,
+                remember_mana_value,
+            } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
                     let resolved_target = chosen_targets[*target_index];
                     *target_index += 1;
                     Effect::CounterSpell {
                         target: resolved_target,
                         required_color: *required_color,
+                        remember_mana_value: *remember_mana_value,
                     }
                 } else {
                     effect.clone()
@@ -3724,7 +3729,11 @@ impl GameState {
                     player_name, num_turns
                 ));
             }
-            Effect::CounterSpell { target, .. } => {
+            Effect::CounterSpell {
+                target,
+                remember_mana_value,
+                ..
+            } => {
                 // Counter a spell on the stack
                 // Fizzle if target is placeholder (no valid target found) or not on stack
                 // This happens when triggered counter effects (e.g., Ulamog's Nullifier ETB)
@@ -3732,6 +3741,24 @@ impl GameState {
                 if target.is_placeholder() || !self.stack.contains(*target) {
                     log::debug!("CounterSpell fizzles - target {} not on stack", target.as_u32());
                 } else {
+                    // Mana Drain (RememberCounteredCMC$ True): record the
+                    // countered spell's mana value (including any X paid) BEFORE
+                    // it leaves the stack, so the chained delayed trigger can
+                    // add that much {C} at the controller's next main phase.
+                    if *remember_mana_value {
+                        let mana_value = self
+                            .cards
+                            .try_get(*target)
+                            .map(|c| u32::from(c.mana_cost.cmc()) + u32::from(c.x_paid))
+                            .unwrap_or(0);
+                        let prior_log_size = self.logger.log_count();
+                        let previous = self.remembered_amount;
+                        self.remembered_amount = Some(mana_value);
+                        self.undo_log.log(
+                            crate::undo::GameAction::SetRememberedAmount { previous },
+                            prior_log_size,
+                        );
+                    }
                     self.counter_spell(*target)?;
                 }
             }
@@ -5032,36 +5059,49 @@ impl GameState {
                 expiry,
             } => {
                 // CreateDelayedTrigger effect: Register a delayed trigger that fires on a condition
-                // Created by SP$ DelayedTrigger spells (e.g., Fatal Fissure)
+                // Created by SP$/DB$ DelayedTrigger spells.
                 //
-                // Implementation:
-                // 1. Verify the tracked card is still on battlefield (target still valid)
-                // 2. Create a DelayedTrigger with the specified condition
-                // 3. Store the effect to execute when triggered
-                // 4. Register the trigger in the delayed_triggers store
+                // Two shapes:
+                // - ZoneChange (Fatal Fissure): tracks a battlefield card; the
+                //   trigger fires when that card changes zones. Requires a valid
+                //   tracked card on the battlefield or the spell fizzles.
+                // - Phase / SpellCast (Mana Drain, Jeong Jeong): no tracked
+                //   battlefield card; the trigger fires at a future phase / on a
+                //   future spell cast. The controller is the resolving spell's
+                //   controller, regardless of whose turn it is.
+                let is_zone_change = matches!(condition, crate::core::DelayedTriggerCondition::ZoneChange { .. });
 
-                // Skip if tracked_card is still placeholder (0) - no valid targets found
-                if tracked_card.is_placeholder() {
-                    // Spell fizzles - no valid targets
-                    log::debug!(target: "actions", "CreateDelayedTrigger: tracked_card is placeholder, spell fizzles");
-                    return Ok(());
+                if is_zone_change {
+                    // Skip if tracked_card is still placeholder (0) - no valid targets found
+                    if tracked_card.is_placeholder() {
+                        log::debug!(target: "actions", "CreateDelayedTrigger: tracked_card is placeholder, spell fizzles");
+                        return Ok(());
+                    }
+                    // Verify the target is still on battlefield
+                    if !self.battlefield.contains(*tracked_card) {
+                        log::debug!(target: "actions", "CreateDelayedTrigger: target no longer on battlefield, spell fizzles");
+                        return Ok(());
+                    }
                 }
 
-                // Verify the target is still on battlefield
-                if !self.battlefield.contains(*tracked_card) {
-                    log::debug!(target: "actions", "CreateDelayedTrigger: target no longer on battlefield, spell fizzles");
-                    return Ok(());
-                }
-
-                // Get card name for logging
+                // Get card name for logging (tracked card for zone triggers, else
+                // the resolving spell's name).
                 let card_name = self
                     .cards
-                    .get(*tracked_card)
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("Unknown");
+                    .try_get(*tracked_card)
+                    .or_else(|| self.current_damage_source.and_then(|src| self.cards.try_get(src)))
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
 
-                // Get the spell controller
-                let controller = self.turn.active_player;
+                // The trigger controller is the resolving spell's controller
+                // (current_damage_source is set to the resolving spell during
+                // resolve_spell_execute_effects). Fall back to the active player
+                // for the legacy zone-change path / direct execute_effect calls.
+                let controller = self
+                    .current_damage_source
+                    .and_then(|src| self.cards.try_get(src))
+                    .map(|c| c.controller)
+                    .unwrap_or(self.turn.active_player);
 
                 // Create the delayed trigger
                 use crate::core::{DelayedEffect, DelayedTrigger, DelayedTriggerId};
@@ -5099,14 +5139,29 @@ impl GameState {
                     None => trigger,
                 };
 
+                // Capture any remembered numeric value (Mana Drain's countered
+                // mana value) onto the trigger so it survives the chained
+                // ClearRemembered and is part of the trigger's serialized state.
+                let trigger = trigger.with_remembered_amount(self.remembered_amount);
+
+                let prior_log_size = self.logger.log_count();
                 let trigger_id = self.delayed_triggers.add(trigger);
+                // Undo-log the registration so rewind-to-turn-start (snapshot/
+                // resume, undo search) removes it; otherwise the replay would
+                // double-register the trigger (mtg-519).
+                self.undo_log.log(
+                    crate::undo::GameAction::RegisterDelayedTrigger { id: trigger_id },
+                    prior_log_size,
+                );
 
                 // Log the delayed trigger creation
-                self.logger.gamelog(&format!(
-                    "Delayed trigger {} created: watching {} for death",
-                    trigger_id.as_u32(),
-                    card_name
-                ));
+                let what = if is_zone_change {
+                    format!("watching {} for death", card_name)
+                } else {
+                    format!("from {}", card_name)
+                };
+                self.logger
+                    .gamelog(&format!("Delayed trigger {} created: {}", trigger_id.as_u32(), what));
 
                 log::debug!(
                     target: "actions",
@@ -5563,9 +5618,21 @@ impl GameState {
                 }
             }
             Effect::ClearRemembered => {
-                // Clear both remembered cards and remembered players storage
+                // Clear remembered cards, players, and numeric value storage.
+                // The numeric value (Mana Drain) is already captured onto the
+                // delayed trigger by the preceding CreateDelayedTrigger, so
+                // clearing the scratch here is safe.
                 self.remembered_cards.clear();
                 self.remembered_players.clear();
+                if self.remembered_amount.is_some() {
+                    let prior_log_size = self.logger.log_count();
+                    let previous = self.remembered_amount;
+                    self.remembered_amount = None;
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetRememberedAmount { previous },
+                        prior_log_size,
+                    );
+                }
             }
             Effect::UnlessCostWrapper {
                 inner_effect,

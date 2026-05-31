@@ -179,6 +179,16 @@ pub struct GameState {
     #[serde(default)]
     pub remembered_players: smallvec::SmallVec<[PlayerId; 4]>,
 
+    /// Remembered numeric value for effect-resolution chains (`RememberNumber$`).
+    ///
+    /// Set when a `CounterSpell` with `RememberCounteredCMC$ True` resolves
+    /// (Mana Drain records the countered spell's mana value here), then read by
+    /// a chained `CreateDelayedTrigger` which captures it onto the delayed
+    /// trigger. Cleared by `DB$ Cleanup | ClearRemembered$ True`. Part of
+    /// serialized state so snapshot/resume and network-shadow stay identical.
+    #[serde(default)]
+    pub remembered_amount: Option<u32>,
+
     /// Queue of extra turns granted by effects (e.g., Time Walk).
     ///
     /// Each entry is the PlayerId who gets the extra turn.
@@ -391,6 +401,7 @@ impl GameState {
             delayed_triggers: DelayedTriggerStore::new(),
             remembered_cards: smallvec::SmallVec::new(),
             remembered_players: smallvec::SmallVec::new(),
+            remembered_amount: None,
             extra_turns: std::collections::VecDeque::new(),
             extra_combat_phases: 0,
             is_shadow_game: false, // Default: not a shadow game
@@ -3221,6 +3232,21 @@ impl GameState {
                         }
                     }
                 }
+
+                crate::undo::GameAction::RegisterDelayedTrigger { id } => {
+                    // Reverse registration: remove the trigger AND roll next_id
+                    // back so a replay re-add reuses the same id (stable hash).
+                    self.delayed_triggers.undo_add(id);
+                }
+
+                crate::undo::GameAction::FireDelayedTrigger { trigger } => {
+                    // Reverse firing: restore the removed trigger.
+                    self.delayed_triggers.restore(*trigger);
+                }
+
+                crate::undo::GameAction::SetRememberedAmount { previous } => {
+                    self.remembered_amount = previous;
+                }
             }
 
             // After undo, mark all mana caches as needing rebuild
@@ -3297,6 +3323,52 @@ impl GameState {
         Ok(fired_count)
     }
 
+    /// Check and fire `Mode$ Phase` delayed triggers at the beginning of a phase.
+    ///
+    /// Called by the turn machinery when a new phase begins (e.g. the
+    /// pre-combat main phase) to fire one-shot "at the beginning of your next
+    /// [main] phase" delayed triggers such as Mana Drain. Matching triggers are
+    /// removed (one-shot) and their effects executed.
+    ///
+    /// `active_player` is the player whose turn it currently is; the trigger's
+    /// `ValidPlayer$` / `whose_turn` is matched against it.
+    ///
+    /// Returns the number of triggers that fired.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if executing a trigger effect fails.
+    pub fn check_delayed_triggers_on_phase(
+        &mut self,
+        phase: crate::core::TriggerPhase,
+        active_player: PlayerId,
+    ) -> Result<usize> {
+        let trigger_ids = self.delayed_triggers.find_phase_triggers(phase, active_player);
+        if trigger_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let mut fired_count = 0;
+        for trigger_id in trigger_ids {
+            if let Some(trigger) = self.delayed_triggers.remove(trigger_id) {
+                // Undo-log the removal so rewind-to-turn-start restores the
+                // trigger; the effect's own mutations (AddMana) are logged
+                // separately. Without this, a rewind past the firing would lose
+                // the trigger and the replay would not re-fire it (mtg-519).
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::FireDelayedTrigger {
+                        trigger: Box::new(trigger.clone()),
+                    },
+                    prior_log_size,
+                );
+                self.fire_delayed_trigger(trigger)?;
+                fired_count += 1;
+            }
+        }
+        Ok(fired_count)
+    }
+
     /// Fire a delayed trigger, executing its effect.
     ///
     /// # Errors
@@ -3307,6 +3379,7 @@ impl GameState {
 
         let card_id = trigger.tracked_card;
         let controller = trigger.controller;
+        let remembered_amount = trigger.remembered_amount;
 
         match trigger.effect {
             DelayedEffect::ReturnToBattlefield { tapped, to_owner } => {
@@ -3534,6 +3607,54 @@ impl GameState {
                                 .normal("Delayed trigger: no valid land target for earthbend");
                         }
                     }
+                    crate::core::Effect::AddMana {
+                        ref mana,
+                        ref amount_var,
+                        ..
+                    } => {
+                        // Mana Drain: "add an amount of {C} equal to that spell's
+                        // mana value" at the controller's next main phase.
+                        //
+                        // When the script uses a variable amount (`Amount$ X` /
+                        // `Count$TriggerRememberAmount`), the count is the value
+                        // remembered at registration time (the countered spell's
+                        // mana value, captured onto this trigger). Otherwise the
+                        // mana cost in the effect is already concrete.
+                        let player = controller;
+                        let count = if amount_var.is_some() {
+                            remembered_amount.unwrap_or(0)
+                        } else {
+                            u32::from(mana.colorless)
+                        };
+                        // Mana Drain only ever produces {C}; produce `count`
+                        // colorless and log it. (If a future Phase-delayed mana
+                        // effect needs colored mana, extend here using `mana`.)
+                        if count > 0 {
+                            let player_name = self.get_player(player).map(|p| p.name.to_string()).ok();
+                            let prior_log_size = self.logger.log_count();
+                            {
+                                let p = self.get_player_mut(player)?;
+                                for _ in 0..count {
+                                    p.mana_pool.add_color(crate::core::Color::Colorless);
+                                }
+                            }
+                            // Undo-log the mana addition (mirrors the AddMana
+                            // effect path) so rewind/replay reverses it.
+                            let mut added = crate::core::ManaCost::new();
+                            added.colorless = u8::try_from(count).unwrap_or(u8::MAX);
+                            self.undo_log.log(
+                                crate::undo::GameAction::AddMana {
+                                    player_id: player,
+                                    mana: added,
+                                },
+                                prior_log_size,
+                            );
+                            if let Some(name) = player_name {
+                                self.logger
+                                    .gamelog(&format!("{} adds {{C}}×{} to mana pool (delayed trigger)", name, count));
+                            }
+                        }
+                    }
                     crate::core::Effect::DealDamage { .. }
                     | crate::core::Effect::DealDamageToTriggeredPlayer { .. }
                     | crate::core::Effect::EachDamage { .. }
@@ -3555,7 +3676,6 @@ impl GameState {
                     | crate::core::Effect::Scry { .. }
                     | crate::core::Effect::Surveil { .. }
                     | crate::core::Effect::CounterSpell { .. }
-                    | crate::core::Effect::AddMana { .. }
                     | crate::core::Effect::PutCounter { .. }
                     | crate::core::Effect::MultiplyCounter { .. }
                     | crate::core::Effect::PutCounterAll { .. }
@@ -3699,6 +3819,7 @@ impl Clone for GameState {
             delayed_triggers: self.delayed_triggers.clone(),
             remembered_cards: self.remembered_cards.clone(),
             remembered_players: self.remembered_players.clone(),
+            remembered_amount: self.remembered_amount,
             extra_turns: self.extra_turns.clone(),
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,

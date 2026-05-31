@@ -478,6 +478,46 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
+        // Fire `Mode$ Phase` delayed triggers registered for this main phase
+        // (e.g. Mana Drain's "At the beginning of your next main phase, add
+        // {C}...").
+        //
+        // Re-entry guard: main_phase runs this firing then a blocking
+        // priority_round, so a WASM re-entry OR a snapshot taken mid-main-phase
+        // and resumed would re-enter main_phase from the top. Removing the
+        // fired trigger is not sufficient on its own: a Phase trigger
+        // REGISTERED during this same main phase's priority round (e.g. Mana
+        // Drain countering an in-response spell) is still present on re-entry
+        // and would fire one phase too early. A per-(turn, which-main) guard
+        // makes the firing scan happen exactly once per main-phase entry.
+        // Unlike the begin-of-phase trigger guards, this one is SERIALIZED (it
+        // gates a direct state mutation, not a stack-routed trigger), so it
+        // survives snapshot/resume.
+        //
+        // main_phase is only entered for Main1/Main2 (see execute_step
+        // dispatch); the wildcard covers the unreachable non-main steps.
+        let current_turn = self.game.turn.turn_number;
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let (phase, already_fired) = match self.game.turn.current_step {
+            crate::game::Step::Main2 => (
+                crate::core::TriggerPhase::Main2,
+                self.game.turn.main2_delayed_fired_turn == Some(current_turn),
+            ),
+            _ => (
+                crate::core::TriggerPhase::Main1,
+                self.game.turn.main1_delayed_fired_turn == Some(current_turn),
+            ),
+        };
+        if !already_fired {
+            if self.game.turn.current_step == crate::game::Step::Main2 {
+                self.game.turn.main2_delayed_fired_turn = Some(current_turn);
+            } else {
+                self.game.turn.main1_delayed_fired_turn = Some(current_turn);
+            }
+            let active_player = self.game.turn.active_player;
+            self.game.check_delayed_triggers_on_phase(phase, active_player)?;
+        }
+
         // Priority round where players can take actions
         if let Some(result) = self.priority_round(controller1, controller2)? {
             return Ok(Some(result));

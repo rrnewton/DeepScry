@@ -388,6 +388,7 @@ mod tests {
         counterspell.effects.push(Effect::CounterSpell {
             target: bolt_id,
             required_color: None,
+            remember_mana_value: false,
         });
         game.cards.insert(counter_id, counterspell);
         game.stack.add(counter_id);
@@ -448,6 +449,7 @@ mod tests {
         counterspell.effects.push(Effect::CounterSpell {
             target: crate::core::CardId::new(0),
             required_color: None,
+            remember_mana_value: false,
         });
         game.cards.insert(counter_id, counterspell);
         game.stack.add(counter_id);
@@ -6465,5 +6467,94 @@ mod tests {
             "Timetwister shuffles into the library"
         );
         assert!(shuffle, "Timetwister has Shuffle$ True");
+    }
+
+    /// Card compat: Mana Drain (cardsfolder/m/mana_drain.txt) — mtg-519
+    ///
+    /// Script:
+    ///   ManaCost:U U
+    ///   Types:Instant
+    ///   A:SP$ Counter | TargetType$ Spell | RememberCounteredCMC$ True
+    ///     | ValidTgts$ Card | SubAbility$ DBDelTrig
+    ///   SVar:DBDelTrig:DB$ DelayedTrigger | Mode$ Phase | Phase$ Main1,Main2
+    ///     | ValidPlayer$ You | Execute$ AddMana | RememberNumber$ True | SubAbility$ DBCleanup
+    ///   SVar:DBCleanup:DB$ Cleanup | ClearRemembered$ True
+    ///   SVar:AddMana:DB$ Mana | Produced$ C | Amount$ X
+    ///
+    /// Verifies (parser): {U}{U} Instant whose effect chain parses to BOTH
+    /// (a) a CounterSpell with remember_mana_value=true (RememberCounteredCMC$),
+    /// and (b) a CreateDelayedTrigger with a Mode$ Phase condition firing on the
+    /// controller's (ValidPlayer$ You) next Main1/Main2 carrying an AddMana
+    /// effect — the rider that was previously a silent drop. Runtime mana-pool
+    /// behavior is verified by puzzle_e2e test_mana_drain_deferred_mana.
+    #[test]
+    fn test_card_compat_mana_drain() {
+        use crate::core::{DelayedTriggerCondition, Effect, TriggerPhase, TurnOwner};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/m/mana_drain.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Mana Drain should load");
+        assert_eq!(def.name.as_str(), "Mana Drain");
+        assert!(def.types.contains(&CardType::Instant));
+        assert_eq!(def.mana_cost.blue, 2, "Mana Drain costs {{U}}{{U}}");
+        assert_eq!(def.mana_cost.cmc(), 2);
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // (a) CounterSpell with RememberCounteredCMC$ True.
+        let counter = card.effects.iter().find_map(|e| {
+            if let Effect::CounterSpell {
+                remember_mana_value, ..
+            } = e
+            {
+                Some(*remember_mana_value)
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            counter,
+            Some(true),
+            "Mana Drain must parse a CounterSpell with remember_mana_value=true. Effects: {:?}",
+            card.effects
+        );
+
+        // (b) CreateDelayedTrigger with Mode$ Phase (Main1,Main2 / ValidPlayer$ You)
+        // carrying an AddMana effect.
+        let delayed = card.effects.iter().find_map(|e| {
+            if let Effect::CreateDelayedTrigger { condition, effect, .. } = e {
+                Some((condition.clone(), effect.clone()))
+            } else {
+                None
+            }
+        });
+        let (condition, inner) = delayed
+            .expect("Mana Drain must parse a CreateDelayedTrigger (the deferred-mana rider must not be dropped)");
+
+        match condition {
+            DelayedTriggerCondition::Phase { phases, whose_turn } => {
+                assert!(
+                    phases.contains(&TriggerPhase::Main1) && phases.contains(&TriggerPhase::Main2),
+                    "Phase$ Main1,Main2 must parse to both main phases. Got: {:?}",
+                    phases
+                );
+                assert_eq!(whose_turn, TurnOwner::You, "ValidPlayer$ You -> TurnOwner::You");
+            }
+            other @ (DelayedTriggerCondition::ZoneChange { .. }
+            | DelayedTriggerCondition::LastCounterRemoved { .. }
+            | DelayedTriggerCondition::SpellCast { .. }) => {
+                panic!("Mana Drain delayed trigger must be Mode$ Phase. Got: {:?}", other)
+            }
+        }
+
+        assert!(
+            matches!(*inner, Effect::AddMana { .. }),
+            "Mana Drain delayed trigger must execute an AddMana effect. Got: {:?}",
+            inner
+        );
     }
 }
