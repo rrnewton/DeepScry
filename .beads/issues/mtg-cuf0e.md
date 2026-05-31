@@ -1,48 +1,33 @@
 ---
 title: 'Bug: Black Vise — Count$ValidHand + ETBReplacement ChoosePlayer unsupported (upkeep punisher deals 0)'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-31T00:22:18.345143728+00:00
-updated_at: 2026-05-31T00:22:18.345143728+00:00
+updated_at: 2026-05-31T12:00:03.821081734+00:00
 ---
 
 # Description
 
-Black Vise (cardsfolder/b/black_vise.txt, mtg-486) now FIRES its upkeep trigger (after the wave14 phase-trigger DealDamageToTriggeredPlayer fix for Karma) but deals 0 damage because two pieces are missing:
+FIXED @34f76ca3 (validated; validate_logs/validate_34f76ca3...log = '=== All validation steps completed ===', '✓ All validation checks passed!').
 
-Script:
-  K:ETBReplacement:Other:ChooseP
-  SVar:ChooseP:DB\$ ChoosePlayer | Defined\$ You | Choices\$ Player.Opponent | ChoiceTitle\$ Choose an opponent | AILogic\$ MostCardsInHand
-  T:Mode\$ Phase | Phase\$ Upkeep | ValidPlayer\$ Player.Chosen | TriggerZones\$ Battlefield | Execute\$ TrigDamage
-  SVar:TrigDamage:DB\$ DealDamage | Defined\$ ChosenPlayer | NumDmg\$ X
-  SVar:X:Count\$ValidHand Card.ChosenCtrl/Minus.4
+Black Vise fully WORKING: 'As Black Vise enters, choose an opponent. At the beginning of the chosen player's upkeep, Black Vise deals max(0, handsize-4) damage to that player.'
 
-Two engine gaps:
+Both engine gaps closed:
+1. Count$ValidHand <selector>/Minus.N — new CountExpression::CardsInHand{selector,modifier} + CountModifier{None,Minus(n),Plus(n)} (core/effects.rs). Parses Count$ValidHand Card.ChosenCtrl/Minus.4; evaluate_count_expression counts the PUBLIC hand SIZE of the player evaluated for and applies /Minus.4 (clamped >=0 at the damage site, CR 119.4/120.8). Information-independent.
+2. ETB ChoosePlayer + ValidPlayer$ Player.Chosen gate — Card::chosen_player serialized slot (mirrors chosen_color); CardCache.etb_choose_player parsed structurally from K:ETBReplacement:Other:<DB$ ChoosePlayer SVar>. At ETB (GameState::set_card_zone) the engine deterministically picks the opponent via pick_chosen_opponent (most cards in hand, tie-break low PlayerId; single opponent forced in 2P), like the sibling ETB ChooseColor path (no controller in scope there). New Trigger::chosen_player_turn_only gate fires the upkeep trigger ONLY on the chosen player's upkeep at both firing sites (steps.rs + check_triggers_for_controller). Puzzle loader resolves chosen players for battlefield-placed permanents (they bypass set_card_zone).
+- PlayerController::choose_player(view, valid_players)->index added (single-choice shape, default index 0) for future controller-driven ChoosePlayer; interactive UX follow-up = mtg-1h6iq.
 
-1. **Count\$ValidHand <selector>/Minus.N** — CountExpression only supports
-   Count\$Valid (battlefield permanents), Count\$xPaid, Count\$YouDrewThisTurn,
-   Count\$YouCastThisTurn, Count\$Compare. It does NOT support counting cards in
-   a HAND zone, nor the trailing /Minus.4 arithmetic modifier. Today this
-   parses to Fixed(0) so Black Vise always deals 0. Need a CountExpression
-   variant for "cards in <player>'s hand" plus the /Minus.N (and /Plus.N)
-   post-modifiers (Java applies these via the Count\$ "/Minus.N" suffix).
+Determinism: chosen player + gate in serialized state (state hash + snapshot/resume + undo via MoveCard); deterministic public-state choice => native==WASM byte-identical. No HashMap iteration in choice/trigger paths.
 
-2. **K:ETBReplacement ChoosePlayer / ValidPlayer\$ Player.Chosen** — the
-   "as ~ enters, choose an opponent" replacement is not modeled, so there is
-   no per-card "chosen player" stored, and ValidPlayer\$ Player.Chosen /
-   Defined\$ ChosenPlayer cannot resolve. For the 2-player case the chosen
-   player is always the single opponent, but the general fix needs the
-   ChoosePlayer ETB to record a chosen PlayerId on the permanent and the
-   phase-trigger ValidPlayer\$ Player.Chosen gate + Defined\$ ChosenPlayer
-   resolution to read it.
+Evidence:
+- Parser-shape unit: test_card_compat_black_vise + test_count_expression_parse_valid_hand_minus (PASS).
+- Puzzle e2e (Rust): test_black_vise_chosen_upkeep_damage — chosen P0 takes 2/upkeep turns 2,4 (20->16); non-chosen P1 takes 0 (PASS).
+- Shell e2e: tests/black_vise_chosen_upkeep_damage_e2e.sh (PASS via shell_script_tests).
+- Native determinism: test_deck_determinism__old_school2_black_vise_punisher (PASS).
+- STRICT native-vs-WASM equivalence: old_school2/*.dck sweep incl. black_vise_punisher DIVERGED:0; dedicated Black Vise leg seed=3 [PASS] DIVERGED:0 (native 81 acts/11t, wasm 66 acts/11t) — ETB choose-player + Count$ValidHand-4 upkeep damage byte-identical on both engines.
+- Gamelog (puzzle, seed 42): Turn 2 Player 1 upkeep -> 'Black Vise deals 2 damage to Player 1' (hand 6 -> 6-4=2); no fire on Player 2's upkeep; hand<=4 -> 0 damage. Live deck (seed 3): 'Black Vise (37) - chose Random2' / 'Black Vise deals 3 damage to Random2'.
+- mtg-rules-review: PASS (CR 614 as-enters replacement, CR 603.2 trigger, CR 119/120.8 damage).
+- docs/EFFECT_SUPPORT.md updated (3 rows -> WORKING).
 
-Until both land Black Vise stays PARTIAL: it parses with the correct
-{1} Artifact shape and its trigger fires, but the damage is 0.
-
-The wave14 DealDamageToTriggeredPlayer effect (loader/card.rs phase-trigger
-DealDamage branch) ALREADY routes Defined\$ ChosenPlayer to the active player
-and evaluates the count against them — so once (1) and (2) land, Black Vise
-should work with no further loader changes.
-
-Found during compat-wave14-jeskai (Jeskai Aggro, mtg-561).
+Follow-up: mtg-1h6iq (interactive/multiplayer controller-driven ChoosePlayer UX).
