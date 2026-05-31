@@ -1,0 +1,22 @@
+[metadata]
+Name:Timetwister shuffles hand+graveyard then draws 7
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Timetwister; each player shuffles hand+graveyard into library and draws 7.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Timetwister; Island; Island
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=Plains; Plains
+p0battlefield=Island; Island; Island
+p0exile=
+p1life=20
+p1hand=Forest; Forest
+p1library=Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp; Swamp
+p1graveyard=Plains
+p1battlefield=
+p1exile=

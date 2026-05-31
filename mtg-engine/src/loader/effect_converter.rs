@@ -1524,10 +1524,20 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // ChangeZoneAll: Move all cards matching a filter from one zone to another
             // Example: "SP$ ChangeZoneAll | ChangeType$ Creature.attacking | Origin$ Battlefield | Destination$ Hand"
             // Example: "DB$ ChangeZoneAll | ChangeType$ Card | Origin$ Graveyard | Destination$ Exile"
-            let origin = params
+            // `Origin$` may list MULTIPLE comma-separated zones (e.g.
+            // Timetwister's `Origin$ Hand,Graveyard`). Parse each into a Zone;
+            // drop unknown tokens. Default to Battlefield when nothing parses.
+            let mut origins: smallvec::SmallVec<[crate::zones::Zone; 2]> = params
                 .get("Origin")
-                .and_then(crate::zones::Zone::from_str_lenient)
-                .unwrap_or(crate::zones::Zone::Battlefield);
+                .map(|s| {
+                    s.split(',')
+                        .filter_map(|tok| crate::zones::Zone::from_str_lenient(tok.trim()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if origins.is_empty() {
+                origins.push(crate::zones::Zone::Battlefield);
+            }
 
             let destination = params
                 .get("Destination")
@@ -1539,10 +1549,19 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 .map(TargetRestriction::parse)
                 .unwrap_or_else(TargetRestriction::any);
 
+            // `Shuffle$ True` — shuffle affected libraries after the move
+            // (Timetwister, Mnemonic Nexus). Distinct from ordered moves like
+            // `LibraryPosition$ -1` which deliberately do NOT shuffle.
+            let shuffle = params
+                .get("Shuffle")
+                .map(|v| v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
             Some(Effect::ChangeZoneAll {
                 restriction,
-                origin,
+                origins,
                 destination,
+                shuffle,
             })
         }
 

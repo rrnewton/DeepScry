@@ -104,7 +104,22 @@ workflow, row format, and update rules.
     (Drain Life) is enum-reserved but NOT yet wired — see the Drain Life row.
 | DB$ GainLife LifeAmount$ <SVar with Count$TotalDamageDoneByThisTurn + LimitMax cap> (damage-dealt drain) | BROKEN | 2026-05-30_#2489(1db3e6c7) | mtg-501 | Drain Life |
 | S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
-| SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-552 | Timetwister |
+| SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) + Shuffle$ True | WORKING | 2026-05-30_#2533(b052ce01) | (fixed mtg-552) | Timetwister |
+  - 2026-05-30: `Effect::ChangeZoneAll.origin: Zone` -> `origins: SmallVec<[Zone;2]>`
+    plus a new `shuffle: bool` field (derived from `Shuffle$ True`). The
+    converter now parses comma-separated `Origin$` into a zone list; the
+    application handler iterates every origin and gained Hand & Library origin
+    support; when `shuffle` is set and the destination is the library, affected
+    libraries are shuffled via the deterministic game RNG (replay-safe, no
+    hidden-info leak — only RNG advances). Ordered library moves
+    (`LibraryPosition$ -1`, e.g. Manifold Insights) keep `shuffle=false` and are
+    untouched. Lifts every multi-origin / Shuffle$ True mass move (Timetwister,
+    Mnemonic Nexus, Midnight Clock). Gamelog is now human-readable
+    ("moves all cards from Hand+Graveyard to Library").
+| SP$ ChangeZoneAll ChangeType$ Artifact Origin$ Battlefield Destination$ Hand (mass owner-filtered bounce) | WORKING | 2026-05-30_#2533(b052ce01) | (none) | Hurkyl's Recall |
+| AB$ ManaReflected (reflected/filter mana, ReflectProperty$ Produce) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-ontwf | Fellwar Stone |
+| SP$ DealDamage + SubAbility$ Effect chain + ReplaceDyingDefined$ (exile instead) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-ioesm | Disintegrate |
+| T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-3hwz3 | City in a Bottle |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 | AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |
 | AB$ ChooseSource Choices$ Card.<Color>Source (source-filtered damage prevention, Circle of Protection) | WORKING | 2026-05-30_#2491(dded4d83) | (fixed mtg-490) | Circle of Protection: Red |
@@ -160,6 +175,14 @@ workflow, row format, and update rules.
 | Produced$ Any                   | WORKING | 2026-05-12_#2226(928ec99f) | (fixed)   | City of Brass       |
 | Produced$ C Amount$ 4 (DB$ Mana on dies trigger) | WORKING | 2026-05-29_#2440(00e22751) | (none) | Su-Chi |
 | Intrinsic basic-land mana (CR 305.6: 1 {T}:Add ability per basic subtype) | WORKING | 2026-05-29_#2456(e30f4ce1) | (none) | Island, Plains, Tundra, Underground Sea, Badlands, Scrubland, Bayou, Plateau, Volcanic Island |
+| Produced$ C Amount$ 3 on a LAND (multi-mana land tap) | WORKING | 2026-05-30_#2533(b052ce01) | (fixed mtg-523) | Mishra's Workshop |
+  - 2026-05-30: `tap_for_mana_for_cost`'s LAND path previously added exactly 1
+    pip, ignoring the cached `mana_production.amount`. Now multiplies by the
+    land's per-activation amount (Workshop = 3), mirroring the Black-Lotus
+    any-color branch. Lifts any land producing >1 mana per tap. NOTE: the
+    `RestrictValid$ Spell.Artifact` spend-restriction is still unenforced
+    (mtg-53gp9) — Workshop mana is currently spendable on any spell.
+| RestrictValid$ on mana ability (spend-only-on-X) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-53gp9 | Mishra's Workshop |
 
 ## Selectors / parameters
 

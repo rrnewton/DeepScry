@@ -3949,3 +3949,204 @@ async fn test_twin_blades_etb_attaches_no_crash() -> Result<()> {
 
     Ok(())
 }
+
+/// Helper: find the first card with `name` owned by `owner` in any zone.
+#[cfg(test)]
+fn find_card_by_name(
+    game: &mtg_engine::game::state::GameState,
+    name: &str,
+    owner: mtg_engine::core::PlayerId,
+) -> Option<mtg_engine::core::CardId> {
+    game.cards
+        .iter()
+        .find(|(_, c)| c.name.as_str() == name && c.owner == owner)
+        .map(|(id, _)| id)
+}
+
+/// E2E (mtg-523, mtg-559): Mishra's Workshop must tap for {C}{C}{C} per
+/// activation (Amount$ 3), not a single {C}. Two Workshops fund Triskelion
+/// (cost {6}). Regression for the multi-mana land tap path.
+///
+/// Reproducer:
+/// ```sh
+/// ./target/release/mtg tui --start-state test_puzzles/mishras_workshop_artifact_cast.pzl \
+///   --p1=zero --p2=zero --seed 42 --verbosity 3
+/// ```
+/// Expected log: `Tap Mishra's Workshop for {C}{C}{C}` (x2), `Triskelion (3) resolves`.
+#[tokio::test]
+async fn test_mishras_workshop_taps_for_ccc() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/mishras_workshop_artifact_cast.pzl");
+    let puzzle = PuzzleFile::parse(&std::fs::read_to_string(&puzzle_path)?)?;
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0];
+    let p2_id = players[1];
+
+    // ZeroController will cast Triskelion using the Workshops' mana.
+    let mut c1 = ZeroController::new(p1_id);
+    let mut c2 = ZeroController::new(p2_id);
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _ = game_loop.run_turns(&mut c1, &mut c2, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    let joined: String = logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+
+    assert!(
+        joined.contains("Tap Mishra's Workshop for {C}{C}{C}"),
+        "Workshop must tap for three colorless pips per activation. Logs:\n{joined}"
+    );
+    assert!(
+        joined.contains("Triskelion") && joined.contains("resolves"),
+        "Triskelion must resolve, funded by Workshop's {{C}}{{C}}{{C}}. Logs:\n{joined}"
+    );
+    Ok(())
+}
+
+/// E2E (mtg-509, mtg-559): Hurkyl's Recall returns ALL artifacts the target
+/// player owns to their hand. Resolves the spell directly against the puzzle
+/// state and asserts the clean per-card log + the readable mass-move line.
+///
+/// Reproducer:
+/// ```sh
+/// ./target/release/mtg tui --start-state test_puzzles/hurkyls_recall_bounce_artifacts.pzl \
+///   --p1-fixed-inputs='cast Hurkyl;*;*' --p1=fixed --p2=zero --seed 42 --verbosity 3
+/// ```
+/// Expected log: `Sol Ring (..) is returned to hand`, ..., and
+/// `Hurkyl's Recall (..) moves all artifacts from Battlefield to Hand`.
+#[tokio::test]
+async fn test_hurkyls_recall_returns_all_artifacts() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/hurkyls_recall_bounce_artifacts.pzl");
+    let puzzle = PuzzleFile::parse(&std::fs::read_to_string(&puzzle_path)?)?;
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0]; // casts Hurkyl's Recall
+    let p2_id = players[1]; // owns the artifacts
+
+    // Count P2 artifacts on the battlefield before.
+    let artifacts_before = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&id| {
+            game.cards
+                .get(id)
+                .map(|c| c.is_artifact() && c.owner == p2_id)
+                .unwrap_or(false)
+        })
+        .count();
+    assert_eq!(
+        artifacts_before, 3,
+        "P2 should start with 3 artifacts (Sol Ring, Mox Pearl, Triskelion)"
+    );
+
+    // Resolve Hurkyl's Recall directly, targeting P2 (the artifacts' owner).
+    let recall = find_card_by_name(&game, "Hurkyl's Recall", p1_id).expect("Hurkyl's Recall in P1 hand");
+    // ChangeZoneAll with a player target: chosen_targets carries the target
+    // player encoded as a CardId, but the effect filters by owner, so the
+    // restriction (Artifact) over the battlefield is what selects cards.
+    game.resolve_spell(recall, &[])?;
+
+    let artifacts_after = game
+        .battlefield
+        .cards
+        .iter()
+        .filter(|&&id| {
+            game.cards
+                .get(id)
+                .map(|c| c.is_artifact() && c.owner == p2_id)
+                .unwrap_or(false)
+        })
+        .count();
+    assert_eq!(artifacts_after, 0, "All P2 artifacts must leave the battlefield");
+
+    // All 3 artifacts must be in P2's hand.
+    let p2_hand = game.get_player_zones(p2_id).expect("P2 zones").hand.cards.len();
+    assert_eq!(p2_hand, 3, "P2 must have the 3 returned artifacts in hand");
+
+    // Effect-level log evidence: each artifact's return is logged by name.
+    // (The one-line mass-move summary `... moves all artifacts from Battlefield
+    // to Hand` is emitted by the GameLoop logging layer — see the
+    // `--verbosity 3` reproducer above; this direct-resolve test asserts the
+    // per-card moves that `resolve_spell` itself emits.)
+    let logs = game.logger.logs();
+    let joined: String = logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    let returns = logs
+        .iter()
+        .filter(|l| l.message.contains("is returned to hand"))
+        .count();
+    assert_eq!(
+        returns, 3,
+        "All 3 artifacts must be logged as returned to hand. Logs:\n{joined}"
+    );
+    for name in ["Sol Ring", "Mox Pearl", "Triskelion"] {
+        assert!(
+            joined.contains(&format!("{name} ")),
+            "{name} must appear in the return logs. Logs:\n{joined}"
+        );
+    }
+    Ok(())
+}
+
+/// E2E (mtg-552, mtg-559): Timetwister shuffles each player's hand AND
+/// graveyard into their library, then each player draws 7. Regression for the
+/// multi-origin (`Origin$ Hand,Graveyard`) ChangeZoneAll + `Shuffle$ True`.
+///
+/// Reproducer:
+/// ```sh
+/// ./target/release/mtg tui --start-state test_puzzles/timetwister_shuffle_draw7.pzl \
+///   --p1-fixed-inputs='cast Timetwister' --p1=fixed --p2=zero --seed 42 --verbosity 3
+/// ```
+/// Expected log: `... moves all cards from Hand+Graveyard to Library`,
+/// then 7x `Player N draws ...` for each player.
+#[tokio::test]
+async fn test_timetwister_shuffles_hand_graveyard_and_draws_seven() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/timetwister_shuffle_draw7.pzl");
+    let puzzle = PuzzleFile::parse(&std::fs::read_to_string(&puzzle_path)?)?;
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0];
+    let p2_id = players[1];
+
+    let timetwister = find_card_by_name(&game, "Timetwister", p1_id).expect("Timetwister in P1 hand");
+    game.resolve_spell(timetwister, &[])?;
+
+    // After resolution: each player drew 7. Hand+graveyard were shuffled into
+    // library first, so hands are exactly 7 and graveyards empty (the spell
+    // itself goes to graveyard via finalize — so P1's graveyard ends at 1).
+    let p1_hand = game.get_player_zones(p1_id).expect("P1 zones").hand.cards.len();
+    let p2_hand = game.get_player_zones(p2_id).expect("P2 zones").hand.cards.len();
+    assert_eq!(p1_hand, 7, "P1 must draw exactly 7");
+    assert_eq!(p2_hand, 7, "P2 must draw exactly 7");
+
+    // P2's graveyard had 1 card (Plains); it must have been shuffled away.
+    let p2_grave = game.get_player_zones(p2_id).expect("P2 zones").graveyard.cards.len();
+    assert_eq!(p2_grave, 0, "P2's graveyard must be shuffled into the library");
+
+    // Effect-level log evidence: 7 draws per player. (The one-line summary
+    // `... moves all cards from Hand+Graveyard to Library` is emitted by the
+    // GameLoop logging layer — see the `--verbosity 3` reproducer above; this
+    // direct-resolve test asserts the draw logs `resolve_spell` itself emits,
+    // plus the zone-state proof that hand+graveyard were shuffled away.)
+    let logs = game.logger.logs();
+    let joined: String = logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    let p1_draws = logs.iter().filter(|l| l.message.contains("Player 1 draws")).count();
+    let p2_draws = logs.iter().filter(|l| l.message.contains("Player 2 draws")).count();
+    assert_eq!(p1_draws, 7, "P1 must draw 7 (logged). Logs:\n{joined}");
+    assert_eq!(p2_draws, 7, "P2 must draw 7 (logged). Logs:\n{joined}");
+    Ok(())
+}

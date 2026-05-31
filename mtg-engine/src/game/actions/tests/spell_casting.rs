@@ -1707,10 +1707,10 @@ Oracle:Exile All Hallow's Eve with two scream counters on it.
                     && matches!(
                         inner.as_ref(),
                         Effect::ChangeZoneAll {
-                            origin: crate::zones::Zone::Graveyard,
+                            origins,
                             destination: crate::zones::Zone::Battlefield,
                             ..
-                        }
+                        } if origins.as_slice() == [crate::zones::Zone::Graveyard]
                     )
             )
         });

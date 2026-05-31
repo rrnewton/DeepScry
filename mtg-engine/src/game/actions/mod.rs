@@ -3899,48 +3899,77 @@ impl GameState {
             }
             Effect::ChangeZoneAll {
                 restriction,
-                origin,
+                origins,
                 destination,
+                shuffle,
             } => {
-                // Move all cards matching the restriction from origin zone to destination zone
-                let cards_to_move: Vec<(CardId, PlayerId)> = match origin {
-                    crate::zones::Zone::Battlefield => self
-                        .battlefield
-                        .cards
-                        .iter()
-                        .copied()
-                        .filter_map(|card_id| {
-                            let card = self.cards.try_get(card_id)?;
-                            if restriction.matches(card) {
-                                Some((card_id, card.owner))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    crate::zones::Zone::Graveyard => {
-                        // Collect from all players' graveyards
-                        let mut result = Vec::new();
-                        for (player_id, zones) in &self.player_zones {
-                            for &card_id in &zones.graveyard.cards {
+                // Move all cards matching the restriction from EACH origin zone
+                // to the destination. Timetwister/Diminishing-Returns style mass
+                // shuffles list two origins (Hand + Graveyard); single-origin
+                // mass bounce/exile list one. Track (card, owner, source-zone)
+                // so each card moves from the zone it actually lives in.
+                let mut cards_to_move: Vec<(CardId, PlayerId, crate::zones::Zone)> = Vec::new();
+                for &origin in origins {
+                    match origin {
+                        crate::zones::Zone::Battlefield => {
+                            for card_id in self.battlefield.cards.iter().copied() {
                                 if let Some(card) = self.cards.try_get(card_id) {
                                     if restriction.matches(card) {
-                                        result.push((card_id, *player_id));
+                                        cards_to_move.push((card_id, card.owner, origin));
                                     }
                                 }
                             }
                         }
-                        result
+                        // Per-player private/owned zones: collect from each
+                        // player's own zone so ownership is exact.
+                        crate::zones::Zone::Graveyard
+                        | crate::zones::Zone::Hand
+                        | crate::zones::Zone::Library
+                        | crate::zones::Zone::Exile => {
+                            for (player_id, zones) in &self.player_zones {
+                                let zone_cards = match origin {
+                                    crate::zones::Zone::Graveyard => &zones.graveyard.cards,
+                                    crate::zones::Zone::Hand => &zones.hand.cards,
+                                    crate::zones::Zone::Library => &zones.library.cards,
+                                    crate::zones::Zone::Exile => &zones.exile.cards,
+                                    // Unreachable: outer match already narrowed to these four.
+                                    crate::zones::Zone::Battlefield
+                                    | crate::zones::Zone::Stack
+                                    | crate::zones::Zone::Command => continue,
+                                };
+                                for &card_id in zone_cards {
+                                    if let Some(card) = self.cards.try_get(card_id) {
+                                        if restriction.matches(card) {
+                                            cards_to_move.push((card_id, *player_id, origin));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::zones::Zone::Stack | crate::zones::Zone::Command => {
+                            // Mass zone changes don't originate from the stack or
+                            // the command zone in any supported card.
+                        }
                     }
-                    crate::zones::Zone::Hand
-                    | crate::zones::Zone::Exile
-                    | crate::zones::Zone::Library
-                    | crate::zones::Zone::Stack
-                    | crate::zones::Zone::Command => Vec::new(), // Other origin zones not yet supported
-                };
+                }
 
-                for (card_id, owner) in cards_to_move {
-                    self.move_card(card_id, *origin, *destination, owner)?;
+                for (card_id, owner, origin) in cards_to_move {
+                    self.move_card(card_id, origin, *destination, owner)?;
+                }
+
+                // `Shuffle$ True` mass move into the library (Timetwister,
+                // Mnemonic Nexus) requires shuffling the affected libraries so
+                // the moved cards land in random order. Ordered moves
+                // (`LibraryPosition$ -1`, e.g. Manifold Insights) set
+                // shuffle=false and are left untouched. The effect is symmetric
+                // across players, so shuffle every library; a library that
+                // received no cards only advances RNG (deterministic /
+                // replay-safe).
+                if *shuffle && matches!(destination, crate::zones::Zone::Library) {
+                    let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
+                    for pid in player_ids {
+                        self.shuffle_library(pid);
+                    }
                 }
             }
             Effect::RemoveCounter {
@@ -8053,6 +8082,17 @@ impl GameState {
             (is_any_color, is_colorless, colors)
         };
 
+        // Per-activation amount for lands whose mana ability produces more than
+        // one mana per tap (e.g. Mishra's Workshop `Produced$ C | Amount$ 3`).
+        // Most lands produce exactly 1; read the cached amount derived from the
+        // parsed `AB$ Mana` effect so multi-mana lands aren't silently clamped
+        // to a single pip. Captured before the mutable player borrow.
+        let land_amount = self
+            .cards
+            .get(card_id)
+            .map(|c| c.definition.cache.mana_production.amount.max(1))
+            .unwrap_or(1);
+
         // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
         let prior_log_size = self.logger.log_count();
 
@@ -8092,43 +8132,54 @@ impl GameState {
         };
 
         if let Some(color) = color {
-            player.mana_pool.add_color(color);
+            // Multi-mana lands (e.g. Mishra's Workshop) add `land_amount` mana of
+            // the chosen colour per tap; ordinary lands keep the amount of 1.
+            let amount = land_amount;
 
             // Log the mana addition
             let mut mana = crate::core::ManaCost::new();
             let color_symbol = match color {
                 crate::core::Color::White => {
-                    mana.white = 1;
+                    player.mana_pool.white += amount;
+                    mana.white = amount;
                     "W"
                 }
                 crate::core::Color::Blue => {
-                    mana.blue = 1;
+                    player.mana_pool.blue += amount;
+                    mana.blue = amount;
                     "U"
                 }
                 crate::core::Color::Black => {
-                    mana.black = 1;
+                    player.mana_pool.black += amount;
+                    mana.black = amount;
                     "B"
                 }
                 crate::core::Color::Red => {
-                    mana.red = 1;
+                    player.mana_pool.red += amount;
+                    mana.red = amount;
                     "R"
                 }
                 crate::core::Color::Green => {
-                    mana.green = 1;
+                    player.mana_pool.green += amount;
+                    mana.green = amount;
                     "G"
                 }
                 crate::core::Color::Colorless => {
-                    mana.colorless = 1;
+                    player.mana_pool.colorless += amount;
+                    mana.colorless = amount;
                     "C"
                 }
             };
             self.undo_log
                 .log(crate::undo::GameAction::AddMana { player_id, mana }, prior_log_size);
 
-            // Log visible message for mana tapping (use gamelog for official action)
+            // Log visible message for mana tapping (use gamelog for official action).
+            // Render amount-many pips, e.g. Mishra's Workshop → "Tap ... for {C}{C}{C}".
             if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
                 let card_name = self.cards.get(card_id).map(|c| c.name.as_str()).unwrap_or("Unknown");
-                let message = format!("Tap {} for {{{}}}", card_name, color_symbol);
+                let pip = format!("{{{}}}", color_symbol);
+                let pips: String = pip.repeat(amount as usize);
+                let message = format!("Tap {} for {}", card_name, pips);
                 self.logger.gamelog(&message);
             }
         }

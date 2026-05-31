@@ -4036,14 +4036,15 @@ impl HeuristicController {
         use crate::core::Effect;
 
         // Find the ChangeZoneAll effect to inspect its parameters
-        let (restriction, origin, _destination) = match spell.effects.iter().find_map(|e| {
+        let (restriction, origins, _destination) = match spell.effects.iter().find_map(|e| {
             if let Effect::ChangeZoneAll {
                 restriction,
-                origin,
+                origins,
                 destination,
+                shuffle: _,
             } = e
             {
-                Some((restriction, origin, destination))
+                Some((restriction, origins, destination))
             } else {
                 None
             }
@@ -4054,7 +4055,16 @@ impl HeuristicController {
 
         use crate::zones::Zone;
 
-        match origin {
+        // Mass moves that touch the battlefield are evaluated by board value; any
+        // other origin (hand/graveyard shuffle like Timetwister) defaults to
+        // beneficial. Pick the battlefield arm if it's among the origins.
+        let primary_origin = if origins.contains(&Zone::Battlefield) {
+            Zone::Battlefield
+        } else {
+            origins.first().copied().unwrap_or(Zone::Battlefield)
+        };
+
+        match primary_origin {
             Zone::Battlefield => {
                 // Mass bounce/exile from battlefield: only do if opponent loses more
                 // Count matching permanents for each player
@@ -9348,8 +9358,9 @@ mod tests {
                 requires_nonartifact: false,
                 required_color: None,
             },
-            origin: crate::zones::Zone::Battlefield,
+            origins: smallvec![crate::zones::Zone::Battlefield],
             destination: crate::zones::Zone::Hand,
+            shuffle: false,
         }];
 
         // Scenario 1: Opponent has 3 big creatures, we have 1 small one → should cast
@@ -9418,8 +9429,9 @@ mod tests {
         exile_spell.add_type(CardType::Instant);
         exile_spell.effects = vec![Effect::ChangeZoneAll {
             restriction: TargetRestriction::any(),
-            origin: crate::zones::Zone::Graveyard,
+            origins: smallvec![crate::zones::Zone::Graveyard],
             destination: crate::zones::Zone::Exile,
+            shuffle: false,
         }];
 
         let mut game3 = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);

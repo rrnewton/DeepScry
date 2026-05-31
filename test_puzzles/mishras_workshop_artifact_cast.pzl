@@ -1,0 +1,22 @@
+[metadata]
+Name:Mishra's Workshop funds an artifact
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 taps two Workshops for {C}{C}{C} each to cast Triskelion ({6}).
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Triskelion
+p0library=Mountain; Mountain
+p0graveyard=
+p0battlefield=Mishra's Workshop; Mishra's Workshop
+p0exile=
+p1life=20
+p1hand=
+p1library=Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=

@@ -486,7 +486,8 @@ impl<'a> GameLoop<'a> {
                 amount,
             } => {
                 let message = format!(
-                    "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on all matching permanents ({restriction:?})"
+                    "{source_name} ({source_id}) puts {amount} {counter_type:?} counter(s) on all {}",
+                    restriction.describe()
                 );
                 self.game.logger.gamelog(&message);
             }
@@ -496,11 +497,15 @@ impl<'a> GameLoop<'a> {
             }
             Effect::ChangeZoneAll {
                 restriction,
-                origin,
+                origins,
                 destination,
+                shuffle: _,
             } => {
+                // Render origins as "Hand+Graveyard" etc. for a readable log.
+                let origin_desc = origins.iter().map(|z| format!("{z:?}")).collect::<Vec<_>>().join("+");
                 let message = format!(
-                    "{source_name} ({source_id}) moves all matching cards ({restriction:?}) from {origin:?} to {destination:?}"
+                    "{source_name} ({source_id}) moves all {} from {origin_desc} to {destination:?}",
+                    restriction.describe()
                 );
                 self.game.logger.gamelog(&message);
             }

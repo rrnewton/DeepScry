@@ -1,0 +1,22 @@
+[metadata]
+Name:Hurkyl's Recall bounces opponent artifacts
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P0 casts Hurkyl's Recall returning all artifacts P1 owns to hand.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Hurkyl's Recall
+p0library=Island; Island
+p0graveyard=
+p0battlefield=Island; Island
+p0exile=
+p1life=20
+p1hand=
+p1library=Plains; Plains
+p1graveyard=
+p1battlefield=Sol Ring; Mox Pearl; Triskelion
+p1exile=

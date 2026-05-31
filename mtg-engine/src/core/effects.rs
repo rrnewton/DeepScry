@@ -444,6 +444,57 @@ impl TargetRestriction {
         }
     }
 
+    /// Render a short, human-readable description of this restriction for game
+    /// logs (e.g. "artifacts you control", "blue permanents", "nontoken
+    /// creatures"). Avoids dumping the raw `Debug` struct into the gamelog,
+    /// which counts as a sentinel/BROKEN log per the compatibility skill.
+    /// Used by `Effect::ChangeZoneAll` / `Effect::PutCounterAll` logging.
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(color) = self.required_color {
+            parts.push(format!("{color:?}").to_lowercase());
+        }
+        if self.requires_nontoken {
+            parts.push("nontoken".to_string());
+        }
+        if self.requires_nonartifact {
+            parts.push("nonartifact".to_string());
+        }
+        // Noun: the matched type(s), defaulting to "cards" (the generic filter
+        // `ChangeType$ Card` / unrestricted matches any card, e.g. Timetwister
+        // shuffling hand+graveyard). Callers describing battlefield-only moves
+        // still read naturally ("all cards on the battlefield").
+        let noun = if self.types.is_empty() {
+            "cards".to_string()
+        } else {
+            let names: Vec<String> = self.types.iter().map(|t| format!("{t:?}").to_lowercase()).collect();
+            // Pluralize the simple way (good enough for log readability).
+            format!("{}s", names.join("/"))
+        };
+        parts.push(noun);
+        let mut desc = parts.join(" ");
+        // Controller / power qualifiers as a trailing clause.
+        let ctrl = match self.controller {
+            ControllerRestriction::YouCtrl => Some("you control"),
+            ControllerRestriction::OppCtrl => Some("an opponent controls"),
+            ControllerRestriction::ActivePlayerCtrl => Some("the active player controls"),
+            ControllerRestriction::Any => None,
+        };
+        if let Some(c) = ctrl {
+            desc.push_str(&format!(" {c}"));
+        }
+        if let Some(ge) = self.power_ge {
+            desc.push_str(&format!(" with power >= {ge}"));
+        }
+        if let Some(le) = self.power_le {
+            desc.push_str(&format!(" with power <= {le}"));
+        }
+        if self.requires_no_counters {
+            desc.push_str(" with no counters");
+        }
+        desc
+    }
+
     /// Check if a card matches this restriction (type, counter, and power checks)
     ///
     /// Returns true if:
@@ -1052,10 +1103,19 @@ pub enum Effect {
     ChangeZoneAll {
         /// Filter for which cards to move
         restriction: TargetRestriction,
-        /// Source zone
-        origin: crate::zones::Zone,
+        /// Source zone(s). Most mass-zone effects have a single origin
+        /// (e.g. "return all creatures from the battlefield"), but some move
+        /// cards out of TWO zones at once — e.g. Timetwister shuffles each
+        /// player's Hand AND Graveyard into the library
+        /// (`Origin$ Hand,Graveyard | UseAllOriginZones$ True`).
+        origins: SmallVec<[crate::zones::Zone; 2]>,
         /// Destination zone
         destination: crate::zones::Zone,
+        /// `Shuffle$ True` — shuffle each affected player's library after the
+        /// move. Set for mass shuffle-back effects (Timetwister, Mnemonic
+        /// Nexus, Midnight Clock). Left false for ordered library moves like
+        /// `LibraryPosition$ -1` (bottom-of-library, e.g. Manifold Insights).
+        shuffle: bool,
     },
 
     /// Move the source card itself between two named zones (neither of which is

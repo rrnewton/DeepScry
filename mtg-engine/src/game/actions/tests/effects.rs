@@ -6148,4 +6148,162 @@ mod tests {
         // TODO(mtg-548): the ChooseCard / RepeatEach / pay-4-life-or-return chain
         // is not yet implemented — see follow-up issue. Card is PARTIAL until then.
     }
+
+    /// Card compat: Mishra's Workshop (cardsfolder/m/mishras_workshop.txt).
+    /// Wave 16 robots deck (mtg-523, mtg-559).
+    ///
+    /// Script: `A:AB$ Mana | Cost$ T | Produced$ C | Amount$ 3 | RestrictValid$ Spell.Artifact`
+    ///
+    /// Parser-shape guard for the multi-mana land fix: the cached mana
+    /// production MUST report Colorless with `amount == 3`, and the parsed
+    /// `AddMana` effect must carry 3 colorless. Before the fix the land
+    /// tap-for-mana path ignored `amount` and produced a single {C}.
+    #[test]
+    fn test_card_compat_mishras_workshop() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/m/mishras_workshop.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Mishra's Workshop should load");
+        assert_eq!(def.name.as_str(), "Mishra's Workshop");
+        assert!(def.types.contains(&CardType::Land));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Cached mana production (recomputed at instantiation): colorless, amount 3.
+        assert!(
+            matches!(
+                card.definition.cache.mana_production.kind,
+                crate::core::ManaProductionKind::Colorless
+            ),
+            "Workshop must produce colorless mana. Got: {:?}",
+            card.definition.cache.mana_production.kind
+        );
+        assert_eq!(
+            card.definition.cache.mana_production.amount, 3,
+            "Workshop's {{T}}: Add {{C}}{{C}}{{C}} must derive amount 3 (Amount$ 3). Got: {}",
+            card.definition.cache.mana_production.amount
+        );
+
+        let mana_ability = card
+            .activated_abilities
+            .iter()
+            .find(|a| a.is_mana_ability)
+            .expect("Workshop must have a mana ability");
+        let added = mana_ability.effects.iter().find_map(|e| {
+            if let Effect::AddMana { mana, .. } = e {
+                Some(*mana)
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            added.map(|m| m.colorless),
+            Some(3),
+            "Workshop's AddMana effect must carry 3 colorless. Got: {:?}",
+            added
+        );
+    }
+
+    /// Card compat: Hurkyl's Recall (cardsfolder/h/hurkyls_recall.txt).
+    /// Wave 16 robots deck (mtg-509, mtg-559).
+    ///
+    /// Script: `A:SP$ ChangeZoneAll | ValidTgts$ Player | ChangeType$ Artifact... |
+    ///          Origin$ Battlefield | Destination$ Hand`
+    ///
+    /// Parser-shape guard: the spell must parse to a `ChangeZoneAll` effect
+    /// with a single Battlefield origin and Hand destination, restricted to
+    /// Artifacts, and NOT request a shuffle.
+    #[test]
+    fn test_card_compat_hurkyls_recall() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/h/hurkyls_recall.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Hurkyl's Recall should load");
+        assert_eq!(def.name.as_str(), "Hurkyl's Recall");
+        assert!(def.types.contains(&CardType::Instant));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let changezone = card.effects.iter().find_map(|e| {
+            if let Effect::ChangeZoneAll {
+                origins,
+                destination,
+                shuffle,
+                ..
+            } = e
+            {
+                Some((origins.clone(), *destination, *shuffle))
+            } else {
+                None
+            }
+        });
+        let (origins, destination, shuffle) = changezone.expect("Hurkyl's Recall must parse to a ChangeZoneAll effect");
+        assert_eq!(
+            origins.as_slice(),
+            [crate::zones::Zone::Battlefield],
+            "Hurkyl's Recall returns artifacts from the battlefield"
+        );
+        assert_eq!(destination, crate::zones::Zone::Hand, "Returns to hand");
+        assert!(!shuffle, "Hurkyl's Recall does not shuffle");
+    }
+
+    /// Card compat: Timetwister (cardsfolder/t/timetwister.txt).
+    /// Wave 16 robots deck (mtg-552, mtg-559) — Power 9.
+    ///
+    /// Script: `A:SP$ ChangeZoneAll | ChangeType$ Card | Origin$ Hand,Graveyard |
+    ///          Destination$ Library | Shuffle$ True | SubAbility$ DBDraw`
+    ///          + `SVar:DBDraw:DB$ Draw | NumCards$ 7 | Defined$ Player`
+    ///
+    /// Parser-shape guard for the multi-origin ChangeZoneAll fix: the spell
+    /// must parse to a ChangeZoneAll with BOTH Hand and Graveyard origins, a
+    /// Library destination, and `shuffle == true`. Before the fix the
+    /// comma-separated `Origin$ Hand,Graveyard` failed to parse and fell back
+    /// to Battlefield (shuffling each player's board into the library).
+    #[test]
+    fn test_card_compat_timetwister() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/t/timetwister.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Timetwister should load");
+        assert_eq!(def.name.as_str(), "Timetwister");
+        assert!(def.types.contains(&CardType::Sorcery));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let changezone = card.effects.iter().find_map(|e| {
+            if let Effect::ChangeZoneAll {
+                origins,
+                destination,
+                shuffle,
+                ..
+            } = e
+            {
+                Some((origins.clone(), *destination, *shuffle))
+            } else {
+                None
+            }
+        });
+        let (origins, destination, shuffle) = changezone.expect("Timetwister must parse to a ChangeZoneAll effect");
+        assert!(
+            origins.contains(&crate::zones::Zone::Hand) && origins.contains(&crate::zones::Zone::Graveyard),
+            "Timetwister's Origin$ Hand,Graveyard must parse to BOTH zones. Got: {:?}",
+            origins
+        );
+        assert_eq!(
+            destination,
+            crate::zones::Zone::Library,
+            "Timetwister shuffles into the library"
+        );
+        assert!(shuffle, "Timetwister has Shuffle$ True");
+    }
 }
