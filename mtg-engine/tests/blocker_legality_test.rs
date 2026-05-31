@@ -12,7 +12,7 @@
 //! These tests pin the predicate's behaviour for every per-pair evasion ability
 //! so future changes can't silently regress the GUI/engine contract.
 
-use mtg_engine::core::{Card, CardType, Color, Keyword};
+use mtg_engine::core::{Card, CardType, Color, Keyword, StaticAbility, TargetRestriction};
 use mtg_engine::game::{combat_rules, GameState};
 use smallvec::SmallVec;
 
@@ -198,6 +198,46 @@ fn is_useful_blocker_filters_unblockable_creatures() {
     assert!(
         combat_rules::is_useful_blocker(&game, air_bender, &attackers),
         "flying defender must remain a useful blocker"
+    );
+}
+
+#[test]
+fn ironclaw_orcs_cant_block_power_2_or_greater() {
+    // mtg-512: Ironclaw Orcs ("can't block creatures with power 2 or greater",
+    // CR 509.1b / 509.4). The blocker carries
+    //   S:Mode$ CantBlockBy | ValidAttacker$ Creature.powerGE2 | ValidBlocker$ Creature.Self
+    // which lowers to StaticAbility::CantBlockMatching { Creature.powerGE2 }.
+    // It must be unable to block a power-2 attacker but free to block a power-1
+    // attacker.
+    let mut game = GameState::new_two_player("p1".to_string(), "p2".to_string(), 20);
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+
+    let big_attacker = add_creature(&mut game, "Hill Giant", p2, 3, 3, &[], &[Color::Green]);
+    let exactly_two = add_creature(&mut game, "Bear", p2, 2, 2, &[], &[Color::Green]);
+    let small_attacker = add_creature(&mut game, "Goblin", p2, 1, 1, &[], &[Color::Red]);
+
+    let orcs = add_creature(&mut game, "Ironclaw Orcs", p1, 2, 2, &[], &[Color::Red]);
+    game.cards
+        .get_mut(orcs)
+        .unwrap()
+        .static_abilities
+        .push(StaticAbility::CantBlockMatching {
+            attacker_filter: TargetRestriction::parse("Creature.powerGE2"),
+            description: "Ironclaw Orcs can't block creatures with power 2 or greater.".to_string(),
+        });
+
+    assert!(
+        !combat_rules::can_block(&game, big_attacker, orcs),
+        "Ironclaw Orcs must NOT be able to block a power-3 attacker (CR 509.1b)"
+    );
+    assert!(
+        !combat_rules::can_block(&game, exactly_two, orcs),
+        "Ironclaw Orcs must NOT be able to block a power-2 attacker (powerGE2 is inclusive)"
+    );
+    assert!(
+        combat_rules::can_block(&game, small_attacker, orcs),
+        "Ironclaw Orcs CAN block a power-1 attacker"
     );
 }
 

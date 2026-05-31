@@ -783,6 +783,74 @@ async fn test_reach_blocks_flyer() -> Result<()> {
     Ok(())
 }
 
+/// Test Ironclaw Orcs' "can't block creatures with power 2 or greater" (mtg-512).
+///
+/// Ironclaw Orcs (2/2) carries
+///   `S:Mode$ CantBlockBy | ValidAttacker$ Creature.powerGE2 | ValidBlocker$ Creature.Self`
+/// which lowers to `StaticAbility::CantBlockMatching { Creature.powerGE2 }` and
+/// is enforced in `combat_rules::can_block` (CR 509.1b / 509.4).
+///
+/// P2 attacks every turn with Hill Giant (3/3). The Orcs must NEVER be a legal
+/// blocker for it, so the Giant's 3 damage hits P1 each combat and the Orcs
+/// survive (they never trade into the Giant). Before the fix the restriction was
+/// silently dropped and the Orcs could illegally block (and die to) the Giant.
+#[tokio::test]
+async fn test_ironclaw_orcs_cant_block_power2() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/ironclaw_orcs_cant_block_power2.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p1_id = players[0]; // controls Ironclaw Orcs (2/2)
+    let p2_id = players[1]; // controls Hill Giant (3/3)
+
+    // Locate the Ironclaw Orcs on P1's battlefield.
+    let orcs_id = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .get(id)
+                .map(|c| c.name.as_str() == "Ironclaw Orcs")
+                .unwrap_or(false)
+        })
+        .expect("Ironclaw Orcs must be on the battlefield");
+
+    let p1_life_before = game.get_player(p1_id)?.life;
+
+    let mut controller1 = HeuristicController::new(p1_id);
+    let mut controller2 = HeuristicController::new(p2_id);
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+    let _ = game_loop.run_turns(&mut controller1, &mut controller2, 3)?;
+
+    let p1_life_after = game_loop.game.get_player(p1_id)?.life;
+
+    // The Orcs must still be alive on the battlefield: they could never block
+    // the Hill Giant (power 3 >= 2), so they never traded into it.
+    let orcs_alive = game_loop.game.battlefield.contains(orcs_id);
+    assert!(
+        orcs_alive,
+        "Ironclaw Orcs must survive: it can't block the power-3 Hill Giant, so it never trades into it"
+    );
+
+    // The Hill Giant got through unblocked: P1 took combat damage despite having
+    // an untapped 2/2 available (which, but for the restriction, could have blocked).
+    assert!(
+        p1_life_after < p1_life_before,
+        "P1 must lose life to the unblockable-by-Orcs Hill Giant (before {p1_life_before}, after {p1_life_after})"
+    );
+
+    Ok(())
+}
+
 /// Test pump spell combat tricks
 ///
 /// This test verifies that the AI can cast pump spells like Giant Growth

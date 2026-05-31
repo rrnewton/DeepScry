@@ -3288,6 +3288,36 @@ impl CardDefinition {
             .map(|v| crate::core::TargetRestriction::parse(v))
     }
 
+    /// Returns `true` iff every dotted modifier in a `ValidAttacker$` filter is
+    /// one that [`crate::core::TargetRestriction::parse`] + `matches` evaluate
+    /// faithfully. Used to gate `Mode$ CantBlockBy | ValidBlocker$ Creature.Self`
+    /// emission: a modifier we silently ignore (e.g. `withoutFlying`) would
+    /// collapse the filter to a bare type and wrongly forbid blocking ALL such
+    /// attackers, so we decline to model those (no worse than the prior
+    /// silent-drop). Base types and the `Self`/`Other` source qualifiers are
+    /// fine; controller restrictions (`YouCtrl`/`OppCtrl`) are NOT, since the
+    /// matcher used at the block site has no controller context.
+    fn cant_block_filter_is_faithful(filter_str: &str) -> bool {
+        for clause in filter_str.split(',') {
+            let mut parts = clause.split('.');
+            // Base type is always fine (unknown bases parse to "any type").
+            let _base = parts.next();
+            for modifier_group in parts {
+                for modifier in modifier_group.split('+') {
+                    let ok = matches!(
+                        modifier,
+                        "!HasCounters" | "!token" | "nonArtifact" | "White" | "Blue" | "Black" | "Red" | "Green"
+                    ) || modifier.starts_with("powerGE")
+                        || modifier.starts_with("powerLE");
+                    if !ok {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
         use crate::core::{AffectedSelector, StaticAbility};
 
@@ -4075,6 +4105,40 @@ impl CardDefinition {
                         valid_card,
                         description,
                     });
+                }
+                "CantBlockBy" => {
+                    // Blocker-side block restriction (Ironclaw Orcs):
+                    //   Mode$ CantBlockBy | ValidAttacker$ <filter> | ValidBlocker$ Creature.Self
+                    // Only the `ValidBlocker$ Creature.Self` shape (the source
+                    // creature itself is the restricted BLOCKER) is modelled.
+                    // The evasion shape (no ValidBlocker$, or a ValidBlocker$
+                    // that is not Creature.Self — meaning "this ATTACKER can't be
+                    // blocked [except by X]") is a different mechanic and is left
+                    // unparsed, exactly as before.
+                    let is_self_blocker = params
+                        .get("ValidBlocker")
+                        .map(|v| v.trim() == "Creature.Self")
+                        .unwrap_or(false);
+                    if is_self_blocker {
+                        if let Some(filter_str) = params.get("ValidAttacker") {
+                            // Faithfulness guard: TargetRestriction::parse only
+                            // honours type/color/power/token modifiers. Keyword
+                            // filters like `withoutFlying` silently degrade to a
+                            // bare `Creature` (matching ALL creatures), which
+                            // would wrongly forbid blocking everything. Only emit
+                            // the static when every dotted modifier is one we
+                            // evaluate faithfully; otherwise leave it unparsed
+                            // (no worse than today's silent-drop).
+                            if Self::cant_block_filter_is_faithful(filter_str) {
+                                let attacker_filter = crate::core::TargetRestriction::parse(filter_str);
+                                let description = params.get("Description").cloned().unwrap_or_default();
+                                abilities.push(StaticAbility::CantBlockMatching {
+                                    attacker_filter,
+                                    description,
+                                });
+                            }
+                        }
+                    }
                 }
                 "Always" => {
                     // State-trigger sweep. We model only the SacrificeAll/

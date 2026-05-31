@@ -1,0 +1,24 @@
+[metadata]
+Name:Ironclaw Orcs can't block power 2 or greater
+Goal:Survive
+Turns:3
+Difficulty:Easy
+Description:mtg-512. Ironclaw Orcs (2/2) carries S:Mode$ CantBlockBy | ValidAttacker$ Creature.powerGE2 | ValidBlocker$ Creature.Self ("can't block creatures with power 2 or greater", CR 509.1b / 509.4). P2 attacks each turn with Hill Giant (3/3). The Orcs must NOT be a legal blocker for it, so Hill Giant's 3 damage hits P1 every combat even though an untapped 2/2 is sitting on P1's battlefield. Before the fix the restriction was silently dropped and the Orcs could illegally block (and trade with) the Giant.
+
+# Regression for mtg-512: the Mode$ CantBlockBy | ValidBlocker$ Creature.Self
+# block-restriction (Ironclaw Orcs) lowers to StaticAbility::CantBlockMatching
+# and is enforced in combat_rules::can_block. The per-pair predicate is also
+# unit-tested in tests/blocker_legality_test.rs
+# (ironclaw_orcs_cant_block_power_2_or_greater).
+[state]
+turn=4
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0battlefield=Ironclaw Orcs
+p0library=Mountain; Mountain; Mountain
+p1life=20
+p1hand=
+p1battlefield=Hill Giant
+p1library=Forest; Forest; Forest

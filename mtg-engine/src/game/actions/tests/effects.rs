@@ -2965,6 +2965,75 @@ mod tests {
         }
     }
 
+    /// Card compat: Ironclaw Orcs (cardsfolder/i/ironclaw_orcs.txt)
+    ///
+    /// Script:
+    ///   ManaCost:1 R
+    ///   Types:Creature Orc
+    ///   PT:2/2
+    ///   S:Mode$ CantBlockBy | ValidAttacker$ Creature.powerGE2 | ValidBlocker$ Creature.Self
+    ///
+    /// Verifies the `Mode$ CantBlockBy | ValidBlocker$ Creature.Self` shape
+    /// lowers to a `StaticAbility::CantBlockMatching` carrying a `powerGE2`
+    /// attacker filter (mtg-512). The block-legality enforcement is covered by
+    /// `blocker_legality_test::ironclaw_orcs_cant_block_power_2_or_greater`.
+    #[test]
+    fn test_card_compat_ironclaw_orcs() {
+        use crate::core::StaticAbility;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/i/ironclaw_orcs.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Ironclaw Orcs should load");
+
+        assert_eq!(def.name.as_str(), "Ironclaw Orcs");
+        assert_eq!(def.mana_cost.generic, 1, "Cost should be {{1}}{{R}}");
+        assert_eq!(def.mana_cost.red, 1, "Cost should include {{R}}");
+        assert!(def.types.contains(&CardType::Creature));
+        assert_eq!(def.power, Some(2));
+        assert_eq!(def.toughness, Some(2));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let cant_block = card
+            .static_abilities
+            .iter()
+            .find_map(|s| match s {
+                StaticAbility::CantBlockMatching { attacker_filter, .. } => Some(attacker_filter),
+                StaticAbility::ModifyPT { .. }
+                | StaticAbility::GrantKeyword { .. }
+                | StaticAbility::ReduceCost { .. }
+                | StaticAbility::RaiseCost { .. }
+                | StaticAbility::GrantAbility { .. }
+                | StaticAbility::GainControl { .. }
+                | StaticAbility::SacrificeMatchingPresent { .. }
+                | StaticAbility::CantBeCast { .. }
+                | StaticAbility::CantPlayLand { .. } => None,
+            })
+            .expect("Ironclaw Orcs must produce a CantBlockMatching static ability");
+
+        // The filter must inclusively reject power-2 attackers and accept power-1.
+        let p2 = make_creature_with_power(2);
+        let p1 = make_creature_with_power(1);
+        assert!(cant_block.matches(&p2), "powerGE2 filter must match a power-2 attacker");
+        assert!(
+            !cant_block.matches(&p1),
+            "powerGE2 filter must NOT match a power-1 attacker"
+        );
+    }
+
+    /// Build a bare vanilla creature with the given base power for filter tests.
+    fn make_creature_with_power(power: i8) -> crate::core::Card {
+        let mut c = crate::core::Card::new(CardId::new(99), "FilterTarget", PlayerId::new(1));
+        c.set_types(smallvec::SmallVec::from_vec(vec![CardType::Creature]));
+        c.set_base_power(Some(power));
+        c.set_base_toughness(Some(power.max(1)));
+        c
+    }
+
     /// Card compat: Black Knight (cardsfolder/b/black_knight.txt)
     ///
     /// Script:

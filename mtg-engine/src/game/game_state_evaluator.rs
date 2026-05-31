@@ -505,9 +505,11 @@ impl GameStateEvaluator {
                 }
                 StaticAbility::SacrificeMatchingPresent { .. }
                 | StaticAbility::CantBeCast { .. }
-                | StaticAbility::CantPlayLand { .. } => {
-                    // Set/color-hoser statics (City in a Bottle, etc.) live on
-                    // an artifact/enchantment, not an aura attached to a
+                | StaticAbility::CantPlayLand { .. }
+                | StaticAbility::CantBlockMatching { .. } => {
+                    // Set/color-hoser statics (City in a Bottle, etc.) and the
+                    // self block-restriction (Ironclaw Orcs) live on the
+                    // creature/artifact itself, not an aura attached to a
                     // creature; they contribute no enchanted-creature value.
                 }
             }

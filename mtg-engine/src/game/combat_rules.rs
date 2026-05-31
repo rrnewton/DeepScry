@@ -112,6 +112,18 @@ fn can_block_impl(game: &GameState, attacker_id: CardId, blocker_id: CardId, vie
         }
     }
 
+    // CR 509.1b / 509.4: per-creature block restriction
+    // (`S:Mode$ CantBlockBy | ValidAttacker$ <filter> | ValidBlocker$ Creature.Self`).
+    // Ironclaw Orcs ("can't block creatures with power 2 or greater"): the
+    // blocker may not be declared against any attacker matching the filter.
+    for static_ability in &blocker.static_abilities {
+        if let crate::core::StaticAbility::CantBlockMatching { attacker_filter, .. } = static_ability {
+            if attacker_filter.matches(attacker) {
+                return false;
+            }
+        }
+    }
+
     // 702.14 Landwalk: needs view to check defending player's lands.
     if attacker.has_keyword(Keyword::Landwalk) {
         if let Some(view) = view {

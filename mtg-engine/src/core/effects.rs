@@ -2609,6 +2609,25 @@ pub enum StaticAbility {
         /// Description for logging.
         description: String,
     },
+
+    /// Per-creature block restriction (CR 509.1b / 509.4): the source creature
+    /// (the *blocker*) can't be declared as a blocker for any attacker matching
+    /// `attacker_filter`. Corresponds to the
+    /// `S:Mode$ CantBlockBy | ValidAttacker$ <filter> | ValidBlocker$ Creature.Self`
+    /// shape, where `ValidBlocker$ Creature.Self` pins the restriction to the
+    /// source itself (Ironclaw Orcs: `ValidAttacker$ Creature.powerGE2`,
+    /// "can't block creatures with power 2 or greater").
+    ///
+    /// This is the *blocker-side* form of `CantBlockBy`; the *evasion* form
+    /// (`ValidAttacker$ Creature.Self` with no `ValidBlocker$`, meaning "this
+    /// attacker can't be blocked") is a different shape and is NOT modelled here.
+    CantBlockMatching {
+        /// Filter for which ATTACKERS this creature may not block
+        /// (e.g. `Creature.powerGE2`). Evaluated against the attacker card.
+        attacker_filter: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
 }
 
 /// Target selector for cost reduction abilities

@@ -108,7 +108,7 @@ workflow, row format, and update rules.
     them. Info-independent / deterministic (public state only). `DamageDealt`
     (Drain Life) is enum-reserved but NOT yet wired — see the Drain Life row.
 | DB$ GainLife LifeAmount$ <SVar with Count$TotalDamageDoneByThisTurn + LimitMax cap> (damage-dealt drain) | BROKEN | 2026-05-30_#2489(1db3e6c7) | mtg-501 | Drain Life |
-| S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | BROKEN | 2026-05-29_#2456(e30f4ce1) | mtg-512 | Ironclaw Orcs |
+| S:Mode$ CantBlockBy ValidBlocker$ Creature.Self (this creature can't block X) | WORKING | 2026-05-31_#2549(221c7867) | (fixed mtg-512) | Ironclaw Orcs |
 | SP$ ChangeZoneAll Origin$ Hand,Graveyard (multi-origin / Hand origin) + Shuffle$ True | WORKING | 2026-05-30_#2533(b052ce01) | (fixed mtg-552) | Timetwister |
   - 2026-05-30: `Effect::ChangeZoneAll.origin: Zone` -> `origins: SmallVec<[Zone;2]>`
     plus a new `shuffle: bool` field (derived from `Shuffle$ True`). The

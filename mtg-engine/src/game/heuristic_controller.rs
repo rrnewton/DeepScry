@@ -1446,6 +1446,18 @@ impl HeuristicController {
             }
         }
 
+        // CR 509.1b / 509.4: per-creature block restriction (Ironclaw Orcs:
+        // "can't block creatures with power 2 or greater"). Mirrors
+        // combat_rules::can_block so the AI never proposes a block the engine
+        // would then silently drop.
+        for static_ability in &blocker.static_abilities {
+            if let crate::core::StaticAbility::CantBlockMatching { attacker_filter, .. } = static_ability {
+                if attacker_filter.matches(attacker) {
+                    return false;
+                }
+            }
+        }
+
         // Menace requires at least 2 blockers (simplified check)
         // In a full implementation, this would be context-dependent
         // For now we allow single blocking to preserve existing logic

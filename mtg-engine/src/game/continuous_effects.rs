@@ -1533,6 +1533,10 @@ impl GameState {
                         // Cast/play-prohibition statics don't affect P/T; they
                         // gate the available-plays enumeration instead.
                     }
+                    StaticAbility::CantBlockMatching { .. } => {
+                        // Block-restriction statics (Ironclaw Orcs) don't affect
+                        // P/T; they gate block legality in combat_rules::can_block.
+                    }
                 }
             }
         }
