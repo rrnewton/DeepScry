@@ -739,6 +739,21 @@ impl TargetRestriction {
     }
 }
 
+/// How a variable-amount damage effect is divided among its chosen targets.
+///
+/// Encodes the card-script `DivideEvenly$` parameter (CR 601.2d). Strong-typed
+/// so the resolution path cannot confuse "single target, full damage" with
+/// "split evenly among N targets".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum DamageDivision {
+    /// No division: deal the full amount to a single chosen target (default).
+    #[default]
+    None,
+    /// `DivideEvenly$ RoundedDown` (Fireball): deal `floor(total / N)` to each of
+    /// the `N` chosen targets, remainder lost.
+    EvenlyRoundedDown,
+}
+
 /// Basic card effects that can be executed
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Effect {
@@ -749,7 +764,27 @@ pub enum Effect {
     /// Deal X damage to a target, where X is the value paid when casting
     /// Example: "Fireball deals X damage" (SVar:X:Count$xPaid)
     /// Amount is read from Card::x_paid at resolution time
-    DealDamageXPaid { target: TargetRef },
+    ///
+    /// `divide` encodes the `DivideEvenly$` parameter (CR 601.2d). When it is
+    /// `DamageDivision::EvenlyRoundedDown` (Fireball), the source consumes ALL
+    /// chosen targets and deals `floor(x_paid / N)` to each of the `N` targets
+    /// (remainder lost); when `None`, exactly one target is consumed and dealt
+    /// the full `x_paid`.
+    DealDamageXPaid { target: TargetRef, divide: DamageDivision },
+
+    /// Resolved form of a `DivideEvenly$` X-damage spell (Fireball). Produced at
+    /// resolution from `DealDamageXPaid { divide: EvenlyRoundedDown }` once the
+    /// chosen targets and `x_paid` are known: deals `amount_each` to every
+    /// listed target. Never parsed, logged, or sent on the wire — it is an
+    /// internal resolved effect, like the concrete forms `DealDamageXPaid`
+    /// resolves into.
+    DealDamageDivided {
+        /// All chosen targets (creatures and/or player sentinels), each dealt
+        /// `amount_each` damage. Order is the controller's chosen order.
+        targets: smallvec::SmallVec<[TargetRef; 4]>,
+        /// `floor(x_paid / N)` damage dealt to each target (remainder lost).
+        amount_each: i32,
+    },
 
     /// Deal a variable amount of damage to the player whose upkeep/phase the
     /// trigger fired on (the "triggered" / "chosen" / active player). The
@@ -1895,6 +1930,7 @@ impl Effect {
             // Effects requiring creature/permanent/spell targets
             Effect::DealDamage { .. }
             | Effect::DealDamageXPaid { .. }
+            | Effect::DealDamageDivided { .. }
             | Effect::EachDamage { .. }
             | Effect::DestroyPermanent { .. }
             | Effect::GainControl { .. }

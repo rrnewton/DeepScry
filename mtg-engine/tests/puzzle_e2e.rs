@@ -4589,3 +4589,117 @@ async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
 
     Ok(())
 }
+
+/// Fireball (X R) divides its X damage evenly, rounded down, among any number
+/// of targets (CR 601.2d) and costs {1} more per target beyond the first (CR
+/// 601.2f). This is the end-to-end proof for mtg-tyvcn (variable target count +
+/// even division + relative cost).
+///
+/// Setup (test_puzzles/fireball_divide_two_targets.pzl): P0 has Fireball + 6
+/// Mountains; P1 has two 3/3 Hill Giants. The FixedScriptController forces:
+///   [1, 2, 0, 1] = cast spell #1 (Fireball), choose 2 targets, indices 0 and 1
+/// (the two Hill Giants — "any target" lists creatures before players). X is
+/// chosen by the default controller as the max affordable AFTER the engine
+/// reserves mana for the per-target surcharge, which lands on X=4. With X=4 over
+/// 2 targets each Hill Giant takes floor(4/2)=2 damage and both 3/3s survive,
+/// proving the damage was divided (not dealt in full to one target).
+#[tokio::test]
+async fn test_fireball_divides_x_among_two_targets() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/fireball_divide_two_targets.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+    let p1_id = players[1];
+
+    // Two Hill Giants must be on P1's battlefield at start.
+    let hill_giants: Vec<_> = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game.cards.try_get(id).map(|c| (id, c)))
+        .filter(|(_, c)| c.name.as_str() == "Hill Giant")
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(hill_giants.len(), 2, "puzzle must start with two Hill Giants");
+
+    game.logger.enable_capture();
+
+    // Script: cast Fireball (1), choose 2 targets, indices 0 and 1 (Hill Giants).
+    let mut controller0 = FixedScriptController::new(p0_id, vec![1, 2, 0, 1]);
+    let mut controller1 = ZeroController::new(p1_id);
+
+    let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Verbose);
+    let _result = game_loop.run_turns(&mut controller0, &mut controller1, 1)?;
+
+    let logs = game_loop.game.logger.logs();
+    println!("\n=== Fireball Divide Test logs ===");
+    for log in logs.iter() {
+        if log.message.contains("Fireball")
+            || log.message.contains("Hill Giant")
+            || log.message.contains("damage")
+            || log.message.contains("X =")
+            || log.message.contains("SCRIPT")
+        {
+            println!("{}", log.message);
+        }
+    }
+    println!("=== end logs ===\n");
+
+    // Fireball was cast and chose X = 4.
+    assert!(
+        logs.iter().any(|e| e.message.contains("casts Fireball")),
+        "Fireball should have been cast"
+    );
+    assert!(
+        logs.iter().any(|e| e.message.contains("X = 4")),
+        "X should be chosen as 4 (after reserving mana for the per-target surcharge)"
+    );
+
+    // Each Hill Giant took exactly 2 (= floor(4/2)) damage, NOT 4.
+    assert!(
+        logs.iter().any(|e| e.message.contains("deals 2 damage to Hill Giant")),
+        "Fireball must deal 2 damage (floor(4/2)) to each target, evidence of even division"
+    );
+    assert!(
+        !logs.iter().any(|e| e.message.contains("deals 4 damage to Hill Giant")),
+        "Fireball must NOT deal the full X=4 to a single Hill Giant (would mean division failed)"
+    );
+
+    // Both 3/3 Hill Giants survive 2 damage.
+    let survivors = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game_loop.game.cards.try_get(id))
+        .filter(|c| c.name.as_str() == "Hill Giant")
+        .count();
+    assert_eq!(survivors, 2, "both 3/3 Hill Giants must survive 2 divided damage each");
+
+    // Relative per-target cost (CR 601.2f): X(4) + R(1) + {1} per extra target
+    // (2 targets -> +1) = 6 mana. All 6 Mountains must be tapped. If the {1}
+    // surcharge had NOT been applied, cost would be 5 and one Mountain would
+    // remain untapped.
+    let untapped_mountains = game_loop
+        .game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game_loop.game.cards.try_get(id))
+        .filter(|c| c.name.as_str() == "Mountain" && c.owner == p0_id && !c.tapped)
+        .count();
+    assert_eq!(
+        untapped_mountains, 0,
+        "all 6 Mountains must be tapped: X(4) + R(1) + per-target surcharge(1) = 6"
+    );
+
+    Ok(())
+}

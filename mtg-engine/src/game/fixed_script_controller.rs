@@ -117,6 +117,8 @@ impl PlayerController for FixedScriptController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             view.logger()
@@ -124,40 +126,61 @@ impl PlayerController for FixedScriptController {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        if valid_targets.len() == 1 {
+        // Variable target count (min != max), e.g. a DivideEvenly X-spell like
+        // Fireball (TargetMin$ 0 .. TargetMax$ N). The script supplies the COUNT
+        // first, then that many target indices:
+        //   [count, idx_0, idx_1, ...]
+        // This keeps fixed single-target scripts (min == max) unchanged.
+        if min_targets != max_targets {
+            let requested = self.next_choice();
+            let count = requested.clamp(min_targets, max_targets).min(valid_targets.len());
+            let mut targets: SmallVec<[CardId; 4]> = SmallVec::new();
+            let mut used: SmallVec<[usize; 8]> = SmallVec::new();
+            for _ in 0..count {
+                let raw = self.next_choice();
+                // Pick the next unused index, clamping into range deterministically.
+                let mut idx = raw.min(valid_targets.len() - 1);
+                while used.contains(&idx) {
+                    idx = (idx + 1) % valid_targets.len();
+                }
+                used.push(idx);
+                targets.push(valid_targets[idx]);
+            }
+            view.logger().controller_choice(
+                "SCRIPT",
+                &format!(
+                    "chose {} target(s) out of {} available",
+                    targets.len(),
+                    valid_targets.len()
+                ),
+            );
+            return ChoiceResult::Ok(targets);
+        }
+
+        if valid_targets.len() == 1 && min_targets == 1 {
             // Only one target available - no choice to make, don't log or consume script
             let mut targets = SmallVec::new();
             targets.push(valid_targets[0]);
             return ChoiceResult::Ok(targets);
         }
 
-        // Multiple targets - use script
-        let choice_index = self.next_choice();
-        let clamped_index = choice_index.min(valid_targets.len() - 1);
-
-        if choice_index != clamped_index {
-            view.logger().controller_choice(
-                "SCRIPT",
-                &format!(
-                    "chose target {} (clamped from {}) out of choices 0-{}",
-                    clamped_index,
-                    choice_index,
-                    valid_targets.len() - 1
-                ),
-            );
-        } else {
-            view.logger().controller_choice(
-                "SCRIPT",
-                &format!(
-                    "chose target {} out of choices 0-{}",
-                    choice_index,
-                    valid_targets.len() - 1
-                ),
-            );
-        }
-
+        // Fixed target count == min_targets. For the common single-target case
+        // this consumes one script value; for fixed-N it consumes N.
         let mut targets = SmallVec::new();
-        targets.push(valid_targets[clamped_index]);
+        let mut used: SmallVec<[usize; 8]> = SmallVec::new();
+        for _ in 0..min_targets.max(1) {
+            let choice_index = self.next_choice();
+            let mut idx = choice_index.min(valid_targets.len() - 1);
+            while used.contains(&idx) {
+                idx = (idx + 1) % valid_targets.len();
+            }
+            used.push(idx);
+            view.logger().controller_choice(
+                "SCRIPT",
+                &format!("chose target {} out of choices 0-{}", idx, valid_targets.len() - 1),
+            );
+            targets.push(valid_targets[idx]);
+        }
         ChoiceResult::Ok(targets)
     }
 
@@ -530,13 +553,13 @@ mod tests {
         let valid_targets = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
 
         // First choice: index 2 (third target)
-        let targets1 = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets1 = controller.choose_targets(&view, spell_id, &valid_targets, 1, 1);
         let targets1_val = targets1.unwrap();
         assert_eq!(targets1_val.len(), 1);
         assert_eq!(targets1_val[0], valid_targets[2]);
 
         // Second choice: index 0 (first target)
-        let targets2 = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets2 = controller.choose_targets(&view, spell_id, &valid_targets, 1, 1);
         let targets2_val = targets2.unwrap();
         assert_eq!(targets2_val.len(), 1);
         assert_eq!(targets2_val[0], valid_targets[0]);

@@ -1567,10 +1567,22 @@ pub trait PlayerController {
     /// Choose targets for a spell or ability
     ///
     /// Called during step 3 of casting a spell (MTG Rules 601.2c).
-    /// The controller must choose valid targets from the provided list.
+    /// The controller must choose between `min_targets` and `max_targets`
+    /// distinct valid targets from the provided list (inclusive bounds).
+    ///
+    /// For fixed single-target spells, `min_targets == max_targets == 1`. For
+    /// variable-target spells (Fireball: `TargetMin$ 0 | TargetMax$ MaxTargets`,
+    /// "X damage divided evenly among any number of targets") the bounds widen
+    /// to `[0, N]` and the controller picks how many to hit. Picking more
+    /// targets can change the spell's cost (Fireball's `{1}` per target beyond
+    /// the first), so the count is a real decision (CR 601.2c/601.2f).
     ///
     /// For spells with no targets, this may not be called, or valid_targets
     /// will be empty.
+    ///
+    /// All controllers MUST choose deterministically from view-only (public)
+    /// information so the choice round-trips identically across native, WASM,
+    /// and network shadow runs (see `docs/NETWORK_ARCHITECTURE.md`).
     ///
     /// Returns ChoiceResult with the chosen targets, or a special request
     /// (UndoRequest, ExitGame, Error).
@@ -1582,6 +1594,8 @@ pub trait PlayerController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>>;
 
     /// Choose which mana sources to tap to pay a cost

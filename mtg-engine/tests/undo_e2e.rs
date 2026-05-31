@@ -953,6 +953,8 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
             _view: &GameStateView,
             _spell: CardId,
             valid_targets: &[CardId],
+            _min_targets: usize,
+            _max_targets: usize,
         ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
             if valid_targets.is_empty() {
                 return ChoiceResult::Ok(SmallVec::new());

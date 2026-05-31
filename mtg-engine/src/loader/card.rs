@@ -524,6 +524,8 @@ impl CardDefinition {
         card.definition.cache.enters_tapped = self.enters_tapped;
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
+        // Fireball's `{1}`-per-extra-target relative cost (CR 601.2f).
+        card.definition.cache.spell_relative_target_cost = self.has_relative_self_target_cost();
 
         // Parse keywords
         card.keywords = self.parse_keywords();
@@ -4456,6 +4458,41 @@ impl CardDefinition {
         }
 
         abilities
+    }
+
+    /// Detect a self-referential relative per-target cost (Fireball, CR 601.2f):
+    /// `S:Mode$ RaiseCost | ValidCard$ Card.Self | ... | Relative$ True`.
+    ///
+    /// Parsed structurally (tokenize on `|` then `$`), never via substring
+    /// matching on the whole line, per the "No Hacky String Operations" rule.
+    /// The cast path uses the resulting cache flag to add `(num_targets - 1)`
+    /// generic mana once targets are chosen.
+    fn has_relative_self_target_cost(&self) -> bool {
+        for ability in &self.raw_abilities {
+            // Static lines are stored as "S:<body>" in raw_abilities.
+            let Some(body) = ability.strip_prefix("S:") else {
+                continue;
+            };
+            let mut is_raise_cost = false;
+            let mut is_self = false;
+            let mut is_relative = false;
+            for token in body.split('|') {
+                let token = token.trim();
+                let Some((key, value)) = token.split_once('$') else {
+                    continue;
+                };
+                match (key.trim(), value.trim()) {
+                    ("Mode", "RaiseCost") => is_raise_cost = true,
+                    ("ValidCard", "Card.Self") => is_self = true,
+                    ("Relative", "True") => is_relative = true,
+                    _ => {}
+                }
+            }
+            if is_raise_cost && is_self && is_relative {
+                return true;
+            }
+        }
+        false
     }
 
     /// Parse an SVar body as an activated ability

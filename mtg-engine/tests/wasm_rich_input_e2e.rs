@@ -182,6 +182,8 @@ async fn test_rewind_replay_mechanism() -> Result<()> {
             _view: &GameStateView,
             _spell: CardId,
             valid_targets: &[CardId],
+            _min_targets: usize,
+            _max_targets: usize,
         ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
             if valid_targets.is_empty() {
                 ChoiceResult::Ok(SmallVec::new())
@@ -595,6 +597,8 @@ async fn test_full_browser_workflow_land_play() -> Result<()> {
             _view: &GameStateView,
             _spell: CardId,
             valid_targets: &[CardId],
+            _min_targets: usize,
+            _max_targets: usize,
         ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
             if valid_targets.is_empty() {
                 ChoiceResult::Ok(SmallVec::new())

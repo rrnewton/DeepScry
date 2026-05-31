@@ -82,6 +82,8 @@ impl PlayerController for TestHumanController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Auto-select first valid target for simplicity
         if valid_targets.is_empty() {

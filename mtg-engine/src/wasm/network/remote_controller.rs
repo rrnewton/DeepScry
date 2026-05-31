@@ -186,6 +186,8 @@ impl PlayerController for WasmRemoteController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         match self.select_from_slice(valid_targets) {
             ChoiceResult::Ok(Some(target)) => ChoiceResult::Ok(smallvec::smallvec![target]),

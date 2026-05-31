@@ -491,6 +491,8 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         let info = match self.get_choice_info() {
             Some(info) => info,
@@ -500,7 +502,12 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         let server_action_count = info.server_action_count;
         self.verify_action_count_sync(view, server_action_count);
 
-        let result = self.inner.choose_targets(view, spell, valid_targets);
+        // The chosen targets (including a VARIABLE count for Fireball-style
+        // divide spells) are logged below as the full index + CardId vectors, so
+        // multi-target choices round-trip to the shadow games byte-identically.
+        let result = self
+            .inner
+            .choose_targets(view, spell, valid_targets, min_targets, max_targets);
 
         if let ChoiceResult::Ok(ref targets) = result {
             let indices: Vec<usize> = targets

@@ -252,7 +252,12 @@ impl PlayerController for WasmRichInputController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        // Pending-choice path maps a VECTOR of indices, so a variable target
+        // count (Fireball) round-trips; the JS multi-select UX is a best-effort
+        // follow-up (mtg-tyvcn). min/max are advisory here.
         // Check for pending choice
         if let Some(PendingChoice::Targets(indices)) = self.pending_choice.take() {
             let targets: SmallVec<[CardId; 4]> = indices

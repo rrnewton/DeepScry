@@ -3883,6 +3883,81 @@ mod tests {
     /// `ReplaceDyingDefined$` clause ("if it would die this turn, exile it
     /// instead"). The rider must bind to the parent target via the
     /// reuse-previous sentinel so it never collects its own cast-time target.
+    /// Card compat: Fireball (cardsfolder/f/fireball.txt)
+    ///
+    /// Script: ManaCost:X R / Types:Sorcery
+    ///   S:Mode$ RaiseCost | ValidCard$ Card.Self | Relative$ True | ...
+    ///   A:SP$ DealDamage | ValidTgts$ Any | NumDmg$ X | TargetMin$ 0
+    ///     | TargetMax$ MaxTargets | DivideEvenly$ RoundedDown
+    ///   SVar:X:Count$xPaid
+    ///
+    /// Parser shape: {X}{R} Sorcery whose SP$ DealDamage carries DivideEvenly$
+    /// RoundedDown (lowered to Effect::DealDamageXPaid { divide:
+    /// EvenlyRoundedDown }) AND whose self-referential Relative$ True RaiseCost
+    /// sets the `spell_relative_target_cost` cache flag. Both are queried
+    /// structurally (tokenized AbilityParams / cache), never via substring
+    /// matching. This is the parser-shape regression guard for mtg-tyvcn.
+    #[test]
+    fn test_card_compat_fireball() {
+        use crate::core::{DamageDivision, Effect};
+        use crate::loader::ability_parser::{AbilityParams, ApiType};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/f/fireball.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Fireball should load");
+        assert_eq!(def.name.as_str(), "Fireball");
+        assert!(def.mana_cost.has_x(), "Fireball cost must contain X");
+        assert_eq!(def.mana_cost.red, 1, "Fireball cost should require {{R}}");
+        assert!(def.types.contains(&CardType::Sorcery), "Fireball must be a Sorcery");
+
+        // SP$ DealDamage with the variable-target + divide parameters.
+        let dmg = def
+            .raw_abilities
+            .iter()
+            .find_map(|raw| {
+                let p = AbilityParams::parse(raw).ok()?;
+                (p.api_type == ApiType::DealDamage).then_some(p)
+            })
+            .expect("Fireball must have an SP$ DealDamage spell ability");
+        assert_eq!(dmg.get("NumDmg"), Some("X"), "Fireball deals X");
+        assert_eq!(dmg.get("ValidTgts"), Some("Any"), "Fireball targets any target");
+        assert_eq!(dmg.get("TargetMin"), Some("0"), "Fireball has TargetMin$ 0");
+        assert_eq!(
+            dmg.get("TargetMax"),
+            Some("MaxTargets"),
+            "Fireball has TargetMax$ MaxTargets"
+        );
+        assert_eq!(
+            dmg.get("DivideEvenly"),
+            Some("RoundedDown"),
+            "Fireball divides its damage evenly, rounded down"
+        );
+
+        // Instantiate to materialize the parsed effects + cache.
+        let card = def.instantiate(crate::core::CardId::new(1), crate::core::PlayerId::new(0));
+        // The DealDamageXPaid effect must carry the EvenlyRoundedDown division.
+        assert!(
+            card.effects.iter().any(|e| matches!(
+                e,
+                Effect::DealDamageXPaid {
+                    target: crate::core::TargetRef::None,
+                    divide: DamageDivision::EvenlyRoundedDown,
+                }
+            )),
+            "Fireball must produce DealDamageXPaid {{ divide: EvenlyRoundedDown }}. Got: {:?}",
+            card.effects
+        );
+        // The relative per-target cost cache flag must be set.
+        assert!(
+            card.definition.cache.spell_relative_target_cost,
+            "Fireball's Relative$ True RaiseCost must set spell_relative_target_cost"
+        );
+    }
+
     #[test]
     fn test_card_compat_disintegrate() {
         use crate::core::Effect;
@@ -3925,7 +4000,7 @@ mod tests {
         let effects = &card.effects;
         assert!(
             effects.iter().any(
-                |e| matches!(e, Effect::DealDamageXPaid { target } if matches!(target, crate::core::TargetRef::None))
+                |e| matches!(e, Effect::DealDamageXPaid { target, .. } if matches!(target, crate::core::TargetRef::None))
             ),
             "Disintegrate must produce a DealDamageXPaid (X to chosen target). Got: {:?}",
             effects

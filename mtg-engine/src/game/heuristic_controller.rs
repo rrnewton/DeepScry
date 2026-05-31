@@ -5322,6 +5322,8 @@ impl PlayerController for HeuristicController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
@@ -5479,25 +5481,46 @@ impl PlayerController for HeuristicController {
         };
 
         if filtered_target_ids.is_empty() {
-            // Fallback: just pick the first target
+            // Fallback: pick the minimum required, taking the first valid ones.
+            let count = min_targets.max(1).min(valid_targets.len());
+            return ChoiceResult::Ok(valid_targets.iter().take(count).copied().collect());
+        }
+
+        // For single-target spells (max_targets == 1), pick the single best
+        // permanent. For variable-target spells (Fireball: max_targets > 1,
+        // "X damage divided evenly among any number of targets"), spread across
+        // as many of the filtered targets as allowed — preferring to hit MORE
+        // targets so the divided damage covers the opponent's board. The choice
+        // is deterministic and view-only, so it round-trips on the network.
+        if max_targets <= 1 {
+            let target = self.get_best_creature(view, &filtered_target_ids);
             let mut targets = SmallVec::new();
-            if !valid_targets.is_empty() {
+            if let Some(target_card_id) = target {
+                targets.push(target_card_id);
+            } else if !valid_targets.is_empty() {
                 targets.push(valid_targets[0]);
             }
             return ChoiceResult::Ok(targets);
         }
 
-        // Target the best permanent from our filtered list
-        let target = self.get_best_creature(view, &filtered_target_ids);
-
-        let mut targets = SmallVec::new();
-        if let Some(target_card_id) = target {
-            targets.push(target_card_id);
-        } else if !valid_targets.is_empty() {
-            // Fallback: just pick the first valid target
-            targets.push(valid_targets[0]);
+        // Variable count: take up to max_targets from the filtered list, but at
+        // least min_targets. filtered_target_ids preserves valid_targets order
+        // (engine offers opponents-first), giving a deterministic selection.
+        let cap = max_targets.min(filtered_target_ids.len());
+        let count = cap.max(min_targets.min(valid_targets.len()));
+        let mut targets: SmallVec<[CardId; 4]> = filtered_target_ids.iter().take(count).copied().collect();
+        // If min_targets exceeds the filtered set, top up from remaining valid
+        // targets so the lower bound is always satisfied.
+        if targets.len() < min_targets {
+            for &id in valid_targets {
+                if targets.len() >= min_targets {
+                    break;
+                }
+                if !targets.contains(&id) {
+                    targets.push(id);
+                }
+            }
         }
-
         ChoiceResult::Ok(targets)
     }
 

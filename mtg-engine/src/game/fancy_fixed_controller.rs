@@ -260,6 +260,8 @@ impl PlayerController for FancyFixedController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Set up renderer state
         self.renderer.state.session.choice_context = ChoiceContext::TargetSelection;
@@ -287,7 +289,8 @@ impl PlayerController for FancyFixedController {
         }
 
         // Delegate
-        self.delegate.choose_targets(view, spell, valid_targets)
+        self.delegate
+            .choose_targets(view, spell, valid_targets, min_targets, max_targets)
     }
 
     fn choose_mana_sources_to_pay(

@@ -312,8 +312,30 @@ impl<'a> GameLoop<'a> {
                     // line even though the real damage went to the creature
                     // (display-only double-resolution, mtg-ioesm). Player-target
                     // sentinels decode to TargetRef::Player here.
+                    // DivideEvenly$ RoundedDown (Fireball): consume ALL remaining
+                    // chosen targets for the log, dealing floor(X/N) to each, so
+                    // the gamelog shows one "deals K to <t>" line per target
+                    // (matches the DealDamageDivided execution in actions/mod.rs).
                     Effect::DealDamageXPaid {
                         target: TargetRef::None,
+                        divide: crate::core::DamageDivision::EvenlyRoundedDown,
+                    } if target_index < targets.len() => {
+                        let remaining = &targets[target_index..];
+                        let resolved_targets: smallvec::SmallVec<[TargetRef; 4]> = remaining
+                            .iter()
+                            .map(|&t| crate::core::target_ref_from_chosen_target(t))
+                            .collect();
+                        last_resolved_target = remaining.last().copied();
+                        target_index = targets.len();
+                        let n = resolved_targets.len().max(1) as i32;
+                        Effect::DealDamageDivided {
+                            targets: resolved_targets,
+                            amount_each: i32::from(card_x_paid) / n,
+                        }
+                    }
+                    Effect::DealDamageXPaid {
+                        target: TargetRef::None,
+                        ..
                     } if target_index < targets.len() => {
                         let raw = targets[target_index];
                         last_resolved_target = Some(raw);
@@ -323,7 +345,7 @@ impl<'a> GameLoop<'a> {
                             amount: i32::from(card_x_paid),
                         }
                     }
-                    Effect::DealDamageXPaid { target } => Effect::DealDamage {
+                    Effect::DealDamageXPaid { target, .. } => Effect::DealDamage {
                         target: target.clone(),
                         amount: i32::from(card_x_paid),
                     },
@@ -708,7 +730,8 @@ impl<'a> GameLoop<'a> {
                         } else {
                             let prior_log_size = self.game.logger.log_count();
                             let choice =
-                                self.choose_targets_with_hook(controller, cast_player, card_id, &valid_targets);
+                                // Single-target site (WASM resume) — bounds (1, 1).
+                                self.choose_targets_with_hook(controller, cast_player, card_id, &valid_targets, 1, 1);
                             let chosen_targets = handle_choice_result_break!(choice, self.game, cast_player);
                             log::debug!(
                                 target: "priority",
@@ -1180,8 +1203,27 @@ impl<'a> GameLoop<'a> {
                                         let card = self.game.cards.get(card_id).unwrap();
                                         let colored_cost = card.mana_cost.cmc(); // colored + generic (excluding X)
                                         let x_count = card.mana_cost.x_count;
-                                        let max_x = if x_count > 0 && max_mana > colored_cost {
-                                            (max_mana - colored_cost) / x_count
+                                        // Reserve mana for a relative per-target cost (Fireball, CR
+                                        // 601.2f) so the X chosen here leaves room to actually pay the
+                                        // `{1}`-per-extra-target surcharge once targets are picked.
+                                        // X (601.2b) is announced BEFORE targets (601.2c), so we
+                                        // conservatively reserve for the worst case of hitting every
+                                        // legal target (num_valid - 1 extra). This keeps the spell
+                                        // castable for any chosen target count and is fully
+                                        // deterministic (num_valid is public state).
+                                        let target_reserve = if card.definition.cache.spell_relative_target_cost {
+                                            let num_valid = self
+                                                .game
+                                                .get_valid_targets_for_spell(card_id)
+                                                .map(|t| t.len())
+                                                .unwrap_or(0);
+                                            num_valid.saturating_sub(1).min(u8::MAX as usize) as u8
+                                        } else {
+                                            0
+                                        };
+                                        let reserved_cost = colored_cost.saturating_add(target_reserve);
+                                        let max_x = if x_count > 0 && max_mana > reserved_cost {
+                                            (max_mana - reserved_cost) / x_count
                                         } else {
                                             0
                                         };
@@ -1219,24 +1261,48 @@ impl<'a> GameLoop<'a> {
                                     .get_valid_targets_for_spell(card_id)
                                     .unwrap_or_else(|_| SmallVec::new());
 
-                                // Ask controller to choose targets (only if there are valid targets)
-                                // Use SmallVec for targets - most spells have 0-2 targets (avoids heap allocation)
-                                let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
+                                // Compute the (min, max) target-count bounds for
+                                // this spell (CR 601.2c). Fixed single-target
+                                // spells are (1, 1); a DivideEvenly X-spell
+                                // (Fireball) is (0, num_valid).
+                                let (min_targets, max_targets) =
+                                    self.game.target_count_bounds_for_spell(card_id, valid_targets.len());
+
+                                // Ask controller to choose targets. Auto-select
+                                // ONLY when the count is forced (no real decision):
+                                //   - no valid targets, or
+                                //   - the bounds pin every legal target
+                                //     (min == max == num_valid), or
+                                //   - the trivial single fixed target
+                                //     (min == max == 1 && num_valid == 1).
+                                // Otherwise the count and/or which targets is a
+                                // genuine choice and must route through the
+                                // controller so it is logged + round-trips on the
+                                // network. Use SmallVec for targets (avoids heap
+                                // allocation for the common 0-2 target case).
+                                let num_valid = valid_targets.len();
+                                let forced_all = min_targets == max_targets && max_targets == num_valid;
+                                let trivial_single = min_targets == max_targets && max_targets == 1 && num_valid == 1;
+                                let chosen_targets_vec: SmallVec<[CardId; 2]> = if num_valid == 0 {
                                     // No targets needed - spell has no targeting effects
                                     SmallVec::new()
-                                } else if valid_targets.len() == 1 {
-                                    // Only one valid target - auto-select without calling controller
-                                    // This is not a choice, so don't log ChoicePoint
-                                    smallvec::smallvec![valid_targets[0]]
+                                } else if forced_all || trivial_single {
+                                    // Count + identity are forced - auto-select without
+                                    // calling the controller. Not a choice, so don't
+                                    // log a ChoicePoint.
+                                    valid_targets.iter().copied().take(max_targets).collect()
                                 } else {
-                                    // Multiple valid targets - ask controller to choose
-                                    // Capture log size BEFORE asking controller (before controller logs its choice)
+                                    // Real choice (which targets and/or how many) -
+                                    // ask the controller. Capture log size BEFORE
+                                    // asking (before the controller logs its choice).
                                     let prior_log_size = self.game.logger.log_count();
                                     let choice = self.choose_targets_with_hook(
                                         controller,
                                         current_priority,
                                         card_id,
                                         &valid_targets,
+                                        min_targets,
+                                        max_targets,
                                     );
                                     let chosen_targets =
                                         handle_choice_result_break!(choice, self.game, current_priority);
@@ -1394,11 +1460,14 @@ impl<'a> GameLoop<'a> {
                                             // Multiple valid targets - ask controller to choose
                                             // Capture log size BEFORE asking controller (before controller logs its choice)
                                             let prior_log_size = self.game.logger.log_count();
+                                            // Single-target activated ability — bounds (1, 1).
                                             let choice = self.choose_targets_with_hook(
                                                 controller,
                                                 current_priority,
                                                 card_id,
                                                 &valid_targets,
+                                                1,
+                                                1,
                                             );
                                             let chosen_targets =
                                                 handle_choice_result_break!(choice, self.game, current_priority);
@@ -2445,11 +2514,14 @@ impl<'a> GameLoop<'a> {
                                     smallvec::smallvec![valid_targets[0]]
                                 } else {
                                     let prior_log_size = self.game.logger.log_count();
+                                    // Single-target site — bounds (1, 1).
                                     let choice = self.choose_targets_with_hook(
                                         controller,
                                         current_priority,
                                         card_id,
                                         &valid_targets,
+                                        1,
+                                        1,
                                     );
                                     let chosen_targets =
                                         handle_choice_result_break!(choice, self.game, current_priority);
@@ -2549,11 +2621,14 @@ impl<'a> GameLoop<'a> {
                                     smallvec::smallvec![valid_targets[0]]
                                 } else {
                                     let prior_log_size = self.game.logger.log_count();
+                                    // Single-target site — bounds (1, 1).
                                     let choice = self.choose_targets_with_hook(
                                         controller,
                                         current_priority,
                                         card_id,
                                         &valid_targets,
+                                        1,
+                                        1,
                                     );
                                     let chosen_targets =
                                         handle_choice_result_break!(choice, self.game, current_priority);
@@ -3726,7 +3801,8 @@ impl<'a> GameLoop<'a> {
                             };
                             let prior_log_size = self.game.logger.log_count();
                             let choice =
-                                self.choose_targets_with_hook(controller, spell_owner, spell_id, &valid_targets);
+                                // Single-target site (copy-spell retarget) — bounds (1, 1).
+                                self.choose_targets_with_hook(controller, spell_owner, spell_id, &valid_targets, 1, 1);
                             let picked = match choice {
                                 crate::game::controller::ChoiceResult::Ok(v) => v.first().copied(),
                                 crate::game::controller::ChoiceResult::NeedInput(ctx) => {

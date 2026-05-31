@@ -3786,6 +3786,7 @@ impl GameState {
                         }
                     }
                     crate::core::Effect::DealDamage { .. }
+                    | crate::core::Effect::DealDamageDivided { .. }
                     | crate::core::Effect::DealDamageToTriggeredPlayer { .. }
                     | crate::core::Effect::EachDamage { .. }
                     | crate::core::Effect::DrawCards { .. }

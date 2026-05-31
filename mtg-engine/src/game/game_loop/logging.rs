@@ -209,10 +209,41 @@ impl<'a> GameLoop<'a> {
                     }
                 }
             },
-            Effect::DealDamageXPaid { target } => {
+            Effect::DealDamageXPaid { target, .. } => {
                 // XPaid damage - will be resolved before actual execution
                 let message = format!("{source_name} ({source_id}) deals X damage to {:?}", target);
                 self.game.logger.gamelog(&message);
+            }
+            // DivideEvenly$ RoundedDown resolved form (Fireball): one log line per
+            // target, dealing amount_each to each — same wording as the concrete
+            // DealDamage arm above so divided burn reads naturally in the gamelog.
+            Effect::DealDamageDivided { targets, amount_each } => {
+                for target in targets {
+                    match target {
+                        TargetRef::Player(target_player_id) => {
+                            let target_name = self.get_player_name(*target_player_id);
+                            let current_life = self.game.get_player(*target_player_id).map(|p| p.life).unwrap_or(0);
+                            let life_after = current_life - *amount_each;
+                            let message = format!(
+                                "{source_name} ({source_id}) deals {amount_each} damage to {target_name} (life: {life_after})"
+                            );
+                            self.game.logger.gamelog(&message);
+                        }
+                        TargetRef::Permanent(target_card_id) => {
+                            let target_name = self
+                                .game
+                                .cards
+                                .get(*target_card_id)
+                                .map(|c| c.name.as_str())
+                                .unwrap_or("Unknown");
+                            let message = format!(
+                                "{source_name} ({source_id}) deals {amount_each} damage to {target_name} ({target_card_id})"
+                            );
+                            self.game.logger.gamelog(&message);
+                        }
+                        TargetRef::None => {}
+                    }
+                }
             }
             Effect::DealDamageToTriggeredPlayer { .. } => {
                 // Phase-trigger damage (Karma, Black Vise) is resolved into a

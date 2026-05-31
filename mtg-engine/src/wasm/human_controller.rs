@@ -324,7 +324,12 @@ impl PlayerController for WasmHumanController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        // The pending-choice path already maps a VECTOR of indices, so a variable
+        // target count (Fireball) round-trips; the JS multi-select UX for picking
+        // how many is a best-effort follow-up (mtg-tyvcn). min/max are advisory.
         // Check for pending choice
         if let Some(PendingChoice::Targets(indices)) = self.pending_choice.take() {
             // CRITICAL: Use the ORIGINAL valid_targets from pending_context, NOT the current
@@ -815,7 +820,7 @@ mod tests {
         // First call: no pending choice → controller asks for input and stores
         // the context (mirroring what the WASM TUI sees on first prompt).
         let spell = EntityId::new(50);
-        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        let _ = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         assert!(controller.pending_context.is_some(), "pending_context must be stored");
 
         // Caller picks index 0 in the engine's `valid_targets` (i.e. the first
@@ -823,7 +828,7 @@ mod tests {
         // visible row, since "No target" occupies row 0; `select_current_choice`
         // is responsible for the -1 conversion.
         controller.set_pending_choice(PendingChoice::Targets(vec![0]));
-        let result = controller.choose_targets(&view, spell, &valid_targets);
+        let result = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         match result {
             ChoiceResult::Ok(targets) => {
                 assert_eq!(
@@ -836,9 +841,9 @@ mod tests {
         }
 
         // Re-prime context, then verify raw index 1 → target_b.
-        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        let _ = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         controller.set_pending_choice(PendingChoice::Targets(vec![1]));
-        let result = controller.choose_targets(&view, spell, &valid_targets);
+        let result = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         match result {
             ChoiceResult::Ok(targets) => {
                 assert_eq!(
@@ -851,9 +856,9 @@ mod tests {
         }
 
         // And the empty-vec convention means "no target chosen" (fizzle).
-        let _ = controller.choose_targets(&view, spell, &valid_targets);
+        let _ = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         controller.set_pending_choice(PendingChoice::Targets(vec![]));
-        let result = controller.choose_targets(&view, spell, &valid_targets);
+        let result = controller.choose_targets(&view, spell, &valid_targets, 1, 1);
         match result {
             ChoiceResult::Ok(targets) => {
                 assert!(targets.is_empty(), "empty Targets vec must mean 'no target'");

@@ -76,7 +76,13 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             if let Ok(amount) = params.get_i32("NumDmg") {
                 Some(Effect::DealDamage { target, amount })
             } else if params.get("NumDmg") == Some("X") {
-                Some(Effect::DealDamageXPaid { target })
+                // DivideEvenly$ RoundedDown (Fireball, CR 601.2d): the X damage is
+                // split floor(X/N) among the N chosen targets at resolution.
+                let divide = match params.get("DivideEvenly") {
+                    Some("RoundedDown") => crate::core::DamageDivision::EvenlyRoundedDown,
+                    _ => crate::core::DamageDivision::None,
+                };
+                Some(Effect::DealDamageXPaid { target, divide })
             } else {
                 None
             }

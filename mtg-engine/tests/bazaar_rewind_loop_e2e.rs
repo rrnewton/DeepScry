@@ -99,6 +99,8 @@ impl PlayerController for BazaarBot {
         _view: &GameStateView,
         _spell: CardId,
         _valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         ChoiceResult::Ok(SmallVec::new())
     }

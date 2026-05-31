@@ -201,23 +201,19 @@ impl PlayerController for RichInputController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }
 
-        if valid_targets.len() == 1 {
-            // Only one target - no choice needed
-            let mut targets = SmallVec::new();
-            targets.push(valid_targets[0]);
-            return ChoiceResult::Ok(targets);
-        }
-
-        // For now, just take the first target
-        // TODO: Implement rich syntax for target selection
-        let mut targets = SmallVec::new();
-        targets.push(valid_targets[0]);
-        ChoiceResult::Ok(targets)
+        // Best-effort: rich text target syntax for variable-count spells is a
+        // deferred follow-up (mtg-tyvcn). For now take the first `min_targets`
+        // (at least 1, capped at max) valid targets deterministically.
+        let lo = min_targets.max(1);
+        let count = lo.min(max_targets.max(1)).min(valid_targets.len());
+        ChoiceResult::Ok(valid_targets.iter().take(count).copied().collect())
     }
 
     fn choose_mana_sources_to_pay(

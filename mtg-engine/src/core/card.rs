@@ -134,6 +134,14 @@ pub struct CardCache {
     /// Example: "Lightning Bolt deals 3 damage to any target"
     pub spell_targets_any: bool,
 
+    /// Precomputed: this spell costs {1} more for each target beyond the first
+    /// (CR 601.2f). Derived from a self-referential
+    /// `S:Mode$ RaiseCost | ValidCard$ Card.Self | Relative$ True` line
+    /// (Fireball). When set, the cast path adds `(num_targets - 1)` generic mana
+    /// to the cost AFTER targets are chosen. The count is public state, so the
+    /// added cost is network-deterministic.
+    pub spell_relative_target_cost: bool,
+
     /// Precomputed: Static value of this land for AI evaluation
     /// (from evaluate_land function in game_state_evaluator.rs)
     /// Only meaningful for lands, 0 for non-lands
@@ -215,6 +223,10 @@ impl CardCache {
             spell_targets_player: text_lower.contains("target player") || text_lower.contains("target opponent"),
             // "any target" means creatures or players (e.g., Lightning Bolt)
             spell_targets_any: text_lower.contains("any target"),
+
+            // Relative per-target cost (Fireball). Set from the parsed RaiseCost
+            // static ability in the card loader, not from oracle text.
+            spell_relative_target_cost: false,
 
             land_evaluation_value: 0,
 

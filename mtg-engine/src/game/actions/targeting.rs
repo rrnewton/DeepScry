@@ -62,6 +62,35 @@ pub fn is_legal_target(
 }
 
 impl GameState {
+    /// Determine the `(min, max)` number of targets a spell requires (CR
+    /// 601.2c). `num_valid` is the count returned by
+    /// `get_valid_targets_for_spell`.
+    ///
+    /// Most spells take exactly one target, so the default is `(1, 1)`. A
+    /// `DivideEvenly$` X-damage spell (Fireball: `TargetMin$ 0 | TargetMax$
+    /// MaxTargets`) takes a variable number — the player may hit anywhere from
+    /// 0 up to every legal target. `MaxTargets` in the script is a public,
+    /// state-derived count (players + permanents); since the engine only offers
+    /// the actually-legal targets, the effective upper bound is `num_valid`.
+    /// All inputs are public, so the bounds are network-deterministic.
+    pub fn target_count_bounds_for_spell(&self, spell_card_id: CardId, num_valid: usize) -> (usize, usize) {
+        let Ok(card) = self.cards.get(spell_card_id) else {
+            return (1, 1);
+        };
+        // DivideEvenly X-damage (Fireball) is the only variable-target shape in
+        // scope. min comes from TargetMin$ 0; max is bounded by the legal targets.
+        for effect in &card.effects {
+            if let Effect::DealDamageXPaid {
+                divide: crate::core::DamageDivision::EvenlyRoundedDown,
+                ..
+            } = effect
+            {
+                return (0, num_valid);
+            }
+        }
+        (1, 1)
+    }
+
     /// Get all valid targets for a spell card
     ///
     /// This examines the spell's effects and returns all legal targets based on:
@@ -108,6 +137,7 @@ impl GameState {
                 }
                 | Effect::DealDamageXPaid {
                     target: TargetRef::None,
+                    ..
                 } => {
                     // Damage targets per the spell's ValidTgts (CR 115.4):
                     //   "any target"   (Lightning Bolt) -> creatures + players
@@ -515,6 +545,7 @@ impl GameState {
                             // (target players, self, or have targets pre-specified)
                             Effect::DealDamage { .. }
                             | Effect::DealDamageXPaid { .. }
+                            | Effect::DealDamageDivided { .. }
                             | Effect::DealDamageToTriggeredPlayer { .. }
                             | Effect::EachDamage { .. }
                             | Effect::DrawCards { .. }
@@ -647,7 +678,9 @@ impl GameState {
                 }
                 // Effects with already-specified targets (non-zero target field)
                 // The handlers above only match when target.is_placeholder()
-                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
+                Effect::DealDamage { .. }
+                | Effect::DealDamageXPaid { .. }
+                | Effect::DealDamageDivided { .. } => {
                     // Either TargetRef::Player (already specified) or TargetRef::Permanent (already specified)
                     // TargetRef::None case handled above
                 }
@@ -1221,7 +1254,7 @@ impl GameState {
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
-                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => {
+                Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } | Effect::DealDamageDivided { .. } => {
                     // TargetRef::Player/Permanent - target already specified
                 }
                 Effect::DestroyPermanent { .. }
@@ -1452,6 +1485,7 @@ impl GameState {
             }
             | Effect::DealDamageXPaid {
                 target: TargetRef::None,
+                ..
             } => {
                 // Damage can target creatures or players - always has targets if there's a creature
                 // (players are always valid targets)
@@ -1539,7 +1573,7 @@ impl GameState {
             // ===== EXHAUSTIVE EFFECT HANDLING =====
             // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
             // These already have targets, so they "have valid targets"
-            Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } => true, // TargetRef::Player/Permanent already specified
+            Effect::DealDamage { .. } | Effect::DealDamageXPaid { .. } | Effect::DealDamageDivided { .. } => true, // TargetRef::Player/Permanent already specified
             Effect::DestroyPermanent { .. }
             | Effect::PumpCreature { .. }
             | Effect::DebuffCreature { .. }

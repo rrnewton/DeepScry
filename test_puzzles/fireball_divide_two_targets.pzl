@@ -1,0 +1,24 @@
+[metadata]
+Name:Fireball Divides X Evenly Among Two Targets
+Goal:Win
+Turns:5
+Difficulty:Medium
+Description:P0 casts Fireball (X R) with X=4 at two of the opponent's Hill Giants (3/3). Fireball deals "X damage divided evenly, rounded down, among any number of targets" (CR 601.2d): with X=4 over 2 targets each Hill Giant takes floor(4/2)=2 damage. The spell also costs {1} more for each target beyond the first (CR 601.2f), so casting at 2 targets costs X + R + {1}. With 6 Mountains the engine reserves mana for the per-target surcharge, chooses X=4, and both 3/3 Hill Giants survive with 2 damage marked (proving the damage was divided, not dealt in full to one target).
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Fireball
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Hill Giant; Hill Giant
+p1exile=

@@ -94,34 +94,47 @@ impl PlayerController for RandomController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // For now, just pick a random target if any are available
-        // TODO: Improve targeting logic based on spell requirements
+        // TODO: Improve targeting logic based on spell requirements.
         if valid_targets.is_empty() {
             // Only log when there are no targets (could be meaningful)
             if view.logger().is_choice_logging_active() {
                 view.logger()
                     .controller_choice("RANDOM", "Chose no targets (none available)");
             }
-            ChoiceResult::Ok(SmallVec::new())
-        } else if valid_targets.len() == 1 {
-            // Only one target available - no choice to make, don't log
-            let mut targets = SmallVec::new();
-            targets.push(valid_targets[0]);
-            ChoiceResult::Ok(targets)
-        } else {
-            // Multiple targets - this is a real choice
-            let index = self.rng.gen_range(0..valid_targets.len());
-            if view.logger().is_choice_logging_active() {
-                view.logger().controller_choice(
-                    "RANDOM",
-                    &format!("Chose target {} out of choices 0-{}", index, valid_targets.len() - 1),
-                );
-            }
-            let mut targets = SmallVec::new();
-            targets.push(valid_targets[index]);
-            ChoiceResult::Ok(targets)
+            return ChoiceResult::Ok(SmallVec::new());
         }
+
+        // Clamp the requested bounds to what is actually available.
+        let lo = min_targets.min(valid_targets.len());
+        let hi = max_targets.min(valid_targets.len()).max(lo);
+
+        if lo == hi && hi == valid_targets.len() {
+            // Count + identity forced - just take all (no real choice to log).
+            return ChoiceResult::Ok(valid_targets.iter().copied().collect());
+        }
+
+        // Deterministically pick a count in [lo, hi] from our own RNG, then that
+        // many DISTINCT random indices (Fisher-Yates partial shuffle over an
+        // index list). RNG is seeded independently from the engine, so this is
+        // reproducible and information-independent.
+        let count = if lo == hi { lo } else { self.rng.gen_range(lo..=hi) };
+        let mut indices: SmallVec<[usize; 8]> = (0..valid_targets.len()).collect();
+        let mut targets = SmallVec::new();
+        for slot in 0..count {
+            let pick = self.rng.gen_range(slot..indices.len());
+            indices.swap(slot, pick);
+            targets.push(valid_targets[indices[slot]]);
+        }
+        if view.logger().is_choice_logging_active() {
+            view.logger().controller_choice(
+                "RANDOM",
+                &format!("Chose {} target(s) out of {} available", count, valid_targets.len()),
+            );
+        }
+        ChoiceResult::Ok(targets)
     }
 
     fn choose_mana_sources_to_pay(
@@ -671,7 +684,7 @@ mod tests {
 
         let spell_id = EntityId::new(100);
         let valid_targets = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
-        let targets = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets = controller.choose_targets(&view, spell_id, &valid_targets, 1, 1);
         let targets_val = targets.unwrap();
 
         // Should choose exactly one target

@@ -50,16 +50,13 @@ impl PlayerController for ZeroController {
         _view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Choose the first valid target if any
-        let result = if let Some(&first_target) = valid_targets.first() {
-            let mut targets = SmallVec::new();
-            targets.push(first_target);
-            targets
-        } else {
-            SmallVec::new()
-        };
-        ChoiceResult::Ok(result)
+        // "Do-nothing" controller: pick exactly the minimum required number of
+        // targets, taking the first valid ones deterministically.
+        let count = min_targets.min(valid_targets.len());
+        ChoiceResult::Ok(valid_targets.iter().take(count).copied().collect())
     }
 
     fn choose_mana_sources_to_pay(
@@ -244,7 +241,7 @@ mod tests {
 
         let spell_id = EntityId::new(100);
         let valid_targets = vec![EntityId::new(20), EntityId::new(21), EntityId::new(22)];
-        let targets = controller.choose_targets(&view, spell_id, &valid_targets);
+        let targets = controller.choose_targets(&view, spell_id, &valid_targets, 1, 1);
         let targets_val = targets.unwrap();
 
         // Should choose the first target
@@ -260,7 +257,7 @@ mod tests {
         let view = GameStateView::new(&game, player_id);
 
         let spell_id = EntityId::new(100);
-        let targets = controller.choose_targets(&view, spell_id, &[]);
+        let targets = controller.choose_targets(&view, spell_id, &[], 1, 1);
         let targets_val = targets.unwrap();
 
         // No targets available

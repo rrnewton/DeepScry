@@ -27,6 +27,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         // All other effect variants don't have an expandable player field
         Effect::DealDamage { .. }
         | Effect::DealDamageXPaid { .. }
+        | Effect::DealDamageDivided { .. }
         | Effect::DealDamageToTriggeredPlayer { .. }
         | Effect::EachDamage { .. }
         | Effect::Loot { .. }
@@ -144,6 +145,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             // Unreachable: is_all_players only true for player-targeted variants.
             Effect::DealDamage { .. }
             | Effect::DealDamageXPaid { .. }
+            | Effect::DealDamageDivided { .. }
             | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
@@ -479,7 +481,22 @@ impl GameState {
     #[allow(clippy::wildcard_enum_match_arm)]
     fn resolve_x_paid_effect(effect: Effect, x_paid: u8) -> Effect {
         match effect {
-            Effect::DealDamageXPaid { target } => Effect::DealDamage {
+            // DivideEvenly$ RoundedDown (Fireball, CR 601.2d): carry the TOTAL X
+            // through as a target-less DealDamageDivided whose `amount_each`
+            // temporarily holds the un-divided total. resolve_effect_target then
+            // gathers the N chosen targets and rewrites amount_each = floor(X/N).
+            // Runs BEFORE resolve_effect_target, so it must not collapse to a
+            // single target here.
+            Effect::DealDamageXPaid {
+                target: TargetRef::None,
+                divide: crate::core::DamageDivision::EvenlyRoundedDown,
+            } => Effect::DealDamageDivided {
+                targets: smallvec::SmallVec::new(),
+                amount_each: i32::from(x_paid),
+            },
+            // Single-target X-damage. The single concrete target is resolved
+            // afterwards in resolve_effect_target; deal the full amount.
+            Effect::DealDamageXPaid { target, .. } => Effect::DealDamage {
                 target,
                 amount: i32::from(x_paid),
             },
@@ -1852,21 +1869,44 @@ impl GameState {
         // is set there, and calculate_effective_cost uses it below.
 
         // Step 3: Choose targets
-        let _targets = choose_targets_fn(self, card_id);
+        let chosen_targets = choose_targets_fn(self, card_id);
+        let num_targets = chosen_targets.len();
         // TODO: Store targets on the spell for resolution
         // For now, we'll use them to update effects immediately (simplified)
 
         // Step 4: Divide effects
-        // TODO: Implement dividing damage/counters among targets
+        // Damage division among the chosen targets (Fireball) is applied at
+        // resolution in resolve_effect_target / resolve_x_paid_effect.
 
         // Step 5: Determine total cost (after applying Affinity and other reductions)
         // If an override cost is provided (e.g., alternative cost or commander cost),
         // use that instead of calculating from the card's printed cost.
-        let mana_cost = if let Some(cost) = override_cost {
+        let mut mana_cost = if let Some(cost) = override_cost {
             cost
         } else {
             self.calculate_effective_cost(card_id, player_id)
         };
+
+        // Step 5a: Relative per-target cost (Fireball, CR 601.2f): "{1} more to
+        // cast for each target beyond the first". Applied AFTER target selection
+        // because the count is only known now. num_targets is public state, so
+        // the adjustment is network-deterministic. Costs nothing extra for 0 or
+        // 1 target.
+        let relative_target_cost = self
+            .cards
+            .get(card_id)
+            .map(|c| c.definition.cache.spell_relative_target_cost)
+            .unwrap_or(false);
+        if relative_target_cost && num_targets > 1 {
+            let extra = (num_targets - 1).min(u8::MAX as usize) as u8;
+            mana_cost.generic = mana_cost.generic.saturating_add(extra);
+            log::debug!(
+                "Relative per-target cost: {} target(s) -> +{} generic (now {})",
+                num_targets,
+                extra,
+                mana_cost.generic
+            );
+        }
 
         // Step 5b: Pay additional costs (sacrifice costs from RaiseCost)
         // This must happen BEFORE mana payment so sacrificed lands aren't used for mana
@@ -2137,9 +2177,37 @@ impl GameState {
                 }
             }
 
+            // DivideEvenly$ RoundedDown (Fireball, CR 601.2d): resolve_x_paid_effect
+            // already produced a target-less DealDamageDivided whose `amount_each`
+            // holds the UNDIVIDED total X. Consume ALL remaining chosen targets and
+            // rewrite amount_each = floor(total / N) (remainder lost). Mirrors the
+            // EachDamage consume-all pattern below. Empty-target case fizzles.
+            Effect::DealDamageDivided {
+                targets: existing,
+                amount_each: total,
+            } if existing.is_empty() => {
+                let remaining = &chosen_targets[*target_index..];
+                if remaining.is_empty() {
+                    // No targets chosen (TargetMin$ 0) — effect fizzles.
+                    return effect.clone();
+                }
+                let resolved_targets: smallvec::SmallVec<[TargetRef; 4]> = remaining
+                    .iter()
+                    .map(|&t| crate::core::target_ref_from_chosen_target(t))
+                    .collect();
+                *last_resolved_target = remaining.last().copied();
+                *target_index = chosen_targets.len();
+                let n = resolved_targets.len() as i32;
+                Effect::DealDamageDivided {
+                    targets: resolved_targets,
+                    amount_each: *total / n,
+                }
+            }
+
             // DealDamageXPaid with no target: resolve target like DealDamage
             Effect::DealDamageXPaid {
                 target: TargetRef::None,
+                divide: crate::core::DamageDivision::None,
             } => {
                 if *target_index < chosen_targets.len() {
                     let target = chosen_targets[*target_index];
@@ -2147,10 +2215,12 @@ impl GameState {
                     *last_resolved_target = Some(target);
                     Effect::DealDamageXPaid {
                         target: crate::core::target_ref_from_chosen_target(target),
+                        divide: crate::core::DamageDivision::None,
                     }
                 } else if let Some(opp) = opponent_id {
                     Effect::DealDamageXPaid {
                         target: TargetRef::Player(opp),
+                        divide: crate::core::DamageDivision::None,
                     }
                 } else {
                     effect.clone()
@@ -2973,6 +3043,30 @@ impl GameState {
                     log::debug!("DealDamage fizzles - no target specified");
                 }
             },
+
+            // DivideEvenly$ RoundedDown resolved form (Fireball): deal amount_each
+            // to every chosen target. The source is set via current_damage_source
+            // by the caller (resolve_spell_effects), so this is a single source
+            // dealing simultaneous damage to N targets (CR 601.2d / 118.5).
+            Effect::DealDamageDivided { targets, amount_each } => {
+                if *amount_each <= 0 {
+                    log::debug!("DealDamageDivided: amount_each={}, no damage dealt", amount_each);
+                } else {
+                    for target in targets {
+                        match target {
+                            TargetRef::Player(player_id) => {
+                                self.deal_damage(*player_id, *amount_each)?;
+                            }
+                            TargetRef::Permanent(card_id) => {
+                                self.deal_damage_to_creature(*card_id, *amount_each)?;
+                            }
+                            TargetRef::None => {
+                                log::debug!("DealDamageDivided: skipping unresolved target");
+                            }
+                        }
+                    }
+                }
+            }
 
             // DealDamageToTriggeredPlayer is resolved into a concrete
             // Effect::DealDamage by check_triggers_for_controller before this
@@ -5852,7 +5946,7 @@ impl GameState {
             // XPaid variants should be resolved to concrete variants before execution
             // by resolve_x_paid_effect() in resolve_spell_execute_effects().
             // If we reach here, treat as amount=0 (shouldn't happen in normal flow).
-            Effect::DealDamageXPaid { target } => {
+            Effect::DealDamageXPaid { target, .. } => {
                 log::warn!("DealDamageXPaid reached execute_effect without resolution, treating as 0 damage");
                 self.execute_effect(&Effect::DealDamage {
                     target: target.clone(),

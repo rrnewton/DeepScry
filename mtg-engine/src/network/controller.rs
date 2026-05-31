@@ -659,6 +659,8 @@ impl PlayerController for NetworkController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Build options list using the SHARED choice formatter so the web /
         // network frontend shows the same ownership + player-relation labels
@@ -674,22 +676,28 @@ impl PlayerController for NetworkController {
         // Compute state hash
         let state_hash = self.compute_view_hash(view);
 
-        // Send request
+        // Send request. target_count advertises the UPPER bound so the frontend
+        // can offer multi-select (Fireball: X damage divided among up to N
+        // targets). The reply may contain anywhere from min to max indices.
         let choice_type = ChoiceType::Targets {
             spell_id: spell,
-            target_count: 1, // FIXME-UNFINISHED: Support multiple targets
+            target_count: max_targets,
         };
 
         match self.request_choice(view, choice_type, options, state_hash, None, None) {
             Ok(result) => {
                 self.increment_choice_seq();
-                // Single-select for now (FIXME-UNFINISHED for multiple targets)
-                let idx = result.indices.first().copied().unwrap_or(0);
-                if idx < valid_targets.len() {
-                    ChoiceResult::Ok(SmallVec::from_slice(&[valid_targets[idx]]))
-                } else {
-                    ChoiceResult::Error("Invalid target index from network".to_string())
+                // Map ALL returned indices to targets (variable count). Out-of-
+                // range indices are a protocol error (desync is always fatal).
+                let mut targets: SmallVec<[CardId; 4]> = SmallVec::new();
+                for &idx in &result.indices {
+                    if idx < valid_targets.len() {
+                        targets.push(valid_targets[idx]);
+                    } else {
+                        return ChoiceResult::Error("Invalid target index from network".to_string());
+                    }
                 }
+                ChoiceResult::Ok(targets)
             }
             Err(NetworkError::Disconnected) => ChoiceResult::ExitGame,
             Err(e) => ChoiceResult::Error(e.to_string()),

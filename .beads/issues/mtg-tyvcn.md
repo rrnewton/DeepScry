@@ -1,10 +1,10 @@
 ---
 title: 'Bug: Fireball multi-target DivideEvenly + RaiseCost incomplete (single-target X-damage OK)'
-status: open
+status: in_progress
 priority: 3
 issue_type: task
 created_at: 2026-05-31T00:22:29.827028377+00:00
-updated_at: 2026-05-31T02:51:06.532907312+00:00
+updated_at: 2026-05-31T10:33:50.834827158+00:00
 ---
 
 # Description

@@ -121,12 +121,14 @@ impl<'a> GameLoop<'a> {
         viewer_player: PlayerId,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         let player = controller.player_id();
 
         if !self.is_network_mode() {
             let view = GameStateView::new(self.game, viewer_player);
-            return controller.choose_targets(&view, spell, valid_targets);
+            return controller.choose_targets(&view, spell, valid_targets, min_targets, max_targets);
         }
 
         let is_remote = controller.get_controller_type() == ControllerType::Remote;
@@ -136,7 +138,7 @@ impl<'a> GameLoop<'a> {
             Some(PreChoiceResult::AskController) => {
                 debug_assert!(!is_remote, "AskController returned for remote controller");
                 let view = GameStateView::new(self.game, viewer_player);
-                controller.choose_targets(&view, spell, valid_targets)
+                controller.choose_targets(&view, spell, valid_targets, min_targets, max_targets)
             }
             Some(PreChoiceResult::UseChoice(raw)) => {
                 debug_assert!(is_remote, "UseChoice returned for non-remote controller");

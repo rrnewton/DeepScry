@@ -367,6 +367,8 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         // Check if ChoiceRequest is ready
         if self.check_choice_request_ready().is_none() {
@@ -379,7 +381,12 @@ impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
             return ChoiceResult::NeedInput(waiting_for_server_context());
         }
 
-        match self.inner.choose_targets(view, spell, valid_targets) {
+        // The inner controller's full target vector (variable count) is mapped
+        // to choice_indices below, so multi-target choices round-trip to server.
+        match self
+            .inner
+            .choose_targets(view, spell, valid_targets, min_targets, max_targets)
+        {
             ChoiceResult::Ok(targets) => {
                 let choice_indices: Vec<usize> = if targets.is_empty() {
                     vec![valid_targets.len()] // "none" option

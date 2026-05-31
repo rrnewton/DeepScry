@@ -292,7 +292,11 @@ impl PlayerController for RemoteController {
         view: &GameStateView,
         _spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        // The server already decided the full target set (any count); we replay
+        // its indices / CardIds verbatim, so variable target counts round-trip.
         let (indices, target_card_ids) = match self.get_opponent_choice_with_targets(view.action_count() as u64) {
             ChoiceResult::Ok(choice) => choice,
             ChoiceResult::UndoRequest(_)

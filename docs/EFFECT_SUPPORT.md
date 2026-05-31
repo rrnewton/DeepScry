@@ -123,8 +123,8 @@ workflow, row format, and update rules.
 | SP$ DealDamage + SubAbility$ Effect chain + ReplaceDyingDefined$ (exile instead) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
 | SP$ DealDamage NumDmg$ X (DealDamageXPaid) at a creature — display target binding | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate, Blaze |
 | ReplaceDyingDefined$ ThisTargetedCard.Creature (exile if would die this turn) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
-| SP$ DealDamage DivideEvenly$ RoundedDown + TargetMax$ <SVar> (multi-target X-burn) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
-| S:Mode$ RaiseCost Relative$ True Amount$ <TargetedObjects-derived> (per-target cost) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
+| SP$ DealDamage DivideEvenly$ RoundedDown + TargetMin/TargetMax (variable-count multi-target X-burn) | WORKING | 2026-05-31_#2542(348be74e) | (fixed mtg-tyvcn) | Fireball |
+| S:Mode$ RaiseCost Relative$ True (per-target {1} surcharge, cost computed after target selection) | WORKING | 2026-05-31_#2542(348be74e) | (fixed mtg-tyvcn) | Fireball |
 | T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
 | Valid filter `set<CODE>` set-origin qualifier (e.g. `setARN`) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
 | Valid filter `Other` self-exclusion qualifier (matches_excluding) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |

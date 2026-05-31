@@ -421,7 +421,13 @@ impl PlayerController for FancyTuiController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        _min_targets: usize,
+        _max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+        // NOTE: fancy TUI multi-select for variable-target spells (Fireball) is
+        // best-effort and deferred (mtg-tyvcn follow-up); this still picks a
+        // single target via the existing prompt. AI/network/equivalence paths do
+        // not rely on it.
         if valid_targets.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
         }

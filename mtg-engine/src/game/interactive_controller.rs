@@ -656,6 +656,8 @@ impl PlayerController for InteractiveController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
         if valid_targets.is_empty() {
             return ChoiceResult::Ok(SmallVec::new());
@@ -665,6 +667,54 @@ impl PlayerController for InteractiveController {
 
         let spell_name = view.card_name(spell).unwrap_or_default();
         println!("\n--- Targeting for: {} ---", spell_name);
+
+        // Variable target count (Fireball-style divide spell): repeatedly let the
+        // user add a distinct target until they reach max_targets or choose to
+        // stop (once min_targets is satisfied). Best-effort human UX; the engine,
+        // AI, and network paths do not depend on it (see mtg-tyvcn follow-up).
+        if min_targets != max_targets {
+            let mut chosen: SmallVec<[CardId; 4]> = SmallVec::new();
+            let cap = max_targets.min(valid_targets.len());
+            while chosen.len() < cap {
+                let remaining: SmallVec<[CardId; 8]> =
+                    valid_targets.iter().copied().filter(|t| !chosen.contains(t)).collect();
+                if remaining.is_empty() {
+                    break;
+                }
+                println!(
+                    "Targets chosen: {} (min {}, max {}). Remaining options:",
+                    chosen.len(),
+                    min_targets,
+                    cap
+                );
+                for (idx, label) in crate::game::controller::format_card_choices(view, &remaining, self.player_id)
+                    .iter()
+                    .enumerate()
+                {
+                    println!("  [{}] {}", idx, label);
+                }
+                let can_stop = chosen.len() >= min_targets;
+                let prompt = if can_stop {
+                    format!("Add target (0-{}), or 'p' when done:", remaining.len() - 1)
+                } else {
+                    format!(
+                        "Add target (0-{}) (need at least {}):",
+                        remaining.len() - 1,
+                        min_targets
+                    )
+                };
+                match self.get_user_choice_with_view(&prompt, remaining.len(), can_stop, Some(view)) {
+                    // A valid in-range index adds that target.
+                    Some(choice) => chosen.push(remaining[choice]),
+                    // None = 'p'/EOF: done if min satisfied, else re-prompt.
+                    None if can_stop => break,
+                    None => continue,
+                }
+            }
+            view.logger()
+                .controller_choice("TUI", &format!("chose {} target(s) of up to {}", chosen.len(), cap));
+            return ChoiceResult::Ok(chosen);
+        }
 
         let mut targets = SmallVec::new();
 

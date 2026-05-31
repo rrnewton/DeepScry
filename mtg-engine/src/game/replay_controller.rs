@@ -156,8 +156,12 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         spell: CardId,
         valid_targets: &[CardId],
+        min_targets: usize,
+        max_targets: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
-        // Try to consume a replay choice first
+        // Try to consume a replay choice first. The logged ReplayChoice::Targets
+        // already carries the full chosen target vector (variable counts round-
+        // trip automatically), so no min/max handling is needed on replay.
         if let Some(targets) = self.consume_replay_choice(|c| {
             if let ReplayChoice::Targets(t) = c {
                 Some(t.clone())
@@ -169,7 +173,8 @@ impl PlayerController for ReplayController {
         }
 
         // No replay choice available, delegate to inner controller
-        self.inner.choose_targets(view, spell, valid_targets)
+        self.inner
+            .choose_targets(view, spell, valid_targets, min_targets, max_targets)
     }
 
     fn choose_mana_sources_to_pay(
