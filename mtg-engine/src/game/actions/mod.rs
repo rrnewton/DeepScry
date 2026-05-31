@@ -27,6 +27,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         // All other effect variants don't have an expandable player field
         Effect::DealDamage { .. }
         | Effect::DealDamageXPaid { .. }
+        | Effect::DealDamageToTriggeredPlayer { .. }
         | Effect::EachDamage { .. }
         | Effect::Loot { .. }
         | Effect::DestroyPermanent { .. }
@@ -142,6 +143,7 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             // Unreachable: is_all_players only true for player-targeted variants.
             Effect::DealDamage { .. }
             | Effect::DealDamageXPaid { .. }
+            | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::EachDamage { .. }
             | Effect::Loot { .. }
             | Effect::DestroyPermanent { .. }
@@ -2947,6 +2949,17 @@ impl GameState {
                     log::debug!("DealDamage fizzles - no target specified");
                 }
             },
+
+            // DealDamageToTriggeredPlayer is resolved into a concrete
+            // Effect::DealDamage by check_triggers_for_controller before this
+            // dispatch (it needs the active-player trigger context). Reaching
+            // here unresolved means there was no trigger context, so there is no
+            // player to damage — fizzle rather than guess.
+            Effect::DealDamageToTriggeredPlayer { .. } => {
+                log::debug!(
+                    "DealDamageToTriggeredPlayer reached execute_effect unresolved - no trigger context, fizzling"
+                );
+            }
 
             Effect::EachDamage {
                 damagers,
@@ -6741,6 +6754,28 @@ impl GameState {
                         continue;
                     }
                 }
+                // "Each player's upkeep, deal damage to that player equal to a
+                // count of their own permanents/cards" (Karma, Black Vise). The
+                // target player and the count are both resolved against the same
+                // player: the active player whose upkeep fired (target_self =
+                // false), or the trigger source's controller (target_self = true,
+                // for Defined$ You variable punishers). Reuses the shared
+                // evaluate_count_expression so ActivePlayerCtrl / YouCtrl filters
+                // count the right player's permanents. Resolves to a concrete
+                // DealDamage so the logging + execute_effect path below is shared.
+                Effect::DealDamageToTriggeredPlayer { count, target_self } => {
+                    let target_player = if *target_self { controller } else { active_player };
+                    let amount = self.evaluate_count_expression(count, target_player)?.max(0);
+                    if amount == 0 {
+                        // No damage to deal — skip to avoid a "deals 0 damage" line
+                        // (CR 120.8: a source dealing 0 damage isn't dealing damage).
+                        continue;
+                    }
+                    effect = Effect::DealDamage {
+                        target: TargetRef::Player(target_player),
+                        amount,
+                    };
+                }
                 Effect::Earthbend { target, num_counters } if target.is_placeholder() => {
                     // Placeholder CardId 0 means we need to target a land the controller controls
                     let land_target = self
@@ -8831,33 +8866,45 @@ impl GameState {
             .iter()
             .filter(|&&card_id| {
                 if let Some(card) = self.cards.try_get(card_id) {
-                    // Check card type filter
-                    let type_matches = if filter.starts_with("Artifact") {
-                        card.is_artifact()
-                    } else if filter.starts_with("Creature") {
-                        card.is_creature()
-                    } else if filter.starts_with("Land") {
-                        card.is_land()
-                    } else if filter.starts_with("Enchantment") {
-                        card.is_enchantment()
-                    } else if filter.starts_with("Permanent") || filter.starts_with("Card") {
-                        true // Any permanent
-                    } else {
-                        // Unknown type, assume it matches if we can't parse
-                        log::warn!(target: "count", "Unknown filter type in count expression: {}", filter);
-                        true
+                    // Check card type filter. The leading token (before the first
+                    // `.`) is the type/subtype selector; basic-land subtypes
+                    // (Swamp/Plains/Island/Mountain/Forest) are recognised via the
+                    // pre-computed cache flags so that e.g. Karma's
+                    // `Count$Valid Swamp.ActivePlayerCtrl` counts Swamps.
+                    let type_token = filter.split('.').next().unwrap_or(filter);
+                    let type_matches = match type_token {
+                        "Artifact" => card.is_artifact(),
+                        "Creature" => card.is_creature(),
+                        "Land" => card.is_land(),
+                        "Enchantment" => card.is_enchantment(),
+                        "Permanent" | "Card" => true, // Any permanent
+                        "Swamp" => card.definition.cache.has_swamp_subtype,
+                        "Plains" => card.definition.cache.has_plains_subtype,
+                        "Island" => card.definition.cache.has_island_subtype,
+                        "Mountain" => card.definition.cache.has_mountain_subtype,
+                        "Forest" => card.definition.cache.has_forest_subtype,
+                        _ => {
+                            // Unknown type, assume it matches if we can't parse
+                            log::warn!(target: "count", "Unknown filter type in count expression: {}", filter);
+                            true
+                        }
                     };
 
                     if !type_matches {
                         return false;
                     }
 
-                    // Check controller filter
+                    // Check controller filter. `ActivePlayerCtrl` is evaluated
+                    // against the player passed in `controller`; callers
+                    // resolving an "each player's upkeep" trigger pass the active
+                    // player here (see Effect::DealDamageToTriggeredPlayer), so
+                    // ActivePlayerCtrl and YouCtrl coincide and mean "the player
+                    // we are counting for".
                     if filter.contains("OppCtrl") {
                         // Opponents control - not the controller
                         card.controller != controller
-                    } else if filter.contains("YouCtrl") {
-                        // You control
+                    } else if filter.contains("YouCtrl") || filter.contains("ActivePlayerCtrl") {
+                        // You / active player control
                         card.controller == controller
                     } else {
                         // No controller restriction

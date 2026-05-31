@@ -1,0 +1,24 @@
+[metadata]
+Name:Karma — each player's upkeep, damage equal to their Swamps
+Goal:Survive
+Turns:6
+Difficulty:Easy
+Description:P1 (Player 2) controls Karma plus 3 Swamps; P0 (Player 1) controls 2 Swamps. At each player's upkeep, Karma deals damage to the active player equal to the number of Swamps THAT player controls (CR 603 triggered ability). The puzzle starts in P0's MAIN1 (turn 1, past upkeep), so the first trigger fires on P1's upkeep (turn 2): 3 damage to Player 2. P0's first upkeep (turn 3) then deals 2 to Player 1.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Swamp; Swamp
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Karma; Swamp; Swamp; Swamp
+p1exile=

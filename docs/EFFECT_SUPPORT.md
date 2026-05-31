@@ -46,6 +46,8 @@ workflow, row format, and update rules.
 | DamageDone Execute$ DB$ Discard Defined$ TriggeredTarget (damaged player discards)| WORKING | 2026-05-29_#2449(b5fd60b7) | (fixed)     | Hypnotic Specter |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
 | Drawn ValidCard$ Card.OppOwn Execute$ DB$ DealDamage Defined$ TriggeredPlayer    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)      | Underworld Dreams |
+| Phase Upkeep ValidPlayer$ Player Execute$ DB$ DealDamage Defined$ TriggeredPlayer NumDmg$ X (variable damage to active player, counted against that player) | WORKING | 2026-05-30_#2530(f7a005ca) | (fixed)   | Karma            |
+| Discarded ValidCard$ Card.Self ValidCause$ SpellAbility.OppCtrl Execute$ DB$ LoseLife (opponent-forced-discard punisher) | BROKEN | 2026-05-30_#2530(f7a005ca) | mtg-czz3f | Psychic Purge |
 | DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura) | BROKEN | 2026-05-30_#2530(199b91e1) | mtg-r9po1 | Spirit Link |
 
 ## Activated abilities (A:) and cost shapes
@@ -166,6 +168,8 @@ workflow, row format, and update rules.
 | Affected$ <selector> (general)                  | PARTIAL  | 2026-05-12_#2226(928ec99f) | mtg-147     | (multiple)       |
 | ValidTgts$ Creature.nonArtifact (excl. artifact)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | ValidTgts$ ...+ActivePlayerCtrl (active player) | WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
+| Count$Valid <BasicLandSubtype>.ActivePlayerCtrl (count active player's Swamps/etc.) | WORKING  | 2026-05-30_#2530(f7a005ca) | (fixed)     | Karma            |
+| Count$ValidHand <selector> (count cards in a player's hand) | BROKEN  | 2026-05-30_#2530(f7a005ca) | mtg-cuf0e   | Black Vise       |
 | DB$ Destroy NoRegen$ True (can't be regenerated)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | ChangeZone Origin$ Stack Destination$ Exile     | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | RememberChanged$ True + Defined$ Remembered      | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |

@@ -513,6 +513,7 @@ impl GameState {
                             // (target players, self, or have targets pre-specified)
                             Effect::DealDamage { .. }
                             | Effect::DealDamageXPaid { .. }
+                            | Effect::DealDamageToTriggeredPlayer { .. }
                             | Effect::EachDamage { .. }
                             | Effect::DrawCards { .. }
                             | Effect::DrawCardsXPaid { .. }
@@ -628,6 +629,9 @@ impl GameState {
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
                 | Effect::Proliferate
+                // Phase-trigger damage: target player resolved at trigger time,
+                // no cast-time targeting.
+                | Effect::DealDamageToTriggeredPlayer { .. }
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ConditionalSelfCounter { .. } => {
@@ -1196,6 +1200,7 @@ impl GameState {
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Proliferate
+                | Effect::DealDamageToTriggeredPlayer { .. }
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ConditionalSelfCounter { .. }
@@ -1515,6 +1520,7 @@ impl GameState {
             | Effect::ChooseColor { .. }
             | Effect::Clone { .. }
             | Effect::Proliferate
+            | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ConditionalSelfCounter { .. }

@@ -2184,20 +2184,49 @@ impl CardDefinition {
                     // Use pre-parsed SVars for O(1) lookup
                     if let Some(exec_ref) = params.get("Execute") {
                         if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
-                            // DB$ DealDamage effects
-                            // Example: "DB$ DealDamage | Defined$ You | NumDmg$ 1"
+                            // DB$ DealDamage effects on a phase trigger.
+                            // Two shapes are supported:
+                            //   (a) fixed damage to the controller
+                            //       "DB$ DealDamage | Defined$ You | NumDmg$ 1"
+                            //       (e.g. Juzám Djinn) → Effect::DealDamage.
+                            //   (b) variable damage to the active/chosen player,
+                            //       counted against that same player:
+                            //       "DB$ DealDamage | Defined$ TriggeredPlayer | NumDmg$ X"
+                            //       (Karma: X = Count$Valid Swamp.ActivePlayerCtrl)
+                            //       "DB$ DealDamage | Defined$ ChosenPlayer | NumDmg$ X"
+                            //       (Black Vise: X = Count$ValidHand ...)
+                            //     → Effect::DealDamageToTriggeredPlayer.
                             if svar_params.api_type == ApiType::DealDamage {
-                                let damage_amount = svar_params
-                                    .get("NumDmg")
-                                    .and_then(|s| s.parse::<i32>().ok())
-                                    .unwrap_or(1);
-                                let target_is_controller = svar_params.get("Defined") == Some("You");
+                                let num_dmg = svar_params.get("NumDmg").unwrap_or("1");
+                                let defined = svar_params.get("Defined");
 
-                                if target_is_controller {
-                                    effects.push(Effect::DealDamage {
-                                        target: TargetRef::Player(PlayerId::new(0)),
-                                        amount: damage_amount,
-                                    });
+                                // A fixed numeric amount stays a plain DealDamage;
+                                // anything that references an SVar (X, Y, …) is a
+                                // CountExpression evaluated at trigger time.
+                                let fixed_amount = num_dmg.parse::<i32>().ok();
+
+                                match (defined, fixed_amount) {
+                                    (Some("You"), Some(amount)) => {
+                                        effects.push(Effect::DealDamage {
+                                            target: TargetRef::Player(PlayerId::new(0)),
+                                            amount,
+                                        });
+                                    }
+                                    (Some("You"), None) => {
+                                        let count = crate::core::CountExpression::parse(num_dmg, &self.svars);
+                                        effects.push(Effect::DealDamageToTriggeredPlayer {
+                                            count,
+                                            target_self: true,
+                                        });
+                                    }
+                                    (Some("TriggeredPlayer" | "ChosenPlayer"), _) => {
+                                        let count = crate::core::CountExpression::parse(num_dmg, &self.svars);
+                                        effects.push(Effect::DealDamageToTriggeredPlayer {
+                                            count,
+                                            target_self: false,
+                                        });
+                                    }
+                                    _ => {}
                                 }
                             }
                             // DB$ GainLife effects

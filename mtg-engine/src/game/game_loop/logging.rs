@@ -214,6 +214,13 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) deals X damage to {:?}", target);
                 self.game.logger.gamelog(&message);
             }
+            Effect::DealDamageToTriggeredPlayer { .. } => {
+                // Phase-trigger damage (Karma, Black Vise) is resolved into a
+                // concrete Effect::DealDamage by check_triggers_for_controller and
+                // logged there via logger.normal(); it never reaches this
+                // spell-resolution effect logger. No-op to keep the match
+                // exhaustive.
+            }
             Effect::DrawCards { player, count } => {
                 let player_name = self.get_player_name(*player);
                 let message = format!("{source_name} ({source_id}) causes {player_name} to draw {count} card(s)");

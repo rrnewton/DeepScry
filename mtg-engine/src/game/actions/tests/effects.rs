@@ -5320,6 +5320,76 @@ mod tests {
         );
     }
 
+    /// Card compat: Karma (cardsfolder/k/karma.txt) — mtg-516
+    ///
+    /// Script:
+    ///   ManaCost:2 W W
+    ///   Types:Enchantment
+    ///   T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player | Execute$ TrigDamage
+    ///   SVar:TrigDamage:DB$ DealDamage | Defined$ TriggeredPlayer | NumDmg$ X
+    ///   SVar:X:Count$Valid Swamp.ActivePlayerCtrl
+    ///
+    /// Asserts the parsed shape: {2}{W}{W} Enchantment carrying a
+    /// BeginningOfUpkeep trigger whose effect is the variable-amount
+    /// DealDamageToTriggeredPlayer (counting the active player's Swamps).
+    /// Before the fix the trigger parsed but produced NO effect (the phase
+    /// trigger handler only recognised `Defined$ You` + fixed NumDmg), so
+    /// Karma was a silent no-op — strictly weaker than printed. Gameplay
+    /// behavior (each player's upkeep, damage = that player's Swamps) is
+    /// covered by tests/karma_upkeep_swamp_damage_e2e.sh.
+    #[test]
+    fn test_card_compat_karma() {
+        use crate::core::{CountExpression, TriggerEvent};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/k/karma.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Karma should load");
+
+        assert_eq!(def.name.as_str(), "Karma");
+        assert_eq!(def.mana_cost.white, 2, "Cost should be {{2}}{{W}}{{W}}");
+        assert_eq!(def.mana_cost.generic, 2, "Cost should be {{2}}{{W}}{{W}}");
+        assert!(def.types.contains(&CardType::Enchantment));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        let upkeep_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::BeginningOfUpkeep)
+            .expect(
+                "Karma must have a BeginningOfUpkeep trigger. Silently dropping it \
+                 makes the card a no-op (strictly weaker than printed).",
+            );
+        // The trigger must fire on EVERY player's upkeep (ValidPlayer$ Player),
+        // not just the controller's — so it must NOT be controller_turn_only.
+        assert!(
+            !upkeep_trigger.controller_turn_only,
+            "Karma fires on each player's upkeep, not only the controller's"
+        );
+        let damage_effect = upkeep_trigger
+            .effects
+            .iter()
+            .find(|e| matches!(e, Effect::DealDamageToTriggeredPlayer { .. }))
+            .expect("Karma's upkeep trigger must deal variable damage to the triggered player");
+        let Effect::DealDamageToTriggeredPlayer { count, target_self } = damage_effect else {
+            unreachable!("matched DealDamageToTriggeredPlayer above");
+        };
+        let target_self = *target_self;
+        assert!(
+            !target_self,
+            "Karma damages the triggered (active) player, not its own controller"
+        );
+        assert!(
+            matches!(count, CountExpression::ValidPermanents { filter } if filter == "Swamp.ActivePlayerCtrl"),
+            "Karma's damage count must be Count$Valid Swamp.ActivePlayerCtrl. Got: {:?}",
+            count
+        );
+    }
+
     /// Card compat: Swamp (cardsfolder/s/swamp.txt) — mtg-546
     ///
     /// Script:

@@ -1,0 +1,37 @@
+---
+title: 'Bug: Discarded trigger event (Mode$ Discarded) unsupported — opponent-forced-discard punishers silently dropped'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-05-31T00:22:01.044390157+00:00
+updated_at: 2026-05-31T00:22:01.044390157+00:00
+---
+
+# Description
+
+There is no TriggerEvent::Discarded in core. Cards with a "when an opponent causes you to discard this, ..." trigger have that ability silently dropped at load (loader/card.rs only handles Phase / Attacks / ChangesZone / Drawn / etc.).
+
+Card scripts affected:
+  T:Mode\$ Discarded | ValidCard\$ Card.Self | ValidCause\$ SpellAbility.OppCtrl | Execute\$ TrigLoseLife
+  SVar:TrigLoseLife:DB\$ LoseLife | Defined\$ TriggeredCauseController | LifeAmount\$ 5
+
+Sample card: Psychic Purge (cardsfolder/p/psychic_purge.txt, mtg-534). The
+PRIMARY mode (SP\$ DealDamage 1 to any target) WORKS; only the secondary
+"opponent loses 5 life when a spell/ability they control made you discard
+Psychic Purge" trigger is missing.
+
+Engine work required (CR 603 triggered abilities, CR 701.8 Discard):
+1. Add TriggerEvent::Discarded.
+2. Fire it from the discard execution path (Effect::DiscardCards) for each
+   discarded card whose owner controls a matching Discarded trigger, carrying
+   the CAUSE (the SpellAbility/source that forced the discard) so
+   ValidCause\$ SpellAbility.OppCtrl and Defined\$ TriggeredCauseController can
+   resolve to the controller of that cause.
+3. Wire TrigLoseLife (DB\$ LoseLife | Defined\$ TriggeredCauseController).
+
+Note the discard zone subtlety: the trigger source is the card being
+discarded, which is moving Hand->Graveyard, so the trigger must fire on the
+LKI of the discarded card. Also note Forge's SVar:DiscardMeByOpp is an AI hint
+only.
+
+Found during compat-wave14-jeskai (Jeskai Aggro, mtg-561).

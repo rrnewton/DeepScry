@@ -642,6 +642,34 @@ pub enum Effect {
     /// Amount is read from Card::x_paid at resolution time
     DealDamageXPaid { target: TargetRef },
 
+    /// Deal a variable amount of damage to the player whose upkeep/phase the
+    /// trigger fired on (the "triggered" / "chosen" / active player). The
+    /// damage amount is a `CountExpression` evaluated **against that same
+    /// player** at resolution time.
+    ///
+    /// Used by "each player's upkeep" phase triggers that punish the active
+    /// player by a count of their own permanents/cards:
+    /// - Karma: `T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ Player` with
+    ///   `DB$ DealDamage | Defined$ TriggeredPlayer | NumDmg$ X` where
+    ///   `SVar:X:Count$Valid Swamp.ActivePlayerCtrl` — deals damage equal to
+    ///   the number of Swamps the active player controls.
+    /// - The Tabernacle at Pendrell Vale and other "ActivePlayerCtrl" punishers
+    ///   share the same shape.
+    ///
+    /// `target_self` distinguishes `Defined$ You` (controller-only upkeep
+    /// punishers, e.g. cards that hurt their own controller) from the
+    /// "each player" / chosen-player case. When `target_self` is true the
+    /// damage and count both resolve against the trigger source's controller;
+    /// otherwise both resolve against the active player whose upkeep fired.
+    DealDamageToTriggeredPlayer {
+        /// Amount of damage, evaluated against the resolved target player.
+        count: CountExpression,
+        /// If true, target/count resolve against the trigger source's
+        /// controller (`Defined$ You`); if false, against the active player
+        /// (`Defined$ TriggeredPlayer` / `ChosenPlayer`).
+        target_self: bool,
+    },
+
     /// Multiple creatures deal damage to a single target
     /// Example: "Up to two target creatures you control each deal damage equal to their power
     /// to target creature an opponent controls"
@@ -1694,6 +1722,9 @@ impl Effect {
             | Effect::AddPhase { .. }
             | Effect::ChooseColor { .. }
             | Effect::Proliferate
+            // Phase-trigger "deal damage to the active/triggered player" — the
+            // target player is resolved at trigger time (no cast-time target).
+            | Effect::DealDamageToTriggeredPlayer { .. }
             | Effect::SelfExileFromStack { .. }
             // Self-zone-move and conditional-self wrappers operate on the source
             // card (Defined$ Self) — no cast-time target collection needed.
