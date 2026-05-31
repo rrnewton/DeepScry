@@ -394,6 +394,12 @@ impl<'a> GameLoop<'a> {
                 eprintln!("    Failed to check legendary rule: {e}");
             }
         }
+        // Apply originally-printed-set state-trigger sweeps (City in a Bottle).
+        if let Err(e) = self.game.check_set_origin_sacrifice() {
+            if should_log {
+                eprintln!("    Failed to check set-origin sacrifice: {e}");
+            }
+        }
         // Check aura attachment (MTG CR 704.5d)
         if let Err(e) = self.game.check_aura_attachment() {
             if should_log {
@@ -498,6 +504,19 @@ impl<'a> GameLoop<'a> {
                 // For network controllers, the prepare call above guarantees ChoiceRequest/OpponentChoice
                 // has been received, which means all preceding CardRevealed are buffered
                 self.sync_to_action();
+
+                // State-based-action-like sweep BEFORE a player receives priority
+                // (CR 704.3): apply any `Mode$ Always` originally-printed-set
+                // sweep (City in a Bottle). This covers the quiescent board (e.g.
+                // a permanent already in play at game/puzzle start) that the
+                // post-resolution SBA sites don't reach. Early-returns with one
+                // battlefield scan when no sweeper is present (the common case),
+                // so it is cheap and deterministic.
+                if let Err(e) = self.game.check_set_origin_sacrifice() {
+                    if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                        eprintln!("    Failed to check set-origin sacrifice: {e}");
+                    }
+                }
 
                 // WASM RESUMPTION: Complete a pending typecycling library search.
                 //
@@ -2275,6 +2294,12 @@ impl<'a> GameLoop<'a> {
                                             eprintln!("    Failed to check legendary rule: {e}");
                                         }
                                     }
+                                    // Apply originally-printed-set state-trigger sweeps (City in a Bottle).
+                                    if let Err(e) = self.game.check_set_origin_sacrifice() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to check set-origin sacrifice: {e}");
+                                        }
+                                    }
                                     // Check aura attachment (MTG CR 704.5d)
                                     if let Err(e) = self.game.check_aura_attachment() {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
@@ -4045,6 +4070,12 @@ impl<'a> GameLoop<'a> {
         if let Err(e) = self.game.check_legendary_rule() {
             if should_log {
                 eprintln!("    Failed to check legendary rule: {e}");
+            }
+        }
+        // Apply originally-printed-set state-trigger sweeps (City in a Bottle).
+        if let Err(e) = self.game.check_set_origin_sacrifice() {
+            if should_log {
+                eprintln!("    Failed to check set-origin sacrifice: {e}");
             }
         }
         if let Err(e) = self.game.check_aura_attachment() {

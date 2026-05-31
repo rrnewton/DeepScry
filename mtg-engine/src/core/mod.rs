@@ -36,7 +36,7 @@ pub use persistent_effect::{
 pub use player::Player;
 pub use prevention::{DamagePreventionShield, DamageSourceFilter, PreventionScope};
 pub use spell_ability::SpellAbility;
-pub use types::{CardName, CounterType, PlayerName, Subtype};
+pub use types::{CardName, CounterType, PlayerName, SetCode, Subtype};
 
 // Type aliases for strongly-typed entity IDs
 /// Strongly-typed ID for Player entities

@@ -530,6 +530,13 @@ impl<'a> GameLoop<'a> {
             for &card_id in &zones.hand.cards {
                 // Using try_get() to avoid Result drop overhead in hot path
                 if let Some(card) = self.game.cards.try_get(card_id) {
+                    // Cast-prohibition statics (City in a Bottle's CantBeCast /
+                    // CantPlayLand on ARN-origin cards). A prohibited spell is
+                    // never offered as a legal play. (CR 605: a spell can't be
+                    // cast while a continuous effect says it can't.)
+                    if self.game.is_play_prohibited(card) {
+                        continue;
+                    }
                     // Check if card is castable (not a land)
                     if !card.is_land() {
                         // Check timing restrictions
@@ -1269,7 +1276,21 @@ impl<'a> GameLoop<'a> {
         {
             if let Ok(player) = self.game.get_player(player_id) {
                 if player.can_play_land() {
-                    for land_id in Self::lands_in_hand_iter(self.game, player_id) {
+                    // Collect first (the closure below borrows self.game while
+                    // we also push into self.abilities_buffer).
+                    let playable: smallvec::SmallVec<[crate::core::CardId; 8]> =
+                        Self::lands_in_hand_iter(self.game, player_id)
+                            .filter(|&land_id| {
+                                // Skip lands a CantPlayLand / CantBeCast static
+                                // prohibits (City in a Bottle: ARN-origin lands).
+                                !self
+                                    .game
+                                    .cards
+                                    .try_get(land_id)
+                                    .is_some_and(|c| self.game.is_play_prohibited(c))
+                            })
+                            .collect();
+                    for land_id in playable {
                         self.abilities_buffer.push(SpellAbility::PlayLand { card_id: land_id });
                     }
                 }

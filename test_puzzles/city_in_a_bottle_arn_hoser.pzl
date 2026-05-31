@@ -1,0 +1,21 @@
+[metadata]
+Name=City in a Bottle ARN hoser (mtg-3hwz3)
+Goal=Win
+Turns=1
+Difficulty=Easy
+Description=P0 controls City in a Bottle plus a Camel (originally printed in Arabian Nights) and a non-ARN Grizzly Bears. The Mode$ Always state-trigger sweep must sacrifice the ARN nontoken permanent (Camel), while leaving City in a Bottle itself (the Other qualifier) and the non-ARN Grizzly Bears untouched. P0 also holds a Camel in hand which must be unplayable (CantBeCast/CantPlayLand on Card.setARN) while City is in play.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Camel
+p0battlefield=City in a Bottle;Camel;Grizzly Bears;Plains;Plains
+p0library=Plains;Plains;Plains
+p0graveyard=
+p1life=20
+p1hand=
+p1battlefield=
+p1library=Plains;Plains;Plains
+p1graveyard=

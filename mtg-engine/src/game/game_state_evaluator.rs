@@ -503,6 +503,13 @@ impl GameStateEvaluator {
                     // it both removes a threat and adds it to our side.
                     value += 80;
                 }
+                StaticAbility::SacrificeMatchingPresent { .. }
+                | StaticAbility::CantBeCast { .. }
+                | StaticAbility::CantPlayLand { .. } => {
+                    // Set/color-hoser statics (City in a Bottle, etc.) live on
+                    // an artifact/enchantment, not an aura attached to a
+                    // creature; they contribute no enchanted-creature value.
+                }
             }
         }
 

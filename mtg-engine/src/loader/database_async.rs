@@ -55,14 +55,57 @@ pub struct CardDatabase {
     /// Cache of loaded cards (shared, thread-safe)
     /// Using Arc<CardDefinition> to avoid cloning on every access
     cards: Arc<RwLock<HashMap<String, Arc<CardDefinition>>>>,
+    /// Edition index used to stamp each loaded card's [`CardDefinition::origin_set`]
+    /// (its earliest printing). Built once in [`CardDatabase::new`] by resolving
+    /// the `editions/` directory as a sibling of `cardsfolder` (the same layout
+    /// `get_token` relies on for `tokenscripts/`). Empty when no `editions/`
+    /// directory is present, in which case `origin_set` stays `None` — set-origin
+    /// predicates (`setARN`, ...) then simply never match, which is the correct
+    /// degraded behaviour rather than a hard failure.
+    edition_index: Arc<crate::loader::CardEditionIndex>,
 }
 
 impl CardDatabase {
-    /// Create a new database pointing at a cardsfolder
+    /// Create a new database pointing at a cardsfolder.
+    ///
+    /// Eagerly builds the set-origin index from the sibling `editions/`
+    /// directory (resolved relative to `cardsfolder`). This is a cheap one-time
+    /// scan of the edition `[cards]` lists and keeps every later `new`-callsite
+    /// signature unchanged while still giving the valid/filter system access to
+    /// each card's originating set.
     pub fn new(cardsfolder: PathBuf) -> Self {
+        let edition_index = Self::build_edition_index(&cardsfolder);
         CardDatabase {
             cardsfolder,
             cards: Arc::new(RwLock::new(HashMap::new())),
+            edition_index: Arc::new(edition_index),
+        }
+    }
+
+    /// Resolve the `editions/` directory as a sibling of the cardsfolder and
+    /// load the card→set index. Returns an empty index on any I/O failure so
+    /// callers degrade gracefully (set-origin predicates just won't match).
+    fn build_edition_index(cardsfolder: &Path) -> crate::loader::CardEditionIndex {
+        // editions/ lives next to cardsfolder/ under forge-java/.../res/.
+        // Canonicalize to follow the ./cardsfolder -> forge-java/... symlink,
+        // mirroring get_token's tokenscripts resolution.
+        let editions_dir = std::fs::canonicalize(cardsfolder)
+            .ok()
+            .and_then(|c| c.parent().map(|p| p.join("editions")))
+            .filter(|p| p.exists())
+            // Fall back to a plain sibling (e.g. when cardsfolder is relative
+            // and not yet present, as in some unit tests) before giving up.
+            .or_else(|| cardsfolder.parent().map(|p| p.join("editions")));
+        match editions_dir {
+            Some(dir) => crate::loader::CardEditionIndex::load_from_directory(&dir).unwrap_or_default(),
+            None => crate::loader::CardEditionIndex::default(),
+        }
+    }
+
+    /// Stamp the originating set onto a freshly-parsed definition, if known.
+    fn stamp_origin_set(&self, def: &mut CardDefinition) {
+        if def.origin_set.is_none() {
+            def.origin_set = self.edition_index.get_origin_set(def.name.as_str());
         }
     }
 
@@ -102,7 +145,9 @@ impl CardDatabase {
 
         // Load asynchronously
         match Self::load_card_async(actual_path).await {
-            Ok(card_def) => {
+            Ok(mut card_def) => {
+                // Stamp originating set for set-origin predicates (setARN, ...).
+                self.stamp_origin_set(&mut card_def);
                 // Cache the loaded card in an Arc
                 let card_arc = Arc::new(card_def);
                 let mut cards = self.cards.write().await;
@@ -246,7 +291,8 @@ impl CardDatabase {
         // Collect loaded cards as they complete - fail fast on any error
         let mut cards_map = HashMap::new();
         while let Some(card_result) = result_rx.recv().await {
-            let card_def = card_result?; // Fail fast: propagate card loading errors
+            let mut card_def = card_result?; // Fail fast: propagate card loading errors
+            self.stamp_origin_set(&mut card_def);
             let name_lower = card_def.name.to_lowercase();
             cards_map.insert(name_lower, Arc::new(card_def));
         }
@@ -322,6 +368,7 @@ impl CardDatabase {
         CardDatabase {
             cardsfolder: self.cardsfolder.clone(),
             cards: Arc::clone(&self.cards),
+            edition_index: Arc::clone(&self.edition_index),
         }
     }
 

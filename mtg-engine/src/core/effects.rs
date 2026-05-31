@@ -413,6 +413,19 @@ pub struct TargetRestriction {
     /// Used by Red/Blue Elemental Blast, Pyroblast, Hydroblast, and color-hosers.
     #[serde(default)]
     pub required_color: Option<crate::core::Color>,
+    /// Required *originating set* of the card, from a `set<CODE>` qualifier
+    /// (e.g. `Permanent.setARN`, `Card.setARN`). `None` = no set restriction.
+    /// A card matches only if its earliest printing (`Card::origin_set`) equals
+    /// this code. General machinery for any "originally printed in the <SET>
+    /// expansion" card — City in a Bottle (`setARN`), Apocalypse Chime, etc.
+    #[serde(default)]
+    pub required_set: Option<crate::core::SetCode>,
+    /// If true, the matched card must NOT be the effect's own source — the
+    /// `Other` qualifier (e.g. `Permanent.Other`). Self-exclusion needs the
+    /// source CardId, so plain [`TargetRestriction::matches`] ignores this flag;
+    /// callers that know the source must use [`TargetRestriction::matches_excluding`].
+    #[serde(default)]
+    pub requires_other: bool,
 }
 
 impl TargetRestriction {
@@ -428,6 +441,8 @@ impl TargetRestriction {
             requires_remembered: false,
             requires_nonartifact: false,
             required_color: None,
+            required_set: None,
+            requires_other: false,
         }
     }
 
@@ -443,6 +458,8 @@ impl TargetRestriction {
             requires_remembered: false,
             requires_nonartifact: false,
             required_color: None,
+            required_set: None,
+            requires_other: false,
         }
     }
 
@@ -494,6 +511,9 @@ impl TargetRestriction {
         if self.requires_no_counters {
             desc.push_str(" with no counters");
         }
+        if let Some(set) = &self.required_set {
+            desc.push_str(&format!(" printed in {set}"));
+        }
         desc
     }
 
@@ -534,6 +554,16 @@ impl TargetRestriction {
             }
         }
 
+        // Check set-origin restriction (e.g. City in a Bottle's `setARN`).
+        // Matches only cards whose EARLIEST printing is the named set. A card
+        // with no known origin set (tokens, custom cards) never matches a
+        // set-origin filter.
+        if let Some(set) = &self.required_set {
+            if !card.is_from_set(set) {
+                return false;
+            }
+        }
+
         // Check counter restriction
         if self.requires_no_counters && card.has_counters() {
             return false;
@@ -556,6 +586,22 @@ impl TargetRestriction {
             return true; // No type restriction
         }
         self.types.iter().any(|t| t.matches(card))
+    }
+
+    /// Like [`TargetRestriction::matches`] but also honors the `Other`
+    /// self-exclusion qualifier against a known effect source.
+    ///
+    /// `source` is the CardId of the permanent whose ability is doing the
+    /// filtering (e.g. the City in a Bottle resolving the sweep). When
+    /// `requires_other` is set, the candidate `card` is rejected if it IS the
+    /// source. Use this at any mass-effect site that has the source available;
+    /// `matches` (no source) treats `Other` as a no-op for back-compat with
+    /// callers that genuinely have no source (none today filter on `Other`).
+    pub fn matches_excluding(&self, card: &crate::core::Card, source: crate::core::CardId) -> bool {
+        if self.requires_other && card.id == source {
+            return false;
+        }
+        self.matches(card)
     }
 
     /// Check if a card matches this restriction including controller checks
@@ -617,6 +663,8 @@ impl TargetRestriction {
         let mut power_ge = None;
         let mut power_le = None;
         let mut required_color = None;
+        let mut required_set = None;
+        let mut requires_other = false;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
@@ -636,6 +684,12 @@ impl TargetRestriction {
                         "OppCtrl" => controller = ControllerRestriction::OppCtrl,
                         "ActivePlayerCtrl" => controller = ControllerRestriction::ActivePlayerCtrl,
                         "nonArtifact" => requires_nonartifact = true,
+                        "Other" => requires_other = true,
+                        // Set-origin qualifier `set<CODE>` (e.g. `setARN`):
+                        // matches a card whose earliest printing is that set.
+                        m if m.starts_with("set") && m.len() > 3 => {
+                            required_set = Some(crate::core::SetCode::new(&m[3..]));
+                        }
                         "White" => required_color = Some(crate::core::Color::White),
                         "Blue" => required_color = Some(crate::core::Color::Blue),
                         "Black" => required_color = Some(crate::core::Color::Black),
@@ -679,6 +733,8 @@ impl TargetRestriction {
             requires_remembered,
             requires_nonartifact,
             required_color,
+            required_set,
+            requires_other,
         }
     }
 }
@@ -2360,6 +2416,48 @@ pub enum StaticAbility {
         /// Selector for which permanent is affected (typically `Card.EnchantedBy`).
         affected: AffectedSelector,
 
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Continuous "destroy/sacrifice any matching permanent" sweep — the
+    /// `T:Mode$ Always` state-trigger pattern (CR 603.8, applied like a
+    /// state-based action). While the source permanent is on the battlefield,
+    /// every battlefield permanent matching `restriction` is moved to its
+    /// owner's graveyard (sacrificed). Re-checked at every state-based-action
+    /// pass, so it covers BOTH the one-time on-enter sweep AND "destroy any
+    /// such permanent that enters afterward" with a single rule.
+    ///
+    /// General machinery: City in a Bottle uses
+    /// `ValidCards$ Permanent.!token+setARN+Other`, but any "whenever one or
+    /// more permanents matching X are on the battlefield, sacrifice them"
+    /// state-trigger maps here. The `Other` qualifier in `restriction`
+    /// excludes the source itself (checked via `matches_excluding`).
+    SacrificeMatchingPresent {
+        /// Filter for which permanents are continuously swept.
+        restriction: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Cast-prohibition static: spells matching `valid_card` can't be cast
+    /// while the source is on the battlefield. Corresponds to
+    /// `S:Mode$ CantBeCast | ValidCard$ <filter>` (City in a Bottle:
+    /// `ValidCard$ Card.setARN`). General color/set/type-hoser machinery.
+    CantBeCast {
+        /// Which cards may not be cast (a card filter such as `Card.setARN`).
+        valid_card: TargetRestriction,
+        /// Description for logging.
+        description: String,
+    },
+
+    /// Land-play prohibition static: lands (and, in Forge, spells) matching
+    /// `valid_card` can't be played/cast while the source is on the
+    /// battlefield. Corresponds to `S:Mode$ CantPlayLand | ValidCard$ <filter>`
+    /// (City in a Bottle: "can't play lands ... originally printed in ARN").
+    CantPlayLand {
+        /// Which cards may not be played as lands (e.g. `Card.setARN`).
+        valid_card: TargetRestriction,
         /// Description for logging.
         description: String,
     },

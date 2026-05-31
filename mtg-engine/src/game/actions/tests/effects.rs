@@ -6557,4 +6557,107 @@ mod tests {
             inner
         );
     }
+
+    /// mtg-3hwz3: City in a Bottle parses into the three general constructs:
+    /// (1) a `Mode$ Always` set-origin sweep static (SacrificeMatchingPresent)
+    /// whose filter requires the ARN set + non-token + Other; (2) a CantBeCast
+    /// static; (3) a CantPlayLand static — both filtering on `Card.setARN`.
+    /// Also verifies the set-origin filter parses `setARN` into a SetCode and
+    /// that an ARN card loaded via CardDatabase is stamped with origin_set=ARN
+    /// while a non-ARN card is not.
+    #[test]
+    fn test_card_compat_city_in_a_bottle() {
+        use crate::core::{SetCode, StaticAbility};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/c/city_in_a_bottle.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("City in a Bottle should load");
+        assert_eq!(def.name.as_str(), "City in a Bottle");
+        assert!(def.types.contains(&CardType::Artifact));
+        assert_eq!(def.mana_cost.cmc(), 2, "City in a Bottle costs {{2}}");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+        let arn = SetCode::new("ARN");
+
+        // (1) Mode$ Always state-trigger -> SacrificeMatchingPresent static,
+        //     filter = Permanent.!token+setARN+Other.
+        let sweep = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::SacrificeMatchingPresent { restriction, .. } = sa {
+                Some(restriction.clone())
+            } else {
+                None
+            }
+        });
+        let sweep = sweep.expect("Mode$ Always must parse into a SacrificeMatchingPresent sweep static");
+        assert_eq!(
+            sweep.required_set.as_ref(),
+            Some(&arn),
+            "sweep filter must require setARN"
+        );
+        assert!(sweep.requires_nontoken, "sweep filter must require !token");
+        assert!(sweep.requires_other, "sweep filter must require Other (self-exclusion)");
+
+        // (2) S:Mode$ CantBeCast | ValidCard$ Card.setARN
+        let cant_cast = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CantBeCast { valid_card, .. } = sa {
+                Some(valid_card.clone())
+            } else {
+                None
+            }
+        });
+        let cant_cast = cant_cast.expect("S:Mode$ CantBeCast must parse into a CantBeCast static");
+        assert_eq!(
+            cant_cast.required_set.as_ref(),
+            Some(&arn),
+            "CantBeCast must filter on setARN"
+        );
+
+        // (3) S:Mode$ CantPlayLand | ValidCard$ Card.setARN
+        let cant_land = card.static_abilities.iter().find_map(|sa| {
+            if let StaticAbility::CantPlayLand { valid_card, .. } = sa {
+                Some(valid_card.clone())
+            } else {
+                None
+            }
+        });
+        let cant_land = cant_land.expect("S:Mode$ CantPlayLand must parse into a CantPlayLand static");
+        assert_eq!(
+            cant_land.required_set.as_ref(),
+            Some(&arn),
+            "CantPlayLand must filter on setARN"
+        );
+
+        // Set-origin stamping: an ARN card carries origin_set=ARN; a non-ARN
+        // card (Lightning Bolt, LEA) does not match setARN. Loaded via the
+        // CardDatabase so the edition index runs.
+        let cardsfolder = PathBuf::from("../cardsfolder");
+        if std::fs::canonicalize(&cardsfolder).is_ok() {
+            let db = CardDatabase::new(cardsfolder);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let camel = rt
+                .block_on(async { db.get_card("Camel").await })
+                .expect("load Camel")
+                .expect("Camel exists");
+            assert_eq!(
+                camel.origin_set.as_ref(),
+                Some(&arn),
+                "Camel was originally printed in ARN; origin_set must be stamped ARN"
+            );
+            let bolt = rt
+                .block_on(async { db.get_card("Lightning Bolt").await })
+                .expect("load Lightning Bolt")
+                .expect("Lightning Bolt exists");
+            assert_ne!(
+                bolt.origin_set.as_ref(),
+                Some(&arn),
+                "Lightning Bolt is not an ARN card; must not be stamped ARN"
+            );
+        } else {
+            eprintln!("Skipping origin_set stamping check: cardsfolder not canonicalizable");
+        }
+    }
 }

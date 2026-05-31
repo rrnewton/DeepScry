@@ -233,6 +233,24 @@ impl CardEditionIndex {
         meets_start && meets_end
     }
 
+    /// Get the set a card was *originally* printed in (its earliest printing).
+    ///
+    /// Ties on year are broken by lexicographic set code, matching
+    /// [`PrimarySetAssignment`] so the native and WASM origin-set assignments
+    /// agree. Returns `None` for cards with no edition entry. Powers
+    /// set-origin valid predicates such as `setARN`.
+    pub fn get_origin_set(&self, card_name: &str) -> Option<crate::core::SetCode> {
+        let normalized = normalize_card_name(card_name);
+        let printings = self.card_printings.get(&normalized)?;
+        // `card_printings` is sorted by year (see load_from_directory), but
+        // re-derive the earliest with a lexicographic set-code tie-break so the
+        // result is independent of insertion order within a single year.
+        printings
+            .iter()
+            .min_by(|a, b| a.year.cmp(&b.year).then_with(|| a.set_code.cmp(&b.set_code)))
+            .map(|p| crate::core::SetCode::new(&p.set_code))
+    }
+
     /// Get the year range for a card (earliest, latest)
     pub fn get_card_years(&self, card_name: &str) -> Option<(u16, u16)> {
         let normalized = normalize_card_name(card_name);

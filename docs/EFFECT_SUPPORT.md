@@ -125,7 +125,12 @@ workflow, row format, and update rules.
 | ReplaceDyingDefined$ ThisTargetedCard.Creature (exile if would die this turn) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
 | SP$ DealDamage DivideEvenly$ RoundedDown + TargetMax$ <SVar> (multi-target X-burn) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
 | S:Mode$ RaiseCost Relative$ True Amount$ <TargetedObjects-derived> (per-target cost) | BROKEN | 2026-05-30_#2535(48fc49b8) | mtg-tyvcn | Fireball |
-| T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-3hwz3 | City in a Bottle |
+| T:Mode$ Always state-trigger + setARN set-origin match + S:Mode$ CantBeCast/CantPlayLand | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
+| Valid filter `set<CODE>` set-origin qualifier (e.g. `setARN`) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
+| Valid filter `Other` self-exclusion qualifier (matches_excluding) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
+| T:Mode$ Always state-trigger sweep -> StaticAbility::SacrificeMatchingPresent (SBA-like, CR 603.8/704.3) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
+| S:Mode$ CantBeCast ValidCard$ <filter> (cast prohibition gate) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
+| S:Mode$ CantPlayLand ValidCard$ <filter> (land/spell-play prohibition gate) | WORKING | 2026-05-31_#2540(ad30b333) | (fixed mtg-3hwz3) | City in a Bottle |
 | SP$ Discard NumCards$ X ValidTgts$ Player Mode$ Random (X-paid discard) | WORKING | 2026-05-29_#2462(132ce6cc) | (fixed mtg-521) | Mind Twist |
 | AB$ activation gate IsPresent$/PresentZone$/PresentCompare$ (EQ/GE/LE) | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-517) | Library of Alexandria |
 | AB$ ChooseSource Choices$ Card.<Color>Source (source-filtered damage prevention, Circle of Protection) | WORKING | 2026-05-30_#2491(dded4d83) | (fixed mtg-490) | Circle of Protection: Red |

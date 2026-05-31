@@ -883,6 +883,71 @@ impl<'de> Deserialize<'de> for CardName {
     }
 }
 
+/// Set / edition code (e.g. `ARN` = Arabian Nights, `LEA` = Limited Edition
+/// Alpha). Identifies the Magic expansion a card was printed in.
+///
+/// This is the engine-wide handle for "set-origin" predicates in card scripts
+/// such as `setARN` (`ValidCard$ Card.setARN`, `Permanent.setARN`). It is a
+/// distinct strong type rather than a bare `String` so that set comparisons in
+/// the valid/filter system can never be confused with card names, subtypes, or
+/// other short uppercase strings.
+///
+/// Set codes are short ASCII (2-4 chars). They are interned as an `Arc<str>`
+/// for cheap clone/compare. Comparison is case-insensitive at construction
+/// time: codes are normalized to uppercase so `setARN` matches an edition file
+/// whose `Code=ARN` (and ScryfallCode/Code2 casing) regardless of source case.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SetCode(std::sync::Arc<str>);
+
+impl SetCode {
+    /// Construct a normalized (uppercase) set code.
+    pub fn new(s: impl AsRef<str>) -> Self {
+        SetCode(s.as_ref().trim().to_ascii_uppercase().into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SetCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for SetCode {
+    fn from(s: &str) -> Self {
+        SetCode::new(s)
+    }
+}
+
+impl From<String> for SetCode {
+    fn from(s: String) -> Self {
+        SetCode::new(s)
+    }
+}
+
+impl Serialize for SetCode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SetCode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        // Already-normalized on the wire, but normalize defensively.
+        Ok(SetCode::new(s))
+    }
+}
+
 /// Player name (distinct from other string types)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlayerName(std::sync::Arc<str>);

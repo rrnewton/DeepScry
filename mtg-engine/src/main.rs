@@ -3836,6 +3836,15 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     // Bucket card definitions by their primary set file basename.
     // Uses references into `card_definitions` (no clone) per CLAUDE.md rules.
     const FALLBACK_BUCKET: &str = "0000-MISC";
+    // Stamp each definition's originating set (mtg-3hwz3) from the SAME primary
+    // assignment used to bucket it, so the WASM per-set `.bin` carries the
+    // serialized `origin_set` and set-origin predicates (`setARN`, ...) match
+    // identically to the native path (which stamps from the edition index).
+    for (name, def) in card_definitions.iter_mut() {
+        if let Some((_, code)) = primary.primary.get(name) {
+            def.origin_set = Some(mtg_engine::core::SetCode::new(code));
+        }
+    }
     let mut buckets: std::collections::BTreeMap<String, Vec<(&str, &mtg_engine::loader::CardDefinition)>> =
         std::collections::BTreeMap::new();
     let mut orphan_count = 0usize;

@@ -4443,3 +4443,149 @@ async fn test_spirit_link_lifelink_on_combat_damage_to_creature() -> Result<()> 
 
     Ok(())
 }
+
+/// mtg-3hwz3: City in a Bottle — the set-origin hoser. Verifies all three
+/// general constructs end-to-end against a real game:
+///
+///  1. **ETB / continuous sweep**: the `Mode$ Always` state-trigger sacrifices
+///     an ARN nontoken permanent (Camel) on the battlefield, while leaving City
+///     in a Bottle itself (the `Other` self-exclusion) and a non-ARN permanent
+///     (Grizzly Bears) untouched.
+///  2. **Destroy-on-enter**: with City already in play, a NEW ARN permanent
+///     that enters the battlefield afterward is swept on the next SBA pass.
+///  3. **Unplayable ARN card**: an ARN card in hand is play-prohibited
+///     (`CantBeCast` / `CantPlayLand` on `Card.setARN`) and is never cast.
+#[tokio::test]
+async fn test_city_in_a_bottle_arn_hoser() -> Result<()> {
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/city_in_a_bottle_arn_hoser.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0];
+
+    // Identify the battlefield permanents by name.
+    let by_name = |g: &mtg_engine::game::GameState, zone_owner: mtg_engine::core::PlayerId, name: &str, zone: Zone| {
+        let zones = g.get_player_zones(zone_owner).unwrap();
+        let cards = match zone {
+            Zone::Battlefield => &g.battlefield.cards,
+            Zone::Hand => &zones.hand.cards,
+            Zone::Graveyard => &zones.graveyard.cards,
+            Zone::Library | Zone::Exile | Zone::Stack | Zone::Command => panic!("unsupported zone in helper"),
+        };
+        cards
+            .iter()
+            .copied()
+            .filter(|&id| g.cards.get(id).map(|c| c.name.as_str() == name).unwrap_or(false))
+            .collect::<Vec<_>>()
+    };
+
+    // Sanity: starting board.
+    assert_eq!(
+        by_name(&game, p0_id, "Camel", Zone::Battlefield).len(),
+        1,
+        "Camel starts on battlefield"
+    );
+    assert_eq!(
+        by_name(&game, p0_id, "Grizzly Bears", Zone::Battlefield).len(),
+        1,
+        "Grizzly starts on bf"
+    );
+    let city_ids = by_name(&game, p0_id, "City in a Bottle", Zone::Battlefield);
+    assert_eq!(city_ids.len(), 1, "City in a Bottle starts on battlefield");
+    let camel_hand = by_name(&game, p0_id, "Camel", Zone::Hand);
+    assert_eq!(camel_hand.len(), 1, "Camel starts in hand");
+
+    // origin_set stamping ran through the puzzle's CardDatabase load.
+    let arn = mtg_engine::core::SetCode::new("ARN");
+    let camel_bf_id = by_name(&game, p0_id, "Camel", Zone::Battlefield)[0];
+    assert_eq!(
+        game.cards.get(camel_bf_id)?.origin_set(),
+        Some(&arn),
+        "battlefield Camel must be stamped origin_set=ARN"
+    );
+
+    // -------- Construct 3: unplayability (pure gating logic, AI-independent) --------
+    let camel_hand_card = game.cards.get(camel_hand[0])?;
+    assert!(
+        game.is_play_prohibited(camel_hand_card),
+        "ARN Camel in hand must be play-prohibited while City in a Bottle is in play"
+    );
+    let grizzly_bf = by_name(&game, p0_id, "Grizzly Bears", Zone::Battlefield)[0];
+    // Grizzly (non-ARN) must NOT be prohibited.
+    {
+        let grizzly_card = game.cards.get(grizzly_bf)?;
+        assert!(
+            !game.is_play_prohibited(grizzly_card),
+            "non-ARN Grizzly Bears must NOT be play-prohibited"
+        );
+    }
+
+    // -------- Construct 1: the continuous / ETB sweep (run one SBA pass) --------
+    game.check_set_origin_sacrifice()?;
+
+    assert_eq!(
+        by_name(&game, p0_id, "Camel", Zone::Battlefield).len(),
+        0,
+        "ARN Camel on the battlefield must be sacrificed by the City in a Bottle sweep"
+    );
+    assert!(
+        game.battlefield.contains(city_ids[0]),
+        "City in a Bottle itself must NOT be swept (Other self-exclusion)"
+    );
+    assert!(
+        game.battlefield.contains(grizzly_bf),
+        "non-ARN Grizzly Bears must survive the ARN sweep"
+    );
+    // The sacrificed Camel went to the graveyard.
+    assert_eq!(
+        by_name(&game, p0_id, "Camel", Zone::Graveyard).len(),
+        1,
+        "sacrificed Camel must be in the graveyard"
+    );
+    // Game-log evidence.
+    let sac_logged = game
+        .logger
+        .logs()
+        .iter()
+        .any(|l| l.message.contains("Camel") && l.message.contains("sacrificed"));
+    assert!(
+        sac_logged,
+        "expected a 'Camel ... sacrificed' log line from the City in a Bottle sweep"
+    );
+
+    // -------- Construct 2: destroy-on-enter afterward --------
+    // City is still in play. Bring a FRESH ARN permanent (Camel) onto the
+    // battlefield, then run the SBA pass again: it must be swept too.
+    let new_camel_def = card_db.get_card("Camel").await?.expect("Camel def");
+    let new_camel_id = game.next_card_id();
+    let mut new_camel = new_camel_def.instantiate(new_camel_id, p0_id);
+    new_camel.controller = p0_id;
+    assert_eq!(
+        new_camel.origin_set(),
+        Some(&arn),
+        "fresh Camel must carry origin_set=ARN"
+    );
+    game.cards.insert(new_camel_id, new_camel);
+    game.battlefield.add(new_camel_id);
+    assert!(
+        game.battlefield.contains(new_camel_id),
+        "fresh Camel is on the battlefield"
+    );
+
+    game.check_set_origin_sacrifice()?;
+    assert!(
+        !game.battlefield.contains(new_camel_id),
+        "an ARN permanent that enters while City in a Bottle is in play must be swept"
+    );
+
+    Ok(())
+}

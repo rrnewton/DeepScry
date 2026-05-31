@@ -964,6 +964,21 @@ impl Card {
             .update_from_subtypes(&self.subtypes, self.name.as_str());
     }
 
+    /// The expansion this card was originally printed in (its earliest
+    /// printing), or `None` if unknown. Backs set-origin valid predicates
+    /// (`setARN`, ...). See [`crate::loader::CardDefinition::origin_set`].
+    #[inline]
+    pub fn origin_set(&self) -> Option<&crate::core::SetCode> {
+        self.definition.origin_set.as_ref()
+    }
+
+    /// True if this card was originally printed in the given set.
+    /// Case-insensitive (both sides are normalized `SetCode`s).
+    #[inline]
+    pub fn is_from_set(&self, set: &crate::core::SetCode) -> bool {
+        self.definition.origin_set.as_ref() == Some(set)
+    }
+
     /// Check if this card is a creature (uses cached value for O(1) lookup)
     #[inline]
     pub fn is_creature(&self) -> bool {

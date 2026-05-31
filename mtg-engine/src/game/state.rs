@@ -2010,6 +2010,136 @@ impl GameState {
         Ok(())
     }
 
+    /// Apply continuous "destroy any matching permanent that's on the
+    /// battlefield" state-trigger sweeps (the `T:Mode$ Always` pattern),
+    /// modeled as a state-based-action-like check (CR 603.8 state triggers,
+    /// applied deterministically alongside the other SBAs).
+    ///
+    /// For every permanent that has a
+    /// [`StaticAbility::SacrificeMatchingPresent`] (e.g. City in a Bottle),
+    /// every OTHER battlefield permanent matching that ability's filter is put
+    /// into its owner's graveyard ("sacrificed", per Oracle text). This single
+    /// rule covers the one-time on-enter sweep AND "destroy any such permanent
+    /// that enters afterward", because it re-runs at every SBA pass.
+    ///
+    /// Determinism: iterates `battlefield.cards` (insertion-ordered, network /
+    /// snapshot stable). Adds NO new game state — derived entirely from the
+    /// already-serialized static abilities and `origin_set` on each card.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if zone operations fail.
+    pub fn check_set_origin_sacrifice(&mut self) -> Result<()> {
+        use crate::core::StaticAbility;
+
+        // Collect (source_id, restriction) pairs from sweepers currently on the
+        // battlefield. Cheap clone of the (small) restriction so we don't hold a
+        // borrow of self.cards across the mutation below.
+        let sweepers: smallvec::SmallVec<[(CardId, crate::core::TargetRestriction); 2]> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&id| {
+                let card = self.cards.try_get(id)?;
+                card.static_abilities.iter().find_map(|sa| {
+                    if let StaticAbility::SacrificeMatchingPresent { restriction, .. } = sa {
+                        Some((id, restriction.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if sweepers.is_empty() {
+            return Ok(());
+        }
+
+        // Determine which permanents are swept. A permanent matched by ANY
+        // active sweeper is sacrificed. Iterate the battlefield in its stable
+        // order so the (rarely >1) results are deterministic.
+        let victims: smallvec::SmallVec<[(CardId, PlayerId); 4]> = self
+            .battlefield
+            .cards
+            .iter()
+            .filter_map(|&victim_id| {
+                let victim = self.cards.try_get(victim_id)?;
+                let swept = sweepers
+                    .iter()
+                    .any(|(source_id, restriction)| restriction.matches_excluding(victim, *source_id));
+                if swept {
+                    Some((victim_id, victim.owner))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for (card_id, owner) in victims {
+            let card_name = self.cards.try_get(card_id).map(|c| c.name.clone());
+            // Death triggers fire before the permanent leaves (CR 603.6c).
+            let _ = self.check_death_triggers(card_id);
+            let dest = self.death_destination_for_card(card_id);
+            self.move_card(card_id, Zone::Battlefield, dest, owner)?;
+            if let Some(name) = card_name {
+                self.logger.gamelog(&format!(
+                    "{} ({}) is sacrificed (originally-printed-set hoser)",
+                    name, card_id
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// True if some permanent on the battlefield has a `CantBeCast` static
+    /// whose filter matches `card` (CR 605-style cast prohibition). Used to
+    /// gate the available-plays enumeration so a prohibited spell is never
+    /// offered (City in a Bottle: ARN-origin cards can't be cast).
+    ///
+    /// General hoser machinery — works for any `S:Mode$ CantBeCast | ValidCard$ <filter>`.
+    pub fn is_cast_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantBeCast { valid_card, .. } = sa {
+                        valid_card.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// True if some permanent on the battlefield has a `CantPlayLand` static
+    /// whose filter matches `card`. Gates land plays (and, per Forge's
+    /// CantPlayLand semantics, spell casts) for prohibited cards. City in a
+    /// Bottle: "Players can't cast spells or play lands ... printed in ARN."
+    pub fn is_land_play_prohibited(&self, card: &crate::core::Card) -> bool {
+        use crate::core::StaticAbility;
+        self.battlefield.cards.iter().any(|&id| {
+            self.cards.try_get(id).is_some_and(|src| {
+                src.static_abilities.iter().any(|sa| {
+                    if let StaticAbility::CantPlayLand { valid_card, .. } = sa {
+                        valid_card.matches(card)
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+    }
+
+    /// Combined gate: a card may not be put on the stack / played as a land if
+    /// either a `CantBeCast` or a `CantPlayLand` static matches it. (Forge's
+    /// `CantPlayLand` on City in a Bottle carries the "can't cast spells"
+    /// clause too, so it applies to both lands and spells.)
+    pub fn is_play_prohibited(&self, card: &crate::core::Card) -> bool {
+        self.is_cast_prohibited(card) || self.is_land_play_prohibited(card)
+    }
+
     /// Check state-based actions for aura attachment (MTG CR 704.5d)
     ///
     /// If an Aura is attached to an illegal permanent or not attached to anything,

@@ -1525,6 +1525,14 @@ impl GameState {
                         // Control-changing statics don't affect P/T.
                         // They are applied in GameState::recompute_aura_control().
                     }
+                    StaticAbility::SacrificeMatchingPresent { .. } => {
+                        // State-trigger sweep (City in a Bottle). Doesn't affect
+                        // P/T; applied as an SBA in check_set_origin_sacrifice().
+                    }
+                    StaticAbility::CantBeCast { .. } | StaticAbility::CantPlayLand { .. } => {
+                        // Cast/play-prohibition statics don't affect P/T; they
+                        // gate the available-plays enumeration instead.
+                    }
                 }
             }
         }

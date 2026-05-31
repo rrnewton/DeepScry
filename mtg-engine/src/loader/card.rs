@@ -48,6 +48,26 @@ fn ordinal(n: u8) -> String {
     format!("{}{}", n, suffix)
 }
 
+/// Tokenize a card-script clause body into a `key -> value` map by splitting on
+/// `|` (parameters) then `$` (key/value). This is the structured-parse path
+/// required by CLAUDE.md ("NO HACKY STRING OPERATIONS ON STRUCTURED DATA"):
+/// callers query the resulting map (`params.get("Mode")`) instead of doing
+/// substring matching on the raw body. The body is the portion AFTER the
+/// `S:`/`T:`/SVar prefix.
+fn tokenize_pipe_dollar(body: &str) -> std::collections::HashMap<String, String> {
+    let mut params = std::collections::HashMap::new();
+    for param in body.split('|') {
+        let param = param.trim();
+        if param.is_empty() {
+            continue;
+        }
+        if let Some((key, value)) = param.split_once('$') {
+            params.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    params
+}
+
 /// Card loader for .txt files
 pub struct CardLoader;
 
@@ -284,6 +304,9 @@ impl CardLoader {
             is_legendary,
             loyalty,
             cache,
+            // Stamped post-parse by CardDatabase (native) or the WASM exporter,
+            // both from the editions/ data. The parser has no set context.
+            origin_set: None,
         })
     }
 }
@@ -370,6 +393,22 @@ pub struct CardDefinition {
     /// Precomputed cache for static card properties (computed at load time)
     /// Avoids repeated string operations during gameplay
     pub cache: CardCache,
+    /// The expansion this card was *originally* printed in (its earliest
+    /// printing), derived from the `editions/` data, not from the card script.
+    ///
+    /// Powers set-origin valid predicates (`setARN`, etc.) used by City in a
+    /// Bottle / Apocalypse Chime and any other card that references "a name
+    /// originally printed in the <SET> expansion". `None` when no edition entry
+    /// was found for the card (tokens, custom cards, or a missing `editions/`
+    /// directory). Populated:
+    /// - native: by [`crate::loader::CardDatabase`] after parse, from the
+    ///   edition index resolved as a sibling of the cardsfolder;
+    /// - WASM: at per-set bin export time from `PrimarySetAssignment`.
+    ///
+    /// Serialized so the WASM per-set `.bin` carries it and the network/snapshot
+    /// path round-trips it deterministically.
+    #[serde(default)]
+    pub origin_set: Option<crate::core::SetCode>,
 }
 
 impl Default for CardDefinition {
@@ -394,6 +433,7 @@ impl Default for CardDefinition {
             is_legendary: false,
             loyalty: None,
             cache: CardCache::default(),
+            origin_set: None,
         }
     }
 }
@@ -3172,6 +3212,35 @@ impl CardDefinition {
     ///
     /// This creates a StaticAbility::ModifyPT that grants +2/+2 to the equipped creature
     /// in CR 613 Layer 7c (MODIFYPT).
+    /// Resolve the sacrifice/destroy filter for a `T:Mode$ Always` state
+    /// trigger. The authoritative filter is the `ValidCards$` of the
+    /// `SacrificeAll`/`DestroyAll` effect named by `Execute$` (City in a
+    /// Bottle: `SVar:TrigSac:DB$ SacrificeAll | ValidCards$ ...`). Falls back
+    /// to the trigger's own `IsPresent$` filter. Returns `None` if neither is
+    /// present (so unrelated `Mode$ Always` triggers are left alone).
+    fn always_sweep_restriction(
+        &self,
+        params: &std::collections::HashMap<String, String>,
+    ) -> Option<crate::core::TargetRestriction> {
+        // Prefer the Execute$ SVar's ValidCards$.
+        if let Some(execute) = params.get("Execute") {
+            if let Some(svar_body) = self.svars.get(execute) {
+                let svar_params = tokenize_pipe_dollar(svar_body);
+                // Only SacrificeAll / DestroyAll forms map to the sweep.
+                let api = svar_params.get("DB").or_else(|| svar_params.get("SP"));
+                if matches!(api.map(String::as_str), Some("SacrificeAll" | "DestroyAll")) {
+                    if let Some(valid) = svar_params.get("ValidCards") {
+                        return Some(crate::core::TargetRestriction::parse(valid));
+                    }
+                }
+            }
+        }
+        // Fallback: the IsPresent$ condition filter.
+        params
+            .get("IsPresent")
+            .map(|v| crate::core::TargetRestriction::parse(v))
+    }
+
     fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
         use crate::core::{AffectedSelector, StaticAbility};
 
@@ -3918,6 +3987,65 @@ impl CardDefinition {
         }
 
         let mut abilities = Vec::new();
+
+        // ---------------------------------------------------------------
+        // Set/cast-hoser statics + the `Mode$ Always` state-trigger sweep
+        // (City in a Bottle, mtg-3hwz3). Parsed with proper tokenization
+        // (split on `|` then `$`), never substring matching.
+        // ---------------------------------------------------------------
+        for ability in &self.raw_abilities {
+            // Only S: (static) and T: (the Always state-trigger) lines.
+            let body = if let Some(rest) = ability.strip_prefix("S:") {
+                rest
+            } else if let Some(rest) = ability.strip_prefix("T:") {
+                rest
+            } else {
+                continue;
+            };
+            let params = tokenize_pipe_dollar(body);
+            let Some(mode) = params.get("Mode").map(String::as_str) else {
+                continue;
+            };
+            match mode {
+                "CantBeCast" => {
+                    let valid_card = params
+                        .get("ValidCard")
+                        .map(|v| crate::core::TargetRestriction::parse(v))
+                        .unwrap_or_else(crate::core::TargetRestriction::any);
+                    let description = params.get("Description").cloned().unwrap_or_default();
+                    abilities.push(StaticAbility::CantBeCast {
+                        valid_card,
+                        description,
+                    });
+                }
+                "CantPlayLand" => {
+                    let valid_card = params
+                        .get("ValidCard")
+                        .map(|v| crate::core::TargetRestriction::parse(v))
+                        .unwrap_or_else(crate::core::TargetRestriction::any);
+                    let description = params.get("Description").cloned().unwrap_or_default();
+                    abilities.push(StaticAbility::CantPlayLand {
+                        valid_card,
+                        description,
+                    });
+                }
+                "Always" => {
+                    // State-trigger sweep. We model only the SacrificeAll/
+                    // DestroyAll form keyed off an IsPresent$ filter (City in a
+                    // Bottle). The filter comes from the Execute$ SVar's
+                    // ValidCards$ (authoritative for WHAT to sacrifice); fall
+                    // back to IsPresent$ if the SVar can't be resolved.
+                    if let Some(restriction) = self.always_sweep_restriction(&params) {
+                        let description = params.get("TriggerDescription").cloned().unwrap_or_default();
+                        abilities.push(StaticAbility::SacrificeMatchingPresent {
+                            restriction,
+                            description,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
 
         for ability in &self.raw_abilities {
             if !ability.starts_with("S:") {
