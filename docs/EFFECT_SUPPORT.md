@@ -35,7 +35,7 @@ workflow, row format, and update rules.
 | Regenerate                   | WORKING  | 2026-05-12_#2226(928ec99f)     | (none)      | Sedge Troll           |
 | Swampwalk                    | WORKING  | 2026-05-12_#2226(928ec99f)     | (none)      | Sedge Troll           |
 | ETBReplacement:Copy (Clone)  | WORKING  | 2026-05-27_#2354(dbf857a7)     | (none)      | Copy Artifact         |
-| ETBReplacement ChoosePlayer (as ~ enters, choose an opponent) | WORKING | 2026-05-31_#2546(pending) | (fixed) | Black Vise |
+| ETBReplacement ChoosePlayer (as ~ enters, choose an opponent) | WORKING | 2026-05-31_#2546(34f76ca3) | (fixed) | Black Vise |
 
 ## Triggers (T:)
 
@@ -48,7 +48,7 @@ workflow, row format, and update rules.
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ Destroy (each player's upkeep)     | WORKING | 2026-05-28_#2360(c5681a91) | mtg-583   | The Abyss        |
 | Drawn ValidCard$ Card.OppOwn Execute$ DB$ DealDamage Defined$ TriggeredPlayer    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)      | Underworld Dreams |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ DealDamage Defined$ TriggeredPlayer NumDmg$ X (variable damage to active player, counted against that player) | WORKING | 2026-05-30_#2530(f7a005ca) | (fixed)   | Karma            |
-| Phase Upkeep ValidPlayer$ Player.Chosen Execute$ DB$ DealDamage Defined$ ChosenPlayer NumDmg$ X (fires only on the ETB-chosen player's upkeep; chosen_player_turn_only gate) | WORKING | 2026-05-31_#2546(pending) | (fixed) | Black Vise |
+| Phase Upkeep ValidPlayer$ Player.Chosen Execute$ DB$ DealDamage Defined$ ChosenPlayer NumDmg$ X (fires only on the ETB-chosen player's upkeep; chosen_player_turn_only gate) | WORKING | 2026-05-31_#2546(34f76ca3) | (fixed) | Black Vise |
 | Discarded ValidCard$ Card.Self ValidCause$ SpellAbility.OppCtrl Execute$ DB$ LoseLife (opponent-forced-discard punisher) | BROKEN | 2026-05-30_#2530(f7a005ca) | mtg-czz3f | Psychic Purge |
 | DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura; fires on combat damage to players AND creatures) | WORKING | 2026-05-31_#2539(05d48a7b) | (fixed) | Spirit Link |
 | Phase Draw ValidPlayer$ You Execute$ DB$ Draw (beginning-of-your-draw-step: draw an additional card) | WORKING | 2026-05-30_#2532(4646ddd1) | (fixed) | Grafted Skullcap |
@@ -207,7 +207,7 @@ workflow, row format, and update rules.
 | ValidTgts$ Creature.nonArtifact (excl. artifact)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | ValidTgts$ ...+ActivePlayerCtrl (active player) | WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | Count$Valid <BasicLandSubtype>.ActivePlayerCtrl (count active player's Swamps/etc.) | WORKING  | 2026-05-30_#2530(f7a005ca) | (fixed)     | Karma            |
-| Count$ValidHand <selector>[/Minus.N or /Plus.N] (count cards in a player's hand, with arithmetic modifier) | WORKING | 2026-05-31_#2546(pending) | (fixed) | Black Vise |
+| Count$ValidHand <selector>[/Minus.N or /Plus.N] (count cards in a player's hand, with arithmetic modifier) | WORKING | 2026-05-31_#2546(34f76ca3) | (fixed) | Black Vise |
 | DB$ Destroy NoRegen$ True (can't be regenerated)| WORKING  | 2026-05-28_#2360(c5681a91) | (none)      | The Abyss        |
 | ChangeZone Origin$ Stack Destination$ Exile     | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | RememberChanged$ True + Defined$ Remembered      | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
