@@ -2822,6 +2822,9 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
     let card_db = CardDatabase::new(cardsfolder);
     let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
 
+    // Capture the gamelog so we can assert on the triggered lifegain line (mtg-r9po1).
+    game.logger.enable_capture();
+
     // Set deterministic seed
     game.seed_rng(42);
 
@@ -2888,8 +2891,30 @@ async fn test_spirit_link_aura_targeting() -> Result<()> {
         }
     }
 
-    // Note: We don't require specific assertions since the AI might make different decisions
-    // But we verify the game can progress with Aura casting
+    // mtg-r9po1: Spirit Link's triggered pseudo-lifelink must fire. The AI casts
+    // Spirit Link onto Savannah Lions and attacks; the 2 combat damage dealt by
+    // the enchanted creature must gain the Aura's controller 2 life per attack.
+    assert!(spirit_link_attached, "Spirit Link should be attached to Savannah Lions");
+
+    let p0_life_after = game_loop.game.get_player(p0_id)?.life;
+    assert!(
+        p0_life_after > p0_life_before,
+        "Spirit Link should have gained P0 life (before={}, after={}); triggered lifelink must fire",
+        p0_life_before,
+        p0_life_after
+    );
+
+    // The gamelog must contain the triggered life-gain evidence (no sentinels).
+    let logs = game_loop.game.logger.logs();
+    let gained_line = logs
+        .iter()
+        .any(|l| l.message.contains("Player 1 gains") && l.message.contains("life"));
+    assert!(
+        gained_line,
+        "Expected a 'Player 1 gains N life' log line from Spirit Link's trigger. Logs:\n{}",
+        logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n")
+    );
+
     assert!(result.turns_played >= 1, "Game should progress at least 1 turn");
 
     Ok(())
@@ -4148,5 +4173,88 @@ async fn test_timetwister_shuffles_hand_graveyard_and_draws_seven() -> Result<()
     let p2_draws = logs.iter().filter(|l| l.message.contains("Player 2 draws")).count();
     assert_eq!(p1_draws, 7, "P1 must draw 7 (logged). Logs:\n{joined}");
     assert_eq!(p2_draws, 7, "P2 must draw 7 (logged). Logs:\n{joined}");
+    Ok(())
+}
+
+/// Test Fellwar Stone's reflected mana ability (mtg-ontwf).
+///
+/// "{T}: Add one mana of any color that a land an opponent controls could
+/// produce." The opponent (P1) controls a Forest and an Island, so Fellwar
+/// Stone's reflected color set is {G, U} — it must be able to produce green and
+/// blue, but NOT red (no opponent land produces red). Verifies (a) the static
+/// cache recognizes Fellwar Stone as an any-color mana source, and (b) the
+/// activation path constrains the produced color to the reflected set.
+///
+/// Reproducer:
+/// ```sh
+/// ./target/release/mtg tui --start-state test_puzzles/fellwar_stone_reflected_mana.pzl \
+///   --p1=heuristic --p2=zero --seed 42 --verbosity 3
+/// ```
+/// Expected: `Tap Fellwar Stone for {G}` followed by Llanowar Elves being cast.
+#[tokio::test]
+async fn test_fellwar_stone_reflected_mana() -> Result<()> {
+    use mtg_engine::core::ManaCost;
+
+    let cardsfolder = require_cardsfolder();
+
+    let puzzle_path = PathBuf::from("../test_puzzles/fellwar_stone_reflected_mana.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.logger.enable_capture();
+    game.seed_rng(42);
+
+    let players: Vec<_> = game.players.iter().map(|p| p.id).collect();
+    let p0_id = players[0]; // controls Fellwar Stone
+    let p1_id = players[1]; // controls Forest + Island
+
+    // Locate Fellwar Stone.
+    let stone_id = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&id| game.cards.try_get(id).map(|c| (id, c)))
+        .find(|(_, c)| c.name.as_str() == "Fellwar Stone")
+        .map(|(id, _)| id)
+        .expect("Fellwar Stone should be on the battlefield");
+
+    // (a) Static cache: Fellwar Stone must be recognized as an any-color mana
+    // source (upper bound) — not dropped as a non-mana artifact.
+    let stone = game.cards.get(stone_id)?;
+    assert!(
+        stone.definition.cache.is_mana_source,
+        "Fellwar Stone must be a mana source (ManaReflected should derive AnyColor)"
+    );
+    assert!(
+        matches!(
+            stone.definition.cache.mana_production.kind,
+            mtg_engine::core::ManaProductionKind::AnyColor
+        ),
+        "Fellwar Stone's cached production should be AnyColor (upper bound). Got: {:?}",
+        stone.definition.cache.mana_production.kind
+    );
+
+    // (b) Reflected set = {G, U} from Forest + Island. Tap for a GREEN cost hint
+    // and confirm it produces green (in the reflected set).
+    let _ = p1_id; // opponent referenced via reflected-set derivation
+    let green_hint = ManaCost {
+        green: 1,
+        ..ManaCost::default()
+    };
+    game.tap_for_mana_for_cost(p0_id, stone_id, &green_hint)?;
+    let pool = &game.get_player(p0_id)?.mana_pool;
+    assert_eq!(pool.green, 1, "Fellwar Stone must produce {{G}} (Forest is reflected)");
+    assert_eq!(pool.red, 0, "Fellwar Stone must NOT produce {{R}} (no opp red land)");
+
+    // The gamelog must show the tap producing green (no sentinel).
+    let logs = game.logger.logs();
+    let joined: String = logs.iter().map(|l| l.message.clone()).collect::<Vec<_>>().join("\n");
+    assert!(
+        logs.iter().any(|l| l.message.contains("Tap Fellwar Stone for {G}")),
+        "Expected 'Tap Fellwar Stone for {{G}}' in log. Logs:\n{joined}"
+    );
+
     Ok(())
 }

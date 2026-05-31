@@ -1,67 +1,61 @@
 ---
 title: 'Bug: T:Mode$ DamageDealtOnce + ValidSource$ Card.AttachedBy + TriggerCount$DamageAmount (triggered pseudo-lifelink) unsupported'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T23:35:49.101624331+00:00
-updated_at: 2026-05-30T23:35:49.101624331+00:00
+updated_at: 2026-05-31T03:48:21.345119433+00:00
 ---
 
 # Description
 
-Engine gap blocking Spirit Link (mtg-544) and any pre-modern 'triggered lifelink' aura/permanent.
+RESOLVED (WORKING) 2026-05-30, compat-wave18-triggers.
 
-Filed: 2026-05-30_#2530(199b91e1), compat-wave13-thedeck.
+Spirit Link's triggered pseudo-lifelink now fires. Implemented as GENERAL
+damage-dealt-trigger machinery (lifts other "deals damage -> do X" attached
+permanents, not just Spirit Link):
 
-Card pattern (Spirit Link, cardsfolder/s/spirit_link.txt):
-  K:Enchant:Creature
-  T:Mode$ DamageDealtOnce | ValidSource$ Card.AttachedBy | Execute$ TrigGain
-    | TriggerZones$ Battlefield
-    | TriggerDescription$ Whenever enchanted creature deals damage, you gain that much life.
-  SVar:TrigGain:DB$ GainLife | Defined$ You | LifeAmount$ X
-  SVar:X:TriggerCount$DamageAmount
+1. Trigger MODE 'DamageDealtOnce' now parsed (loader/card.rs parse_triggers):
+   maps to TriggerEvent::DealsCombatDamage (same firing site as DamageDone),
+   resolves the Execute$ SVar chain via extract_effects_from_svar.
 
-THREE missing pieces (all in the trigger subsystem):
+2. ValidSource$ Card.AttachedBy now resolved: new Trigger.requires_attached_source
+   flag (core/effects.rs). check_triggers filters: the trigger fires only when
+   the event source == the trigger card's attached_to (the enchanted creature).
+   So the Aura's trigger fires for its host, not for every creature.
 
-1. Trigger MODE 'DamageDealtOnce' is not parsed. mtg-engine/src/loader/card.rs
-   parse_triggers() handles 'DamageDone' (→ TriggerEvent::DealsCombatDamage) but
-   NOT 'DamageDealtOnce'. DamageDealtOnce aggregates all simultaneous damage from
-   the source into ONE trigger (lifelink-like, CR 702.15-ish batching). Result:
-   the T: line is silently dropped, the aura has no trigger.
+3. TriggerCount$DamageAmount plumbed: DynamicAmount::parse now recognizes
+   SVar:X:TriggerCount$DamageAmount -> DynamicAmount::DamageDealt;
+   extract_effects_from_svar routes a dynamic LifeAmount$ through
+   gain_life_dynamic_from_params (previously silently dropped). New
+   TriggerContext.damage_amount carries the damage; check_triggers_with_damage
+   threads it from the combat firing site (combat.rs). resolve_effect_placeholder
+   converts GainLifeDynamic{DamageDealt} -> GainLife{controller, damage} at fire
+   time. Also added a gamelog line to the fixed Effect::GainLife arm so the gain
+   is visible (closes a log gap; LoseLife already logged).
 
-2. ValidSource$ Card.AttachedBy is not resolved for trigger firing. The trigger
-   lives on the AURA but must fire when the ENCHANTED CREATURE (the card the aura
-   is attached to) deals damage. check_triggers() (actions/mod.rs ~6136) only has
-   trigger_self_only / requires_other / requires_landfall filters; there is no
-   'fires when event_source == the card I'm attached to' filter. Need a new
-   trigger flag (e.g. requires_attached_source) + a check that the trigger card's
-   attachment target == source_card_id.
+Game-log evidence (puzzle test_puzzles/spirit_link_aura.pzl):
+  Savannah Lions (6) deals 2 damage to Player 2 (life: 18)
+  Player 1 gains 2 life (life: 12)
+  ... second attack ...
+  Player 1 gains 2 life (life: 14)
+P0 (Spirit Link controller) goes 10 -> 14 over two 2-damage attacks.
 
-3. TriggerCount$DamageAmount is not plumbed. The GainLife amount must equal the
-   damage just dealt. TriggerContext (actions/triggers.rs) carries creature_power
-   etc. but NOT a damage_amount. The combat firing site
-   (actions/combat.rs ~864, where it tracks creature_id→(target,damage_amount) and
-   calls check_triggers(DealsCombatDamage, creature_id)) must thread the damage
-   amount into a new TriggerContext.damage_amount, and resolve_effect_placeholder
-   must fill GainLife { amount } from it (a DynamicAmount::DamageDealt-style hook —
-   note DynamicAmount::DamageDealt already exists in core/effects.rs but is only
-   reserved for Drain Life, mtg-501). Also non-combat damage (e.g. a pinger
-   enchanted) should trigger too; combat is the primary case.
-
-Affected cards (cross-deck lift): Spirit Link (mtg-544; decks 02_thedeck mtg-413,
-03_robots mtg-559, 06_troll_disk mtg-562). Other pre-keyword lifelink permanents
-share the pattern.
-
-Repro (lifegain does NOT fire today — Player 1 stays at 15):
+Reproducer:
 ```sh
-## puzzle: p0battlefield=Grizzly Bears|id=10; Spirit Link|id=11|AttachedTo:10  (p0life=15)
-./target/release/mtg tui --start-state <puzzle> --p1=fixed --p2=zero \
-  --p1-fixed-inputs='attack Grizzly Bears;pass;pass;pass;pass;pass' \
-  --stop-on-choice=12 --seed 42 --verbosity 3
+cargo test --release --features network --test puzzle_e2e test_spirit_link_aura_targeting -- --nocapture
 ```
-Observed: 'Grizzly Bears (3) deals 2 damage to Player 2'; NO 'Player 1 gains 2 life' line; P1 life unchanged at 15.
+Expected: two "Player 1 gains 2 life" lines; P0 life 10 -> 14.
 
-Suggested approach: model as a general triggered-lifelink construct reusing the
-existing DynamicAmount::DamageDealt enum + a new TriggerContext.damage_amount and
-a requires_attached_source trigger flag, so it lifts all 'gain that much life when
-<source> deals damage' cards, not just Spirit Link.
+Tests:
+- Parser-shape unit: test_card_compat_spirit_link (mtg-engine/src/game/actions/tests/effects.rs)
+  asserts DealsCombatDamage trigger present, !trigger_self_only,
+  requires_attached_source, and GainLifeDynamic{DamageDealt} effect.
+- E2E: test_spirit_link_aura_targeting (mtg-engine/tests/puzzle_e2e.rs) now
+  asserts P0 life increases and the "Player 1 gains N life" log line.
+
+EFFECT_SUPPORT.md: DamageDealtOnce ... TriggerCount$DamageAmount row -> WORKING.
+
+MTG Rules Review verdict: PASS (see commit message). CR 119.3 (life gain from
+damage), CR 603.2 (trigger events), CR 608.2 (resolution). No hidden info, no
+controller-layer crossing, deterministic.

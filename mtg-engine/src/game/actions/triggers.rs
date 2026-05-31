@@ -49,6 +49,11 @@ pub struct TriggerContext {
 
     /// For CardDrawn triggers: the player who drew the card
     pub drawing_player: Option<PlayerId>,
+
+    /// For damage-dealt triggers (Spirit Link `TriggerCount$DamageAmount`): the
+    /// amount of damage the event source just dealt this combat/resolution.
+    /// `None` for triggers that carry no damage amount.
+    pub damage_amount: Option<i32>,
 }
 
 impl TriggerContext {
@@ -63,7 +68,14 @@ impl TriggerContext {
             creature_power: 0,
             sacrificed_power: 0,
             drawing_player: None,
+            damage_amount: None,
         }
+    }
+
+    /// Builder method to set the damage amount (for damage-dealt triggers)
+    pub fn with_damage_amount(mut self, amount: i32) -> Self {
+        self.damage_amount = Some(amount);
+        self
     }
 
     /// Builder method to set the event source
@@ -171,6 +183,23 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
         Effect::GainLife { player, amount } if player.is_placeholder() => Effect::GainLife {
             player: ctx.controller,
             amount: *amount,
+        },
+
+        // Damage-driven life gain fired from a trigger (Spirit Link: "you gain
+        // that much life"). The trigger context carries the damage amount the
+        // event source just dealt (TriggerCount$DamageAmount). Resolve to a
+        // concrete GainLife for the controller here, since the damage amount is
+        // only known at the trigger firing site (not at later execute time).
+        // `Defined$ You` -> placeholder player -> the trigger's controller.
+        Effect::GainLifeDynamic {
+            player,
+            amount: crate::core::DynamicAmount::DamageDealt,
+            ..
+        } if player.is_placeholder() => Effect::GainLife {
+            player: ctx.controller,
+            // CR 119.4: a player gains 0 (never negative) life. damage_amount is
+            // always >= 0 in practice; clamp defensively.
+            amount: ctx.damage_amount.unwrap_or(0).max(0),
         },
 
         Effect::Mill { player, count } if player.is_placeholder() => Effect::Mill {

@@ -865,10 +865,12 @@ impl GameState {
         // MTG Rule 702.18: "Whenever this creature deals combat damage to a player..."
         // Sort by card ID for deterministic trigger ordering
         creatures_that_dealt_player_damage.sort_by_key(|(card_id, _, _)| card_id.as_u32());
-        for (creature_id, _target_player, _damage) in creatures_that_dealt_player_damage {
+        for (creature_id, _target_player, damage) in creatures_that_dealt_player_damage {
             // Only fire if creature is still on the battlefield
             if self.battlefield.contains(creature_id) {
-                self.check_triggers(TriggerEvent::DealsCombatDamage, creature_id)?;
+                // Thread the damage amount so damage-driven triggers (Spirit
+                // Link's "you gain that much life") read TriggerCount$DamageAmount.
+                self.check_triggers_with_damage(TriggerEvent::DealsCombatDamage, creature_id, Some(damage))?;
             }
         }
 

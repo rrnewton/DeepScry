@@ -3178,7 +3178,17 @@ impl GameState {
                 let prior_log_size = self.logger.log_count();
 
                 let p = self.get_player_mut(*player)?;
+                let player_name = p.name.clone();
                 p.gain_life(*amount);
+                let new_life = p.life;
+
+                // Emit a gamelog line so reproducers can verify the life gain
+                // (CR 119.3). A zero-life gain still resolved but changed nothing;
+                // skip the line in that case to avoid noisy "gains 0 life" output.
+                if *amount > 0 {
+                    self.logger
+                        .gamelog(&format!("{} gains {} life (life: {})", player_name, amount, new_life));
+                }
 
                 // Log the life gain
                 self.undo_log.log(
@@ -6171,8 +6181,27 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if effect execution fails.
-    #[allow(clippy::wildcard_enum_match_arm)]
     pub fn check_triggers(&mut self, event: TriggerEvent, source_card_id: CardId) -> Result<()> {
+        self.check_triggers_with_damage(event, source_card_id, None)
+    }
+
+    /// Like [`check_triggers`](Self::check_triggers) but carries the amount of
+    /// damage the event source just dealt, for damage-driven triggers such as
+    /// Spirit Link's "you gain that much life" (`TriggerCount$DamageAmount`).
+    ///
+    /// `damage_amount` is `None` for non-damage events; the combat
+    /// `DealsCombatDamage` firing site passes the aggregated per-creature damage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    #[allow(clippy::wildcard_enum_match_arm)]
+    pub fn check_triggers_with_damage(
+        &mut self,
+        event: TriggerEvent,
+        source_card_id: CardId,
+        damage_amount: Option<i32>,
+    ) -> Result<()> {
         use crate::core::Trigger;
 
         // Info needed to check trigger payability and execute costs
@@ -6206,6 +6235,7 @@ impl GameState {
             .flat_map(|(card_id, card)| {
                 let controller = card.controller;
                 let card_name = &card.name;
+                let attached_to = card.attached_to;
 
                 card.triggers
                     .iter()
@@ -6217,6 +6247,13 @@ impl GameState {
 
                         // Self-only triggers only fire when the trigger source is the event source
                         if trigger.trigger_self_only && card_id != source_card_id {
+                            return false;
+                        }
+
+                        // Attached-source triggers (Aura/Equipment watching its host,
+                        // e.g. Spirit Link `ValidSource$ Card.AttachedBy`) only fire
+                        // when the event source is the permanent this card is attached to.
+                        if trigger.requires_attached_source && attached_to != Some(source_card_id) {
                             return false;
                         }
 
@@ -6349,6 +6386,12 @@ impl GameState {
                 .with_sacrificed_power(sacrificed_power);
             let ctx = if let Some(opp) = opponent {
                 ctx.with_opponent(opp)
+            } else {
+                ctx
+            };
+            // Thread the damage amount for damage-driven triggers (Spirit Link).
+            let ctx = if let Some(dmg) = damage_amount {
+                ctx.with_damage_amount(dmg)
             } else {
                 ctx
             };
@@ -7763,6 +7806,54 @@ impl GameState {
         self.tap_for_mana_for_cost(player_id, card_id, &empty_cost)
     }
 
+    /// Compute the set of colors that lands controlled by `player_id`'s
+    /// opponents could produce — the "reflected" color set for Fellwar Stone's
+    /// `AB$ ManaReflected | Valid$ Land.OppCtrl | ReflectProperty$ Produce`
+    /// (CR 106.7 / Fellwar Stone Oracle). Derived purely from public battlefield
+    /// state (each land's static mana-production cache), so it is
+    /// information-independent and identical on server and every client.
+    ///
+    /// A land that itself produces "any color" contributes all five colors. A
+    /// land that produces only colorless contributes nothing (colorless is not a
+    /// color; CR 105.1). The result is the union across all matching lands.
+    fn reflected_mana_colors(&self, player_id: PlayerId) -> crate::game::mana_colors::ManaColors {
+        use crate::core::{ManaColor, ManaProductionKind};
+        use crate::game::mana_colors::ManaColors;
+
+        let mut colors = ManaColors::new();
+        for &land_id in self.battlefield.cards.iter() {
+            let Some(card) = self.cards.try_get(land_id) else {
+                continue;
+            };
+            // Valid$ Land.OppCtrl: lands controlled by an opponent of player_id.
+            if !card.is_land() || card.controller == player_id {
+                continue;
+            }
+            match card.definition.cache.mana_production.kind {
+                ManaProductionKind::Fixed(c) => colors.insert(c),
+                ManaProductionKind::Choice(set) => {
+                    for c in set.iter() {
+                        colors.insert(c);
+                    }
+                }
+                ManaProductionKind::AnyColor => {
+                    for c in [
+                        ManaColor::White,
+                        ManaColor::Blue,
+                        ManaColor::Black,
+                        ManaColor::Red,
+                        ManaColor::Green,
+                    ] {
+                        colors.insert(c);
+                    }
+                }
+                // Colorless lands (e.g. Wastes) produce no color (CR 105.1).
+                ManaProductionKind::Colorless => {}
+            }
+        }
+        colors
+    }
+
     /// Tap a permanent for mana with a cost hint to guide color production
     ///
     /// This method handles both:
@@ -7876,26 +7967,86 @@ impl GameState {
                 1
             };
 
+            // Reflected mana (Fellwar Stone): the produced color is constrained
+            // to the set of colors opponents' lands could produce. Detect the
+            // flag and compute the reflected color set BEFORE borrowing the
+            // player mutably (the helper borrows self immutably).
+            let is_reflected = self
+                .cards
+                .get(card_id)
+                .map(|c| {
+                    c.activated_abilities
+                        .iter()
+                        .any(|ab| ab.is_mana_ability && ab.produces_reflected_mana)
+                })
+                .unwrap_or(false);
+            let reflected_colors = if is_reflected {
+                Some(self.reflected_mana_colors(player_id))
+            } else {
+                None
+            };
+
             // Capture log size before mana addition (before get_player_mut to avoid borrow issues)
             let prior_log_size = self.logger.log_count();
 
             let player = self.get_player_mut(player_id)?;
 
             if is_any_color {
-                // Choose color based on cost hint
-                let color = if cost_hint.white > 0 {
-                    crate::core::Color::White
+                // Choose color based on cost hint. For reflected sources, the
+                // choice is restricted to colors the opponents' lands could
+                // produce (CR 106.7); a cost-hint color outside that set falls
+                // back to the cheapest available reflected color so we never
+                // fabricate a color the source could not produce.
+                use crate::core::ManaColor;
+                let hint_color = if cost_hint.white > 0 {
+                    Some(crate::core::Color::White)
                 } else if cost_hint.blue > 0 {
-                    crate::core::Color::Blue
+                    Some(crate::core::Color::Blue)
                 } else if cost_hint.black > 0 {
-                    crate::core::Color::Black
+                    Some(crate::core::Color::Black)
                 } else if cost_hint.red > 0 {
-                    crate::core::Color::Red
+                    Some(crate::core::Color::Red)
                 } else if cost_hint.green > 0 {
-                    crate::core::Color::Green
+                    Some(crate::core::Color::Green)
                 } else {
-                    // Default to green if no specific color needed
-                    crate::core::Color::Green
+                    None
+                };
+
+                // Map between ManaColor (reflected set) and Color (mana pool).
+                let to_color = |mc: ManaColor| match mc {
+                    ManaColor::White => crate::core::Color::White,
+                    ManaColor::Blue => crate::core::Color::Blue,
+                    ManaColor::Black => crate::core::Color::Black,
+                    ManaColor::Red => crate::core::Color::Red,
+                    ManaColor::Green => crate::core::Color::Green,
+                };
+                let hint_mana_color = hint_color.and_then(|c| match c {
+                    crate::core::Color::White => Some(ManaColor::White),
+                    crate::core::Color::Blue => Some(ManaColor::Blue),
+                    crate::core::Color::Black => Some(ManaColor::Black),
+                    crate::core::Color::Red => Some(ManaColor::Red),
+                    crate::core::Color::Green => Some(ManaColor::Green),
+                    crate::core::Color::Colorless => None,
+                });
+
+                let color = match &reflected_colors {
+                    Some(set) => {
+                        // Prefer the hinted color if the reflected set allows it,
+                        // else the first reflected color in canonical WUBRG order,
+                        // else green as a harmless default (set was empty — e.g.
+                        // opponents control only colorless lands or none).
+                        if let Some(hint) = hint_mana_color {
+                            if set.contains(hint) {
+                                to_color(hint)
+                            } else {
+                                set.iter().next().map(to_color).unwrap_or(crate::core::Color::Green)
+                            }
+                        } else {
+                            set.iter().next().map(to_color).unwrap_or(crate::core::Color::Green)
+                        }
+                    }
+                    // Non-reflected any-color source: honor hint, default green.
+                    None => hint_color.unwrap_or(crate::core::Color::Green),
                 };
 
                 // Use the per-activation amount captured above before the

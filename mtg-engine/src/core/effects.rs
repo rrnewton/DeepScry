@@ -175,8 +175,10 @@ impl DynamicAmount {
     /// through the card's SVars, into a `DynamicAmount`.
     ///
     /// Recognised SVar bodies (tokenized, never substring-matched):
-    /// - `Targeted$CardPower`    -> `TargetPower`
-    /// - `Targeted$CardManaCost` -> `TargetManaValue`
+    /// - `Targeted$CardPower`      -> `TargetPower`
+    /// - `Targeted$CardManaCost`   -> `TargetManaValue`
+    /// - `TriggerCount$DamageAmount` -> `DamageDealt` (Spirit Link's triggered
+    ///   pseudo-lifelink: "you gain that much life" reads the damage just dealt)
     ///
     /// A literal integer parses to `Fixed`. Anything unrecognised returns
     /// `None` so the caller can fall back to the existing fixed-amount path.
@@ -188,14 +190,14 @@ impl DynamicAmount {
 
         // Variable reference (X / Y / Z). Resolve through the card's SVars.
         let svar_body = svars.get(trimmed)?;
-        // SVar bodies for these references are `Targeted$<Characteristic>`.
+        // SVar bodies for these references are `<Selector>$<Characteristic>`.
         let (selector, characteristic) = svar_body.split_once('$')?;
-        if selector.trim() != "Targeted" {
-            return None;
-        }
-        match characteristic.trim() {
-            "CardPower" => Some(DynamicAmount::TargetPower),
-            "CardManaCost" => Some(DynamicAmount::TargetManaValue),
+        match (selector.trim(), characteristic.trim()) {
+            ("Targeted", "CardPower") => Some(DynamicAmount::TargetPower),
+            ("Targeted", "CardManaCost") => Some(DynamicAmount::TargetManaValue),
+            // Spirit Link: SVar:X:TriggerCount$DamageAmount — the amount of
+            // damage the trigger event just reported.
+            ("TriggerCount", "DamageAmount") => Some(DynamicAmount::DamageDealt),
             _ => None,
         }
     }
@@ -2026,6 +2028,14 @@ pub struct Trigger {
     #[serde(default)]
     pub requires_noncreature: bool,
 
+    /// When true, the trigger fires only when the event source is the
+    /// permanent this trigger's card is *attached to* (`ValidSource$
+    /// Card.AttachedBy`). Used by Auras/Equipment that watch the host's
+    /// actions, e.g. Spirit Link's "Whenever enchanted creature deals damage,
+    /// you gain that much life." The check is `attached_to == event_source`.
+    #[serde(default)]
+    pub requires_attached_source: bool,
+
     /// For AttackersDeclared triggers: keyword required on attacking creatures
     /// Corresponds to ValidAttackers$ Creature.withFlying (or other keywords)
     /// None means any attacking creature triggers it
@@ -2069,6 +2079,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            requires_attached_source: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2090,6 +2101,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            requires_attached_source: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2117,6 +2129,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            requires_attached_source: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -2139,6 +2152,7 @@ impl Trigger {
             requires_landfall: false,
             controller_turn_only: false,
             requires_noncreature: false,
+            requires_attached_source: false,
             valid_attackers_keyword: None,
             trigger_zones: smallvec::SmallVec::new(),
             present_self_condition: None,
@@ -3372,6 +3386,15 @@ pub struct ActivatedAbility {
     #[serde(default)]
     pub activation_condition: Option<crate::core::ActivationCondition>,
 
+    /// True for `AB$ ManaReflected` abilities (Fellwar Stone: "Add one mana of
+    /// any color that a land an opponent controls could produce"). The static
+    /// mana-production cache treats such a source as AnyColor (an upper bound),
+    /// but at activation time the produced color is constrained to the set of
+    /// colors the `Valid$` lands could actually produce — computed from public
+    /// battlefield state, so it stays information-independent / deterministic.
+    #[serde(default)]
+    pub produces_reflected_mana: bool,
+
     /// Cache for expensive string operations (computed at creation time)
     pub cache: AbilityCache,
 }
@@ -3390,6 +3413,7 @@ impl ActivatedAbility {
             your_turn_only: false, // Default to any turn
             exhaust: false,        // Default to non-exhaust
             activation_condition: None,
+            produces_reflected_mana: false,
             cache,
         }
     }
@@ -3407,6 +3431,7 @@ impl ActivatedAbility {
             your_turn_only: false, // sorcery_speed implies your turn already
             exhaust: false,
             activation_condition: None,
+            produces_reflected_mana: false,
             cache,
         }
     }
@@ -3430,6 +3455,7 @@ impl ActivatedAbility {
             your_turn_only: true, // Your turn only
             exhaust: false,
             activation_condition: None,
+            produces_reflected_mana: false,
             cache,
         }
     }

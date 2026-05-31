@@ -1852,6 +1852,17 @@ impl CardDefinition {
 
         let mut effects = Vec::new();
 
+        // A `DB$ GainLife` with a dynamic `LifeAmount$` (e.g. Spirit Link's
+        // `LifeAmount$ X` / `SVar:X:TriggerCount$DamageAmount`, or Swords-style
+        // `Targeted$CardPower`) is not expressible as a fixed `Effect::GainLife`
+        // — params_to_effect would silently drop it (get_i32 fails on "X"). Route
+        // it through the SVar-aware dynamic builder first (DRY with the
+        // SubAbility-chain path in follow_sub_ability_chain).
+        if let Some(effect) = self.gain_life_dynamic_from_params(svar_params) {
+            effects.push(effect);
+            return effects;
+        }
+
         // First, try the standard params_to_effect conversion
         if let Some(effect) = params_to_effect(svar_params) {
             // Wrap in a counter-gated conditional when the SVar carries
@@ -2865,6 +2876,69 @@ impl CardDefinition {
 
                 triggers.push(trigger);
             }
+
+            // Parse DamageDealtOnce triggers (Mode$ DamageDealtOnce)
+            // Example (Spirit Link):
+            //   T:Mode$ DamageDealtOnce | ValidSource$ Card.AttachedBy | Execute$ TrigGain
+            //     | TriggerZones$ Battlefield
+            //     | TriggerDescription$ Whenever enchanted creature deals damage, you gain that much life.
+            // DamageDealtOnce aggregates all simultaneous damage from the source into a
+            // single trigger (lifelink-batched, CR 119.3/702.15-style). We model it on
+            // the same DealsCombatDamage firing site as DamageDone but with the
+            // damage-amount available to the executed effects via TriggerCount$DamageAmount.
+            if mode == Some("DamageDealtOnce") {
+                // Resolve the executed effects (the Execute$ SVar chain). This reuses
+                // extract_effects_from_svar so a `DB$ GainLife | LifeAmount$ X` with
+                // `SVar:X:TriggerCount$DamageAmount` becomes a dynamic GainLife driven
+                // by the damage just dealt.
+                let mut effects = Vec::new();
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                // ValidSource$ Card.AttachedBy -> fire when the host (the permanent
+                // this card is attached to) deals damage. Other ValidSource patterns
+                // (Card.Self) fall back to the self-only case.
+                let valid_source = params.get("ValidSource").map(|s| s.as_str());
+                let attached_source = valid_source == Some("Card.AttachedBy");
+                let self_only = matches!(valid_source, Some("Card.Self" | "Creature.Self") | None);
+
+                let optional = params.contains_key("OptionalDecider");
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever enchanted permanent deals damage".to_string());
+
+                let mut trigger = if self_only {
+                    if optional {
+                        Trigger::new_optional(TriggerEvent::DealsCombatDamage, effects, description)
+                    } else {
+                        Trigger::new(TriggerEvent::DealsCombatDamage, effects, description)
+                    }
+                } else {
+                    let mut t = Trigger::new_any(TriggerEvent::DealsCombatDamage, effects, description);
+                    t.optional = optional;
+                    t
+                };
+
+                trigger.requires_attached_source = attached_source;
+
+                // TriggerZones$ (defaults to [Battlefield]); the Aura lives on the
+                // battlefield while watching its host.
+                trigger.trigger_zones = params
+                    .get("TriggerZones")
+                    .map(|s| {
+                        s.split(',')
+                            .filter_map(|z| crate::zones::Zone::from_str_lenient(z.trim()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                triggers.push(trigger);
+            }
         }
 
         triggers
@@ -2923,7 +2997,11 @@ impl CardDefinition {
                 .get("Planeswalker")
                 .map(|s| s.eq_ignore_ascii_case("True"))
                 .unwrap_or(false);
-            let is_mana_ability = matches!(params.api_type, ApiType::Mana) && !is_planeswalker_ability;
+            // ManaReflected (Fellwar Stone) is also a mana ability (CR 605): it
+            // adds mana, doesn't use the stack, and has no target.
+            let is_reflected_mana = matches!(params.api_type, ApiType::ManaReflected);
+            let is_mana_ability =
+                matches!(params.api_type, ApiType::Mana | ApiType::ManaReflected) && !is_planeswalker_ability;
 
             // Try to convert parameters to effects (with SVar resolution for StaticAbilities$)
             let mut effects = if let Some(effect) = params_to_effect_with_svars(&params, &self.svars) {
@@ -2982,6 +3060,11 @@ impl CardDefinition {
                 // Set exhaust flag if applicable
                 if is_exhaust {
                     ability.exhaust = true;
+                }
+                // Flag reflected-mana abilities (Fellwar Stone) so the activation
+                // path constrains the produced color to the reflected set.
+                if is_reflected_mana {
+                    ability.produces_reflected_mana = true;
                 }
                 ability.activation_condition = activation_condition;
                 abilities.push(ability);

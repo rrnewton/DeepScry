@@ -1,0 +1,24 @@
+[metadata]
+Name:Fellwar Stone Reflected Mana
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Fellwar Stone ({T}: Add one mana of any color a land an opponent controls could produce). P0 controls Fellwar Stone; the opponent (P1) controls a Forest and an Island, so Fellwar Stone can produce {G} or {U} (the reflected set) but not {R}. P0 has Llanowar Elves ({G}) in hand and taps Fellwar Stone for {G} to cast it.
+
+[state]
+turn=1
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Llanowar Elves
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Fellwar Stone
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=Forest; Island
+p1exile=

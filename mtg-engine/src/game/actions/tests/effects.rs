@@ -3122,6 +3122,63 @@ mod tests {
         );
     }
 
+    /// Card compat: Fellwar Stone (cardsfolder/f/fellwar_stone.txt) — mtg-ontwf
+    ///
+    /// Script:
+    ///   ManaCost:2
+    ///   Types:Artifact
+    ///   A:AB$ ManaReflected | Cost$ T | ColorOrType$ Color | Valid$ Land.OppCtrl
+    ///     | ReflectProperty$ Produce | SpellDescription$ Add one mana of any color
+    ///       that a land an opponent controls could produce.
+    ///
+    /// Verifies (parser): {2} Artifact whose ManaReflected ability (a) parses as
+    /// a mana ability (CR 605), (b) carries an AddMana effect (no longer a no-op
+    /// silent drop), and (c) is flagged produces_reflected_mana so the activation
+    /// path constrains the produced color to the reflected set. The static cache
+    /// derives AnyColor (upper bound). Runtime color constraint is verified by
+    /// puzzle_e2e test_fellwar_stone_reflected_mana.
+    #[test]
+    fn test_card_compat_fellwar_stone() {
+        use crate::core::{Effect, ManaProductionKind};
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/f/fellwar_stone.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Fellwar Stone should load");
+        assert_eq!(def.name.as_str(), "Fellwar Stone");
+        assert_eq!(def.mana_cost.generic, 2, "Fellwar Stone costs {{2}}");
+        assert!(def.types.contains(&CardType::Artifact));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // The ManaReflected ability must parse as a mana ability that produces
+        // mana (AddMana) and is flagged reflected.
+        let reflected = card
+            .activated_abilities
+            .iter()
+            .find(|ab| ab.produces_reflected_mana)
+            .expect("Fellwar Stone must have a produces_reflected_mana ability (AB$ ManaReflected)");
+        assert!(
+            reflected.is_mana_ability,
+            "ManaReflected must be a mana ability (CR 605)"
+        );
+        assert!(
+            reflected.effects.iter().any(|e| matches!(e, Effect::AddMana { .. })),
+            "ManaReflected must carry an AddMana effect (not a silent no-op). Got: {:?}",
+            reflected.effects
+        );
+
+        // Static cache derives AnyColor (upper bound; the real set is dynamic).
+        assert!(
+            matches!(card.definition.cache.mana_production.kind, ManaProductionKind::AnyColor),
+            "Fellwar Stone's cached production should be AnyColor. Got: {:?}",
+            card.definition.cache.mana_production.kind
+        );
+    }
+
     /// Card compat: Strip Mine (cardsfolder/s/strip_mine.txt)
     ///
     /// Script:
@@ -6088,15 +6145,17 @@ mod tests {
     ///   SVar:TrigGain:DB$ GainLife | Defined$ You | LifeAmount$ X
     ///   SVar:X:TriggerCount$DamageAmount
     ///
-    /// PARTIAL (mtg-544): the aura side (cost, types, Enchant:Creature) parses
-    /// and the card casts + attaches correctly, but the "gain that much life
-    /// when enchanted creature deals damage" trigger is silently dropped — the
-    /// `DamageDealtOnce` mode + `Card.AttachedBy` source + `TriggerCount$DamageAmount`
-    /// amount are unsupported (engine gap mtg-r9po1). This test pins the
-    /// currently-correct parser shape (aura side) and documents the gap; update
-    /// it to assert the trigger once mtg-r9po1 lands.
+    /// WORKING (mtg-r9po1): the aura side (cost, types, Enchant:Creature)
+    /// parses, and the "gain that much life when enchanted creature deals
+    /// damage" trigger now parses into a DealsCombatDamage trigger that is
+    /// attached-source-filtered (ValidSource$ Card.AttachedBy ->
+    /// requires_attached_source) and carries a GainLifeDynamic { DamageDealt }
+    /// effect (LifeAmount$ X / SVar:X:TriggerCount$DamageAmount). A silent drop
+    /// of the T: line would leave the Aura with no triggers. Runtime lifegain is
+    /// verified by puzzle_e2e test_spirit_link_aura_targeting.
     #[test]
     fn test_card_compat_spirit_link() {
+        use crate::core::{DynamicAmount, TriggerEvent};
         use std::path::PathBuf;
 
         let path = PathBuf::from("../cardsfolder/s/spirit_link.txt");
@@ -6116,8 +6175,41 @@ mod tests {
             "Spirit Link must carry the Enchant keyword. Keywords: {:?}",
             card.keywords
         );
-        // TODO(mtg-r9po1): once DamageDealtOnce + Card.AttachedBy + TriggerCount$DamageAmount
-        // are supported, assert the card has the lifegain trigger here.
+        assert!(card.is_aura(), "Spirit Link should be an Aura");
+
+        // The DamageDealtOnce trigger must parse (not be silently dropped).
+        let dmg_trigger = card
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::DealsCombatDamage)
+            .expect(
+                "Spirit Link must have a DealsCombatDamage trigger from its \
+                 T:Mode$ DamageDealtOnce line; a silent parser drop leaves it empty",
+            );
+        assert!(
+            !dmg_trigger.trigger_self_only,
+            "ValidSource$ Card.AttachedBy must NOT be self-only (fires for the host, not the Aura)"
+        );
+        assert!(
+            dmg_trigger.requires_attached_source,
+            "ValidSource$ Card.AttachedBy must set requires_attached_source so the trigger \
+             only fires when the enchanted creature deals damage"
+        );
+        let has_dynamic_gain = dmg_trigger.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::GainLifeDynamic {
+                    amount: DynamicAmount::DamageDealt,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_dynamic_gain,
+            "Spirit Link's trigger must carry GainLifeDynamic {{ DamageDealt }} \
+             (LifeAmount$ X / SVar:X:TriggerCount$DamageAmount). Got: {:?}",
+            dmg_trigger.effects
+        );
     }
 
     /// Card compat: Grafted Skullcap (cardsfolder/g/grafted_skullcap.txt)

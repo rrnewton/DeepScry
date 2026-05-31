@@ -542,6 +542,37 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
+        ApiType::ManaReflected => {
+            // Reflected mana (Fellwar Stone): "Add one mana of any color that a
+            // land an opponent controls could produce."
+            //   A:AB$ ManaReflected | Cost$ T | ColorOrType$ Color
+            //     | Valid$ Land.OppCtrl | ReflectProperty$ Produce
+            // The set of producible colors is DYNAMIC (depends on opponents'
+            // lands at activation time), so the static cache cannot enumerate it.
+            // We model the upper bound as an any-color source (all five colors set
+            // to 1), exactly like `Produced$ Any`; the activation path
+            // (tap_for_mana_for_cost) intersects this with the actual reflected
+            // color set, flagged via ActivatedAbility::produces_reflected_mana.
+            //
+            // We only support the common Fellwar Stone shape here
+            // (ColorOrType$ Color, ReflectProperty$ Produce); other shapes fall
+            // through to no-op (still better than before — see mtg-ontwf).
+            use crate::core::ManaCost;
+            Some(Effect::AddMana {
+                player: PlayerId::new(0),
+                mana: ManaCost {
+                    white: 1,
+                    blue: 1,
+                    black: 1,
+                    red: 1,
+                    green: 1,
+                    ..ManaCost::default()
+                },
+                produces_chosen_color: false,
+                amount_var: None,
+            })
+        }
+
         ApiType::Balance => {
             // Balance effect: SP$ Balance | Valid$ Land/Creature | Zone$ Hand/Battlefield | SubAbility$ SvarName
             // Valid$ defaults to "Land" (most common use)

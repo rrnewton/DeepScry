@@ -48,7 +48,7 @@ workflow, row format, and update rules.
 | Drawn ValidCard$ Card.OppOwn Execute$ DB$ DealDamage Defined$ TriggeredPlayer    | WORKING | 2026-05-29_#2449(b5fd60b7) | (none)      | Underworld Dreams |
 | Phase Upkeep ValidPlayer$ Player Execute$ DB$ DealDamage Defined$ TriggeredPlayer NumDmg$ X (variable damage to active player, counted against that player) | WORKING | 2026-05-30_#2530(f7a005ca) | (fixed)   | Karma            |
 | Discarded ValidCard$ Card.Self ValidCause$ SpellAbility.OppCtrl Execute$ DB$ LoseLife (opponent-forced-discard punisher) | BROKEN | 2026-05-30_#2530(f7a005ca) | mtg-czz3f | Psychic Purge |
-| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura) | BROKEN | 2026-05-30_#2530(199b91e1) | mtg-r9po1 | Spirit Link |
+| DamageDealtOnce ValidSource$ Card.AttachedBy Execute$ GainLife LifeAmount$ TriggerCount$DamageAmount (triggered pseudo-lifelink aura) | WORKING | 2026-05-30_#2536(compat-wave18) | (fixed) | Spirit Link |
 | Phase Draw ValidPlayer$ You Execute$ DB$ Draw (beginning-of-your-draw-step: draw an additional card) | WORKING | 2026-05-30_#2532(4646ddd1) | (fixed) | Grafted Skullcap |
 | Phase Draw ValidPlayer$ You Execute$ AB$ ChooseCard Cost$ Draw<N/You> + RepeatEach + UnlessCost$ PayLife (draw-then-choose-then-pay-or-return) | PARTIAL | 2026-05-30_#2532(4646ddd1) | mtg-548 | Sylvan Library |
 
@@ -117,7 +117,7 @@ workflow, row format, and update rules.
     Mnemonic Nexus, Midnight Clock). Gamelog is now human-readable
     ("moves all cards from Hand+Graveyard to Library").
 | SP$ ChangeZoneAll ChangeType$ Artifact Origin$ Battlefield Destination$ Hand (mass owner-filtered bounce) | WORKING | 2026-05-30_#2533(b052ce01) | (none) | Hurkyl's Recall |
-| AB$ ManaReflected (reflected/filter mana, ReflectProperty$ Produce) | BROKEN | 2026-05-30_#2533(b052ce01) | mtg-ontwf | Fellwar Stone |
+| AB$ ManaReflected (reflected/filter mana, ReflectProperty$ Produce) | WORKING | 2026-05-30_#2536(compat-wave18) | (fixed) | Fellwar Stone |
 | SP$ DealDamage + SubAbility$ Effect chain + ReplaceDyingDefined$ (exile instead) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
 | SP$ DealDamage NumDmg$ X (DealDamageXPaid) at a creature — display target binding | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate, Blaze |
 | ReplaceDyingDefined$ ThisTargetedCard.Creature (exile if would die this turn) | WORKING | 2026-05-30_#2535(48fc49b8) | (fixed mtg-ioesm) | Disintegrate |
