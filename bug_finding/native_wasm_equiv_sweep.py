@@ -232,21 +232,22 @@ _WASM_RUN_JS = """
 async (cfg) => {
     const m = await window.__mtgEnsureBridge();
     const cardDb = new m.WasmCardDatabase();
-    const resp = await fetch('/data/decks.bin');
-    if (!resp.ok) return { error: `fetch decks.bin failed: ${resp.status}` };
+    // decks.bin is content-addressed (tokens+decks cache-skew fix): resolve the
+    // hashed name from the manifest, not the retired fixed /data/decks.bin.
+    const idxResp = await fetch('/data/sets/index.json');
+    if (!idxResp.ok) return { error: `fetch sets/index.json failed: ${idxResp.status}` };
+    const idx = await idxResp.json();
+    const resp = await fetch(`/data/${idx.decks}`);
+    if (!resp.ok) return { error: `fetch ${idx.decks} failed: ${resp.status}` };
     cardDb.load_decks(new Uint8Array(await resp.arrayBuffer()));
     const names = JSON.parse(cardDb.get_deck_names_json());
     if (!names.includes(cfg.deck)) {
         return { error: 'deck not in WASM data', requested: cfg.deck, available: names };
     }
-    const idxResp = await fetch('/data/sets/index.json');
-    if (idxResp.ok) {
-        const idx = await idxResp.json();
-        await Promise.all(idx.sets.map(async s => {
-            const r = await fetch(`/data/sets/${s.file}`);
-            if (r.ok) cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
-        }));
-    }
+    await Promise.all(idx.sets.map(async s => {
+        const r = await fetch(`/data/sets/${s.file}`);
+        if (r.ok) cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+    }));
     m.launch_game_session(
         cardDb, cfg.deck, cfg.deck, cfg.starting_life, BigInt(cfg.seed),
         m.WasmControllerType.Random, m.WasmControllerType.Random,
@@ -501,8 +502,16 @@ def wasm_available_deck_names(web_dir: Path) -> set[str] | None:
     bundle doesn't ship (rather than fail the whole sweep). Returns None if we
     can't determine the set (in which case we attempt every deck)."""
 
-    decks_bin = web_dir / "data" / "decks.bin"
-    if not decks_bin.exists():
+    # decks.bin is content-addressed (tokens+decks cache-skew fix): its hashed
+    # name lives in data/sets/index.json. Probe via the manifest.
+    index_json = web_dir / "data" / "sets" / "index.json"
+    if not index_json.exists():
+        return None
+    try:
+        decks_rel = json.loads(index_json.read_text())["decks"]
+    except (KeyError, ValueError):
+        return None
+    if not (web_dir / "data" / decks_rel).exists():
         return None
     # The bundle is a binary format; rather than parse it in Python we leave
     # name-validation to the WASM runner (which surfaces a clear error). This
@@ -585,7 +594,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    if not (web_dir / "data" / "decks.bin").exists():
+    # decks.bin is content-addressed (tokens+decks cache-skew fix): resolve via
+    # the manifest rather than the retired fixed web/data/decks.bin path.
+    _index_json = web_dir / "data" / "sets" / "index.json"
+    _decks_ok = False
+    if _index_json.exists():
+        try:
+            _decks_rel = json.loads(_index_json.read_text())["decks"]
+            _decks_ok = (web_dir / "data" / _decks_rel).exists()
+        except (KeyError, ValueError):
+            _decks_ok = False
+    if not _decks_ok:
         print(
             f"SETUP ERROR: WASM data not found at {web_dir / 'data'}.\n"
             "Generate it with: mtg export-wasm (or make wasm-dev).",

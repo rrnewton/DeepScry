@@ -472,11 +472,18 @@ class WasmPlaywrightProcess:
             async (cfg) => {
                 const m = await window.__mtgEnsureBridge();
 
-                // Build a card database and load the WASM decks.bin if needed.
+                // Build a card database. decks.bin is content-addressed
+                // (tokens+decks cache-skew fix): resolve the hashed name from
+                // data/sets/index.json instead of the retired fixed URL.
                 const cardDb = new m.WasmCardDatabase();
-                const resp = await fetch('/data/decks.bin');
+                const idxResp = await fetch('/data/sets/index.json');
+                if (!idxResp.ok) {
+                    return { error: `fetch sets/index.json failed: ${idxResp.status}` };
+                }
+                const idx = await idxResp.json();
+                const resp = await fetch(`/data/${idx.decks}`);
                 if (!resp.ok) {
-                    return { error: `fetch decks.bin failed: ${resp.status}` };
+                    return { error: `fetch ${idx.decks} failed: ${resp.status}` };
                 }
                 const bytes = new Uint8Array(await resp.arrayBuffer());
                 const deckCount = cardDb.load_decks(bytes);
@@ -495,14 +502,10 @@ class WasmPlaywrightProcess:
                 // card definition to be loaded before launching a game; the
                 // simplest deterministic approach for the agentplay harness
                 // is to fetch every set bin in parallel.
-                const idxResp = await fetch('/data/sets/index.json');
-                if (idxResp.ok) {
-                    const idx = await idxResp.json();
-                    await Promise.all(idx.sets.map(async s => {
-                        const r = await fetch(`/data/sets/${s.file}`);
-                        if (r.ok) cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
-                    }));
-                }
+                await Promise.all(idx.sets.map(async s => {
+                    const r = await fetch(`/data/sets/${s.file}`);
+                    if (r.ok) cardDb.load_set(new Uint8Array(await r.arrayBuffer()));
+                }));
 
                 // Map controller names to the WASM enum.
                 const ctrlMap = {

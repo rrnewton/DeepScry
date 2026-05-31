@@ -90,8 +90,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # Ensure the WASM bundle exists (build if missing, unless told not to).
+# decks.bin + tokens.bin are content-addressed (tokens+decks cache-skew fix):
+# their hashed names live in data/sets/index.json, so probe the manifest +
+# the bin it points at rather than the retired fixed `web/data/decks.bin`.
 # ---------------------------------------------------------------------------
-if [ ! -f "$REPO_ROOT/web/pkg/mtg_engine.js" ] || [ ! -f "$REPO_ROOT/web/data/decks.bin" ]; then
+wasm_bundle_ready() {
+    [ -f "$REPO_ROOT/web/pkg/mtg_engine.js" ] || return 1
+    [ -f "$REPO_ROOT/web/data/sets/index.json" ] || return 1
+    local decks_rel
+    decks_rel="$(python3 -c "import json,sys; print(json.load(open('$REPO_ROOT/web/data/sets/index.json'))['decks'])" 2>/dev/null)" || return 1
+    [ -n "$decks_rel" ] && [ -f "$REPO_ROOT/web/data/$decks_rel" ]
+}
+if ! wasm_bundle_ready; then
     if [ "${MTG_EQUIV_NO_BUILD:-0}" = "1" ]; then
         echo "Error: WASM bundle missing and MTG_EQUIV_NO_BUILD=1 (run 'make wasm-dev')." >&2
         exit 1

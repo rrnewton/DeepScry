@@ -1257,7 +1257,18 @@ def _run_wasm(
             file=sys.stderr,
         )
         return 1
-    if not (web_dir / "data" / "decks.bin").exists():
+    # decks.bin is content-addressed (tokens+decks cache-skew fix): resolve via
+    # data/sets/index.json rather than the retired fixed web/data/decks.bin.
+    import json as _json
+
+    _index_json = web_dir / "data" / "sets" / "index.json"
+    _decks_ok = False
+    if _index_json.exists():
+        try:
+            _decks_ok = (web_dir / "data" / _json.loads(_index_json.read_text())["decks"]).exists()
+        except (KeyError, ValueError):
+            _decks_ok = False
+    if not _decks_ok:
         print(
             f"Error: WASM data not found at {web_dir / 'data'}.\n"
             "Generate it with: mtg export-wasm",
