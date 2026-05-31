@@ -6231,4 +6231,76 @@ Oracle:{T}: Draw two cards, then discard three cards.
             effects
         );
     }
+
+    /// Regression for mtg-8scpx: a bincode round-trip of a CardDefinition drops
+    /// `parsed_svars` (it is `#[serde(skip)]`). Trigger parsing resolves
+    /// `Execute$ <SVar>` effects via `parsed_svars`, so WITHOUT a post-deserialize
+    /// `rebuild_parsed_svars()` the trigger parses to ZERO effects — which is
+    /// exactly how the WASM `load_set` path silently dropped City of Brass's
+    /// `Taps` self-ping and Su-Chi's death trigger, diverging WASM from native.
+    /// This test pins the contract: round-trip + rebuild MUST restore the effect.
+    #[test]
+    fn test_svar_trigger_survives_bincode_roundtrip_after_rebuild() {
+        use crate::core::{Effect, PlayerId, TriggerEvent};
+
+        // City of Brass: Taps trigger whose effect lives in the TrigDamage SVar.
+        let content = r#"
+Name:City of Brass
+ManaCost:no cost
+Types:Land
+A:AB$ Mana | Cost$ T | Produced$ Any | Amount$ 1 | SpellDescription$ Add one mana of any color.
+T:Mode$ Taps | ValidCard$ Card.Self | Execute$ TrigDamage | TriggerZones$ Battlefield | TriggerDescription$ Whenever CARDNAME becomes tapped, it deals 1 damage to you.
+SVar:TrigDamage:DB$ DealDamage | Defined$ You | NumDmg$ 1
+Oracle:Whenever City of Brass becomes tapped, it deals 1 damage to you.
+"#;
+
+        let def = CardLoader::parse(content).unwrap();
+
+        // Sanity: freshly-parsed definition produces a Taps trigger that deals damage.
+        let fresh = def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+        let fresh_taps = fresh
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::Taps)
+            .expect("freshly-parsed City of Brass must have a Taps trigger");
+        assert!(
+            fresh_taps
+                .effects
+                .iter()
+                .any(|e| matches!(e, Effect::DealDamage { .. })),
+            "freshly-parsed Taps trigger must carry the SVar DealDamage effect, got: {:?}",
+            fresh_taps.effects
+        );
+
+        // Round-trip through bincode (the WASM `decks.bin`/set-bin wire format).
+        let bytes = bincode::serialize(&def).expect("serialize CardDefinition");
+        let mut restored: CardDefinition = bincode::deserialize(&bytes).expect("deserialize CardDefinition");
+
+        // BEFORE rebuild: parsed_svars is empty, so the Execute$ SVar resolves to
+        // nothing and the trigger is effect-less. This is the bug shape.
+        assert!(
+            restored.parsed_svars.is_empty(),
+            "bincode-deserialized CardDefinition should arrive with empty parsed_svars"
+        );
+        let pre = restored.instantiate(crate::core::CardId::new(2), PlayerId::new(0));
+        let pre_taps = pre.triggers.iter().find(|t| t.event == TriggerEvent::Taps);
+        assert!(
+            pre_taps.is_none_or(|t| t.effects.is_empty()),
+            "without rebuild_parsed_svars the Execute$ SVar effect must be dropped (the mtg-8scpx bug)"
+        );
+
+        // AFTER rebuild (what load_set now does): the effect is restored.
+        restored.rebuild_parsed_svars();
+        let post = restored.instantiate(crate::core::CardId::new(3), PlayerId::new(0));
+        let post_taps = post
+            .triggers
+            .iter()
+            .find(|t| t.event == TriggerEvent::Taps)
+            .expect("after rebuild the Taps trigger must exist");
+        assert!(
+            post_taps.effects.iter().any(|e| matches!(e, Effect::DealDamage { .. })),
+            "after rebuild_parsed_svars the Taps trigger must carry the DealDamage effect again, got: {:?}",
+            post_taps.effects
+        );
+    }
 }

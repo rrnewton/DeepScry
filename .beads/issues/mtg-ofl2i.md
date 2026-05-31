@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-05-30T06:32:43.753296370+00:00
-updated_at: 2026-05-30T21:53:57.737429718+00:00
+updated_at: 2026-05-31T05:29:58.447127107+00:00
 closed_at: 2026-05-30T12:26:50.807448634+00:00
 ---
 
@@ -90,3 +90,17 @@ seeds, not introduced by this change.
 
 ## Relationship to Java Forge
 N/A — Rust-only cross-compile-target determinism issue; Java Forge has no WASM target.
+
+## UPDATE 2026-05-30: THIRD residual FIXED (mtg-8scpx) — native-vs-WASM leg flipped to STRICT
+The third root cause was NOT a run_one_turn-vs-run_game stepping difference. It was
+WASM card deserialization: WasmCardDatabase::load_set/load_tokens deserialized the
+per-set .bin without calling CardDefinition::rebuild_parsed_svars(), so parsed_svars
+() was empty and every SVar-backed trigger (Execute$ <SVar>) parsed
+to ZERO effects — dropping City of Brass's silent Taps self-ping and Su-Chi's death
+trigger. Native loads from cardsfolder with parsed_svars populated, hence the divergence.
+Fixed in mtg-engine/src/wasm/mod.rs (mirrors the native network path which already
+rebuilds). Sweep: old_school2 36/36 PASS (was 24/12), old_school+old_school2 54/54 PASS.
+Makefile validate-wasm-e2e-step: --expect-divergence DROPPED; the leg now runs
+old_school2 x seeds1 x maxturns8 in STRICT mode and ASSERTS native==WASM. All three
+root causes (#1 CardID order, #2 controller seeding, #3 parsed_svars rebuild) are now
+fixed. This issue can be CLOSED once validate confirms the STRICT leg green.

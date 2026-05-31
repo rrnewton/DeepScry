@@ -190,7 +190,18 @@ impl WasmCardDatabase {
             .map_err(|e| JsValue::from_str(&format!("Failed to deserialize set bin: {}", e)))?;
 
         let mut newly_inserted: u32 = 0;
-        for (name, def) in cards {
+        for (name, mut def) in cards {
+            // `parsed_svars` is `#[serde(skip)]`, so a bincode-deserialized
+            // CardDefinition arrives with an EMPTY parsed_svars map. Trigger /
+            // ability parsing resolves `Execute$ <SVar>` effects via
+            // `parsed_svars` (loader/card.rs parse_triggers), so without this
+            // rebuild EVERY SVar-backed trigger silently parses to zero effects
+            // (e.g. City of Brass `Taps`->TrigDamage self-ping, Su-Chi death
+            // ->TrigMana) — diverging the WASM target from native, which loads
+            // cards from cardsfolder with parsed_svars populated. The native
+            // network path already rebuilds here (network/client.rs,
+            // reveal_processor.rs); WASM `load_set` must do the same. (mtg-8scpx)
+            def.rebuild_parsed_svars();
             self.cards.entry(name).or_insert_with(|| {
                 newly_inserted += 1;
                 Arc::new(def)
@@ -216,7 +227,12 @@ impl WasmCardDatabase {
             .map_err(|e| JsValue::from_str(&format!("Failed to deserialize tokens: {}", e)))?;
 
         let count = tokens.len() as u32;
-        for (name, def) in tokens {
+        for (name, mut def) in tokens {
+            // See `load_set`: rebuild parsed_svars dropped by `#[serde(skip)]`
+            // so token triggers/abilities that reference SVars via `Execute$`
+            // resolve to their effects rather than silently parsing empty.
+            // (mtg-8scpx)
+            def.rebuild_parsed_svars();
             self.tokens.insert(name, Arc::new(def));
         }
 
