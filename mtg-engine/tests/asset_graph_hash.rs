@@ -53,6 +53,7 @@ fn full_graph_hashes_everything_but_index_html() {
     write(&web.join("server-config.js"), "window.MTG_WS_URL = 'ws://x';");
     write(&web.join("network.js"), "// network module");
     write(&web.join("bug_report.js"), "// bug report module");
+    write(&web.join("lobby_launcher.js"), "// shared lobby launcher");
 
     // Non-entry HTML pages. Include the patterns the rewriter must handle:
     // <a href="other.html"> nav, fetch('./data/sets/index.json'),
@@ -62,13 +63,13 @@ fn full_graph_hashes_everything_but_index_html() {
         &web.join("native_game.html"),
         r#"<html><head><script src="server-config.js"></script><script src="bug_report.js"></script></head>
 <body><a href="tui_game.html">TUI</a> <a href="index.html">lobby</a>
-<script>fetch('./data/sets/index.json');</script></body></html>"#,
+<script type="module">import { consumeLobbyParams } from './lobby_launcher.js'; fetch('./data/sets/index.json');</script></body></html>"#,
     );
     write(
         &web.join("tui_game.html"),
         r#"<html><head><script src="server-config.js"></script></head>
 <body><a href="native_game.html">GUI</a> <a href="index.html">lobby</a>
-<script type="module">import './network.js'; import './bug_report.js'; fetch('/data/sets/index.json');</script></body></html>"#,
+<script type="module">import './network.js'; import './bug_report.js'; import './lobby_launcher.js'; fetch('/data/sets/index.json');</script></body></html>"#,
     );
     write(
         &web.join("demo.html"),
