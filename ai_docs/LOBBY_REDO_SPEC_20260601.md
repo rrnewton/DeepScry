@@ -23,8 +23,14 @@ coordinator rubber-stamped plausible-looking diffs instead of diffing intent vs 
    Editor" launch** button + **your renderer: Native GUI (DEFAULT) or Web TUI**
    (alternate). Renderer is a per-player experience detail chosen HERE, never in
    the lobby. Then "Play" → go to the matching game page. This is the ONE launcher.
-   (The good launcher logic — collections/decks/controllers — currently lives
-   built-into native_game.html lines ~824-929; extract it here.)
+   EXTRACTION SOURCE: the BETTER built-in launcher to lift from is **tui_game.html**
+   (lines ~750-893): it has Deck COLLECTIONS (3-pane layout, `#p1-collection`/
+   `#p2-collection`, deck-buttons incl. the deck-editor link) — the richer UX the
+   user remembers. native_game.html's built-in launcher is WEAKER (no deck-editor
+   link, fewer collection refs). So `launcher.html` should be extracted from
+   tui_game.html's launcher, generalized to be renderer-agnostic (renderer =
+   native default / TUI alternate), and BOTH game pages then lose their built-in
+   launcher entirely.
 3. **Native game** (`native_game.html`): PURE renderer (card DOM). NO built-in
    launcher (delete the `#launcher` block). Receives everything via params.
 4. **Web TUI game** (`tui_game.html`): PURE renderer (ratzilla). NO built-in launcher.
