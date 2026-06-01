@@ -1426,15 +1426,12 @@
         }
 
         function applyLocalImageGate() {
-            const allowed = resolveLocalImageAllowed();
-            window.__allowLocalImgLoad = allowed;
-            if (allowed) return;
-            const localCb = document.getElementById('img-src-local');
-            if (localCb) localCb.checked = false;
-            const localLabel = document.getElementById('img-src-local-label');
-            if (localLabel) localLabel.remove();
-            const note = document.getElementById('img-src-local-gate-note');
-            if (note) note.style.display = 'block';
+            // mtg-drxh5: the built-in launcher (which had the #img-src-local
+            // checkbox/label/gate-note this used to toggle) was deleted when this
+            // page became a PURE renderer (mtg-682 page 3). The only live effect
+            // now is publishing the resolved flag on window.__allowLocalImgLoad
+            // (read by the card-image URL filter, see ~line 1130).
+            window.__allowLocalImgLoad = resolveLocalImageAllowed();
         }
 
         // ==================== CARD LOADING (mtg-464 per-set) ====================

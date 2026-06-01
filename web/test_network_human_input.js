@@ -4,10 +4,21 @@
 // This test validates the rewind/replay pattern for network human mode:
 // 1. Starts a native MTG server
 // 2. Starts a native AI client (heuristic) as P1
-// 3. Launches browser as P2 with human controller
+// 3. Launches browser as P2 with human controller (booted from URL params —
+//    mtg-drxh5: migrated off the deleted built-in launcher form)
 // 4. Waits for choice prompts, makes smart selections
 // 5. Verifies no MONOTONICITY VIOLATION, DESYNC, or other errors
 // 6. Plays through as many turns as possible
+//
+// NOT in make validate. KNOWN-FAILING on the pre-existing WASM Human-controller
+// network desync mtg-679 (P2 hash mismatch at choice_seq=1 / action_count=45 —
+// the WASM Human client runs ahead of the server through P2's draw into the
+// cleanup discard). That desync is DECK-INDEPENDENT and out of scope for the
+// lobby-redo cleanup (web/JS only). Per the project's inviolable rule "desync is
+// ALWAYS fatal", this test correctly REFUSES to pass on the mismatch rather than
+// papering over it — which is exactly why the redo's acceptance gate
+// (test_redo_multiturn_reload_e2e.js) uses AI controllers, which sidestep
+// mtg-679. This test will pass once mtg-679 is fixed.
 //
 // Requires:
 //   make build-network
@@ -18,6 +29,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { getRandomPorts, enableReplayVerifier } = require('./test_network_utils');
+const { parseDckIntoCustomDeck } = require('./game_boot_params');
 
 // Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test_human';
@@ -366,6 +378,14 @@ async function runTest() {
         // Start native AI client as P1 (heuristic so it actively plays)
         log('Starting native AI client as P1 (heuristic)...');
         const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
+        // Read the deck so the web client can seed the SAME deck as a custom deck
+        // (mtg-drxh5: pure renderer boots from params; out-of-glob decks are
+        // loaded via getCustomDecks + register_custom_deck).
+        const deckContent = fs.readFileSync(deckPath, 'utf8');
+        const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
+        const webDeckName = deckNameMatch
+            ? deckNameMatch[1].trim()
+            : path.basename(DECK_NAME).replace(/\.(dck|txt)$/i, '');
         nativeClient = spawn(mtgBinary, [
             'connect',
             '--server', `localhost:${SERVER_PORT}`,
@@ -390,6 +410,16 @@ async function runTest() {
             args: ['--no-sandbox', '--enable-unsafe-swiftshader']
         });
         const page = await browser.newPage();
+
+        // Seed the deck as a custom deck before navigation (mtg-drxh5).
+        const webCustomDeck = parseDckIntoCustomDeck(deckContent);
+        await page.addInitScript(({ name, deck }) => {
+            const KEY = 'mtg-forge-custom-decks';
+            let decks = {};
+            try { decks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { /* ignore */ }
+            decks[name] = deck;
+            localStorage.setItem(KEY, JSON.stringify(decks));
+        }, { name: webDeckName, deck: webCustomDeck });
 
         page.on('console', msg => {
             const entry = { timestamp: Date.now(), type: msg.type(), text: msg.text() };
@@ -423,50 +453,30 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // Navigate to fancy TUI
-        log('Loading page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // built-in launcher. Boot the HUMAN-controller network client from URL
+        // params via the auto-match contract (?mode=network&controller=human&ws=
+        // &server_pass=&name=&deck=) — the server pairs it with the native
+        // heuristic peer. Replaces the deleted #game-mode / #server-url /
+        // #p1-controller=human / #btn-launch form.
+        log('Booting tui_game.html (network human boot via params)...');
+        const bootUrl = `http://localhost:${HTTP_PORT}/tui_game.html?` + new URLSearchParams({
+            mode: 'network',
+            ws: `ws://localhost:${SERVER_PORT}`,
+            server_pass: SERVER_PASSWORD,
+            name: 'HumanP2',
+            deck: webDeckName,
+            controller: 'human',
+        }).toString();
+        await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
+        log('WASM loaded; network human boot initiated from params');
 
-        // Wait for WASM to load
-        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
-        log('WASM loaded');
-
-        // Enable rewind/replay verifier (the local checkForFatalErrors above
-        // now matches REWIND/REPLAY FATAL). Network + human + this test's
-        // tight choice loop is exactly the scenario the verifier was designed
-        // for: every choice triggers a rewind/replay round-trip with a
-        // network handshake in the middle. Belt-and-braces with the
-        // #debug-mode checkbox below — tui_game.html only flips the flag inside
-        // its launch handler when debug mode is on.
+        // Enable rewind/replay verifier (the local checkForFatalErrors above now
+        // matches REWIND/REPLAY FATAL). Network + human + this test's tight choice
+        // loop is exactly the scenario the verifier was designed for: every choice
+        // triggers a rewind/replay round-trip with a network handshake in between.
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
-
-        // Select Network game mode
-        await page.selectOption('#game-mode', 'network');
-        await page.waitForSelector('#network-settings-group', { state: 'visible', timeout: 5000 });
-
-        // Fill in network settings (human controller for P2)
-        await page.fill('#server-url', `ws://localhost:${SERVER_PORT}`);
-        await page.fill('#server-password', SERVER_PASSWORD);
-        await page.fill('#player-name', 'HumanP2');
-
-        // Select human controller
-        await page.selectOption('#p1-controller', 'human');
-
-        // Enable debug mode for WASM hash debug logging
-        const debugCheckbox = await page.$('#debug-mode');
-        if (debugCheckbox) {
-            await debugCheckbox.check();
-        }
-
-        await page.screenshot({ path: path.join(screenshotDir, 'net_human_01_settings.png'), fullPage: true });
-        log('Settings filled, launching...');
-
-        // Launch the game
-        await page.click('#btn-launch');
 
         // Wait for terminal to appear
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 20000 });

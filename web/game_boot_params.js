@@ -19,15 +19,16 @@
 const http = require('http');
 
 /**
- * Fetch the first built-in deck name from `<base>/data/sets/index.json`.
- * Returns a string deck name, or throws if the index / deck_names is missing.
+ * Fetch the sorted built-in deck-name list from `<base>/data/sets/index.json`
+ * (the same WASM-free source launcher.html populates its deck picker from).
+ * The single fetch helper that firstBuiltinDeck / pickBuiltinDeck share (DRY).
  *
  * @param {string} base   e.g. "http://localhost:8766"
- * @returns {Promise<string>}
+ * @returns {Promise<string[]>}  deck names, name-sorted (throws if none)
  */
-function firstBuiltinDeck(base) {
+function listBuiltinDecks(base) {
+    const url = base.replace(/\/$/, '') + '/data/sets/index.json';
     return new Promise((resolve, reject) => {
-        const url = base.replace(/\/$/, '') + '/data/sets/index.json';
         http.get(url, (res) => {
             if (res.statusCode !== 200) {
                 res.resume();
@@ -40,17 +41,21 @@ function firstBuiltinDeck(base) {
                 try {
                     const idx = JSON.parse(body);
                     const names = Array.isArray(idx.deck_names) ? idx.deck_names.slice().sort() : [];
-                    if (names.length === 0) {
-                        reject(new Error('index.json has no deck_names'));
-                        return;
-                    }
-                    resolve(names[0]);
-                } catch (e) {
-                    reject(e);
-                }
+                    if (names.length === 0) { reject(new Error('index.json has no deck_names')); return; }
+                    resolve(names);
+                } catch (e) { reject(e); }
             });
         }).on('error', reject);
     });
+}
+
+/**
+ * The first built-in deck name (alphabetical). Throws if none.
+ * @param {string} base
+ * @returns {Promise<string>}
+ */
+async function firstBuiltinDeck(base) {
+    return (await listBuiltinDecks(base))[0];
 }
 
 /**
@@ -63,25 +68,7 @@ function firstBuiltinDeck(base) {
  * @returns {Promise<string>}
  */
 async function pickBuiltinDeck(base, re) {
-    const url = base.replace(/\/$/, '') + '/data/sets/index.json';
-    const names = await new Promise((resolve, reject) => {
-        http.get(url, (res) => {
-            if (res.statusCode !== 200) {
-                res.resume();
-                reject(new Error(`index.json HTTP ${res.statusCode} (run 'mtg export-wasm')`));
-                return;
-            }
-            let body = '';
-            res.on('data', (c) => { body += c; });
-            res.on('end', () => {
-                try {
-                    const idx = JSON.parse(body);
-                    resolve(Array.isArray(idx.deck_names) ? idx.deck_names.slice().sort() : []);
-                } catch (e) { reject(e); }
-            });
-        }).on('error', reject);
-    });
-    if (names.length === 0) throw new Error('index.json has no deck_names');
+    const names = await listBuiltinDecks(base);
     return names.find((n) => re.test(n)) || names[0];
 }
 
@@ -148,4 +135,4 @@ function parseDckIntoCustomDeck(content) {
     return { main_deck: mainDeck, sideboard };
 }
 
-module.exports = { firstBuiltinDeck, pickBuiltinDeck, localGameUrl, parseDckIntoCustomDeck };
+module.exports = { listBuiltinDecks, firstBuiltinDeck, pickBuiltinDeck, localGameUrl, parseDckIntoCustomDeck };

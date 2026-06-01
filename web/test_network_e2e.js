@@ -17,6 +17,7 @@ const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { getRandomPorts, enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
+const { parseDckIntoCustomDeck } = require('./game_boot_params');
 
 // Configuration - ports allocated dynamically in runTest()
 const SERVER_PASSWORD = 'test123';
@@ -144,6 +145,14 @@ async function runTest() {
         // Start native client as P2 with fixed controller (from project root)
         log('Starting native client as P2...');
         const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
+        // Read the deck so the WEB client can seed the SAME deck as a custom deck
+        // (mtg-drxh5: the pure renderer boots from params; out-of-glob decks like
+        // grizzly_bears are loaded via getCustomDecks + register_custom_deck).
+        const deckContent = fs.readFileSync(deckPath, 'utf8');
+        const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
+        const webDeckName = deckNameMatch
+            ? deckNameMatch[1].trim()
+            : path.basename(DECK_NAME).replace(/\.(dck|txt)$/i, '');
         nativeClient = spawn(mtgBinary, [
             'connect',
             '--server', `localhost:${SERVER_PORT}`,
@@ -182,6 +191,17 @@ async function runTest() {
         });
         const page = await browser.newPage();
 
+        // Seed the deck into localStorage as a custom deck BEFORE navigation, so
+        // the param-booted page can register it by name (mtg-drxh5).
+        const webCustomDeck = parseDckIntoCustomDeck(deckContent);
+        await page.addInitScript(({ name, deck }) => {
+            const KEY = 'mtg-forge-custom-decks';
+            let decks = {};
+            try { decks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { /* ignore */ }
+            decks[name] = deck;
+            localStorage.setItem(KEY, JSON.stringify(decks));
+        }, { name: webDeckName, deck: webCustomDeck });
+
         // Collect console messages
         page.on('console', msg => {
             const entry = { timestamp: new Date().toISOString(), type: msg.type(), text: msg.text() };
@@ -196,17 +216,24 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // Navigate to fancy TUI page
-        log('Loading fancy TUI page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
-
-        // Wait for WASM to initialize (launcher becomes visible when ready)
-        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
+        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // built-in launcher. Boot the network client ENTIRELY from URL params via
+        // the auto-match contract (?mode=network&controller=...&ws=&server_pass=
+        // &name=&deck=) — the server pairs this web client with the native
+        // `mtg connect` AI above. This replaces the deleted #game-mode / #server-url
+        // / #btn-launch form. `fixed` mirrors the native client's fixed controller.
+        log('Booting tui_game.html (network auto-match boot via params)...');
+        const bootUrl = `http://localhost:${HTTP_PORT}/tui_game.html?` + new URLSearchParams({
+            mode: 'network',
+            ws: `ws://localhost:${SERVER_PORT}`,
+            server_pass: SERVER_PASSWORD,
+            name: 'WebP1',
+            deck: webDeckName,
+            controller: 'fixed',
+        }).toString();
+        await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
-        log('WASM loaded');
+        log('WASM loaded; network boot initiated from params');
 
         // Enable rewind/replay verifier (see test_network_utils.js for the
         // full rationale). Network E2E is a prime candidate: any divergence
@@ -216,54 +243,7 @@ async function runTest() {
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
 
-        // Check if network mode is available (game-mode selector, not p1-controller)
-        const networkAvailable = await page.evaluate(() => {
-            const option = document.querySelector('#game-mode option[value="network"]');
-            return option && !option.disabled;
-        });
-
-        if (!networkAvailable) {
-            log('Network mode not available in this build. Test passed (graceful fallback works).');
-            testResults.steps.push({ name: 'network_not_available', timestamp: new Date().toISOString() });
-            await page.screenshot({ path: path.join(screenshotDir, 'network_not_available.png'), fullPage: true });
-
-            // This is expected for non-wasm-network builds
-            testResults.result = 'SKIPPED';
-            testResults.message = 'Network mode not available (expected for non-wasm-network builds)';
-            return testResults;
-        }
-
-        log('Network mode is available');
-        testResults.steps.push({ name: 'network_available', timestamp: new Date().toISOString() });
-
-        // Take screenshot of setup
-        await page.screenshot({ path: path.join(screenshotDir, 'network_01_setup.png'), fullPage: true });
-
-        // Select Network game mode
-        log('Selecting Network game mode...');
-        await page.selectOption('#game-mode', 'network');
-
-        // Wait for network settings to appear
-        await page.waitForSelector('#network-settings-group', { state: 'visible', timeout: 5000 });
-
-        // Fill in network settings
-        await page.fill('#server-url', `ws://localhost:${SERVER_PORT}`);
-        await page.fill('#server-password', SERVER_PASSWORD);
-        await page.fill('#player-name', 'WebP1');
-
-        await page.screenshot({ path: path.join(screenshotDir, 'network_02_settings.png'), fullPage: true });
-        log('Network settings filled');
-
-        // Launch the game (connect to server)
-        log('Clicking launch to connect...');
-        await page.click('#btn-launch');
-
-        // Wait for connection - the button text changes
-        await page.waitForFunction(() => {
-            const btn = document.getElementById('btn-launch');
-            return btn && btn.textContent.includes('Connecting');
-        }, { timeout: 5000 });
-        log('Connection initiated');
+        testResults.steps.push({ name: 'network_boot', timestamp: new Date().toISOString() });
 
         // Wait for game to start (terminal should appear)
         // Note: With current placeholder implementation, game may not fully work

@@ -22,6 +22,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { chromium } = require('playwright');
+const { localGameUrl } = require('./game_boot_params');
 
 const PORT = 8772;
 const SCREEN_DIR = path.join(__dirname, 'screenshots');
@@ -182,24 +183,25 @@ async function playOneGame(browser, server, cfg) {
                 && (/404/.test(text) || /ERR_/.test(text) || /net::/.test(text))) {
                 return;
             }
+            // mtg-drxh5: exiting the game now navigates to the LOBBY (index.html),
+            // which opens a `/lobby` WebSocket. On this static python http.server
+            // there is no lobby endpoint, so that handshake 404s — a harness
+            // artifact of the redo's exit-to-lobby flow, NOT a game bug.
+            if (/\/lobby/.test(text) && (/WebSocket/.test(text) || /404/.test(text))) {
+                return;
+            }
             result.consoleErrors.push({ kind: 'console_error', msg: text });
         }
     });
 
     try {
-        // Boot the launcher and configure the game.
-        await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'networkidle', timeout: 60000 });
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.selectOption('#p1-collection', 'booster_draft');
-        await page.selectOption('#p2-collection', 'booster_draft');
-        await page.selectOption('#p1-deck', cfg.p1);
-        await page.selectOption('#p2-deck', cfg.p2);
-        await page.fill('#game-seed', cfg.seed);
-
-        await page.click('#btn-launch');
+        // mtg-682 page 3 / mtg-drxh5: native_game.html is a PURE renderer with no
+        // built-in launcher. Boot the heuristic-vs-heuristic game straight from
+        // URL params (mode=local) via game_boot_params.localGameUrl — the exact
+        // decks/seed this leg used to pick via the deleted launcher form.
+        await page.goto(localGameUrl(`http://localhost:${PORT}`, 'native_game.html', {
+            p1Deck: cfg.p1, p2Deck: cfg.p2, p1: 'heuristic', p2: 'heuristic', seed: cfg.seed,
+        }), { waitUntil: 'networkidle', timeout: 60000 });
         await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 30000 });
         await page.waitForTimeout(500);
 
@@ -363,13 +365,15 @@ async function playOneGame(browser, server, cfg) {
             });
         }
 
-        // Exit and return to launcher.
+        // mtg-682 page 3 / mtg-drxh5: the pure renderer has no built-in launcher
+        // to return to — pressing 'q' (exitGame) navigates back to the LOBBY
+        // (index.html). Assert that clean exit-to-lobby instead.
         await page.keyboard.press('q');
-        await page.waitForTimeout(400);
-        const launcherShown = await page.evaluate(() =>
-            document.getElementById('launcher')?.classList.contains('show') || false);
-        if (!launcherShown) {
-            result.bugs.push({ kind: 'exit_did_not_return_to_launcher' });
+        await page.waitForFunction(() => /index\.html$/.test(window.location.pathname), null, { timeout: 5000 })
+            .catch(() => {});
+        const backToLobby = /index\.html$/.test(new URL(page.url()).pathname);
+        if (!backToLobby) {
+            result.bugs.push({ kind: 'exit_did_not_return_to_lobby', url: page.url() });
         }
 
         result.success = result.consoleErrors.length === 0

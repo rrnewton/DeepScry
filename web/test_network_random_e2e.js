@@ -8,15 +8,19 @@
 // This test is NOT part of 'make validate' - it's for manual testing only.
 
 const { chromium } = require('playwright');
-const { spawn, execSync } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
+const { parseDckIntoCustomDeck } = require('./game_boot_params');
 
-// Configuration (should match launch_network_game.sh)
+// Configuration. mtg-drxh5: the old launch_network_game.sh (deleted in 43a0661f)
+// is gone, so this test now spawns the server + native AI peer DIRECTLY (like
+// test_network_e2e.js) and boots the web client from URL params (no launcher).
 const SERVER_PORT = 17771;
 const SERVER_PASSWORD = 'play';
 const HTTP_PORT = 8000;
+const DECK_NAME = 'grizzly_bears.dck';
 
 // Timestamped logging
 function log(message) {
@@ -68,7 +72,9 @@ async function waitForHttp(port, maxAttempts = 30) {
 }
 
 async function runTest() {
-    let launchScript = null;
+    let server = null;
+    let httpServer = null;
+    let nativeClient = null;
     let browser = null;
     const projectRoot = path.join(__dirname, '..');
     const screenshotDir = path.join(__dirname, 'screenshots');
@@ -85,56 +91,53 @@ async function runTest() {
         fs.mkdirSync(screenshotDir);
     }
 
+    // Read the deck so the web client can seed the SAME deck as a custom deck.
+    const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
+    const deckContent = fs.readFileSync(deckPath, 'utf8');
+    const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
+    const webDeckName = deckNameMatch
+        ? deckNameMatch[1].trim()
+        : path.basename(DECK_NAME).replace(/\.(dck|txt)$/i, '');
+
     try {
         log('=== Network Random E2E Test ===');
         log('');
 
-        // Start the launch script
-        log('Starting launch_network_game.sh...');
-        launchScript = spawn('bash', ['./scripts/launch_network_game.sh'], {
-            cwd: projectRoot,
-            stdio: ['ignore', 'pipe', 'pipe']
+        // mtg-drxh5: start the static HTTP server, the game server, and a native
+        // AI peer DIRECTLY (the old launch_network_game.sh is deleted).
+        log('Starting HTTP server...');
+        httpServer = spawn('python3', ['-m', 'http.server', String(HTTP_PORT)], {
+            cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe']
         });
-
-        launchScript.stdout.on('data', data => {
-            const lines = data.toString().split('\n').filter(l => l.trim());
-            for (const line of lines) {
-                testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line });
-                // Only log important lines to reduce noise
-                if (line.includes('Ready!') || line.includes('ERROR') ||
-                    line.includes('Starting') || line.includes('finished')) {
-                    log(`Launch: ${line}`);
-                }
-            }
-        });
-        launchScript.stderr.on('data', data => {
-            const lines = data.toString().split('\n').filter(l => l.trim());
-            for (const line of lines) {
-                testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line, stderr: true });
-                log(`Launch[err]: ${line}`);
-            }
-        });
-
-        // Wait for both servers to be ready
-        log('Waiting for game server...');
-        const gameServerReady = await waitForServer(SERVER_PORT);
-        if (!gameServerReady) {
-            throw new Error(`Game server not ready on port ${SERVER_PORT}`);
-        }
-        log('Game server ready');
-        testResults.steps.push({ name: 'game_server_ready', timestamp: new Date().toISOString() });
-
-        log('Waiting for HTTP server...');
         const httpReady = await waitForHttp(HTTP_PORT);
-        if (!httpReady) {
-            throw new Error(`HTTP server not ready on port ${HTTP_PORT}`);
-        }
+        if (!httpReady) throw new Error(`HTTP server not ready on port ${HTTP_PORT}`);
         log('HTTP server ready');
         testResults.steps.push({ name: 'http_server_ready', timestamp: new Date().toISOString() });
 
+        log('Starting MTG game server...');
+        const mtgBinary = path.join(projectRoot, 'target', 'release', 'mtg');
+        server = spawn(mtgBinary, ['server', '--port', String(SERVER_PORT), '--password', SERVER_PASSWORD, '--network-debug'], {
+            cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe']
+        });
+        server.stdout.on('data', d => testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line: d.toString().trim() }));
+        server.stderr.on('data', d => testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line: d.toString().trim(), stderr: true }));
+        const gameServerReady = await waitForServer(SERVER_PORT);
+        if (!gameServerReady) throw new Error(`Game server not ready on port ${SERVER_PORT}`);
+        log('Game server ready');
+        testResults.steps.push({ name: 'game_server_ready', timestamp: new Date().toISOString() });
+
+        // Native AI peer (random controller) — pairs with the web client.
+        log('Starting native AI peer (random)...');
+        nativeClient = spawn(mtgBinary, [
+            'connect', '--server', `localhost:${SERVER_PORT}`, '--password', SERVER_PASSWORD,
+            '--name', 'NativeRandom', '--controller', 'random', deckPath,
+        ], { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'] });
+        nativeClient.stdout.on('data', d => testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line: `NativeRandom: ${d.toString().trim()}` }));
+        nativeClient.stderr.on('data', d => testResults.launchScriptOutput.push({ timestamp: new Date().toISOString(), line: `NativeRandom: ${d.toString().trim()}`, stderr: true }));
+
         // Give native client time to connect and settle
         log('Waiting for native client to connect...');
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise(r => setTimeout(r, 3000));
 
         // Launch browser
         log('Launching browser...');
@@ -143,6 +146,16 @@ async function runTest() {
             args: ['--no-sandbox', '--enable-unsafe-swiftshader']
         });
         const page = await browser.newPage();
+
+        // Seed the deck as a custom deck before navigation (mtg-drxh5).
+        const webCustomDeck = parseDckIntoCustomDeck(deckContent);
+        await page.addInitScript(({ name, deck }) => {
+            const KEY = 'mtg-forge-custom-decks';
+            let decks = {};
+            try { decks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { /* ignore */ }
+            decks[name] = deck;
+            localStorage.setItem(KEY, JSON.stringify(decks));
+        }, { name: webDeckName, deck: webCustomDeck });
 
         // Collect console messages
         page.on('console', msg => {
@@ -164,119 +177,34 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // Navigate to fancy TUI page
-        log('Loading fancy TUI page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
-
-        // Wait for WASM to initialize (launcher container becomes visible)
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // built-in launcher. Boot the Random-controller network client ENTIRELY
+        // from URL params via the auto-match contract (?mode=network&controller=
+        // random&ws=&server_pass=&name=&deck=) — the server pairs it with the
+        // native random peer. Replaces the deleted #game-mode / #server-url /
+        // #p1-controller / #btn-launch form.
+        log('Booting tui_game.html (network auto-match boot via params)...');
+        const bootUrl = `http://localhost:${HTTP_PORT}/tui_game.html?` + new URLSearchParams({
+            mode: 'network',
+            ws: `ws://localhost:${SERVER_PORT}`,
+            server_pass: SERVER_PASSWORD,
+            name: 'WebRandom',
+            deck: webDeckName,
+            controller: 'random',
+        }).toString();
+        await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });
-        log('WASM loaded');
+        log('WASM loaded; network boot initiated from params');
 
         // Enable rewind/replay verifier so any post-replay state divergence
         // surfaces as a "REWIND/REPLAY FATAL" entry (see fancy_tui.rs and
-        // replay_verifier.rs). This test runs the Random controller in a
-        // network game; even though Random itself doesn't drive rewinds,
-        // the WASM TUI rewinds whenever a human-style choice gets resumed,
-        // and we want any divergence from a network round-trip to fail
-        // the test rather than silently corrupting state.
+        // replay_verifier.rs). Even though Random itself doesn't drive rewinds,
+        // the WASM TUI rewinds whenever a human-style choice gets resumed, and we
+        // want any divergence from a network round-trip to fail the test rather
+        // than silently corrupting state.
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
-
-        // Enable debug logging to diagnose hang issues
-        await page.evaluate(() => {
-            if (typeof window.setLogLevel === 'function') {
-                window.setLogLevel('debug');
-                console.log('[Test] WASM debug logging enabled via window.setLogLevel');
-            } else {
-                console.log('[Test] window.setLogLevel not found');
-            }
-        });
-
-        await page.screenshot({ path: path.join(screenshotDir, 'random_01_initial.png'), fullPage: true });
-
-        // Select Network game mode (using game-mode selector, not controller)
-        log('Selecting Remote Network game mode...');
-        const gameModeExists = await page.$('#game-mode');
-        if (!gameModeExists) {
-            throw new Error('Game mode selector not found - UI may have changed');
-        }
-        await page.selectOption('#game-mode', 'network');
-
-        // Trigger the change event explicitly and wait for UI update
-        await page.evaluate(() => {
-            const gameMode = document.getElementById('game-mode');
-            if (gameMode) {
-                gameMode.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        });
-        await new Promise(r => setTimeout(r, 1000)); // Wait for UI update
-
-        await page.screenshot({ path: path.join(screenshotDir, 'random_02_after_mode_select.png'), fullPage: true });
-
-        // Check if network settings appeared
-        const networkSettingsVisible = await page.isVisible('#network-settings-group');
-        log(`Network settings visible: ${networkSettingsVisible}`);
-        if (!networkSettingsVisible) {
-            // Try to get the display style for debugging
-            const displayStyle = await page.evaluate(() => {
-                const el = document.getElementById('network-settings-group');
-                return el ? window.getComputedStyle(el).display : 'element not found';
-            });
-            log(`Network settings group display style: ${displayStyle}`);
-            await page.screenshot({ path: path.join(screenshotDir, 'random_02_network_missing.png'), fullPage: true });
-            throw new Error(`Network settings group not visible after selecting network mode (display: ${displayStyle})`);
-        }
-
-        // Wait for the server-url field to be visible
-        await page.waitForSelector('#server-url', { state: 'visible', timeout: 5000 });
-
-        // Select Random controller for our player
-        log('Selecting Random controller...');
-        await page.selectOption('#p1-controller', 'random');
-        await new Promise(r => setTimeout(r, 500));
-
-        // Check if server-url is still visible after controller change
-        const serverUrlStillVisible = await page.isVisible('#server-url');
-        log(`Server URL visible after Random select: ${serverUrlStillVisible}`);
-        await page.screenshot({ path: path.join(screenshotDir, 'random_02b_after_random.png'), fullPage: true });
-
-        if (!serverUrlStillVisible) {
-            // Debug: check the network settings group again
-            const networkGroupDisplay = await page.evaluate(() => {
-                const el = document.getElementById('network-settings-group');
-                return el ? window.getComputedStyle(el).display : 'not found';
-            });
-            log(`Network settings group display after Random: ${networkGroupDisplay}`);
-            throw new Error('Server URL became hidden after selecting Random controller');
-        }
-
-        // Fill in network settings
-        await page.fill('#server-url', `ws://localhost:${SERVER_PORT}`);
-        await page.fill('#server-password', SERVER_PASSWORD);
-        await page.fill('#player-name', 'WebRandom');
-
-        await page.screenshot({ path: path.join(screenshotDir, 'random_02_settings.png'), fullPage: true });
         testResults.steps.push({ name: 'settings_filled', timestamp: new Date().toISOString() });
-        log('Settings configured: Random controller, network mode');
-
-        // Launch the game
-        log('Clicking launch button...');
-        await page.click('#btn-launch');
-
-        // Wait for connection - button text changes
-        try {
-            await page.waitForFunction(() => {
-                const btn = document.getElementById('btn-launch');
-                return btn && (btn.textContent.includes('Connecting') || btn.textContent.includes('Loading'));
-            }, { timeout: 5000 });
-            log('Connection initiated');
-        } catch (e) {
-            log('Note: Button text did not change to Connecting');
-        }
 
         // Wait for game to start (terminal should appear)
         log('Waiting for game to start...');
@@ -444,17 +372,11 @@ async function runTest() {
 
     } finally {
         // Cleanup
-        if (browser) {
-            log('Closing browser...');
-            await browser.close();
-        }
-        if (launchScript) {
-            log('Stopping launch script...');
-            // Send SIGINT to trigger cleanup trap
-            launchScript.kill('SIGINT');
-            // Wait for cleanup
-            await new Promise(r => setTimeout(r, 2000));
-        }
+        if (browser)      { log('Closing browser...');     await browser.close(); }
+        if (nativeClient) { log('Stopping native peer...'); nativeClient.kill('SIGTERM'); }
+        if (server)       { log('Stopping game server...'); server.kill('SIGTERM'); }
+        if (httpServer)   { log('Stopping HTTP server...'); httpServer.kill('SIGTERM'); }
+        await new Promise(r => setTimeout(r, 500));
     }
 }
 

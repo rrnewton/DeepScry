@@ -96,6 +96,11 @@ package-lock.json
 # "NEVER commit images"). Belt-and-suspenders dir ignore on top of *.png.
 web/screenshots/
 
+# Web E2E test result JSON artifacts (written to web/ root by the network
+# e2e tests, e.g. network_test_results.json / network_random_test_results.json).
+# Transient run output, never tracked.
+web/*_test_results.json
+
 # Debug directory for one-off scripts and temporary files
 # See CLAUDE.md section "Debugging Scripts and Temporary Files"
 debug/

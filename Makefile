@@ -349,6 +349,14 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
 	@cd web && node test_landing_page_ux.js
+	@echo "=== Running lobby-redo multiturn + reload acceptance e2e (mtg-682 items 4+5) ==="
+	@echo "    Two browser AI clients (create+join) over the networked web path:"
+	@echo "    advance >=3 full turns in sync (no desync), then RELOAD one client"
+	@echo "    mid-game — asserts the survivor never silently freezes (advances OR"
+	@echo "    gets a CLEAN connection-lost notice) and the reloaded client lands in"
+	@echo "    a well-defined state, never silent corruption. Covers BOTH renderers"
+	@echo "    (native_game default + tui_game). The redo play-path gate."
+	@cd web && node test_redo_multiturn_reload_e2e.js
 	@echo "=== Running hermetic content-addressed web-asset smoke test (mtg-571) ==="
 	@echo "    Local-only: launches 'mtg server-web' on a temp port; asserts"
 	@echo "    index.json no-cache, hashed bin/wasm/js immutable, fixed pkg no-cache."
