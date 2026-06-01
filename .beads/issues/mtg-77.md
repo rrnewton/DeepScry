@@ -6,5 +6,19 @@ issue_type: epic
 labels:
 - tracking
 created_at: 2025-10-26T21:06:34+00:00
-updated_at: 2026-04-03T19:10:12.165890205+00:00
+updated_at: 2026-06-01T13:45:20.552633668+00:00
 ---
+
+# Description
+
+## Heuristic AI completeness tracking
+
+GARDENING (2026-06-01): this epic has an empty description. It appears to have been a tracking issue for heuristic AI improvements, but the content was lost or never populated.
+
+Current heuristic AI state (from observation):
+- The HeuristicController (mtg-engine/src/game/heuristic_controller.rs) is the primary AI
+- It handles: spell casting decisions, creature attacks/blocks, mana payment, discard choices, ETB triggers
+- Upkeep cost penalties were added (for Juzam Djinn-style upkeep triggers)
+- Land play, creature pump, burn targeting all functional
+
+GARDENING: if there are specific missing heuristic AI behaviors, they should be tracked as separate issues rather than under this empty epic.
