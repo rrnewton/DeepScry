@@ -251,22 +251,6 @@ pub struct TurnStructure {
     /// Not serialized - this is transient within a single game session.
     #[serde(skip)]
     pub draw_triggers_checked_turn: Option<u32>,
-
-    /// Tracks which turn the Main1 `Mode$ Phase` delayed triggers (e.g. Mana
-    /// Drain's deferred mana) already fired, so a WASM re-entry of main_phase
-    /// (which fires then blocks on a priority_round) does not double-fire.
-    /// Same `#[serde(skip)]` + auto-invalidate-per-turn pattern as the
-    /// begin-of-phase trigger guards above. The delayed-trigger lifecycle
-    /// itself is fully undo-logged (RegisterDelayedTrigger / FireDelayedTrigger
-    /// / SetRememberedAmount + AddMana), so snapshot/resume + rewind/replay
-    /// reverse it correctly without this guard being serialized; it is reset by
-    /// reset_transient_guards on rewind-to-turn-start.
-    #[serde(skip)]
-    pub main1_delayed_fired_turn: Option<u32>,
-
-    /// Like `main1_delayed_fired_turn` but for the post-combat main phase.
-    #[serde(skip)]
-    pub main2_delayed_fired_turn: Option<u32>,
 }
 
 impl TurnStructure {
@@ -287,8 +271,6 @@ impl TurnStructure {
             upkeep_triggers_checked_turn: None,
             end_step_triggers_checked_turn: None,
             draw_triggers_checked_turn: None,
-            main1_delayed_fired_turn: None,
-            main2_delayed_fired_turn: None,
         }
     }
 
@@ -309,8 +291,6 @@ impl TurnStructure {
             upkeep_triggers_checked_turn: None,
             end_step_triggers_checked_turn: None,
             draw_triggers_checked_turn: None,
-            main1_delayed_fired_turn: None,
-            main2_delayed_fired_turn: None,
         }
     }
 
@@ -353,11 +333,6 @@ impl TurnStructure {
         self.upkeep_triggers_checked_turn = None;
         self.end_step_triggers_checked_turn = None;
         self.draw_triggers_checked_turn = None;
-        // Serialized, but a full rewind to the initial state must also clear
-        // these so a same-session replay re-fires the main-phase delayed
-        // triggers (mirrors the draw_step_executed_turn rationale above).
-        self.main1_delayed_fired_turn = None;
-        self.main2_delayed_fired_turn = None;
     }
 }
 
