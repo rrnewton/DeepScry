@@ -6,30 +6,25 @@ issue_type: task
 labels:
 - human
 created_at: 2025-10-27T13:51:48+00:00
-updated_at: 2026-01-20T14:12:23.427319686+00:00
+updated_at: 2026-06-01T13:23:57.944878374+00:00
 ---
 
 # Description
 
-## Issue
+## TODO: Find and fix our leaky tests
 
-We had a report that some of our tests are leaking memory. Investigate and fix.
+GARDENING (2026-06-01): possibly-stale, needs human/code re-check — the original report was vague ('some tests are leaking memory') with no specific test identified and no reproduction steps. The investigation concluded 'needs more information'. No leak has been identified or confirmed. If memory issues surface concretely in CI or profiling, file a new focused issue. Until then, this is low-confidence.
 
-## Investigation Status
+## Investigation Status (from original filing)
 
 **Needs more information:**
 - No specific test identified as leaking
 - No reproduction steps provided
-- No memory profiling tools (valgrind) available in this environment
-- Thread-local storage is used in:
-  - `card.rs:PARSING_FILE_CONTEXT` - for parsing warnings (cleared after parsing)
-  - `wasm/` modules - for WASM state (not relevant to native tests)
+- Thread-local storage is used in card.rs:PARSING_FILE_CONTEXT and wasm/ modules
 
-## Next Steps
+## Next Steps (if revived)
 
 1. Need specific report details: which test(s), how much memory, how observed?
 2. Consider adding memory tracking to test harness
-3. Check if any tests create large game states repeatedly without cleanup
-4. May need to run tests under valgrind/heaptrack in a different environment
-
-Marking as needs-info until more details are provided.
+3. Run tests under heaptrack/dhat with nextest
+4. Check if any tests create large game states repeatedly without cleanup
