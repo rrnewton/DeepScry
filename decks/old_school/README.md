@@ -19,8 +19,16 @@ results dated **2024** (e.g. Prieto Top-8'd LCOS Sept 2024 with a "Disco Troll" 
 So these are **mid-2020s community-tournament Old School lists**, archetype-
 representative, not a single official championship.
 
-Per-deck exact event/date was not all individually confirmed (mtgdecks blocks
-automated fetch); the safest collection label is **"Old-School Decks"**, not
+Per-deck source pages live under their archetype on mtgdecks:
+[robots](https://mtgdecks.net/Old-school/robots),
+[troll-disk](https://mtgdecks.net/Old-school/troll-disk),
+[mono-black](https://mtgdecks.net/Old-school/mono-black),
+[rogue](https://mtgdecks.net/Old-school/rogue). The exact per-deck URL +
+event/date for each of our six was not all individually pinned (mtgdecks
+rate-limits scraping — see mtg-scrape issue), but one is confirmed as a worked
+example: the Prieto Disco-Troll list is
+[Top-8, Liga Catalana Old School, 29-Sep-2024](https://mtgdecks.net/Old-school/disco-troll-decklist-by-jose-antonio-prieto-2255002).
+The safest collection label is **"Old-School Decks"**, not
 "Championship <year>". (A separate effort, mtg-nmbr1, tracks building real,
 properly-sourced official Championship-by-year collections for public launch.)
 

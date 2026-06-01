@@ -5,9 +5,10 @@ priority: 2
 issue_type: task
 depends_on:
   mtg-pph0s: blocks
+  mtg-cz3vm: blocks
   mtg-35z3s: blocks
 created_at: 2026-06-01T13:01:04.684026617+00:00
-updated_at: 2026-06-01T13:01:14.532761325+00:00
+updated_at: 2026-06-01T13:28:55.366268043+00:00
 ---
 
 # Description
