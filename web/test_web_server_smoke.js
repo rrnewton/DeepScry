@@ -180,7 +180,7 @@ async function main() {
     // hashing, so all three JS leaves must be staged.
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
-    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js', 'lobby_launcher.js'];
+    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js', 'lobby_launcher.js', 'help_dialog.js'];
     for (const f of fs.readdirSync(WEB_SRC)) {
         if (f.endsWith('.html') || JS_LEAVES.includes(f)) {
             fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));

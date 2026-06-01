@@ -1127,10 +1127,22 @@
         // Shared lobby-redirect + param-plumbing (Phase 2 / mtg-phase2-native-network).
         import { consumeLobbyParams, applyLobbyParamsToForm, buildLobbyAction } from './lobby_launcher.js';
 
+        // Shared help modal (mtg-1vwpd DRY extraction) — one implementation reused
+        // by tui_game.html and native_game.html. The page supplies the help text
+        // via a closure over its `tui_get_help_text` WASM import.
+        import { installHelpDialog } from './help_dialog.js';
+        const _helpDialog = installHelpDialog({
+            getHelpText: () => (typeof tui_get_help_text === 'function' ? tui_get_help_text() : null),
+        });
+
         // Network client + WASM network exports (optional — only present when built
         // with --features wasm-network). Mirror exactly how tui_game.html wires these.
         let networkEnabled = false;
-        let launch_network_game = null;
+        // mtg-tnsk7: native_game.html drives the NATIVE card renderer for network
+        // games via launch_network_game_session (ratzilla-free). The old
+        // launch_network_game (ratzilla TUI) is intentionally NOT used here — that
+        // was the layering bug where "Native GUI" still rendered the TUI.
+        let launch_network_game_session = null;
         let network_init = null;
         let network_on_message = null;
         let network_on_open = null;
@@ -1147,11 +1159,12 @@
         try {
             const networkModule = await import('./pkg/mtg_engine.js');
             if (networkModule.network_init) {
-                // Capture launch_network_game from the same module bundle.
-                // This is the same function tui_game.html imports directly;
-                // we grab it dynamically here because native_game.html's
-                // static import list is local-game-only.
-                launch_network_game = networkModule.launch_network_game;
+                // Capture the ratzilla-FREE network session launcher (mtg-tnsk7).
+                // native_game.html renders network games with its own native card
+                // DOM, so it must NOT attach ratzilla — it uses the same
+                // session-only entry point its local path conceptually uses
+                // (launch_game_session), but for the network init flow.
+                launch_network_game_session = networkModule.launch_network_game_session;
                 network_init         = networkModule.network_init;
                 network_on_message   = networkModule.network_on_message;
                 network_on_open      = networkModule.network_on_open;
@@ -1758,21 +1771,23 @@
                 }
 
                 if (isNetworkMode) {
-                    // ── Network game path ───────────────────────────────────────
-                    // Mirrors exactly how tui_game.html wires the network client,
-                    // but launches launch_network_game instead of launch_fancy_tui
-                    // so the TUI renderer is used (the native GUI's
-                    // launch_game_session is local-only; network play requires the
-                    // ratzilla-based render loop that the server drives via choice
-                    // messages). The game then runs in the same WASM session but
-                    // through the native GUI's <div> DOM instead of ratzilla.
+                    // ── Network game path (mtg-tnsk7) ───────────────────────────
+                    // The network CLIENT + player-controller logic is IDENTICAL to
+                    // the TUI page (tui_game.html): same NetworkClient wiring, same
+                    // WASM exports, same choice stream. The ONLY difference is the
+                    // renderer — native_game.html drives its native CARD DOM
+                    // (updateUI / tui_get_gui_view_model_json) instead of ratzilla.
                     //
-                    // NOTE: This uses launch_network_game (the TUI-based network
-                    // path) because the native GUI's local path (launch_game_session)
-                    // is ratzilla-free. The two pages reach the same game state; the
-                    // native GUI shows cards in card-style panels rather than text
-                    // cells. The player sees the same game regardless of which UI
-                    // they choose.
+                    // This is achieved by launching launch_network_game_session (the
+                    // ratzilla-FREE analogue of launch_network_game): it performs the
+                    // exact same network game initialization (late-binding CardID
+                    // ranges, server RNG state, network-mode controllers) but does
+                    // NOT attach a ratzilla terminal. We then render with the SAME
+                    // native render loop the local path uses.
+                    //
+                    // Determinism: this consumes NO extra/hidden information and
+                    // changes NOTHING about what the client sends to the server —
+                    // the native view reads the same GuiViewModel the TUI view reads.
                     const serverUrl   = document.getElementById('server-url').value.trim();
                     const password    = document.getElementById('server-password').value;
                     const playerName  = document.getElementById('player-name').value.trim();
@@ -1809,55 +1824,44 @@
                     };
 
                     networkClient.onGameReady = () => {
-                        console.log('[Network] Game is ready (native GUI)!');
+                        console.log('[Network] Game is ready (native card renderer)!');
 
                         const seedInput = document.getElementById('game-seed').value;
                         const controllerSeed = seedInput ? BigInt(seedInput) : BigInt(0);
 
-                        // Launch the network game using the TUI/network WASM entry
-                        // point.  This renders into #ratzilla-terminal; the native
-                        // GUI's own game-area panes are therefore not used in this
-                        // path.  A hybrid approach (native layout + network state)
-                        // would require a deeper integration that is out of scope
-                        // for Phase 2 — the key deliverable is that players CAN join
-                        // a lobby game from this page and play it.
-                        //
-                        // We reuse the TUI terminal container that tui_game.html
-                        // uses.  Since native_game.html doesn't have
-                        // #ratzilla-terminal in its DOM we create it here.
-                        let terminal = document.getElementById('ratzilla-terminal');
-                        if (!terminal) {
-                            terminal = document.createElement('div');
-                            terminal.id = 'ratzilla-terminal';
-                            terminal.style.cssText = [
-                                'position:fixed', 'top:0', 'left:0',
-                                'width:100vw', 'height:100vh',
-                                'font-family:Consolas,Monaco,"Courier New",monospace',
-                                'font-size:16px', 'line-height:20px',
-                                'background:#000', 'overflow:hidden', 'z-index:1000',
-                            ].join(';');
-                            document.body.appendChild(terminal);
-                        }
-                        terminal.innerHTML = '';
-                        terminal.style.display = 'block';
-
-                        // Hide the native launcher + game-area while the TUI runs.
+                        // Show the NATIVE game area (card DOM), exactly like the
+                        // local path does — NOT a ratzilla terminal.
                         document.getElementById('launcher').classList.remove('show');
-                        const gameAreaEl = document.getElementById('game-area');
-                        if (gameAreaEl) gameAreaEl.classList.remove('show');
+                        document.getElementById('game-area').classList.add('show');
                         document.getElementById('game-controls').style.display = 'block';
 
-                        launch_network_game(
-                            cardDb, ourDeck, 'human', controllerSeed,
-                            window.innerWidth, window.innerHeight
+                        // Apply the shared Rust-computed pane layout (same as local).
+                        applySharedLayout();
+
+                        // Ratzilla-free network session launch (mtg-tnsk7): identical
+                        // network/controller setup to launch_network_game, minus the
+                        // ratzilla attach. The native renderer takes over from here.
+                        launch_network_game_session(
+                            cardDb, ourDeck, 'human', controllerSeed
                         );
                         tuiLaunched = true;
                         tui_run_turn();
-                        console.log('[Network] Launched network game via TUI in native_game.html');
+
+                        // Initial native render of the synced state.
+                        setTimeout(updateUI, 200);
+                        console.log('[Network] Launched network game with NATIVE card renderer');
                     };
 
                     networkClient.onMessageProcessed = (msgType) => {
-                        if (tuiLaunched) tui_run_turn();
+                        // Each processed server message may have advanced game
+                        // state; drive the engine forward and re-render the native
+                        // card DOM (the TUI page calls tui_run_turn here too — same
+                        // controller path, only the render differs).
+                        if (tuiLaunched) {
+                            tui_run_turn();
+                            clearTimeout(window._netRenderTimer);
+                            window._netRenderTimer = setTimeout(updateUI, 30);
+                        }
                     };
 
                     networkClient.connect(
@@ -2739,48 +2743,9 @@
         // The TUI exit/help callbacks (called by WASM key handler)
         window.exitFancyTui = function() { exitGame(); };
         window.showExitConfirmation = function() { exitGame(); };
-        // mtg-0sm9a: styled help modal (mirrors tui_game.html). Exposed on
-        // window because the WASM key handler calls window.showHelpDialog().
-        window.showHelpDialog = function() {
-            const dialog = document.getElementById('help-dialog');
-            const overlay = document.getElementById('help-dialog-overlay');
-            const content = document.getElementById('help-dialog-content');
-            if (!dialog || !overlay || !content) return;
-
-            content.textContent = (typeof tui_get_help_text === 'function')
-                ? tui_get_help_text()
-                : 'Help text not available (WASM not loaded)';
-
-            dialog.classList.add('show');
-            overlay.classList.add('show');
-
-            // Close on any key or on click of the overlay/dialog. Capture
-            // phase + stopPropagation so the close keystroke doesn't also
-            // get interpreted as a game command.
-            const handleHelpKey = function(e) {
-                hideHelpDialog();
-                e.preventDefault();
-                e.stopPropagation();
-            };
-            dialog._helpKeyHandler = handleHelpKey;
-            document.addEventListener('keydown', handleHelpKey, true);
-            overlay.onclick = hideHelpDialog;
-            dialog.onclick = hideHelpDialog;
-        };
-
-        function hideHelpDialog() {
-            const dialog = document.getElementById('help-dialog');
-            const overlay = document.getElementById('help-dialog-overlay');
-            if (!dialog || !overlay) return;
-            dialog.classList.remove('show');
-            overlay.classList.remove('show');
-            if (dialog._helpKeyHandler) {
-                document.removeEventListener('keydown', dialog._helpKeyHandler, true);
-                dialog._helpKeyHandler = null;
-            }
-            overlay.onclick = null;
-            dialog.onclick = null;
-        }
+        // mtg-0sm9a / mtg-1vwpd: styled help modal, now shared via help_dialog.js.
+        // Exposed on window because the WASM key handler calls window.showHelpDialog().
+        window.showHelpDialog = _helpDialog.show;
         window.toggleCardImages = function() {
             showImages = !showImages;
             updateUI();

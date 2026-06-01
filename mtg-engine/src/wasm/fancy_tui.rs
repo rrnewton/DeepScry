@@ -3805,8 +3805,63 @@ pub fn launch_network_game(
     _canvas_width: u32,
     _canvas_height: u32,
 ) -> Result<(), JsValue> {
+    // Ratzilla-attached path (tui_game.html). Build the ratzilla-free network
+    // session, then wire up the visible `#ratzilla-terminal` canvas.
+    create_and_install_network_session(card_db, deck_name, controller_type, controller_seed)?;
+    attach_ratzilla_renderer()?;
+    log::info!("launch_network_game: Network TUI ready");
+    Ok(())
+}
+
+/// Launch a network game WITHOUT the ratzilla renderer (mtg-tnsk7).
+///
+/// This is the network analogue of `launch_game_session`: it performs the
+/// identical network game initialization as `launch_network_game` (late-binding
+/// CardID ranges, server RNG state, network-mode controllers) but does NOT
+/// attach the ratzilla `#ratzilla-terminal` canvas. The caller drives rendering
+/// itself from JS via the GUI view model (`tui_get_gui_view_model_json`) plus
+/// `tui_run_turn` / `tui_tick`, exactly like `native_game.html`'s local path.
+///
+/// This is what lets `native_game.html` render a NETWORK game as real cards: the
+/// network client + player-controller logic is byte-identical to the TUI path
+/// (same `WasmFancyTuiState`, same choice stream, same hidden-info posture); only
+/// the renderer differs (native card DOM vs ratzilla grid). It consumes NO extra
+/// information and changes NOTHING about what the client sends to the server.
+///
+/// # Errors
+///
+/// Returns a `JsValue` error if game creation from the network client's stored
+/// `GameStarted` data fails.
+#[wasm_bindgen]
+#[cfg(feature = "wasm-network")]
+pub fn launch_network_game_session(
+    card_db: &WasmCardDatabase,
+    deck_name: &str,
+    controller_type: &str,
+    controller_seed: u64,
+) -> Result<(), JsValue> {
+    create_and_install_network_session(card_db, deck_name, controller_type, controller_seed)?;
+    log::info!("launch_network_game_session: ratzilla-free network session ready");
+    Ok(())
+}
+
+/// Build + install the network-mode `WasmFancyTuiState` from the network
+/// client's stored `GameStarted` data, WITHOUT attaching any renderer.
+///
+/// Shared by `launch_network_game` (ratzilla TUI) and
+/// `launch_network_game_session` (native card DOM). The renderer is the ONLY
+/// thing that differs between the two callers — this function owns the entire
+/// network/controller setup so it can never drift between the two pages
+/// (mtg-tnsk7).
+#[cfg(feature = "wasm-network")]
+fn create_and_install_network_session(
+    card_db: &WasmCardDatabase,
+    deck_name: &str,
+    controller_type: &str,
+    controller_seed: u64,
+) -> Result<(), JsValue> {
     log::info!(
-        "launch_network_game: Initializing network game TUI with controller={}, seed={}",
+        "create_and_install_network_session: Initializing network game with controller={}, seed={}",
         controller_type,
         controller_seed
     );
@@ -3968,15 +4023,12 @@ pub fn launch_network_game(
     // Run until the first choice point
     state.borrow_mut().run_until_choice();
 
-    // Install + attach using the same two-step pattern as `launch_fancy_tui`
-    // (decouple-step3). Network mode currently always wants the ratzilla
-    // canvas; if a ratzilla-free network UI is ever needed (e.g. native_game.html
-    // for network games), split this into install + optional attach the same
-    // way `launch_game_session` does.
+    // Install the global session but DO NOT attach any renderer here — the
+    // renderer is the caller's responsibility (decouple-step3 split, mtg-tnsk7).
+    // `launch_network_game` attaches ratzilla; `launch_network_game_session`
+    // leaves it ratzilla-free for native_game.html to drive from JS.
     install_global_session(state);
-    attach_ratzilla_renderer()?;
 
-    log::info!("launch_network_game: Network TUI ready");
     Ok(())
 }
 

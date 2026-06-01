@@ -184,7 +184,8 @@ pub mod web_pkg {
 /// - Other HTML pages: `native_game.html`, `tui_game.html`, `demo.html`,
 ///   `wasm_ai_harness.html`.
 /// - JS leaves loaded by `<script src>` / ES `import` / `await import`:
-///   `server-config.js`, `network.js`, `bug_report.js`, `lobby_launcher.js`.
+///   `server-config.js`, `network.js`, `bug_report.js`, `lobby_launcher.js`,
+///   `help_dialog.js`.
 /// - The set-resolver `data/sets/index.json` (fetched as a plain JS
 ///   string literal from the HTML pages).
 /// - The wasm-bindgen pkg pair (delegated to [`web_pkg::hash_web_assets`],
@@ -243,9 +244,17 @@ pub mod asset_graph {
     pub const HASHED_HTML_PAGES: &[&str] = &["native_game.html", "tui_game.html", "demo.html", "wasm_ai_harness.html"];
 
     /// JS leaves loaded by `<script src>` or ES `import`. None of these
-    /// have internal JS imports of their own (verified 2026-05-29), so
+    /// have internal JS imports of their own (verified 2026-05-31), so
     /// they are pure leaves: hash bytes once, rename, rewrite referrers.
-    pub const HASHED_JS_LEAVES: &[&str] = &["server-config.js", "network.js", "bug_report.js", "lobby_launcher.js"];
+    /// (`help_dialog.js` added mtg-1vwpd: the shared help-modal module both
+    /// game pages import.)
+    pub const HASHED_JS_LEAVES: &[&str] = &[
+        "server-config.js",
+        "network.js",
+        "bug_report.js",
+        "lobby_launcher.js",
+        "help_dialog.js",
+    ];
 
     /// The data leaf — the set→bin resolver. Fetched as a JS string
     /// literal `fetch('./data/sets/index.json')` (or `/data/...`) from

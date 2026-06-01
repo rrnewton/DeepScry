@@ -1100,6 +1100,13 @@ Name=My Deck
         // Shared lobby-redirect + param-plumbing (Phase 2 / mtg-phase2-native-network).
         import { consumeLobbyParams, applyLobbyParamsToForm, buildLobbyAction } from './lobby_launcher.js';
 
+        // Shared help modal (mtg-1vwpd DRY extraction) — same implementation as
+        // native_game.html; only the help TEXT (a WASM import) is page-supplied.
+        import { installHelpDialog } from './help_dialog.js';
+        const _helpDialog = installHelpDialog({
+            getHelpText: () => (typeof tui_get_help_text === 'function' ? tui_get_help_text() : null),
+        });
+
         // Deck builder imports - optional (only available when built with wasm-tui feature)
         let deckBuilderEnabled = false;
         let launch_deck_builder = null;
@@ -3242,44 +3249,8 @@ Name=My Deck
             }
         }
 
-        // Show help dialog when '?' is pressed
-        window.showHelpDialog = function() {
-            const dialog = document.getElementById('help-dialog');
-            const overlay = document.getElementById('help-dialog-overlay');
-            const content = document.getElementById('help-dialog-content');
-
-            // Set help text content from shared Rust source
-            content.textContent = (typeof tui_get_help_text === 'function')
-                ? tui_get_help_text()
-                : 'Help text not available (WASM not loaded)';
-
-            dialog.classList.add('show');
-            overlay.classList.add('show');
-
-            // Add keyboard handler to close on any key
-            const handleHelpKey = function(e) {
-                hideHelpDialog();
-                e.preventDefault();
-                e.stopPropagation();
-            };
-
-            // Store handler so we can remove it later
-            dialog._helpKeyHandler = handleHelpKey;
-            document.addEventListener('keydown', handleHelpKey, true);
-        };
-
-        function hideHelpDialog() {
-            const dialog = document.getElementById('help-dialog');
-            const overlay = document.getElementById('help-dialog-overlay');
-            dialog.classList.remove('show');
-            overlay.classList.remove('show');
-
-            // Remove keyboard handler
-            if (dialog._helpKeyHandler) {
-                document.removeEventListener('keydown', dialog._helpKeyHandler, true);
-                dialog._helpKeyHandler = null;
-            }
-        }
+        // Show help dialog when '?' is pressed (mtg-1vwpd: shared help_dialog.js).
+        window.showHelpDialog = _helpDialog.show;
 
         // Toggle card images function (called by 'i' key)
         window.toggleCardImages = function() {
