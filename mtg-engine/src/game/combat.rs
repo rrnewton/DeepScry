@@ -135,6 +135,38 @@ impl CombatState {
         self.attacker_blockers.clear();
         self.combat_active = false;
     }
+
+    /// Reverse a `declare_attacker` (for the undo log, mtg-614 hole (b)).
+    ///
+    /// Removes the attacker from the `attackers` map and restores the
+    /// `combat_active` flag to its value before the declaration. Combined with
+    /// the logged `GameAction::DeclareAttacker`, this makes attacker declaration
+    /// a fully reversible game action so per-action undo / rewind-to-turn-start
+    /// restores the prior `CombatState` exactly (no manual `combat.clear()`).
+    pub fn undo_declare_attacker(&mut self, attacker: CardId, prev_combat_active: bool) {
+        self.attackers.remove(&attacker);
+        self.combat_active = prev_combat_active;
+    }
+
+    /// Reverse a `declare_blocker` (for the undo log, mtg-614 hole (b)).
+    ///
+    /// Removes the blocker -> attackers mapping and removes this blocker from
+    /// each attacker's reverse `attacker_blockers` entry, pruning entries that
+    /// become empty so the restored state is byte-identical to the pre-declare
+    /// state (an empty `SmallVec` entry would still hash differently than an
+    /// absent key). `declare_blocker` pushes the blocker once per attacker, so
+    /// we `retain` rather than remove a single occurrence.
+    pub fn undo_declare_blocker(&mut self, blocker: CardId, attackers: &[CardId]) {
+        self.blockers.remove(&blocker);
+        for attacker in attackers {
+            if let Some(blockers) = self.attacker_blockers.get_mut(attacker) {
+                blockers.retain(|b| *b != blocker);
+                if blockers.is_empty() {
+                    self.attacker_blockers.remove(attacker);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -508,3 +508,230 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
 
     Ok(())
 }
+
+// =============================================================================
+// PER-ACTION undo/redo round-trips (mtg-614 holes (b) and (c), oracle part (d))
+//
+// The whole-turn oracle above proves rewind_to_turn_start + replay round-trips,
+// but it cannot isolate a SINGLE action's reversibility (a whole-turn rewind
+// re-runs combat from scratch, hiding a non-undoable combat mutation). These
+// tests apply ONE logged GameAction, snapshot compute_state_hash, `undo()` it,
+// assert the hash returns EXACTLY to the pre-apply value, then re-apply and
+// assert it returns EXACTLY to the post-apply value. This is the binary gate
+// for per-action MCTS time-travel: each canonical-state mutation must be a
+// faithful GameAction inverse.
+// =============================================================================
+
+use mtg_engine::core::{Card, CardType};
+use mtg_engine::game::GameState;
+
+/// Build a 2-player game with `n` vanilla creatures on the battlefield for the
+/// given player. Returns the game and the creature IDs (deterministic order).
+fn game_with_creatures(player_for: usize, specs: &[(&str, i8, i8)]) -> (GameState, Vec<CardId>, [PlayerId; 2]) {
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+    let owner = [p1, p2][player_for];
+    let mut ids = Vec::new();
+    for (name, power, toughness) in specs {
+        let id = game.next_card_id();
+        let mut card = Card::new(id, (*name).to_string(), owner);
+        card.add_type(CardType::Creature);
+        card.set_base_power(Some(*power));
+        card.set_base_toughness(Some(*toughness));
+        card.controller = owner;
+        game.cards.insert(id, card);
+        game.battlefield.add(id);
+        ids.push(id);
+    }
+    (game, ids, [p1, p2])
+}
+
+/// Pop the most recent action and undo it via the centralized `GameAction::undo`
+/// (the same inverse `rewind_to_turn_start` applies). Mirrors a per-action MCTS
+/// step-back without going through `GameState::undo`'s cache-dirtying path, so
+/// the assertion isolates the action's own state inverse.
+fn undo_last(game: &mut GameState) -> GameAction {
+    let mut undo_log = std::mem::take(&mut game.undo_log);
+    let (action, _prior) = undo_log.pop().expect("undo log must have an action to pop");
+    action.undo(game).expect("undo must succeed");
+    game.undo_log = undo_log;
+    action
+}
+
+/// Hole (b): declaring an attacker is a reversible GameAction.
+#[test]
+fn per_action_undo_redo_declare_attacker() {
+    let (mut game, ids, players) = game_with_creatures(0, &[("Grizzly Bears", 2, 2)]);
+    let attacker = ids[0];
+    let defender = players[1];
+
+    let hash_before = compute_state_hash(&game);
+
+    // Apply: declare attacker (logged). NOTE: we use the combat-only logged
+    // helper (not GameState::declare_attacker) so this test isolates the
+    // CombatState mutation + its GameAction inverse, independent of the tap /
+    // trigger side effects (which have their own separately-tested inverses).
+    game.declare_attacker_logged(attacker, defender);
+    assert!(game.combat.is_attacking(attacker));
+    let hash_after = compute_state_hash(&game);
+    assert_ne!(
+        hash_before, hash_after,
+        "declaring an attacker must change the state hash (combat.attackers / combat_active)"
+    );
+
+    // Undo → must return EXACTLY to the pre-declare hash.
+    let action = undo_last(&mut game);
+    assert!(matches!(action, GameAction::DeclareAttacker { .. }));
+    assert!(!game.combat.is_attacking(attacker), "undo must remove the attacker");
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_before,
+        "undo of DeclareAttacker must restore the exact pre-declare state hash \
+         (combat.attackers map AND the combat_active flag)"
+    );
+
+    // Redo (re-apply) → must return EXACTLY to the post-declare hash.
+    game.declare_attacker_logged(attacker, defender);
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_after,
+        "re-applying DeclareAttacker must reproduce the exact post-declare state hash"
+    );
+}
+
+/// Hole (b): declaring a blocker is a reversible GameAction (including the
+/// reverse attacker_blockers map and combat_active when the clear restores it).
+#[test]
+fn per_action_undo_redo_declare_blocker_and_clear() {
+    let (mut game, ids, players) = game_with_creatures(0, &[("Hill Giant", 3, 3), ("Wall", 0, 4), ("Wall II", 0, 4)]);
+    // P1 owns all three for setup simplicity; assign blockers to P2.
+    let attacker = ids[0];
+    let blocker1 = ids[1];
+    let blocker2 = ids[2];
+    let defender = players[1];
+
+    // Set up an attack so blockers have something to block.
+    game.declare_attacker_logged(attacker, defender);
+    let hash_attack_only = compute_state_hash(&game);
+
+    // Declare blocker1 (logged).
+    let mut atk_vec: SmallVec<[CardId; 2]> = SmallVec::new();
+    atk_vec.push(attacker);
+    game.declare_blocker_logged(blocker1, atk_vec.clone());
+    assert!(game.combat.is_blocking(blocker1));
+    assert!(game.combat.is_blocked(attacker));
+    let hash_one_block = compute_state_hash(&game);
+    assert_ne!(hash_attack_only, hash_one_block);
+
+    // Declare a SECOND blocker on the same attacker, so the reverse-map entry
+    // has 2 elements — undoing the 2nd must prune to exactly 1 (not 0, not an
+    // empty leftover Vec).
+    game.declare_blocker_logged(blocker2, atk_vec.clone());
+    let hash_two_blocks = compute_state_hash(&game);
+    assert_ne!(hash_one_block, hash_two_blocks);
+
+    // Undo the 2nd blocker → exactly back to the one-block hash.
+    let a2 = undo_last(&mut game);
+    assert!(matches!(a2, GameAction::DeclareBlocker { .. }));
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_one_block,
+        "undo of the 2nd DeclareBlocker must restore the exact one-block state \
+         (reverse attacker_blockers pruned to a single entry, not an empty leftover)"
+    );
+
+    // Undo the 1st blocker → exactly back to the attack-only hash.
+    let a1 = undo_last(&mut game);
+    assert!(matches!(a1, GameAction::DeclareBlocker { .. }));
+    assert!(!game.combat.is_blocked(attacker));
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_attack_only,
+        "undo of the 1st DeclareBlocker must restore the exact attack-only state \
+         (attacker_blockers entry fully removed, not left empty)"
+    );
+
+    // Now exercise ClearCombat reversibility: re-declare both blockers, snapshot,
+    // clear combat (logged), then undo the clear → must restore the full combat.
+    game.declare_blocker_logged(blocker1, atk_vec.clone());
+    game.declare_blocker_logged(blocker2, atk_vec);
+    let hash_full = compute_state_hash(&game);
+
+    let prev = Box::new(game.combat.clone());
+    let prior_log_size = game.logger.log_count();
+    game.combat.clear();
+    game.undo_log.log(GameAction::ClearCombat { prev }, prior_log_size);
+    assert!(!game.combat.is_attacking(attacker), "clear must empty combat");
+
+    let ac = undo_last(&mut game);
+    assert!(matches!(ac, GameAction::ClearCombat { .. }));
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_full,
+        "undo of ClearCombat must restore the exact pre-clear CombatState \
+         (all attacker/blocker declarations)"
+    );
+}
+
+/// Hole (c): a temp base P/T override (Animate / base-set) is a reversible
+/// GameAction, including the clear path.
+#[test]
+fn per_action_undo_redo_temp_base_stats() {
+    let (mut game, ids, _players) = game_with_creatures(0, &[("Mishra's Factory", 0, 0)]);
+    let card_id = ids[0];
+
+    // Baseline: no temp override set yet.
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_power(), None);
+    let hash_none = compute_state_hash(&game);
+
+    // Apply an Animate-style base-set (2/2) via the logged helper.
+    game.set_temp_base_stats_logged(card_id, Some(2), Some(2));
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_power(), Some(2));
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_toughness(), Some(2));
+    let hash_animated = compute_state_hash(&game);
+    assert_ne!(
+        hash_none, hash_animated,
+        "setting a temp base P/T override must change the state hash"
+    );
+
+    // Undo → must restore the prior `None`/`None` exactly.
+    let action = undo_last(&mut game);
+    assert!(matches!(action, GameAction::SetTempBaseStats { .. }));
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_power(), None);
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_none,
+        "undo of SetTempBaseStats must restore the exact prior override (None/None)"
+    );
+
+    // Re-apply → exactly the animated hash.
+    game.set_temp_base_stats_logged(card_id, Some(2), Some(2));
+    assert_eq!(compute_state_hash(&game), hash_animated);
+
+    // Now stack a SECOND override on top (e.g. a later base-set to 4/4) and undo
+    // it — must restore the FIRST override (Some(2)/Some(2)), not None. This is
+    // why the action stores the PRIOR Option pair, not a clear.
+    game.set_temp_base_stats_logged(card_id, Some(4), Some(4));
+    let hash_4_4 = compute_state_hash(&game);
+    assert_ne!(hash_animated, hash_4_4);
+    let action2 = undo_last(&mut game);
+    assert!(matches!(action2, GameAction::SetTempBaseStats { .. }));
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_power(), Some(2));
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_animated,
+        "undo of a stacked SetTempBaseStats must restore the FIRST override (2/2), not None"
+    );
+
+    // Exercise the logged CLEAR path: clear the override, then undo → restores 2/2.
+    game.clear_temp_base_stats_logged(card_id);
+    assert_eq!(game.cards.get(card_id).unwrap().temp_base_power(), None);
+    let action3 = undo_last(&mut game);
+    assert!(matches!(action3, GameAction::SetTempBaseStats { .. }));
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_animated,
+        "undo of clear_temp_base_stats_logged must restore the cleared override (2/2)"
+    );
+}

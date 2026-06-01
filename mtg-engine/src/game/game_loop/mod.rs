@@ -134,6 +134,11 @@ pub struct RawChoice {
 /// * `Exit` - Game ended
 pub type PreChoiceHook<'a> = Box<dyn FnMut(&mut GameState, PlayerId, ChoiceKind) -> PreChoiceResult + 'a>;
 
+/// Callback type for the one-shot post-setup hook (rewind/replay harness
+/// turn-1-start snapshot). Fires once after `setup_game()` with a shared
+/// reference to the freshly-set-up `GameState`. See `GameLoop::post_setup_hook`.
+pub type PostSetupHook<'a> = Box<dyn FnMut(&GameState) + 'a>;
+
 /// Callback type for pushing reveals AFTER automatic actions (like draws).
 ///
 /// This function is called after automatic actions that reveal cards.
@@ -333,7 +338,7 @@ pub struct GameLoop<'a> {
     /// then replays the recorded intra-turn choices. Fires at most once per
     /// `run_game` / `run_until_input` invocation; on a resume/replay re-entry,
     /// `setup_game` is a no-op (undo log non-empty) so the hook does not fire.
-    post_setup_hook: Option<Box<dyn FnMut(&GameState) + 'a>>,
+    post_setup_hook: Option<PostSetupHook<'a>>,
 }
 
 impl<'a> GameLoop<'a> {

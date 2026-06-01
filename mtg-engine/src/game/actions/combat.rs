@@ -99,8 +99,9 @@ impl GameState {
             .map(|p| p.id)
             .ok_or_else(|| MtgError::InvalidAction("No opponent found".to_string()))?;
 
-        // Declare attacker in combat state
-        self.combat.declare_attacker(card_id, defending_player);
+        // Declare attacker in combat state (logged so it is reversible by the
+        // undo log — mtg-614 hole (b)).
+        self.declare_attacker_logged(card_id, defending_player);
 
         // Tap the creature (unless it has vigilance)
         // Uses has_keyword_with_effects to account for granted vigilance
@@ -217,14 +218,46 @@ impl GameState {
             ));
         }
 
-        // Declare blocker
+        // Declare blocker (logged so it is reversible by the undo log — mtg-614
+        // hole (b)).
         let mut attackers_vec = smallvec::SmallVec::new();
         for &attacker in &attackers {
             attackers_vec.push(attacker);
         }
-        self.combat.declare_blocker(blocker_id, attackers_vec);
+        self.declare_blocker_logged(blocker_id, attackers_vec);
 
         Ok(())
+    }
+
+    /// Declare an attacker in `CombatState` and log a reversible
+    /// `GameAction::DeclareAttacker` (mtg-614 hole (b)). Shared by the validated
+    /// `declare_attacker` entry point and the combat-step game loop, so the
+    /// declaration is always undo-logged regardless of call path. Captures
+    /// `combat_active` BEFORE the mutation so undo restores the exact prior flag.
+    pub fn declare_attacker_logged(&mut self, card_id: CardId, defending_player: PlayerId) {
+        let prev_combat_active = self.combat.combat_active;
+        self.combat.declare_attacker(card_id, defending_player);
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::DeclareAttacker {
+                card_id,
+                prev_combat_active,
+            },
+            prior_log_size,
+        );
+    }
+
+    /// Declare a blocker in `CombatState` and log a reversible
+    /// `GameAction::DeclareBlocker` (mtg-614 hole (b)). Shared by the validated
+    /// `declare_blocker` entry point and the combat-step game loop. Stores the
+    /// attacker list so undo prunes the exact reverse-map entries it added.
+    pub fn declare_blocker_logged(&mut self, blocker_id: CardId, attackers: SmallVec<[CardId; 2]>) {
+        self.combat.declare_blocker(blocker_id, attackers.clone());
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::DeclareBlocker { blocker_id, attackers },
+            prior_log_size,
+        );
     }
 
     /// Calculate lethal damage needed for a blocker
