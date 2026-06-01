@@ -3865,16 +3865,17 @@ impl GameState {
                     .collect();
 
                 for target in targets {
+                    // Set base P/T (if specified) via the logged helper so the
+                    // override is reversible by the undo log (mtg-614 hole (c)).
+                    if power.is_some() || toughness.is_some() {
+                        self.set_temp_base_stats_logged(
+                            target,
+                            (*power).map(|p| p as i8),
+                            (*toughness).map(|t| t as i8),
+                        );
+                    }
                     if let Ok(card) = self.cards.get_mut(target) {
                         let card_name = card.name.clone();
-
-                        // Set base P/T if specified
-                        if let Some(p) = power {
-                            card.set_temp_base_power(*p as i8);
-                        }
-                        if let Some(t) = toughness {
-                            card.set_temp_base_toughness(*t as i8);
-                        }
 
                         // Grant keywords
                         for kw in keywords_granted {
@@ -4501,19 +4502,16 @@ impl GameState {
                 // Set temporary base P/T override (until end of turn)
                 // This is used by Animate effects like Flexible Waterbender,
                 // Turtle-Duck, and manlands such as Mishra's Factory.
+                //
+                // Set the temp base P/T (if specified) via the logged helper so
+                // the override is reversible by the undo log (mtg-614 hole (c)).
+                if power.is_some() || toughness.is_some() {
+                    self.set_temp_base_stats_logged(*target, (*power).map(|p| p as i8), (*toughness).map(|t| t as i8));
+                }
                 let card = self.cards.get_mut(*target)?;
                 let card_name = card.name.clone();
                 let _old_power = card.current_power();
                 let _old_toughness = card.current_toughness();
-
-                // Only set power if specified
-                if let Some(p) = power {
-                    card.set_temp_base_power(*p as i8);
-                }
-                // Only set toughness if specified
-                if let Some(t) = toughness {
-                    card.set_temp_base_toughness(*t as i8);
-                }
 
                 // Grant temporary keywords (until end of turn)
                 // Note: Uses same approach as PumpCreature - keywords added to permanent set
@@ -4893,16 +4891,17 @@ impl GameState {
                         card.add_type(CardType::Creature);
                     }
 
-                    // Set temp base power/toughness to 0/0 (animate effect)
-                    card.set_temp_base_power(0);
-                    card.set_temp_base_toughness(0);
-
                     // Add Haste keyword so it can attack immediately
                     use crate::core::Keyword;
                     card.keywords.insert(Keyword::Haste);
 
                     card.name.clone()
                 };
+
+                // Set temp base power/toughness to 0/0 (animate effect) via the
+                // logged helper so the override is reversible by the undo log
+                // (mtg-614 hole (c)).
+                self.set_temp_base_stats_logged(*target, Some(0), Some(0));
 
                 // Add +1/+1 counters
                 use crate::core::CounterType;

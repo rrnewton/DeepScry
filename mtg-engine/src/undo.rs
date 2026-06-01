@@ -325,6 +325,56 @@ pub enum GameAction {
         #[serde(default)]
         previous: Option<u32>,
     },
+
+    /// Declare a creature as an attacker (mtg-614 hole (b)).
+    ///
+    /// `CombatState::declare_attacker` mutates `combat.attackers` and sets
+    /// `combat_active`; previously this was NOT undoable, so per-action undo
+    /// could not reverse it and `rewind_to_turn_start` had to hand-clear the
+    /// whole `CombatState`. Logging this action makes the declaration reversible
+    /// (`undo()` calls `CombatState::undo_declare_attacker`), restoring the prior
+    /// `combat_active` flag.
+    DeclareAttacker {
+        card_id: CardId,
+        /// Value of `combat.combat_active` BEFORE this declaration (for undo).
+        prev_combat_active: bool,
+    },
+
+    /// Declare a creature as a blocker (mtg-614 hole (b)).
+    ///
+    /// `CombatState::declare_blocker` inserts into `combat.blockers` and pushes
+    /// into each attacker's `attacker_blockers` reverse map. Logging this action
+    /// makes it reversible (`undo()` calls `CombatState::undo_declare_blocker`).
+    /// The attacker list is stored so undo can prune the exact reverse-map
+    /// entries it added.
+    DeclareBlocker {
+        blocker_id: CardId,
+        attackers: SmallVec<[CardId; 2]>,
+    },
+
+    /// Clear the whole `CombatState` at end of combat (mtg-614 hole (b)).
+    ///
+    /// `end_combat_step` calls `combat.clear()`, discarding the attacker/blocker
+    /// declarations. Without logging, a rewind across the end-of-combat boundary
+    /// could not restore those declarations. Storing the previous `CombatState`
+    /// lets `undo()` put it back exactly. Boxed to keep the `GameAction` enum
+    /// small (avoids bloating every variant with the combat maps).
+    ClearCombat {
+        prev: Box<crate::game::combat::CombatState>,
+    },
+
+    /// Set a card's temporary base power/toughness override (mtg-614 hole (c)).
+    ///
+    /// `Card::set_temp_base_power` / `set_temp_base_toughness` (Animate Dead,
+    /// characteristic-defining / base-setting effects, manlands) and
+    /// `clear_temp_base_stats` previously had NO undo support — `undo.rs`'s own
+    /// comment admitted this. Storing the previous `Option<i8>` values lets
+    /// `undo()` restore them, so an Animate/base-set/clear round-trips exactly.
+    SetTempBaseStats {
+        card_id: CardId,
+        prev_power: Option<i8>,
+        prev_toughness: Option<i8>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -507,6 +557,35 @@ impl fmt::Display for GameAction {
             GameAction::SetRememberedAmount { previous } => {
                 write!(f, "SetRememberedAmount(prev={:?})", previous)
             }
+            GameAction::DeclareAttacker {
+                card_id,
+                prev_combat_active,
+            } => write!(
+                f,
+                "DeclareAttacker({} prev_active={})",
+                card_id.as_u32(),
+                prev_combat_active
+            ),
+            GameAction::DeclareBlocker { blocker_id, attackers } => write!(
+                f,
+                "DeclareBlocker({} blocking {} attacker(s))",
+                blocker_id.as_u32(),
+                attackers.len()
+            ),
+            GameAction::ClearCombat { prev } => {
+                write!(f, "ClearCombat(restored {} attacker(s))", prev.attackers.len())
+            }
+            GameAction::SetTempBaseStats {
+                card_id,
+                prev_power,
+                prev_toughness,
+            } => write!(
+                f,
+                "SetTempBaseStats({} prev={:?}/{:?})",
+                card_id.as_u32(),
+                prev_power,
+                prev_toughness
+            ),
         }
     }
 }
@@ -950,6 +1029,41 @@ impl GameAction {
 
             GameAction::SetRememberedAmount { previous } => {
                 game.remembered_amount = *previous;
+            }
+
+            GameAction::DeclareAttacker {
+                card_id,
+                prev_combat_active,
+            } => {
+                // Reverse the attacker declaration: remove from the attackers map
+                // and restore the prior combat_active flag. (The tap and any
+                // attack triggers are logged as their own actions and undone
+                // separately.)
+                game.combat.undo_declare_attacker(*card_id, *prev_combat_active);
+            }
+
+            GameAction::DeclareBlocker { blocker_id, attackers } => {
+                // Reverse the blocker declaration: remove the blocker mapping and
+                // prune the reverse attacker_blockers entries it added.
+                game.combat.undo_declare_blocker(*blocker_id, attackers);
+            }
+
+            GameAction::ClearCombat { prev } => {
+                // Restore the full CombatState that end_combat_step cleared.
+                game.combat = (**prev).clone();
+            }
+
+            GameAction::SetTempBaseStats {
+                card_id,
+                prev_power,
+                prev_toughness,
+            } => {
+                // Restore the previous temp base P/T overrides (Animate / base-set
+                // / clear). get_mut tolerates a missing card (the card may have
+                // left the battlefield) the same way other card-field undos do.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.restore_temp_base_stats(*prev_power, *prev_toughness);
+                }
             }
         }
 

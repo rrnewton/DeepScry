@@ -1408,6 +1408,14 @@ impl Card {
         self.temp_base_power = None;
         self.temp_base_toughness = None;
     }
+
+    /// Restore the temp base P/T overrides to specific previous values.
+    /// Used by `GameAction::SetTempBaseStats::undo` (mtg-614 hole (c)) to revert
+    /// a `set_temp_base_*` / `clear_temp_base_stats` mutation exactly.
+    pub fn restore_temp_base_stats(&mut self, power: Option<i8>, toughness: Option<i8>) {
+        self.temp_base_power = power;
+        self.temp_base_toughness = toughness;
+    }
 }
 
 impl GameEntity<Card> for Card {

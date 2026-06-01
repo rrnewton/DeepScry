@@ -519,6 +519,68 @@ impl GameState {
         Ok(())
     }
 
+    /// Set a card's temporary base power and/or toughness override, logging a
+    /// reversible `GameAction::SetTempBaseStats` (mtg-614 hole (c)).
+    ///
+    /// `power`/`toughness` of `None` leave that stat's override unchanged; pass
+    /// `Some(v)` to set it. Captures the PRIOR override pair before mutating so
+    /// undo restores both exactly (including the prior `None`). Used by Animate /
+    /// characteristic-defining / base-setting effects and manlands. No-op (and no
+    /// log entry) if the card does not exist.
+    pub fn set_temp_base_stats_logged(&mut self, card_id: CardId, power: Option<i8>, toughness: Option<i8>) {
+        let (prev_power, prev_toughness) = {
+            let card = match self.cards.get_mut(card_id) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let prev = (card.temp_base_power(), card.temp_base_toughness());
+            if let Some(p) = power {
+                card.set_temp_base_power(p);
+            }
+            if let Some(t) = toughness {
+                card.set_temp_base_toughness(t);
+            }
+            prev
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetTempBaseStats {
+                card_id,
+                prev_power,
+                prev_toughness,
+            },
+            prior_log_size,
+        );
+    }
+
+    /// Clear a card's temporary base P/T overrides (end-of-turn cleanup of
+    /// Animate effects), logging a reversible `GameAction::SetTempBaseStats`
+    /// (mtg-614 hole (c)). No-op (and no log entry) if the card does not exist or
+    /// already has no override set.
+    pub fn clear_temp_base_stats_logged(&mut self, card_id: CardId) {
+        let (prev_power, prev_toughness) = {
+            let card = match self.cards.get_mut(card_id) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let prev = (card.temp_base_power(), card.temp_base_toughness());
+            if prev.0.is_none() && prev.1.is_none() {
+                return; // nothing to clear → nothing to log
+            }
+            card.clear_temp_base_stats();
+            prev
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetTempBaseStats {
+                card_id,
+                prev_power,
+                prev_toughness,
+            },
+            prior_log_size,
+        );
+    }
+
     /// Apply a regeneration shield: consume one shield, tap, clear damage,
     /// remove from combat. CR 701.15a.
     ///
@@ -3584,6 +3646,37 @@ impl GameState {
                 crate::undo::GameAction::SetRememberedAmount { previous } => {
                     self.remembered_amount = previous;
                 }
+
+                crate::undo::GameAction::DeclareAttacker {
+                    card_id,
+                    prev_combat_active,
+                } => {
+                    // Reverse the attacker declaration (mtg-614 hole (b)).
+                    self.combat.undo_declare_attacker(card_id, prev_combat_active);
+                }
+
+                crate::undo::GameAction::DeclareBlocker { blocker_id, attackers } => {
+                    // Reverse the blocker declaration (mtg-614 hole (b)).
+                    self.combat.undo_declare_blocker(blocker_id, &attackers);
+                }
+
+                crate::undo::GameAction::ClearCombat { prev } => {
+                    // Restore the CombatState cleared at end of combat (mtg-614
+                    // hole (b)).
+                    self.combat = *prev;
+                }
+
+                crate::undo::GameAction::SetTempBaseStats {
+                    card_id,
+                    prev_power,
+                    prev_toughness,
+                } => {
+                    // Restore the previous temp base P/T overrides (mtg-614 hole
+                    // (c)).
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.restore_temp_base_stats(prev_power, prev_toughness);
+                    }
+                }
             }
 
             // After undo, mark all mana caches as needing rebuild
@@ -3906,13 +3999,14 @@ impl GameState {
                                     card.add_type(CardType::Creature);
                                 }
 
-                                // Set base P/T to 0/0
-                                card.set_temp_base_power(0);
-                                card.set_temp_base_toughness(0);
-
                                 // Add Haste keyword
                                 card.keywords.insert(Keyword::Haste);
                             }
+
+                            // Set base P/T to 0/0 via the logged helper so the
+                            // override is reversible by the undo log (mtg-614
+                            // hole (c)).
+                            self.set_temp_base_stats_logged(land_id, Some(0), Some(0));
 
                             // Add +1/+1 counters
                             self.add_counters(land_id, CounterType::P1P1, num_counters)?;
