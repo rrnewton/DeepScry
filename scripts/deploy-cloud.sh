@@ -616,10 +616,14 @@ PYGC
     # --- 8. Restart the service ---
     echo "→ restarting service ${SERVICE_NAME} (systemd-$SYSTEMD_MODE)"
     if [[ "$SYSTEMD_MODE" == "user" ]]; then
-        ssh "$REMOTE_SSH" "chmod +x ~/$REMOTE_DIR/bin/mtg && systemctl --user restart $SERVICE_NAME.service"
+        # `systemctl --user` over a non-interactive SSH session has no
+        # DBus/user-manager handle unless XDG_RUNTIME_DIR is set — otherwise
+        # it fails "Failed to connect to bus: No medium found" (the user
+        # lingers, the runtime dir exists, the env var just isn't exported).
+        ssh "$REMOTE_SSH" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); chmod +x ~/$REMOTE_DIR/bin/mtg && systemctl --user restart $SERVICE_NAME.service"
         # Give it a moment to come up
         sleep 2
-        ssh "$REMOTE_SSH" "systemctl --user status $SERVICE_NAME.service --no-pager -n 10" || true
+        ssh "$REMOTE_SSH" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); systemctl --user status $SERVICE_NAME.service --no-pager -n 10" || true
     else
         ssh "$REMOTE_SSH" "chmod +x ~/$REMOTE_DIR/bin/mtg && sudo -n systemctl restart $SERVICE_NAME.service" || {
             echo "warning: sudo restart failed; the service file may need 'config --with-sudoers'." >&2
@@ -818,7 +822,7 @@ except Exception:
 
 cmd_status() {
     if [[ "$SYSTEMD_MODE" == "user" ]]; then
-        ssh "$REMOTE_SSH" "systemctl --user status $SERVICE_NAME.service --no-pager -n 20"
+        ssh "$REMOTE_SSH" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); systemctl --user status $SERVICE_NAME.service --no-pager -n 20"
     else
         ssh "$REMOTE_SSH" "sudo systemctl status $SERVICE_NAME.service --no-pager -n 20"
     fi
@@ -826,7 +830,7 @@ cmd_status() {
 
 cmd_logs() {
     if [[ "$SYSTEMD_MODE" == "user" ]]; then
-        ssh -t "$REMOTE_SSH" "journalctl --user -u $SERVICE_NAME.service -f"
+        ssh -t "$REMOTE_SSH" "export XDG_RUNTIME_DIR=/run/user/\$(id -u); journalctl --user -u $SERVICE_NAME.service -f"
     else
         ssh -t "$REMOTE_SSH" "sudo journalctl -u $SERVICE_NAME.service -f"
     fi
