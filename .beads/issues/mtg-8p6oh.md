@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-01T13:49:18.450338457+00:00
-updated_at: 2026-06-01T13:49:18.450338457+00:00
+updated_at: 2026-06-01T14:15:11.285319769+00:00
 ---
 
 # Description
@@ -20,3 +20,23 @@ SOURCES + PROTOCOL (intel from this session):
 
 DELIVERABLE: decks/championship/<year>/ for as many of 1995/2000/2005/2010/2015/2020/2025 as found, each w/ .dck files + README (provenance+links+pilots+placements), committed to a worktree branch. Report which years/decks were found, source URLs, and any that couldn't be located. NO code, NO wiring, NO collection changes — that's mtg-nmbr1's later phase. This issue = the fetching protocol + the raw decks only.
 Part of / precursor to mtg-nmbr1 (official collections).
+
+COMPLETED 2026-06-01: All 7 target years populated on branch championship-deck-fetch (7 commits, eaf57851..70dd8fdc). See decks/championship/README.md for full fetch protocol and accuracy notes.
+
+SUMMARY:
+- 1995: 4 decks (Blumke, Hernandez, Justice, Stern); Justice skeleton/approximate
+- 2000: 4 decks (Finkel, Maher, van de Logt, Labarre); from official WC Decks 2000 product — highest confidence
+- 2005: 4 decks (Mori, Karsten, Asahara, Kaji); Asahara/Kaji approximate; no official product released
+- 2010: 4 decks (Matignon, Wafo-Tapa, PVDDR, Janse); PVDDR approximate (mtgdecks.net 403)
+- 2015: 4 decks (Manfield, Turtenwald, Rietzl, Black); confirmed from SCG coverage article
+- 2020: 4 decks (PVDDR, Carvalho, Manfield, Nassif); confirmed from SCG coverage article
+- 2025: 4 decks (Manfield, Shibata, Davis, Henry); from official magic.gg; cards NOT in current engine
+
+FETCH PROTOCOL FINDINGS:
+- mtgdecks.net: 403 to WebFetch (matches known behavior)
+- MTGGoldfish: 403 to WebFetch
+- Moxfield: 403 to WebFetch
+- Scryfall: 403 to WebFetch
+- mtg.fandom.com: 403 to WebFetch
+- WORKS: TappedOut, Star City Games articles, magic.gg, mtg.wtf (official WC product mirror), Usenet archive, search snippet extraction
+- Best strategy: WebSearch first to identify URLs, then targeted WebFetch for sources known to work
