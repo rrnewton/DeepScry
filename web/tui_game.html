@@ -668,7 +668,7 @@
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web TUI</h1>
         <a href="index.html">Back to lobby</a>
-        <a href="native_game.html">Web GUI</a>
+        <a href="native_game.html" data-asset-href="native_game.html">Web GUI</a>
         <span id="status">Loading...</span>
         <span id="card-status" style="color: #888; font-size: 12px;"></span>
     </div>
@@ -940,6 +940,12 @@
             consumeNetworkParams,
             buildLobbyAction,
         } from './lobby_launcher.js';
+
+        // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
+        // link (tui_game.html ⇄ native_game.html) through the runtime manifest
+        // so it points at the hashed name on the deploy tree. Identity on dev.
+        import { installManifestHrefRewrite } from './asset_manifest.js';
+        installManifestHrefRewrite();
 
         // mtg-35z3s page 3: boot settings resolved from URL params (no built-in
         // launcher). launchTui() reads these instead of launcher form fields.

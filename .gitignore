@@ -123,6 +123,10 @@ inspect_*.js
 measure_*.js
 sanity_test_*.js
 test_*.js
+# ...but the web/ E2E + deploy-tree tests ARE core test scripts wired into
+# `make validate` (and GitHub CI) — keep them tracked despite the broad
+# `test_*.js` ignore above (mtg-682).
+!web/test_*.js
 simple_screenshot.js
 quick_screenshot.js
 dom_inspection_test.js

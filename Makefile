@@ -361,6 +361,12 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "    Local-only: launches 'mtg server-web' on a temp port; asserts"
 	@echo "    index.json no-cache, hashed bin/wasm/js immutable, fixed pkg no-cache."
 	@cd web && node test_web_server_smoke.js
+	@echo "=== Running deploy-tree navigation gate on the HASHED tree (mtg-682) ==="
+	@echo "    Local-only: stages web/ via 'mtg hash-web-assets' (the deploy code"
+	@echo "    path), serves it, and asserts the full lobby->launcher->game/editor"
+	@echo "    nav RESOLVES to hashed 200s — incl. the cycle edges routed through"
+	@echo "    the runtime asset-manifest. Guards the lobby-redo CAS deploy break."
+	@cd web && node test_deploy_tree_nav.js
 	@echo "=== Running network-vs-local equivalence E2E (deterministic gamelog identity) ==="
 	@echo "    Guards the network-determinism class fixed in fix-network-desync"
 	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."

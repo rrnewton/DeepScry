@@ -1201,8 +1201,23 @@ async fn async_main() -> Result<()> {
                 println!("    {k} -> {v}");
             }
             println!("    {} -> {}", res.data_index.0, res.data_index.1);
-            for (k, v) in &res.html_pages {
-                println!("    {k} -> {v}");
+            for (k, v) in &res.graph_nodes {
+                let via_manifest = if res.manifest.contains_key(k) {
+                    "  (cycle → manifest)"
+                } else {
+                    ""
+                };
+                println!("    {k} -> {v}{via_manifest}");
+            }
+            if res.manifest.is_empty() {
+                println!("✓ no dependency cycles — every reference statically rewritten");
+            } else {
+                println!(
+                    "✓ {} cycle-edge name(s) resolved via the runtime manifest ({} / {})",
+                    res.manifest.len(),
+                    mtg_engine::asset_hash::asset_graph::MANIFEST_JSON,
+                    mtg_engine::asset_hash::asset_graph::MANIFEST_JS,
+                );
             }
             println!(
                 "✓ entrypoint {} rewritten (filename UNCHANGED — short-TTL stable URL)",

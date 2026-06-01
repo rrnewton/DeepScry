@@ -715,6 +715,58 @@ run_post_deploy_probe() {
     if [[ -z "$hashed_tui" ]]; then
         probe_failed=1; fail_reasons+=("index.html: no hashed tui_game.<h>.html reference (mtg hash-web-assets did not run?)")
     fi
+
+    # 2b. Lobby-redo NAV hardening (mtg-682). The lobby-redo deploy break was a
+    # 404 on the launcher hub + the game-page cross-nav once HTML was hashed.
+    # Probe the FULL nav chain a browser walks, resolving cycle-edge links
+    # through the served runtime manifest exactly like asset_manifest.js does:
+    #   - index.html must reference a HASHED launcher.<h>.html and it must 200;
+    #   - the launcher's HASHED deck_editor.<h>.html forward link must 200;
+    #   - the lobby_launcher.<h>.js redirect builder's LOGICAL game-page names
+    #     must resolve (through the manifest) to a hashed 200.
+    local hashed_launcher manifest_json nav_code
+    hashed_launcher="$(printf '%s' "$landing_html" | grep -oE "launcher\.[0-9a-f]+\.html" | head -1)"
+    if [[ -z "$hashed_launcher" ]]; then
+        probe_failed=1; fail_reasons+=("index.html: no HASHED launcher.<h>.html reference (auto-discovery / lobby-redo break)")
+    else
+        nav_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/$hashed_launcher")" || nav_code="000"
+        if [[ "$nav_code" != "200" ]]; then
+            probe_failed=1; fail_reasons+=("/$hashed_launcher: HTTP $nav_code (launcher hub must resolve hashed)")
+        else
+            echo "  ✓ /$hashed_launcher  200 (launcher hub)"
+            # The launcher's forward link to the hashed deck editor must 200.
+            local launcher_html hashed_deck
+            launcher_html="$(curl "${curl_opts[@]}" "$base/$hashed_launcher")" || launcher_html=""
+            hashed_deck="$(printf '%s' "$launcher_html" | grep -oE "deck_editor\.[0-9a-f]+\.html" | head -1)"
+            if [[ -n "$hashed_deck" ]]; then
+                nav_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/$hashed_deck")" || nav_code="000"
+                if [[ "$nav_code" != "200" ]]; then
+                    probe_failed=1; fail_reasons+=("/$hashed_deck: HTTP $nav_code (launcher→deck_editor must resolve)")
+                else
+                    echo "  ✓ /$hashed_deck  200 (launcher→deck editor)"
+                fi
+            fi
+        fi
+    fi
+    # The runtime manifest must map the game pages to their hashed names, and
+    # those names must 200 (the cycle-edge resolution the lobby redirect uses).
+    manifest_json="$(curl "${curl_opts[@]}" "$base/asset-manifest.json")" || manifest_json=""
+    local nav_page hashed_nav
+    for nav_page in tui_game native_game; do
+        # Pull "<nav_page>.html": "<nav_page>.<h>.html" out of the manifest JSON.
+        hashed_nav="$(printf '%s' "$manifest_json" | grep -oE "${nav_page}\.[0-9a-f]+\.html" | head -1)"
+        if [[ -z "$hashed_nav" ]]; then
+            probe_failed=1; fail_reasons+=("asset-manifest.json: no ${nav_page}.html → hashed mapping (cycle-edge resolver missing)")
+        else
+            nav_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/$hashed_nav")" || nav_code="000"
+            if [[ "$nav_code" != "200" ]]; then
+                probe_failed=1; fail_reasons+=("/$hashed_nav: HTTP $nav_code (manifest-resolved game page must 200)")
+            else
+                echo "  ✓ /$hashed_nav  200 (manifest: ${nav_page}.html)"
+            fi
+        fi
+    done
+
     game_html="$(curl "${curl_opts[@]}" "$base/$hashed_tui")" || game_html=""
     hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine\.[0-9a-f]+\.js" | head -1)"
     hashed_wasm="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine_bg\.[0-9a-f]+\.wasm" | head -1)"

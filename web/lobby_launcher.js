@@ -35,6 +35,8 @@
 
 'use strict';
 
+import { resolveAsset } from './asset_manifest.js';
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -42,7 +44,18 @@
 /** Default launch target when `?ui=` is absent. */
 export const DEFAULT_UI = 'tui';
 
-/** File names for the two game UIs (no path prefix — same origin). */
+/**
+ * LOGICAL file names for the two game UIs (no path prefix — same origin).
+ *
+ * These are the *logical* names. On the content-addressed deploy the actual
+ * served file is `tui_game.<hash>.html` etc. — `buildRedirectUrl` resolves the
+ * logical name through `asset_manifest.js` (the runtime manifest) before
+ * emitting the redirect URL. The game pages ⇄ this module form a dependency
+ * cycle, so the deploy hasher canNOT statically bake the hashed name into this
+ * leaf; the manifest is the general cycle-break (see asset_manifest.js + the
+ * asset_hash.rs module docs). On the source/dev tree `resolveAsset` is the
+ * identity, so these fixed names are used as-is.
+ */
 export const GAME_PAGE = {
     tui:    'tui_game.html',
     native: 'native_game.html',
@@ -71,7 +84,10 @@ export const GAME_PAGE = {
  */
 export function buildRedirectUrl(opts) {
     const ui = opts.ui === 'native' ? 'native' : 'tui';
-    const page = GAME_PAGE[ui];
+    // Resolve the logical game-page name → the hashed name actually served on
+    // the deploy tree (identity on the dev tree). This is the runtime
+    // cycle-break: the game pages ⇄ this leaf cannot be statically rewritten.
+    const page = resolveAsset(GAME_PAGE[ui]);
     const qp = new URLSearchParams();
 
     if (opts.action === 'create') {

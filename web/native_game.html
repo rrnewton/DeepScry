@@ -815,7 +815,7 @@
 <body>
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web GUI</h1>
-        <a href="tui_game.html">Web TUI</a>
+        <a href="tui_game.html" data-asset-href="tui_game.html">Web TUI</a>
         <a href="index.html">Back to lobby</a>
         <span id="status">Loading...</span>
     </div>
@@ -1044,6 +1044,12 @@
             hasNoLaunchParams,
             buildLobbyAction,
         } from './lobby_launcher.js';
+
+        // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
+        // link (tui_game.html ⇄ native_game.html) through the runtime manifest
+        // so it points at the hashed name on the deploy tree. Identity on dev.
+        import { installManifestHrefRewrite } from './asset_manifest.js';
+        installManifestHrefRewrite();
 
         // Shared help modal (mtg-1vwpd DRY extraction) — one implementation reused
         // by tui_game.html and native_game.html. The page supplies the help text
