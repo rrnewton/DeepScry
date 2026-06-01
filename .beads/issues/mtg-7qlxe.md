@@ -1,0 +1,36 @@
+---
+title: new_worktree.sh full-copies 78GB target + 589MB forge-java per worktree (reflink void on ext4/WSL2)
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-06-01T19:02:18.016904151+00:00
+updated_at: 2026-06-01T19:05:59.170316908+00:00
+---
+
+# Description
+
+Worktree creation is slow (minutes) and disk-heavy because the workspace FS is ext4 on WSL2, where cp -a --reflink=auto SILENTLY falls back to a full byte copy (reflink probe: cp --reflink=always fails). So scripts/new_worktree.sh (multiagent_workspace/scripts/new_worktree.sh) full-copies per worktree: target/ (~78GB) + forge-java working tree (589MB).
+
+Measured 2026-06-01: df -T . = ext4; target breakdown: debug=60GB (incl debug/incremental=18GB), release=13GB, wasm32-unknown-unknown=4.6GB, release-deploy=943MB; release/deps=11GB / 2482 files. Total build artifacts across primary + 2 worktrees ~300GB, disk 48% full.
+
+cargo-sweep is NOT installed → the script step that is supposed to trim the donor target before cloning is a silent no-op → target grows unbounded across a session.
+
+Also: the script comment itself notes cargo fingerprints embed absolute source paths, so the copied target only preserves the DEPENDENCY cache (workspace members recompile anyway) — we pay a 79GB ext4 copy to save a few minutes of dep compilation.
+
+FIX OPTIONS (pick/combine):
+1. Copy only target/release + target/wasm32-unknown-unknown into the new worktree (skip target/debug + */incremental). ~18GB instead of 79GB. Biggest, simplest win.
+2. Or skip the target copy entirely and accept a one-time full rebuild in the new worktree (simplest; trades I/O for CPU).
+3. Install cargo-sweep (cargo install cargo-sweep) so the donor-trim step works; run cargo sweep --installed / --time N on the donor before clone.
+4. forge-java: on a non-reflink FS, prefer a per-worktree `git submodule update --init forge-java` from the shared object store (or git worktree-style shared) rather than a 589MB cp; or accept the 589MB (small vs target).
+5. Longer-term: move the workspace onto a reflink-capable FS (btrfs/xfs) so the original CoW design works and worktrees become near-free.
+
+Acceptance: new worktree creation drops from ~79GB copy to <=~18GB (or near-zero), wall-clock from minutes to seconds/tens-of-seconds; disk footprint per worktree drops correspondingly; make validate still green in a fresh worktree.
+
+--- DESIGN: worktree REUSE POOL (user 2026-06-01) + target-copy trim ---
+Because reflink is void on ext4, the win is to STOP re-copying target/. Two changes:
+
+1. TARGET-COPY TRIM (new_worktree.sh): copy only target/release + target/wasm32-unknown-unknown (+ CACHEDIR.TAG); SKIP target/debug (60GB) and */incremental (18GB). validate + worktrees build release/wasm, so debug is dead weight in the copy. Drops the per-worktree copy from ~79GB to ~18GB. (User explicitly agreed to removing target/debug + incremental from the copy.)
+
+2. WORKTREE REUSE POOL (user request): on closeout, instead of `git worktree remove`, PARK the worktree (keep up to 3 in a ready pool): rename to a basic pool path (e.g. worktrees/_pool/slot-N), `git fetch && git checkout -B _parked-N origin/integration && git reset --hard origin/integration`, verify `git status` clean (+ submodule status clean), KEEP its target/ (the expensive asset). When acquiring a new worktree: if a parked slot exists, reuse it — `git worktree move` to worktrees/<branch>, `git checkout -B <branch> origin/integration`, `git reset --hard`, fetch, verify clean — NO 79GB copy, just an incremental rebuild. Cap pool at 3; if full at closeout, fall back to `git worktree remove`. New scripts: park_worktree.sh + acquire_worktree.sh (or fold acquire into new_worktree.sh as a pool-first check). Update <RepoRoot>/multiagent_workspace/CLAUDE.md worktree-lifecycle section + ACTIVE.md to add a POOL registry section. CAUTION: test `git worktree move` w/ the shared forge-java gitdir + per-worktree .claude_template gitdir (the deinit footgun is about deinit, not move; move should rewrite admin pointers — but VERIFY git status + submodule status clean after move before trusting a reused slot). Implement + TEST at the next real worktree closeout (park) + next acquire (reuse), with fallback to plain remove/new_worktree if the move/reset misbehaves.
+
+3. SEPARATE BUG FOUND 2026-06-01: the merged example mtg-engine/examples/measure_rewind_replay.rs left an ORPHAN process running 2h38m (pid killed by coordinator) — it can apparently hang/loop for some input. If `make validate` runs examples, this is a latent validate-hang risk. Audit: add a hard iteration/time cap to the example, and confirm whether validate executes it (if so, gate or bound it). Likely contributed to the earlier validate flake via CPU contention.
