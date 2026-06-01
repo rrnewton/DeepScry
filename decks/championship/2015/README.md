@@ -32,6 +32,21 @@ All four decklists confirmed from the Star City Games coverage article, which pu
 
 The finals was Manfield vs Turtenwald in an Abzan Control mirror. Manfield's key differentiator: Silence the Believers as a trump against Hangarback Walker (no counter with -1/-1 abilities). Turtenwald ran Dragonlord Dromoka. Manfield won 3–2 in the best-of-5.
 
+## Legal Sets
+
+The 2015 main event was a **Standard (Type II)** tournament. The **August 27–30, 2015** event fell *just before* the September 2015 rotation (Battle for Zendikar), so the **full pre-rotation pool** was legal — two blocks plus the final-era core sets:
+
+- **Theros** (THS, Sep 2013)
+- **Born of the Gods** (BNG, Feb 2014)
+- **Journey into Nyx** (JOU, Apr 2014)
+- **Magic 2015** (M15, Jul 2014) — core set
+- **Khans of Tarkir** (KTK, Sep 2014)
+- **Fate Reforged** (FRF, Jan 2015)
+- **Dragons of Tarkir** (DTK, Mar 2015)
+- **Magic Origins** (ORI, Jul 2015) — the final core set under the old model
+
+**Boundary note:** This was the **last** large pre-rotation Standard: weeks later, the September 2015 Battle for Zendikar rotation dropped Theros block and M15, leaving only Khans of Tarkir / Fate Reforged / Dragons of Tarkir / Magic Origins. So the Top-4 lists here can legally contain Theros-block cards (e.g. Courser of Kruphix, Thoughtseize, temples) that would rotate out immediately after Worlds.
+
 ## Card Pool Context
 
 The 2015 Worlds was defined by **Khans of Tarkir** (tricolor wedge format) intersecting with **Magic Origins**. Siege Rhino had dominated Standard since Khans release; Thoughtseize, Courser of Kruphix, and Languish were pillars. Samuel Black's Mono-White Devotion list featured the newly-released Kytheon, Hero of Akros (from Magic Origins). Three of the four finalists were American players, and three played Abzan variants.

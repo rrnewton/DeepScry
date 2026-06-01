@@ -35,6 +35,25 @@ Seth Manfield won the finals 3–0 against Akira Shibata in an Izzet Lessons mir
 
 The Top 8 consisted of 7 Izzet/Stormchaser Talent decks and 1 Sultai Reanimator (Ken Yukuhiro). Two Temur Otters builds also appeared (Henry and Huschenbeth).
 
+## Legal Sets
+
+The 2025 main event (Magic World Championship 31) was a **Standard** tournament. By December 2025 Standard runs on the **three-year rotation** model (announced 2023; no rotation occurred in 2025–2026), so the **December 2025** legal pool spanned Wilds of Eldraine onward:
+
+- **Wilds of Eldraine** (WOE, Sep 2023)
+- **The Lost Caverns of Ixalan** (LCI, Nov 2023)
+- **Murders at Karlov Manor** (MKM, Feb 2024)
+- **Outlaws of Thunder Junction** (OTJ, Apr 2024)
+- **Bloomburrow** (BLB, Aug 2024)
+- **Duskmourn: House of Horror** (DSK, Sep 2024)
+- **Foundations** (FDN, Nov 2024) — long-lived base set
+- **Aetherdrift** (DFT, Feb 2025)
+- **Tarkir: Dragonstorm** (TDM, Apr 2025)
+- **Magic: The Gathering — Final Fantasy** (FIN, Jun 2025)
+- **Edge of Eternities** (EOE, Aug 2025)
+- **Avatar: The Last Airbender** (Nov 2025) — the final 2025 set; sparked the Izzet Lessons metagame
+
+**Boundary note:** Under the three-year model, no autumn-2025 rotation took place, so this is an unusually deep 12-set Standard. Before Worlds, the bans of **Vivi Ornitier**, **Proft's Eidetic Memory**, and **Screaming Nemesis** had reshaped the metagame. The winning Izzet "Lessons" decks draw heavily on Avatar: The Last Airbender (Lessons mechanic) plus Aetherdrift/Final Fantasy support.
+
 ## Card Pool Note
 
 The 2025 Worlds card pool is from a **future Standard** format not yet in the mtg-forge-rs card database. Cards like Gran-Gran, Stormchaser's Talent, Boomerang Basics, Combustion Technique, Firebending Lesson, Multiversal Passage, Monument to Endurance, Accumulate Wisdom, Riverpyre Verge, Artist's Talent, Badgermole Cub, Enduring Vitality, Thundertrap Trainer, Stock Up, Analyze the Pollen, Song of Totentatz, Awaken the Honored Dead, Bringer of the Last Gift, Ardyn the Usurper, Superior Spider-Man, and others are from sets released in 2025 (Avatar: The Last Airbender, Final Fantasy, and Aetherdrift). **These decks will NOT load in the current engine** — they are included for collection completeness and as a placeholder pending future card database additions. The 2025 decks are strictly historical provenance documentation.

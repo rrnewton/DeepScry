@@ -35,6 +35,20 @@
 
 All four decklists are from the official **World Championship Decks 2000** physical product (gold-bordered cards), which is the most authoritative possible source. Finkel's list shows 61 cards (main) per TappedOut vs 60 per other reconstructions — 61 is confirmed correct (he ran a 61-card deck with 2 Mishra's Helix). Maher's list is nearly identical with 1 fewer Mishra's Helix and 1 more Island.
 
+## Legal Sets
+
+The 2000 main event was a **Standard (Type II)** tournament. As of the **August 2000** event date (before the October 2000 Invasion rotation), the Standard legal pool was the **Urza block + Masques block** plus the current core set:
+
+- **Classic Sixth Edition** (6ED, Apr 1999) — base/core set
+- **Urza's Saga** (USG, Oct 1998)
+- **Urza's Legacy** (ULG, Feb 1999)
+- **Urza's Destiny** (UDS, Jun 1999)
+- **Mercadian Masques** (MMQ, Oct 1999)
+- **Nemesis** (NEM, Feb 2000)
+- **Prophecy** (PCY, Jun 2000)
+
+**Boundary note:** Tempest block and Fifth Edition had rotated out in autumn 1999; **Invasion** released October 2000, *after* this event, so it was not yet legal. Tinker was unrestricted in Standard at this time. (The 1999 autumn rotation that dropped Tempest/5th is also why the format was "transitioning out of the broken Urza era" — the most degenerate Urza cards like Tolarian Academy had already been banned in Standard before Worlds 2000.)
+
 ## Card Pool Context
 
 Standard at the 2000 World Championship included **Urza's Saga/Legacy/Destiny** and **Mercadian Masques** blocks. Tinker was unrestricted in Standard at this time. The format was just transitioning out of the broken Urza block era. The Physical "World Championship Decks 2000" product is the canonical reference.

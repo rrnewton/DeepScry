@@ -4,10 +4,23 @@ This directory contains finalist decklists from the **official Magic: The Gather
 
 **These are NOT the modern "Old School 93/94" community format.** The Old School community event (n00bcon "World Championship") is a separate modern-day tournament played with vintage card pools. The decks here are from the official WotC Worlds event, which began in 1994.
 
+## Capture Convention — what we collect (and what we deliberately skip)
+
+From **1995 onward there was always a mandatory Type 2 (Standard) main event** at the World Championship. **Our deck capture targets that Type 2 / Standard main event** — the constructed-Standard portion that crowned the champion — for every captured year (1995, 2000, 2005, 2010, 2015, 2020, 2025). Each year's `README.md` includes a **"Legal Sets"** section documenting the exact Standard-legal card pool as of that tournament's date, so you can see at a glance what the players were working with.
+
+We **deliberately ignore the side formats** that Worlds layered on top of the Type 2 main event, including:
+- Booster/Sealed draft (Limited) portions
+- Extended / block-constructed segments
+- The 1996 Worlds **Type 1.5** segment
+- Team events and any non-Standard exhibition rounds
+
+**1994 is the sole exception:** "Type 2"/Standard did **not exist yet** in 1994, so the first World Championship (Gen Con, Aug 1994, champion Zak Dolan) was played in the single sanctioned Constructed format of the era — the all-cards / Type 1 (Vintage) pool. For 1994 we therefore capture that **single main Constructed event** rather than a Type 2 segment. See `1994/README.md` for the full format writeup.
+
 ## Structure
 
 ```
 decks/championship/
+├── 1994/   — Milwaukee, WI, USA (Aug 1994, Gen Con) — Champion: Zak Dolan (the FIRST Worlds; Type 1/Vintage pool, no Type 2 yet)
 ├── 1995/   — Seattle, WA, USA (Aug 1995) — Champion: Alexander Blumke
 ├── 2000/   — Brussels, Belgium (Aug 2000) — Champion: Jon Finkel
 ├── 2005/   — Yokohama, Japan (Dec 2005) — Champion: Katsuhiro Mori
@@ -25,6 +38,7 @@ Each subdirectory contains:
 
 | Year | Decks | Champion | Confidence |
 |------|-------|----------|------------|
+| 1994 | 4 (Top 4) | Zak Dolan (5-color Stasis control) | High — all 4 from mtgtop8/TappedOut (de Foucaud main = 66, Lestrée = 61, faithful to era) |
 | 1995 | 4 (Top 4) | Alexander Blumke (B/W Rack) | High for 3/4; Justice deck approximate |
 | 2000 | 4 (Top 4 per WC product) | Jon Finkel (Mono-Blue Tinker) | High — official WC Decks 2000 product |
 | 2005 | 4 (Top 4) | Katsuhiro Mori (Selesnya Ghazi-Glare) | High for 2/4; Asahara/Kaji approximate |

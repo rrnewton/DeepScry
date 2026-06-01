@@ -35,6 +35,18 @@
 - **Stern (3rd–4th)**: Complete list confirmed from Usenet results post and brandonpatton.com. Sideboard fully documented.
 - **Justice (3rd–4th)**: **PARTIAL / APPROXIMATE.** The full decklist for Mark Justice's Red Artifact Control has not been definitively published. The reconstruction in `03_justice_red_artifact.dck` is a plausible approximation based on the archetype name, era card pool, and fragmentary references in sources. Treat as low-confidence until a primary source is found. Sources that reference the deck (https://www.mtggoldfish.com/deck/4503226, https://deckbox.org/sets/1634598) were not fully accessible for verification.
 
+## Legal Sets
+
+The 1995 main event was an early **Type II (Standard)** World Championship. Type II had been introduced on Jan 10, 1995 (initially Revised + The Dark + Fallen Empires), and a major rotation in June 1995 dropped Revised and The Dark when Fourth Edition and Ice Age arrived. As of the **August 1995** event date, the Type II legal pool was:
+
+- **Fourth Edition** (4ED, Apr 1995) — the current base/core set
+- **Fallen Empires** (FEM, Nov 1994)
+- **Ice Age** (ICE, Jun 1995)
+
+**Boundary note:** **Chronicles** (CHR) released in July 1995, *before* the tournament, but its Type II legality was **delayed and it was NOT legal at this event** (a notable detail at the time — e.g. it kept Erhnam Djinn out of the format). Earlier sets — **Revised**, **The Dark**, **Legends**, **Arabian Nights**, **Antiquities**, plus Alpha/Beta/Unlimited — had already rotated out of Type II. **Homelands** (Oct 1995) and **Alliances** (Jun 1996) were not yet released. A restricted list also applied (e.g. Strip Mine was restricted to 1 copy in Type II at this time), which is why the decks above run a single Strip Mine. The 1995 Worlds also included a **Sealed Deck** segment, which we do not capture here (see the top-level README capture convention).
+
 ## Card Pool Context
 
-The 1995 World Championship was played in **Type II (Standard)** with sets through approximately **Revised + Legends + The Dark + Fallen Empires + Fourth Edition + Ice Age** (early rotation — exact cut-off was sets through early 1995). Notably, **Arabian Nights** and **Antiquities** were not in Type II by this point, but **Revised**, **Legends**, **The Dark**, **Fallen Empires**, and **Ice Age** were all legal. Specific restricted/banned list applied (e.g. Strip Mine was restricted to 1 copy at this time in Type II). This is the **official** Wizards of the Coast World Championship, **not** the modern "Old School 93/94" community format.
+The 1995 Type II pool was the early-rotation Standard environment built around **Fourth Edition** plus **Ice Age**, with **Fallen Empires** as the only small expansion. The Rack, Hymn to Tourach (Fallen Empires), Icy Manipulator, and Dark Ritual were format pillars; Blumke's B/W Rack control leaned on these. This is the **official** Wizards of the Coast World Championship, **not** the modern "Old School 93/94" community format.
+
+**Correction note:** An earlier version of this README incorrectly listed Revised, Legends, and The Dark as legal; those had rotated out of Type II by June 1995 and were not legal at the August 1995 event (verified against the Type II timeline and contemporaneous 1995-Worlds metagame writeups).

@@ -35,6 +35,18 @@
 - **Asahara (3rd–4th)**: **APPROXIMATE.** The specific Asahara list has limited primary documentation accessible via web fetch (MTGTop8 and Moxfield are the authoritative sources but could not be fully fetched). The file `03_asahara_enduring_ideal.dck` is a plausible reconstruction of the Enduring Ideal archetype from that era. Known to be a creatureless white deck using Enduring Ideal to find enchantments. Some sources mention a blue splash with Sleight of Hand/Telling Time — the exact build requires verification from https://mtgtop8.com/event?e=9254&d=253156&f=ST or https://moxfield.com/decks/lpd9be1m9kukQibqiwjxRQ.
 - **Kaji (3rd–4th)**: **APPROXIMATE.** Kaji played the same Ghazi-Glare archetype as Mori. Filed as the same 75-card list, but the exact differences (if any) between Mori's and Kaji's 75 are unconfirmed. Source: https://mtgtop8.com/event?e=9254&f=ST.
 
+## Legal Sets
+
+The 2005 main event was a **Standard (Type II)** tournament. As of the **December 2005** event date (after the September 2005 rotation when Ravnica + Ninth Edition arrived), the Standard legal pool was the **Kamigawa block + Ravnica** plus the current core set:
+
+- **Ninth Edition** (9ED, Jul 2005) — base/core set
+- **Champions of Kamigawa** (CHK, Oct 2004)
+- **Betrayers of Kamigawa** (BOK, Feb 2005)
+- **Saviors of Kamigawa** (SOK, Jun 2005)
+- **Ravnica: City of Guilds** (RAV, Oct 2005)
+
+**Boundary note:** The September 2005 rotation dropped **Eighth Edition** and the entire **Mirrodin block** (Mirrodin/Darksteel/Fifth Dawn). The rest of the Ravnica block (Guildpact, Dissension) had **not yet released** (Feb/May 2006), so Ravnica: City of Guilds was the only Ravnica set legal. The top two decks (Mori, Kaji) leaned on Ravnica's Selesnya guild lands (Temple Garden, Selesnya Sanctuary), while Asahara's Enduring Ideal combo was a pure Kamigawa-block construction.
+
 ## Card Pool Context
 
 The 2005 Worlds Standard format included **Kamigawa block** (Champions, Betrayers, Saviors) and **Ravnica: City of Guilds** (just released October 2005). The top two decks showcased the power of Ravnica's guild lands (Temple Garden, Selesnya Sanctuary), while Asahara's combo deck was a purely Kamigawa construction. Mori's victory with Ghazi-Glare beat Karsten's Greater Gifts 3–1 in the finals.
