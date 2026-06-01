@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-01T19:02:18.016904151+00:00
-updated_at: 2026-06-01T19:05:59.170316908+00:00
+updated_at: 2026-06-01T19:31:51.200220969+00:00
 ---
 
 # Description
@@ -34,3 +34,11 @@ Because reflink is void on ext4, the win is to STOP re-copying target/. Two chan
 2. WORKTREE REUSE POOL (user request): on closeout, instead of `git worktree remove`, PARK the worktree (keep up to 3 in a ready pool): rename to a basic pool path (e.g. worktrees/_pool/slot-N), `git fetch && git checkout -B _parked-N origin/integration && git reset --hard origin/integration`, verify `git status` clean (+ submodule status clean), KEEP its target/ (the expensive asset). When acquiring a new worktree: if a parked slot exists, reuse it — `git worktree move` to worktrees/<branch>, `git checkout -B <branch> origin/integration`, `git reset --hard`, fetch, verify clean — NO 79GB copy, just an incremental rebuild. Cap pool at 3; if full at closeout, fall back to `git worktree remove`. New scripts: park_worktree.sh + acquire_worktree.sh (or fold acquire into new_worktree.sh as a pool-first check). Update <RepoRoot>/multiagent_workspace/CLAUDE.md worktree-lifecycle section + ACTIVE.md to add a POOL registry section. CAUTION: test `git worktree move` w/ the shared forge-java gitdir + per-worktree .claude_template gitdir (the deinit footgun is about deinit, not move; move should rewrite admin pointers — but VERIFY git status + submodule status clean after move before trusting a reused slot). Implement + TEST at the next real worktree closeout (park) + next acquire (reuse), with fallback to plain remove/new_worktree if the move/reset misbehaves.
 
 3. SEPARATE BUG FOUND 2026-06-01: the merged example mtg-engine/examples/measure_rewind_replay.rs left an ORPHAN process running 2h38m (pid killed by coordinator) — it can apparently hang/loop for some input. If `make validate` runs examples, this is a latent validate-hang risk. Audit: add a hard iteration/time cap to the example, and confirm whether validate executes it (if so, gate or bound it). Likely contributed to the earlier validate flake via CPU contention.
+
+--- IMPLEMENTATION FINDING 2026-06-01 (first park/reuse test) ---
+`git worktree move` REFUSES worktrees with submodules ("working trees containing submodules cannot be moved or removed"). So the pool uses PARK-IN-PLACE, not dir-rename:
+- PARK (closeout, keep ≤3): in the worktree, `git fetch && git checkout -B _parked-N origin/integration && git reset --hard origin/integration`; verify `git status` clean + `git submodule status` clean; KEEP the dir name + target/. (No move.)
+- ACQUIRE (new task): pick a _parked slot, `git checkout -B <branch> origin/integration && git reset --hard && git fetch`; dispatch the agent into that existing dir. The dir name is COSMETIC (may not match the branch) — the branch + this registry are the source of truth.
+VERIFIED: parked the gamepages worktree (_parked-1) then acquired it for compat-oldschool-finish — clean, submodules clean, target/release 13G REUSED (no 79GB copy; acquisition in seconds). Proves the no-copy reuse path.
+OPTIONAL future for clean dir names: `mv <olddir> <newdir>` (instant same-FS rename, moves target too) THEN `git worktree repair <newdir>` (+ maybe repair submodule gitdir pointers) — UNTESTED, risks submodule pointer breakage (deinit-footgun adjacent); test carefully before adopting, or just pre-create neutral-named slots (_pool-slot-1/2/3) once and reuse forever.
+Still TODO: park_worktree.sh + acquire_worktree.sh scripts + multiagent_workspace/CLAUDE.md lifecycle section + new_worktree.sh target-trim (skip debug+incremental).
