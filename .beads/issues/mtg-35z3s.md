@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-06-01T12:31:21.332680376+00:00
-updated_at: 2026-06-01T12:42:24.486872771+00:00
+updated_at: 2026-06-01T12:58:23.395137060+00:00
 ---
 
 # Description
@@ -117,3 +117,34 @@ architecture before any merge.
 - Join has no per-player renderer choice → launcher gives each player their own.
 - Game freeze after first land → netarch mtg-c9fuc / play-path robustness.
 - Reload/back corrupts → reconnect-token resume or clean failure.
+
+## Step-0 result: AI-over-network web play WORKS (2026-06-01_#2586(c4509863))
+
+**Foundational question answered YES.** Built minimal harness `web/test_redo_ai_network_e2e.js` and ran it empirically.
+
+### Empirical results
+- Seed 42, grizzly_bears.dck: **Turn 4, 49 choices** in ~6s. PASS, no desync.
+- Seed 13, grizzly_bears.dck: **Turn 5, 52 choices** in ~6s. PASS, no desync.
+- Seed 99, grizzly_bears.dck: **Turn 6, 69 choices** in ~8s. PASS, no desync.
+
+### Direct launch URLs (bypassing broken lobby)
+Game server: `mtg server --port <P> --password <PW> --seed <S>`
+P1 (create): `tui_game.html` with form: game-mode=network, server-url=ws://127.0.0.1:<P>, p1-controller=random, __mtg_lobby_action={kind:'create', gameName:'…'}
+P2 (join):   `tui_game.html` with form: game-mode=network, server-url=ws://127.0.0.1:<P>, p1-controller=random, __mtg_lobby_action={kind:'join', gameName:'…'}
+
+### Space-advance in network mode?
+**Not needed.** In network mode with a non-human controller, the WASM sets `auto_run=true` (fancy_tui.rs:1563) so the game advances automatically without any key presses. Space still works (calls `state.run_until_choice()`) but is redundant for AI-only games. The AI-over-network path is driven entirely by the game loop.
+
+### Architecture finding
+The harness mirrors test_network_gui_e2e.js but opens TWO browser clients instead of one browser + one native AI. Both use WASM random controllers. Both advance without freeze/desync.
+
+### Verdict: AI-over-network IS a viable e2e driver
+- No freeze, no desync, advances ≥3 turns reliably.
+- The Space-advance mechanism works but is unnecessary for AI games.
+- mtg-uzvu4 (human controller desync) is NOT a blocker for the AI-driven test path.
+- The redo UI can be built incrementally, with each stage gated by this harness.
+- The existing test_network_gui_e2e.js (native AI + WASM random) also confirms this: it ran to Turn 13 with 152 choices with no DESYNC errors in 3 minutes.
+
+### Harness file
+`web/test_redo_ai_network_e2e.js` — run with: `cd web && node test_redo_ai_network_e2e.js`
+NOT added to make validate (not in gate yet — awaits UI rework).
