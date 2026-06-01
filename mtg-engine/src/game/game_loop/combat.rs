@@ -306,9 +306,10 @@ impl<'a> GameLoop<'a> {
             for (blocker_id, attacker_id) in validated_blocks.iter() {
                 let mut attackers_vec = SmallVec::new();
                 attackers_vec.push(*attacker_id);
-                // Logged so the blocker declaration is reversible by the undo
-                // log (mtg-614 hole (b)).
-                self.game.declare_blocker_logged(*blocker_id, attackers_vec);
+                // (mtg-614 hole (b)) reversible-declaration infra exists but is
+                // not LIVE-wired here — see the note in
+                // GameState::declare_attacker (blocked on ai_harness rewind).
+                self.game.combat.declare_blocker(*blocker_id, attackers_vec);
 
                 // Log blocker declarations at Normal level (same as attacker declarations)
                 if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
@@ -522,19 +523,11 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
-        // Clear combat state at end of combat, logging the prior CombatState so
-        // the clear is reversible by the undo log (mtg-614 hole (b)). Without
-        // this, a rewind across the end-of-combat boundary could not restore the
-        // attacker/blocker declarations.
-        let prev_combat = self.game.combat.clone();
+        // Clear combat state at end of combat.
+        // (mtg-614 hole (b)) GameAction::ClearCombat exists + is oracle-proven
+        // reversible, but is not LIVE-wired here — see the note in
+        // GameState::declare_attacker (blocked on ai_harness rewind migration).
         self.game.combat.clear();
-        let prior_log_size = self.game.logger.log_count();
-        self.game.undo_log.log(
-            crate::undo::GameAction::ClearCombat {
-                prev: Box::new(prev_combat),
-            },
-            prior_log_size,
-        );
 
         // Clear combat mana pools (mana from Firebending, etc. lasts until end of combat)
         // Fast path: has_combat_mana() is a single well-predicted branch (usually false)

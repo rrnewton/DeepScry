@@ -3999,14 +3999,16 @@ impl GameState {
                                     card.add_type(CardType::Creature);
                                 }
 
+                                // Set base P/T to 0/0.
+                                // (mtg-614 hole (c)) reversible SetTempBaseStats
+                                // infra exists but is not LIVE-wired — see
+                                // GameState::declare_attacker.
+                                card.set_temp_base_power(0);
+                                card.set_temp_base_toughness(0);
+
                                 // Add Haste keyword
                                 card.keywords.insert(Keyword::Haste);
                             }
-
-                            // Set base P/T to 0/0 via the logged helper so the
-                            // override is reversible by the undo log (mtg-614
-                            // hole (c)).
-                            self.set_temp_base_stats_logged(land_id, Some(0), Some(0));
 
                             // Add +1/+1 counters
                             self.add_counters(land_id, CounterType::P1P1, num_counters)?;
