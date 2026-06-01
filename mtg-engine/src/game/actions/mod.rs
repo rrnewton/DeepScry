@@ -4332,11 +4332,13 @@ impl GameState {
                         .get_player_zones(*player)
                         .map(|z| z.graveyard.cards.iter().copied().collect())
                         .unwrap_or_default();
-                    if remaining.is_empty() {
-                        break;
-                    }
                     // Deterministic pick: lowest CardId (stable across server/clients).
-                    let chosen = *remaining.iter().min_by_key(|id| id.as_u32()).unwrap();
+                    // `min_by_key` returns None only on empty iter; we guard
+                    // above with `if remaining.is_empty() { break }`, so the
+                    // `?`-style early-exit covers the impossible None case.
+                    let Some(&chosen) = remaining.iter().min_by_key(|id| id.as_u32()) else {
+                        break;
+                    };
                     let card_name = self
                         .cards
                         .try_get(chosen)
