@@ -127,28 +127,13 @@ async function scenarioFullFlow() {
 
     await shot(alice, 'landing_03_waiting_room.png');
 
-    // Alice clicks "Go to Launcher" → redirect to launcher.html (Step 1 target).
-    await alice.click('#btn-launch-game');
-    await alice.waitForFunction(
-        () => /launcher\.html/.test(window.location.href),
-        null,
-        { timeout: 4000 },
-    ).catch(() => record('blocking', 'create flow', 'alice never redirected to launcher.html after "Go to Launcher"'));
-    const aliceUrl = alice.url();
-    console.log('  alice redirected to:', aliceUrl);
-    if (!aliceUrl.includes('game=qa-test-game')) {
-        record('major', 'create flow', 'alice URL missing game= param: ' + aliceUrl);
-    }
-    if (!aliceUrl.includes('role=create')) {
-        record('major', 'create flow', 'alice URL missing role=create param: ' + aliceUrl);
-    }
-    if (!aliceUrl.includes('pass=secret')) {
-        record('major', 'create flow', 'alice URL missing pass=secret param: ' + aliceUrl);
-    }
-    await alice.waitForTimeout(800);
-    await shot(alice, 'landing_03_game_created.png');
-
-    // --- Bob ---
+    // --- Bob (while alice is STILL in the waiting room, lobby WS alive) ---
+    // Step 1: a game created on the lobby is visible to other players while the
+    // creator waits. We check visibility BEFORE alice navigates to the launcher,
+    // because sustaining the game across the lobby→launcher handoff (so it stays
+    // listed after the creator leaves the lobby) is explicitly Step 2+ work
+    // (the launcher reconnects/keeps the game alive). The lobby's Step 1 job is
+    // to create the game and reach the launcher with the right params.
     const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const bob = await bobCtx.newPage();
     bob.on('pageerror', (e) => record('major', 'bob page error', e.message));
@@ -178,10 +163,31 @@ async function scenarioFullFlow() {
         record(
             'blocking',
             'lobby visibility',
-            'qa-test-game NOT visible in bob lobby — confirms create-game intent is dropped (native_game.html ignores lobby params)',
+            'qa-test-game NOT visible in bob lobby while alice waits — create-game intent dropped on the lobby itself',
         );
     }
     await shot(bob, 'landing_04_join_wrong_passcode.png');
+
+    // Now alice clicks "Go to Launcher" → redirect to launcher.html (Step 1 target).
+    await alice.click('#btn-launch-game');
+    await alice.waitForFunction(
+        () => /launcher\.html/.test(window.location.href),
+        null,
+        { timeout: 4000 },
+    ).catch(() => record('blocking', 'create flow', 'alice never redirected to launcher.html after "Go to Launcher"'));
+    const aliceUrl = alice.url();
+    console.log('  alice redirected to:', aliceUrl);
+    if (!aliceUrl.includes('game=qa-test-game')) {
+        record('major', 'create flow', 'alice URL missing game= param: ' + aliceUrl);
+    }
+    if (!aliceUrl.includes('role=create')) {
+        record('major', 'create flow', 'alice URL missing role=create param: ' + aliceUrl);
+    }
+    if (!aliceUrl.includes('pass=secret')) {
+        record('major', 'create flow', 'alice URL missing pass=secret param: ' + aliceUrl);
+    }
+    await alice.waitForTimeout(800);
+    await shot(alice, 'landing_03_game_created.png');
 
     // --- Test username uniqueness (server-side Register enforcement) ---
     // Phase 2: the server now enforces unique names via Register. A concurrent
