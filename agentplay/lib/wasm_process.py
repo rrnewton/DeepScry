@@ -50,6 +50,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
+from urllib.parse import urlencode
 
 from .game_process import ChoicePoint, GameOver
 from .web_game_common import deck_path_to_wasm_name, find_free_port
@@ -269,36 +270,28 @@ class WasmPlaywrightProcess:
 
         self._start_http_server()
         self._launch_browser()
+        cfg = self.config
         page_file = WASM_PAGE_FILES[self.config.page]
-        url = f"http://127.0.0.1:{self._port}/{page_file}"
+        # The game pages are now PURE renderers — the lobby redo (mtg-35z3s)
+        # removed their built-in launcher (deck/controller selectors +
+        # #btn-launch). Boot a local engine-vs-engine game directly from URL
+        # params, the same `?mode=local&p1_deck&p2_deck&p1&p2&seed` contract
+        # that bootFromParams()/consumeLocalGameParams() consume and that
+        # web/game_boot_params.js::localGameUrl + the local-AI render e2e use,
+        # instead of driving the deleted launcher form.
+        qp = {
+            "mode": "local",
+            "p1_deck": cfg.p1_deck,
+            "p2_deck": cfg.p2_deck,
+            "p1": cfg.p1_controller,
+            "p2": cfg.p2_controller,
+        }
+        if cfg.seed is not None:
+            qp["seed"] = str(cfg.seed)
+        url = f"http://127.0.0.1:{self._port}/{page_file}?{urlencode(qp)}"
         if self.verbose:
             print(f"[wasm] (ui) navigating to {url}", file=sys.stderr)
         self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-
-        # Wait for the launcher (deck dropdowns populated).
-        self._page.wait_for_function(
-            "() => { const s = document.getElementById('p1-deck'); return s && s.options.length > 0; }",
-            timeout=30_000,
-        )
-
-        cfg = self.config
-        # Verify both decks are present; surface a clear error otherwise.
-        avail = self._page.evaluate(
-            "() => Array.from(document.getElementById('p1-deck').options).map(o => o.value)"
-        )
-        for want in (cfg.p1_deck, cfg.p2_deck):
-            if want not in avail:
-                raise RuntimeError(
-                    f"WASM driver (ui): deck {want!r} not in exported set. Available: {avail}"
-                )
-
-        self._page.select_option("#p1-deck", cfg.p1_deck)
-        self._page.select_option("#p2-deck", cfg.p2_deck)
-        self._page.select_option("#p1-controller", cfg.p1_controller)
-        self._page.select_option("#p2-controller", cfg.p2_controller)
-        with suppress(Exception):
-            self._page.fill("#game-seed", str(cfg.seed))
-        self._page.click("#btn-launch")
 
         # Wait for the game surface (the RatZilla terminal exists on both
         # pages; native_game.html also renders DOM panes).
