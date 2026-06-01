@@ -4,10 +4,12 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-06-01T12:31:21.332680376+00:00
-updated_at: 2026-06-01T12:58:23.395137060+00:00
+updated_at: 2026-06-01T13:00:14.753071422+00:00
 ---
 
 # Description
+
+## Description
 
 ## Lobby/Launcher/Game REDO — Spec & Acceptance (2026-06-01)
 
@@ -148,3 +150,6 @@ The harness mirrors test_network_gui_e2e.js but opens TWO browser clients instea
 ### Harness file
 `web/test_redo_ai_network_e2e.js` — run with: `cd web && node test_redo_ai_network_e2e.js`
 NOT added to make validate (not in gate yet — awaits UI rework).
+
+--- STEP 0 DONE + COORDINATOR-VERIFIED (2026-06-01) ---
+FOUNDATION CONFIRMED: AI-over-network web play WORKS. Harness web/test_redo_ai_network_e2e.js (two headless browser clients, both random AI, direct ws:// to a local mtg server, bypassing the broken lobby) advances >=3 turns with NO freeze/desync. Coordinator RAN IT independently (not just trusting the agent): seed 42 → PASSED, Turn 4, 45 choices, desync=false, exit 0 (agent also saw seeds 13/99 → 5/6 turns; pre-existing test_network_gui_e2e hit turn 13). KEY: auto_run=true for AI controllers in network mode (fancy_tui.rs:1563) → NO spacebar scripting needed; the game self-advances. The user-reported freeze is the HUMAN-controller path (mtg-uzvu4), which the AI e2e driver SIDESTEPS. Merged to integration. So the redo can proceed test-first: each UI step adds its acceptance gate, driven by AI-over-network. Harness NOT yet in make validate (intentional during redo).
