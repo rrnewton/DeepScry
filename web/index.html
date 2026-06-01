@@ -445,9 +445,9 @@
                 </a>
             </div>
             <div style="margin-top: 12px;">
-                <a class="launcher-link disabled" href="deck_editor.html" title="Coming soon — deck editor is planned for a future phase">
+                <a class="launcher-link" href="deck_editor.html" title="Build and save custom decks">
                     <strong>Deck Editor</strong>
-                    <small>Build and edit decks &mdash; coming soon</small>
+                    <small>Build, save, and export custom decks</small>
                 </a>
             </div>
         </div>
@@ -684,22 +684,76 @@
             });
     }
 
-    function populateWrDeckSelect(names) {
+    // -------------------------------------------------------------------------
+    // Custom-deck integration: the deck editor (deck_editor.html) saves custom
+    // decks to localStorage under the key 'mtg_custom_decks' as a JSON object
+    // mapping deckName -> dck-text. This function returns the sorted list of
+    // custom deck names, prefixed with "[Custom] " so users can tell them apart
+    // from built-in decks in the picker. The actual deck text is handed to the
+    // game page via the 'mtg_selected_custom_deck' localStorage key when the
+    // user selects one in the waiting room and clicks "Confirm Deck".
+    //
+    // localStorage key contract (shared with deck_editor.html):
+    //   'mtg_custom_decks'          : JSON { [deckName: string]: string (dck text) }
+    //   'mtg_selected_custom_deck'  : JSON { name: string, dck: string } | null
+    //   'mtg_lobby_deck_preselect'  : string (deck name) — written by deck editor's
+    //                                 "Use in lobby" button to pre-select the deck.
+    // -------------------------------------------------------------------------
+
+    /** Read custom deck names from localStorage; returns [] on any error. */
+    function loadCustomDeckNames() {
+        try {
+            var raw = localStorage.getItem('mtg_custom_decks');
+            if (!raw) return [];
+            var obj = JSON.parse(raw);
+            if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return [];
+            return Object.keys(obj).sort();
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function populateWrDeckSelect(builtinNames) {
         var sel = document.getElementById('wr-deck-select');
         sel.innerHTML = '';
-        if (names.length === 0) {
+
+        var customNames = loadCustomDeckNames();
+
+        if (builtinNames.length === 0 && customNames.length === 0) {
             var opt = document.createElement('option');
             opt.value = '';
-            opt.textContent = '(No built-in decks available)';
+            opt.textContent = '(No decks available)';
             sel.appendChild(opt);
         } else {
-            names.forEach(function (name) {
+            // Custom decks first (most recently relevant to the user).
+            customNames.forEach(function (name) {
+                var opt = document.createElement('option');
+                opt.value = 'custom:' + name;
+                opt.textContent = '[Custom] ' + name;
+                sel.appendChild(opt);
+            });
+            builtinNames.forEach(function (name) {
                 var opt = document.createElement('option');
                 opt.value = name;
                 opt.textContent = name;
                 sel.appendChild(opt);
             });
         }
+
+        // If the deck editor pre-selected a deck via localStorage, apply it now.
+        var preselect = localStorage.getItem('mtg_lobby_deck_preselect');
+        if (preselect) {
+            localStorage.removeItem('mtg_lobby_deck_preselect');
+            // Try the custom option first, then builtin.
+            var customKey = 'custom:' + preselect;
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === customKey || sel.options[i].value === preselect) {
+                    sel.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+
         document.getElementById('btn-set-deck').disabled = false;
     }
 
@@ -1513,14 +1567,38 @@
 
     // Deck selection + confirmation in the waiting room.
     document.getElementById('btn-set-deck').addEventListener('click', function () {
-        var deckName = document.getElementById('wr-deck-select').value;
-        if (!deckName || !waitingRoomState) return;
+        var rawVal = document.getElementById('wr-deck-select').value;
+        if (!rawVal || !waitingRoomState) return;
+
+        // Handle custom decks: value is 'custom:<name>'.
+        // Store the selected custom deck text in localStorage so the game page
+        // can load it. The deck name passed to sendSetDeck is just the label
+        // (the server only uses it for display in WaitingRoomUpdate).
+        var deckName = rawVal;
+        if (rawVal.startsWith('custom:')) {
+            var customName = rawVal.slice('custom:'.length);
+            deckName = customName;
+            // Write the full dck text for the game page to pick up.
+            try {
+                var customDecks = JSON.parse(localStorage.getItem('mtg_custom_decks') || '{}');
+                if (customDecks[customName]) {
+                    localStorage.setItem('mtg_selected_custom_deck',
+                        JSON.stringify({ name: customName, dck: customDecks[customName] }));
+                }
+            } catch (e) {
+                console.warn('Could not read custom deck from localStorage:', e);
+            }
+        } else {
+            // Built-in deck selected — clear any stale custom selection.
+            localStorage.removeItem('mtg_selected_custom_deck');
+        }
+
         waitingRoomState.selectedDeckName = deckName;
         setWrDeckStatus('Confirming deck…', '');
         sendSetDeck(deckName);
         setWrDeckStatus('Deck sent: ' + deckName, 'ok');
-        // Kick off prefetch of deck bins in background.
-        if (availableDeckNames) {
+        // Kick off prefetch of deck bins in background (only for built-in decks).
+        if (availableDeckNames && !rawVal.startsWith('custom:')) {
             // Re-fetch index to get bin map for prefetch; best-effort.
             fetch('./data/sets/index.json', { cache: 'default' })
                 .then(function (r) { return r.json(); })
@@ -1538,7 +1616,9 @@
     // Deck select change → auto-update selectedDeckName (launch button still required).
     document.getElementById('wr-deck-select').addEventListener('change', function (ev) {
         if (waitingRoomState) {
-            waitingRoomState.selectedDeckName = ev.target.value;
+            var val = ev.target.value;
+            // Strip the 'custom:' prefix for the stored deck name.
+            waitingRoomState.selectedDeckName = val.startsWith('custom:') ? val.slice('custom:'.length) : val;
         }
     });
 

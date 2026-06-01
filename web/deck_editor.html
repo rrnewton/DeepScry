@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deck Editor &mdash; DeepScry</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%231a1a2e'/%3E%3Ccircle cx='32' cy='32' r='20' fill='%2300ffaa'/%3E%3Ccircle cx='32' cy='32' r='8' fill='%231a1a2e'/%3E%3C/svg%3E">
+    <style>
+        :root {
+            --bg: #0a0a14;
+            --surface: #16213e;
+            --surface-2: #0f3460;
+            --border: #1a2a50;
+            --accent: #4cc9f0;
+            --accent-2: #ffd700;
+            --accent-3: #4361ee;
+            --danger: #ff6b6b;
+            --ok: #6bf07a;
+            --text: #e6e6f0;
+            --muted: #8a8aa0;
+        }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; line-height: 1.55; height: 100%; }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        code, .mono { font-family: 'Consolas', 'Monaco', 'Source Code Pro', monospace; }
+
+        /* ── Layout ─────────────────────────────────────────────────────── */
+        .header {
+            background: linear-gradient(135deg, #0a0a14 0%, #16213e 50%, #1a1a4a 100%);
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        .header h1 { margin: 0; font-size: 20px; color: var(--accent-2); }
+        .header .back-link { font-size: 13px; color: var(--muted); }
+        .header .back-link:hover { color: var(--accent); }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            grid-template-rows: 1fr;
+            height: calc(100vh - 54px);
+            gap: 0;
+            overflow: hidden;
+        }
+        @media (max-width: 900px) {
+            .layout {
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr 1fr;
+                height: auto;
+            }
+        }
+
+        /* ── Left: catalog + search ─────────────────────────────────────── */
+        .pane-catalog {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-right: 1px solid var(--border);
+        }
+        .catalog-toolbar {
+            padding: 10px 14px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: flex-end;
+        }
+        .catalog-toolbar label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; display: block; margin-bottom: 3px; }
+        .catalog-toolbar input[type=text], .catalog-toolbar select {
+            background: var(--surface-2);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 6px 9px;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        .catalog-toolbar input[type=text]:focus, .catalog-toolbar select:focus { outline: none; border-color: var(--accent); }
+        .search-field { flex: 1 1 160px; min-width: 120px; }
+        .catalog-toolbar .filter-group { display: flex; flex-direction: column; }
+
+        .catalog-count { font-size: 11px; color: var(--muted); padding: 4px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+
+        .card-list-wrap { flex: 1; overflow-y: auto; }
+        .card-list { list-style: none; margin: 0; padding: 4px 0; }
+        .card-list li {
+            display: flex;
+            align-items: center;
+            padding: 4px 12px;
+            gap: 8px;
+            border-bottom: 1px solid rgba(26,42,80,0.5);
+            cursor: default;
+            font-size: 13px;
+        }
+        .card-list li:hover { background: rgba(67,97,238,0.15); }
+        .card-list li.in-deck { background: rgba(76,201,240,0.07); }
+
+        .card-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .card-mana { font-size: 11px; color: var(--muted); white-space: nowrap; min-width: 40px; text-align: right; font-family: monospace; }
+        .card-type-badge { font-size: 10px; color: var(--accent); background: rgba(76,201,240,0.1); border: 1px solid rgba(76,201,240,0.25); border-radius: 3px; padding: 1px 4px; white-space: nowrap; }
+        .add-btn { background: var(--accent-3); color: white; border: none; border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+        .add-btn:hover { background: #5a78ff; }
+        .add-btn:disabled { background: #2a2a40; color: #555; cursor: not-allowed; }
+
+        /* Mana symbols */
+        .ms { display: inline-block; font-size: 10px; border-radius: 50%; width: 14px; height: 14px; line-height: 14px; text-align: center; font-weight: bold; margin: 0 1px; }
+        .ms-W { background: #f9f6e8; color: #333; }
+        .ms-U { background: #0e68ab; color: #fff; }
+        .ms-B { background: #2a2a2a; color: #ccc; }
+        .ms-R { background: #d3202a; color: #fff; }
+        .ms-G { background: #00733e; color: #fff; }
+        .ms-C { background: #aaa; color: #fff; }
+        .ms-n { background: #555; color: #eee; font-size: 9px; }
+        .ms-X { background: #888; color: #fff; font-size: 9px; }
+
+        /* Oracle text tooltip */
+        .oracle-tip { font-size: 11px; color: var(--muted); font-style: italic; max-width: 320px; }
+
+        /* ── Right: deck builder ────────────────────────────────────────── */
+        .pane-deck {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--surface);
+        }
+        .deck-header {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface-2);
+        }
+        .deck-header h2 { margin: 0 0 8px; font-size: 15px; color: var(--accent); }
+        .deck-name-row { display: flex; gap: 6px; align-items: center; }
+        .deck-name-input {
+            flex: 1;
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 6px 9px;
+            font-size: 13px;
+            font-family: inherit;
+        }
+        .deck-name-input:focus { outline: none; border-color: var(--accent); }
+
+        .deck-stats {
+            padding: 6px 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--muted);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .deck-stats .stat-val { color: var(--text); }
+        .color-dots { display: flex; gap: 4px; align-items: center; }
+        .color-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .cd-W { background: #f9f6e8; border: 1px solid #ccc; }
+        .cd-U { background: #0e68ab; }
+        .cd-B { background: #2a2a2a; border: 1px solid #555; }
+        .cd-R { background: #d3202a; }
+        .cd-G { background: #00733e; }
+        .cd-C { background: #888; }
+
+        /* Mana curve mini-chart */
+        .curve-wrap {
+            padding: 6px 14px 2px;
+            border-bottom: 1px solid var(--border);
+        }
+        .curve-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
+        .curve-bars { display: flex; align-items: flex-end; gap: 3px; height: 36px; }
+        .curve-col { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+        .curve-bar { width: 18px; background: var(--accent-3); border-radius: 2px 2px 0 0; transition: height 0.15s; }
+        .curve-cmc { font-size: 9px; color: var(--muted); }
+
+        .deck-list-wrap { flex: 1; overflow-y: auto; }
+        .deck-list { list-style: none; margin: 0; padding: 4px 0; }
+        .deck-section-hdr { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); padding: 6px 12px 2px; }
+        .deck-list li {
+            display: flex;
+            align-items: center;
+            padding: 3px 12px;
+            gap: 6px;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(26,42,80,0.4);
+        }
+        .deck-list li:hover { background: rgba(67,97,238,0.1); }
+        .dl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dl-qty { color: var(--accent-2); font-weight: bold; min-width: 20px; text-align: right; }
+        .dl-mana { font-size: 11px; color: var(--muted); min-width: 40px; text-align: right; font-family: monospace; }
+        .qty-btn { background: transparent; border: 1px solid var(--border); border-radius: 3px; color: var(--text); padding: 0 5px; font-size: 12px; cursor: pointer; line-height: 16px; }
+        .qty-btn:hover { background: var(--surface-2); border-color: var(--accent); }
+
+        .deck-actions {
+            padding: 10px 14px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        button {
+            background: var(--accent-3);
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 5px;
+            font-size: 13px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background 0.15s;
+        }
+        button:hover:not(:disabled) { background: #5a78ff; }
+        button:disabled { background: #2a2a40; color: #555; cursor: not-allowed; }
+        button.ghost { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+        button.ghost:hover:not(:disabled) { background: rgba(76,201,240,0.1); }
+        button.danger { background: var(--danger); }
+        button.danger:hover:not(:disabled) { background: #ff8585; }
+        button.success { background: #276221; color: #9af09a; border: 1px solid var(--ok); }
+        button.success:hover:not(:disabled) { background: #2d7226; }
+        .status-msg { font-size: 12px; padding: 4px 0; width: 100%; }
+        .status-msg.ok { color: var(--ok); }
+        .status-msg.err { color: var(--danger); }
+
+        /* Saved decks panel */
+        .saved-decks-wrap {
+            padding: 8px 14px;
+            border-top: 1px solid var(--border);
+            background: rgba(0,0,0,0.2);
+        }
+        .saved-decks-wrap h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
+        .saved-list { display: flex; flex-wrap: wrap; gap: 5px; }
+        .saved-chip {
+            display: flex; align-items: center; gap: 4px;
+            background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px;
+            padding: 3px 8px; font-size: 12px; cursor: pointer;
+        }
+        .saved-chip:hover { border-color: var(--accent); color: var(--accent); }
+        .saved-chip-del { color: var(--danger); cursor: pointer; font-size: 14px; line-height: 1; margin-left: 2px; }
+        .saved-chip-del:hover { color: #ff8585; }
+        .no-saved { font-size: 12px; color: var(--muted); font-style: italic; }
+
+        /* ── Import textarea modal-ish ────────────────────────────────── */
+        .import-panel {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 100;
+            align-items: center; justify-content: center;
+        }
+        .import-panel.open { display: flex; }
+        .import-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            width: 480px;
+            max-width: 95vw;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .import-box h3 { margin: 0; color: var(--accent); font-size: 16px; }
+        .import-box textarea {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            padding: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            height: 200px;
+            resize: vertical;
+            width: 100%;
+        }
+        .import-box .row { display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* Loading state */
+        #catalog-loading { padding: 20px; text-align: center; color: var(--muted); font-size: 14px; }
+        .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--muted); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 8px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<div class="header">
+    <h1>Deck Editor</h1>
+    <a class="back-link" href="index.html">&larr; Back to Lobby</a>
+    <span style="flex:1"></span>
+    <span id="header-status" style="font-size:12px; color: var(--muted);"></span>
+</div>
+
+<!-- ── Main layout ─────────────────────────────────────────────────────────── -->
+<div class="layout">
+
+    <!-- Left: card catalog -->
+    <div class="pane-catalog">
+        <div class="catalog-toolbar">
+            <div class="filter-group" style="flex:1 1 180px; min-width:140px;">
+                <label for="search-input">Search cards</label>
+                <input type="text" id="search-input" class="search-field" placeholder="Name, text, type…" autocomplete="off">
+            </div>
+            <div class="filter-group">
+                <label for="filter-color">Color</label>
+                <select id="filter-color">
+                    <option value="">Any</option>
+                    <option value="W">White</option>
+                    <option value="U">Blue</option>
+                    <option value="B">Black</option>
+                    <option value="R">Red</option>
+                    <option value="G">Green</option>
+                    <option value="C">Colorless</option>
+                    <option value="multi">Multicolor</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-type">Type</label>
+                <select id="filter-type">
+                    <option value="">Any</option>
+                    <option value="Creature">Creature</option>
+                    <option value="Instant">Instant</option>
+                    <option value="Sorcery">Sorcery</option>
+                    <option value="Enchantment">Enchantment</option>
+                    <option value="Artifact">Artifact</option>
+                    <option value="Land">Land</option>
+                    <option value="Planeswalker">Planeswalker</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="filter-cmc">Max CMC</label>
+                <select id="filter-cmc">
+                    <option value="">Any</option>
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7+</option>
+                </select>
+            </div>
+        </div>
+        <div class="catalog-count" id="catalog-count">Loading catalog…</div>
+        <div class="card-list-wrap">
+            <div id="catalog-loading"><span class="spinner"></span>Fetching card catalog…</div>
+            <ul class="card-list" id="card-list" style="display:none;"></ul>
+        </div>
+    </div>
+
+    <!-- Right: deck builder -->
+    <div class="pane-deck">
+        <div class="deck-header">
+            <h2>Current Deck</h2>
+            <div class="deck-name-row">
+                <input type="text" id="deck-name" class="deck-name-input" placeholder="Deck name…" value="My Deck">
+            </div>
+        </div>
+
+        <div class="deck-stats" id="deck-stats">
+            <span>Cards: <span class="stat-val" id="stat-count">0</span></span>
+            <span>Main: <span class="stat-val" id="stat-main">0</span></span>
+            <span>Side: <span class="stat-val" id="stat-side">0</span></span>
+            <span>Colors: <span class="color-dots" id="stat-colors"></span></span>
+        </div>
+
+        <div class="curve-wrap">
+            <div class="curve-label">Mana Curve (main deck)</div>
+            <div class="curve-bars" id="curve-bars"></div>
+        </div>
+
+        <div class="deck-list-wrap">
+            <ul class="deck-list" id="deck-list">
+                <li style="color: var(--muted); font-style:italic; padding: 12px;">
+                    Add cards from the catalog on the left.
+                </li>
+            </ul>
+        </div>
+
+        <div class="saved-decks-wrap">
+            <h3>Saved Decks</h3>
+            <div class="saved-list" id="saved-list">
+                <span class="no-saved">No saved decks yet.</span>
+            </div>
+        </div>
+
+        <div class="deck-actions">
+            <button id="btn-save">Save Deck</button>
+            <button id="btn-use-in-lobby" class="success" title="Save and switch to lobby with this deck selected">Use in Lobby</button>
+            <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
+            <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
+            <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
+            <span id="action-status" class="status-msg"></span>
+        </div>
+    </div>
+</div>
+
+<!-- ── Import modal ───────────────────────────────────────────────────────── -->
+<div class="import-panel" id="import-panel">
+    <div class="import-box">
+        <h3>Import .dck Deck</h3>
+        <p style="margin:0; font-size:13px; color: var(--muted);">
+            Paste a deck in .dck format. Lines: <code>4 Card Name</code> or
+            <code>4 Card Name|SET|[collector]</code>. Sections:
+            <code>[Main]</code>, <code>[Sideboard]</code>.
+        </p>
+        <textarea id="import-text" placeholder="[metadata]&#10;Name=My Deck&#10;&#10;[Main]&#10;4 Lightning Bolt&#10;20 Mountain&#10;&#10;[Sideboard]&#10;2 Red Elemental Blast"></textarea>
+        <div class="row">
+            <button id="btn-import-cancel" class="ghost">Cancel</button>
+            <button id="btn-import-confirm">Import</button>
+        </div>
+        <span id="import-status" class="status-msg"></span>
+    </div>
+</div>
+
+<script>
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+/** localStorage key for all custom decks: { [name: string]: string (dck) } */
+const CUSTOM_DECKS_KEY = 'mtg_custom_decks';
+
+/** localStorage key for lobby preselect: written when user clicks "Use in Lobby" */
+const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
+
+/** Max copies of a non-basic land card allowed in the main deck. */
+const MAX_COPIES = 4;
+
+/** Basic land names (exempt from 4-of limit) */
+const BASIC_LANDS = new Set([
+    'Plains', 'Island', 'Swamp', 'Mountain', 'Forest',
+    'Wastes', 'Snow-Covered Plains', 'Snow-Covered Island',
+    'Snow-Covered Swamp', 'Snow-Covered Mountain', 'Snow-Covered Forest',
+]);
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+/** Full card catalog (array of CatalogEntry objects from Rust export). */
+let catalog = [];
+
+/**
+ * Deck state: { main: Map<cardName, count>, sideboard: Map<cardName, count> }.
+ * The Maps store canonical card names as keys and positive integer counts.
+ */
+let deck = { main: new Map(), sideboard: new Map() };
+
+/** Card name → CatalogEntry (for quick lookups during deck rendering). */
+let catalogByName = new Map();
+
+/** Whether we're adding to main or sideboard. */
+let addTarget = 'main';
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const searchInput    = document.getElementById('search-input');
+const filterColor    = document.getElementById('filter-color');
+const filterType     = document.getElementById('filter-type');
+const filterCmc      = document.getElementById('filter-cmc');
+const catalogCount   = document.getElementById('catalog-count');
+const catalogLoading = document.getElementById('catalog-loading');
+const cardListEl     = document.getElementById('card-list');
+const deckListEl     = document.getElementById('deck-list');
+const deckNameInput  = document.getElementById('deck-name');
+const actionStatus   = document.getElementById('action-status');
+const savedListEl    = document.getElementById('saved-list');
+
+// ── Card catalog loading ───────────────────────────────────────────────────
+
+/**
+ * Fetch data/sets/index.json to discover the content-addressed catalog
+ * file name, then fetch and parse the catalog JSON.
+ *
+ * The catalog file name is stored in index.json as `card_catalog` (a field
+ * added by the Rust export pipeline). This keeps the editor WASM-free: we
+ * only need two lightweight JSON fetches to get the full searchable card pool.
+ */
+async function loadCatalog() {
+    const statusEl = document.getElementById('header-status');
+    statusEl.textContent = 'Loading catalog…';
+
+    let idxJson;
+    try {
+        const r = await fetch('./data/sets/index.json', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        idxJson = await r.json();
+    } catch (err) {
+        catalogLoading.textContent = 'Could not load data/sets/index.json: ' + err.message +
+            '. Run make wasm-export first.';
+        statusEl.textContent = 'Catalog unavailable';
+        return;
+    }
+
+    const catalogFile = idxJson && idxJson.card_catalog;
+    if (!catalogFile) {
+        catalogLoading.textContent =
+            'index.json has no card_catalog field. Re-run make wasm-export with the updated build.';
+        statusEl.textContent = 'Catalog unavailable';
+        return;
+    }
+
+    let data;
+    try {
+        const r = await fetch('./data/' + catalogFile, { cache: 'default' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        data = await r.json();
+    } catch (err) {
+        catalogLoading.textContent = 'Could not load catalog ' + catalogFile + ': ' + err.message;
+        statusEl.textContent = 'Catalog unavailable';
+        return;
+    }
+
+    catalog = data;
+    catalogByName.clear();
+    for (const entry of catalog) {
+        catalogByName.set(entry.name, entry);
+    }
+
+    catalogLoading.style.display = 'none';
+    cardListEl.style.display = '';
+    statusEl.textContent = catalog.length + ' cards loaded';
+    renderCatalog();
+}
+
+// ── Rendering helpers ──────────────────────────────────────────────────────
+
+/** Format a mana-cost string as colored letter spans. */
+function renderMana(manaCostStr) {
+    if (!manaCostStr) return '';
+    let out = '';
+    let i = 0;
+    while (i < manaCostStr.length) {
+        const ch = manaCostStr[i];
+        if (ch >= '0' && ch <= '9') {
+            // Possibly multi-digit number.
+            let n = ch;
+            while (i + 1 < manaCostStr.length && manaCostStr[i+1] >= '0' && manaCostStr[i+1] <= '9') {
+                i++; n += manaCostStr[i];
+            }
+            out += `<span class="ms ms-n">${n}</span>`;
+        } else if ('WUBRGCX'.includes(ch)) {
+            out += `<span class="ms ms-${ch}">${ch}</span>`;
+        }
+        // Skip spaces and braces (some formats use {W}{U}).
+        i++;
+    }
+    return out;
+}
+
+/** Short primary type label from a types array. */
+function primaryType(types) {
+    if (!types || types.length === 0) return '';
+    // Show first type + "Creature" if present.
+    const prio = ['Planeswalker','Creature','Artifact','Enchantment','Instant','Sorcery','Land'];
+    for (const t of prio) {
+        if (types.includes(t)) return t;
+    }
+    return types[0];
+}
+
+// ── Filtering ──────────────────────────────────────────────────────────────
+
+function passesFilters(entry) {
+    const q = searchInput.value.trim().toLowerCase();
+    const colorF = filterColor.value;
+    const typeF  = filterType.value;
+    const cmcF   = filterCmc.value;
+
+    if (q) {
+        const haystack = (entry.name + ' ' + entry.oracle + ' ' + (entry.types || []).join(' ') + ' ' + entry.subtypes).toLowerCase();
+        if (!haystack.includes(q)) return false;
+    }
+
+    if (colorF) {
+        if (colorF === 'multi') {
+            if (!entry.colors || entry.colors.length < 2) return false;
+        } else {
+            if (!entry.colors || !entry.colors.includes(colorF)) return false;
+        }
+    }
+
+    if (typeF) {
+        if (!entry.types || !entry.types.includes(typeF)) return false;
+    }
+
+    if (cmcF !== '') {
+        const maxCmc = parseInt(cmcF, 10);
+        if (maxCmc === 7) {
+            if (entry.cmc < 7) return false;
+        } else {
+            if (entry.cmc !== maxCmc) return false;
+        }
+    }
+
+    return true;
+}
+
+// ── Catalog rendering ──────────────────────────────────────────────────────
+
+/**
+ * Render at most 200 filtered results. Pagination is not needed for the
+ * expected catalog size; the search filter reduces the list quickly.
+ */
+function renderCatalog() {
+    const filtered = catalog.filter(passesFilters);
+    const limit = 200;
+    const shown = filtered.slice(0, limit);
+
+    const total = catalog.length;
+    if (filtered.length === total) {
+        catalogCount.textContent = total + ' cards (showing first ' + Math.min(total, limit) + ')';
+    } else {
+        catalogCount.textContent = filtered.length + ' matching (of ' + total + ')' +
+            (filtered.length > limit ? '; showing first ' + limit : '');
+    }
+
+    cardListEl.innerHTML = '';
+
+    for (const entry of shown) {
+        const mainCount = deck.main.get(entry.name) || 0;
+        const sideCount = deck.sideboard.get(entry.name) || 0;
+        const inDeck = mainCount + sideCount > 0;
+        const isBasic = BASIC_LANDS.has(entry.name);
+        const atMax = !isBasic && mainCount + sideCount >= MAX_COPIES;
+
+        const li = document.createElement('li');
+        if (inDeck) li.classList.add('in-deck');
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'card-name';
+        nameSpan.title = entry.oracle || '';
+        nameSpan.textContent = entry.name;
+        if (inDeck) nameSpan.style.color = 'var(--accent)';
+
+        const manaSpan = document.createElement('span');
+        manaSpan.className = 'card-mana';
+        manaSpan.innerHTML = renderMana(entry.mana_cost);
+
+        const typeBadge = document.createElement('span');
+        typeBadge.className = 'card-type-badge';
+        typeBadge.textContent = primaryType(entry.types);
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'add-btn';
+        addBtn.textContent = inDeck ? ('+' + (mainCount + sideCount)) : 'Add';
+        addBtn.disabled = atMax;
+        addBtn.title = atMax ? 'Already at ' + MAX_COPIES + ' copies' : 'Add to main deck';
+        addBtn.addEventListener('click', () => addCard(entry.name, 'main'));
+
+        const sideBtn = document.createElement('button');
+        sideBtn.className = 'add-btn';
+        sideBtn.style.background = 'var(--surface-2)';
+        sideBtn.style.border = '1px solid var(--border)';
+        sideBtn.style.color = 'var(--muted)';
+        sideBtn.textContent = 'SB';
+        sideBtn.title = 'Add to sideboard';
+        sideBtn.addEventListener('click', () => addCard(entry.name, 'sideboard'));
+
+        li.append(nameSpan, manaSpan, typeBadge, addBtn, sideBtn);
+        cardListEl.appendChild(li);
+    }
+}
+
+// ── Deck mutations ─────────────────────────────────────────────────────────
+
+/**
+ * Add one copy of a card to the deck (main or sideboard).
+ * Respects the MAX_COPIES limit for non-basic-land cards.
+ * Triggers re-render of both the catalog row (in-deck highlight) and
+ * the full deck list.
+ */
+function addCard(name, zone) {
+    const map = zone === 'sideboard' ? deck.sideboard : deck.main;
+    const isBasic = BASIC_LANDS.has(name);
+    const mainCount = deck.main.get(name) || 0;
+    const sideCount = deck.sideboard.get(name) || 0;
+
+    if (!isBasic && mainCount + sideCount >= MAX_COPIES) return;
+
+    map.set(name, (map.get(name) || 0) + 1);
+    renderDeck();
+    renderCatalog();  // Update in-deck highlights + counts.
+}
+
+function removeCard(name, zone) {
+    const map = zone === 'sideboard' ? deck.sideboard : deck.main;
+    const cur = map.get(name) || 0;
+    if (cur <= 1) {
+        map.delete(name);
+    } else {
+        map.set(name, cur - 1);
+    }
+    renderDeck();
+    renderCatalog();
+}
+
+function clearDeck() {
+    deck.main.clear();
+    deck.sideboard.clear();
+    renderDeck();
+    renderCatalog();
+}
+
+// ── Deck rendering ─────────────────────────────────────────────────────────
+
+function renderDeck() {
+    deckListEl.innerHTML = '';
+
+    const mainEntries = [...deck.main.entries()].sort((a, b) => {
+        const eA = catalogByName.get(a[0]);
+        const eB = catalogByName.get(b[0]);
+        const cmcA = eA ? eA.cmc : 0;
+        const cmcB = eB ? eB.cmc : 0;
+        if (cmcA !== cmcB) return cmcA - cmcB;
+        return a[0].localeCompare(b[0]);
+    });
+
+    const sideEntries = [...deck.sideboard.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+    const totalMain = mainEntries.reduce((s, [, c]) => s + c, 0);
+    const totalSide = sideEntries.reduce((s, [, c]) => s + c, 0);
+
+    if (mainEntries.length === 0 && sideEntries.length === 0) {
+        const li = document.createElement('li');
+        li.style.color = 'var(--muted)';
+        li.style.fontStyle = 'italic';
+        li.style.padding = '12px';
+        li.textContent = 'Add cards from the catalog on the left.';
+        deckListEl.appendChild(li);
+    } else {
+        if (mainEntries.length > 0) {
+            const hdr = document.createElement('li');
+            hdr.className = 'deck-section-hdr';
+            hdr.style.display = 'block';
+            hdr.textContent = 'Main Deck (' + totalMain + ')';
+            deckListEl.appendChild(hdr);
+            for (const [name, count] of mainEntries) {
+                deckListEl.appendChild(makeDeckRow(name, count, 'main'));
+            }
+        }
+        if (sideEntries.length > 0) {
+            const hdr = document.createElement('li');
+            hdr.className = 'deck-section-hdr';
+            hdr.style.display = 'block';
+            hdr.textContent = 'Sideboard (' + totalSide + ')';
+            deckListEl.appendChild(hdr);
+            for (const [name, count] of sideEntries) {
+                deckListEl.appendChild(makeDeckRow(name, count, 'sideboard'));
+            }
+        }
+    }
+
+    updateStats(totalMain, totalSide, mainEntries);
+    renderCurve(mainEntries);
+}
+
+function makeDeckRow(name, count, zone) {
+    const li = document.createElement('li');
+    const entry = catalogByName.get(name);
+
+    const qtySpan = document.createElement('span');
+    qtySpan.className = 'dl-qty';
+    qtySpan.textContent = count + 'x';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'dl-name';
+    nameSpan.textContent = name;
+    nameSpan.title = entry ? entry.oracle : '';
+
+    const manaSpan = document.createElement('span');
+    manaSpan.className = 'dl-mana';
+    manaSpan.innerHTML = entry ? renderMana(entry.mana_cost) : '';
+
+    const plusBtn = document.createElement('button');
+    plusBtn.className = 'qty-btn';
+    plusBtn.textContent = '+';
+    plusBtn.title = 'Add one more';
+    plusBtn.addEventListener('click', () => addCard(name, zone));
+
+    const minusBtn = document.createElement('button');
+    minusBtn.className = 'qty-btn';
+    minusBtn.textContent = '−';
+    minusBtn.title = 'Remove one';
+    minusBtn.addEventListener('click', () => removeCard(name, zone));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'qty-btn';
+    delBtn.style.color = 'var(--danger)';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Remove all copies';
+    delBtn.addEventListener('click', () => {
+        (zone === 'sideboard' ? deck.sideboard : deck.main).delete(name);
+        renderDeck();
+        renderCatalog();
+    });
+
+    li.append(qtySpan, nameSpan, manaSpan, plusBtn, minusBtn, delBtn);
+    return li;
+}
+
+function updateStats(totalMain, totalSide, mainEntries) {
+    document.getElementById('stat-count').textContent = totalMain + totalSide;
+    document.getElementById('stat-main').textContent = totalMain;
+    document.getElementById('stat-side').textContent = totalSide;
+
+    // Compute color identity from main deck cards.
+    const colorSet = new Set();
+    for (const [name] of mainEntries) {
+        const entry = catalogByName.get(name);
+        if (entry && entry.colors) {
+            for (const c of entry.colors) colorSet.add(c);
+        }
+    }
+
+    const colorsEl = document.getElementById('stat-colors');
+    colorsEl.innerHTML = '';
+    const colorOrder = ['W','U','B','R','G','C'];
+    const colorNames = { W:'White', U:'Blue', B:'Black', R:'Red', G:'Green', C:'Colorless' };
+    for (const c of colorOrder) {
+        if (colorSet.has(c)) {
+            const dot = document.createElement('span');
+            dot.className = 'color-dot cd-' + c;
+            dot.title = colorNames[c];
+            colorsEl.appendChild(dot);
+        }
+    }
+    if (colorSet.size === 0) {
+        colorsEl.textContent = 'none';
+        colorsEl.style.color = 'var(--muted)';
+    }
+}
+
+function renderCurve(mainEntries) {
+    const barsEl = document.getElementById('curve-bars');
+    barsEl.innerHTML = '';
+
+    // Count spells by CMC (0-7+) excluding basic lands.
+    const counts = new Array(8).fill(0);
+    for (const [name, count] of mainEntries) {
+        const entry = catalogByName.get(name);
+        if (!entry || BASIC_LANDS.has(name)) continue;
+        const cmc = Math.min(entry.cmc, 7);
+        counts[cmc] += count;
+    }
+
+    const max = Math.max(...counts, 1);
+
+    for (let cmc = 0; cmc <= 7; cmc++) {
+        const col = document.createElement('div');
+        col.className = 'curve-col';
+        const bar = document.createElement('div');
+        bar.className = 'curve-bar';
+        const pct = counts[cmc] / max;
+        bar.style.height = Math.max(pct * 34, counts[cmc] > 0 ? 4 : 0) + 'px';
+        bar.title = (cmc === 7 ? '7+' : cmc) + ' CMC: ' + counts[cmc] + ' cards';
+        const label = document.createElement('div');
+        label.className = 'curve-cmc';
+        label.textContent = cmc === 7 ? '7+' : cmc;
+        col.append(bar, label);
+        barsEl.appendChild(col);
+    }
+}
+
+// ── .dck format parser / emitter ───────────────────────────────────────────
+//
+// The .dck format (see decks/*.dck and loader/deck.rs):
+//   [metadata]
+//   Name=<deck name>
+//   Description=<optional>
+//
+//   [Main]
+//   <count> <Card Name>
+//   ...
+//
+//   [Sideboard]
+//   <count> <Card Name>
+//   ...
+//
+// Rules mirroring DeckLoader::parse_with_problems:
+//   - Lines starting with '[' are section headers.
+//   - Lines containing '=' and NOT starting with a digit are metadata.
+//   - Lines of the form "<digit> <name>" (with optional "|SET|[n]" suffix stripped) are entries.
+//   - Trailing '+' on card names is stripped (foil marker).
+//   - Empty lines and '#' comments are ignored.
+
+/**
+ * Parse a .dck text into { name: string, main: Map<name,count>, sideboard: Map<name,count> }.
+ * Returns null and sets an error message on parse failure (empty deck).
+ * This mirrors DeckLoader::parse_with_problems in Rust — do NOT use string
+ * substring hacks; parse structured tokens first.
+ */
+function parseDck(text) {
+    const main = new Map();
+    const sideboard = new Map();
+    let deckName = '';
+    let section = 'main';  // default section before any header
+
+    for (const rawLine of text.split('\n')) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+
+        // Section header: [Main], [Sideboard], [metadata], [Commander], etc.
+        if (line.startsWith('[')) {
+            const lower = line.toLowerCase();
+            if (lower.includes('sideboard')) section = 'sideboard';
+            else if (lower.includes('commander')) section = 'commander';
+            else if (lower.includes('main')) section = 'main';
+            // else: metadata section — handled below, no section change needed
+            continue;
+        }
+
+        // Metadata line: contains '=' and does NOT start with a digit.
+        if (line.includes('=') && !/^\d/.test(line)) {
+            // Split on FIRST '=' only (card names could contain '=').
+            const eqIdx = line.indexOf('=');
+            const key = line.slice(0, eqIdx).trim().toLowerCase();
+            const val = line.slice(eqIdx + 1).trim();
+            if (key === 'name') deckName = val;
+            continue;
+        }
+
+        // Card entry: "<count> <Card Name>[|SET|[collector]]".
+        const spIdx = line.indexOf(' ');
+        if (spIdx <= 0) continue;
+        const countStr = line.slice(0, spIdx);
+        const count = parseInt(countStr, 10);
+        if (isNaN(count) || count <= 0) continue;
+
+        let cardName = line.slice(spIdx + 1).trim();
+        // Strip set suffix: "Card Name|SET|[123]" → "Card Name"
+        const pipeIdx = cardName.indexOf('|');
+        if (pipeIdx >= 0) cardName = cardName.slice(0, pipeIdx).trim();
+        // Strip foil marker.
+        if (cardName.endsWith('+')) cardName = cardName.slice(0, -1).trim();
+        if (!cardName) continue;
+
+        if (section === 'sideboard') {
+            sideboard.set(cardName, (sideboard.get(cardName) || 0) + count);
+        } else if (section !== 'commander') {
+            // Treat commander and any unknown section as main.
+            main.set(cardName, (main.get(cardName) || 0) + count);
+        }
+    }
+
+    return { name: deckName, main, sideboard };
+}
+
+/**
+ * Emit a .dck text from the current deck state.
+ * Mirrors the project's .dck format exactly (see decks/*.dck for reference).
+ */
+function emitDck(deckName, mainMap, sideboardMap) {
+    const lines = [];
+    lines.push('[metadata]');
+    lines.push('Name=' + (deckName || 'Unnamed Deck'));
+    lines.push('');
+
+    if (mainMap.size > 0) {
+        lines.push('[Main]');
+        // Sort by name for stable output.
+        const sorted = [...mainMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+        for (const [name, count] of sorted) {
+            lines.push(count + ' ' + name);
+        }
+    }
+
+    if (sideboardMap.size > 0) {
+        lines.push('[Sideboard]');
+        const sorted = [...sideboardMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+        for (const [name, count] of sorted) {
+            lines.push(count + ' ' + name);
+        }
+    }
+
+    return lines.join('\n') + '\n';
+}
+
+// ── Persistence (localStorage) ─────────────────────────────────────────────
+
+/** Read the full custom-decks object from localStorage; returns {} on error. */
+function readCustomDecks() {
+    try {
+        const raw = localStorage.getItem(CUSTOM_DECKS_KEY);
+        if (!raw) return {};
+        const obj = JSON.parse(raw);
+        return (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+/** Write the full custom-decks object to localStorage. */
+function writeCustomDecks(obj) {
+    localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(obj));
+}
+
+function saveDeck() {
+    const name = deckNameInput.value.trim() || 'Unnamed Deck';
+    if (deck.main.size === 0 && deck.sideboard.size === 0) {
+        showStatus('Deck is empty — add some cards first.', 'err');
+        return;
+    }
+    const dck = emitDck(name, deck.main, deck.sideboard);
+    const all = readCustomDecks();
+    all[name] = dck;
+    writeCustomDecks(all);
+    showStatus('Saved "' + name + '"!', 'ok');
+    renderSavedList();
+}
+
+function loadDeckFromStorage(name) {
+    const all = readCustomDecks();
+    const dckText = all[name];
+    if (!dckText) return;
+    const parsed = parseDck(dckText);
+    deckNameInput.value = parsed.name || name;
+    deck.main = parsed.main;
+    deck.sideboard = parsed.sideboard;
+    renderDeck();
+    renderCatalog();
+    showStatus('Loaded "' + name + '"', 'ok');
+}
+
+function deleteSavedDeck(name) {
+    const all = readCustomDecks();
+    delete all[name];
+    writeCustomDecks(all);
+    renderSavedList();
+    showStatus('Deleted "' + name + '"', 'ok');
+}
+
+function renderSavedList() {
+    const all = readCustomDecks();
+    const names = Object.keys(all).sort();
+    savedListEl.innerHTML = '';
+    if (names.length === 0) {
+        const span = document.createElement('span');
+        span.className = 'no-saved';
+        span.textContent = 'No saved decks yet.';
+        savedListEl.appendChild(span);
+        return;
+    }
+    for (const name of names) {
+        const chip = document.createElement('span');
+        chip.className = 'saved-chip';
+        chip.title = 'Load "' + name + '"';
+
+        const label = document.createElement('span');
+        label.textContent = name;
+        label.addEventListener('click', () => loadDeckFromStorage(name));
+
+        const del = document.createElement('span');
+        del.className = 'saved-chip-del';
+        del.textContent = '×';
+        del.title = 'Delete "' + name + '"';
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm('Delete saved deck "' + name + '"?')) deleteSavedDeck(name);
+        });
+
+        chip.append(label, del);
+        savedListEl.appendChild(chip);
+    }
+}
+
+// ── Status helper ──────────────────────────────────────────────────────────
+
+let statusTimer = null;
+function showStatus(msg, kind) {
+    actionStatus.textContent = msg;
+    actionStatus.className = 'status-msg ' + (kind || '');
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { actionStatus.textContent = ''; }, 4000);
+}
+
+// ── Import / Export ────────────────────────────────────────────────────────
+
+function exportDck() {
+    const name = deckNameInput.value.trim() || 'Unnamed Deck';
+    const text = emitDck(name, deck.main, deck.sideboard);
+    // Trigger a file download.
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name.replace(/[^a-zA-Z0-9_\-. ]/g, '_') + '.dck';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+const importPanel = document.getElementById('import-panel');
+const importText  = document.getElementById('import-text');
+const importStatus = document.getElementById('import-status');
+
+function openImportPanel() {
+    importText.value = '';
+    importStatus.textContent = '';
+    importPanel.classList.add('open');
+    importText.focus();
+}
+
+function closeImportPanel() {
+    importPanel.classList.remove('open');
+}
+
+function confirmImport() {
+    const text = importText.value.trim();
+    if (!text) {
+        importStatus.textContent = 'Paste some deck text first.';
+        importStatus.className = 'status-msg err';
+        return;
+    }
+    const parsed = parseDck(text);
+    if (parsed.main.size === 0 && parsed.sideboard.size === 0) {
+        importStatus.textContent = 'No valid card entries found. Check format.';
+        importStatus.className = 'status-msg err';
+        return;
+    }
+    deck.main = parsed.main;
+    deck.sideboard = parsed.sideboard;
+    if (parsed.name) deckNameInput.value = parsed.name;
+    closeImportPanel();
+    renderDeck();
+    renderCatalog();
+    showStatus('Imported ' + (parsed.main.size + parsed.sideboard.size) + ' unique cards.', 'ok');
+}
+
+// ── Wire up events ─────────────────────────────────────────────────────────
+
+// Filters (debounced search, instant for selects).
+let filterDebounce = null;
+searchInput.addEventListener('input', () => {
+    if (filterDebounce) clearTimeout(filterDebounce);
+    filterDebounce = setTimeout(renderCatalog, 150);
+});
+filterColor.addEventListener('change', renderCatalog);
+filterType.addEventListener('change', renderCatalog);
+filterCmc.addEventListener('change', renderCatalog);
+
+// Deck actions.
+document.getElementById('btn-save').addEventListener('click', saveDeck);
+
+document.getElementById('btn-use-in-lobby').addEventListener('click', () => {
+    saveDeck();
+    const name = deckNameInput.value.trim() || 'Unnamed Deck';
+    localStorage.setItem(LOBBY_PRESELECT_KEY, name);
+    window.location.href = 'index.html';
+});
+
+document.getElementById('btn-export').addEventListener('click', exportDck);
+document.getElementById('btn-import').addEventListener('click', openImportPanel);
+document.getElementById('btn-clear').addEventListener('click', () => {
+    if (deck.main.size + deck.sideboard.size > 0) {
+        if (!confirm('Clear the current deck?')) return;
+    }
+    clearDeck();
+    showStatus('Deck cleared.', '');
+});
+
+document.getElementById('btn-import-cancel').addEventListener('click', closeImportPanel);
+document.getElementById('btn-import-confirm').addEventListener('click', confirmImport);
+
+// Close import panel on backdrop click.
+importPanel.addEventListener('click', (e) => {
+    if (e.target === importPanel) closeImportPanel();
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+renderDeck();
+renderSavedList();
+loadCatalog();
+</script>
+</body>
+</html>
