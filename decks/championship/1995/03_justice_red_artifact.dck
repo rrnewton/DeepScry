@@ -1,0 +1,20 @@
+[metadata]
+Name=03 Justice Red Artifact Control
+Description=1995 MTG World Championship, 3rd-4th Place (tie). Mark Justice (USA). Red Artifact Control. NOTE: APPROXIMATE SKELETON — the full decklist has not been published in any accessible primary source. The main deck here is a partial reconstruction based on: archetype name "Red Artifact Control", the Type II card pool circa 1995, and fragmentary references. Missing cards undocumented. Sources to verify: https://www.mtggoldfish.com/deck/4503226, https://deckbox.org/sets/1634598. Treat as low-confidence; do not use for engine testing without verification.
+
+[Main]
+4 Black Vise
+4 Howling Mine
+4 Icy Manipulator
+4 Winter Orb
+4 Zuran Orb
+4 Lightning Bolt
+4 Incinerate
+3 Fireball
+2 Shivan Dragon
+4 Strip Mine
+4 Mishra's Factory
+4 Mountain
+4 Dwarven Ruins
+
+[Sideboard]
