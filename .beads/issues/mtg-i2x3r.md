@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-30T04:45:39.533970539+00:00
-updated_at: 2026-05-30T17:36:47.736339157+00:00
+updated_at: 2026-06-01T13:46:52.543354324+00:00
 ---
 
 # Description
@@ -88,3 +88,6 @@ desync tripwire. Left for follow-up.
 == Next actor ==
 Implement Step 4 (choose_at unification) on a fresh worktree off the merged
 Step-3 integration, coordinating with mtg-614.
+
+---
+GARDENING (2026-06-01): Step 3 DONE (landed at f30c2d9d, merged to integration). Step 4 (choose_at unification) still pending. The 'Next actor: implement Step 4 on fresh worktree coordinating with mtg-614' is blocked/related to mtg-614 (WASM rewind). Leaving open until Step 4 lands.
