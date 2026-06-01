@@ -654,6 +654,7 @@ impl WasmNetworkClient {
                 deck_card_ids,
                 token_definitions,
                 rng_state,
+                reconnect_token: _, // Stored by the JS layer, not the WASM game client
             } => {
                 log::info!(
                     "WasmNetworkClient: Game started! We are {:?}, opponent: {}, life: {}",
@@ -907,6 +908,35 @@ impl WasmNetworkClient {
             ServerMessage::JoinFailed { game_name, reason } => {
                 log::warn!("WasmNetworkClient: JoinFailed for {:?}: {:?}", game_name, reason);
                 self.last_error = Some(format!("Join failed for {game_name}: {reason:?}"));
+            }
+
+            // New lobby protocol messages — handled at the JS layer or
+            // safely ignored in the WASM game client.
+            ServerMessage::RegisterResult {
+                success,
+                player_name,
+                error,
+            } => {
+                log::info!(
+                    "WasmNetworkClient: RegisterResult name={:?} success={} error={:?}",
+                    player_name,
+                    success,
+                    error
+                );
+            }
+
+            ServerMessage::WaitingRoomUpdate { .. } => {
+                // Forwarded to JS via callback in the future; currently a no-op
+                // in the WASM game client (the lobby page handles it).
+                log::debug!("WasmNetworkClient: WaitingRoomUpdate (lobby layer)");
+            }
+
+            ServerMessage::ReconnectResult { success, game_name, .. } => {
+                log::info!(
+                    "WasmNetworkClient: ReconnectResult success={} game={:?}",
+                    success,
+                    game_name
+                );
             }
         }
     }
