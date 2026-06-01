@@ -176,12 +176,16 @@ impl NetworkMessage {
                 Some(NetworkMessage::LibraryReordered { player, new_order })
             }
             // Ignore connection/setup messages - handled during connection setup, not gameplay.
-            // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed) are also
-            // pre-gameplay: the lobby flow consumes them before the in-game
-            // NetworkMessage stream begins, so they are never expected here.
+            // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed/WaitingRoomUpdate/
+            // RegisterResult/ReconnectResult) are also pre-gameplay: the lobby flow consumes
+            // them before the in-game NetworkMessage stream begins, so they are never
+            // expected here.
             ServerMessage::AuthResult { .. }
+            | ServerMessage::RegisterResult { .. }
             | ServerMessage::BugReportResult { .. }
             | ServerMessage::WaitingForOpponent
+            | ServerMessage::WaitingRoomUpdate { .. }
+            | ServerMessage::ReconnectResult { .. }
             | ServerMessage::GameStarted { .. }
             | ServerMessage::GameList { .. }
             | ServerMessage::GameCreated { .. }
@@ -1404,6 +1408,7 @@ impl NetworkClient {
                     deck_card_ids,
                     token_definitions,
                     rng_state,
+                    reconnect_token: _, // stored by the client UI layer, not the game loop
                 } => {
                     log::info!("Game started! Playing against {}", opponent_name);
                     log::info!(

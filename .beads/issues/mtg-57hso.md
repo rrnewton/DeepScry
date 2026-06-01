@@ -1,16 +1,27 @@
 ---
 title: 'mtg server / server-web: fix misleading --help, document the real distinction, purge retired-python mentions'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-31T21:37:21.293301614+00:00
-updated_at: 2026-05-31T21:37:21.293301614+00:00
+updated_at: 2026-06-01T01:03:58.276231587+00:00
 ---
 
 # Description
 
-USER (2026-05-31): server-web --help should be extensive and must NOT reference old/retired state ('used to be a separate python server' — irrelevant to a finished product).
+## Status: COMPLETED (2026-05-31)
 
-Findings: (1) 'mtg server' about text says 'dedicated game server (TUI watches games...)' but there is NO TUI — it is the bare multiplayer WebSocket GameServer (clients connect via 'mtg connect' / self-hosted 'Custom Network Game'), no HTTP/static serving. (2) 'mtg server-web' about text 'dedicated game server (no TUI...)' is near-identical and doesn't convey that it is the FULL browser product: unified axum server that serves web/ (HTML+WASM+card bins) AND embeds the GameServer lobby on a private port. (3) web_server.rs:48,53 docstrings still describe the retired 'standalone Python script (serve_web.py)' / 'old two-process (Python proxy + Rust WS) deployment' — delete.
+Implemented in lobby-server-protocol branch.
 
-DELIVER: rewrite both subcommands' about/long_about so each is self-contained and the server-vs-server-web distinction is obvious; give server-web a thorough long_about (what it serves, ports, static-dir, lobby model, TLS, bug-report password); strip all retired-python/legacy mentions from help + docstrings. Decide+document whether 'mtg server' stays a separate command (headless WS server for CLI/custom) or folds into 'server-web --no-web'. main.rs Commands::Server@643 / ServerWeb@717; web_server.rs.
+### Changes:
+- mtg server: rewrote about text to clearly state it's a headless WS-only server (no HTTP/TUI)
+- mtg server-web: rewrote as thorough long_about explaining the full browser product:
+  - what it serves (static files + lobby WS proxy)
+  - lobby model (Register, SetDeck, SetReady, heartbeat eviction, reconnect tokens)
+  - TLS configuration
+  - bug-report password behavior
+  - graceful shutdown
+- web_server/mod.rs: removed 'Replaces the old dual-process deploy (Python http.server ...)' mention
+- No retired-Python, dual-process, or serve_web.py mentions remain in help text or docstrings
+
+Decision: 'mtg server' stays as a separate standalone headless WS command (for CLI/custom use); does NOT fold into 'server-web --no-web'. Rationale: the architectures are distinct (one uses axum, the other uses raw tokio TCP) and the proxy layer adds unnecessary overhead for CLI-only clients.

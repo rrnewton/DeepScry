@@ -81,6 +81,8 @@ async fn pending_game_handoff_oneshot_round_trip() {
     let server_ws = server_accept.await.unwrap();
 
     let (tx, rx) = tokio::sync::oneshot::channel::<JoinedPlayer>();
+    let (update_tx, _update_rx) =
+        tokio::sync::watch::channel(mtg_engine::network::lobby::WaitingRoomSnapshot::default());
     let mut pending = PendingGame {
         id: 1,
         name: "g".to_string(),
@@ -89,6 +91,10 @@ async fn pending_game_handoff_oneshot_round_trip() {
         password_hash: None,
         created_at: std::time::Instant::now(),
         created_at_ms: 0,
+        creator_state: mtg_engine::network::lobby::WaitingPlayerState::default(),
+        joiner_state: None,
+        joiner_name: None,
+        creator_update_tx: Some(update_tx),
         handoff_tx: Some(tx),
     };
 
@@ -257,6 +263,9 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                                     let _ = ws.send(Message::Text(serde_json::to_string(&r).unwrap().into())).await;
                                     return;
                                 }
+                                let (upd_tx, _upd_rx) = tokio::sync::watch::channel(
+                                    mtg_engine::network::lobby::WaitingRoomSnapshot::default(),
+                                );
                                 l.waiting_games.insert(
                                     key,
                                     PendingGame {
@@ -267,6 +276,10 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                                         password_hash: game_password.as_deref().map(hash_game_password),
                                         created_at: std::time::Instant::now(),
                                         created_at_ms: 0,
+                                        creator_state: mtg_engine::network::lobby::WaitingPlayerState::default(),
+                                        joiner_state: None,
+                                        joiner_name: None,
+                                        creator_update_tx: Some(upd_tx),
                                         handoff_tx: Some(tx),
                                     },
                                 );
@@ -357,6 +370,8 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                                         p1_name: pending.creator_name.clone(),
                                         p2_name: player_name.clone().unwrap_or_else(|| "Player2".to_string()),
                                         started_at: std::time::Instant::now(),
+                                        p1_reconnect_token: None,
+                                        p2_reconnect_token: None,
                                     },
                                 );
                             }

@@ -1,8 +1,6 @@
 //! Unified web server: static files + lobby WebSocket proxy + optional TLS.
 //!
-//! Replaces the old dual-process deploy (Python `http.server` for `web/`
-//! plus a separate `mtg server` for the lobby). One axum process now
-//! binds a single public port (default 8080) and serves:
+//! One axum process binds a single public port (default 8080) and serves:
 //!
 //! - `GET /…` → static files out of `--static-dir` (default `./web`).
 //! - `GET /lobby` → WebSocket upgrade, proxied bidirectionally to the

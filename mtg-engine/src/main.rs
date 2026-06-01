@@ -638,7 +638,24 @@ enum Commands {
         rate_limit: u64,
     },
 
-    /// Start a multiplayer game server
+    /// Headless multiplayer WebSocket game server.
+    ///
+    /// Binds a raw TCP port (default 17771) and accepts WebSocket connections
+    /// for multiplayer MTG games. Does NOT serve any HTTP/static assets; there
+    /// is no lobby web UI, no TUI, and no deck browser — clients connect via
+    /// `mtg connect` (CLI) or by launching a custom network game from a
+    /// separately hosted web front-end.
+    ///
+    /// Lobby model: each accepted WebSocket starts in the lobby dispatch loop.
+    /// Clients send `Register` (to claim a unique username), then `ListGames`
+    /// / `CreateGame` / `JoinGame`. When two players have joined the same game
+    /// slot the server starts a full GameServer session on that connection pair.
+    /// Reconnect tokens are issued at game-start so a dropped player can
+    /// re-attach (Phase 3 resume wiring). Waiting games are evicted immediately
+    /// when the creator's WebSocket drops (no stale entries in `ListGames`).
+    ///
+    /// For the complete browser product — static assets + lobby on one public
+    /// port — use `mtg server-web` instead.
     #[cfg(feature = "network")]
     Server {
         /// Port to listen on (default: 17771)
@@ -707,12 +724,48 @@ enum Commands {
         max_memory_percent: u32,
     },
 
-    /// Unified web server: serves `web/` over HTTP(S) AND proxies the lobby
-    /// WebSocket on `/lobby` to an embedded `mtg server`. Replaces the old
-    /// dual-process deploy (Python http.server + standalone `mtg server`).
+    /// Full browser product: static web assets + embedded lobby on one port.
     ///
-    /// TLS is enabled iff both `--tls-cert` and `--tls-key` (or the
-    /// `MTG_TLS_CERT` / `MTG_TLS_KEY` env vars) are set.
+    /// Starts a single axum process that binds one public address (default
+    /// `0.0.0.0:8080`) and serves two things simultaneously:
+    ///
+    ///   • Static files from `--static-dir` (default `./web`) at every URL path
+    ///     that does not match the lobby WebSocket path. This includes the lobby
+    ///     HTML, WASM bundle, card-image bins, JavaScript modules, and any other
+    ///     assets required by the browser client.
+    ///
+    ///   • A WebSocket proxy at `--lobby-path` (default `/lobby`): the browser
+    ///     connects here for the full lobby flow (Register, ListGames, CreateGame,
+    ///     JoinGame, SetDeck, SetReady, BugReport, Reconnect, game play). Behind
+    ///     the proxy, the embedded [`GameServer`] runs on a private loopback port
+    ///     chosen by the OS — it is never directly reachable from outside the
+    ///     process.
+    ///
+    /// TLS: enabled when both `--tls-cert` and `--tls-key` (or the `MTG_TLS_CERT`
+    /// / `MTG_TLS_KEY` env vars) point to valid PEM files. When unset, the server
+    /// speaks plain HTTP, which is the standard configuration when a CDN (e.g.
+    /// Cloudflare) terminates TLS at its edge and forwards plaintext to the origin
+    /// port.
+    ///
+    /// Lobby model: identical to `mtg server`. Each WebSocket connection starts
+    /// in the lobby dispatch loop: the client sends `Register` to claim a unique
+    /// username (server-enforced; duplicate names are rejected), then browses
+    /// (`ListGames`) or creates/joins games (`CreateGame` / `JoinGame`). Waiting
+    /// games are backed by the live WebSocket — closing the browser tab drops the
+    /// connection and the server immediately evicts the game from `ListGames`
+    /// (no stale rooms). Both players track deck selection and ready state via
+    /// `SetDeck` / `SetReady`; the game starts when both are ready. Reconnect
+    /// tokens are issued at game-start for mid-game resume after a connection drop.
+    ///
+    /// Bug reports: clients submit via `BugReport`. An optional
+    /// `--trusted-bug-report-password` marks a submission as trusted (enabling
+    /// automated GitHub issue filing and Claude autofix). Reports are ALWAYS
+    /// stored regardless of the password outcome; the password only sets the
+    /// `trusted` metadata flag. Omitting the flag stores all reports as untrusted.
+    ///
+    /// Graceful shutdown: on SIGTERM or Ctrl-C the server stops accepting new
+    /// connections, sends a `ServerMessage::Error { fatal: true }` to each open
+    /// WebSocket, and waits up to 30 s for clients to drain.
     #[cfg(feature = "web-server")]
     ServerWeb {
         /// Public bind address.

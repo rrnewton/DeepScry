@@ -86,6 +86,51 @@ pub fn now_ms() -> u64 {
 // CLIENT → SERVER MESSAGES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Opaque token issued by the server when a player joins or creates a game.
+///
+/// A client that holds a valid `ReconnectToken` may re-join an in-progress
+/// game after a connection drop by sending `ClientMessage::Reconnect`. The
+/// token is bound to a specific `(game_name, player_id)` pair on the server;
+/// presenting it to the wrong game or as the wrong player is rejected.
+///
+/// **Representation**: a random 128-bit value encoded as a lowercase hex
+/// string (32 ASCII hex digits). This makes it copy-paste friendly and
+/// trivially JSON-serializable as a plain string. 128 bits is sufficient to
+/// make brute-force guessing impractical for the lifetime of a single game
+/// (≤ 4 hours per the server cap).
+///
+/// **Lifecycle**: the server issues a fresh token on `CreateGame` / `JoinGame`
+/// success; the same token is reused if `Reconnect` succeeds (i.e., the
+/// server does not rotate the token on every reconnect). Tokens are
+/// invalidated when the associated game ends.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReconnectToken(pub String);
+
+impl ReconnectToken {
+    /// Generate a fresh cryptographically random 128-bit token.
+    ///
+    /// Uses `rand::random::<u128>()` for simplicity and safety — `rand`
+    /// is already in the dependency tree and its `ThreadRng` source is
+    /// `OsRng`-seeded.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn generate() -> Self {
+        use rand::random;
+        let bits: u128 = random();
+        Self(format!("{bits:032x}"))
+    }
+
+    /// Check whether the token string is structurally valid (32 lowercase hex chars).
+    pub fn is_valid_format(&self) -> bool {
+        self.0.len() == 32 && self.0.chars().all(|c| c.is_ascii_hexdigit())
+    }
+}
+
+impl std::fmt::Display for ReconnectToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Messages sent from client to server
 ///
 /// Note: SubmitChoice variant is intentionally large (contains multiple Option<Vec<_>> fields
@@ -94,14 +139,37 @@ pub fn now_ms() -> u64 {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum ClientMessage {
+    /// Register a unique display name on this lobby connection.
+    ///
+    /// **Must be the first message sent** by new lobby clients (those that do
+    /// NOT use the legacy `Authenticate` flow). The server reserves the name
+    /// for the lifetime of this WebSocket connection; when the connection
+    /// drops, the reservation is released. A second client claiming the same
+    /// name receives `ServerMessage::RegisterResult { success: false, .. }`.
+    ///
+    /// After a successful `Register` the client may call `ListGames`,
+    /// `CreateGame`, or `JoinGame` without re-supplying a `player_name` —
+    /// the server uses the registered name automatically. Supplying
+    /// `player_name` in those messages overrides the registered name for
+    /// that game (useful for per-game aliases), but the lobby-level
+    /// reservation stays on the registered name.
+    Register {
+        /// Server password (must match server config if non-empty).
+        password: String,
+        /// Desired display name. Must be 1–32 printable non-whitespace-only
+        /// ASCII characters. Validation is server-side; invalid names get a
+        /// `RegisterResult { success: false, .. }`.
+        player_name: String,
+    },
+
     /// Initial authentication and deck submission.
     ///
     /// **Legacy single-game entry point** — kept for backwards compatibility
     /// with clients that pre-date the lobby. The server treats this as an
     /// implicit `JoinOrCreate` against a well-known game named
     /// [`DEFAULT_LOBBY_GAME`]: the first authenticator becomes that game's
-    /// creator, the second joins it. New clients should use `CreateGame` /
-    /// `JoinGame` / `ListGames` for explicit lobby control.
+    /// creator, the second joins it. New clients should use `Register` +
+    /// `CreateGame` / `JoinGame` / `ListGames` for explicit lobby control.
     Authenticate {
         /// Server password
         password: String,
@@ -165,6 +233,56 @@ pub enum ClientMessage {
         player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
+    },
+
+    /// Update the deck choice for this player in an active waiting room.
+    ///
+    /// Must be sent after a successful `CreateGame` or `JoinGame` response and
+    /// before both players mark ready. The server updates its per-player state
+    /// and broadcasts `WaitingRoomUpdate` to both players so each side sees
+    /// the current deck selections and ready flags. Submitting a new deck
+    /// implicitly resets the player's `ready` flag to `false` (so the other
+    /// player cannot be surprised by a deck swap after the match starts).
+    SetDeck {
+        /// The deck the player wants to play. The server validates the deck
+        /// (minimum size) and replies with `WaitingRoomUpdate`; an invalid
+        /// deck leaves the previous selection in place and sends an
+        /// `Error { fatal: false }` explaining the problem.
+        deck: DeckSubmission,
+    },
+
+    /// Mark this player as ready (or unready) in the waiting room.
+    ///
+    /// When BOTH players are ready the server starts the match: it sends
+    /// `GameStarted` to both, issues reconnect tokens, and transitions the
+    /// game from `waiting_games` to `active_games`. A client that sends
+    /// `SetReady { ready: true }` before setting a deck receives
+    /// `Error { fatal: false }` (the game will not start until a valid deck
+    /// is on record for both players).
+    SetReady {
+        /// `true` = ready, `false` = cancel ready (e.g. to switch deck).
+        ready: bool,
+    },
+
+    /// Re-join an in-progress game after a connection drop.
+    ///
+    /// The client must supply the `ReconnectToken` it received when it
+    /// originally joined. The server validates the token against its active
+    /// game registry and, on success, re-attaches the WebSocket to the
+    /// running game task. The response is a normal `GameStarted`-style
+    /// snapshot of current state so the client can reconstruct its view.
+    ///
+    /// **Not yet fully wired to the in-game task** (stubbed in Phase 1 —
+    /// the token lifecycle is implemented and tested; the actual mid-game
+    /// resume of a running `GameLoop` is deferred to Phase 3). A successful
+    /// `Reconnect` in Phase 1 will respond with `ReconnectResult { success:
+    /// true }` but the game may not yet continue on the reattached socket.
+    Reconnect {
+        /// The token received at game creation / join time.
+        token: ReconnectToken,
+        /// Game name (allows the server to look up the game before checking
+        /// the token, avoiding a global O(n) search).
+        game_name: String,
     },
 
     /// Submit a bug report to the server for local persistence
@@ -264,6 +382,22 @@ impl DeckSubmission {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)] // ChoiceRequest is the hot path; boxing adds overhead
 pub enum ServerMessage {
+    /// Result of a `ClientMessage::Register` request.
+    ///
+    /// Sent immediately after the server processes a `Register`. On success
+    /// the name is reserved for the lifetime of this WebSocket connection;
+    /// subsequent lobby actions inherit it.
+    RegisterResult {
+        /// `true` iff the name was accepted and reserved.
+        success: bool,
+        /// The name that was reserved (echoed from the request, so the client
+        /// can correlate without tracking in-flight requests).
+        player_name: String,
+        /// Human-readable rejection reason when `success = false`
+        /// (e.g., "Name already taken", "Name too long").
+        error: Option<String>,
+    },
+
     /// Authentication result
     AuthResult {
         /// Whether authentication succeeded
@@ -323,6 +457,37 @@ pub enum ServerMessage {
         your_player_id: PlayerId,
         /// Display name the server settled on for the creator.
         your_name: Option<String>,
+    },
+
+    /// Snapshot of the waiting room state, sent to both players whenever
+    /// either player's deck selection or ready flag changes.
+    ///
+    /// Both the creator and the joiner receive this message on every
+    /// `SetDeck` / `SetReady` update so their UIs stay in sync without
+    /// polling. The message is also sent once to the joiner when they first
+    /// join, so they immediately see the creator's current state.
+    WaitingRoomUpdate {
+        /// Creator's current state.
+        creator: WaitingRoomPlayerState,
+        /// Joiner's current state. `None` until the second player joins.
+        joiner: Option<WaitingRoomPlayerState>,
+    },
+
+    /// Result of a `ClientMessage::Reconnect` request.
+    ///
+    /// In Phase 1 the token lifecycle is fully implemented (issue on
+    /// CreateGame/JoinGame, validate on Reconnect, invalidate on game end),
+    /// but the in-game task reattachment is stubbed. A successful reconnect
+    /// returns `success: true`; mid-game resume wiring is a Phase 3 task.
+    ReconnectResult {
+        /// `true` iff the token was valid and the reconnect was accepted.
+        success: bool,
+        /// Game name the player reconnected to (echoed for correlation).
+        game_name: String,
+        /// Your player ID in the game (echoed for the UI).
+        your_player_id: Option<PlayerId>,
+        /// Human-readable error when `success = false`.
+        error: Option<String>,
     },
 
     /// `CreateGame`/`JoinGame` rejected because host memory pressure is at or
@@ -400,6 +565,15 @@ pub enum ServerMessage {
         /// Uses bincode serialization of ChaCha12Rng (56 bytes).
         #[serde(default)]
         rng_state: Vec<u8>,
+        /// Reconnect token for this player in this game.
+        ///
+        /// The client MUST persist this token. If the WebSocket drops during
+        /// the game, the client can send `ClientMessage::Reconnect { token,
+        /// game_name }` on a new connection to re-attach to the running game.
+        /// The token is invalidated when the game ends (either naturally or
+        /// by timeout).
+        #[serde(default)]
+        reconnect_token: Option<ReconnectToken>,
     },
 
     /// Card reveal event (draws, tutors, plays, etc.)
@@ -596,6 +770,21 @@ pub enum ServerMessage {
 // ═══════════════════════════════════════════════════════════════════════════
 // LOBBY TYPES
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Per-player state inside a waiting room, broadcast in `WaitingRoomUpdate`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WaitingRoomPlayerState {
+    /// Display name of this player.
+    pub name: String,
+    /// `true` iff this player has submitted a valid deck via `SetDeck`.
+    pub deck_selected: bool,
+    /// Summary of the selected deck (name/count pairs from the main deck).
+    /// `None` until the player submits their first `SetDeck`.
+    pub deck_summary: Option<Vec<(String, u8)>>,
+    /// `true` iff this player has sent `SetReady { ready: true }` with a
+    /// valid deck on record.
+    pub ready: bool,
+}
 
 /// Well-known game name used when a legacy client connects with `Authenticate`.
 ///
@@ -1507,6 +1696,7 @@ mod tests {
                 deck_card_ids: Some(DeckCardIdRanges::from_deck_sizes(60, 60)),
                 token_definitions: std::collections::HashMap::new(),
                 rng_state: vec![1, 2, 3, 4], // Dummy RNG state for testing
+                reconnect_token: None,
             },
             ServerMessage::ChoiceRequest {
                 choice_seq: 1,

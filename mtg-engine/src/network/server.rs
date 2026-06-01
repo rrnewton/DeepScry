@@ -13,12 +13,12 @@ use crate::game::{GameEndReason, GameLoop, GameResult, GameState};
 use crate::loader::{AsyncCardDatabase, DeckEntry, DeckList, GameInitializer};
 use crate::network::lobby::{
     build_server_full_message, hash_game_password, new_shared_lobby, ActiveGame, JoinedPlayer, PendingGame,
-    SharedLobby, DEFAULT_GAME_TIMEOUT,
+    SharedLobby, WaitingPlayerState, WaitingRoomSnapshot, DEFAULT_GAME_TIMEOUT,
 };
 use crate::network::memory::{check_memory_admission, current_system_memory, AdmissionVerdict};
 use crate::network::protocol::{
-    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason, RevealReason,
-    ServerMessage, DEFAULT_LOBBY_GAME,
+    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason, ReconnectToken,
+    RevealReason, ServerMessage, DEFAULT_LOBBY_GAME,
 };
 use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
@@ -182,6 +182,8 @@ struct WaitingPlayer {
     deck: DeckSubmission,
     /// WebSocket connection
     ws_stream: WebSocketStream<TcpStream>,
+    /// Reconnect token issued for this player at game-start time.
+    reconnect_token: Option<ReconnectToken>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -611,22 +613,161 @@ const WAIT_FOR_JOINER: std::time::Duration = std::time::Duration::from_secs(30 *
 
 /// Top-level dispatcher for one freshly-accepted WebSocket connection.
 ///
-/// Reads the first message and routes it. Lobby-only messages (`ListGames`)
-/// can repeat; the connection stays open until the client sends a
-/// "commitment" message (`CreateGame`/`JoinGame`/`Authenticate`/`BugReport`).
+/// Reads the first message and routes it. Lobby-only messages (`ListGames`,
+/// `Register`) can repeat; the connection stays open until the client sends a
+/// "commitment" message (`CreateGame`/`JoinGame`/`Authenticate`/`BugReport`/
+/// `Reconnect`). On every exit path — including errors and panics — any
+/// registered name held by this connection is released from the lobby so the
+/// name slot becomes available for a new client.
 async fn handle_lobby_connection(
     stream: TcpStream,
     lobby: SharedLobby,
     card_db: Arc<AsyncCardDatabase>,
     config: ServerConfig,
 ) -> Result<()> {
-    let mut ws_stream = accept_async(stream).await?;
+    let ws_stream = accept_async(stream).await?;
 
+    // Assign a stable per-connection ID so we can clean up registrations on
+    // disconnect without storing a mutable reference into the lobby map.
+    let connection_id = {
+        let mut l = lobby.lock().await;
+        l.next_connection_id()
+    };
+    // The name registered by this connection (if any), kept here for cleanup.
+    let mut registered_name: Option<String> = None;
+
+    let result = run_lobby_dispatch(
+        ws_stream,
+        &lobby,
+        &card_db,
+        &config,
+        connection_id,
+        &mut registered_name,
+    )
+    .await;
+
+    // Always release the name on any exit (normal, error, or panic guard).
+    if let Some(ref name) = registered_name {
+        let mut l = lobby.lock().await;
+        l.release_name(name, connection_id);
+    }
+
+    result
+}
+
+/// Inner dispatch loop extracted so the cleanup in `handle_lobby_connection`
+/// can run unconditionally (the `?` operator would skip cleanup if left in the
+/// outer function body).
+///
+/// Takes `ws_stream` by value. Functions that need to own the stream (such as
+/// `run_create_flow`) receive it directly; once they return this function
+/// terminates.
+#[allow(clippy::too_many_arguments)]
+async fn run_lobby_dispatch(
+    mut ws_stream: WebSocketStream<TcpStream>,
+    lobby: &SharedLobby,
+    card_db: &Arc<AsyncCardDatabase>,
+    config: &ServerConfig,
+    connection_id: u64,
+    registered_name: &mut Option<String>,
+) -> Result<()> {
     loop {
         let msg = read_one_lobby_message(&mut ws_stream).await?;
         match msg {
+            // ── New: unique-name registration ────────────────────────────────
+            ClientMessage::Register { password, player_name } => {
+                if !check_server_password(config, &password) {
+                    send_message(
+                        &mut ws_stream,
+                        &ServerMessage::RegisterResult {
+                            success: false,
+                            player_name: player_name.clone(),
+                            error: Some("Invalid server password".to_string()),
+                        },
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                let outcome = {
+                    let mut l = lobby.lock().await;
+                    l.try_register_name(&player_name, connection_id)
+                };
+                match outcome {
+                    Ok(()) => {
+                        *registered_name = Some(player_name.clone());
+                        send_message(
+                            &mut ws_stream,
+                            &ServerMessage::RegisterResult {
+                                success: true,
+                                player_name,
+                                error: None,
+                            },
+                        )
+                        .await?;
+                        // Loop: client now browses the lobby.
+                    }
+                    Err(reason) => {
+                        send_message(
+                            &mut ws_stream,
+                            &ServerMessage::RegisterResult {
+                                success: false,
+                                player_name,
+                                error: Some(reason),
+                            },
+                        )
+                        .await?;
+                        // Non-fatal: client can retry with a different name.
+                    }
+                }
+            }
+
+            // ── Reconnect (dropped player re-joining an in-progress game) ────
+            ClientMessage::Reconnect { token, game_name } => {
+                let outcome = {
+                    let l = lobby.lock().await;
+                    l.validate_reconnect_token(&game_name, &token)
+                };
+                match outcome {
+                    Some((_game_id, player_index)) => {
+                        let your_player_id = Some(PlayerId::new(player_index as u32));
+                        send_message(
+                            &mut ws_stream,
+                            &ServerMessage::ReconnectResult {
+                                success: true,
+                                game_name: game_name.clone(),
+                                your_player_id,
+                                error: None,
+                            },
+                        )
+                        .await?;
+                        // Phase 1 stub: token is valid but in-game task
+                        // reattachment is deferred to Phase 3. The connection
+                        // can be kept alive here for a future resume handshake.
+                        log::info!(
+                            "Reconnect accepted for game '{}' player {} (Phase 3 resume pending)",
+                            game_name,
+                            player_index
+                        );
+                        return Ok(());
+                    }
+                    None => {
+                        send_message(
+                            &mut ws_stream,
+                            &ServerMessage::ReconnectResult {
+                                success: false,
+                                game_name,
+                                your_player_id: None,
+                                error: Some("Invalid or expired reconnect token".to_string()),
+                            },
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+            }
+
             ClientMessage::ListGames { password, query } => {
-                if !check_server_password(&config, &password) {
+                if !check_server_password(config, &password) {
                     // We send AuthResult { success: false, .. } so legacy
                     // clients can decode it; ListGames is intentionally a
                     // pre-auth probe, but the server password still gates it.
@@ -667,16 +808,19 @@ async fn handle_lobby_connection(
                 player_name,
                 deck,
             } => {
+                // Prefer the registered name if the client didn't supply one.
+                let resolved_name = player_name.or_else(|| registered_name.clone());
                 return run_create_flow(
                     ws_stream,
-                    lobby,
-                    card_db,
-                    config,
+                    SharedLobby::clone(lobby),
+                    Arc::clone(card_db),
+                    config.clone(),
                     password,
                     game_name,
                     game_password,
-                    player_name,
+                    resolved_name,
                     deck,
+                    connection_id,
                 )
                 .await;
             }
@@ -688,14 +832,15 @@ async fn handle_lobby_connection(
                 player_name,
                 deck,
             } => {
+                let resolved_name = player_name.or_else(|| registered_name.clone());
                 return run_join_flow(
                     ws_stream,
-                    lobby,
-                    config,
+                    SharedLobby::clone(lobby),
+                    config.clone(),
                     password,
                     game_name,
                     game_password,
-                    player_name,
+                    resolved_name,
                     deck,
                 )
                 .await;
@@ -715,29 +860,31 @@ async fn handle_lobby_connection(
                     let l = lobby.lock().await;
                     l.waiting_games.contains_key(DEFAULT_LOBBY_GAME)
                 };
+                let resolved_name = player_name.or_else(|| registered_name.clone());
                 if exists {
                     return run_join_flow(
                         ws_stream,
-                        lobby,
-                        config,
+                        SharedLobby::clone(lobby),
+                        config.clone(),
                         password,
                         DEFAULT_LOBBY_GAME.to_string(),
                         None,
-                        player_name,
+                        resolved_name,
                         deck,
                     )
                     .await;
                 } else {
                     return run_create_flow(
                         ws_stream,
-                        lobby,
-                        card_db,
-                        config,
+                        SharedLobby::clone(lobby),
+                        Arc::clone(card_db),
+                        config.clone(),
                         password,
                         Some(DEFAULT_LOBBY_GAME.to_string()),
                         None,
-                        player_name,
+                        resolved_name,
                         deck,
+                        connection_id,
                     )
                     .await;
                 }
@@ -750,7 +897,7 @@ async fn handle_lobby_connection(
                 trusted_password,
             } => {
                 let response = submit_bug_report(
-                    &config,
+                    config,
                     BugReportRequest {
                         description,
                         game_logs,
@@ -762,6 +909,19 @@ async fn handle_lobby_connection(
                 .await;
                 send_message(&mut ws_stream, &response).await?;
                 return Ok(());
+            }
+
+            // SetDeck / SetReady are only valid inside a waiting room
+            // (after CreateGame/JoinGame). At the bare lobby level they are
+            // unexpected — tell the client and close.
+            ClientMessage::SetDeck { .. } | ClientMessage::SetReady { .. } => {
+                send_error(
+                    &mut ws_stream,
+                    "SetDeck/SetReady are only valid after joining a game waiting room",
+                    false,
+                )
+                .await?;
+                // Non-fatal: client can correct the flow.
             }
 
             // Anything else at the lobby level is an error — Submit/Disconnect/
@@ -834,6 +994,10 @@ async fn refuse_with_server_full(
 /// 5. Move from `waiting_games` → `active_games` and run the game with a
 ///    `DEFAULT_GAME_TIMEOUT` cap.
 /// 6. On any exit path, clear our entry from the lobby state.
+///
+/// `connection_id` is the per-connection monotonic ID assigned in
+/// `handle_lobby_connection`. It is stored with the pending game so the
+/// watchdog / eviction path can verify ownership.
 #[allow(clippy::too_many_arguments)]
 async fn run_create_flow(
     mut ws_stream: WebSocketStream<TcpStream>,
@@ -845,6 +1009,7 @@ async fn run_create_flow(
     game_password: Option<String>,
     player_name: Option<String>,
     deck: DeckSubmission,
+    _connection_id: u64,
 ) -> Result<()> {
     if !check_server_password(&config, &server_password) {
         send_message(
@@ -884,7 +1049,22 @@ async fn run_create_flow(
     }
 
     let creator_name = player_name.unwrap_or_else(|| "Player1".to_string());
-    let (handoff_tx, handoff_rx) = tokio::sync::oneshot::channel::<JoinedPlayer>();
+    let (handoff_tx, mut handoff_rx) = tokio::sync::oneshot::channel::<JoinedPlayer>();
+
+    // Watch channel for waiting-room state updates (SetDeck/SetReady from either
+    // player). The creator's task awaits updates on the receiver; the joiner's
+    // task (and SetDeck/SetReady handlers) send on the sender stored in
+    // PendingGame.
+    let initial_snapshot = WaitingRoomSnapshot {
+        creator_name: creator_name.clone(),
+        creator_state: WaitingPlayerState {
+            deck: Some(deck.clone()),
+            ready: false,
+        },
+        joiner_name: None,
+        joiner_state: None,
+    };
+    let (update_tx, mut update_rx) = tokio::sync::watch::channel(initial_snapshot);
 
     // Allocate id + name and register the pending entry. Unique-name check is
     // done under the same lock to avoid a TOCTOU race against a concurrent
@@ -918,6 +1098,13 @@ async fn run_create_flow(
                 password_hash: game_password.as_deref().map(hash_game_password),
                 created_at: std::time::Instant::now(),
                 created_at_ms: now_ms(),
+                creator_state: WaitingPlayerState {
+                    deck: Some(deck.clone()),
+                    ready: false,
+                },
+                joiner_state: None,
+                joiner_name: None,
+                creator_update_tx: Some(update_tx),
                 handoff_tx: Some(handoff_tx),
             },
         );
@@ -943,35 +1130,169 @@ async fn run_create_flow(
     .await?;
     send_message(&mut ws_stream, &ServerMessage::WaitingForOpponent).await?;
 
-    // Wait for joiner with a long timeout. We must always remove our
-    // PendingGame from the map on every exit path, otherwise it leaks.
-    let joiner_result = tokio::time::timeout(WAIT_FOR_JOINER, handoff_rx).await;
+    // Send the initial waiting-room state so the creator's UI can render it.
+    let initial_update = update_rx.borrow().to_server_message();
+    send_message(&mut ws_stream, &initial_update).await?;
+
+    // Wait for joiner with a long timeout, while simultaneously:
+    // (a) forwarding WaitingRoomUpdate notifications from the watch channel, and
+    // (b) evicting the game from waiting_games if the creator's WS drops or
+    //     if the WAIT_FOR_JOINER deadline expires.
+    //
+    // We must always remove our PendingGame from the map on every exit path,
+    // otherwise it leaks.
     let key = game_name.to_lowercase();
 
-    let joiner = match joiner_result {
-        Ok(Ok(j)) => j,
-        Ok(Err(_)) => {
-            // Sender was dropped without sending — joiner's task likely died.
-            let mut l = lobby.lock().await;
-            l.waiting_games.remove(&key);
-            drop(l);
-            let _ = send_error(&mut ws_stream, "Internal error: joiner dropped before pairing", true).await;
-            return Ok(());
-        }
-        Err(_) => {
-            // Wait timeout — cleanup and tell the client.
-            let mut l = lobby.lock().await;
-            l.waiting_games.remove(&key);
-            drop(l);
-            let _ = send_error(
-                &mut ws_stream,
-                &format!("No opponent joined within {} minutes", WAIT_FOR_JOINER.as_secs() / 60),
-                true,
-            )
-            .await;
-            return Ok(());
+    // Drive the waiting loop: poll the WS for SetDeck/SetReady/Ping from the
+    // creator, and forward WaitingRoomUpdate notifications from the watch channel.
+    let joiner = loop {
+        tokio::select! {
+            // Joiner arrived (or sender dropped / timeout).
+            joiner_result = tokio::time::timeout(WAIT_FOR_JOINER, &mut handoff_rx) => {
+                match joiner_result {
+                    Ok(Ok(j)) => break j,
+                    Ok(Err(_)) => {
+                        // Sender was dropped without sending — joiner's task likely died.
+                        let mut l = lobby.lock().await;
+                        l.waiting_games.remove(&key);
+                        drop(l);
+                        let _ = send_error(&mut ws_stream, "Internal error: joiner dropped before pairing", true).await;
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        // Wait timeout — evict and tell the client.
+                        let mut l = lobby.lock().await;
+                        l.waiting_games.remove(&key);
+                        drop(l);
+                        let _ = send_error(
+                            &mut ws_stream,
+                            &format!("No opponent joined within {} minutes", WAIT_FOR_JOINER.as_secs() / 60),
+                            true,
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Waiting-room state changed (joiner updated their deck/ready).
+            _ = update_rx.changed() => {
+                let snapshot = update_rx.borrow().to_server_message();
+                if send_message(&mut ws_stream, &snapshot).await.is_err() {
+                    // Creator's WS dropped — evict the waiting game.
+                    let mut l = lobby.lock().await;
+                    l.waiting_games.remove(&key);
+                    return Ok(());
+                }
+            }
+
+            // Creator sends us a message (SetDeck, SetReady, Ping, etc.).
+            msg = read_one_lobby_message(&mut ws_stream) => {
+                match msg {
+                    Err(_) => {
+                        // Creator disconnected — evict the waiting game immediately.
+                        let mut l = lobby.lock().await;
+                        l.waiting_games.remove(&key);
+                        log::info!(
+                            "Game {} ({}): creator disconnected, evicting from waiting list",
+                            game_id, game_name
+                        );
+                        return Ok(());
+                    }
+                    Ok(ClientMessage::SetDeck { deck: new_deck }) => {
+                        if new_deck.main_deck_size() < 40 {
+                            let _ = send_error(
+                                &mut ws_stream,
+                                &format!("Deck too small: {} cards (minimum 40)", new_deck.main_deck_size()),
+                                false,
+                            )
+                            .await;
+                        } else {
+                            let snapshot = {
+                                let mut l = lobby.lock().await;
+                                if let Some(pg) = l.waiting_games.get_mut(&key) {
+                                    pg.creator_state.deck = Some(new_deck);
+                                    pg.creator_state.ready = false; // reset on deck change
+                                    let snap = WaitingRoomSnapshot {
+                                        creator_name: pg.creator_name.clone(),
+                                        creator_state: pg.creator_state.clone(),
+                                        joiner_name: pg.joiner_name.clone(),
+                                        joiner_state: pg.joiner_state.clone(),
+                                    };
+                                    if let Some(tx) = &pg.creator_update_tx {
+                                        let _ = tx.send(snap.clone());
+                                    }
+                                    Some(snap)
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(snap) = snapshot {
+                                let _ = send_message(&mut ws_stream, &snap.to_server_message()).await;
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::SetReady { ready }) => {
+                        let (snapshot, both_ready) = {
+                            let mut l = lobby.lock().await;
+                            if let Some(pg) = l.waiting_games.get_mut(&key) {
+                                if ready && pg.creator_state.deck.is_none() {
+                                    (None, false)
+                                } else {
+                                    pg.creator_state.ready = ready;
+                                    let joiner_ready = pg.joiner_state.as_ref().map(|s| s.ready).unwrap_or(false);
+                                    let creator_ready = pg.creator_state.ready;
+                                    let snap = WaitingRoomSnapshot {
+                                        creator_name: pg.creator_name.clone(),
+                                        creator_state: pg.creator_state.clone(),
+                                        joiner_name: pg.joiner_name.clone(),
+                                        joiner_state: pg.joiner_state.clone(),
+                                    };
+                                    if let Some(tx) = &pg.creator_update_tx {
+                                        let _ = tx.send(snap.clone());
+                                    }
+                                    (Some(snap), creator_ready && joiner_ready)
+                                }
+                            } else {
+                                (None, false)
+                            }
+                        };
+                        if ready && snapshot.is_none() {
+                            let _ = send_error(&mut ws_stream, "Cannot ready without a deck", false).await;
+                        } else if let Some(snap) = snapshot {
+                            let _ = send_message(&mut ws_stream, &snap.to_server_message()).await;
+                            if both_ready {
+                                // Both players ready — the joiner's SetReady
+                                // already triggered the handoff via the watch
+                                // channel; we'll receive the joiner via handoff_rx
+                                // in the next loop iteration.
+                                log::info!(
+                                    "Game {} ({}): both players ready, awaiting game start handoff",
+                                    game_id, game_name
+                                );
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::Ping { timestamp_ms }) => {
+                        let _ = send_message(&mut ws_stream, &ServerMessage::Pong { timestamp_ms }).await;
+                    }
+                    Ok(ClientMessage::Disconnect) => {
+                        let mut l = lobby.lock().await;
+                        l.waiting_games.remove(&key);
+                        return Ok(());
+                    }
+                    Ok(_) => {
+                        // Other messages (SubmitChoice, etc.) are invalid here.
+                        let _ = send_error(&mut ws_stream, "Unexpected message in waiting room", false).await;
+                    }
+                }
+            }
         }
     };
+
+    // Issue reconnect tokens for both players.
+    let p1_token = ReconnectToken::generate();
+    let p2_token = ReconnectToken::generate();
 
     // Joiner's task already removed us from waiting_games; promote to active.
     {
@@ -984,6 +1305,8 @@ async fn run_create_flow(
                 p1_name: creator_name.clone(),
                 p2_name: joiner.name.clone(),
                 started_at: std::time::Instant::now(),
+                p1_reconnect_token: Some(p1_token.clone()),
+                p2_reconnect_token: Some(p2_token.clone()),
             },
         );
     }
@@ -1000,11 +1323,13 @@ async fn run_create_flow(
         name: Some(creator_name.clone()),
         deck,
         ws_stream,
+        reconnect_token: Some(p1_token),
     };
     let p2 = WaitingPlayer {
         name: Some(joiner.name.clone()),
         deck: joiner.deck,
         ws_stream: joiner.ws_stream,
+        reconnect_token: Some(p2_token),
     };
 
     // Per-game wall-clock cap so a stuck/desynced game never holds memory
@@ -1086,12 +1411,12 @@ async fn run_join_flow(
     let joiner_name = player_name.unwrap_or_else(|| "Player2".to_string());
     let key = game_name.to_lowercase();
 
-    // Atomically: look up + password-check + remove. Doing this under one lock
-    // closes the TOCTOU window where two joiners both pass the lookup and only
-    // one wins the remove.
-    let pending = {
+    // Atomically: look up + password-check. We do NOT remove yet — we update
+    // the joiner's state in the pending entry first so the creator's watch
+    // channel fires a WaitingRoomUpdate, then we remove when handing off.
+    let (handoff_tx, creator_update_tx, initial_snapshot) = {
         let mut l = lobby.lock().await;
-        let Some(pg) = l.waiting_games.get(&key) else {
+        let Some(pg) = l.waiting_games.get_mut(&key) else {
             drop(l);
             send_message(
                 &mut ws_stream,
@@ -1120,9 +1445,35 @@ async fn run_join_flow(
             }
         }
 
-        l.waiting_games.remove(&key)
+        // Register joiner state in the pending entry.
+        let joiner_state = WaitingPlayerState {
+            deck: Some(deck.clone()),
+            ready: false,
+        };
+        pg.joiner_name = Some(joiner_name.clone());
+        pg.joiner_state = Some(joiner_state);
+
+        let snap = WaitingRoomSnapshot {
+            creator_name: pg.creator_name.clone(),
+            creator_state: pg.creator_state.clone(),
+            joiner_name: pg.joiner_name.clone(),
+            joiner_state: pg.joiner_state.clone(),
+        };
+
+        // Notify the creator task that a joiner arrived.
+        if let Some(tx) = &pg.creator_update_tx {
+            let _ = tx.send(snap.clone());
+        }
+
+        let handoff_tx = pg.handoff_tx.take().expect("handoff_tx must be present");
+        let update_tx = pg.creator_update_tx.clone();
+
+        // Now remove from waiting_games (the creator's task will pick up the
+        // joiner via the oneshot).
+        l.waiting_games.remove(&key);
+
+        (handoff_tx, update_tx, snap)
     };
-    let mut pending = pending.expect("entry was present under the lock just above");
 
     send_message(
         &mut ws_stream,
@@ -1135,21 +1486,21 @@ async fn run_join_flow(
     )
     .await?;
 
+    // Send the initial waiting-room state to the joiner.
+    let update_msg = initial_snapshot.to_server_message();
+    send_message(&mut ws_stream, &update_msg).await?;
+
     // Hand the WebSocket to the creator's task. If the Sender is gone (creator
     // died after we removed the entry) we lose the joiner — close cleanly.
-    let Some(tx) = pending.handoff_tx.take() else {
-        log::error!("Pending game '{game_name}' missing handoff channel — joiner dropped");
-        return Ok(());
-    };
-
     let payload = JoinedPlayer {
         name: joiner_name,
         deck,
         ws_stream,
     };
-    if tx.send(payload).is_err() {
+    if handoff_tx.send(payload).is_err() {
         log::error!("Pending game '{game_name}' creator gone — joiner dropped");
     }
+    drop(creator_update_tx); // release our handle so the watch channel closes cleanly
     Ok(())
 }
 
@@ -1195,6 +1546,8 @@ async fn run_game(
     // Extract final names (should always be Some at this point)
     let p1_name = p1.name.clone().unwrap_or_else(|| "Player1".to_string());
     let p2_name = p2.name.clone().unwrap_or_else(|| "Player2".to_string());
+    let p1_reconnect_token = p1.reconnect_token.clone();
+    let p2_reconnect_token = p2.reconnect_token.clone();
     log::info!("Game {}: Initializing {} vs {}", game_id, p1_name, p2_name);
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1361,6 +1714,7 @@ async fn run_game(
             deck_card_ids: deck_card_ids.clone(),
             token_definitions: token_definitions.clone(),
             rng_state: rng_state.clone(),
+            reconnect_token: p1_reconnect_token,
         })
         .await?;
 
@@ -1379,6 +1733,7 @@ async fn run_game(
             deck_card_ids: deck_card_ids.clone(),
             token_definitions: token_definitions.clone(),
             rng_state: rng_state.clone(),
+            reconnect_token: p2_reconnect_token,
         })
         .await?;
 
@@ -2483,9 +2838,13 @@ async fn handle_player_websocket(
                             Ok(ClientMessage::Authenticate { .. }
                             | ClientMessage::CreateGame { .. }
                             | ClientMessage::JoinGame { .. }
-                            | ClientMessage::ListGames { .. }) => {
-                                // Lobby/auth messages are not legal once a game
-                                // has started for this connection. We surface a
+                            | ClientMessage::ListGames { .. }
+                            | ClientMessage::Register { .. }
+                            | ClientMessage::SetDeck { .. }
+                            | ClientMessage::SetReady { .. }
+                            | ClientMessage::Reconnect { .. }) => {
+                                // Lobby/auth/waiting-room messages are not legal once a
+                                // game has started for this connection. We surface a
                                 // non-fatal Error so test clients can recover.
                                 conn.send(&ServerMessage::Error {
                                     message: "Already authenticated / in a game".to_string(),
@@ -2651,12 +3010,30 @@ fn zone_to_reveal_reason(zone: Zone) -> RevealReason {
     }
 }
 
-fn validate_trusted_bug_report_password(expected_password: &str, provided_password: Option<&str>) -> Result<bool> {
+/// Determine whether a submitted bug report should be flagged `trusted`.
+///
+/// **Infallible by design** (returns `bool`, not `Result<bool>`): a bug report
+/// MUST always be stored regardless of the password outcome. The password only
+/// decides the `trusted` metadata field:
+///
+/// | `expected_password` | `provided_password` | result |
+/// |---|---|---|
+/// | empty (not configured) | any / None | `false` (untrusted — no configured password to verify against) |
+/// | non-empty | `None` | `false` (no password supplied) |
+/// | non-empty | `Some(pw)` where `pw == expected` | `true` |
+/// | non-empty | `Some(pw)` where `pw != expected` | `false` (wrong password → untrusted, NOT an error) |
+///
+/// The previous `Result<bool>` version would `Err` on a wrong password, which
+/// caused the caller to propagate the error and REJECT the upload — violating
+/// the invariant that bug reports are always stored. (mtg-obrx2)
+fn validate_trusted_bug_report_password(expected_password: &str, provided_password: Option<&str>) -> bool {
+    if expected_password.is_empty() {
+        // No password configured — no way to grant trust; always untrusted.
+        return false;
+    }
     match provided_password {
-        Some(_) if expected_password.is_empty() => Ok(false),
-        Some(password) if password == expected_password => Ok(true),
-        Some(_) => Err(anyhow!("Invalid trusted bug report password")),
-        None => Ok(false),
+        Some(pw) => pw == expected_password,
+        None => false,
     }
 }
 
@@ -3093,7 +3470,7 @@ async fn store_bug_report(
     reporter_player_id: Option<PlayerId>,
 ) -> Result<StoredBugReport> {
     let trusted =
-        validate_trusted_bug_report_password(&config.trusted_bug_report_password, report.trusted_password.as_deref())?;
+        validate_trusted_bug_report_password(&config.trusted_bug_report_password, report.trusted_password.as_deref());
     let timestamp_ms = now_ms();
     let report_dir = create_bug_report_dir(&config.bug_reports_dir, timestamp_ms).await?;
 
@@ -3304,11 +3681,19 @@ mod tests {
 
     #[test]
     fn test_validate_trusted_bug_report_password() {
-        assert!(!validate_trusted_bug_report_password("", None).expect("no password configured"));
-        assert!(!validate_trusted_bug_report_password("", Some("anything")).expect("ignored if not configured"));
-        assert!(validate_trusted_bug_report_password("trusted", Some("trusted")).expect("matching password"));
-        let error = validate_trusted_bug_report_password("trusted", Some("wrong")).expect_err("invalid password");
-        assert!(error.to_string().contains("Invalid trusted bug report password"));
+        // Empty expected password → always untrusted (cannot configure trust).
+        assert!(!validate_trusted_bug_report_password("", None));
+        assert!(!validate_trusted_bug_report_password("", Some("anything")));
+
+        // Configured password, correct → trusted.
+        assert!(validate_trusted_bug_report_password("trusted", Some("trusted")));
+
+        // Configured password, wrong → UNTRUSTED (NOT an error — report is still stored).
+        // This is the key fix: the old code returned Err and rejected the upload.
+        assert!(!validate_trusted_bug_report_password("trusted", Some("wrong")));
+
+        // Configured password, none supplied → untrusted.
+        assert!(!validate_trusted_bug_report_password("trusted", None));
     }
 
     #[tokio::test]
@@ -3355,8 +3740,11 @@ mod tests {
         assert!(metadata["timestamp_ms"].as_u64().is_some());
     }
 
+    /// A wrong password must NOT reject the upload — the report is stored as
+    /// UNTRUSTED. This test was the inverse under the old `Result<bool>`
+    /// implementation; it is now the key regression guard for mtg-obrx2.
     #[tokio::test]
-    async fn test_store_bug_report_rejects_invalid_trusted_password() {
+    async fn test_store_bug_report_stores_with_wrong_password_as_untrusted() {
         let temp = tempdir().expect("tempdir");
         let config = ServerConfig {
             trusted_bug_report_password: "trusted".to_string(),
@@ -3370,11 +3758,37 @@ mod tests {
             trusted_password: Some("wrong".to_string()),
         };
 
-        let error = store_bug_report(&config, &report, None)
+        // The report MUST be stored (not rejected) even with the wrong password.
+        let stored = store_bug_report(&config, &report, None)
             .await
-            .expect_err("invalid password should fail");
-        assert!(error.to_string().contains("Invalid trusted bug report password"));
-        assert!(!config.bug_reports_dir.exists());
+            .expect("wrong password must not reject — always store");
+        // trusted=false because the password was wrong.
+        assert!(!stored.trusted, "wrong password should yield trusted=false");
+        // Files must exist.
+        assert!(stored.report_dir.join("user_report.txt").exists());
+        let metadata: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(stored.report_dir.join("metadata.json")).unwrap()).unwrap();
+        assert_eq!(metadata["trusted"], false);
+        assert_eq!(metadata["trusted_password_supplied"], true);
+    }
+
+    /// No password supplied → untrusted, still stored.
+    #[tokio::test]
+    async fn test_store_bug_report_stores_without_password_as_untrusted() {
+        let temp = tempdir().expect("tempdir");
+        let config = ServerConfig {
+            trusted_bug_report_password: "trusted".to_string(),
+            bug_reports_dir: temp.path().join("bug_reports"),
+            ..Default::default()
+        };
+        let report = BugReportRequest {
+            description: "no pw".to_string(),
+            game_logs: "g".to_string(),
+            console_logs: "c".to_string(),
+            trusted_password: None,
+        };
+        let stored = store_bug_report(&config, &report, None).await.expect("store");
+        assert!(!stored.trusted);
     }
 
     #[test]

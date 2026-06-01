@@ -1,12 +1,27 @@
 ---
 title: 'Deployed systemd unit: duplicate --cardsfolder, and --trusted-bug-report-password unset (bug-report upload disabled live)'
-status: open
+status: closed
 priority: 3
 issue_type: bug
 created_at: 2026-05-31T21:37:21.294873034+00:00
-updated_at: 2026-05-31T21:37:21.294873034+00:00
+updated_at: 2026-06-01T01:03:47.175148329+00:00
 ---
 
 # Description
 
-Audit of live ~/.config/systemd/user/deepscry.service (2026-05-31): ExecStart passes '--cardsfolder' TWICE and does NOT pass --trusted-bug-report-password. Effect: trusted_bug_report_password defaults to empty; server.rs:746 treats empty as 'bug-report upload DISABLED' (safe, not an auth hole — empty does NOT mean anyone-can-upload). But it means playtesters currently CANNOT upload bug-report snapshots. DECISION for user: if we want playtest bug reports, set a real --trusted-bug-report-password (store in <parent>/.deepscry-deploy.env, have scripts/deploy-cloud.sh config render it into the unit). Also dedupe the --cardsfolder arg in the unit template (scripts/deploy-cloud.sh config). No secret is currently deployed.
+## Status: COMPLETED (2026-05-31)
+
+Implemented in lobby-server-protocol branch.
+
+### Bug fixes:
+1. **validate_trusted_bug_report_password** changed from Result<bool> to bool (infallible)
+   - Wrong password now yields trusted=false instead of Err + upload rejection
+   - New behavior: ALWAYS store the report, only the trusted flag differs
+   - Regression test: test_store_bug_report_stores_with_wrong_password_as_untrusted
+
+2. **deploy-cloud.sh** updated:
+   - render_systemd_unit: reads TRUSTED_BUG_REPORT_PASSWORD from env, adds flag when set
+   - render_env_file: emits TRUSTED_BUG_REPORT_PASSWORD line when configured
+   - cmd_config: warns (but proceeds) when TRUSTED_BUG_REPORT_PASSWORD is not set
+   - FIXED: --cardsfolder no longer duplicated (single clean arg)
+   - deepscry-deploy.env.example: documents TRUSTED_BUG_REPORT_PASSWORD var

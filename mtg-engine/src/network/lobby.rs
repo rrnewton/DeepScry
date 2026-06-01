@@ -29,7 +29,8 @@
 //! game task aborts and removes itself from the registry.
 
 use crate::network::protocol::{
-    DeckSubmission, ListGamesQuery, LobbyGameEntry, ServerMessage, DEFAULT_LIST_GAMES_LIMIT, MAX_LIST_GAMES_LIMIT,
+    DeckSubmission, ListGamesQuery, LobbyGameEntry, ReconnectToken, ServerMessage, WaitingRoomPlayerState,
+    DEFAULT_LIST_GAMES_LIMIT, MAX_LIST_GAMES_LIMIT,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,6 +74,31 @@ pub struct JoinedPlayer {
     pub ws_stream: WebSocketStream<TcpStream>,
 }
 
+/// Per-player mutable state inside a waiting game room.
+///
+/// Tracked server-side so both players always agree on the current deck
+/// selections and ready flags before the match starts.
+#[derive(Debug, Clone, Default)]
+pub struct WaitingPlayerState {
+    /// Most recent deck submitted via `SetDeck`, or `None` if not yet set.
+    pub deck: Option<DeckSubmission>,
+    /// `true` iff the player sent `SetReady { ready: true }` with a valid
+    /// deck on record. Reset to `false` whenever a new `SetDeck` is received.
+    pub ready: bool,
+}
+
+impl WaitingPlayerState {
+    /// Produce the protocol snapshot of this player's state.
+    pub fn to_protocol_state(&self, name: &str) -> WaitingRoomPlayerState {
+        WaitingRoomPlayerState {
+            name: name.to_string(),
+            deck_selected: self.deck.is_some(),
+            deck_summary: self.deck.as_ref().map(|d| d.main_deck.clone()),
+            ready: self.ready,
+        }
+    }
+}
+
 /// Information about a game that is waiting for its second player.
 ///
 /// We do not store the creator's WebSocket here — it stays with the creator's
@@ -105,6 +131,18 @@ pub struct PendingGame {
     pub created_at: Instant,
     /// Wall-clock ms used in the lobby wire format for "waiting for X".
     pub created_at_ms: u64,
+    /// Creator's current deck + ready state (updated by `SetDeck`/`SetReady`).
+    pub creator_state: WaitingPlayerState,
+    /// Joiner's current deck + ready state. `None` until a second player joins.
+    pub joiner_state: Option<WaitingPlayerState>,
+    /// Joiner's display name. `None` until the second player joins.
+    pub joiner_name: Option<String>,
+    /// Sender used to deliver a `WaitingRoomUpdate` to the creator's task
+    /// when the joiner (or joiner's state) changes.
+    ///
+    /// The creator's task receives these updates and forwards
+    /// `ServerMessage::WaitingRoomUpdate` to the creator's WebSocket.
+    pub creator_update_tx: Option<tokio::sync::watch::Sender<WaitingRoomSnapshot>>,
     /// Hand-off channel — see [`JoinedPlayer`]. `None` after the joiner takes
     /// it (which is also the moment the entry is removed from the map; this
     /// field exists as `Option` only so the Sender can be moved out without
@@ -112,11 +150,43 @@ pub struct PendingGame {
     pub handoff_tx: Option<oneshot::Sender<JoinedPlayer>>,
 }
 
+/// A point-in-time snapshot of the waiting room state, distributed to both
+/// players via the `creator_update_tx` watch channel whenever anything
+/// changes. The server serialises this into `ServerMessage::WaitingRoomUpdate`.
+#[derive(Debug, Clone, Default)]
+pub struct WaitingRoomSnapshot {
+    pub creator_name: String,
+    pub creator_state: WaitingPlayerState,
+    pub joiner_name: Option<String>,
+    pub joiner_state: Option<WaitingPlayerState>,
+}
+
+impl WaitingRoomSnapshot {
+    /// Convert to the wire message.
+    pub fn to_server_message(&self) -> ServerMessage {
+        ServerMessage::WaitingRoomUpdate {
+            creator: self.creator_state.to_protocol_state(&self.creator_name),
+            joiner: self.joiner_name.as_deref().map(|name| {
+                self.joiner_state
+                    .as_ref()
+                    .map(|s| s.to_protocol_state(name))
+                    .unwrap_or_else(|| WaitingRoomPlayerState {
+                        name: name.to_string(),
+                        deck_selected: false,
+                        deck_summary: None,
+                        ready: false,
+                    })
+            }),
+        }
+    }
+}
+
 /// Information about a game that is currently being played.
 ///
 /// Carries no game state — that lives inside the spawned game task. We track
 /// active games so `ListGames` can return accurate "in progress" totals and
-/// so the watchdog can enforce per-game timeouts.
+/// so the watchdog can enforce per-game timeouts. Reconnect tokens are stored
+/// here so a dropped player can re-authenticate without restarting the game.
 #[derive(Debug)]
 pub struct ActiveGame {
     pub id: GameId,
@@ -124,6 +194,25 @@ pub struct ActiveGame {
     pub p1_name: String,
     pub p2_name: String,
     pub started_at: Instant,
+    /// Reconnect token for P1 (creator). `None` until the game has started.
+    pub p1_reconnect_token: Option<ReconnectToken>,
+    /// Reconnect token for P2 (joiner). `None` until the game has started.
+    pub p2_reconnect_token: Option<ReconnectToken>,
+}
+
+/// Registered username entry: name → held until the owning connection drops.
+///
+/// We store the lowercased canonical form as the map key; the display-case
+/// form is stored in the value. Uniqueness is enforced case-insensitively so
+/// "Alice" and "alice" collide. The `connection_id` is the monotonic
+/// per-accept counter used to associate the reservation with a specific WS
+/// connection so the cleanup path can verify ownership.
+#[derive(Debug, Clone)]
+pub struct RegisteredName {
+    /// Display-case name as the client submitted it.
+    pub display_name: String,
+    /// Monotonic connection identifier assigned at accept time.
+    pub connection_id: u64,
 }
 
 /// Mutable lobby state, shared via `Arc<Mutex<...>>` between the accept loop
@@ -136,6 +225,14 @@ pub struct LobbyState {
     pub active_games: HashMap<GameId, ActiveGame>,
     /// Monotonic counter for `next_game_id()`.
     pub next_game_id: GameId,
+    /// Monotonic counter for assigning `connection_id` values.
+    pub next_connection_id: u64,
+    /// Registered display names, keyed by lowercased canonical form.
+    ///
+    /// A connection that holds a registration here owns that name until it
+    /// disconnects or explicitly deregisters. The connection task calls
+    /// [`LobbyState::release_name`] in its `Drop`/cleanup path.
+    pub registered_names: HashMap<String, RegisteredName>,
 }
 
 impl LobbyState {
@@ -146,7 +243,115 @@ impl LobbyState {
             waiting_games: HashMap::new(),
             active_games: HashMap::new(),
             next_game_id: 1,
+            next_connection_id: 1,
+            registered_names: HashMap::new(),
         }
+    }
+
+    /// Allocate the next monotonic connection identifier.
+    pub fn next_connection_id(&mut self) -> u64 {
+        let id = self.next_connection_id;
+        self.next_connection_id += 1;
+        id
+    }
+
+    /// Try to register a display name for the given connection.
+    ///
+    /// Returns `Ok(())` on success. Returns `Err(reason)` — a human-readable
+    /// explanation — when the name fails validation or is already taken
+    /// (case-insensitively) by another connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` (non-fatal, wire-ready) in the following cases:
+    /// - Name is empty or contains only whitespace.
+    /// - Name exceeds 32 characters.
+    /// - Name contains non-printable-ASCII characters.
+    /// - The lowercased name is already registered by another connection.
+    ///
+    /// Validation rules:
+    /// - Non-empty, ≤ 32 characters.
+    /// - Contains at least one non-whitespace character (no blank names).
+    /// - Only printable ASCII (`0x20..=0x7E`).
+    pub fn try_register_name(&mut self, display_name: &str, connection_id: u64) -> Result<(), String> {
+        // Validate format.
+        if display_name.is_empty() {
+            return Err("Name must not be empty".to_string());
+        }
+        if display_name.len() > 32 {
+            return Err(format!("Name too long ({} chars; max 32)", display_name.len()));
+        }
+        if !display_name.chars().all(|c| (' '..='~').contains(&c)) {
+            return Err("Name must contain only printable ASCII characters".to_string());
+        }
+        if display_name.trim().is_empty() {
+            return Err("Name must not be blank".to_string());
+        }
+
+        let key = display_name.to_lowercase();
+        if let Some(existing) = self.registered_names.get(&key) {
+            return Err(format!("Name '{}' is already taken", existing.display_name));
+        }
+        self.registered_names.insert(
+            key,
+            RegisteredName {
+                display_name: display_name.to_string(),
+                connection_id,
+            },
+        );
+        Ok(())
+    }
+
+    /// Release a name reservation held by the given connection.
+    ///
+    /// No-op if the name is not registered, or if it was taken over by a
+    /// different connection (should not happen in practice — defensive guard).
+    pub fn release_name(&mut self, display_name: &str, connection_id: u64) {
+        let key = display_name.to_lowercase();
+        if let Some(entry) = self.registered_names.get(&key) {
+            if entry.connection_id == connection_id {
+                self.registered_names.remove(&key);
+            }
+        }
+    }
+
+    /// Look up the canonical (display-case) registered name for a connection,
+    /// if one exists.
+    pub fn registered_name_for(&self, connection_id: u64) -> Option<&str> {
+        self.registered_names
+            .values()
+            .find(|r| r.connection_id == connection_id)
+            .map(|r| r.display_name.as_str())
+    }
+
+    /// Look up an active game's reconnect token by name + player id.
+    ///
+    /// Returns `None` if no such game exists or the token has not been set yet.
+    pub fn find_reconnect_token(&self, game_name: &str, player_index: usize) -> Option<&ReconnectToken> {
+        let key = game_name.to_lowercase();
+        let game = self.active_games.values().find(|g| g.name.to_lowercase() == key)?;
+        match player_index {
+            0 => game.p1_reconnect_token.as_ref(),
+            1 => game.p2_reconnect_token.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Validate a reconnect token against a named active game.
+    ///
+    /// Returns `Some(player_index)` (0 = P1, 1 = P2) if the token is valid,
+    /// `None` if the game does not exist or the token does not match either
+    /// player.
+    pub fn validate_reconnect_token(&self, game_name: &str, token: &ReconnectToken) -> Option<(GameId, usize)> {
+        let key = game_name.to_lowercase();
+        let game = self.active_games.values().find(|g| g.name.to_lowercase() == key)?;
+        if game.p1_reconnect_token.as_ref() == Some(token) {
+            return Some((game.id, 0));
+        }
+        if game.p2_reconnect_token.as_ref() == Some(token) {
+            return Some((game.id, 1));
+        }
+        None
     }
 
     /// Allocate the next game id.
@@ -292,6 +497,7 @@ mod tests {
 
     fn pending(id: GameId, name: &str, created_ms: u64, has_pw: bool) -> PendingGame {
         let (tx, _rx) = oneshot::channel();
+        let (update_tx, _update_rx) = tokio::sync::watch::channel(WaitingRoomSnapshot::default());
         PendingGame {
             id,
             name: name.to_string(),
@@ -300,6 +506,10 @@ mod tests {
             password_hash: has_pw.then(|| hash_game_password("secret")),
             created_at: Instant::now(),
             created_at_ms: created_ms,
+            creator_state: WaitingPlayerState::default(),
+            joiner_state: None,
+            joiner_name: None,
+            creator_update_tx: Some(update_tx),
             handoff_tx: Some(tx),
         }
     }
@@ -310,6 +520,219 @@ mod tests {
         assert_eq!(s.next_game_id(), 1);
         assert_eq!(s.next_game_id(), 2);
         assert_eq!(s.next_game_id(), 3);
+    }
+
+    #[test]
+    fn next_connection_id_is_monotonic_starting_at_one() {
+        let mut s = LobbyState::new();
+        assert_eq!(s.next_connection_id(), 1);
+        assert_eq!(s.next_connection_id(), 2);
+        assert_eq!(s.next_connection_id(), 3);
+    }
+
+    // ── Name registration ────────────────────────────────────────────────────
+
+    #[test]
+    fn register_name_succeeds_for_unique_name() {
+        let mut s = LobbyState::new();
+        let conn_id = s.next_connection_id();
+        assert!(s.try_register_name("Alice", conn_id).is_ok());
+        assert!(s.registered_names.contains_key("alice"));
+    }
+
+    #[test]
+    fn register_name_rejects_duplicate_case_insensitively() {
+        let mut s = LobbyState::new();
+        let conn1 = s.next_connection_id();
+        s.try_register_name("Alice", conn1).unwrap();
+        let conn2 = s.next_connection_id();
+        let err = s.try_register_name("ALICE", conn2).unwrap_err();
+        assert!(err.contains("Alice"), "error should mention the existing holder: {err}");
+    }
+
+    #[test]
+    fn register_name_rejects_empty_name() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        assert!(s.try_register_name("", conn).is_err());
+    }
+
+    #[test]
+    fn register_name_rejects_blank_name() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        assert!(s.try_register_name("   ", conn).is_err());
+    }
+
+    #[test]
+    fn register_name_rejects_too_long_name() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        let long_name = "A".repeat(33);
+        let err = s.try_register_name(&long_name, conn).unwrap_err();
+        assert!(err.contains("too long"), "error: {err}");
+    }
+
+    #[test]
+    fn register_name_rejects_non_printable_ascii() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        // Tab character is not in ' '..='~' (printable range)
+        assert!(s.try_register_name("Alice\tSmith", conn).is_err());
+    }
+
+    #[test]
+    fn release_name_frees_reservation() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        s.try_register_name("Alice", conn).unwrap();
+        s.release_name("Alice", conn);
+        assert!(!s.registered_names.contains_key("alice"));
+        // Another connection can now claim it.
+        let conn2 = s.next_connection_id();
+        assert!(s.try_register_name("Alice", conn2).is_ok());
+    }
+
+    #[test]
+    fn release_name_is_noop_for_wrong_connection() {
+        let mut s = LobbyState::new();
+        let conn1 = s.next_connection_id();
+        s.try_register_name("Alice", conn1).unwrap();
+        let conn2 = s.next_connection_id();
+        // conn2 does NOT own the name — release should not remove it.
+        s.release_name("Alice", conn2);
+        assert!(
+            s.registered_names.contains_key("alice"),
+            "name should still be reserved"
+        );
+    }
+
+    #[test]
+    fn registered_name_for_returns_display_name() {
+        let mut s = LobbyState::new();
+        let conn = s.next_connection_id();
+        s.try_register_name("MixedCase", conn).unwrap();
+        assert_eq!(s.registered_name_for(conn), Some("MixedCase"));
+        assert_eq!(s.registered_name_for(conn + 99), None);
+    }
+
+    // ── Reconnect token validation ───────────────────────────────────────────
+
+    #[test]
+    fn validate_reconnect_token_accepts_valid_p1_token() {
+        let mut s = LobbyState::new();
+        let token = ReconnectToken("abcd1234abcd1234abcd1234abcd1234".to_string());
+        s.active_games.insert(
+            1,
+            ActiveGame {
+                id: 1,
+                name: "my-game".to_string(),
+                p1_name: "alice".to_string(),
+                p2_name: "bob".to_string(),
+                started_at: Instant::now(),
+                p1_reconnect_token: Some(token.clone()),
+                p2_reconnect_token: None,
+            },
+        );
+        assert_eq!(s.validate_reconnect_token("my-game", &token), Some((1, 0)));
+        assert_eq!(s.validate_reconnect_token("MY-GAME", &token), Some((1, 0)));
+    }
+
+    #[test]
+    fn validate_reconnect_token_accepts_valid_p2_token() {
+        let mut s = LobbyState::new();
+        let p2_token = ReconnectToken("ff00ff00ff00ff00ff00ff00ff00ff00".to_string());
+        s.active_games.insert(
+            2,
+            ActiveGame {
+                id: 2,
+                name: "other-game".to_string(),
+                p1_name: "alice".to_string(),
+                p2_name: "bob".to_string(),
+                started_at: Instant::now(),
+                p1_reconnect_token: None,
+                p2_reconnect_token: Some(p2_token.clone()),
+            },
+        );
+        assert_eq!(s.validate_reconnect_token("other-game", &p2_token), Some((2, 1)));
+    }
+
+    #[test]
+    fn validate_reconnect_token_rejects_wrong_token() {
+        let mut s = LobbyState::new();
+        let real = ReconnectToken("aaaa0000aaaa0000aaaa0000aaaa0000".to_string());
+        let fake = ReconnectToken("bbbb1111bbbb1111bbbb1111bbbb1111".to_string());
+        s.active_games.insert(
+            3,
+            ActiveGame {
+                id: 3,
+                name: "game3".to_string(),
+                p1_name: "alice".to_string(),
+                p2_name: "bob".to_string(),
+                started_at: Instant::now(),
+                p1_reconnect_token: Some(real),
+                p2_reconnect_token: None,
+            },
+        );
+        assert_eq!(s.validate_reconnect_token("game3", &fake), None);
+    }
+
+    #[test]
+    fn validate_reconnect_token_rejects_unknown_game() {
+        let s = LobbyState::new();
+        let token = ReconnectToken("aaaa0000aaaa0000aaaa0000aaaa0000".to_string());
+        assert_eq!(s.validate_reconnect_token("no-such-game", &token), None);
+    }
+
+    // ── WaitingPlayerState / WaitingRoomSnapshot ─────────────────────────────
+
+    #[test]
+    fn waiting_player_state_default_is_not_ready() {
+        let state = WaitingPlayerState::default();
+        assert!(!state.ready);
+        assert!(state.deck.is_none());
+        let proto = state.to_protocol_state("Alice");
+        assert_eq!(proto.name, "Alice");
+        assert!(!proto.deck_selected);
+        assert!(!proto.ready);
+        assert!(proto.deck_summary.is_none());
+    }
+
+    #[test]
+    fn waiting_room_snapshot_to_server_message_without_joiner() {
+        let snap = WaitingRoomSnapshot {
+            creator_name: "Alice".to_string(),
+            creator_state: WaitingPlayerState::default(),
+            joiner_name: None,
+            joiner_state: None,
+        };
+        let msg = snap.to_server_message();
+        match msg {
+            ServerMessage::WaitingRoomUpdate { creator, joiner } => {
+                assert_eq!(creator.name, "Alice");
+                assert!(joiner.is_none());
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn waiting_room_snapshot_to_server_message_with_joiner() {
+        let snap = WaitingRoomSnapshot {
+            creator_name: "Alice".to_string(),
+            creator_state: WaitingPlayerState::default(),
+            joiner_name: Some("Bob".to_string()),
+            joiner_state: Some(WaitingPlayerState::default()),
+        };
+        let msg = snap.to_server_message();
+        match msg {
+            ServerMessage::WaitingRoomUpdate { creator: _, joiner } => {
+                let j = joiner.expect("joiner should be present");
+                assert_eq!(j.name, "Bob");
+                assert!(!j.ready);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 
     #[test]
@@ -483,6 +906,8 @@ mod tests {
                 p1_name: "alice".to_string(),
                 p2_name: "bob".to_string(),
                 started_at: Instant::now(),
+                p1_reconnect_token: None,
+                p2_reconnect_token: None,
             },
         );
         assert_eq!(s.waiting_count(), 1);
