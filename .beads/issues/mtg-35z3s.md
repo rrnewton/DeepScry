@@ -4,10 +4,11 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-06-01T12:31:21.332680376+00:00
-updated_at: 2026-06-01T13:00:14.753071422+00:00
+updated_at: 2026-06-01T13:23:20.874131898+00:00
 ---
 
 # Description
+
 
 ## Description
 
@@ -153,3 +154,18 @@ NOT added to make validate (not in gate yet — awaits UI rework).
 
 --- STEP 0 DONE + COORDINATOR-VERIFIED (2026-06-01) ---
 FOUNDATION CONFIRMED: AI-over-network web play WORKS. Harness web/test_redo_ai_network_e2e.js (two headless browser clients, both random AI, direct ws:// to a local mtg server, bypassing the broken lobby) advances >=3 turns with NO freeze/desync. Coordinator RAN IT independently (not just trusting the agent): seed 42 → PASSED, Turn 4, 45 choices, desync=false, exit 0 (agent also saw seeds 13/99 → 5/6 turns; pre-existing test_network_gui_e2e hit turn 13). KEY: auto_run=true for AI controllers in network mode (fancy_tui.rs:1563) → NO spacebar scripting needed; the game self-advances. The user-reported freeze is the HUMAN-controller path (mtg-uzvu4), which the AI e2e driver SIDESTEPS. Merged to integration. So the redo can proceed test-first: each UI step adds its acceptance gate, driven by AI-over-network. Harness NOT yet in make validate (intentional during redo).
+
+--- STEP 1 IN PROGRESS (redo-step1-lobby branch, 2026-06-01) ---
+Removes renderer selector (#lobby-ui-* radios, lines ~376-386) and deck picker
+(#wr-deck-select, the waiting-room deck form) from index.html.
+Creates placeholder launcher.html with TODO(mtg-35z3s) noting Step 2 work.
+Lobby handoff: doRedirectToLauncher() → launcher.html?game=&role=create|join&pass=&name=&ws=
+(old doRedirectToGamePage/getSelectedUi removed).
+Dead code removed: loadDeckNames, populateWrDeckSelect, loadCustomDeckNames,
+prefetchDeckBins, sendSetDeck, sendSetReady — replaced with startWasmPrefetch.
+Step 1 acceptance gate: web/test_redo_lobby_e2e.js — ALL 16 assertions PASS:
+renderer absent, deck picker absent, launcher.html loads with correct params.
+test_landing_page_ux.js updated: full flow expects launcher.html redirect with
+game/role/pass params; scenarioNativeGuiLaunch → verifies renderer radio absent;
+param contract updated to launcher.html contract.
+Step 2 next: extract deck collections from tui_game.html launcher + renderer pick.

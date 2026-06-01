@@ -372,18 +372,6 @@
                                     aria-label="Show passcode" aria-pressed="false" title="Show passcode">
                             </button>
                         </div>
-                        <div style="height: 8px;"></div>
-                        <label>Game Interface</label>
-                        <div style="display: flex; gap: 12px; align-items: center; padding: 2px 0 6px;">
-                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px;">
-                                <input type="radio" name="lobby-ui" id="lobby-ui-tui" value="tui" checked>
-                                Web TUI <span style="color: var(--muted); font-size: 11px;">(terminal)</span>
-                            </label>
-                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 13px;">
-                                <input type="radio" name="lobby-ui" id="lobby-ui-native" value="native">
-                                Native GUI <span style="color: var(--muted); font-size: 11px;">(card-style)</span>
-                            </label>
-                        </div>
                         <div class="row">
                             <button type="submit" id="btn-create">Create &amp; Wait</button>
                             <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
@@ -503,36 +491,16 @@
                 <button type="button" class="copy-btn" id="btn-copy-invite">Copy</button>
             </div>
 
-            <!-- Deck picker (ONE deck picker, in the waiting room per design doc) -->
-            <div id="wr-options" style="margin: 14px 0;">
-                <div class="grid-2" style="gap: 12px;">
-                    <div>
-                        <label for="wr-deck-select">Your Deck</label>
-                        <select id="wr-deck-select">
-                            <option value="">Loading decks&hellip;</option>
-                        </select>
-                        <button type="button" id="btn-set-deck" style="margin-top: 8px; width: 100%;" disabled>
-                            Confirm Deck
-                        </button>
-                        <p id="wr-deck-status" class="status-line"></p>
-                    </div>
-                    <div>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-top: 20px; font-size: 13px; text-transform: none; letter-spacing: 0;">
-                            <input type="checkbox" id="wr-ready-check">
-                            Mark me as Ready
-                        </label>
-                        <p style="font-size: 11px; color: var(--muted); margin-top: 6px;">
-                            Game interface is selected in the lobby form above (TUI / Native GUI).
-                        </p>
-                    </div>
-                </div>
-            </div>
+            <!-- TODO(mtg-35z3s): deck + renderer choice moves to launcher.html (Step 2) -->
+            <p style="color: var(--muted); font-size: 13px; margin: 10px 0;">
+                Deck and renderer selection will be available in the next screen.
+            </p>
 
             <!-- Prefetch status -->
             <div id="wr-prefetch-status" class="prefetch-bar"></div>
 
             <div class="row" style="margin-top: 12px;">
-                <button type="button" class="success" id="btn-launch-game">Launch Game</button>
+                <button type="button" class="success" id="btn-launch-game">Go to Launcher &rarr;</button>
                 <button type="button" class="danger" id="btn-cancel-waiting">Cancel &amp; return to lobby</button>
             </div>
             <p id="waiting-status" class="status-line"></p>
@@ -619,10 +587,6 @@
     var gamesOffset = 0;
     var filterDebounceTimer = null;
 
-    // Deck names loaded from data/sets/index.json (deck_names field).
-    // Null = not yet loaded; [] = loaded but empty.
-    var availableDeckNames = null;
-
     // Waiting-room state: set when we enter a waiting room (create or join).
     // { gameName, gamePass, action: 'create'|'join', deckName: '', reconnectToken: null }
     var waitingRoomState = null;
@@ -659,102 +623,19 @@
     }
 
     // -------------------------------------------------------------------------
-    // Deck picker: fetch data/sets/index.json (same origin, already served) and
-    // populate the waiting-room deck <select> from `deck_names`. DRY: ONE fetch.
-    // The binary decks.bin is NOT fetched here (that requires WASM; the game
-    // page handles it at launch, from the browser cache warmed by prefetch).
+    // Background WASM prefetch — warms the HTTP cache so the game/launcher page
+    // can instantiate WASM from cache. Triggered on lobby connect.
     // -------------------------------------------------------------------------
-    function loadDeckNames() {
+    function startWasmPrefetch() {
         fetch('./data/sets/index.json', { cache: 'no-store' })
             .then(function (r) {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 return r.json();
             })
             .then(function (idx) {
-                var names = (idx && Array.isArray(idx.deck_names)) ? idx.deck_names : [];
-                availableDeckNames = names;
-                populateWrDeckSelect(names);
-                // Kick off background prefetch of pkg/ (idle warm).
                 prefetchWasmBundle(idx);
             })
-            .catch(function (err) {
-                console.warn('Could not load deck list from data/sets/index.json:', err);
-                availableDeckNames = [];
-                populateWrDeckSelect([]);
-            });
-    }
-
-    // -------------------------------------------------------------------------
-    // Custom-deck integration: the deck editor (deck_editor.html) saves custom
-    // decks to localStorage under the key 'mtg_custom_decks' as a JSON object
-    // mapping deckName -> dck-text. This function returns the sorted list of
-    // custom deck names, prefixed with "[Custom] " so users can tell them apart
-    // from built-in decks in the picker. The actual deck text is handed to the
-    // game page via the 'mtg_selected_custom_deck' localStorage key when the
-    // user selects one in the waiting room and clicks "Confirm Deck".
-    //
-    // localStorage key contract (shared with deck_editor.html):
-    //   'mtg_custom_decks'          : JSON { [deckName: string]: string (dck text) }
-    //   'mtg_selected_custom_deck'  : JSON { name: string, dck: string } | null
-    //   'mtg_lobby_deck_preselect'  : string (deck name) — written by deck editor's
-    //                                 "Use in lobby" button to pre-select the deck.
-    // -------------------------------------------------------------------------
-
-    /** Read custom deck names from localStorage; returns [] on any error. */
-    function loadCustomDeckNames() {
-        try {
-            var raw = localStorage.getItem('mtg_custom_decks');
-            if (!raw) return [];
-            var obj = JSON.parse(raw);
-            if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return [];
-            return Object.keys(obj).sort();
-        } catch (e) {
-            return [];
-        }
-    }
-
-    function populateWrDeckSelect(builtinNames) {
-        var sel = document.getElementById('wr-deck-select');
-        sel.innerHTML = '';
-
-        var customNames = loadCustomDeckNames();
-
-        if (builtinNames.length === 0 && customNames.length === 0) {
-            var opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = '(No decks available)';
-            sel.appendChild(opt);
-        } else {
-            // Custom decks first (most recently relevant to the user).
-            customNames.forEach(function (name) {
-                var opt = document.createElement('option');
-                opt.value = 'custom:' + name;
-                opt.textContent = '[Custom] ' + name;
-                sel.appendChild(opt);
-            });
-            builtinNames.forEach(function (name) {
-                var opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                sel.appendChild(opt);
-            });
-        }
-
-        // If the deck editor pre-selected a deck via localStorage, apply it now.
-        var preselect = localStorage.getItem('mtg_lobby_deck_preselect');
-        if (preselect) {
-            localStorage.removeItem('mtg_lobby_deck_preselect');
-            // Try the custom option first, then builtin.
-            var customKey = 'custom:' + preselect;
-            for (var i = 0; i < sel.options.length; i++) {
-                if (sel.options[i].value === customKey || sel.options[i].value === preselect) {
-                    sel.selectedIndex = i;
-                    break;
-                }
-            }
-        }
-
-        document.getElementById('btn-set-deck').disabled = false;
+            .catch(function () { /* prefetch is best-effort */ });
     }
 
     // -------------------------------------------------------------------------
@@ -816,22 +697,6 @@
         }).catch(function () {
             setPrefetchStatus('');
         });
-    }
-
-    // Prefetch the set bins for the currently selected deck. Called when the
-    // user changes deck selection in the waiting room.
-    function prefetchDeckBins(deckName, idx) {
-        if (!idx || !idx.cards || !deckName) return;
-        // Collect which set bins contain cards needed by this deck. Since we
-        // don't have the WASM card DB here (lobby page is WASM-free), we just
-        // prefetch ALL set bins referenced in the manifest (they're small and
-        // immutable — the browser deduplicates). A smarter approach requires
-        // the WASM card DB which lives in the game page. Good enough for now.
-        if (!idx.sets || idx.sets.length === 0) return;
-        var batch = idx.sets.slice(0, 5).map(function (s) {
-            return fetch('./data/sets/' + s.file, { cache: 'default', mode: 'no-cors' }).catch(function () {});
-        });
-        Promise.all(batch).catch(function () {});
     }
 
     // -------------------------------------------------------------------------
@@ -919,22 +784,6 @@
         sideboard: [],
     };
 
-    function sendSetDeck(deckName) {
-        // The lobby page is WASM-free so we cannot build a real DeckSubmission
-        // from the deck name. We send the placeholder; the waiting-room display
-        // shows the deck NAME from waitingRoomState, not the card list. The
-        // actual deck is carried by the game page via the &deck= URL param and
-        // resolved there via WASM. See mtg-khy7x for the rationale.
-        if (deckName) {
-            waitingRoomState.selectedDeckName = deckName;
-        }
-        send({ type: 'set_deck', deck: PLACEHOLDER_DECK });
-    }
-
-    function sendSetReady(ready) {
-        send({ type: 'set_ready', ready: ready });
-    }
-
     // -------------------------------------------------------------------------
     // Server message handler
     // -------------------------------------------------------------------------
@@ -972,9 +821,8 @@
                 setWaitingStatus('Fatal error: ' + (msg.message || 'unknown'), 'err');
             } else {
                 console.warn('[Lobby] Server error:', msg.message);
-                // Non-fatal: update deck status if it looks like a deck error.
                 if (isWaiting()) {
-                    setWrDeckStatus(msg.message || 'Server error', 'err');
+                    setWaitingStatus(msg.message || 'Server error', 'err');
                 }
             }
             break;
@@ -1018,16 +866,7 @@
             'Waiting room: "' + waitingRoomState.gameName + '"';
         document.getElementById('wr-creator-name').textContent = currentUsername;
         updateInviteBlock();
-        setWaitingStatus('Game created. Waiting for opponent…', '');
-        // Immediately send our deck selection (placeholder with chosen name tracked
-        // in waitingRoomState.selectedDeckName) so the waiting-room state reflects
-        // that we have chosen a deck.
-        var deckSel = document.getElementById('wr-deck-select');
-        var deckName = (deckSel && deckSel.value) ? deckSel.value : '';
-        if (deckName) {
-            waitingRoomState.selectedDeckName = deckName;
-        }
-        sendSetDeck(deckName);
+        setWaitingStatus('Game created. Waiting for opponent… (Click “Go to Launcher” when ready)', '');
     }
 
     function handleWaitingRoomUpdate(msg) {
@@ -1037,13 +876,12 @@
 
     function handleGameStarted(msg) {
         if (!waitingRoomState) return;
-        // Store the reconnect token so the game page can use it.
+        // Store the reconnect token so the launcher page can use it.
         if (msg.reconnect_token) {
             waitingRoomState.reconnectToken = msg.reconnect_token;
         }
-        // Auto-redirect: the server has started the game. Navigate now.
-        var deckName = waitingRoomState.selectedDeckName || '';
-        doRedirectToGamePage(deckName);
+        // Auto-redirect to the launcher — deck + renderer chosen there (Step 2).
+        doRedirectToLauncher();
     }
 
     function handleJoinFailed(msg) {
@@ -1080,14 +918,8 @@
         if (creator) {
             creatorNameEl.textContent = creator.name;
             if (creator.deck_selected) {
-                // Prefer the locally-known deck name (from waitingRoomState) over
-                // the server's placeholder-deck summary (we send a placeholder from
-                // the lobby since WASM isn't available here; the real deck name
-                // flows to the game page via the &deck= URL param).
-                var deckLabel = (waitingRoomState && creator.name === currentUsername &&
-                    waitingRoomState.selectedDeckName)
-                    ? waitingRoomState.selectedDeckName
-                    : (creator.deck_summary ? formatDeckSummary(creator.deck_summary) : 'selected');
+                // Deck shown from server's deck_summary (lobby sends placeholder deck on CreateGame).
+                var deckLabel = creator.deck_summary ? formatDeckSummary(creator.deck_summary) : 'selected';
                 creatorDeckEl.textContent = deckLabel;
                 creatorDeckEl.className = 'ok';
             } else {
@@ -1114,10 +946,7 @@
             joinerWaiting.classList.add('hidden');
             joinerDl.classList.remove('hidden');
             if (joiner.deck_selected) {
-                var ds = (waitingRoomState && joiner.name === currentUsername &&
-                    waitingRoomState.selectedDeckName)
-                    ? waitingRoomState.selectedDeckName
-                    : (joiner.deck_summary ? formatDeckSummary(joiner.deck_summary) : 'selected');
+                var ds = joiner.deck_summary ? formatDeckSummary(joiner.deck_summary) : 'selected';
                 joinerDeckEl.textContent = ds;
                 joinerDeckEl.className = 'ok';
             } else {
@@ -1136,12 +965,12 @@
             joinerCard.className = 'wr-player-card';
         }
 
-        // Check if both ready — enable Launch Game.
-        var bothReady = !!(creator && creator.ready && joiner && joiner.ready);
+        // Highlight launch button when both players have joined.
+        var opponentJoined = !!(joiner);
         var launchBtn = document.getElementById('btn-launch-game');
-        if (bothReady) {
+        if (opponentJoined) {
             launchBtn.classList.add('success');
-            setWaitingStatus('Both players ready! Click Launch Game.', 'ok');
+            setWaitingStatus('Opponent joined! Click "Go to Launcher" to pick your deck and renderer.', 'ok');
         }
     }
 
@@ -1261,12 +1090,6 @@
         el.className = 'status-line' + (kind ? ' ' + kind : '');
     }
 
-    function setWrDeckStatus(text, kind) {
-        var el = document.getElementById('wr-deck-status');
-        el.textContent = text || '';
-        el.className = 'status-line' + (kind ? ' ' + kind : '');
-    }
-
     // -------------------------------------------------------------------------
     // Username / lobby enter/exit
     // -------------------------------------------------------------------------
@@ -1345,7 +1168,6 @@
             gameName: gameName,
             gamePass: gamePass,
             action: action,
-            selectedDeckName: '',
             reconnectToken: null,
         };
 
@@ -1358,16 +1180,9 @@
 
         document.getElementById('waiting-status').textContent = '';
         document.getElementById('waiting-status').className = 'status-line';
-        document.getElementById('wr-deck-status').textContent = '';
         document.getElementById('wr-prefetch-status').textContent = '';
         document.getElementById('btn-launch-game').disabled = false;
         document.getElementById('btn-cancel-waiting').disabled = false;
-
-        // If deck names are loaded, auto-select the first deck so the
-        // "Confirm Deck" button is immediately usable.
-        if (availableDeckNames && availableDeckNames.length > 0) {
-            document.getElementById('btn-set-deck').disabled = false;
-        }
 
         document.getElementById('pane-lobby').classList.add('hidden');
         document.getElementById('pane-waiting').classList.remove('hidden');
@@ -1401,7 +1216,6 @@
         waitingRoomState = null;
         document.getElementById('pane-waiting').classList.add('hidden');
         document.getElementById('waiting-invite-block').classList.add('hidden');
-        document.getElementById('wr-ready-check').checked = false;
         document.getElementById('pane-lobby').classList.remove('hidden');
         // After CreateGame/JoinGame, the server's WS task is in "waiting for
         // joiner" state (only accepts SetDeck/SetReady/Disconnect). To evict
@@ -1482,35 +1296,27 @@
     }
 
     // -------------------------------------------------------------------------
-    // Redirect to game page — close lobby WS and navigate
+    // Redirect to launcher — close lobby WS and navigate to launcher.html.
+    // TODO(mtg-35z3s): launcher.html picks deck + renderer (Step 2).
     // -------------------------------------------------------------------------
-    function getSelectedUi() {
-        var r = document.querySelector('input[name="lobby-ui"]:checked');
-        return r ? r.value : 'tui';
-    }
-
-    function doRedirectToGamePage(deckName) {
+    function doRedirectToLauncher() {
         if (!waitingRoomState) return;
         var s = waitingRoomState;
-        var selectedUi = getSelectedUi();
-        var page = selectedUi === 'native' ? 'native_game.html' : 'tui_game.html';
         var qp = new URLSearchParams();
-        qp.set(s.action === 'create' ? 'lobby_create' : 'lobby_join', s.gameName);
-        if (s.gamePass) qp.set('lobby_pass', s.gamePass);
-        if (deckName) qp.set('deck', deckName);
+        qp.set('game', s.gameName);
+        qp.set('role', s.action === 'create' ? 'create' : 'join');
+        if (s.gamePass) qp.set('pass', s.gamePass);
         if (currentUsername) qp.set('name', currentUsername);
         if (wsUrl) qp.set('ws', wsUrl);
         if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
         if (s.reconnectToken) qp.set('reconnect_token', s.reconnectToken);
-        qp.set('ui', selectedUi);
-        qp.set('mode', 'network');
         // Close our browse-WS so the server cleanly drops the lobby task.
         stopRefreshTimer();
         if (ws) {
-            try { ws.close(1000, 'redirect-to-game'); } catch (e) { /* ignore */ }
+            try { ws.close(1000, 'redirect-to-launcher'); } catch (e) { /* ignore */ }
             ws = null;
         }
-        window.location.href = page + '?' + qp.toString();
+        window.location.href = 'launcher.html?' + qp.toString();
     }
 
     // -------------------------------------------------------------------------
@@ -1539,10 +1345,7 @@
 
     document.getElementById('btn-launch-game').addEventListener('click', function (ev) {
         ev.preventDefault();
-        if (!waitingRoomState) return;
-        var deckName = waitingRoomState.selectedDeckName ||
-            document.getElementById('wr-deck-select').value || '';
-        doRedirectToGamePage(deckName);
+        doRedirectToLauncher();
     });
 
     document.getElementById('btn-cancel-waiting').addEventListener('click', function (ev) {
@@ -1563,63 +1366,6 @@
         }).catch(function () {
             // Clipboard API not available (e.g. non-HTTPS); silently ignore.
         });
-    });
-
-    // Deck selection + confirmation in the waiting room.
-    document.getElementById('btn-set-deck').addEventListener('click', function () {
-        var rawVal = document.getElementById('wr-deck-select').value;
-        if (!rawVal || !waitingRoomState) return;
-
-        // Handle custom decks: value is 'custom:<name>'.
-        // Store the selected custom deck text in localStorage so the game page
-        // can load it. The deck name passed to sendSetDeck is just the label
-        // (the server only uses it for display in WaitingRoomUpdate).
-        var deckName = rawVal;
-        if (rawVal.startsWith('custom:')) {
-            var customName = rawVal.slice('custom:'.length);
-            deckName = customName;
-            // Write the full dck text for the game page to pick up.
-            try {
-                var customDecks = JSON.parse(localStorage.getItem('mtg_custom_decks') || '{}');
-                if (customDecks[customName]) {
-                    localStorage.setItem('mtg_selected_custom_deck',
-                        JSON.stringify({ name: customName, dck: customDecks[customName] }));
-                }
-            } catch (e) {
-                console.warn('Could not read custom deck from localStorage:', e);
-            }
-        } else {
-            // Built-in deck selected — clear any stale custom selection.
-            localStorage.removeItem('mtg_selected_custom_deck');
-        }
-
-        waitingRoomState.selectedDeckName = deckName;
-        setWrDeckStatus('Confirming deck…', '');
-        sendSetDeck(deckName);
-        setWrDeckStatus('Deck sent: ' + deckName, 'ok');
-        // Kick off prefetch of deck bins in background (only for built-in decks).
-        if (availableDeckNames && !rawVal.startsWith('custom:')) {
-            // Re-fetch index to get bin map for prefetch; best-effort.
-            fetch('./data/sets/index.json', { cache: 'default' })
-                .then(function (r) { return r.json(); })
-                .then(function (idx) { prefetchDeckBins(deckName, idx); })
-                .catch(function () {});
-        }
-    });
-
-    // Ready checkbox
-    document.getElementById('wr-ready-check').addEventListener('change', function (ev) {
-        if (!waitingRoomState) return;
-        sendSetReady(ev.target.checked);
-    });
-
-    // Deck select change → auto-update selectedDeckName (launch button still required).
-    document.getElementById('wr-deck-select').addEventListener('change', function (ev) {
-        if (waitingRoomState) {
-            var val = ev.target.value;
-            // Strip the 'custom:' prefix for the stored deck name.
-            waitingRoomState.selectedDeckName = val.startsWith('custom:') ? val.slice('custom:'.length) : val;
-        }
     });
 
     // Passcode show/hide on the create-game form.
@@ -1659,8 +1405,8 @@
     }
     applyLaunchLinks();
     connect();
-    // Load deck names from data/sets/index.json for the waiting-room picker.
-    loadDeckNames();
+    // Warm the HTTP cache with the WASM bundle in the background.
+    startWasmPrefetch();
 
     // Populate the footer build identity from the same-origin /health probe.
     (function renderFooterVersion() {

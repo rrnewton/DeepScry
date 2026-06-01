@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-05-31T20:13:58.068340424+00:00
-updated_at: 2026-06-01T12:33:58.029261951+00:00
+updated_at: 2026-06-01T13:18:33.492411145+00:00
 ---
 
 # Description
@@ -19,3 +19,6 @@ STATUS CORRECTION (2026-06-01): This was the P1 lobby-redesign issue. The AFK bu
 - Game froze after first land; reload/back corrupts state.
 
 SUPERSEDED BY mtg-35z3s (REDO spec, ai_docs/LOBBY_REDO_SPEC_20260601.md): correct 4-page architecture (lobby has NO renderer/deck choice; launcher.html owns deck-collections + Deck-Editor link + renderer with NATIVE DEFAULT, extracted from tui_game.html's richer built-in launcher; game pages are pure renderers w/ built-in launchers DELETED) gated on an end-to-end played-game acceptance test. Do the work under mtg-35z3s. This issue stays OPEN, tracking the lobby-page portion of that redo (strip the renderer selector + deck picker from index.html).
+
+--- STEP 1 WORK (2026-06-01) ---
+Lobby index.html: renderer selector and deck picker removed. See mtg-35z3s step 1.

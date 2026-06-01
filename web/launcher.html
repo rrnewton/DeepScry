@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<!--
+  launcher.html — PLACEHOLDER (Step 1 of mtg-35z3s lobby redo)
+  This page receives the lobby handoff params and will become the full
+  per-player pre-game launcher in Step 2 (deck collections + renderer pick).
+  TODO(mtg-35z3s): implement deck collections, renderer choice (native default /
+  TUI alternate), and the "Play" button that navigates to the game page.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepScry &mdash; Launcher</title>
+    <style>
+        body {
+            margin: 0; padding: 0;
+            background: #0a0a14; color: #e6e6f0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh;
+        }
+        .box {
+            background: #16213e;
+            border: 1px solid #1a2a50;
+            border-radius: 10px;
+            padding: 32px 36px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        h1 { color: #ffd700; font-size: 24px; margin: 0 0 8px; }
+        .step-label {
+            font-size: 11px; color: #4cc9f0; letter-spacing: 1px;
+            text-transform: uppercase; margin-bottom: 20px;
+        }
+        dl {
+            display: grid; grid-template-columns: auto 1fr;
+            gap: 6px 14px; margin: 0 0 20px; font-size: 14px;
+        }
+        dt { color: #8a8aa0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; white-space: nowrap; }
+        dd { margin: 0; font-family: monospace; color: #ffd700; }
+        .todo {
+            background: #0f3460; border: 1px dashed #4cc9f0;
+            border-radius: 6px; padding: 14px 16px;
+            font-size: 13px; color: #8a8aa0; line-height: 1.6;
+        }
+        .todo strong { color: #4cc9f0; }
+        a { color: #4cc9f0; }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h1>Launcher</h1>
+    <p class="step-label">Step 1 placeholder &mdash; Step 2 coming soon</p>
+
+    <p style="color: #8a8aa0; font-size: 13px; margin: 0 0 16px;">
+        Lobby handoff received. Params:
+    </p>
+
+    <dl id="params-dl">
+        <!-- populated by JS below -->
+    </dl>
+
+    <div class="todo">
+        <strong>TODO(mtg-35z3s) &mdash; Step 2</strong>: This page will become the full
+        per-player pre-game screen:<br>
+        &bull; Deck collections (3-pane layout, extracted from tui_game.html launcher)<br>
+        &bull; Renderer choice: <em>Native GUI</em> (default) or <em>Web TUI</em><br>
+        &bull; Deck Editor link<br>
+        &bull; "Play" button &rarr; navigates to native_game.html or tui_game.html with full params
+    </div>
+
+    <p style="margin-top: 20px; font-size: 12px; color: #8a8aa0;">
+        <a href="index.html">← Back to Lobby</a>
+    </p>
+</div>
+
+<script>
+(function () {
+    'use strict';
+    var qs = new URLSearchParams(window.location.search);
+    var fields = [
+        ['game',            'Game Name'],
+        ['role',            'Role'],
+        ['pass',            'Passcode'],
+        ['name',            'Player Name'],
+        ['ws',              'Server URL'],
+        ['reconnect_token', 'Reconnect Token'],
+    ];
+    var dl = document.getElementById('params-dl');
+    var anyParam = false;
+    fields.forEach(function (pair) {
+        var key = pair[0];
+        var label = pair[1];
+        var val = qs.get(key);
+        if (!val) return;
+        anyParam = true;
+        var dt = document.createElement('dt');
+        dt.textContent = label;
+        var dd = document.createElement('dd');
+        dd.textContent = val;
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+    });
+    if (!anyParam) {
+        var dt = document.createElement('dt');
+        dt.textContent = 'note';
+        var dd = document.createElement('dd');
+        dd.textContent = '(no params — reached directly, not via lobby)';
+        dd.style.color = '#8a8aa0';
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+    }
+    // Expose params globally for Playwright test assertions.
+    window.__launcherParams = Object.fromEntries(qs.entries());
+})();
+</script>
+</body>
+</html>

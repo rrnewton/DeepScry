@@ -94,18 +94,15 @@ async function scenarioFullFlow() {
         { timeout: 5000 },
     ).catch(() => record('blocking', 'deck picker', 'btn-create stayed disabled'));
 
-    // Phase 1 waiting room (mtg-465): clicking "Create & Wait" now shows the
-    // waiting-room pane with game details (name, passcode, deck, invite text)
-    // BEFORE redirecting. The user reviews the info, copies the invite, then
-    // clicks "Launch Game" to go to tui_game.html. We verify the waiting pane
-    // appears with the right content, then click Launch to do the redirect.
+    // Step 1 (mtg-35z3s): clicking "Create & Wait" shows the waiting-room pane.
+    // After game creation is confirmed the user clicks "Go to Launcher" →
+    // navigates to launcher.html (NOT a game page — that comes in Step 2).
     await alice.click('#btn-create');
     await alice.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
         record('blocking', 'create flow', 'waiting-room pane never appeared after alice clicked Create'),
     );
 
-    // Verify waiting-room detail fields (Phase 2 layout).
-    // The game title is shown in #waiting-title; the invite block has the full snippet.
+    // Verify waiting-room detail fields.
     const waitingTitle = await alice.textContent('#waiting-title').catch(() => '');
     if (!waitingTitle.includes('qa-test-game')) {
         record('major', 'waiting room', 'waiting-title missing game name: ' + waitingTitle);
@@ -122,26 +119,33 @@ async function scenarioFullFlow() {
     if (!creatorName.includes('alice')) {
         record('minor', 'waiting room', 'wr-creator-name missing alice: ' + creatorName);
     }
+    // Renderer selector MUST NOT be present on the lobby (mtg-35z3s Step 1).
+    const lobbyUiRadio = await alice.$('#lobby-ui-tui, #lobby-ui-native');
+    if (lobbyUiRadio) {
+        record('major', 'redo step1', 'renderer radio (#lobby-ui-*) must NOT appear on the lobby — belongs in launcher.html');
+    }
 
     await shot(alice, 'landing_03_waiting_room.png');
 
-    // Now alice clicks "Launch Game" → redirect to tui_game.html.
+    // Alice clicks "Go to Launcher" → redirect to launcher.html (Step 1 target).
     await alice.click('#btn-launch-game');
     await alice.waitForFunction(
-        () => /tui_game\.html/.test(window.location.href),
+        () => /launcher\.html/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'create flow', 'alice never redirected to tui_game.html after Launch Game'));
+    ).catch(() => record('blocking', 'create flow', 'alice never redirected to launcher.html after "Go to Launcher"'));
     const aliceUrl = alice.url();
     console.log('  alice redirected to:', aliceUrl);
-    if (!aliceUrl.includes('lobby_create=qa-test-game')) {
-        record('major', 'create flow', 'alice URL missing lobby_create param: ' + aliceUrl);
+    if (!aliceUrl.includes('game=qa-test-game')) {
+        record('major', 'create flow', 'alice URL missing game= param: ' + aliceUrl);
     }
-    if (!aliceUrl.includes('lobby_pass=secret')) {
-        record('major', 'create flow', 'alice URL missing lobby_pass param: ' + aliceUrl);
+    if (!aliceUrl.includes('role=create')) {
+        record('major', 'create flow', 'alice URL missing role=create param: ' + aliceUrl);
     }
-    // Give the tui page a moment to load WASM + send CreateGame.
-    await alice.waitForTimeout(2500);
+    if (!aliceUrl.includes('pass=secret')) {
+        record('major', 'create flow', 'alice URL missing pass=secret param: ' + aliceUrl);
+    }
+    await alice.waitForTimeout(800);
     await shot(alice, 'landing_03_game_created.png');
 
     // --- Bob ---
@@ -208,21 +212,20 @@ async function scenarioFullFlow() {
     await bob.click('#btn-create');
     await bob.waitForTimeout(300);
     // Should still be on lobby (validation blocks empty name before showing waiting room).
-    const stillOnLobby = !bob.url().includes('native_game.html') && !bob.url().includes('tui_game.html');
+    const stillOnLobby = !bob.url().includes('launcher.html');
     const waitingVisible = await bob.evaluate(() => !document.getElementById('pane-waiting').classList.contains('hidden'));
     if (!stillOnLobby || waitingVisible) {
         record('major', 'create empty name', 'empty game name allowed (should be blocked by validation, not show waiting room)');
     }
 
-    // --- Try create with valid name but NO passcode: shows waiting room then redirects ---
+    // --- Try create with valid name but NO passcode: shows waiting room then → launcher ---
     await bob.fill('#create-game', 'open-game');
     await bob.fill('#create-pass', '');
-    // Phase 2: btn-create always enabled; wait a tick for DOM to settle.
     await bob.waitForFunction(
         () => !document.getElementById('btn-create').disabled,
         null,
         { timeout: 3000 },
-    ).catch(() => record('minor', 'deck picker bob', 'btn-create stayed disabled for bob'));
+    ).catch(() => record('minor', 'btn-create bob', 'btn-create stayed disabled for bob'));
     await bob.click('#btn-create');
     // Waiting room appears first.
     await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
@@ -234,20 +237,23 @@ async function scenarioFullFlow() {
         record('minor', 'create no-pass', 'unexpected passcode in invite text for open game: ' + wrInviteBob);
     }
     await shot(bob, 'landing_04b_waiting_room_open_game.png');
-    // Click Launch Game to do the actual redirect.
+    // Click "Go to Launcher" → launcher.html (Step 1).
     await bob.click('#btn-launch-game');
     await bob.waitForFunction(
-        () => /tui_game\.html/.test(window.location.href) &&
-              /lobby_create=open-game/.test(window.location.href),
+        () => /launcher\.html/.test(window.location.href) &&
+              /game=open-game/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'create no-pass', 'bob never redirected to tui_game.html with lobby_create=open-game'));
+    ).catch(() => record('blocking', 'create no-pass', 'bob never redirected to launcher.html with game=open-game'));
     const bobAfterCreate = bob.url();
     console.log('  bob after create (no pass):', bobAfterCreate);
-    if (bobAfterCreate.includes('lobby_pass=')) {
+    if (bobAfterCreate.includes('pass=')) {
         record('major', 'create no-pass', 'empty passcode leaked into URL: ' + bobAfterCreate);
     }
-    await bob.waitForTimeout(2000);
+    if (!bobAfterCreate.includes('role=create')) {
+        record('major', 'create no-pass', 'role=create missing from launcher URL: ' + bobAfterCreate);
+    }
+    await bob.waitForTimeout(800);
     await shot(bob, 'landing_05_joined.png');
 
     await aliceCtx.close();
@@ -664,71 +670,62 @@ async function scenarioGameListFilterAndPager() {
     await new Promise((r) => setTimeout(r, 300));
 }
 
-// Phase 2 / mtg-phase2-native-network: test that the lobby-ui radio picker
-// correctly sends the user to native_game.html when "Native GUI" is selected.
+// mtg-35z3s Step 1: verify renderer selector is ABSENT from the lobby.
+// Renderer choice belongs in launcher.html (Step 2); the lobby must NOT have it.
 async function scenarioNativeGuiLaunch() {
-    console.log('\n=== Scenario: native GUI launch via lobby-ui picker (Phase 2) ===');
+    console.log('\n=== Scenario: renderer selector absent from lobby (mtg-35z3s Step 1) ===');
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
-    page.on('pageerror', (e) => record('major', 'native-gui-launch pageerror', e.message));
+    page.on('pageerror', (e) => record('major', 'renderer-absent pageerror', e.message));
 
     await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {
-        record('blocking', 'native-gui-launch ws', e.message);
+        record('blocking', 'renderer-absent ws', e.message);
     }
 
-    // Enter the lobby.
     await page.fill('#username', 'native-tester');
     await page.click('#btn-name');
     await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'native-gui-launch lobby', 'lobby pane never revealed'),
+        record('blocking', 'renderer-absent lobby', 'lobby pane never revealed'),
     );
 
-    // Select "Native GUI" from the new lobby-ui picker (Phase 2).
-    const nativeRadio = await page.$('#lobby-ui-native');
-    if (!nativeRadio) {
-        record('major', 'native-gui-launch', '#lobby-ui-native radio not found (Phase 2 picker missing)');
-    } else {
-        await page.click('#lobby-ui-native');
-        const checked = await page.evaluate(() => {
-            const r = document.getElementById('lobby-ui-native');
-            return r ? r.checked : false;
-        });
-        if (!checked) record('major', 'native-gui-launch', '#lobby-ui-native radio not checked after click');
+    // The renderer radio buttons must NOT exist on the lobby (mtg-35z3s).
+    const tuiRadio = await page.$('#lobby-ui-tui');
+    if (tuiRadio) {
+        record('major', 'renderer-absent', '#lobby-ui-tui radio must NOT be on the lobby (removed in Step 1)');
     }
+    const nativeRadio = await page.$('#lobby-ui-native');
+    if (nativeRadio) {
+        record('major', 'renderer-absent', '#lobby-ui-native radio must NOT be on the lobby (removed in Step 1)');
+    }
+    // Also verify no lobby-ui radio input of any kind.
+    const anyLobbyUi = await page.$('input[name="lobby-ui"]');
+    if (anyLobbyUi) {
+        record('major', 'renderer-absent', 'name="lobby-ui" radio input found on lobby — must be absent');
+    }
+    console.log('  renderer radio absent: PASS (all three checks clean)');
 
-    // Fill game name and wait for deck list.
-    await page.fill('#create-game', 'native-launch-test');
+    // Verify Create still works and lands on launcher.html.
+    await page.fill('#create-game', 'renderer-absent-test');
     await page.fill('#create-pass', '');
-    await page.waitForFunction(
-        () => !document.getElementById('btn-create').disabled,
-        null,
-        { timeout: 5000 },
-    ).catch(() => record('minor', 'native-gui-launch deck', 'btn-create stayed disabled'));
-
-    // Create + show waiting room.
     await page.click('#btn-create');
     await page.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'native-gui-launch', 'waiting room never appeared'),
+        record('blocking', 'renderer-absent create', 'waiting room never appeared'),
     );
     await shot(page, 'landing_16_native_gui_waiting.png');
 
-    // Click "Launch Game" — should redirect to native_game.html (not tui_game.html).
     await page.click('#btn-launch-game');
     await page.waitForFunction(
-        () => /native_game\.html/.test(window.location.href) &&
-              /lobby_create=native-launch-test/.test(window.location.href),
+        () => /launcher\.html/.test(window.location.href) &&
+              /game=renderer-absent-test/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'native-gui-launch', 'not redirected to native_game.html with lobby_create param'));
+    ).catch(() => record('blocking', 'renderer-absent redirect', 'not redirected to launcher.html'));
 
     const finalUrl = page.url();
-    console.log('  native-gui final URL:', finalUrl);
-    if (!/ui=native/.test(finalUrl)) {
-        record('minor', 'native-gui-launch', 'ui=native param missing from redirect URL: ' + finalUrl);
-    }
+    console.log('  launcher redirect URL:', finalUrl);
     await shot(page, 'landing_17_native_gui_redirect.png');
 
     await ctx.close();
@@ -758,10 +755,10 @@ async function scenarioWaitingRoomAndParamContract() {
         record('blocking', 'dave lobby', 'lobby pane never appeared for dave'),
     );
 
-    // Check that the native-GUI radio is in the lobby pane (not hidden in waiting room).
-    const nativeRadioVisible = await dave.isVisible('#lobby-ui-native');
-    if (!nativeRadioVisible) {
-        record('major', 'param contract', '#lobby-ui-native not visible in lobby pane');
+    // Step 1 (mtg-35z3s): renderer radio must NOT be in the lobby at all.
+    const nativeRadioExists = await dave.$('#lobby-ui-native');
+    if (nativeRadioExists) {
+        record('major', 'param contract', '#lobby-ui-native must NOT be on lobby (renderer belongs in launcher.html)');
     }
 
     await dave.fill('#create-game', 'wr-test-game');
@@ -784,10 +781,11 @@ async function scenarioWaitingRoomAndParamContract() {
         record('minor', 'waiting room display', 'joiner waiting placeholder not visible before opponent joins');
     }
 
-    // The deck picker must be present and enabled (or at least in DOM).
+    // Step 1 (mtg-35z3s): deck picker must NOT be in the waiting room.
+    // Deck choice moves to launcher.html (Step 2).
     const deckSel = await dave.$('#wr-deck-select');
-    if (!deckSel) {
-        record('major', 'waiting room display', '#wr-deck-select not present in waiting room');
+    if (deckSel) {
+        record('major', 'waiting room display', '#wr-deck-select must NOT be in waiting room (deck choice moves to launcher.html)');
     }
 
     // Verify "Cancel" returns to lobby.
@@ -802,53 +800,47 @@ async function scenarioWaitingRoomAndParamContract() {
         record('major', 'waiting room cancel', 'waiting room pane not hidden after cancel');
     }
 
-    // Param contract test: build a redirect URL via lobby_launcher.js and
-    // verify it matches what both game pages would interpret identically.
-    // We test this structurally: consumeLobbyParams(buildRedirectUrl(opts)) === opts.
+    // Param contract test (mtg-35z3s Step 1): lobby handoff to launcher.html uses
+    // game=, role=, pass=, name=, ws= (NOT lobby_create/lobby_join/deck/ui/mode).
+    // Those old params are now launcher→game-page concerns (Step 2+).
     const paramTest = await dave.evaluate(() => {
-        // Minimal inline test — import is module-scoped so we re-implement the
-        // contract check here against the known URL structure.
+        // Mirror doRedirectToLauncher() logic in index.html.
         const opts = {
-            action: 'create',
             gameName: 'test-game',
+            role: 'create',
             gamePass: 'pw',
-            deckName: 'Forest Mono',
             playerName: 'dave',
             wsUrl: 'ws://localhost:1234',
-            allowLocalImgLoad: false,
-            ui: 'tui',
-            mode: 'network',
         };
-        // Build URL manually (mirrors lobby_launcher.buildRedirectUrl).
         const qp = new URLSearchParams();
-        qp.set('lobby_create', opts.gameName);
-        qp.set('lobby_pass', opts.gamePass);
-        qp.set('deck', opts.deckName);
+        qp.set('game', opts.gameName);
+        qp.set('role', opts.role);
+        qp.set('pass', opts.gamePass);
         qp.set('name', opts.playerName);
         qp.set('ws', opts.wsUrl);
-        qp.set('ui', opts.ui);
-        qp.set('mode', opts.mode);
-        const url = 'tui_game.html?' + qp.toString();
+        const url = 'launcher.html?' + qp.toString();
 
-        // Verify the URL has the right params (consumers parse exactly these).
         const parsed = new URLSearchParams(url.split('?')[1]);
         return {
-            hasCreate: parsed.get('lobby_create') === 'test-game',
-            hasPass: parsed.get('lobby_pass') === 'pw',
-            hasDeck: parsed.get('deck') === 'Forest Mono',
-            hasName: parsed.get('name') === 'dave',
-            hasUi: parsed.get('ui') === 'tui',
-            hasMode: parsed.get('mode') === 'network',
+            hasGame:   parsed.get('game') === 'test-game',
+            hasRole:   parsed.get('role') === 'create',
+            hasPass:   parsed.get('pass') === 'pw',
+            hasName:   parsed.get('name') === 'dave',
+            hasWs:     parsed.get('ws') === 'ws://localhost:1234',
+            // Old lobby params must NOT appear.
+            noLobbyCreate: !parsed.has('lobby_create'),
+            noLobbyJoin:   !parsed.has('lobby_join'),
             page: url.split('?')[0],
         };
     });
-    if (!paramTest.hasCreate) record('major', 'param contract', 'lobby_create missing from redirect URL');
-    if (!paramTest.hasPass)   record('major', 'param contract', 'lobby_pass missing from redirect URL');
-    if (!paramTest.hasDeck)   record('major', 'param contract', 'deck missing from redirect URL');
-    if (!paramTest.hasName)   record('major', 'param contract', 'name missing from redirect URL');
-    if (!paramTest.hasUi)     record('major', 'param contract', 'ui missing from redirect URL');
-    if (!paramTest.hasMode)   record('major', 'param contract', 'mode missing from redirect URL');
-    if (paramTest.page !== 'tui_game.html') record('major', 'param contract', 'page not tui_game.html: ' + paramTest.page);
+    if (!paramTest.hasGame)        record('major', 'param contract', 'game= missing from launcher URL');
+    if (!paramTest.hasRole)        record('major', 'param contract', 'role= missing from launcher URL');
+    if (!paramTest.hasPass)        record('major', 'param contract', 'pass= missing from launcher URL');
+    if (!paramTest.hasName)        record('major', 'param contract', 'name= missing from launcher URL');
+    if (!paramTest.hasWs)          record('major', 'param contract', 'ws= missing from launcher URL');
+    if (!paramTest.noLobbyCreate)  record('major', 'param contract', 'old lobby_create param must NOT appear');
+    if (!paramTest.noLobbyJoin)    record('major', 'param contract', 'old lobby_join param must NOT appear');
+    if (paramTest.page !== 'launcher.html') record('major', 'param contract', 'page not launcher.html: ' + paramTest.page);
     console.log('  param contract check:', JSON.stringify(paramTest));
 
     await daveCtx.close();
