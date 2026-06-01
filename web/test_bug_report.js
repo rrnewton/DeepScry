@@ -163,6 +163,12 @@ async function runTest() {
         log('Opening modal and verifying fields...');
         await openBugReportModal(page);
         await page.waitForSelector('#bug-report-description', { state: 'visible', timeout: 5000 });
+        // The password field is inside a collapsed <details> (advanced options).
+        // Expand the section first so the field is visible for interaction.
+        const advDetails = await page.$('#bug-report-advanced');
+        if (advDetails) {
+            await advDetails.evaluate((el) => { el.open = true; });
+        }
         await page.waitForSelector('#bug-report-password', { state: 'visible', timeout: 5000 });
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_03_modal.png'), fullPage: true });
         testResults.steps.push({ name: 'modal_open', timestamp: new Date().toISOString() });

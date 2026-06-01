@@ -352,6 +352,15 @@ async function main() {
             );
         }
 
+        // mtg-33fmb: confirm no fixed-name cards.bin is served (it is dead —
+        // superseded by the per-set split from mtg-6fsjb). The source HTML
+        // files must not contain any `fetch(` calls to `cards.bin`; the smoke
+        // test verifies this at the served-asset level by checking 404.
+        const cardsBinFixed = await httpGet(base + '/data/cards.bin');
+        check(cardsBinFixed.status === 404, `/data/cards.bin → 404 (should be dead / content-addressed)`);
+        const cardsRootFixed = await httpGet(base + '/cards.bin');
+        check(cardsRootFixed.status === 404, `/cards.bin → 404 (should be dead)`);
+
         // d2. hashed tokens/decks bins: 200 + IMMUTABLE, and the retired
         //     fixed names must 404 (tokens+decks cache-skew fix). This proves a
         //     content change → new hash → new URL → guaranteed cache-miss, so a

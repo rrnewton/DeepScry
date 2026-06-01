@@ -172,10 +172,15 @@ const BUG_REPORT_HTML = `
             <label class="bug-report-label" for="bug-report-description">Describe the expected behavior and the deviant behavior</label>
             <textarea id="bug-report-description" class="bug-report-input" placeholder="Describe the expected behavior and the deviant behavior"></textarea>
         </div>
-        <div class="bug-report-field">
-            <label class="bug-report-label" for="bug-report-password">Trusted bug-report password</label>
-            <input id="bug-report-password" class="bug-report-input" type="password" placeholder="Optional">
-        </div>
+        <details id="bug-report-advanced" style="margin-bottom: 14px;">
+            <summary style="cursor: pointer; color: var(--muted, #9fb3d1); font-size: 12px; user-select: none; padding: 4px 0;">
+                Advanced options
+            </summary>
+            <div class="bug-report-field" style="margin-top: 10px;">
+                <label class="bug-report-label" for="bug-report-password">Trusted bug-report password</label>
+                <input id="bug-report-password" class="bug-report-input" type="password" placeholder="Leave blank unless you have a trusted reporter key">
+            </div>
+        </details>
         <div class="bug-report-meta">
             <div class="bug-report-meta-card">
                 <strong>Console Capture</strong>

@@ -20,14 +20,16 @@
  *
  * ──────────────────────────────────────────────────────────────────────────────
  * Redirect param contract (used by both `tui_game.html` and `native_game.html`):
- *   ?lobby_create=<game_name>   → game page sends CreateGame on connect
- *   ?lobby_join=<game_name>     → game page sends JoinGame on connect
- *   &lobby_pass=<passcode>      → optional per-game passcode
- *   &deck=<deck_name>           → pre-select deck in the game page launcher
- *   &name=<player_name>         → pre-fill player name field
- *   &ws=<ws_url>                → override lobby WebSocket URL
- *   &allow_local_img_load=true  → propagate the sticky local-image unlock
- *   &ui=tui|native              → which game-page UI to land on (default: tui)
+ *   ?lobby_create=<game_name>     → game page sends CreateGame on connect
+ *   ?lobby_join=<game_name>       → game page sends JoinGame on connect
+ *   &lobby_pass=<passcode>        → optional per-game passcode
+ *   &deck=<deck_name>             → pre-select deck in the game page launcher
+ *   &name=<player_name>           → pre-fill player name field
+ *   &ws=<ws_url>                  → override lobby WebSocket URL
+ *   &allow_local_img_load=true    → propagate the sticky local-image unlock
+ *   &ui=tui|native                → which game-page UI to land on (default: tui)
+ *   &mode=local|network           → game mode hint (default: network when from lobby)
+ *   &reconnect_token=<token>      → reconnect token from GameStarted (Phase 1 stub)
  * ──────────────────────────────────────────────────────────────────────────────
  */
 
@@ -63,6 +65,8 @@ export const GAME_PAGE = {
  * @param {string}  [opts.wsUrl]            - WebSocket URL override
  * @param {boolean} [opts.allowLocalImgLoad]
  * @param {'tui'|'native'} [opts.ui]        - target game UI (default: 'tui')
+ * @param {'local'|'network'} [opts.mode]   - game mode hint (default: 'network')
+ * @param {string}  [opts.reconnectToken]   - reconnect token from GameStarted
  * @returns {string}  Full relative URL (e.g. "tui_game.html?lobby_create=...")
  */
 export function buildRedirectUrl(opts) {
@@ -76,12 +80,15 @@ export function buildRedirectUrl(opts) {
         qp.set('lobby_join', opts.gameName);
     }
 
-    if (opts.gamePass)       qp.set('lobby_pass', opts.gamePass);
-    if (opts.deckName)       qp.set('deck', opts.deckName);
-    if (opts.playerName)     qp.set('name', opts.playerName);
-    if (opts.wsUrl)          qp.set('ws', opts.wsUrl);
+    if (opts.gamePass)         qp.set('lobby_pass', opts.gamePass);
+    if (opts.deckName)         qp.set('deck', opts.deckName);
+    if (opts.playerName)       qp.set('name', opts.playerName);
+    if (opts.wsUrl)            qp.set('ws', opts.wsUrl);
     if (opts.allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+    if (opts.reconnectToken)   qp.set('reconnect_token', opts.reconnectToken);
     qp.set('ui', ui);
+    // Default to 'network' mode when coming from the lobby redirect.
+    qp.set('mode', opts.mode === 'local' ? 'local' : 'network');
 
     return page + '?' + qp.toString();
 }
@@ -100,12 +107,14 @@ export function buildRedirectUrl(opts) {
  * @typedef {object} LobbyParams
  * @property {'create'|'join'} action
  * @property {string}  gameName
- * @property {string}  gamePass       - may be ''
- * @property {string}  playerName     - may be ''
- * @property {string}  wsUrl          - may be ''
- * @property {string}  serverPass     - server-level password (rarely used)
- * @property {string}  deckName       - may be ''
+ * @property {string}  gamePass           - may be ''
+ * @property {string}  playerName         - may be ''
+ * @property {string}  wsUrl              - may be ''
+ * @property {string}  serverPass         - server-level password (rarely used)
+ * @property {string}  deckName           - may be ''
  * @property {'tui'|'native'} ui
+ * @property {'local'|'network'} mode     - game mode hint
+ * @property {string}  reconnectToken     - may be '' (Phase 1 stub)
  */
 export function consumeLobbyParams() {
     const qs = new URLSearchParams(window.location.search);
@@ -114,15 +123,18 @@ export function consumeLobbyParams() {
     if (!createName && !joinName) return null;
 
     const ui = qs.get('ui') === 'native' ? 'native' : 'tui';
+    const mode = qs.get('mode') === 'local' ? 'local' : 'network';
     return {
-        action:     createName ? 'create' : 'join',
-        gameName:   createName || joinName || '',
-        gamePass:   qs.get('lobby_pass')  || '',
-        playerName: qs.get('name')        || '',
-        wsUrl:      qs.get('ws')          || '',
-        serverPass: qs.get('server_pass') || '',
-        deckName:   qs.get('deck')        || '',
+        action:         createName ? 'create' : 'join',
+        gameName:       createName || joinName || '',
+        gamePass:       qs.get('lobby_pass')       || '',
+        playerName:     qs.get('name')             || '',
+        wsUrl:          qs.get('ws')               || '',
+        serverPass:     qs.get('server_pass')      || '',
+        deckName:       qs.get('deck')             || '',
+        reconnectToken: qs.get('reconnect_token')  || '',
         ui,
+        mode,
     };
 }
 

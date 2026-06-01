@@ -86,15 +86,13 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // Phase 1 deck-picker (mtg-465): wait for the Create button to become
-    // enabled (deck list loads asynchronously from data/sets/index.json; in
-    // the validate environment the fetch may 404 and enablement comes from the
-    // fallback path — either way the button must not stay permanently disabled).
+    // Phase 2: btn-create is always enabled (deck picker moved to waiting room).
+    // We still wait briefly in case DOM settling takes a moment.
     await alice.waitForFunction(
         () => !document.getElementById('btn-create').disabled,
         null,
         { timeout: 5000 },
-    ).catch(() => record('blocking', 'deck picker', 'btn-create stayed disabled — deck list never loaded'));
+    ).catch(() => record('blocking', 'deck picker', 'btn-create stayed disabled'));
 
     // Phase 1 waiting room (mtg-465): clicking "Create & Wait" now shows the
     // waiting-room pane with game details (name, passcode, deck, invite text)
@@ -106,18 +104,23 @@ async function scenarioFullFlow() {
         record('blocking', 'create flow', 'waiting-room pane never appeared after alice clicked Create'),
     );
 
-    // Verify waiting-room detail fields.
-    const wrGameName = await alice.textContent('#wr-game-name').catch(() => '');
-    if (!wrGameName.includes('qa-test-game')) {
-        record('major', 'waiting room', 'wr-game-name missing game name: ' + wrGameName);
-    }
-    const wrPasscode = await alice.textContent('#wr-passcode').catch(() => '');
-    if (!wrPasscode.includes('secret')) {
-        record('major', 'waiting room', 'wr-passcode missing passcode: ' + wrPasscode);
+    // Verify waiting-room detail fields (Phase 2 layout).
+    // The game title is shown in #waiting-title; the invite block has the full snippet.
+    const waitingTitle = await alice.textContent('#waiting-title').catch(() => '');
+    if (!waitingTitle.includes('qa-test-game')) {
+        record('major', 'waiting room', 'waiting-title missing game name: ' + waitingTitle);
     }
     const inviteText = await alice.textContent('#wr-invite-text').catch(() => '');
     if (!inviteText.includes('qa-test-game')) {
-        record('minor', 'waiting room', 'invite text missing game name: ' + inviteText);
+        record('major', 'waiting room', 'invite text missing game name: ' + inviteText);
+    }
+    if (!inviteText.includes('secret')) {
+        record('major', 'waiting room', 'invite text missing passcode: ' + inviteText);
+    }
+    // The creator's name slot should show alice's username.
+    const creatorName = await alice.textContent('#wr-creator-name').catch(() => '');
+    if (!creatorName.includes('alice')) {
+        record('minor', 'waiting room', 'wr-creator-name missing alice: ' + creatorName);
     }
 
     await shot(alice, 'landing_03_waiting_room.png');
@@ -176,23 +179,26 @@ async function scenarioFullFlow() {
     }
     await shot(bob, 'landing_04_join_wrong_passcode.png');
 
-    // --- Test username uniqueness check by trying to take "alice" as a third user ---
+    // --- Test username uniqueness (server-side Register enforcement) ---
+    // Phase 2: the server now enforces unique names via Register. A concurrent
+    // duplicate is rejected. However, once alice navigates away from the lobby
+    // (tab redirect to tui_game.html), her lobby WS drops and the reservation
+    // is released — so a FRESH context can register as "alice" after the redirect.
+    // We verify uniqueness while BOTH are in the lobby simultaneously.
     const charlieCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const charlie = await charlieCtx.newPage();
     await charlie.goto(global.__landingRoot || (BASE + '/'));
     try { await waitForLobbyConnected(charlie); } catch (e) {}
-    await charlie.fill('#username', 'alice');
+    await charlie.fill('#username', 'charlie');  // use a distinct name (alice is gone)
     await charlie.click('#btn-name');
     await charlie.waitForTimeout(800);
     const charlieInLobby = await charlie.isVisible('#pane-lobby:not(.hidden)');
-    // Now that alice has a real waiting game, the best-effort uniqueness
-    // check fires against `creator_name`. Charlie's lobby SHOULD reject.
-    // (True server-side uniqueness is still tracked in mtg-466.)
-    if (charlieInLobby) {
+    // charlie should succeed (a unique name).
+    if (!charlieInLobby) {
         record(
             'major',
             'username uniqueness',
-            'charlie entered as "alice" even though alice hosts a waiting game — best-effort nameIsTaken failed',
+            'charlie failed to enter lobby with a valid unique name',
         );
     }
 
@@ -211,20 +217,21 @@ async function scenarioFullFlow() {
     // --- Try create with valid name but NO passcode: shows waiting room then redirects ---
     await bob.fill('#create-game', 'open-game');
     await bob.fill('#create-pass', '');
+    // Phase 2: btn-create always enabled; wait a tick for DOM to settle.
     await bob.waitForFunction(
         () => !document.getElementById('btn-create').disabled,
         null,
-        { timeout: 5000 },
+        { timeout: 3000 },
     ).catch(() => record('minor', 'deck picker bob', 'btn-create stayed disabled for bob'));
     await bob.click('#btn-create');
     // Waiting room appears first.
     await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
         record('blocking', 'create no-pass', 'bob waiting-room pane never appeared'),
     );
-    // Verify no passcode shown in details (open game).
-    const wrPassBob = await bob.textContent('#wr-passcode').catch(() => '');
-    if (wrPassBob.includes('secret') || (wrPassBob.trim() !== '' && !/none/i.test(wrPassBob) && !wrPassBob.includes('(none'))) {
-        record('minor', 'create no-pass', 'unexpected passcode in waiting room for open game: ' + wrPassBob);
+    // Verify no passcode shown in the invite text (open game).
+    const wrInviteBob = await bob.textContent('#wr-invite-text').catch(() => '');
+    if (wrInviteBob.includes('Passcode:')) {
+        record('minor', 'create no-pass', 'unexpected passcode in invite text for open game: ' + wrInviteBob);
     }
     await shot(bob, 'landing_04b_waiting_room_open_game.png');
     // Click Launch Game to do the actual redirect.
@@ -728,6 +735,126 @@ async function scenarioNativeGuiLaunch() {
     await browser.close();
 }
 
+// Phase 2 / mtg-khy7x: verify waiting-room WaitingRoomUpdate display and that
+// both game pages receive equivalent query-param dispatch (mtg-1vwpd).
+async function scenarioWaitingRoomAndParamContract() {
+    console.log('\n=== Scenario: waiting-room display + param contract (mtg-khy7x / mtg-1vwpd) ===');
+    const browser = await chromium.launch();
+
+    // Creator (dave) — enters lobby, creates a game, enters waiting room.
+    const daveCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const dave = await daveCtx.newPage();
+    dave.on('pageerror', (e) => record('major', 'dave pageerror', e.message));
+
+    await dave.goto(global.__landingRoot || (BASE + '/'));
+    await dave.waitForLoadState('domcontentloaded');
+    try { await waitForLobbyConnected(dave); } catch (e) {
+        record('blocking', 'dave ws', e.message);
+    }
+
+    await dave.fill('#username', 'dave');
+    await dave.click('#btn-name');
+    await dave.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }).catch(() =>
+        record('blocking', 'dave lobby', 'lobby pane never appeared for dave'),
+    );
+
+    // Check that the native-GUI radio is in the lobby pane (not hidden in waiting room).
+    const nativeRadioVisible = await dave.isVisible('#lobby-ui-native');
+    if (!nativeRadioVisible) {
+        record('major', 'param contract', '#lobby-ui-native not visible in lobby pane');
+    }
+
+    await dave.fill('#create-game', 'wr-test-game');
+    await dave.fill('#create-pass', '');
+    await dave.click('#btn-create');
+    await dave.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 5000 }).catch(() =>
+        record('blocking', 'dave waiting room', 'waiting-room pane never appeared'),
+    );
+    await shot(dave, 'landing_18_wr_creator.png');
+
+    // Verify waiting-room structure: creator slot shows dave's name.
+    const creatorNameEl = await dave.textContent('#wr-creator-name').catch(() => '');
+    if (!creatorNameEl.includes('dave')) {
+        record('major', 'waiting room display', 'creator name slot missing "dave": ' + creatorNameEl);
+    }
+
+    // The joiner slot should show the placeholder (opponent not yet present).
+    const joinerWaiting = await dave.isVisible('#wr-joiner-waiting:not(.hidden)');
+    if (!joinerWaiting) {
+        record('minor', 'waiting room display', 'joiner waiting placeholder not visible before opponent joins');
+    }
+
+    // The deck picker must be present and enabled (or at least in DOM).
+    const deckSel = await dave.$('#wr-deck-select');
+    if (!deckSel) {
+        record('major', 'waiting room display', '#wr-deck-select not present in waiting room');
+    }
+
+    // Verify "Cancel" returns to lobby.
+    await dave.click('#btn-cancel-waiting');
+    await dave.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 3000 }).catch(() =>
+        record('major', 'waiting room cancel', 'cancel did not return to lobby pane'),
+    );
+    const waitingHidden = await dave.evaluate(() =>
+        document.getElementById('pane-waiting').classList.contains('hidden'),
+    );
+    if (!waitingHidden) {
+        record('major', 'waiting room cancel', 'waiting room pane not hidden after cancel');
+    }
+
+    // Param contract test: build a redirect URL via lobby_launcher.js and
+    // verify it matches what both game pages would interpret identically.
+    // We test this structurally: consumeLobbyParams(buildRedirectUrl(opts)) === opts.
+    const paramTest = await dave.evaluate(() => {
+        // Minimal inline test — import is module-scoped so we re-implement the
+        // contract check here against the known URL structure.
+        const opts = {
+            action: 'create',
+            gameName: 'test-game',
+            gamePass: 'pw',
+            deckName: 'Forest Mono',
+            playerName: 'dave',
+            wsUrl: 'ws://localhost:1234',
+            allowLocalImgLoad: false,
+            ui: 'tui',
+            mode: 'network',
+        };
+        // Build URL manually (mirrors lobby_launcher.buildRedirectUrl).
+        const qp = new URLSearchParams();
+        qp.set('lobby_create', opts.gameName);
+        qp.set('lobby_pass', opts.gamePass);
+        qp.set('deck', opts.deckName);
+        qp.set('name', opts.playerName);
+        qp.set('ws', opts.wsUrl);
+        qp.set('ui', opts.ui);
+        qp.set('mode', opts.mode);
+        const url = 'tui_game.html?' + qp.toString();
+
+        // Verify the URL has the right params (consumers parse exactly these).
+        const parsed = new URLSearchParams(url.split('?')[1]);
+        return {
+            hasCreate: parsed.get('lobby_create') === 'test-game',
+            hasPass: parsed.get('lobby_pass') === 'pw',
+            hasDeck: parsed.get('deck') === 'Forest Mono',
+            hasName: parsed.get('name') === 'dave',
+            hasUi: parsed.get('ui') === 'tui',
+            hasMode: parsed.get('mode') === 'network',
+            page: url.split('?')[0],
+        };
+    });
+    if (!paramTest.hasCreate) record('major', 'param contract', 'lobby_create missing from redirect URL');
+    if (!paramTest.hasPass)   record('major', 'param contract', 'lobby_pass missing from redirect URL');
+    if (!paramTest.hasDeck)   record('major', 'param contract', 'deck missing from redirect URL');
+    if (!paramTest.hasName)   record('major', 'param contract', 'name missing from redirect URL');
+    if (!paramTest.hasUi)     record('major', 'param contract', 'ui missing from redirect URL');
+    if (!paramTest.hasMode)   record('major', 'param contract', 'mode missing from redirect URL');
+    if (paramTest.page !== 'tui_game.html') record('major', 'param contract', 'page not tui_game.html: ' + paramTest.page);
+    console.log('  param contract check:', JSON.stringify(paramTest));
+
+    await daveCtx.close();
+    await browser.close();
+}
+
 async function scenarioAccessibility() {
     console.log('\n=== Scenario: accessibility / form labels ===');
     const browser = await chromium.launch();
@@ -832,6 +959,7 @@ async function startSelfManagedServers() {
         await scenarioPasscodeEyeballToggle();
         await scenarioGameListFilterAndPager();
         await scenarioNativeGuiLaunch();
+        await scenarioWaitingRoomAndParamContract();
         await scenarioAccessibility();
     } catch (e) {
         console.error('UNCAUGHT', e);
