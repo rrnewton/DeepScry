@@ -6252,22 +6252,13 @@ mod tests {
     ///   SVar:DBPump:DB$ Effect | ReplacementEffects$ RPrevent1,RPrevent2
     ///                  | RememberObjects$ Targeted | ExileOnMoved$ Battlefield
     ///
-    /// Parser-shape regression: a non-mana-producing Land with a single
-    /// {T}-cost activated ability whose effects (a) untap target
-    /// attacking creature and (b) create a one-shot DamagePrevention
-    /// effect. Silent-drop of either half changes card identity (drop
-    /// the untap → can't undo the combat assignment; drop the
-    /// prevention → no damage stop).
-    ///
-    /// **Status — PARTIAL** at this commit: the loader keeps only the
-    /// primary `AB$ Untap` effect on the activated ability; the
-    /// `SubAbility$ DBPump` (`DB$ Effect | ReplacementEffects$
-    /// RPrevent1,RPrevent2`) is silently dropped. Net effect: Maze of
-    /// Ith untaps the creature but does NOT prevent its combat damage,
-    /// so the creature still deals damage that turn. Tracking this as a
-    /// parser/loader gap on the per-card issue (mtg-520). Once the
-    /// SubAbility chain is parsed we should add a stronger assertion
-    /// here and a puzzle/e2e for the "no damage dealt" outcome.
+    /// Parser-shape regression (mtg-520): both halves — Untap AND the
+    /// SubAbility$ damage-prevention effect — must parse. The fix emits
+    /// `Effect::PreventAllCombatDamageThisTurn` for the `DB$ Effect |
+    /// ReplacementEffects$ RPrevent1,RPrevent2 | RememberObjects$ Targeted`
+    /// sub-ability, and `assign_combat_damage` checks
+    /// `Card::prevent_all_combat_damage_this_turn` before assigning
+    /// any combat damage to or from the targeted creature.
     #[test]
     fn test_card_compat_maze_of_ith() {
         use std::path::PathBuf;
@@ -6295,8 +6286,7 @@ mod tests {
         );
 
         // Primary mode: Untap target attacking creature.
-        // This half IS exercised by the parser at HEAD.
-        let _untap_ability = card
+        let untap_ability = card
             .activated_abilities
             .iter()
             .find(|a| a.effects.iter().any(|e| matches!(e, Effect::UntapPermanent { .. })))
@@ -6304,6 +6294,22 @@ mod tests {
                 "Maze of Ith must have an Untap activated ability \
                  (untap target attacking creature).",
             );
+
+        // SubAbility (fix for mtg-520): PreventAllCombatDamageThisTurn must be
+        // present in the same activated ability's effect list. The target starts
+        // as a placeholder (CardId::new(0)) and is resolved at runtime from
+        // last_resolved_target (set by the preceding UntapPermanent).
+        let has_prevention = untap_ability
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::PreventAllCombatDamageThisTurn { .. }));
+        assert!(
+            has_prevention,
+            "Maze of Ith activated ability must have PreventAllCombatDamageThisTurn \
+             in its effect list (mtg-520 fix — DB$ Effect | ReplacementEffects$ RPrevent1,RPrevent2 \
+             must not be silently dropped). Got effects: {:?}",
+            untap_ability.effects
+        );
     }
 
     /// Card compat: Wrath of God (cardsfolder/w/wrath_of_god.txt)
@@ -6390,6 +6396,94 @@ mod tests {
             counter.get("ValidTgts"),
             Some("Instant"),
             "Flash Counter must restrict ValidTgts to Instant"
+        );
+    }
+
+    /// Card compat: Recall (cardsfolder/r/recall.txt) — mtg-535.
+    ///
+    /// Script:
+    ///   ManaCost:X X U
+    ///   Types:Sorcery
+    ///   A:SP$ Discard | Defined$ You | Mode$ TgtChoose | NumCards$ X
+    ///        | RememberDiscarded$ True | SubAbility$ DBChangeZone
+    ///   SVar:DBChangeZone:DB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
+    ///        | ChangeNum$ Y | ChangeType$ Card.YouOwn | SubAbility$ DBExile
+    ///   SVar:DBExile:DB$ ChangeZone | Origin$ Stack | Destination$ Exile
+    ///   SVar:X:Count$xPaid
+    ///   SVar:Y:Remembered$Amount
+    ///
+    /// Regression (mtg-535): Previously, the DBChangeZone sub-ability was silently
+    /// dropped because the ChangeZone converter matched `Origin$ Graveyard |
+    /// Destination$ Hand` without `Defined$` as `MoveSelfBetweenZones` (self-return).
+    /// The correct mapping for `ChangeNum$ Y` (Remembered$Amount) is
+    /// `ReturnCardsFromGraveyardToHand`, which reads `remembered_cards.len()` at
+    /// resolution time.
+    ///
+    /// Parser-shape assertions:
+    ///   1. {X}{X}{U} Sorcery — ManaCost parses with 2 generic X pips + 1 blue.
+    ///   2. SP$ Discard effect is present with RememberDiscarded$ True.
+    ///   3. ReturnCardsFromGraveyardToHand effect is present in the effect list
+    ///      (replacing the previous MoveSelfBetweenZones mis-mapping).
+    ///   4. SelfExileFromStack effect is present (Recall exiles itself).
+    #[test]
+    fn test_card_compat_recall() {
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/r/recall.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Recall should load");
+        assert_eq!(def.name.as_str(), "Recall");
+
+        // ManaCost: X X U — two X pips and one blue
+        assert_eq!(def.mana_cost.blue, 1, "Recall costs 1 blue");
+        assert!(def.types.contains(&CardType::Sorcery), "Recall is a Sorcery");
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // 1. Discard effect with RememberDiscarded$ True must be present.
+        let has_discard_remember = card.effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::DiscardCards {
+                    remember_discarded: true,
+                    ..
+                } | Effect::DiscardCardsXPaid {
+                    remember_discarded: true,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_discard_remember,
+            "Recall must have a Discard effect with remember_discarded=true; got: {:?}",
+            card.effects
+        );
+
+        // 2. ReturnCardsFromGraveyardToHand must be present (the fixed-mtg-535 shape).
+        //    Before the fix, this was incorrectly emitted as MoveSelfBetweenZones.
+        let has_return = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::ReturnCardsFromGraveyardToHand { .. }));
+        assert!(
+            has_return,
+            "Recall must have a ReturnCardsFromGraveyardToHand effect (mtg-535 fix); \
+             before the fix this was incorrectly MoveSelfBetweenZones. Got: {:?}",
+            card.effects
+        );
+
+        // 3. SelfExileFromStack must be present (Recall exiles itself from the stack).
+        let has_self_exile = card
+            .effects
+            .iter()
+            .any(|e| matches!(e, Effect::SelfExileFromStack { .. }));
+        assert!(
+            has_self_exile,
+            "Recall must have a SelfExileFromStack effect; got: {:?}",
+            card.effects
         );
     }
 

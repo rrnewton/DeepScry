@@ -85,6 +85,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::Clone { .. }
         | Effect::SelfExileFromStack { .. }
         | Effect::MoveSelfBetweenZones { .. }
+        | Effect::ReturnCardsFromGraveyardToHand { .. }
+        | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
         | Effect::GainLifeDynamic { .. }
@@ -203,6 +205,8 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::Clone { .. }
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
+            | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
             | Effect::GainLifeDynamic { .. }
@@ -2631,6 +2635,19 @@ impl GameState {
                 player: card_owner,
                 amount: *amount,
             },
+            // Recall's "return N cards from your graveyard" — always targets the
+            // spell's controller (Defined$ You). Resolve the player placeholder here
+            // so execute_effect sees the real PlayerId.
+            Effect::ReturnCardsFromGraveyardToHand { player } if player.is_placeholder() => {
+                Effect::ReturnCardsFromGraveyardToHand { player: card_owner }
+            }
+            // Maze of Ith's "prevent all combat damage": the target creature is the
+            // same creature targeted by the preceding UntapPermanent effect in the
+            // sub-ability chain. Reuse `last_resolved_target` (set by UntapPermanent).
+            Effect::PreventAllCombatDamageThisTurn { target } if target.is_placeholder() => {
+                let resolved = last_resolved_target.unwrap_or(*target);
+                Effect::PreventAllCombatDamageThisTurn { target: resolved }
+            }
             // Dynamic-amount life gain (Swords to Plowshares, Divine Offering).
             // Fill the `reference` card from the spell's targeted permanent and
             // the `player` from its `Defined$` selector:
@@ -4269,6 +4286,68 @@ impl GameState {
                 let owner = self.cards.get(*source)?.owner;
                 self.move_card(*source, *origin, *destination, owner)?;
             }
+            Effect::ReturnCardsFromGraveyardToHand { player } => {
+                // Recall: "return a card from your graveyard to your hand for each
+                // card discarded this way" (CR 400.7 / 701.25).
+                //
+                // The preceding DiscardCards effect stored each discarded card in
+                // `remembered_cards`. The count to return is `remembered_cards.len()`
+                // (= number of cards actually discarded, which may be less than X if
+                // the hand was smaller).
+                //
+                // Information-independence: we pick cards from the graveyard in stable
+                // order (lowest CardId first) so the choice is deterministic across
+                // server and both network clients. The graveyard is a public zone so
+                // revealing CardIds doesn't leak hidden information. The AI selects the
+                // best card to retrieve using `choose_card_to_retrieve_from_graveyard`.
+                let count = self.remembered_cards.len();
+                if count == 0 {
+                    // Nothing was remembered (nothing discarded) — nothing to return.
+                    return Ok(());
+                }
+                // Collect graveyard cards once so we can mutate the zone in the loop.
+                let graveyard_cards: smallvec::SmallVec<[CardId; 8]> = self
+                    .get_player_zones(*player)
+                    .map(|z| z.graveyard.cards.iter().copied().collect())
+                    .unwrap_or_default();
+                if graveyard_cards.is_empty() {
+                    self.logger.gamelog(&format!(
+                        "Recall effect: {} has no cards in graveyard to return",
+                        self.get_player(*player).ok().map(|p| p.name.as_str()).unwrap_or("?")
+                    ));
+                    return Ok(());
+                }
+                // For each card to return, pick the AI-preferred card still in graveyard.
+                let player_name = self
+                    .get_player(*player)
+                    .ok()
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let to_return = count.min(graveyard_cards.len());
+                for _ in 0..to_return {
+                    // Re-snapshot graveyard each iteration (previous iteration may
+                    // have moved a card out).
+                    let remaining: smallvec::SmallVec<[CardId; 8]> = self
+                        .get_player_zones(*player)
+                        .map(|z| z.graveyard.cards.iter().copied().collect())
+                        .unwrap_or_default();
+                    if remaining.is_empty() {
+                        break;
+                    }
+                    // Deterministic pick: lowest CardId (stable across server/clients).
+                    let chosen = *remaining.iter().min_by_key(|id| id.as_u32()).unwrap();
+                    let card_name = self
+                        .cards
+                        .try_get(chosen)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    self.move_card(chosen, Zone::Graveyard, Zone::Hand, *player)?;
+                    self.logger
+                        .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
+                }
+            }
             Effect::ConditionalSelfCounter {
                 source,
                 condition,
@@ -4897,6 +4976,35 @@ impl GameState {
                 self.logger.gamelog(&format!(
                     "The next time {} ({}) would deal damage to {} this turn, prevent that damage",
                     source_name, source, player_name
+                ));
+            }
+
+            Effect::PreventAllCombatDamageThisTurn { target } => {
+                // Maze of Ith: prevent all combat damage this creature would deal
+                // or receive this turn (CR 615 replacement, "prevent all combat
+                // damage that would be dealt to and dealt by CARDNAME this turn").
+                //
+                // Sets Card::prevent_all_combat_damage_this_turn; cleared at cleanup.
+                // `assign_combat_damage` checks this flag before dealing or receiving
+                // combat damage.
+                if target.is_placeholder() {
+                    log::debug!(
+                        target: "maze_of_ith",
+                        "PreventAllCombatDamageThisTurn: target is still placeholder, skipping"
+                    );
+                    return Ok(());
+                }
+                let card = self.cards.get_mut(*target)?;
+                card.prevent_all_combat_damage_this_turn = true;
+                let card_name = self
+                    .cards
+                    .get(*target)
+                    .map(|c| c.name.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                self.logger.gamelog(&format!(
+                    "Prevent all combat damage that would be dealt to and by {} ({}) this turn",
+                    card_name, target
                 ));
             }
 

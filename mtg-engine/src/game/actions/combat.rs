@@ -583,6 +583,13 @@ impl GameState {
                 continue; // This creature doesn't deal damage in this step
             }
 
+            // Maze of Ith: if this attacker has been targeted by Maze of Ith,
+            // all combat damage it would deal is prevented (CR 615). Skip it
+            // entirely in the damage-assignment loop.
+            if attacker.prevent_all_combat_damage_this_turn {
+                continue;
+            }
+
             // Use effective power (includes Equipment buffs)
             let mut remaining_power = self
                 .get_effective_power(attacker_id)
@@ -741,6 +748,21 @@ impl GameState {
 
                     if !blocker_deals_damage {
                         continue;
+                    }
+
+                    // Maze of Ith: if the blocker has been Maze'd, it deals no combat
+                    // damage (CR 615 — "prevent all combat damage that would be dealt
+                    // by CARDNAME this turn"). Skip if flagged.
+                    if blocker.prevent_all_combat_damage_this_turn {
+                        continue;
+                    }
+
+                    // Maze of Ith applied to the attacker: it receives no combat
+                    // damage from blockers this turn.
+                    if let Ok(att) = self.cards.get(attacker_id) {
+                        if att.prevent_all_combat_damage_this_turn {
+                            continue;
+                        }
                     }
 
                     // Use effective power (includes Equipment buffs)

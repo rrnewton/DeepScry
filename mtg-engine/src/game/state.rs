@@ -3920,6 +3920,8 @@ impl GameState {
                     | crate::core::Effect::Proliferate
                     | crate::core::Effect::SelfExileFromStack { .. }
                     | crate::core::Effect::MoveSelfBetweenZones { .. }
+                    | crate::core::Effect::ReturnCardsFromGraveyardToHand { .. }
+                    | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
                     | crate::core::Effect::Unimplemented { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }

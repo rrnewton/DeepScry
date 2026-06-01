@@ -857,6 +857,13 @@ pub struct Card {
     #[serde(default)]
     pub exile_if_would_die_this_turn: bool,
 
+    /// Maze of Ith: prevent ALL combat damage this creature would deal OR receive
+    /// this turn (CR 615 replacement effect, "prevent all combat damage dealt to
+    /// and dealt by CARDNAME"). Set by `Effect::PreventAllCombatDamageThisTurn`
+    /// and cleared in the cleanup step.
+    #[serde(default)]
+    pub prevent_all_combat_damage_this_turn: bool,
+
     /// Indices of exhausted activated abilities (can only be activated once per game)
     /// When an exhaust ability resolves, its index is added here to prevent reactivation
     pub exhausted_abilities: SmallVec<[usize; 1]>,
@@ -928,6 +935,7 @@ impl Card {
             damage_prevention: 0,
             x_paid: 0,
             exile_if_would_die_this_turn: false,
+            prevent_all_combat_damage_this_turn: false,
             exhausted_abilities: SmallVec::new(),
             definition,
         }

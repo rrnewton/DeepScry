@@ -1329,6 +1329,37 @@ pub enum Effect {
         destination: crate::zones::Zone,
     },
 
+    /// Maze of Ith: prevent all combat damage this creature would deal OR receive
+    /// this turn (CR 615, replacement effect "prevent all combat damage that would
+    /// be dealt to and dealt by CARDNAME this turn").
+    ///
+    /// Corresponds to `DB$ Effect | ReplacementEffects$ RPrevent1,RPrevent2 |
+    /// RememberObjects$ Targeted | ExileOnMoved$ Battlefield` which is the
+    /// SubAbility of Maze of Ith's Untap activated ability.
+    ///
+    /// Sets `Card::prevent_all_combat_damage_this_turn` on the targeted creature;
+    /// the flag is cleared at the cleanup step. `target` is `CardId::placeholder()`
+    /// from the loader and is filled at resolution from the preceding UntapPermanent
+    /// effect's target (via the `last_resolved_target` sub-ability chain).
+    PreventAllCombatDamageThisTurn { target: CardId },
+
+    /// Return up to N cards from a player's graveyard to their hand, where N is
+    /// determined at resolution time from `GameState::remembered_cards.len()`.
+    ///
+    /// Corresponds to `DB$ ChangeZone | Origin$ Graveyard | Destination$ Hand |
+    /// ChangeNum$ Y | ChangeType$ Card.YouOwn` where `SVar:Y:Remembered$Amount`.
+    /// Used by Recall: "return a card from your graveyard to your hand for each
+    /// card discarded this way" (the discard step stores cards in `remembered_cards`;
+    /// the count of cards to return equals `remembered_cards.len()`).
+    ///
+    /// The AI picks the best cards to return using `choose_card_to_retrieve_from_graveyard`.
+    /// The player is a placeholder until resolution, when it is bound to the
+    /// controller of the resolving spell.
+    ReturnCardsFromGraveyardToHand {
+        /// Player whose graveyard to return cards from.
+        player: PlayerId,
+    },
+
     /// Execute an inner effect only if the source card currently satisfies a
     /// counter-count condition (e.g. `ConditionPresent$ Card.counters_EQ0_SCREAM`).
     ///
@@ -1979,6 +2010,8 @@ impl Effect {
             // Self-zone-move and conditional-self wrappers operate on the source
             // card (Defined$ Self) — no cast-time target collection needed.
             | Effect::MoveSelfBetweenZones { .. }
+            | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             // Clone chooses which permanent to copy at resolution time (ETB
             // replacement), routed through the controller — there is no

@@ -1120,6 +1120,14 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) moves from {origin:?} to {destination:?}");
                 self.game.logger.gamelog(&message);
             }
+            Effect::ReturnCardsFromGraveyardToHand { .. } => {
+                // Individual card-return log lines are emitted inside execute_effect
+                // (one line per card returned). Nothing to surface at the top level.
+            }
+            Effect::PreventAllCombatDamageThisTurn { .. } => {
+                // The combat-damage prevention log line is emitted inside execute_effect
+                // ("Prevent all combat damage ... this turn"). Nothing to surface here.
+            }
             Effect::ConditionalSelfCounter { .. } => {
                 // The wrapper itself produces no log; the inner effect logs when
                 // (and if) it executes. Nothing to surface here.

@@ -461,6 +461,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                     shuffle: true, // Library searches always shuffle (MTG Rules 701.19b)
                 })
             }
+            // Recall: "return a card from your graveyard to your hand for each card
+            // discarded this way."
+            //
+            //   SVar:DBChangeZone:DB$ ChangeZone | Origin$ Graveyard
+            //     | Destination$ Hand | ChangeNum$ Y | ChangeType$ Card.YouOwn
+            //   SVar:Y:Remembered$Amount
+            //
+            // ChangeNum$ Y resolves to the number of cards stored in
+            // `GameState::remembered_cards` (i.e. the cards actually discarded
+            // in the preceding Discard step). We detect this pattern by looking
+            // for `Origin$ Graveyard | Destination$ Hand | ChangeNum$` which is
+            // the dynamic-count return. The Y value must have been set via the
+            // SVar mechanism; we don't look it up here — the runtime reads
+            // `remembered_cards.len()` instead.
+            else if params.get("Origin") == Some("Graveyard")
+                && params.get("Destination") == Some("Hand")
+                && params.contains_key("ChangeNum")
+            {
+                Some(Effect::ReturnCardsFromGraveyardToHand {
+                    player: PlayerId::placeholder(),
+                })
+            }
             // Return-self from a non-battlefield, non-stack zone to another zone.
             // E.g. A:AB$ ChangeZone | Origin$ Graveyard | Destination$ Hand
             //        | ActivationZone$ Graveyard
@@ -896,6 +918,25 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
         }
 
         ApiType::Effect => {
+            // Maze of Ith: DB$ Effect | ReplacementEffects$ RPrevent1,RPrevent2
+            //              | RememberObjects$ Targeted | ExileOnMoved$ Battlefield
+            //
+            // This pattern creates a "prevent all combat damage dealt to and by
+            // the targeted creature this turn" replacement effect. The target is
+            // derived from `last_resolved_target` in the sub-ability chain (the
+            // same creature that was untapped by the preceding AB$ Untap effect).
+            // Detect this pattern by checking for ReplacementEffects$ containing
+            // "RPrevent" (damage prevention replacement) plus RememberObjects$ Targeted.
+            if params.get("ReplacementEffects").is_some_and(|v| v.contains("RPrevent"))
+                && params.get("RememberObjects") == Some("Targeted")
+            {
+                return Some(Effect::PreventAllCombatDamageThisTurn {
+                    // Placeholder — resolved from last_resolved_target in
+                    // resolve_effect_target (the UntapPermanent target in the chain).
+                    target: CardId::new(0),
+                });
+            }
+
             // Effect ability: AB$ Effect | StaticAbilities$ X | RememberObjects$ Targeted
             // Creates a persistent effect that applies to remembered objects.
             //
