@@ -4,30 +4,38 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-06-01T00:58:29.466320424+00:00
-updated_at: 2026-06-01T00:58:29.466320424+00:00
+updated_at: 2026-06-01T06:00:07.613984650+00:00
 ---
 
 # Description
 
-NETARCH PRIMARY GOAL (user 2026-05-31, AFK autonomous): finish the network rearchitecture so web-based games use PROPER intra-turn rewind/replay for "blocking" instead of re-run-with-guards. This is the #1 priority to LAND FIRST (ahead of lobby/launcher). Lobby+server-protocol+launcher+deck-editor work proceeds in PARALLEL where it is SEPARABLE from netarch, but netarch agents get merge priority.
-
-DECISION: do NOT rebase PR#11 (wasm-rewind-replay, 3 ahead / 153 behind, touches the most-churned engine files combat/phase/steps/mod/state/undo/ai_harness). Reimplement FRESH on current integration, guided by the mtg-610 design + PR#11's documented learnings. PR#12 already closed (its ActionLog<T> code + docs already merged).
+NETARCH PRIMARY GOAL (user 2026-05-31, AFK autonomous): finish the network rearchitecture so web-based games use PROPER intra-turn rewind/replay for blocking instead of re-run-with-guards.
 
 THE GOAL STATE (from mtg-610 + action_log.rs invariants + NETWORK_ARCHITECTURE.md):
-- The monotonic, append-only, NON-DESTRUCTIVE action_log (ActionLog<T>, already on integration) is the SINGLE source of truth for all network-fed info to controllers AND to shadow-state updates.
-- WASM harness BLOCKS by rewind-to-checkpoint + replay-forward (re-evolving internal state, suppressing ONLY external effects: dup logging / network sends) — the SAME mechanism snapshot/resume already uses and passes. NOT re-run-from-top-of-step.
-- Delete the ~13 TurnStructure *_turn guard fields (draw_step_executed_turn, turn_state_reset_turn, attackers_declared_turn, blockers_declared_turn, combat_first_strike_damage_dealt_turn, combat_first_strike_priority_done_turn, combat_damage_dealt_turn, upkeep_triggers_checked_turn, end_step_triggers_checked_turn, draw_triggers_checked_turn, main1_delayed_fired_turn, main2_delayed_fired_turn) — they only exist to paper over re-run-without-rewind.
-- Same fix resolves mtg-559 (robots42 Copy Artifact in-stack-resolution re-entry) → robots42 re-joins the network gate.
+- The monotonic, append-only, NON-DESTRUCTIVE action_log (ActionLog<T>) is the SINGLE source of truth for all network-fed info to controllers AND shadow-state updates.
+- WASM harness BLOCKS by rewind-to-checkpoint + replay-forward, NOT re-run-from-top-of-step.
 
-THE BLOCKER PR#11 hit (must solve): destructively-consumed network inputs are not replayable on turn>=2 — controller.rs:309 view.take_pending_library_reorders() DRAINS; opponent side-channels. FIX: route these through the non-destructive action_log so replay reconstructs them (the action_log already declares CardRevealed/LibraryReordered as its StateSyncEntry payloads — wire the consumption to read-by-action_count, not drain).
+N1/N2/N3: DONE (merged @c93b3ba6). rewind+replay hash round-trip invariant proven for mid-resolution state.
 
-SEQUENCING (netarch decomposed into landable steps; each validate-gated + skeptic-gated, native byte-identical, STRICT native-vs-WASM DIVERGED:0):
-- N1: make library-reorders + opponent side-channel inputs flow through the non-destructive action_log (read-by-action_count, stop draining). Prove replay reconstructs them. (Unblocks the turn>=2 gap.)
-- N2: verify/extend undo.rs rewind for arbitrary MID-RESOLUTION / in-stack state (mtg-559 linchpin); add debug-assert hash round-trip invariant (rewind+replay returns to exact start hash).
-- N3: switch ai_harness step_harness to rewind+replay blocking (resume not re-run); add the debug hash-check.
-- N4: delete the TurnStructure guard family; re-enable robots42 in the network gate; confirm net SIMPLER (line count down).
-Each step can be its own commit/merge if it stands alone + validates; otherwise one branch netarch-rewind-replay.
+=== N4 RESULT (branch netarch-n4-guards, base c93b3ba6) — PARTIAL, EMPIRICALLY GATED ===
 
-PARALLEL (separable, non-netarch): lobby-server-protocol agent (RUNNING: Register/unique-name, waiting-game heartbeat/eviction mtg-dw9j3, deck+ready, reconnect tokens, bug-report infallibility, --help rewrite). Launcher/3-page web (mtg-khy7x) + deck editor — mostly JS/HTML, separable EXCEPT net_game_driver.js (Phase 3 native renderer) which DEPENDS on netarch landing first. Interleave merges; netarch first when conflicting.
+The N4 premise ('the ~13 guards are now REDUNDANT, delete them all') turned out to be FALSE for most guards. Each guard was removed ONE AT A TIME and full-validate-gated (STRICT native-vs-WASM DIVERGED:0 + 3-deck network mirror incl. All Hallow's Eve mtg-609 + snapshot/resume E2E + robots42 local 4/4). The deterministic network multi-deck mirror (web/test_network_multideck.js, All Hallow's Eve rogerbrand seed=3) is the sharpest desync canary.
 
-Refs: mtg-610 (arch, in_progress), mtg-559 (robots42), mtg-589 (desync family), mtg-614 (closed: old PR#11 attempt), action_log.rs, undo.rs, ai_harness.rs, snapshot_architecture.md, NETWORK_ARCHITECTURE.md, NETWORK_ACTION_LOG.md.
+REMOVED (2 commits, full-validate GREEN):
+- attackers_declared_turn (86847b14) — combat declare-attackers choice guard. Safe: rewind clears CombatState.
+- main1/main2_delayed_fired_turn (9b00fff0) — Mode$ Phase delayed-trigger guards. Safe: check_delayed_triggers_on_phase REMOVES+undo-logs each trigger on fire. CONCERN: no Mode$ Phase delayed trigger is exercised over the live WASM-network path (robots42/Mana Drain excluded per mtg-559); proven via snapshot/resume + native-vs-WASM + robots42-local instead.
+
+KEPT — removal causes a REAL, REPRODUCIBLE network desync (these guards are NOT redundant; the WASM-over-WebSocket harness does NOT fully suppress double-application without them):
+- upkeep/end_step/draw_triggers_checked_turn (shared check_phase_triggers guard_slot): removal → All Hallow's Eve upkeep trigger DOUBLE-FIRES (RemoveCounter Scream x2), P2 hash mismatch, multideck rogerbrand mirror 3/3 FAIL (local +6 actions @turn13). The mtg-609 fix is still load-bearing.
+- draw_step_executed_turn: removal → P2 hash mismatch @Turn2 Draw, action_count=86 (single-deck network e2e).
+- turn_state_reset_turn: removal → 'FATAL DESYNC: Local abilities (1)!=server abilities (0): [PlayLand]' — reset_turn_state re-zeroes lands_played on WASM re-entry (not undo-logged).
+- blockers_declared_turn: removal → P2 hash mismatch @action_count=961 rogerbrand mirror (local 1 BEHIND server; re-entry consumes wrong ChoiceRequest).
+- combat_first_strike_damage_dealt_turn / combat_first_strike_priority_done_turn / combat_damage_dealt_turn (3, tested together): removal → P2 hash mismatch @action_count=577 monored mirror (local +1; combat damage / first-strike priority re-applied on re-entry).
+
+ROOT CAUSE of the kept guards: the live ai_harness step_harness rewind+replay suppresses dup EXTERNAL effects but does NOT prevent re-application of these once-per-turn INTERNAL state mutations on a WASM GameLoop re-entry that does not rewind (or where the re-entry path differs from the snapshot/resume path the N3 work validated). The guards remain the correct mechanism for those events until the harness re-entry is proven to always rewind for them. Each kept guard is a precise, reproducible test case for remaining rewind-incompleteness.
+
+robots42 in network gate: still EXCLUDED. seed=42 mirror now passes 2/3 over network (improved by N1+N2) but still desyncs 1/3 at deep action_count (~1616) on Copy Artifact Clone / Balance in-stack resolution — the DISTINCT mtg-559 in-stack-resolution root cause, untouched by N4. Re-enabling would make the gate flaky. Leave excluded; mtg-559 stays open.
+
+NET: 2 of the 12 guards safely removed (net line-count down on those). N4 is a PARTIAL success with a strong negative result: the guard family is mostly NOT redundant under the current harness. Follow-up (new issue): make the live WASM step_harness re-entry rewind for the upkeep-trigger / draw / turn-state / blockers / combat-damage events so their guards can also be deleted.
+
+Refs: mtg-610 (arch), mtg-559 (robots42 in-stack), mtg-589 (desync family), mtg-609 (All Hallow's Eve upkeep double-fire — guard still needed), action_log.rs, undo.rs, ai_harness.rs, NETWORK_ARCHITECTURE.md.
