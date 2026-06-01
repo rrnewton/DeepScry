@@ -320,6 +320,20 @@ pub struct GameLoop<'a> {
     /// This is for network clients where the server is authoritative - the client
     /// waits for GameEnded from the server rather than detecting locally.
     defer_game_end_check: bool,
+
+    /// One-shot hook fired immediately after `setup_game()` completes (opening
+    /// hands drawn, libraries shuffled), BEFORE the first turn runs. Used by the
+    /// rewind/replay harnesses (WASM AI harness, the rewind/replay oracle) to
+    /// capture a clone of the turn-1-start game state.
+    ///
+    /// Turn 1 has no preceding `ChangeTurn` marker, so `rewind_to_turn_start`
+    /// would over-rewind past the (RNG-consuming) opening-hand draws and library
+    /// shuffle, which a local replay cannot reproduce. The harness instead holds
+    /// a full-state baseline captured here and restores it for turn-1 re-entries,
+    /// then replays the recorded intra-turn choices. Fires at most once per
+    /// `run_game` / `run_until_input` invocation; on a resume/replay re-entry,
+    /// `setup_game` is a no-op (undo log non-empty) so the hook does not fire.
+    post_setup_hook: Option<Box<dyn FnMut(&GameState) + 'a>>,
 }
 
 impl<'a> GameLoop<'a> {
@@ -358,7 +372,20 @@ impl<'a> GameLoop<'a> {
             local_player_id: None,
             pre_choice_hook: None,
             defer_game_end_check: false,
+            post_setup_hook: None,
         }
+    }
+
+    /// Register a one-shot hook fired right after `setup_game()` completes.
+    /// See the `post_setup_hook` field docs. Used by the rewind/replay harnesses
+    /// to snapshot the turn-1-start state (which `rewind_to_turn_start` cannot
+    /// reach, since turn 1 has no preceding `ChangeTurn` marker).
+    pub fn with_post_setup_hook<F>(mut self, hook: F) -> Self
+    where
+        F: FnMut(&GameState) + 'a,
+    {
+        self.post_setup_hook = Some(Box::new(hook));
+        self
     }
 
     /// Set maximum turns before forcing a draw
@@ -776,8 +803,25 @@ impl<'a> GameLoop<'a> {
         controller1: &mut dyn PlayerController,
         controller2: &mut dyn PlayerController,
     ) -> Result<GameResult> {
+        // Whether this is a FRESH game (empty undo log) vs a resume/replay
+        // re-entry (non-empty log), captured BEFORE setup_game runs. setup_game
+        // draws opening hands on a fresh start (logging MoveCards), so the log is
+        // no longer empty afterward — we must sample this first.
+        let is_fresh_start = self.game.undo_log.actions().is_empty();
+
         // Setup: verify controllers and shuffle libraries
         let (player1_id, player2_id) = self.setup_game(controller1, controller2)?;
+
+        // Fire the one-shot post-setup hook (rewind/replay harness turn-1-start
+        // snapshot). `.take()` ensures it fires at most once per GameLoop, and
+        // only after a FRESH setup_game (a resume/replay re-entry already holds
+        // its baseline and must not recapture a mid-turn state). See the
+        // `post_setup_hook` field docs.
+        if is_fresh_start {
+            if let Some(mut hook) = self.post_setup_hook.take() {
+                hook(self.game);
+            }
+        }
 
         // Main game loop - repeatedly run turns until game ends
         loop {
