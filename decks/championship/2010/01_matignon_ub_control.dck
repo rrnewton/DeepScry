@@ -1,0 +1,36 @@
+[metadata]
+Name=01 Matignon UB Control
+Description=2010 MTG World Championship (Chiba, Japan), 1st Place (World Champion). Guillaume Matignon (France). Blue-Black Control.
+
+[Main]
+3 Grave Titan
+2 Sea Gate Oracle
+2 Jace Beleren
+4 Jace, the Mind Sculptor
+4 Creeping Tar Pit
+4 Darkslick Shores
+4 Drowned Catacomb
+5 Island
+1 Misty Rainforest
+3 Swamp
+4 Tectonic Edge
+1 Verdant Catacombs
+4 Spreading Seas
+1 Cancel
+2 Consume the Meek
+2 Disfigure
+2 Doom Blade
+1 Duress
+3 Inquisition of Kozilek
+4 Mana Leak
+4 Preordain
+
+[Sideboard]
+1 Deprive
+2 Disfigure
+1 Doom Blade
+2 Duress
+2 Flashfreeze
+3 Memoricide
+3 Ratchet Bomb
+1 Sorin Markov
