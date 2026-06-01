@@ -1166,6 +1166,28 @@ impl UndoLog {
         game.pending_cycling_search = None;
         game.spell_targets.clear();
 
+        // Clear the server-side library-reorder broadcast queue (not tracked by
+        // the undo log). `pending_library_reorders` is a transient `RefCell<Vec>`
+        // populated by `scry_apply_decision` / `surveil_apply_decision` on the
+        // GOLDEN (non-shadow, network) state and drained by `NetworkController`
+        // when it assembles a `ChoiceRequest`. It is NOT a logged GameAction, so
+        // a rewind leaves whatever was queued at the rewind point — and a replay
+        // re-runs the scry/surveil and re-pushes the same entries, double-queuing
+        // a reorder that the original forward pass had already drained.
+        //
+        // Clearing it here makes rewind+replay re-derive the reorder broadcast
+        // identically: the same scry on replay re-enqueues exactly the same
+        // entries from a clean queue. This is the replay-safe counterpart of the
+        // non-destructive `state_sync` ActionLog on the client (the server side
+        // re-derives reorders from the library state, which IS undo-logged,
+        // rather than from a destructively-drained side queue) — see mtg-610 /
+        // docs/NETWORK_ACTION_LOG.md § 3.2. For current native play this is a
+        // no-op: the golden state is never rewound mid-game, and the server
+        // drains the queue at every ChoiceRequest within the turn, so it is
+        // already empty at any turn boundary. It only matters once server-side
+        // rewind+replay (or MCTS rollouts on the golden state) drive this path.
+        game.pending_library_reorders.borrow_mut().clear();
+
         // Clear combat state (not tracked by undo log).
         // CombatState is modified directly by declare_attacker/declare_blocker and
         // cleared at end_of_combat. After rewinding to turn start, combat hasn't
@@ -1726,5 +1748,58 @@ mod tests {
                  must NOT affect the Replay hash (bug-desync-seed41 regression)."
             );
         }
+    }
+
+    /// `rewind_to_turn_start` must clear the server-side
+    /// `pending_library_reorders` broadcast queue (mtg-610 / mtg-559).
+    ///
+    /// That queue is a transient `RefCell<Vec>` NOT tracked by the undo log; it
+    /// is populated by `scry`/`surveil` on the golden network state and drained
+    /// by `NetworkController`. If a rewind left a stale entry queued, a replay
+    /// would re-run the scry and re-enqueue the SAME reorder on top of the stale
+    /// one — double-broadcasting a `LibraryReordered` and desyncing the client
+    /// shadow. This test asserts the queue is empty after a rewind so replay
+    /// re-derives reorders from a clean queue (the replay-safe counterpart of
+    /// the non-destructive client-side `state_sync` ActionLog).
+    #[test]
+    fn rewind_to_turn_start_clears_pending_library_reorders() {
+        use crate::game::GameState;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1 = game.players[0].id;
+
+        // Establish a turn-2 boundary so the rewind has something to rewind TO.
+        let prior_log_size = game.logger.log_count();
+        game.undo_log.log(
+            GameAction::ChangeTurn {
+                from_player: p1,
+                to_player: p1,
+                turn_number: 2,
+                rng_state: None,
+            },
+            prior_log_size,
+        );
+
+        // Simulate a scry/surveil having queued a library-reorder broadcast for
+        // P1 (as `scry_apply_decision` does on the golden state). This is the
+        // stale-side-queue entry that a rewind must not leave behind.
+        game.pending_library_reorders.borrow_mut().push(p1);
+        assert_eq!(
+            game.pending_library_reorders.borrow().len(),
+            1,
+            "precondition: one reorder queued before rewind"
+        );
+
+        let mut undo_log = std::mem::take(&mut game.undo_log);
+        let result = undo_log.rewind_to_turn_start(&mut game);
+        game.undo_log = undo_log;
+        assert!(result.is_some(), "rewind_to_turn_start should succeed");
+
+        assert!(
+            game.pending_library_reorders.borrow().is_empty(),
+            "rewind_to_turn_start must clear pending_library_reorders so a replay \
+             re-derives the reorder broadcast from a clean queue (no double-broadcast). \
+             See mtg-610 / docs/NETWORK_ACTION_LOG.md § 3.2."
+        );
     }
 }
