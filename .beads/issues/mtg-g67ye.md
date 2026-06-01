@@ -1,0 +1,16 @@
+---
+title: Server sends immutable/max-age=1yr cache-control on 404s → Cloudflare caches 404s (cache poisoning)
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-05-31T20:29:56.409574444+00:00
+updated_at: 2026-05-31T20:29:56.409574444+00:00
+---
+
+# Description
+
+Found while reviewing the CF-purge question (live @9d125ae2). 404 responses for asset-like paths carry 'cache-control: public, max-age=31536000, immutable' and are cached by Cloudflare (cf-cache-status: HIT): /images/nope.jpg, /data/sets/nope.bin, /nope.html all reproduce it; an extension-less path (/totally-random-xyz-404) correctly gets NO cache-control. So the static/content-addressed cache-header middleware applies immutable headers by URL pattern BEFORE checking the response status.
+
+RISK (same family as mtg-wwzw8): a transient missing asset — e.g. a deploy race where index.json references a hash not yet rsynced, or a stale/mistyped early request — becomes a YEAR-LONG persistent 404 for that CF edge / client. This is a latent reliability hole, not just cosmetics.
+
+FIX: only apply immutable/long max-age when the response status is 200; serve 4xx/5xx as no-store (or short max-age). Code: the is_content_addressed / static-asset cache-header path in mtg-engine/src/web_server.rs. After fixing, a one-time CF purge (mtg-nisrk) clears already-poisoned 404s. Add a smoke assertion (web/test_web_server_smoke.js) that a 404 is NOT immutable.
