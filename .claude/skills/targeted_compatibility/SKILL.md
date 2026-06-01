@@ -166,6 +166,38 @@ subset of these probes:
       cost reducers (`Helm of Awakening`), color hosers (`CoP: Red`),
       and protection.
 
+### Targeting coverage (MANDATORY for any card that targets)
+
+A card whose targets can be a player is NOT "WORKING" until tested
+against **each distinct target type AND each player-perspective**. The
+single most common false-CLOSED is testing only one target type or only
+the self-cast perspective.
+
+- [ ] **"Any target" / "target creature or player"** — test with a
+      **creature** target AND with a **player** target. Both must
+      resolve correctly; do not assume the player case works because the
+      creature case did.
+- [ ] **Cross-player perspective** — when the effect is asymmetric or
+      controller-relative (`Defined$ You`, "deals N damage to you",
+      lifegain to controller, "you draw", etc.), test the case where the
+      **opponent casts it at you** (P2 casts targeting P1), not just a
+      self-cast or a heuristic-vs-heuristic game where caster and
+      beneficiary are ambiguous. The recipient of a "to you" rider is the
+      CASTER, regardless of who/what is targeted.
+- [ ] **Assert recipient IDENTITY, not just that a log line fired.**
+      Check *which* player's life total / which permanent actually
+      changed, by name, and the post-effect life total — e.g. for
+      "4 to any target and 2 to you" cast P2→P1, assert P1 lost 4 AND
+      P2 (the caster) lost 2. "Both halves logged" is necessary but NOT
+      sufficient; a wrong-recipient bug passes a naive "both fired" check.
+      (Real example: Psionic Blast mtg-533 was CLOSED but its self-damage
+      went to the target's controller instead of the caster on a
+      cross-player cast — never caught because only the self-context was
+      tested.)
+- [ ] **Player-only and creature-only targets** — for cards restricted
+      to one (`ValidTgts$ Player` / `ValidTgts$ Creature`), confirm the
+      other type is correctly rejected as an illegal target.
+
 ### Card-shape edge cases
 
 - [ ] **Split cards / fuse** — each half cast independently, fused
@@ -175,7 +207,12 @@ subset of these probes:
 - [ ] **Modal spells** — each mode chosen separately produces correct
       log evidence.
 - [ ] **X-cost** — X=0, X=1, X=large all behave correctly; X
-      announced on cast and locked.
+      announced on cast and locked. The controller must be **solicited
+      for X at cast time** with choices 0..N (N = max payable mana after
+      other costs) — confirm the choice is actually offered, not silently
+      defaulted to 0. (Real example: Mind Twist mtg-564 was CLOSED but
+      casting it never asked for X — see mtg-9yauo, the general
+      X-choice-at-cast gap.)
 - [ ] **Tokens created by the card** — token name, type line, P/T,
       keywords, colors match the printed instruction.
 
@@ -279,6 +316,14 @@ When an aspect resolves to BROKEN or PARTIAL:
 5. **Generalize** — find sibling cards affected by the same bug
    class. Either fix them in the same change or list them in the bug
    issue.
+6. **If the gap was in a card already marked CLOSED / WORKING**, the
+   test methodology was insufficient — harden THIS skill so the same
+   class of gap is caught next time. Add the missing check to the
+   relevant per-aspect checklist above (with a one-line real example),
+   and reopen the falsely-closed per-card issue at priority 2. This is a
+   standing instruction: every false-CLOSED discovery must leave the
+   skill stronger than it found it. (Origin: 2026-06-01 Psionic Blast +
+   Mind Twist false-CLOSED discoveries.)
 
 ## Stop conditions
 
