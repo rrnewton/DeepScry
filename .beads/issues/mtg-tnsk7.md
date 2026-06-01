@@ -4,10 +4,11 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-05-31T20:13:58.072105756+00:00
-updated_at: 2026-06-01T03:04:18.336220798+00:00
+updated_at: 2026-06-01T12:33:31.070756341+00:00
 ---
 
 # Description
+
 
 USER architectural requirement + CONFIRMED ROOT-CAUSE. Rules: engine knows no UI; shared UI logic knows no renderer; networking + player-controller logic is the SAME code for TUI and GUI — only the renderer differs (docs/NETWORK_ARCHITECTURE.md).
 
@@ -24,3 +25,6 @@ FIX LANDED (branch phase3-native-renderer):
 VERIFIED (web/test_network_native_renderer_e2e.js, manual): native #game-area engages (cards), NO #ratzilla-terminal exists, GUI view model reports a 2-player synced opening (turn 1), and the native renderer introduces NO new desync.
 
 DISCOVERED + FILED mtg-uzvu4 (separate, PRE-EXISTING, renderer-independent): the WASM Human controller in network mode desyncs at P2 turn-2 cleanup discard (server=f7ec406da80a882e client=3b7dd10b9f66711d at action_count=45). It reproduces IDENTICALLY through the unmodified ratzilla tui_game.html --human path with the same hash, regardless of deck — proving it is NOT introduced by this renderer work. Only the random-controller network path is in validate; --human is not. mtg-tnsk7 (renderer) is DONE; mtg-uzvu4 (Human-controller engine desync) tracks the remaining full-game sync.
+
+--- STATUS CORRECTION (2026-06-01) ---
+A prior note in this issue said 'mtg-tnsk7 (renderer) is DONE'. That is OVERSTATED: the ratzilla-free shared session split (create_and_install_network_session + launch_network_game_session) DID land and validate green, and native_game.html's network path was wired to render via the native card DOM — but it was NEVER play-tested end-to-end. In real play (user, 2026-05-31) the game FROZE after the first land. So the LAYERING refactor landed, but 'native renders a playable network game' is NOT proven. Keep OPEN; done = the mtg-35z3s end-to-end played-game test renders multiple full turns natively without freeze. The freeze itself is netarch (mtg-c9fuc / mtg-uzvu4). This issue stays open under the mtg-35z3s redo.

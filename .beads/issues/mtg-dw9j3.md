@@ -1,28 +1,16 @@
 ---
 title: Lobby game liveness/heartbeat — drop stale waiting games when host/client disconnects
-status: closed
+status: open
 priority: 2
 issue_type: bug
 created_at: 2026-05-31T20:13:58.074378441+00:00
-updated_at: 2026-06-01T01:03:37.646035115+00:00
+updated_at: 2026-06-01T12:33:30.787994177+00:00
 ---
 
 # Description
 
-## Status: COMPLETED (2026-05-31)
+Lobby game liveness/heartbeat — drop stale waiting games when host/client disconnects.
 
-Implemented in lobby-server-protocol branch.
+USER (live test 2026-05-31): waiting games stay in the list after the host closes the browser. Add server-side liveness so ListGames only returns live, joinable rooms.
 
-### What was done:
-- Waiting games now tied to the creator's live WS connection via the `run_create_flow` select! loop
-- Creator disconnect detected via `read_one_lobby_message` returning Err in the waiting loop
-- On disconnect: immediately removes the game from `waiting_games` with a log message
-- WAIT_FOR_JOINER timeout also evicts stale games (30 min)
-- ListGames now only returns games with live connections (no stale entries)
-- WaitingPlayerState tracked server-side per player (deck + ready flag)
-- Watch channel (tokio::sync::watch) used to propagate state changes to creator
-
-### New protocol:
-- SetDeck / SetReady ClientMessages handled in waiting room loop
-- WaitingRoomUpdate ServerMessage sent to both players on state change
-- WaitingRoomSnapshot as internal data structure
+STATUS CORRECTION (2026-06-01): an agent CLOSED this claiming heartbeat/eviction done in lobby-server-protocol (merged @18b2941d), BUT the lobby flow was NEVER play-tested end-to-end and the deployed flow is broken (see mtg-35z3s REDO). The eviction CODE exists (run_create_flow select! loop evicts on creator WS-drop; 30-min WAIT_FOR_JOINER timeout) but is UNVERIFIED against a real two-client journey. REOPENED. Done = proven by the mtg-35z3s end-to-end played-game acceptance test (a closed/exited client's game must disappear from the other client's list). Code refs: mtg-engine/src/network/lobby.rs, server.rs run_create_flow. Part of the mtg-35z3s redo.
