@@ -274,7 +274,8 @@ function check(cond, msg) {
 
         // Evaluate the localStorage write without triggering full navigation.
         // Directly trigger the click handler logic: save + set preselect key.
-        const preBeforeClick = await page.evaluate((key) => localStorage.getItem(key), LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect');
+        // eslint-disable-next-line no-unused-vars
+        const preBeforeClick = await page.evaluate(() => localStorage.getItem('mtg_lobby_deck_preselect'));
         await page.evaluate(() => {
             // Simulate: save deck and write preselect key, but intercept the navigation.
             const nameEl = document.getElementById('deck-name');
