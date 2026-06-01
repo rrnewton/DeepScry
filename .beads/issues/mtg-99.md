@@ -1,18 +1,24 @@
 ---
 title: 'TODO: overhaul snapshot serialization'
-status: open
+status: closed
 priority: 2
 issue_type: task
 labels:
-  - human
-created_at: "2025-10-27T06:51:48-07:00"
-updated_at: "2025-10-27T06:51:48-07:00"
+- human
+created_at: 2025-10-27T13:51:48+00:00
+updated_at: 2026-06-01T13:22:17.995181031+00:00
 ---
 
 # Description
 
-First, produce a criterion benchmark that times the saving of snapshot to disk. You probably want to play midway into a game to get a good representative snapshot to benchmark.
+## Snapshot serialization overhaul — DONE
 
-Second, stop pretty-printing the json snapshots. We don't need that and the user can always use `jq`.
+Closed 2026-06-01 gardening: DONE. All three requested items from the original description are implemented.
 
-Third, introduce a flag to control json/binary serialization, and make it binary by default. You should be able to use the same `Serialize` instance but with a different backend. You can use the `bincode` serde backend because we don't need them to be versioned, self-describing, or shared with non-Rust languages.
+1. Binary format as default: mtg-engine/src/main.rs line 337/509: '--json: Use JSON format for snapshots (default is binary format)'. The default is now binary (bincode).
+
+2. No more pretty-printed JSON (binary is default so this is moot; --json still works for debugging).
+
+3. Flag to control json/binary: the --json flag exists in both the TUI subcommand (line 337) and resume subcommand (line 509). SnapshotFormat enum at game/snapshot.rs selects the backend.
+
+Evidence: tests/snapshot_resume_e2e.sh covers 'stop-on-choice + resume in both bincode and JSON snapshot formats' (from mtg-414 description). main.rs line 1053 builds snapshot_format from the --json flag.
