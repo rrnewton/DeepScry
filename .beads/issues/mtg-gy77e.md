@@ -1,13 +1,24 @@
 ---
 title: 'Standardized + flexible test binary strategy: trusted env signal for prebuilt mtg binary + feature-flag encoding'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-05-31T20:13:58.073266180+00:00
-updated_at: 2026-05-31T20:18:40.478142222+00:00
+updated_at: 2026-06-01T13:35:06.726354360+00:00
 ---
 
 # Description
 
-Standardized+flexible test-binary strategy (USER). Run a test INDIVIDUALLY → it cargo build/runs (hermetic, exercises current code). Run under make validate → a TRUSTED env var tells it a fresh mtg binary is already built; it uses that prebuilt binary instead of re-invoking cargo (removes the cargo build-lock serialization that stalls validate — the mtg-sto4q symptom). The handshake also encodes the FEATURE FLAGS the binary was built with, so consumers verify the config and fail loud on mismatch. One shared helper for all e2e shell tests (tests/*.sh) + agentplay + smoke; wire via scripts/validate.sh.
-SUPERSEDES mtg-sto4q (closing it). Distinct from mtg-wvn3d (precheck false-positive).
+## Standardized flexible test binary strategy: trusted env signal for prebuilt mtg binary — DONE
+
+Closed 2026-06-01 gardening: DONE. The MTG_REUSE_PREBUILT / MTG_BIN pattern is implemented.
+
+Evidence: tests/lib/test_helpers.sh:42-68:
+- ensure_mtg_binary() function
+- MTG_BIN env var (default: $WORKSPACE_ROOT/target/release/mtg)
+- Fast path: if MTG_REUSE_PREBUILT=1 and binary exists, skip rebuild
+- Comments: 'CI builds mtg --release --features network ONCE in the Build release binary step, then runs the whole shell-script test binary; having each of the 26 scripts re-invoke cargo build was the single biggest contributor to the ~1046s serial shell-test time (mtg-578)'
+
+All 74 e2e tests call ensure_mtg_binary(). CI sets MTG_REUSE_PREBUILT=1 to avoid re-building. Local make validate still builds fresh (MTG_REUSE_PREBUILT not set).
+
+Feature flag encoding: MTG_BIN path + MTG_REUSE_PREBUILT=1 pattern; if the binary doesn't exist at the expected path, the test fails loudly.
