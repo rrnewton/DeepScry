@@ -1,10 +1,32 @@
 <!DOCTYPE html>
 <!--
-  launcher.html — PLACEHOLDER (Step 1 of mtg-35z3s lobby redo)
-  This page receives the lobby handoff params and will become the full
-  per-player pre-game launcher in Step 2 (deck collections + renderer pick).
-  TODO(mtg-35z3s): implement deck collections, renderer choice (native default /
-  TUI alternate), and the "Play" button that navigates to the game page.
+  launcher.html — the per-player pre-game launcher (mtg-35z3s lobby redo, page 2 of 4).
+
+  The lobby (index.html) hands off here via:
+    launcher.html?game=<name>&role=create|join&pass=<pw>&name=<user>&ws=<wsurl>
+    [&allow_local_img_load=true][&reconnect_token=<tok>]
+
+  This page lets ONE player pick, for THIS game:
+    - their deck (grouped into deck COLLECTIONS, not a flat dropdown), with a
+      "Deck Editor" launch button (deck_editor.html) for building custom decks;
+    - their renderer: Native GUI (DEFAULT) or Web TUI (alternate) — a per-player
+      experience detail chosen HERE, never on the lobby.
+
+  On "Play" it redirects to the matching game page (native_game.html by default,
+  tui_game.html if Web TUI is chosen), forwarding the FULL param contract:
+    &deck=<name>&ui=native|tui plus the inherited game/role/pass/name/ws/...
+
+  The deck-collections UX is lifted from tui_game.html's built-in launcher
+  (DECK_COLLECTIONS + the collection→deck dropdown wiring), generalized to ONE
+  player and made renderer-agnostic. The redirect itself reuses the shared
+  buildRedirectUrl() in lobby_launcher.js so the role→lobby_create/lobby_join
+  translation and param names live in exactly one place (DRY).
+
+  This page is WASM-FREE: deck names come from data/sets/index.json's `deck_names`
+  field (emitted by `mtg export-wasm` precisely so a deck picker can populate
+  without loading WASM), exactly like deck_editor.html loads its catalog. Custom
+  decks come from the shared `mtg-forge-custom-decks` localStorage key, the same
+  key deck_editor.html / the game pages write to.
 -->
 <html lang="en">
 <head>
@@ -12,107 +34,390 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeepScry &mdash; Launcher</title>
     <style>
+        :root {
+            --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
+            --border: #1a2a50; --text: #e6e6f0; --muted: #8a8aa0;
+            --accent: #4cc9f0; --gold: #ffd700;
+        }
+        * { box-sizing: border-box; }
         body {
-            margin: 0; padding: 0;
-            background: #0a0a14; color: #e6e6f0;
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            display: flex; align-items: center; justify-content: center;
+            margin: 0; padding: 24px;
+            background: var(--bg); color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: flex; align-items: flex-start; justify-content: center;
             min-height: 100vh;
         }
         .box {
-            background: #16213e;
-            border: 1px solid #1a2a50;
+            background: var(--surface);
+            border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 32px 36px;
-            max-width: 480px;
+            padding: 28px 32px;
+            max-width: 560px;
             width: 100%;
             box-shadow: 0 4px 16px rgba(0,0,0,0.4);
         }
-        h1 { color: #ffd700; font-size: 24px; margin: 0 0 8px; }
-        .step-label {
-            font-size: 11px; color: #4cc9f0; letter-spacing: 1px;
-            text-transform: uppercase; margin-bottom: 20px;
+        h1 { color: var(--gold); font-size: 24px; margin: 0 0 4px; }
+        .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+        .subtitle b { color: var(--accent); font-family: monospace; }
+        .field { margin-bottom: 20px; }
+        .field > label.field-label {
+            display: block; font-size: 11px; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px;
         }
-        dl {
-            display: grid; grid-template-columns: auto 1fr;
-            gap: 6px 14px; margin: 0 0 20px; font-size: 14px;
+        select {
+            width: 100%; padding: 8px 10px; font-size: 14px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 5px;
         }
-        dt { color: #8a8aa0; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; white-space: nowrap; }
-        dd { margin: 0; font-family: monospace; color: #ffd700; }
-        .todo {
-            background: #0f3460; border: 1px dashed #4cc9f0;
-            border-radius: 6px; padding: 14px 16px;
-            font-size: 13px; color: #8a8aa0; line-height: 1.6;
+        .deck-row { display: flex; gap: 8px; align-items: stretch; }
+        .deck-row select { flex: 1; }
+        .deck-editor-btn {
+            white-space: nowrap; padding: 8px 14px; font-size: 13px; cursor: pointer;
+            background: var(--surface-2); color: var(--accent);
+            border: 1px solid var(--accent); border-radius: 5px;
+            text-decoration: none; display: inline-flex; align-items: center;
         }
-        .todo strong { color: #4cc9f0; }
-        a { color: #4cc9f0; }
+        .deck-editor-btn:hover { background: #16406b; }
+        .renderer-toggle { display: flex; gap: 10px; }
+        .renderer-opt {
+            flex: 1; cursor: pointer; padding: 12px 14px; border-radius: 6px;
+            background: var(--surface-2); border: 2px solid var(--border);
+            display: flex; flex-direction: column; gap: 3px;
+        }
+        .renderer-opt input { margin: 0 6px 0 0; }
+        .renderer-opt.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .renderer-opt .ro-title { font-size: 14px; font-weight: 600; }
+        .renderer-opt .ro-title .badge {
+            font-size: 9px; color: var(--bg); background: var(--accent);
+            border-radius: 3px; padding: 1px 5px; margin-left: 6px;
+            text-transform: uppercase; letter-spacing: 0.5px; vertical-align: middle;
+        }
+        .renderer-opt .ro-desc { font-size: 11px; color: var(--muted); }
+        .play-row { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
+        #btn-play {
+            flex: 1; padding: 13px; font-size: 16px; font-weight: 700; cursor: pointer;
+            background: linear-gradient(135deg, #2a9d4a, #1f7d3a); color: #fff;
+            border: none; border-radius: 7px;
+        }
+        #btn-play:hover { filter: brightness(1.1); }
+        #btn-play:disabled { background: #2a2a40; color: #666; cursor: not-allowed; filter: none; }
+        .status { font-size: 12px; color: var(--muted); min-height: 1.2em; }
+        .status.error { color: #ff8080; }
+        .footer { margin-top: 22px; font-size: 12px; }
+        .footer a { color: var(--accent); }
+        .params-dump { margin-top: 14px; font-size: 11px; color: var(--muted); }
+        .params-dump summary { cursor: pointer; }
+        .params-dump dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 8px 0 0; }
+        .params-dump dt { text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+        .params-dump dd { margin: 0; font-family: monospace; color: var(--gold); word-break: break-all; }
     </style>
 </head>
 <body>
 <div class="box">
     <h1>Launcher</h1>
-    <p class="step-label">Step 1 placeholder &mdash; Step 2 coming soon</p>
+    <p class="subtitle" id="subtitle">Pre-game setup</p>
 
-    <p style="color: #8a8aa0; font-size: 13px; margin: 0 0 16px;">
-        Lobby handoff received. Params:
-    </p>
-
-    <dl id="params-dl">
-        <!-- populated by JS below -->
-    </dl>
-
-    <div class="todo">
-        <strong>TODO(mtg-35z3s) &mdash; Step 2</strong>: This page will become the full
-        per-player pre-game screen:<br>
-        &bull; Deck collections (3-pane layout, extracted from tui_game.html launcher)<br>
-        &bull; Renderer choice: <em>Native GUI</em> (default) or <em>Web TUI</em><br>
-        &bull; Deck Editor link<br>
-        &bull; "Play" button &rarr; navigates to native_game.html or tui_game.html with full params
+    <!-- Deck collection + deck picker (generalized from tui_game.html, one player) -->
+    <div class="field">
+        <label class="field-label" for="deck-collection">Deck Collection</label>
+        <select id="deck-collection">
+            <option value="old_school">Old School 1994</option>
+            <option value="booster_draft">Booster Draft</option>
+            <option value="commander">Commander</option>
+            <option value="custom">Custom Decks (Local)</option>
+        </select>
     </div>
 
-    <p style="margin-top: 20px; font-size: 12px; color: #8a8aa0;">
-        <a href="index.html">← Back to Lobby</a>
-    </p>
+    <div class="field">
+        <label class="field-label" for="deck-select">Deck</label>
+        <div class="deck-row">
+            <select id="deck-select"></select>
+            <a id="btn-deck-editor" class="deck-editor-btn" href="deck_editor.html" title="Open the Deck Editor">&#9998; Deck Editor</a>
+        </div>
+    </div>
+
+    <!-- Renderer toggle: Native (DEFAULT) vs Web TUI -->
+    <div class="field">
+        <label class="field-label">Renderer</label>
+        <div class="renderer-toggle" id="renderer-toggle">
+            <label class="renderer-opt selected" id="renderer-opt-native">
+                <span class="ro-title"><input type="radio" name="renderer" id="renderer-native" value="native" checked>Native GUI<span class="badge">Default</span></span>
+                <span class="ro-desc">Card-style graphical board (native_game.html).</span>
+            </label>
+            <label class="renderer-opt" id="renderer-opt-tui">
+                <span class="ro-title"><input type="radio" name="renderer" id="renderer-tui" value="tui">Web TUI</span>
+                <span class="ro-desc">Terminal-style text renderer (tui_game.html).</span>
+            </label>
+        </div>
+    </div>
+
+    <div class="field play-row">
+        <button id="btn-play" type="button">Play &rarr;</button>
+    </div>
+    <p class="status" id="status"></p>
+
+    <div class="footer">
+        <a href="index.html">&larr; Back to Lobby</a>
+    </div>
+
+    <details class="params-dump">
+        <summary>Lobby handoff params</summary>
+        <dl id="params-dl"></dl>
+    </details>
 </div>
 
-<script>
+<script type="module">
+import { buildRedirectUrl } from './lobby_launcher.js';
+
 (function () {
     'use strict';
-    var qs = new URLSearchParams(window.location.search);
-    var fields = [
-        ['game',            'Game Name'],
-        ['role',            'Role'],
-        ['pass',            'Passcode'],
-        ['name',            'Player Name'],
-        ['ws',              'Server URL'],
-        ['reconnect_token', 'Reconnect Token'],
-    ];
-    var dl = document.getElementById('params-dl');
-    var anyParam = false;
-    fields.forEach(function (pair) {
-        var key = pair[0];
-        var label = pair[1];
-        var val = qs.get(key);
-        if (!val) return;
-        anyParam = true;
-        var dt = document.createElement('dt');
-        dt.textContent = label;
-        var dd = document.createElement('dd');
-        dd.textContent = val;
-        dl.appendChild(dt);
-        dl.appendChild(dd);
-    });
-    if (!anyParam) {
-        var dt = document.createElement('dt');
-        dt.textContent = 'note';
-        var dd = document.createElement('dd');
-        dd.textContent = '(no params — reached directly, not via lobby)';
-        dd.style.color = '#8a8aa0';
-        dl.appendChild(dt);
-        dl.appendChild(dd);
+
+    // --- Parse and expose the lobby handoff params (preserved from placeholder). ---
+    const qs = new URLSearchParams(window.location.search);
+    const params = Object.fromEntries(qs.entries());
+    // Expose globally for Playwright test assertions.
+    window.__launcherParams = params;
+
+    const statusEl = document.getElementById('status');
+    function setStatus(msg, isError) {
+        statusEl.textContent = msg || '';
+        statusEl.classList.toggle('error', !!isError);
     }
-    // Expose params globally for Playwright test assertions.
-    window.__launcherParams = Object.fromEntries(qs.entries());
+
+    // --- Render the param dump (debug/visibility). ---
+    (function renderParamDump() {
+        const fields = [
+            ['game', 'Game'], ['role', 'Role'], ['pass', 'Passcode'],
+            ['name', 'Player'], ['ws', 'Server'], ['reconnect_token', 'Reconnect Token'],
+        ];
+        const dl = document.getElementById('params-dl');
+        let any = false;
+        for (const [key, label] of fields) {
+            const val = qs.get(key);
+            if (!val) continue;
+            any = true;
+            const dt = document.createElement('dt'); dt.textContent = label;
+            const dd = document.createElement('dd'); dd.textContent = val;
+            dl.appendChild(dt); dl.appendChild(dd);
+        }
+        if (!any) {
+            const dt = document.createElement('dt'); dt.textContent = 'note';
+            const dd = document.createElement('dd');
+            dd.textContent = '(no params — reached directly, not via lobby)';
+            dl.appendChild(dt); dl.appendChild(dd);
+        }
+    })();
+
+    // --- Subtitle reflecting the game/role. ---
+    (function renderSubtitle() {
+        const game = qs.get('game');
+        const role = qs.get('role');
+        const name = qs.get('name');
+        const sub = document.getElementById('subtitle');
+        if (game) {
+            const verb = role === 'join' ? 'Joining' : 'Hosting';
+            sub.innerHTML = `${verb} <b>${escapeHtml(game)}</b>` +
+                (name ? ` as <b>${escapeHtml(name)}</b>` : '') +
+                ' &mdash; pick your deck &amp; renderer.';
+        } else {
+            sub.textContent = 'Pre-game setup (opened directly, not via the lobby).';
+        }
+    })();
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
+    }
+
+    // ==================== DECK COLLECTIONS ====================
+    // Lifted from tui_game.html's built-in launcher and generalized to one
+    // player. The filters partition the WASM-free `deck_names` list (from
+    // data/sets/index.json) into named collections; 'custom' reads localStorage.
+    const DECK_COLLECTIONS = {
+        old_school: {
+            name: 'Old School 1994',
+            filter: (deckName) => deckName.includes('_') && (
+                /^\d\d_/.test(deckName) ||
+                deckName.includes('classic') ||
+                deckName.includes('erhnam') ||
+                deckName.includes('ponza') ||
+                deckName.includes('stasis') ||
+                deckName.includes('disco') ||
+                deckName.includes('zoo') ||
+                deckName.includes('monolith')
+            ),
+        },
+        booster_draft: {
+            name: 'Booster Draft',
+            filter: (deckName) => deckName.includes('avatar') || deckName.includes('spiderman'),
+        },
+        commander: {
+            name: 'Commander',
+            filter: (deckName) => deckName.includes('chandra_tokens'),
+        },
+        custom: {
+            name: 'Custom Decks (Local)',
+            filter: () => false, // handled separately from localStorage
+        },
+    };
+
+    // Shared with deck_editor.html / the game pages.
+    const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
+
+    // Built-in deck names, populated WASM-free from index.json.
+    let allDeckNames = [];
+
+    function getCustomDecks() {
+        try {
+            const saved = localStorage.getItem(CUSTOM_DECKS_KEY);
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            console.warn('Failed to load custom decks:', e);
+            return {};
+        }
+    }
+
+    const collectionSelect = document.getElementById('deck-collection');
+    const deckSelect = document.getElementById('deck-select');
+    const playBtn = document.getElementById('btn-play');
+
+    /** Populate the deck dropdown from the selected collection. */
+    function updateDeckDropdown() {
+        const collection = collectionSelect.value;
+        deckSelect.innerHTML = '';
+
+        if (collection === 'custom') {
+            const customDecks = getCustomDecks();
+            const names = Object.keys(customDecks).sort();
+            if (names.length === 0) {
+                deckSelect.appendChild(new Option('(No custom decks — use the Deck Editor)', ''));
+            } else {
+                for (const name of names) {
+                    const deck = customDecks[name];
+                    const count = (deck.main_deck || []).reduce((sum, pair) => sum + (pair[1] || 0), 0);
+                    deckSelect.appendChild(new Option(`${name} (${count} cards)`, name));
+                }
+            }
+        } else {
+            const cfg = DECK_COLLECTIONS[collection];
+            if (!cfg) {
+                collectionSelect.value = 'booster_draft';
+                updateDeckDropdown();
+                return;
+            }
+            const matching = allDeckNames.filter(cfg.filter);
+            if (matching.length === 0) {
+                deckSelect.appendChild(new Option('(No decks in this collection)', ''));
+            } else {
+                for (const name of matching) {
+                    deckSelect.appendChild(new Option(name, name));
+                }
+            }
+        }
+        refreshPlayEnabled();
+    }
+
+    function refreshPlayEnabled() {
+        playBtn.disabled = !deckSelect.value;
+    }
+
+    collectionSelect.addEventListener('change', updateDeckDropdown);
+    deckSelect.addEventListener('change', refreshPlayEnabled);
+
+    /** Load the built-in deck names WASM-free (same source deck_editor uses). */
+    async function loadDeckNames() {
+        try {
+            const r = await fetch('./data/sets/index.json', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const idx = await r.json();
+            allDeckNames = Array.isArray(idx.deck_names) ? idx.deck_names.slice() : [];
+            allDeckNames.sort();
+        } catch (err) {
+            console.warn('Could not load deck list from index.json:', err);
+            allDeckNames = [];
+            setStatus('Could not load the built-in deck list (run `make wasm-export`). ' +
+                'Custom decks still work.', true);
+        }
+        // Default to a populated built-in collection so a deck is preselected.
+        for (const key of ['booster_draft', 'old_school', 'commander']) {
+            if (allDeckNames.some(DECK_COLLECTIONS[key].filter)) {
+                collectionSelect.value = key;
+                break;
+            }
+        }
+        updateDeckDropdown();
+    }
+
+    // ==================== RENDERER TOGGLE ====================
+    // Native is the DEFAULT (radio `checked` in markup). Keep the visual
+    // 'selected' class in sync so the default is obvious.
+    const optNative = document.getElementById('renderer-opt-native');
+    const optTui = document.getElementById('renderer-opt-tui');
+    const radioNative = document.getElementById('renderer-native');
+    const radioTui = document.getElementById('renderer-tui');
+
+    function refreshRendererUI() {
+        const native = radioNative.checked;
+        optNative.classList.toggle('selected', native);
+        optTui.classList.toggle('selected', !native);
+    }
+    radioNative.addEventListener('change', refreshRendererUI);
+    radioTui.addEventListener('change', refreshRendererUI);
+    refreshRendererUI();
+
+    function selectedRenderer() {
+        return radioTui.checked ? 'tui' : 'native';
+    }
+
+    // ==================== PLAY ====================
+    playBtn.addEventListener('click', () => {
+        const deckName = deckSelect.value;
+        if (!deckName) {
+            setStatus('Pick a deck first.', true);
+            return;
+        }
+        const gameName = qs.get('game') || '';
+        if (!gameName) {
+            setStatus('No game to launch — open this page from the lobby.', true);
+            return;
+        }
+        const ui = selectedRenderer();
+        const role = qs.get('role') === 'join' ? 'join' : 'create';
+        const gamePass = qs.get('pass') || '';
+        const playerName = qs.get('name') || '';
+        const wsUrl = qs.get('ws') || '';
+        // Reuse the shared redirect builder: it performs the
+        // role→lobby_create/lobby_join translation (the form the game pages
+        // actually consume via consumeLobbyParams) and owns those param names,
+        // so this page never duplicates that contract (DRY). It also encodes
+        // &deck, &ui, &name, &ws, &mode and the reconnect token.
+        const baseUrl = buildRedirectUrl({
+            action: role,
+            gameName,
+            gamePass,
+            deckName,
+            playerName,
+            wsUrl,
+            allowLocalImgLoad: qs.get('allow_local_img_load') === 'true',
+            reconnectToken: qs.get('reconnect_token') || '',
+            ui,
+            mode: 'network',
+        });
+        // Also forward the lobby's own param names (game/role/pass) verbatim so
+        // the full inherited contract is present on the game-page URL alongside
+        // the lobby_create/lobby_join form. Harmless to the game pages (they
+        // ignore unknown params) and keeps the handoff self-describing.
+        const url = new URL(baseUrl, window.location.href);
+        url.searchParams.set('game', gameName);
+        url.searchParams.set('role', role);
+        if (gamePass) url.searchParams.set('pass', gamePass);
+        setStatus(`Launching ${ui === 'native' ? 'Native GUI' : 'Web TUI'}…`);
+        window.location.href = url.pathname.split('/').pop() + url.search;
+    });
+
+    // Kick off deck loading.
+    loadDeckNames();
 })();
 </script>
 </body>

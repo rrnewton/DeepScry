@@ -1,12 +1,18 @@
-// test_redo_lobby_e2e.js — Step 1 acceptance gate (mtg-35z3s lobby redo).
+// test_redo_lobby_e2e.js — lobby + launcher acceptance gate (mtg-35z3s lobby redo).
 //
-// Asserts the Step 1 contract:
+// Asserts the contract for pages 1 (lobby) and 2 (launcher):
 //   - Renderer selector (#lobby-ui-*) is ABSENT from the lobby.
 //   - Deck picker (#wr-deck-select) is ABSENT from the waiting room.
 //   - "Create" → waiting room → "Go to Launcher" navigates to
 //     launcher.html?game=<name>&role=create&name=<user>&ws=<wsurl>
 //     (no deck, no renderer, no lobby_create/lobby_join in URL).
-//   - The launcher placeholder page loads (200, displays received params).
+//   - The launcher page loads (200, displays received params).
+//   - The launcher exposes the per-player pre-game controls: a deck-COLLECTION
+//     picker, a renderer toggle with Native SELECTED BY DEFAULT, and a
+//     Deck-Editor launch button (linking to deck_editor.html).
+//   - Picking a deck + leaving renderer on Native → Play lands on
+//     native_game.html with deck=, ui=native, game=, name= in the URL.
+//   - Choosing Web TUI → Play lands on tui_game.html with ui=tui.
 //
 // Self-managed: spawns its own http.server + mtg server on random ports
 // (same pattern as test_landing_page_ux.js).
@@ -225,7 +231,7 @@ async function testLobbyToLauncherHandoff() {
             fail('no-old-lobby-create', 'lobby_create must NOT appear in launcher URL');
         }
 
-        // The launcher placeholder must display the received params.
+        // The launcher must display the received params (subtitle + dump).
         await page.waitForLoadState('domcontentloaded');
         await page.waitForTimeout(300);
         const bodyText = await page.textContent('body').catch(() => '');
@@ -275,6 +281,176 @@ async function testLobbyToLauncherHandoff() {
     await browser.close();
 }
 
+// ---------------------------------------------------------------------------
+// Test: launcher.html per-player controls + Play → game-page redirect
+// (mtg-35z3s page 2). Drives launcher.html directly with the param contract
+// the lobby produces, then exercises the deck picker + renderer toggle + Play.
+// ---------------------------------------------------------------------------
+async function testLauncherControlsAndPlay() {
+    console.log('\n=== Test: launcher.html controls + Play redirect (mtg-35z3s page 2) ===');
+    const browser = await chromium.launch();
+
+    // The launcher reads built-in decks from data/sets/index.json (WASM-free).
+    // To keep this test independent of whether `make wasm-export` has run, we
+    // seed ONE custom deck into localStorage and select the Custom collection,
+    // so a deck is always available to Play. (If built-ins are present they are
+    // also exercised by the deck-collection assertions below.)
+    const SEED = `localStorage.setItem('mtg-forge-custom-decks', JSON.stringify({
+        'E2E Test Deck': { main_deck: [['Mountain', 40]], sideboard: [] }
+    }));`;
+
+    const launcherUrl = (extra) => {
+        const qp = new URLSearchParams({
+            game: 'launch-test-game',
+            role: 'create',
+            pass: 'pw9',
+            name: 'launch-tester',
+            ws: WS_OVERRIDE,
+        });
+        if (extra) for (const [k, v] of Object.entries(extra)) qp.set(k, v);
+        return BASE + '/launcher.html?' + qp.toString();
+    };
+
+    async function openLauncher() {
+        const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+        const page = await ctx.newPage();
+        page.on('pageerror', (e) => fail('launcher-page-error', e.message));
+        // Seed localStorage before the page script runs.
+        await page.addInitScript(SEED);
+        await page.goto(launcherUrl(), { waitUntil: 'domcontentloaded' });
+        // Wait for the deck dropdown to be populated (async index.json fetch).
+        await page.waitForTimeout(500);
+        return { ctx, page };
+    }
+
+    // ---- (a) Controls present + Native default ----
+    {
+        const { ctx, page } = await openLauncher();
+
+        // Deck-COLLECTION picker present (grouping, not a flat all-decks list).
+        const collection = await page.$('#deck-collection');
+        if (collection) {
+            const optCount = await page.$$eval('#deck-collection option', (os) => os.length);
+            if (optCount >= 2) {
+                pass('launcher-collection', `deck-collection picker present (${optCount} collections)`);
+            } else {
+                fail('launcher-collection', 'deck-collection has too few options: ' + optCount);
+            }
+        } else {
+            fail('launcher-collection', '#deck-collection picker missing from launcher');
+        }
+
+        // Renderer toggle present.
+        const native = await page.$('input[name="renderer"][value="native"]');
+        const tui = await page.$('input[name="renderer"][value="tui"]');
+        if (native && tui) {
+            pass('launcher-renderer-toggle', 'renderer toggle present (native + tui options)');
+        } else {
+            fail('launcher-renderer-toggle', 'renderer toggle missing native/tui radios');
+        }
+
+        // Native must be the DEFAULT selection.
+        const nativeChecked = native ? await native.isChecked() : false;
+        const tuiChecked = tui ? await tui.isChecked() : false;
+        if (nativeChecked && !tuiChecked) {
+            pass('launcher-native-default', 'Native renderer selected by default');
+        } else {
+            fail('launcher-native-default',
+                `Native must be default; native=${nativeChecked} tui=${tuiChecked}`);
+        }
+
+        // Deck-Editor launch button/link present → deck_editor.html.
+        const deckEditor = await page.$('#btn-deck-editor');
+        if (deckEditor) {
+            const href = await deckEditor.getAttribute('href');
+            if (href && href.includes('deck_editor.html')) {
+                pass('launcher-deck-editor', 'Deck Editor button links to deck_editor.html');
+            } else {
+                fail('launcher-deck-editor', 'Deck Editor button href wrong: ' + href);
+            }
+        } else {
+            fail('launcher-deck-editor', '#btn-deck-editor missing from launcher');
+        }
+
+        await shot(page, '04_launcher_controls.png');
+        await ctx.close();
+    }
+
+    // ---- (b) Select deck + Native → Play → native_game.html with params ----
+    {
+        const { ctx, page } = await openLauncher();
+
+        // Switch to the Custom collection (where our seeded deck lives) and select it.
+        await page.selectOption('#deck-collection', 'custom');
+        await page.waitForTimeout(150);
+        await page.selectOption('#deck-select', 'E2E Test Deck').catch(() => {});
+        const chosen = await page.$eval('#deck-select', (s) => s.value).catch(() => '');
+        if (chosen === 'E2E Test Deck') {
+            pass('launcher-deck-select', 'custom deck selectable');
+        } else {
+            fail('launcher-deck-select', 'could not select seeded custom deck, got: ' + chosen);
+        }
+
+        // Native is default; click Play.
+        await page.click('#btn-play');
+        await page.waitForFunction(
+            () => /native_game\.html/.test(window.location.href),
+            null, { timeout: 5000 },
+        ).catch(() => fail('launcher-play-native', 'Play did not navigate to native_game.html'));
+
+        const url = page.url();
+        console.log('  native Play URL:', url);
+        const parsed = new URL(url);
+        const checks = [
+            ['deck', 'E2E Test Deck'],
+            ['ui', 'native'],
+            ['game', 'launch-test-game'],
+            ['name', 'launch-tester'],
+        ];
+        for (const [key, want] of checks) {
+            const got = parsed.searchParams.get(key);
+            if (got === want) {
+                pass('native-param-' + key, `${key}=${want}`);
+            } else {
+                fail('native-param-' + key, `expected ${key}=${want}, got: ${got}`);
+            }
+        }
+        await ctx.close();
+    }
+
+    // ---- (c) Choose Web TUI → Play → tui_game.html with ui=tui ----
+    {
+        const { ctx, page } = await openLauncher();
+        await page.selectOption('#deck-collection', 'custom');
+        await page.waitForTimeout(150);
+        await page.selectOption('#deck-select', 'E2E Test Deck').catch(() => {});
+
+        // Pick the Web TUI renderer.
+        await page.check('input[name="renderer"][value="tui"]');
+        await page.click('#btn-play');
+        await page.waitForFunction(
+            () => /tui_game\.html/.test(window.location.href),
+            null, { timeout: 5000 },
+        ).catch(() => fail('launcher-play-tui', 'Play (TUI) did not navigate to tui_game.html'));
+
+        const parsed = new URL(page.url());
+        console.log('  tui Play URL:', page.url());
+        if (parsed.searchParams.get('ui') === 'tui') {
+            pass('tui-param-ui', 'ui=tui on tui_game.html');
+        } else {
+            fail('tui-param-ui', 'expected ui=tui, got: ' + parsed.searchParams.get('ui'));
+        }
+        if (parsed.searchParams.get('deck') === 'E2E Test Deck') {
+            pass('tui-param-deck', 'deck forwarded to tui_game.html');
+        } else {
+            fail('tui-param-deck', 'deck not forwarded, got: ' + parsed.searchParams.get('deck'));
+        }
+        await ctx.close();
+    }
+
+    await browser.close();
+}
+
 (async () => {
     let spawned = null;
     if (!BASE) {
@@ -282,6 +458,7 @@ async function testLobbyToLauncherHandoff() {
     }
     try {
         await testLobbyToLauncherHandoff();
+        await testLauncherControlsAndPlay();
     } catch (e) {
         fail('harness', 'uncaught: ' + e.message);
         console.error(e);
