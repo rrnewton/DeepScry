@@ -184,16 +184,6 @@ pub struct TurnStructure {
     #[serde(skip)]
     pub turn_state_reset_turn: Option<u32>,
 
-    /// Tracks which turn the DeclareAttackers choice has already been made for.
-    /// Prevents re-asking the active player for attacker choices when the game loop resumes
-    /// after NeedInput (from the subsequent priority_round). Without this flag, when the
-    /// active player chose no attackers (no creatures tapped), re-entering declare_attackers_step
-    /// would find available attackers again and consume the wrong opponent choice message.
-    /// Auto-invalidates when turn_number changes.
-    /// Not serialized - this is transient within a single game session.
-    #[serde(skip)]
-    pub attackers_declared_turn: Option<u32>,
-
     /// Tracks which turn the DeclareBlockers choice has already been made for.
     /// Prevents re-asking the defending player for blocker choices when the game loop resumes
     /// after NeedInput (from the subsequent priority_round). Without this flag, re-entering
@@ -290,7 +280,6 @@ impl TurnStructure {
             consecutive_passes: 0,
             draw_step_executed_turn: None,
             turn_state_reset_turn: None,
-            attackers_declared_turn: None,
             blockers_declared_turn: None,
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
@@ -313,7 +302,6 @@ impl TurnStructure {
             consecutive_passes: 0,
             draw_step_executed_turn: None,
             turn_state_reset_turn: None,
-            attackers_declared_turn: None,
             blockers_declared_turn: None,
             combat_first_strike_damage_dealt_turn: None,
             combat_first_strike_priority_done_turn: None,
@@ -358,7 +346,6 @@ impl TurnStructure {
     pub fn reset_transient_guards(&mut self) {
         self.draw_step_executed_turn = None;
         self.turn_state_reset_turn = None;
-        self.attackers_declared_turn = None;
         self.blockers_declared_turn = None;
         self.combat_first_strike_damage_dealt_turn = None;
         self.combat_first_strike_priority_done_turn = None;

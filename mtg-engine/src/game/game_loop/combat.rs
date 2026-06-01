@@ -39,21 +39,20 @@ impl<'a> GameLoop<'a> {
             controller2
         };
 
-        // Check if the attacker declaration has already been done for this turn.
-        // This flag prevents re-asking the controller for attackers when the game loop resumes
-        // after a NeedInput return from priority_round(). Without this guard, when the active
-        // player chose no attackers (so no creatures are tapped), re-entering this function
-        // would find creatures available again and consume the wrong opponent choice from the
-        // network queue, causing a desync.
-        let current_turn = self.game.turn.turn_number;
-        let already_declared = self.game.turn.attackers_declared_turn == Some(current_turn);
+        // NETARCH N4 (mtg-53okw/mtg-610): the former attackers_declared_turn
+        // re-entry guard is gone. The WASM harness now blocks via rewind+replay,
+        // and rewind_to_turn_start clears CombatState (undo.rs), so the declare-
+        // attackers choice is presented exactly once on the forward pass and re-
+        // presented cleanly after a rewind. Proven by the full validate gate
+        // (STRICT native-vs-WASM DIVERGED:0 + 3-deck network mirror incl. the
+        // All Hallow's Eve mtg-609 scenario + robots42 4/4).
 
         // Get available creatures that can attack
         let available_creatures = self.get_available_attacker_creatures(active_player);
 
         // (combat debug logging removed after fixing combat state rewind bug)
 
-        if !available_creatures.is_empty() && !already_declared {
+        if !available_creatures.is_empty() {
             // Clear replay mode if all choices have been replayed
             // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
             // include the upcoming choice (which hasn't been presented yet)
@@ -180,12 +179,6 @@ impl<'a> GameLoop<'a> {
             // These are different from individual Attacks triggers which fire per-creature
             self.check_attackers_declared_triggers(active_player)?;
         }
-
-        // Mark attackers as declared for this turn so that if priority_round returns NeedInput
-        // and the game loop is re-entered, we skip the attacker declaration above. This prevents
-        // consuming the wrong opponent choice from the network queue when the active player
-        // chose no attackers (so no creatures were tapped as a signal that declaration is done).
-        self.game.turn.attackers_declared_turn = Some(current_turn);
 
         // MTG Rules 508.4: After attackers are declared, players receive priority
         if let Some(result) = self.priority_round(controller1, controller2)? {

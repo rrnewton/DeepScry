@@ -2529,7 +2529,6 @@ impl GameState {
             self.extra_combat_phases -= 1;
             self.turn.current_step = crate::game::Step::BeginCombat;
             // Reset combat-specific turn guards so combat steps work again
-            self.turn.attackers_declared_turn = None;
             self.turn.blockers_declared_turn = None;
             self.turn.combat_first_strike_damage_dealt_turn = None;
             self.turn.combat_first_strike_priority_done_turn = None;
