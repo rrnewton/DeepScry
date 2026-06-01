@@ -293,6 +293,26 @@ impl NetworkController {
                 action_count,
                 view.format_last_n_actions(30),
             );
+            // mtg-610: emit a BOUNDED tail of the server undo log at every choice
+            // point so the JS e2e harness can capture each to a file (keyed by
+            // action_count) and diff the one at the desync point against the WASM
+            // shadow's WASM_FULL_UNDO_DUMP. Bracketed with unique markers for
+            // byte-exact extraction. A desync surfaces near the tail, so a bounded
+            // 120-action window captures the divergence while staying O(1) per
+            // choice point (a full-log dump here is O(n^2) over a game and blows
+            // the gate log up to hundreds of MB). Gated behind
+            // MTG_NET_FULL_UNDO_DUMP=1 (in ADDITION to network-debug mode) so the
+            // routine gate stays quiet unless we are actively diagnosing a desync.
+            if std::env::var_os("MTG_NET_FULL_UNDO_DUMP").is_some() {
+                const FULL_UNDO_DUMP_TAIL: usize = 120;
+                log::warn!(
+                    "SERVER_FULL_UNDO_DUMP_BEGIN player={:?} choice_seq={} action_count={}\n{}SERVER_FULL_UNDO_DUMP_END",
+                    self.player_id,
+                    self.choice_seq + 1,
+                    action_count,
+                    view.format_last_n_actions(FULL_UNDO_DUMP_TAIL),
+                );
+            }
             Some(crate::game::build_debug_sync_info(view, 10, None, Some(self.player_id)))
         } else {
             None

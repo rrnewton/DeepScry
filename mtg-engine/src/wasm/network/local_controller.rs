@@ -228,6 +228,22 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                     action_count as i64 - local_action_count as i64,
                     view.format_last_n_actions(15),
                 );
+                // mtg-610: emit a BOUNDED tail of the WASM-shadow undo log so the
+                // JS e2e harness (which truncates console lines for display) can
+                // capture it to a file and diff it against the server's tail dump.
+                // Bracketed with unique markers for byte-exact extraction. A
+                // desync surfaces near the log tail (the diverging entries are the
+                // most recent), so 120 actions captures the divergence with the
+                // index prefix [NNNN] preserved for alignment, while staying
+                // bounded (no O(n) per-mismatch blowup on a long game).
+                const FULL_UNDO_DUMP_TAIL: usize = 120;
+                log::warn!(
+                    "WASM_FULL_UNDO_DUMP_BEGIN server={} local={} diff={}\n{}WASM_FULL_UNDO_DUMP_END",
+                    action_count,
+                    local_action_count,
+                    action_count as i64 - local_action_count as i64,
+                    view.format_last_n_actions(FULL_UNDO_DUMP_TAIL),
+                );
             } else {
                 log::trace!("WASM_ACTION_DUMP: last 30 actions:\n{}", view.format_last_n_actions(30),);
             }
