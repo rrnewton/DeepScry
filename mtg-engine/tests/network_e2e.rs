@@ -299,6 +299,24 @@ mod websocket_integration {
         }
     }
 
+    /// Helper to receive messages until `GameStarted` arrives, skipping
+    /// `WaitingForOpponent` and `WaitingRoomUpdate` which the server now
+    /// sends between the auth response and the actual game start.
+    async fn receive_game_started(
+        ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    ) -> Result<ServerMessage, Box<dyn std::error::Error>> {
+        loop {
+            let msg = receive_message(ws).await?;
+            match &msg {
+                ServerMessage::WaitingForOpponent | ServerMessage::WaitingRoomUpdate { .. } => {
+                    // These are expected pre-game messages; skip and keep waiting.
+                    continue;
+                }
+                _ => return Ok(msg),
+            }
+        }
+    }
+
     /// Test that the server accepts connections and authenticates clients
     #[tokio::test]
     async fn test_server_auth_flow() {
@@ -452,14 +470,14 @@ mod websocket_integration {
             _ => panic!("Expected AuthResult for client 2"),
         }
 
-        // Both clients should receive GameStarted
-        // Use a longer timeout since the server needs to set up the game
-        let game_start_1 = timeout(Duration::from_secs(5), receive_message(&mut ws1))
+        // Both clients should receive GameStarted (skipping any WaitingRoomUpdate messages).
+        // Use a longer timeout since the server needs to set up the game.
+        let game_start_1 = timeout(Duration::from_secs(10), receive_game_started(&mut ws1))
             .await
             .expect("Timeout waiting for GameStarted on client 1")
             .expect("Failed to receive GameStarted");
 
-        let game_start_2 = timeout(Duration::from_secs(5), receive_message(&mut ws2))
+        let game_start_2 = timeout(Duration::from_secs(10), receive_game_started(&mut ws2))
             .await
             .expect("Timeout waiting for GameStarted on client 2")
             .expect("Failed to receive GameStarted");
@@ -618,13 +636,13 @@ mod websocket_integration {
         // Get auth result for client 2
         let _ = receive_message(&mut ws2).await.expect("Auth result 2");
 
-        // Both should receive GameStarted
-        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+        // Both should receive GameStarted (skipping any WaitingRoomUpdate messages).
+        let game_started_1 = timeout(Duration::from_secs(10), receive_game_started(&mut ws1))
             .await
             .expect("Timeout waiting for GameStarted")
             .expect("Failed to receive GameStarted");
 
-        let _game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+        let _game_started_2 = timeout(Duration::from_secs(10), receive_game_started(&mut ws2))
             .await
             .expect("Timeout waiting for GameStarted")
             .expect("Failed to receive GameStarted");
@@ -809,13 +827,13 @@ mod websocket_integration {
 
         let _ = receive_message(&mut ws2).await.expect("Auth result 2");
 
-        // Both get GameStarted
-        let _ = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+        // Both get GameStarted (skipping any WaitingRoomUpdate messages).
+        let _ = timeout(Duration::from_secs(10), receive_game_started(&mut ws1))
             .await
             .expect("Timeout")
             .expect("GameStarted 1");
 
-        let _ = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+        let _ = timeout(Duration::from_secs(10), receive_game_started(&mut ws2))
             .await
             .expect("Timeout")
             .expect("GameStarted 2");
@@ -917,13 +935,13 @@ mod websocket_integration {
 
         let _ = receive_message(&mut ws2).await.expect("Auth result 2");
 
-        // Get GameStarted messages
-        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+        // Get GameStarted messages (skipping any WaitingRoomUpdate messages).
+        let game_started_1 = timeout(Duration::from_secs(10), receive_game_started(&mut ws1))
             .await
             .expect("Timeout")
             .expect("GameStarted 1");
 
-        let game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+        let game_started_2 = timeout(Duration::from_secs(10), receive_game_started(&mut ws2))
             .await
             .expect("Timeout")
             .expect("GameStarted 2");
@@ -1019,13 +1037,13 @@ mod websocket_integration {
 
         let _ = receive_message(&mut ws2).await.expect("Auth result 2");
 
-        // Get GameStarted messages
-        let game_started_1 = timeout(Duration::from_secs(10), receive_message(&mut ws1))
+        // Get GameStarted messages (skipping any WaitingRoomUpdate messages).
+        let game_started_1 = timeout(Duration::from_secs(10), receive_game_started(&mut ws1))
             .await
             .expect("Timeout")
             .expect("GameStarted 1");
 
-        let game_started_2 = timeout(Duration::from_secs(10), receive_message(&mut ws2))
+        let game_started_2 = timeout(Duration::from_secs(10), receive_game_started(&mut ws2))
             .await
             .expect("Timeout")
             .expect("GameStarted 2");
