@@ -26,6 +26,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { getRandomPorts } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -65,26 +66,17 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 30000,
-        });
-        await page.waitForFunction(() => {
-            const s = document.getElementById('p1-deck');
-            return s && s.options.length > 0;
-        }, { timeout: 30000 });
-
-        // Human (P1) vs heuristic (P2) — gives P1 real prompts to handle.
-        // Same deck both sides, seed 42 for reproducibility (matches the
-        // setup test_game_gui_bugfixes.js uses, where the human gets a
-        // priority prompt with several land/pass choices on turn 1).
-        const deck = await page.evaluate(() => document.getElementById('p1-deck').options[0].value);
-        await page.selectOption('#p1-deck', deck);
-        await page.selectOption('#p2-deck', deck);
-        await page.selectOption('#p1-controller', 'human');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.fill('#game-seed', '42');
-        await page.click('#btn-launch');
+        // mtg-35z3s page 3: native_game.html is a PURE renderer — boot via URL
+        // params. Human (P1) vs heuristic (P2) gives P1 real prompts to handle.
+        // Same deck both sides, seed 42 for reproducibility (matches the setup
+        // test_game_gui_bugfixes.js uses, where the human gets a priority prompt
+        // with several land/pass choices on turn 1).
+        const base = `http://localhost:${HTTP_PORT}`;
+        const deck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'native_game.html', {
+            deck, p1: 'human', p2: 'heuristic', seed: 42,
+        }), { waitUntil: 'networkidle', timeout: 30000 });
+        await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(2000);
 
         // Helper: read the GuiViewModel JSON directly out of WASM and

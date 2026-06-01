@@ -63,14 +63,16 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
+        // mtg-35z3s page 3: native_game.html is a PURE renderer with no built-in
+        // launcher / #p1-deck dropdown. A bare visit (no boot params) still runs
+        // WASM init fully then shows the "launch from the lobby" message, so we
+        // wait on the WASM-init signal (window.__mtg) instead of #p1-deck. This
+        // test then drives launch_game_session directly via the WASM bindings.
         await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
             waitUntil: 'networkidle',
             timeout: 30000,
         });
-        await page.waitForFunction(() => {
-            const s = document.getElementById('p1-deck');
-            return s && s.options.length > 0;
-        }, { timeout: 30000 });
+        await page.waitForFunction(() => !!window.__mtg, { timeout: 30000 });
         log('WASM module loaded, decks ready');
 
         // ===== Step 1: Confirm there is no #ratzilla-terminal in the DOM =====

@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 // Timestamped logging for correlation with server logs
 function log(message) {
@@ -77,23 +78,28 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // Navigate to the fancy TUI page
-        log('Loading fancy TUI page...');
+        // mtg-35z3s page 3: tui_game.html is now a PURE renderer with no
+        // built-in launcher — boot a local heuristic-vs-heuristic game directly
+        // from URL params instead of driving the (deleted) launcher form.
+        log('Loading fancy TUI page (local boot via params)...');
         const loadStart = Date.now();
-        await page.goto('http://localhost:8766/tui_game.html', {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        const base = 'http://localhost:8766';
+        const firstDeck = await firstBuiltinDeck(base);
+        log(`Selected deck for both players: ${firstDeck}`);
+        await page.goto(localGameUrl(base, 'tui_game.html', {
+            deck: firstDeck, p1: 'heuristic', p2: 'heuristic',
+        }), { waitUntil: 'networkidle', timeout: 60000 });
         testResults.steps.push({
             name: 'page_load',
             timestamp: new Date().toISOString(),
             durationMs: Date.now() - loadStart
         });
 
-        // Wait for WASM to initialize (launcher should be visible)
-        log('Waiting for WASM to load...');
+        // The page auto-launches from the params; the ratzilla terminal becomes
+        // visible once the game is rendering. Use that as the WASM-init signal.
+        log('Waiting for WASM to load + game to render...');
         const wasmStart = Date.now();
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         testResults.steps.push({
             name: 'wasm_init',
             timestamp: new Date().toISOString(),
@@ -118,49 +124,17 @@ async function runTest() {
         });
         log(`Status: ${status}`);
 
-        // Check available decks
-        const deckCount = await page.evaluate(() => {
-            return document.getElementById('p1-deck')?.options.length || 0;
-        });
-        log(`Available decks: ${deckCount}`);
-
-        if (deckCount === 0) {
-            throw new Error('No decks loaded! Make sure to run "mtg export-wasm" first.');
-        }
-
-        // Take screenshot before launching TUI
+        // Take screenshot of the rendered TUI.
         const screenshotDir = path.join(__dirname, 'screenshots');
         if (!fs.existsSync(screenshotDir)) {
             fs.mkdirSync(screenshotDir);
         }
-
         await page.screenshot({ path: path.join(screenshotDir, '01_setup.png'), fullPage: true });
         log('Screenshot: 01_setup.png');
 
-        // Select same deck for both players to avoid missing-card errors
-        const firstDeck = await page.evaluate(() => {
-            const sel = document.getElementById('p1-deck');
-            return sel?.options[0]?.value || '';
-        });
-        if (firstDeck) {
-            await page.evaluate((deck) => {
-                document.getElementById('p1-deck').value = deck;
-                document.getElementById('p2-deck').value = deck;
-            }, firstDeck);
-            log(`Selected deck for both players: ${firstDeck}`);
-        }
-
-        // Set both controllers to heuristic AI so turns auto-advance
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-
-        // Launch the fancy TUI
-        log('Clicking "Launch Fancy TUI" button...');
+        // The game already auto-launched from the boot params above; just time
+        // the render readiness.
         const launchStart = Date.now();
-        await page.click('#btn-launch');
-
-        // Wait for the RatZilla terminal to appear (it's a div, not canvas)
-        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
 
         // Wait for game controls to appear (indicates TUI is ready)
         await page.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });

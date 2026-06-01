@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { enableReplayVerifier } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 function log(message) {
     const timestamp = new Date().toISOString();
@@ -247,16 +248,20 @@ async function runTest() {
             testResults.errors.push(err.message);
         });
 
-        // Navigate to fancy TUI
-        log('Loading fancy TUI page...');
-        await page.goto('http://localhost:8767/tui_game.html', {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        // mtg-35z3s page 3: tui_game.html is a PURE renderer — boot a local
+        // Human(P1)-vs-Zero(P2) game from URL params (no launcher form). THIS
+        // test drives the human controller path so a deck is needed for both
+        // seats (same deck avoids missing-card errors).
+        log('Loading fancy TUI page (Human vs Zero, local boot via params)...');
+        const base = 'http://localhost:8767';
+        const firstDeck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'tui_game.html', {
+            deck: firstDeck, p1: 'human', p2: 'zero',
+        }), { waitUntil: 'networkidle', timeout: 60000 });
 
-        // Wait for WASM to initialize (launcher should be visible)
-        log('Waiting for WASM to load...');
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+        // Wait for the TUI to render (auto-launched from params).
+        log('Waiting for WASM to load + game to render...');
+        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         log('WASM loaded');
 
         // Enable rewind/replay verifier. THIS test exercises the human
@@ -268,30 +273,10 @@ async function runTest() {
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
 
-        // Select Human for P1 and Zero for P2
-        await page.selectOption('#p1-controller', 'human');
-        await page.selectOption('#p2-controller', 'zero');
-
-        // Select same deck for both players to avoid missing-card errors
-        await page.evaluate(() => {
-            const sel = document.getElementById('p1-deck');
-            const firstDeck = sel?.options[0]?.value || '';
-            if (firstDeck) {
-                sel.value = firstDeck;
-                document.getElementById('p2-deck').value = firstDeck;
-            }
-        });
-
-        // Take screenshot of setup
         const screenshotDir = path.join(__dirname, 'screenshots');
         if (!fs.existsSync(screenshotDir)) {
             fs.mkdirSync(screenshotDir);
         }
-
-        // Launch the TUI
-        log('Launching TUI with Human vs Zero...');
-        await page.click('#btn-launch');
-        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
         await page.waitForTimeout(500);
         await page.screenshot({ path: path.join(screenshotDir, 'human_01_initial.png'), fullPage: true });
 

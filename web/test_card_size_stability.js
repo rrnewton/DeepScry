@@ -22,6 +22,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { getRandomPorts } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -61,28 +62,19 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        // Explicitly gate OFF local images: they are optional / not
-        // version-controlled / absent on CI, and the default UX hides them
-        // anyway (see applyLocalImageGate in native_game.html). Passing
-        // ?allow_local_img_load=false documents that this test exercises the
-        // Scryfall/Gatherer cascade only and pins the gated-default code path.
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html?allow_local_img_load=false`, {
-            waitUntil: 'networkidle',
-            timeout: 30000,
-        });
-        await page.waitForFunction(() => {
-            const s = document.getElementById('p1-deck');
-            return s && s.options.length > 0;
-        }, { timeout: 30000 });
-
-        // Heuristic vs heuristic so the test never blocks waiting for human input.
-        const deck = await page.evaluate(() => document.getElementById('p1-deck').options[0].value);
-        await page.selectOption('#p1-deck', deck);
-        await page.selectOption('#p2-deck', deck);
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.fill('#game-seed', '42');
-        await page.click('#btn-launch');
+        // mtg-35z3s page 3: native_game.html is now a PURE renderer with no
+        // built-in launcher — boot the game directly from URL params
+        // (heuristic-vs-heuristic, seed 42, so the test never blocks on human
+        // input). Explicitly gate OFF local images (allow_local_img_load=false)
+        // to pin the Scryfall/Gatherer cascade, as before.
+        const base = `http://localhost:${HTTP_PORT}`;
+        const deck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'native_game.html', {
+            deck, p1: 'heuristic', p2: 'heuristic', seed: 42,
+            extra: { allow_local_img_load: 'false' },
+        }), { waitUntil: 'networkidle', timeout: 30000 });
+        // Wait for the native game area to render (replaces #launcher boot).
+        await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(2000);
 
         // Drive a few turns so each battlefield has a handful of permanents.

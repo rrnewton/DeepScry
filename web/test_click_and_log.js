@@ -15,6 +15,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { getRandomPorts, enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 function log(msg) {
     const ts = new Date().toISOString().substring(11, 23);
@@ -56,11 +57,13 @@ function log(msg) {
             await dialog.accept();
         });
 
-        // Navigate and wait for WASM
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle', timeout: 30000
-        });
-        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
+        // mtg-35z3s page 3: tui_game.html is a PURE renderer — boot a LOCAL
+        // human(P1)-vs-random(P2) game from URL params (no launcher form).
+        const base = `http://localhost:${HTTP_PORT}`;
+        const firstDeck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'tui_game.html', {
+            deck: firstDeck, p1: 'human', p2: 'random',
+        }), { waitUntil: 'networkidle', timeout: 30000 });
         log('Page loaded, WASM ready');
 
         // Enable rewind/replay verifier — this test exercises the human
@@ -70,24 +73,6 @@ function log(msg) {
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
 
-        // Wait for deck dropdowns
-        await page.waitForFunction(() => {
-            const select = document.getElementById('p1-deck');
-            return select && select.options.length > 0;
-        }, { timeout: 10000 });
-
-        // Select deck for both players
-        const firstDeck = await page.evaluate(() => document.getElementById('p1-deck').options[0].value);
-        await page.selectOption('#p1-deck', firstDeck);
-        await page.selectOption('#p2-deck', firstDeck);
-
-        // Use LOCAL mode: human P1, random P2
-        await page.selectOption('#game-mode', 'local');
-        await page.selectOption('#p1-controller', 'human');
-        await page.selectOption('#p2-controller', 'random');
-
-        log('Launching game...');
-        await page.click('#btn-launch');
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         log('Terminal visible');
 

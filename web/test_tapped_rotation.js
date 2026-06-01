@@ -21,6 +21,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { getRandomPorts } = require('./test_network_utils');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -57,22 +58,13 @@ function log(msg) {
         const browserErrors = [];
         page.on('pageerror', err => browserErrors.push(err.message));
 
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 30000,
-        });
-        await page.waitForFunction(() => {
-            const s = document.getElementById('p1-deck');
-            return s && s.options.length > 0;
-        }, { timeout: 30000 });
-
-        const deck = await page.evaluate(() => document.getElementById('p1-deck').options[0].value);
-        await page.selectOption('#p1-deck', deck);
-        await page.selectOption('#p2-deck', deck);
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.fill('#game-seed', '42');
-        await page.click('#btn-launch');
+        // mtg-35z3s page 3: native_game.html is a PURE renderer — boot via URL params.
+        const base = `http://localhost:${HTTP_PORT}`;
+        const deck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'native_game.html', {
+            deck, p1: 'heuristic', p2: 'heuristic', seed: 42,
+        }), { waitUntil: 'networkidle', timeout: 30000 });
+        await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(2000);
 
         // Drive enough turns that at least one creature attacks (and

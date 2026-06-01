@@ -56,6 +56,7 @@ const {
     enableReplayVerifier,
     extractTerminalText,
 } = require('./test_network_utils');
+const { parseDckIntoCustomDeck } = require('./game_boot_params');
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -130,85 +131,55 @@ async function launchBrowserClient(browser, httpPort, serverPort, mode, playerNa
         log(`[${playerName}] Page ERROR: ${err.message}`);
     });
 
-    // Navigate to tui_game.html (the game page, NOT the lobby)
-    await page.goto(`http://127.0.0.1:${httpPort}/tui_game.html`, {
-        waitUntil: 'networkidle',
-        timeout: 60_000,
-    });
-
-    // Wait for WASM to initialize
-    await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30_000 });
-    log(`[${playerName}] WASM loaded`);
-
-    // Enable replay verifier
-    const verifierOn = await enableReplayVerifier(page);
-    log(`[${playerName}] Replay verifier: ${verifierOn}`);
-
-    // Inject the deck content as a custom deck so any .dck file works
+    // mtg-35z3s page 3: tui_game.html is a PURE renderer with no built-in
+    // launcher. Boot the networked AI game ENTIRELY from URL params — the lobby
+    // param contract (lobby_create/lobby_join) + the new &controller= AI-driver
+    // override + &deck= pointing at a custom deck seeded into localStorage. This
+    // is exactly the spec's "AI controllers over networked web play" strategy.
     const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
     const displayName = deckNameMatch
         ? deckNameMatch[1].trim()
         : path.basename(DECK_NAME).replace(/\.(dck|txt)$/i, '');
 
-    const deckInjected = await page.evaluate(({ content, expectedName }) => {
-        if (typeof window.__mtg_test_import_and_select_deck !== 'function') {
-            return { ok: false, reason: 'page deck import hook unavailable' };
-        }
-        return window.__mtg_test_import_and_select_deck('p1', content, expectedName);
-    }, { content: deckContent, expectedName: displayName });
+    // Seed the deck into localStorage as a custom deck (the page's
+    // loadCardsForDecks reads + registers it by name). Works for ANY .dck,
+    // including ones outside the WASM export globs.
+    const customDeck = parseDckIntoCustomDeck(deckContent);
+    await page.addInitScript(({ name, deck }) => {
+        const KEY = 'mtg-forge-custom-decks';
+        let decks = {};
+        try { decks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { /* ignore */ }
+        decks[name] = deck;
+        localStorage.setItem(KEY, JSON.stringify(decks));
+    }, { name: displayName, deck: customDeck });
 
-    if (!deckInjected.ok) {
-        throw new Error(`[${playerName}] Failed to inject deck: ${deckInjected.reason}`);
-    }
-    log(`[${playerName}] Deck set to "${deckInjected.name}"`);
+    // Build the lobby boot URL: lobby_create/lobby_join + random AI controller.
+    const lobbyKey = mode === 'create' ? 'lobby_create' : 'lobby_join';
+    const qp = new URLSearchParams({
+        ws: `ws://127.0.0.1:${serverPort}`,
+        server_pass: SERVER_PASSWORD,
+        name: playerName,
+        deck: displayName,
+        controller: 'random',
+        mode: 'network',
+    });
+    qp.set(lobbyKey, GAME_NAME);
+    const bootUrl = `http://127.0.0.1:${httpPort}/tui_game.html?` + qp.toString();
+    await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60_000 });
+    log(`[${playerName}] Booted ${mode} "${GAME_NAME}" (network, random AI, deck "${displayName}")`);
 
-    // Switch to network mode
-    await page.selectOption('#game-mode', 'network');
-    await page.waitForSelector('#network-settings-group', { state: 'visible', timeout: 5_000 });
+    // Enable replay verifier
+    const verifierOn = await enableReplayVerifier(page);
+    log(`[${playerName}] Replay verifier: ${verifierOn}`);
 
-    // Fill connection settings
-    await page.fill('#server-url',      `ws://127.0.0.1:${serverPort}`);
-    await page.fill('#server-password', SERVER_PASSWORD);
-    await page.fill('#player-name',     playerName);
-
-    // Set random controller (auto-runs AI without needing Space key)
-    await page.selectOption('#p1-controller', 'random');
-
-    log(`[${playerName}] Settings filled (network, random, ${mode})`);
-
-    // Set the lobby action so the network client sends CreateGame or JoinGame
-    // on connection, bypassing the broken lobby.
-    await page.evaluate(({ gameMode, gameName, gamePass }) => {
-        // Use the WASM exports if available (injected by tui_game.html init)
-        if (gameMode === 'create' && typeof window.__mtg_network_set_lobby_create === 'function') {
-            window.__mtg_network_set_lobby_create(gameName, gamePass);
-            console.log(`[Test] Set lobby_create: ${gameName}`);
-        } else if (gameMode === 'join' && typeof window.__mtg_network_set_lobby_join === 'function') {
-            window.__mtg_network_set_lobby_join(gameName, gamePass);
-            console.log(`[Test] Set lobby_join: ${gameName}`);
-        } else {
-            // Fallback: set window.__mtg_lobby_action directly (consumed by launchTui)
-            window.__mtg_lobby_action = {
-                kind:         gameMode,
-                gameName:     gameName,
-                gamePassword: gamePass,
-            };
-            console.log(`[Test] Set __mtg_lobby_action: ${JSON.stringify(window.__mtg_lobby_action)}`);
-        }
-    }, { gameMode: mode, gameName: GAME_NAME, gamePass: '' });
-
-    // Launch the game
-    await page.click('#btn-launch');
-    log(`[${playerName}] Clicked launch`);
-
-    // Wait for terminal to appear
+    // Wait for terminal to appear (page auto-connects + renders on game ready)
     try {
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 20_000 });
         log(`[${playerName}] Game terminal appeared`);
     } catch (e) {
         const status = await page.evaluate(() =>
-            document.getElementById('network-status')?.textContent || 'no status');
-        log(`[${playerName}] Terminal not visible yet. Network status: "${status}"`);
+            document.getElementById('status')?.textContent || 'no status');
+        log(`[${playerName}] Terminal not visible yet. Status: "${status}"`);
         // Give it a bit more time
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 20_000 });
     }

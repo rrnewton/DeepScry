@@ -115,6 +115,10 @@ export function buildRedirectUrl(opts) {
  * @property {'tui'|'native'} ui
  * @property {'local'|'network'} mode     - game mode hint
  * @property {string}  reconnectToken     - may be '' (Phase 1 stub)
+ * @property {'human'|'heuristic'|'random'|'zero'} controller - our network
+ *           controller. Defaults to 'human' (a person plays the web client).
+ *           An explicit &controller= lets an AI drive the web client over the
+ *           network (the spec's AI-driver acceptance-test strategy, mtg-35z3s).
  */
 export function consumeLobbyParams() {
     const qs = new URLSearchParams(window.location.search);
@@ -124,6 +128,8 @@ export function consumeLobbyParams() {
 
     const ui = qs.get('ui') === 'native' ? 'native' : 'tui';
     const mode = qs.get('mode') === 'local' ? 'local' : 'network';
+    const ctrl = qs.get('controller');
+    const controller = ['human', 'heuristic', 'random', 'zero'].includes(ctrl) ? ctrl : 'human';
     return {
         action:         createName ? 'create' : 'join',
         gameName:       createName || joinName || '',
@@ -135,7 +141,112 @@ export function consumeLobbyParams() {
         reconnectToken: qs.get('reconnect_token')  || '',
         ui,
         mode,
+        controller,
     };
+}
+
+// ---------------------------------------------------------------------------
+// consumeLocalGameParams — local (non-network) boot params for the game pages
+// ---------------------------------------------------------------------------
+
+/**
+ * After the lobby-redo (mtg-35z3s page 3) the game pages are PURE renderers
+ * with no built-in launcher: they boot entirely from URL params. The network
+ * boot uses `consumeLobbyParams()` (lobby_create/lobby_join). For LOCAL
+ * (AI-vs-AI / dev / renderer-test) boots there is no lobby, so the page
+ * accepts an explicit local-game param contract instead:
+ *
+ *   ?mode=local                  → boot a local game (no network)
+ *   &p1_deck=<deck_name>         → Player 1 (our) deck   (required)
+ *   &p2_deck=<deck_name>         → Player 2 (opponent) deck (defaults to p1_deck)
+ *   &p1=human|heuristic|random|zero   → P1 controller (default: heuristic)
+ *   &p2=human|heuristic|random|zero   → P2 controller (default: heuristic)
+ *   &seed=<u64>                  → RNG seed (default: time-based / random)
+ *   &debug=true                  → enable TRACE logging
+ *
+ * Returns `null` when `mode` is not `local` OR no `p1_deck` is supplied, so the
+ * caller can fall back to the network path / the "launch from the lobby"
+ * degraded message. Kept here (not duplicated per page) so both game pages
+ * share one parser (DRY).
+ *
+ * @returns {LocalGameParams|null}
+ *
+ * @typedef {object} LocalGameParams
+ * @property {string} p1Deck
+ * @property {string} p2Deck
+ * @property {'human'|'heuristic'|'random'|'zero'} p1Controller
+ * @property {'human'|'heuristic'|'random'|'zero'} p2Controller
+ * @property {string} seed              - '' means "pick one"
+ * @property {boolean} debug
+ */
+export function consumeLocalGameParams() {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('mode') !== 'local') return null;
+    const p1Deck = qs.get('p1_deck') || '';
+    if (!p1Deck) return null;
+    const ctrl = (v, dflt) =>
+        ['human', 'heuristic', 'random', 'zero'].includes(v) ? v : dflt;
+    return {
+        p1Deck,
+        p2Deck:       qs.get('p2_deck') || p1Deck,
+        p1Controller: ctrl(qs.get('p1'), 'heuristic'),
+        p2Controller: ctrl(qs.get('p2'), 'heuristic'),
+        seed:         qs.get('seed') || '',
+        debug:        qs.get('debug') === 'true',
+    };
+}
+
+/**
+ * Network boot WITHOUT a lobby action (auto-match). The normal lobby flow
+ * carries a `lobby_create=`/`lobby_join=` game name (handled by
+ * consumeLobbyParams). But the server can also auto-match two connecting
+ * clients into one game when neither names a game — this is what the network
+ * AI-vs-AI e2e harness relies on (the native `mtg connect` client and the web
+ * client just connect and get paired). Such a boot is requested with
+ * `?mode=network` and NO lobby_create/lobby_join:
+ *
+ *   ?mode=network&ws=<ws>&name=<name>&deck=<deck>&controller=random[&server_pass=]
+ *
+ * Returns `null` unless `mode=network` AND there is no lobby_create/lobby_join
+ * (so the lobby flow keeps priority). The resulting boot connects with a `null`
+ * lobby action — i.e. server auto-match.
+ *
+ * @returns {NetworkParams|null}
+ *
+ * @typedef {object} NetworkParams
+ * @property {string} deckName
+ * @property {string} playerName
+ * @property {string} wsUrl
+ * @property {string} serverPass
+ * @property {'human'|'heuristic'|'random'|'zero'} controller
+ */
+export function consumeNetworkParams() {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get('mode') !== 'network') return null;
+    if (qs.get('lobby_create') || qs.get('lobby_join')) return null; // lobby flow owns these
+    const ctrl = qs.get('controller');
+    const controller = ['human', 'heuristic', 'random', 'zero'].includes(ctrl) ? ctrl : 'human';
+    return {
+        deckName:   qs.get('deck')        || '',
+        playerName: qs.get('name')        || '',
+        wsUrl:      qs.get('ws')          || '',
+        serverPass: qs.get('server_pass') || '',
+        controller,
+    };
+}
+
+/**
+ * True when the page was opened with NEITHER a lobby (network) boot param NOR a
+ * local-game boot param NOR a no-lobby network boot — i.e. a bare direct visit.
+ * The game pages use this to decide whether to show the "launch from the lobby"
+ * degraded message instead of a (now-deleted) built-in launcher.
+ *
+ * @returns {boolean}
+ */
+export function hasNoLaunchParams() {
+    return consumeLobbyParams() === null
+        && consumeLocalGameParams() === null
+        && consumeNetworkParams() === null;
 }
 
 // ---------------------------------------------------------------------------

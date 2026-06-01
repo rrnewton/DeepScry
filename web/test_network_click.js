@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { getRandomPorts } = require('./test_network_utils');
+const { pickBuiltinDeck } = require('./game_boot_params');
 
 // Configuration - ports allocated dynamically below
 const SERVER_PASSWORD = 'clicktest';
@@ -119,41 +120,24 @@ function log(msg) {
             await dialog.accept();
         });
 
-        // Navigate to tui_game.html
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle', timeout: 30000
-        });
-        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
-        log('Page loaded, WASM ready');
-
-        // Wait for deck dropdowns
-        await page.waitForFunction(() => {
-            const select = document.getElementById('p1-deck');
-            return select && select.options.length > 0;
-        }, { timeout: 10000 });
-
-        // Configure NETWORK mode
-        await page.selectOption('#game-mode', 'network');
-        // Set server connection details (field IDs: server-url, server-password, player-name)
-        await page.evaluate(({port, password}) => {
-            document.getElementById('server-url').value = `ws://localhost:${port}`;
-            document.getElementById('server-password').value = password;
-            document.getElementById('player-name').value = 'TestP1';
-        }, {port: SERVER_PORT, password: SERVER_PASSWORD});
-
-        // Select deck and controller
-        const deckOptions = await page.evaluate(() => {
-            const select = document.getElementById('p1-deck');
-            return Array.from(select.options).map(o => o.value);
-        });
-        const targetDeck = deckOptions.find(d => d.includes('rogue')) || deckOptions[0];
-        await page.selectOption('#p1-deck', targetDeck);
-        await page.selectOption('#p1-controller', 'human');
+        // mtg-35z3s page 3: tui_game.html is a PURE renderer — boot NETWORK mode
+        // (auto-match: no game name, server pairs us with the native heuristic
+        // client) from URL params. Built-in deck (in the WASM glob) so no
+        // localStorage seeding needed; human controller (this test drives
+        // choices via keyboard).
+        const base = `http://localhost:${HTTP_PORT}`;
+        const targetDeck = await pickBuiltinDeck(base, /rogue/);
         log(`Selected deck: ${targetDeck}`);
-
-        // Launch game
-        log('Clicking Launch...');
-        await page.click('#btn-launch');
+        const bootUrl = `${base}/tui_game.html?` + new URLSearchParams({
+            mode: 'network',
+            ws: `ws://localhost:${SERVER_PORT}`,
+            server_pass: SERVER_PASSWORD,
+            name: 'TestP1',
+            deck: targetDeck,
+            controller: 'human',
+        }).toString();
+        await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        log('Page loaded, WASM ready (network auto-match boot)');
 
         // Wait for terminal to appear (game connected and started)
         await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 60000 });

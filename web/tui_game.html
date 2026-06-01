@@ -671,7 +671,6 @@
         <a href="native_game.html">Web GUI</a>
         <span id="status">Loading...</span>
         <span id="card-status" style="color: #888; font-size: 12px;"></span>
-        <button id="btn-load-all-cards" style="display: none; background: #4361ee; color: white; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;">Load All Cards</button>
     </div>
 
     <!-- Exit confirmation dialog -->
@@ -747,191 +746,27 @@
         </div>
     </div>
 
-    <!-- Three-pane launcher -->
-    <div id="launcher" class="launcher-container">
-        <!-- Global Options Pane (top) -->
-        <div class="global-pane">
-            <h2>Global Options</h2>
-            <div class="global-options">
-                <div class="pane-row">
-                    <label>Game Mode</label>
-                    <select id="game-mode" style="min-width: 180px;">
-                        <option value="local">Local Game (vs AI)</option>
-                        <option value="network">Custom Network Game</option>
-                    </select>
-                </div>
-
-                <div class="pane-row" style="margin-bottom: 0;">
-                    <label>Seed (determinism)</label>
-                    <input type="number" id="game-seed" placeholder="Random" style="width: 120px;">
-                    <span class="hint">Leave empty for random</span>
-                </div>
-
-                <div>
-                    <div class="checkbox-row">
-                        <input type="checkbox" id="show-card-images">
-                        <label for="show-card-images">Show Card Images</label>
-                    </div>
-                    <div class="image-sources" id="image-source-options">
-                        <label id="img-src-local-label"><input type="checkbox" id="img-src-local" checked> Local (fastest, offline)</label>
-                        <label><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
-                        <label><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
-                        <div id="img-src-local-gate-note" style="display:none; font-size:10px; color:#666; margin-top:4px;">
-                            Local images hidden pending licensing clarity around card images.
-                            Append <code>?allow_local_img_load=true</code> to the URL to enable.
-                        </div>
-                    </div>
-                </div>
-
-                <div class="checkbox-row" style="margin-bottom: 0;">
-                    <input type="checkbox" id="debug-mode">
-                    <label for="debug-mode">Debug Mode (TRACE logs)</label>
-                </div>
-            </div>
-        </div>
-
-        <!-- Player Panes (side by side) -->
-        <div class="player-panes">
-            <!-- Player 1 Pane (becomes "Our Player" in network mode) -->
-            <div class="player-pane p1" id="p1-pane">
-                <h2 id="p1-header"><span class="player-icon">&#9818;</span> <span id="p1-title">Player 1</span></h2>
-
-                <!-- Controller row (hidden in network mode - implied) -->
-                <div class="pane-row" id="p1-controller-row">
-                    <label>Controller</label>
-                    <select id="p1-controller">
-                        <option value="human">Human (You)</option>
-                        <option value="fixed">Fixed Script</option>
-                        <option value="heuristic">Heuristic AI</option>
-                        <option value="random">Random</option>
-                        <option value="zero">Zero (Pass)</option>
-                    </select>
-                </div>
-
-                <!-- Network settings (shown in network game mode) -->
-                <div id="network-settings-group" class="pane-row" style="display: none;">
-                    <label>Server Connection</label>
-                    <div class="network-inputs">
-                        <input type="text" id="server-url" placeholder="ws://localhost:17771">
-                        <input type="password" id="server-password" placeholder="Password">
-                        <input type="text" id="player-name" placeholder="Your name">
-                    </div>
-                    <span class="hint">You'll be assigned P1 or P2 when you connect</span>
-                    <div id="network-status" class="network-status"></div>
-                </div>
-
-                <!-- Fixed script (shown when fixed selected) -->
-                <div id="fixed-script-group" class="pane-row" style="display: none;">
-                    <label>Fixed Script (one command per line)</label>
-                    <textarea id="fixed-script" rows="4" style="font-family: monospace; font-size: 12px;"># Commands: play, cast, activate, pass, *, 0-9
-*
-play swamp
-*
-cast dark ritual</textarea>
-                </div>
-
-                <div class="pane-row">
-                    <label>Deck Collection</label>
-                    <select id="p1-collection">
-                        <option value="old_school">Old School 1994</option>
-                        <option value="booster_draft">Booster Draft</option>
-                        <option value="commander">Commander</option>
-                        <option value="custom">Custom Decks (Local)</option>
-                    </select>
-                </div>
-
-                <div class="pane-row">
-                    <label>Deck</label>
-                    <select id="p1-deck"></select>
-                    <div class="deck-buttons" id="p1-deck-buttons" style="display: none;">
-                        <button id="p1-upload-deck" title="Import .dck file">↑ Upload</button>
-                        <button id="p1-add-deck" title="Create new deck in builder">+ Build</button>
-                        <button id="p1-edit-deck">Edit</button>
-                        <button id="p1-delete-deck" class="delete-btn">Delete</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Player 2 Pane (hidden in network mode) -->
-            <div class="player-pane p2" id="p2-pane">
-                <h2><span class="player-icon">&#9820;</span> Player 2 (Opponent)</h2>
-
-                <div class="pane-row" id="p2-controller-group">
-                    <label>Controller</label>
-                    <select id="p2-controller">
-                        <option value="heuristic">Heuristic AI</option>
-                        <option value="random">Random</option>
-                        <option value="zero">Zero (Pass)</option>
-                    </select>
-                </div>
-
-                <div class="pane-row">
-                    <label>Deck Collection</label>
-                    <select id="p2-collection">
-                        <option value="old_school">Old School 1994</option>
-                        <option value="booster_draft">Booster Draft</option>
-                        <option value="commander">Commander</option>
-                        <option value="custom">Custom Decks (Local)</option>
-                    </select>
-                </div>
-
-                <div class="pane-row">
-                    <label>Deck</label>
-                    <select id="p2-deck"></select>
-                    <div class="deck-buttons" id="p2-deck-buttons" style="display: none;">
-                        <button id="p2-upload-deck" title="Import .dck file">↑ Upload</button>
-                        <button id="p2-add-deck" title="Create new deck in builder">+ Build</button>
-                        <button id="p2-edit-deck">Edit</button>
-                        <button id="p2-delete-deck" class="delete-btn">Delete</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Launch Area -->
-        <div class="launch-area">
-            <button id="btn-launch" class="btn-launch">Launch Game</button>
-        </div>
-
-        <div class="launcher-help">
-            Human: Up/Down=select, Enter=confirm, 1-9=quick | AI: Space=turn, A=auto | Q=exit, Tab=cycle, ?=help
+    <!-- mtg-35z3s page 3: this page is now a PURE renderer. The old built-in
+         three-pane launcher (#launcher: game-mode, deck collections, deck-builder
+         buttons, Custom Network Game form, Fixed-script) AND the deck-upload modal
+         were DELETED — deck + renderer selection now lives entirely on
+         launcher.html. The page boots from URL params:
+           - network play: ?lobby_create/lobby_join&deck&name&ws&ui&mode=network
+             (forwarded by launcher.html via lobby_launcher.buildRedirectUrl)
+           - local play:   ?mode=local&p1_deck&p2_deck&p1&p2&seed (dev + e2e)
+         A bare direct visit (no boot params) shows the message below instead. -->
+    <div id="no-launch-msg" class="launcher-container" style="display:none;">
+        <div class="global-pane" style="text-align:center; max-width:520px; margin:0 auto;">
+            <h2>No game to render</h2>
+            <p class="boot-msg-text" style="line-height:1.6;">
+                This is the Web TUI renderer. It is launched from the lobby
+                &mdash; pick your deck and renderer there, then press Play.
+            </p>
+            <p style="margin-top:18px;">
+                <a href="index.html" style="color:#4cc9f0; font-size:16px;">&rarr; Go to the Lobby</a>
+            </p>
         </div>
     </div>
-
-    <!-- Deck Upload Modal -->
-    <div id="deck-upload-modal" class="modal" style="display: none;">
-        <div class="modal-content">
-            <h3>Upload Deck (.dck)</h3>
-            <p>Paste deck content or select a .dck file:</p>
-
-            <div style="margin-bottom: 15px;">
-                <input type="file" id="deck-file-input" accept=".dck,.txt" style="display: none;">
-                <button id="btn-select-file" style="padding: 8px 16px; cursor: pointer;">Select File...</button>
-                <span id="selected-file-name" style="margin-left: 10px; color: #888;"></span>
-            </div>
-
-            <textarea id="deck-content-input" placeholder="Or paste .dck content here...
-
-Example format:
-[metadata]
-Name=My Deck
-[Main]
-4 Lightning Bolt
-4 Grizzly Bears
-24 Forest"
-                style="width: 100%; height: 200px; font-family: monospace; resize: vertical;"></textarea>
-
-            <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="btn-upload-cancel" style="padding: 8px 16px;">Cancel</button>
-                <button id="btn-upload-submit" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; cursor: pointer;">Import Deck</button>
-            </div>
-
-            <div id="upload-error" style="color: #ff6b6b; margin-top: 10px; display: none;"></div>
-        </div>
-    </div>
-
-    <!-- Old setup-bar kept for compatibility but hidden -->
-    <div id="setup-bar" style="display: none;"></div>
 
     <div class="tui-container">
         <div id="loading" class="loading">
@@ -1098,7 +933,96 @@ Name=My Deck
         import { initBugReport } from './bug_report.js';
 
         // Shared lobby-redirect + param-plumbing (Phase 2 / mtg-phase2-native-network).
-        import { consumeLobbyParams, applyLobbyParamsToForm, buildLobbyAction } from './lobby_launcher.js';
+        // mtg-35z3s page 3: PURE renderer — boots from URL params only.
+        import {
+            consumeLobbyParams,
+            consumeLocalGameParams,
+            consumeNetworkParams,
+            buildLobbyAction,
+        } from './lobby_launcher.js';
+
+        // mtg-35z3s page 3: boot settings resolved from URL params (no built-in
+        // launcher). launchTui() reads these instead of launcher form fields.
+        let bootConfig = {
+            isNetwork: false,
+            p1Deck: '', p2Deck: '',
+            p1Controller: 'heuristic', p2Controller: 'heuristic',
+            seed: '', debug: false,
+            serverUrl: '', serverPass: '', playerName: '',
+        };
+
+        // Resolve the boot mode from URL params and launch (or show the
+        // degraded "launch from the lobby" message on a bare direct visit).
+        function bootFromParams() {
+            const lobby = consumeLobbyParams();
+            if (lobby) {
+                bootConfig = {
+                    isNetwork:    true,
+                    p1Deck:       lobby.deckName,
+                    p2Deck:       lobby.deckName,
+                    p1Controller: lobby.controller,   // 'human' default; AI via &controller=
+                    p2Controller: lobby.controller,
+                    seed:         '',
+                    debug:        false,
+                    serverUrl:    lobby.wsUrl,
+                    serverPass:   lobby.serverPass,
+                    playerName:   lobby.playerName,
+                };
+                window.__mtg_lobby_action = buildLobbyAction(lobby);
+                launchTui();
+                return;
+            }
+            // Network auto-match boot (no lobby action): server pairs two
+            // connecting clients. Used by the network AI-vs-AI e2e harness.
+            const net = consumeNetworkParams();
+            if (net) {
+                bootConfig = {
+                    isNetwork:    true,
+                    p1Deck:       net.deckName,
+                    p2Deck:       net.deckName,
+                    p1Controller: net.controller,
+                    p2Controller: net.controller,
+                    seed:         '',
+                    debug:        false,
+                    serverUrl:    net.wsUrl,
+                    serverPass:   net.serverPass,
+                    playerName:   net.playerName,
+                };
+                window.__mtg_lobby_action = null;
+                launchTui();
+                return;
+            }
+            const local = consumeLocalGameParams();
+            if (local) {
+                bootConfig = {
+                    isNetwork:    false,
+                    p1Deck:       local.p1Deck,
+                    p2Deck:       local.p2Deck,
+                    p1Controller: local.p1Controller,
+                    p2Controller: local.p2Controller,
+                    seed:         local.seed,
+                    debug:        local.debug,
+                    serverUrl:    '',
+                    serverPass:   '',
+                    playerName:   '',
+                };
+                launchTui();
+                return;
+            }
+            showBootMessage('Launch from the lobby', false);
+        }
+
+        // PURE renderer has no launcher to fall back to: show the message panel.
+        function showBootMessage(msg, isError) {
+            const el = document.getElementById('no-launch-msg');
+            if (el) {
+                el.style.display = 'block';
+                el.querySelector('.boot-msg-text').textContent = msg;
+                el.querySelector('.boot-msg-text').style.color = isError ? '#ff8080' : '#bbb';
+            }
+            const st = document.getElementById('status');
+            if (st) st.textContent = msg;
+        }
 
         // Shared help modal (mtg-1vwpd DRY extraction) — same implementation as
         // native_game.html; only the help TEXT (a WASM import) is page-supplied.
@@ -1245,61 +1169,26 @@ Name=My Deck
                 window.allDeckNames = JSON.parse(cardDb.get_deck_names_json());
                 window.allDeckNames.sort();
 
-                // Apply local-image source gate before restoring settings, so that
-                // stale localStorage entries for `imgSrcLocal=true` can't override
-                // the gate (see applyLocalImageGate for rationale).
+                // Apply local-image source gate (see applyLocalImageGate for
+                // rationale). Honours ?allow_local_img_load= forwarded from the
+                // launcher.
                 applyLocalImageGate();
-
-                // Restore saved settings from localStorage
-                restoreSettings();
-
-                // Update game mode UI based on restored settings
-                // (this must be after restoreSettings so it reflects the saved game mode)
-                if (typeof updateGameModeUI === 'function') {
-                    updateGameModeUI();
-                }
-
-                // Update network UI based on available features
-                updateNetworkUI();
 
                 // NOTE: Cards are NOT loaded yet - they load on game launch
                 status.textContent = `WASM v${version()} | ${deckCount} decks ready (cards load on launch)`;
 
-                // Hide loading, show launcher
+                // Hide loading.
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('launcher').classList.add('show');
-
-                // Initialize deck collections and populate dropdowns
-                initDeckCollections();
-
-                // Set up launch button
-                document.getElementById('btn-launch').addEventListener('click', launchTui);
-
-                // Set up deck builder buttons for both players
-                setupDeckBuilderButtons('p1');
-                setupDeckBuilderButtons('p2');
-
-                // Set up deck upload modal
-                initUploadModal();
-
-                // Set up controller change handlers
-                setupControllerHandlers();
-
-                // Set up "Load All Cards" button
-                document.getElementById('btn-load-all-cards').addEventListener('click', loadAllCards);
-
-                // Update card status display (initially 0 cards loaded)
-                updateCardStatus();
 
                 console.log(`MTG Forge WASM initialized: ${deckCount} decks ready (deferred card loading)`);
 
-                // mtg-474: landing-page-lobby redirect auto-launch.
-                // The lobby (web/index.html) closes its own browse-WS before
-                // redirecting here with ?lobby_create=NAME or ?lobby_join=NAME
-                // (plus &lobby_pass=, &name=, &ws=, &deck=). Detect that and
-                // skip the launcher UI entirely — we already know everything
-                // the user needs to start playing.
-                maybeAutoLaunchFromLobby();
+                // mtg-35z3s page 3: this page is now a PURE renderer with NO
+                // built-in launcher (deck/renderer/mode pickers moved to
+                // launcher.html). It boots entirely from URL params:
+                //   - network: ?lobby_create/lobby_join&deck&name&ws&mode=network
+                //   - local:   ?mode=local&p1_deck&p2_deck&p1&p2&seed (dev + e2e)
+                //   - neither: show a "launch from the lobby" message.
+                bootFromParams();
             } catch (error) {
                 document.getElementById('loading').innerHTML = `
                     <div class="error">
@@ -1323,31 +1212,25 @@ Name=My Deck
          * Update the card status display in the header bar
          * Shows current card count and Load All button if not fully loaded
          */
+        // mtg-35z3s page 3: the "Load All Cards" launcher button was removed
+        // (it lived on the deleted launcher). This now only updates the small
+        // card-count badge in the header; the load-all button is gone, so its
+        // references are null-guarded.
         function updateCardStatus() {
             const cardStatus = document.getElementById('card-status');
-            const loadAllBtn = document.getElementById('btn-load-all-cards');
+            if (!cardStatus) return;
 
             if (!cardDb) {
                 cardStatus.textContent = '';
-                loadAllBtn.style.display = 'none';
                 return;
             }
 
             const count = cardDb.card_count();
-            if (fullCardsLoaded) {
-                // Full database loaded - highlight in cyan
+            if (count > 0) {
                 cardStatus.textContent = `| ${count.toLocaleString()} cards loaded`;
-                cardStatus.style.color = '#4cc9f0';
-                loadAllBtn.style.display = 'none';
-            } else if (count > 0) {
-                // Partial cards loaded (from deck packs)
-                cardStatus.textContent = `| ${count.toLocaleString()} cards loaded`;
-                cardStatus.style.color = '#888';
-                loadAllBtn.style.display = 'inline-block';
+                cardStatus.style.color = fullCardsLoaded ? '#4cc9f0' : '#888';
             } else {
-                // No cards loaded yet
                 cardStatus.textContent = '';
-                loadAllBtn.style.display = 'inline-block';
             }
         }
 
@@ -1741,54 +1624,12 @@ Name=My Deck
             });
         }
 
-        // Initialize settings persistence after DOM is ready
-        setupSettingsPersistence();
-
-        // Game mode change handler
-        function updateGameModeUI() {
-            const gameMode = document.getElementById('game-mode').value;
-            const isNetworkMode = gameMode === 'network';
-
-            const p1Title = document.getElementById('p1-title');
-            const networkGroup = document.getElementById('network-settings-group');
-            const p2Pane = document.getElementById('p2-pane');
-            const seedRow = document.getElementById('game-seed').closest('.pane-row');
-            const p1Controller = document.getElementById('p1-controller');
-
-            // Update P1 pane title
-            p1Title.textContent = isNetworkMode ? 'Our Player' : 'Player 1';
-
-            // Show/hide network settings
-            if (networkGroup) {
-                networkGroup.style.display = isNetworkMode ? 'flex' : 'none';
-            }
-
-            // Hide P2 pane in network mode (opponent is remote)
-            if (p2Pane) {
-                p2Pane.style.display = isNetworkMode ? 'none' : 'block';
-            }
-
-            // Show seed in network mode too - needed for deterministic random controller (mtg-254)
-            // IMPORTANT: For WASM/native behavioral identity, both clients MUST use the same seed!
-            if (seedRow) {
-                seedRow.style.display = 'flex'; // Always show - coordination needed for testing
-            }
-        }
-
-        document.getElementById('game-mode').addEventListener('change', updateGameModeUI);
-        // Initialize UI based on current game mode
-        updateGameModeUI();
-
-        // Show/hide controller-specific settings (for local mode)
-        document.getElementById('p1-controller').addEventListener('change', function() {
-            const gameMode = document.getElementById('game-mode').value;
-            if (gameMode === 'network') return; // Skip in network mode
-
-            const scriptGroup = document.getElementById('fixed-script-group');
-
-            // Show appropriate settings group
-            scriptGroup.style.display = this.value === 'fixed' ? 'flex' : 'none';
-        });
+        // mtg-35z3s page 3: the built-in launcher (game-mode/deck/controller
+        // pickers + settings persistence + the change-handler wiring that used
+        // to live here) was DELETED. This page is a PURE renderer that boots
+        // from URL params (see bootFromParams). No launcher form to persist or
+        // wire up, so setupSettingsPersistence()/updateGameModeUI()/the
+        // game-mode + p1-controller change listeners are gone.
 
         let tuiLaunched = false;
         let cardImagesEnabled = false;
@@ -2703,108 +2544,64 @@ Name=My Deck
         // mtg-474: detect the landing-page lobby redirect and auto-launch
         // network mode targeting the specified named slot. The lobby closes
         // its own WS before redirect so there is no second-pairing race.
-        function maybeAutoLaunchFromLobby() {
-            // Use the shared lobby_launcher.js module so both tui_game.html
-            // and native_game.html consume the exact same param contract.
-            const params = consumeLobbyParams();
-            if (!params) return;
-
-            // Stash the lobby action on window so launchTui's
-            // networkClient.connect(...) picks it up via buildLobbyAction.
-            window.__mtg_lobby_action = buildLobbyAction(params);
-
-            // Pre-fill form fields using the shared helper.
-            applyLobbyParamsToForm(params, {
-                gameModeSelectId:     'game-mode',
-                serverUrlInputId:     'server-url',
-                serverPassInputId:    'server-password',
-                playerNameInputId:    'player-name',
-                p1DeckSelectId:       'p1-deck',
-                p1ControllerSelectId: 'p1-controller',
-                networkStatusId:      'network-status',
-            }, typeof updateGameModeUI === 'function' ? updateGameModeUI : undefined);
-
-            // Auto-fire the launch button after a tick so the UI updates settle.
-            setTimeout(() => {
-                const btn = document.getElementById('btn-launch');
-                if (btn && !btn.disabled) btn.click();
-            }, 50);
-        }
-
+        // mtg-35z3s page 3: launchTui() now reads its config from `bootConfig`
+        // (resolved from URL params in bootFromParams) instead of launcher form
+        // fields. ALL network/local engine + ratzilla render wiring below is
+        // unchanged — only the source of deck/controller/seed/connection values
+        // moved from DOM <select>/<input> to the param-derived bootConfig.
         async function launchTui() {
-            const gameMode = document.getElementById('game-mode').value;
-            const isNetworkMode = gameMode === 'network';
+            const isNetworkMode = bootConfig.isNetwork;
 
-            // In network mode, "P1" UI controls represent "our" settings
-            // The server will assign us as P1 or P2 based on join order
-            const ourDeck = document.getElementById('p1-deck').value;
-            const ourControllerValue = document.getElementById('p1-controller').value;
+            // In network mode, "our" deck/controller is P1; the server assigns
+            // P1/P2 by join order.
+            const ourDeck = bootConfig.p1Deck;
+            const ourControllerValue = bootConfig.p1Controller;
             const ourController = getControllerType(ourControllerValue);
 
-            // P2 settings only used in local mode
-            const opponentDeck = document.getElementById('p2-deck').value;
-            const opponentController = getControllerType(document.getElementById('p2-controller').value);
-            const showImages = document.getElementById('show-card-images').checked;
+            // P2 settings only used in local mode.
+            const opponentDeck = bootConfig.p2Deck;
+            const opponentController = getControllerType(bootConfig.p2Controller);
+            const showImages = false;  // launcher.html owns image prefs; default off here.
 
-            // Validate deck selection
+            // Validate (param-driven now; a bad URL is the failure mode).
             if (!ourDeck) {
-                alert(isNetworkMode ? 'Please select a deck' : 'Please select a deck for Player 1');
+                showBootMessage(isNetworkMode ? 'No deck param (&deck=)' : 'No deck param (&p1_deck=)', true);
                 return;
             }
             if (!isNetworkMode && !opponentDeck) {
-                alert('Please select a deck for Player 2');
+                showBootMessage('No opponent deck param (&p2_deck=)', true);
                 return;
             }
 
-            // Validate network settings
+            // Validate network settings.
             if (isNetworkMode) {
                 if (!networkEnabled) {
-                    alert('Network mode is not available in this build. Please rebuild with --features wasm-network.');
+                    showBootMessage('Network mode is not available in this build (rebuild with --features wasm-network).', true);
                     return;
                 }
-
-                const serverUrl = document.getElementById('server-url').value.trim();
-                const password = document.getElementById('server-password').value;
-                const playerName = document.getElementById('player-name').value.trim();
-
-                if (!serverUrl) {
-                    alert('Please enter a server URL (e.g., ws://localhost:17771)');
+                if (!bootConfig.serverUrl) {
+                    showBootMessage('No server URL param (&ws=)', true);
                     return;
                 }
-                // password may be empty for an unconfigured server (the
-                // default). The server's check_server_password accepts any
-                // value when config.password.is_empty() — so we don't
-                // demand one client-side either. (mtg-474: needed for
-                // the landing-page redirect path which does not collect a
-                // server password from the user.)
-                if (!playerName) {
-                    alert('Please enter your player name');
+                // password may be empty for an unconfigured server (the default).
+                if (!bootConfig.playerName) {
+                    showBootMessage('No player name param (&name=)', true);
                     return;
                 }
             }
 
-            // If using Fixed controller, set the script first
-            if (ourControllerValue === 'fixed') {
-                const script = document.getElementById('fixed-script').value;
-                if (!script.trim()) {
-                    alert('Please enter a script for the Fixed controller');
-                    return;
-                }
-                set_p1_fixed_script(script);
-                console.log('Set fixed script:', script);
-            } else {
-                // Clear any previous fixed script
-                clear_p1_fixed_script();
-            }
+            // Fixed-script controller is launcher-only and no longer reachable
+            // via params; clear any stale fixed script defensively.
+            clear_p1_fixed_script();
 
-            // Initialize card image overlay if enabled
+            // Initialize card image overlay if enabled.
             if (showImages) {
                 CardImageOverlay.enable();
                 cardImagesEnabled = true;
             }
 
-            // Set log level based on debug mode checkbox
-            const debugMode = document.getElementById('debug-mode').checked;
+            // Set log level based on debug param.
+            const debugMode = bootConfig.debug;
             CardImageOverlay.debugMode = debugMode;  // Enable image URL logging
             if (debugMode) {
                 set_log_level('trace');
@@ -2813,11 +2610,6 @@ Name=My Deck
             } else {
                 set_log_level('info');
             }
-
-            // Disable launch button while loading
-            const launchBtn = document.getElementById('btn-launch');
-            launchBtn.disabled = true;
-            launchBtn.textContent = 'Loading cards...';
 
             try {
                 // Load cards for the selected deck(s)
@@ -2838,9 +2630,8 @@ Name=My Deck
                     cleanup_deck_builder_state();
                 }
 
-                // Hide launcher and header to give full viewport to TUI
+                // Hide header to give full viewport to TUI (the launcher is gone).
                 // RatZilla calculates terminal size from window dimensions, so we need full viewport
-                document.getElementById('launcher').classList.remove('show');
                 document.getElementById('header-bar').style.display = 'none';
 
                 // Clear RatZilla terminal before launching game
@@ -2856,9 +2647,9 @@ Name=My Deck
 
                 if (isNetworkMode) {
                     // Network mode: connect to server and wait for game to start
-                    const serverUrl = document.getElementById('server-url').value.trim();
-                    const password = document.getElementById('server-password').value;
-                    const playerName = document.getElementById('player-name').value.trim();
+                    const serverUrl = bootConfig.serverUrl;
+                    const password = bootConfig.serverPass;
+                    const playerName = bootConfig.playerName;
 
                     // Get deck as JSON for server submission
                     const deckJson = cardDb.get_deck_json(ourDeck);
@@ -2910,10 +2701,10 @@ Name=My Deck
                     networkClient.onGameReady = () => {
                         console.log('[Network] Game is ready!');
 
-                        // Get controller seed from UI (IMPORTANT for WASM/native behavioral identity)
-                        // Both clients MUST use the same seed for random controllers to behave identically
-                        const seedInput = document.getElementById('game-seed').value;
-                        const controllerSeed = seedInput ? BigInt(seedInput) : BigInt(0);
+                        // Controller seed from the boot params (IMPORTANT for
+                        // WASM/native behavioral identity). Both clients MUST use
+                        // the same seed for random controllers to behave identically.
+                        const controllerSeed = bootConfig.seed ? BigInt(bootConfig.seed) : BigInt(0);
                         console.log(`[Network] Using controller seed: ${controllerSeed} (mtg-254)`);
 
                         // Launch network TUI mode with selected controller
@@ -2964,13 +2755,13 @@ Name=My Deck
 
                     // Connect to server
                     networkClient.connect(serverUrl, password, playerName, deckJson, window.__mtg_lobby_action || null);
-                    launchBtn.textContent = 'Connecting...';
+                    const st = document.getElementById('status');
+                    if (st) st.textContent = 'Connecting...';
 
                 } else {
                     // Local mode: Launch the fancy TUI immediately
                     // In local mode, "our" player is P1, opponent is P2
-                    const seedInput = document.getElementById('game-seed').value;
-                    const seed = seedInput ? BigInt(seedInput) : BigInt(Date.now());
+                    const seed = bootConfig.seed ? BigInt(bootConfig.seed) : BigInt(Date.now());
                     console.log(`[GAME] Using seed: ${seed}`);
                     launch_fancy_tui(
                         cardDb,
@@ -3030,10 +2821,7 @@ Name=My Deck
                     toggleBtn.style.background = CardImageOverlay.enabled ? '#30a030' : '#4361ee';
                 }
             } catch (error) {
-                // Re-enable launch button on error
-                launchBtn.disabled = false;
-                launchBtn.textContent = 'Launch Web TUI';
-                alert(`Failed to launch TUI: ${error}`);
+                showBootMessage(`Failed to launch TUI: ${error}`, true);
                 console.error('Failed to launch TUI:', error);
             }
         }
@@ -3288,25 +3076,15 @@ Name=My Deck
                 }
             }
 
-            // Hide terminal and show launcher + header
+            // Hide terminal + game controls.
             terminal.style.display = 'none';
             document.getElementById('game-controls').style.display = 'none';
             document.getElementById('header-bar').style.display = 'flex';
-            document.getElementById('launcher').classList.add('show');
 
-            // Re-enable launch button
-            const launchBtn = document.getElementById('btn-launch');
-            launchBtn.disabled = false;
-            launchBtn.textContent = 'Launch Game';
-
-            // Reset network status display
-            const networkStatus = document.getElementById('network-status');
-            if (networkStatus) {
-                networkStatus.textContent = '';
-                networkStatus.style.color = '#4cc9f0';
-            }
-
-            console.log('[EXIT] TUI exited cleanly. Ready to launch new game.');
+            // mtg-35z3s page 3: PURE renderer — no launcher to return to. Exit
+            // goes back to the lobby (a new game = a fresh launcher flow).
+            console.log('[EXIT] TUI exited cleanly — returning to lobby.');
+            window.location.href = 'index.html';
         };
 
         // ==================== DECK COLLECTIONS ====================

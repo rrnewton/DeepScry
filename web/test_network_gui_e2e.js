@@ -31,6 +31,13 @@ const {
 // Configuration - ports allocated dynamically to avoid conflicts
 const SERVER_PASSWORD = 'test_gui';
 
+// mtg-35z3s page 3: the game pages no longer carry a built-in .dck parser
+// (parseDckFormat lived in the deleted launcher). To give the browser client
+// the SAME deck as the native client, we parse the .dck via the shared helper
+// and seed it into localStorage as a custom deck under `mtg-forge-custom-decks`
+// — the page's loadCardsForDecks() reads + registers it by name.
+const { parseDckIntoCustomDeck } = require('./game_boot_params');
+
 // Parse CLI arguments: --deck <name> --seed <n> --human
 function parseArgs() {
     const args = process.argv.slice(2);
@@ -195,71 +202,46 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // Navigate to fancy TUI
-        log('Loading tui_game.html...');
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        // mtg-35z3s page 3: tui_game.html is a PURE renderer with no built-in
+        // launcher. Boot network mode entirely from URL params (auto-match: no
+        // lobby_create/join — the server pairs this web client with the native
+        // `mtg connect` client). The browser gets the SAME deck as the native
+        // P1: seed it into localStorage as a custom deck (reusing the page's own
+        // getCustomDecks + register_custom_deck load path, which works for ANY
+        // .dck including ones outside the WASM export globs) and pass it via
+        // &deck=. controller=random|human is the new AI-driver override param.
+        const controllerType = HUMAN_MODE ? 'human' : 'random';
+        const customDeck = parseDckIntoCustomDeck(deckContent, browserDeckName);
+        await page.addInitScript(({ name, deck }) => {
+            const KEY = 'mtg-forge-custom-decks';
+            let decks = {};
+            try { decks = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { /* ignore */ }
+            decks[name] = deck;
+            localStorage.setItem(KEY, JSON.stringify(decks));
+        }, { name: browserDeckName, deck: customDeck });
 
-        // Wait for WASM to load
-        await page.waitForSelector('#launcher.show', { state: 'attached', timeout: 30000 });
-        log('WASM loaded');
+        log('Loading tui_game.html (network auto-match boot via params)...');
+        const bootUrl = `http://localhost:${HTTP_PORT}/tui_game.html?` + new URLSearchParams({
+            mode: 'network',
+            ws: `ws://localhost:${SERVER_PORT}`,
+            server_pass: SERVER_PASSWORD,
+            name: `Web${HUMAN_MODE ? 'Human' : 'Random'}`,
+            deck: browserDeckName,
+            controller: controllerType,
+        }).toString();
+        await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
 
-        // Belt-and-braces: enableReplayVerifier here in addition to ticking
-        // the #debug-mode checkbox below. tui_game.html only flips the verifier
-        // on inside its launch handler when debug mode is checked; calling
-        // the export directly works even if the launch path or checkbox
-        // changes. checkForFatalErrors now matches REWIND/REPLAY FATAL too.
+        // Belt-and-braces: enableReplayVerifier (the page enables it only in
+        // debug mode, which is no longer reachable via params). checkForFatalErrors
+        // matches REWIND/REPLAY FATAL too.
         const verifierEnabled = await enableReplayVerifier(page);
         log(`Replay verifier enabled: ${verifierEnabled}`);
 
-        // Select Network game mode
-        await page.selectOption('#game-mode', 'network');
-        await page.waitForSelector('#network-settings-group', { state: 'visible', timeout: 5000 });
-
-        // Fill in network settings
-        await page.fill('#server-url', `ws://localhost:${SERVER_PORT}`);
-        await page.fill('#server-password', SERVER_PASSWORD);
-        await page.fill('#player-name', `Web${HUMAN_MODE ? 'Human' : 'Random'}`);
-
-        // Give the browser P2 the SAME deck as the native P1 (single --deck =>
-        // both seats). Inject as a custom deck (reusing the page's own
-        // parseDckFormat + custom-deck localStorage path) so it works for ANY
-        // .dck file, including ones outside the WASM export globs.
-        const deckInjected = await page.evaluate(({ content, expectedName }) => {
-            if (typeof window.__mtg_test_import_and_select_deck !== 'function') {
-                return { ok: false, reason: 'page deck import hook unavailable' };
-            }
-            // "P1" UI controls represent "our" (browser) seat in network mode.
-            return window.__mtg_test_import_and_select_deck('p1', content, expectedName);
-        }, { content: deckContent, expectedName: browserDeckName });
-        if (!deckInjected.ok) {
-            throw new Error(`Failed to inject browser deck: ${deckInjected.reason}`);
-        }
-        if (deckInjected.selected !== deckInjected.name) {
-            throw new Error(`Browser deck not selected: wanted "${deckInjected.name}", got "${deckInjected.selected}"`);
-        }
-        log(`Browser P2 deck set to "${deckInjected.name}" (mirror of native P1)`);
-
-        // Select controller type
-        const controllerType = HUMAN_MODE ? 'human' : 'random';
-        await page.selectOption('#p1-controller', controllerType);
-
-        // Enable debug mode
-        const debugCheckbox = await page.$('#debug-mode');
-        if (debugCheckbox) {
-            await debugCheckbox.check();
-        }
-
         await page.screenshot({ path: path.join(screenshotDir, `${prefix}_01_settings.png`), fullPage: true });
-        log(`Settings filled: ${controllerType} controller, launching...`);
+        log(`Network boot: ${controllerType} controller, deck "${browserDeckName}", connecting...`);
 
-        // Launch the game
-        await page.click('#btn-launch');
-
-        // Wait for terminal to appear
-        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 20000 });
+        // Wait for terminal to appear (page auto-connects + renders on game ready)
+        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         log('Game terminal appeared');
 
         // Wait for game to initialize

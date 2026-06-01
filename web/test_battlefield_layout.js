@@ -31,6 +31,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const { getRandomPorts } = require('./test_network_utils');
+const { pickBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const projectRoot = path.join(__dirname, '..');
 
@@ -70,27 +71,16 @@ function log(msg) {
             if (msg.type() === 'error') browserErrors.push(`console.error: ${msg.text()}`);
         });
 
-        await page.goto(`http://localhost:${HTTP_PORT}/native_game.html?allow_local_img_load=false`, {
-            waitUntil: 'networkidle',
-            timeout: 30000,
-        });
-        await page.waitForFunction(() => {
-            const s = document.getElementById('p1-deck');
-            return s && s.options.length > 0;
-        }, { timeout: 30000 });
-
-        // Jeskai aggro deck reliably puts both a creature and a few lands into
+        // mtg-35z3s page 3: native_game.html is a PURE renderer now — boot via
+        // URL params. Jeskai aggro reliably puts a creature + a few lands into
         // play within ~40 ticks; falls back to the first deck if unavailable.
-        const deck = await page.evaluate(() => {
-            const opts = [...document.getElementById('p1-deck').options].map(o => o.value);
-            return opts.find(o => /jeskai_aggro/.test(o)) || opts[0];
-        });
-        await page.selectOption('#p1-deck', deck);
-        await page.selectOption('#p2-deck', deck);
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.fill('#game-seed', '7');
-        await page.click('#btn-launch');
+        const base = `http://localhost:${HTTP_PORT}`;
+        const deck = await pickBuiltinDeck(base, /jeskai_aggro/);
+        await page.goto(localGameUrl(base, 'native_game.html', {
+            deck, p1: 'heuristic', p2: 'heuristic', seed: 7,
+            extra: { allow_local_img_load: 'false' },
+        }), { waitUntil: 'networkidle', timeout: 30000 });
+        await page.waitForSelector('#game-area.show', { state: 'attached', timeout: 30000 });
         await page.waitForTimeout(1500);
 
         // Drive the game so both battlefields have a handful of permanents

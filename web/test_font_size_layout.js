@@ -5,6 +5,7 @@
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 function log(m) {
     console.log(`[${new Date().toISOString()}] ${m}`);
@@ -47,19 +48,14 @@ async function checkViewport(browser, w, h) {
     const page = await ctx.newPage();
     page.on('pageerror', e => log(`Page ERROR @${w}x${h}: ${e.message}`));
     try {
-        await page.goto('http://localhost:8767/tui_game.html', { waitUntil: 'networkidle', timeout: 60000 });
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-        const firstDeck = await page.evaluate(() => document.getElementById('p1-deck')?.options[0]?.value || '');
-        if (firstDeck) {
-            await page.evaluate(d => {
-                document.getElementById('p1-deck').value = d;
-                document.getElementById('p2-deck').value = d;
-            }, firstDeck);
-        }
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-        await page.click('#btn-launch');
-        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
+        // mtg-35z3s page 3: tui_game.html is a PURE renderer — boot a local
+        // heuristic-vs-heuristic game from URL params (no launcher form).
+        const base = 'http://localhost:8767';
+        const firstDeck = await firstBuiltinDeck(base);
+        await page.goto(localGameUrl(base, 'tui_game.html', {
+            deck: firstDeck, p1: 'heuristic', p2: 'heuristic',
+        }), { waitUntil: 'networkidle', timeout: 60000 });
+        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         await page.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });
         await page.waitForTimeout(800);
         const m = await measure(page);

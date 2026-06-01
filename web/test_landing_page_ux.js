@@ -304,13 +304,16 @@ async function scenarioPostRedirectAutoLaunch() {
     await page.waitForTimeout(4000); // give WASM init + auto-launch a chance
     await shot(page, 'landing_12_post_redirect_autolaunch.png');
 
-    // Look for the network-status hint we injected.
+    // mtg-35z3s page 3: tui_game.html is now a PURE renderer with no built-in
+    // launcher / #network-status field — the lobby_create param auto-launches
+    // the network game and connection state surfaces in the header #status
+    // (e.g. "Connecting...") or the ratzilla terminal appears. Check #status.
     const networkStatusText = await page.evaluate(() => {
-        const el = document.getElementById('network-status');
+        const el = document.getElementById('status');
         return el ? el.textContent : '';
     });
-    console.log('  network status:', JSON.stringify(networkStatusText));
-    if (!/auto-creating|status|waiting|connecting/i.test(networkStatusText)) {
+    console.log('  status:', JSON.stringify(networkStatusText));
+    if (!/auto-creating|status|waiting|connecting|ready|cards/i.test(networkStatusText)) {
         // Minor (not major) because the auto-launch can legitimately fail in
         // a stub environment (missing data/decks.bin, etc.). The redirect
         // wiring itself is verified by scenarioFullFlow. We surface this so
