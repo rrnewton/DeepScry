@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { chromium } = require('playwright');
+const { localGameUrl } = require('./game_boot_params');
 
 const PORT = 8771;
 const SCREEN_DIR = path.join(__dirname, 'screenshots');
@@ -151,12 +152,19 @@ async function runTest() {
             results.screenshots.push(name);
         };
 
-        // ---- 1. Load native_game.html, wait for WASM init ----------------------
+        // ---- 1. Boot native_game.html (eric vs gabriel, heuristic, seed=42) ----
+        // mtg-682 page 3 / mtg-drxh5: native_game.html is a PURE renderer with no
+        // built-in launcher. Boot the heuristic-vs-heuristic local game directly
+        // from URL params (mode=local) via game_boot_params.localGameUrl instead
+        // of driving the deleted #p1-collection / #p1-deck / #btn-launch form.
+        // DECK_COLLECTION is implicit now (the deck names ARE the contract).
+        void DECK_COLLECTION;
         await step(results, 'page_load', async () => {
-            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'networkidle', timeout: 60000 });
-            await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+            await page.goto(localGameUrl(`http://localhost:${PORT}`, 'native_game.html', {
+                p1Deck: P1_DECK, p2Deck: P2_DECK, p1: 'heuristic', p2: 'heuristic',
+                seed: GAME_SEED, debug: true,
+            }), { waitUntil: 'networkidle', timeout: 60000 });
         }, { fatal: true });
-        await screenshot('rebuild_01_launcher.png');
 
         // The new exports must be reachable through `window.__mtg` (the
         // native_game.html test bridge installed right after `await init()`).
@@ -178,35 +186,8 @@ async function runTest() {
             return present;
         });
 
-        // ---- 2. Configure (eric vs gabriel, heuristic AIs, seed=42) -----
-        await step(results, 'configure_decks', async () => {
-            // Both controllers heuristic so the run is deterministic for screenshots.
-            await page.selectOption('#p1-controller', 'heuristic');
-            await page.selectOption('#p2-controller', 'heuristic');
-
-            await page.selectOption('#p1-collection', DECK_COLLECTION);
-            await page.selectOption('#p2-collection', DECK_COLLECTION);
-            await page.selectOption('#p1-deck', P1_DECK);
-            await page.selectOption('#p2-deck', P2_DECK);
-
-            await page.fill('#game-seed', GAME_SEED);
-            await page.check('#debug-mode'); // Surfaces [Debug] logs in console.
-
-            const cfg = await page.evaluate(() => ({
-                p1: document.getElementById('p1-deck').value,
-                p2: document.getElementById('p2-deck').value,
-                seed: document.getElementById('game-seed').value,
-            }));
-            if (cfg.p1 !== P1_DECK || cfg.p2 !== P2_DECK || cfg.seed !== GAME_SEED) {
-                throw new Error(`config mismatch: ${JSON.stringify(cfg)}`);
-            }
-            return cfg;
-        }, { fatal: true });
-        await screenshot('rebuild_02_configured.png');
-
-        // ---- 3. Launch game; wait for game area ------------------------
+        // ---- 2. Wait for the booted game's board to render -------------
         await step(results, 'launch_game', async () => {
-            await page.click('#btn-launch');
             await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 30000 });
             await page.waitForTimeout(800);
         }, { fatal: true });
@@ -537,13 +518,15 @@ async function runTest() {
             return display;
         });
 
-        // ---- 17. Exit returns to launcher -----------------------------
-        await step(results, 'exit_to_launcher', async () => {
+        // ---- 17. Exit returns to the LOBBY ----------------------------
+        // mtg-682 page 3 / mtg-drxh5: the pure renderer has no built-in launcher
+        // to return to — 'q' (exitGame) navigates back to the lobby (index.html).
+        await step(results, 'exit_to_lobby', async () => {
             await page.keyboard.press('q');
-            await page.waitForTimeout(400);
-            const visible = await page.evaluate(() =>
-                document.getElementById('launcher')?.classList.contains('show') || false);
-            if (!visible) throw new Error('launcher not shown after exit');
+            await page.waitForFunction(() => /index\.html$/.test(window.location.pathname), null, { timeout: 5000 })
+                .catch(() => {});
+            const onLobby = /index\.html$/.test(new URL(page.url()).pathname);
+            if (!onLobby) throw new Error(`exit did not navigate to lobby (url=${page.url()})`);
         });
         await screenshot('rebuild_09_after_exit.png');
 

@@ -6,6 +6,18 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { listBuiltinDecks, firstBuiltinDeck, pickBuiltinDeck, localGameUrl } = require('./game_boot_params');
+
+// mtg-682 page 3 / mtg-drxh5: the game pages are PURE renderers (no built-in
+// launcher / deck-collection dropdown). These regexes approximate the OLD
+// launcher's DECK_COLLECTIONS filters (now living in launcher.html) just enough
+// to pick a representative built-in deck per "collection" for this non-gate
+// rendering test — it does not need the exact partition, only two distinct
+// loadable decks per label.
+const COLLECTION_DECK_RE = {
+    old_school:    /^\d\d_|classic|erhnam|ponza|stasis|zoo|monolith/,
+    booster_draft: /avatar|spiderman/,
+};
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 
@@ -45,36 +57,24 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
-            await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+            // mtg-drxh5: boot native_game.html from URL params (mode=local) — the
+            // pure renderer has no launcher/collection dropdown. Pick two distinct
+            // representative built-in decks for this collection label.
+            const base = `http://localhost:${PORT}`;
+            const re = COLLECTION_DECK_RE[dt.collection] || /.*/;
+            const p1Deck = await pickBuiltinDeck(base, re);
+            // Pick a DIFFERENT deck for P2 (asymmetric, as the original first-vs-last
+            // launcher selection was): first built-in that isn't p1Deck.
+            const allDecks = await listBuiltinDecks(base);
+            const p2Deck = allDecks.find(d => re.test(d) && d !== p1Deck)
+                || allDecks.find(d => d !== p1Deck)
+                || p1Deck;
+            finding('OK', `${dt.name}: booting ${p1Deck} vs ${p2Deck} (built-in, param boot)`);
 
-            // Select collection
-            await page.selectOption('#p1-collection', dt.collection);
-            await page.selectOption('#p2-collection', dt.collection);
-            await page.waitForTimeout(200);
-
-            const p1Decks = await page.evaluate(() =>
-                Array.from(document.getElementById('p1-deck').options).map(o => o.value)
-            );
-
-            if (p1Decks.length === 0) {
-                finding('WARN', `${dt.name}: No decks in collection`);
-                await page.close();
-                continue;
-            }
-            finding('OK', `${dt.name}: ${p1Decks.length} decks available — ${p1Decks.join(', ')}`);
-
-            // Pick first and last deck for P1 vs P2 (asymmetric)
-            const p1Deck = p1Decks[0];
-            const p2Deck = p1Decks[p1Decks.length - 1];
-            await page.evaluate(d => { document.getElementById('p1-deck').value = d; }, p1Deck);
-            await page.evaluate(d => { document.getElementById('p2-deck').value = d; }, p2Deck);
-            await page.selectOption('#p1-controller', 'heuristic');
-            await page.selectOption('#p2-controller', 'heuristic');
-            await page.fill('#game-seed', '99');
-
-            await page.click('#btn-launch');
             try {
+                await page.goto(localGameUrl(base, 'native_game.html', {
+                    p1Deck, p2Deck, p1: 'heuristic', p2: 'heuristic', seed: 99,
+                }), { waitUntil: 'load', timeout: 30000 });
                 await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 15000 });
                 await page.waitForTimeout(300);
 
@@ -100,21 +100,25 @@ async function runTest() {
 
                 await page.screenshot({ path: path.join(ssDir, `deep_deck_${dt.name}.png`) });
 
-                // Check: no lands show P/T
+                // Check: no NON-creature land shows P/T. A land that has been
+                // animated into a creature (CR 208.3, common in the avatar decks)
+                // legitimately shows P/T, so we only flag lands that are NOT also
+                // creatures (the `.creature` class marks animated lands).
                 const landPT = await page.evaluate(() => {
                     const cards = document.querySelectorAll('#player-field-cards .card, #opp-field-cards .card');
                     const issues = [];
                     cards.forEach(c => {
                         const isLand = c.classList.contains('land');
+                        const isCreature = c.classList.contains('creature');
                         const hasPT = c.querySelector('.card-pt');
-                        if (isLand && hasPT) issues.push(c.querySelector('.card-name')?.textContent);
+                        if (isLand && !isCreature && hasPT) issues.push(c.querySelector('.card-name')?.textContent);
                     });
                     return issues;
                 });
                 if (landPT.length > 0) {
-                    finding('FAIL', `${dt.name}: Lands with P/T: ${landPT.join(', ')}`);
+                    finding('FAIL', `${dt.name}: Non-creature lands with P/T: ${landPT.join(', ')}`);
                 } else {
-                    finding('OK', `${dt.name}: No lands show P/T`);
+                    finding('OK', `${dt.name}: No non-creature land shows P/T`);
                 }
 
             } catch (e) {
@@ -133,14 +137,12 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
-            await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-
-            await page.selectOption('#p1-controller', 'human');
-            await page.selectOption('#p2-controller', 'heuristic');
-            await page.fill('#game-seed', '42');
-
-            await page.click('#btn-launch');
+            // mtg-drxh5: boot Human-vs-Heuristic local game from URL params.
+            const dbase = `http://localhost:${PORT}`;
+            const hDeck = await firstBuiltinDeck(dbase);
+            await page.goto(localGameUrl(dbase, 'native_game.html', {
+                deck: hDeck, p1: 'human', p2: 'heuristic', seed: 42,
+            }), { waitUntil: 'load', timeout: 30000 });
             await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 15000 });
             await page.waitForTimeout(300);
 
@@ -256,15 +258,13 @@ async function runTest() {
             });
 
             // Run native_game.html with seed 77, AI vs AI, 5 turns
+            // mtg-drxh5: boot from URL params (same seed 77, AI vs AI).
+            const cmpBase = `http://localhost:${PORT}`;
+            const cmpDeck = await firstBuiltinDeck(cmpBase);
             const gamePage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-            await gamePage.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
-            await gamePage.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-
-            await gamePage.selectOption('#p1-controller', 'heuristic');
-            await gamePage.selectOption('#p2-controller', 'heuristic');
-            await gamePage.fill('#game-seed', '77');
-
-            await gamePage.click('#btn-launch');
+            await gamePage.goto(localGameUrl(cmpBase, 'native_game.html', {
+                deck: cmpDeck, p1: 'heuristic', p2: 'heuristic', seed: 77,
+            }), { waitUntil: 'load', timeout: 30000 });
             await gamePage.waitForSelector('#game-area.show', { state: 'visible', timeout: 15000 });
             await gamePage.waitForTimeout(300);
 
@@ -291,15 +291,11 @@ async function runTest() {
             await gamePage.close();
 
             // Now run tui_game.html with same seed
+            // mtg-drxh5: boot tui_game.html from URL params (same deck + seed 77).
             const fancyPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-            await fancyPage.goto(`http://localhost:${PORT}/tui_game.html`, { waitUntil: 'load', timeout: 30000 });
-            await fancyPage.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-
-            await fancyPage.selectOption('#p1-controller', 'heuristic');
-            await fancyPage.selectOption('#p2-controller', 'heuristic');
-            await fancyPage.fill('#game-seed', '77');
-
-            await fancyPage.click('#btn-launch');
+            await fancyPage.goto(localGameUrl(cmpBase, 'tui_game.html', {
+                deck: cmpDeck, p1: 'heuristic', p2: 'heuristic', seed: 77,
+            }), { waitUntil: 'load', timeout: 30000 });
             await fancyPage.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
             await fancyPage.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });
             await fancyPage.waitForTimeout(500);
@@ -341,15 +337,12 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            await page.goto(`http://localhost:${PORT}/native_game.html`, { waitUntil: 'load', timeout: 30000 });
-            await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-
-            // Use heuristic AI for both, auto-run to game over
-            await page.selectOption('#p1-controller', 'heuristic');
-            await page.selectOption('#p2-controller', 'heuristic');
-            await page.fill('#game-seed', '42');
-
-            await page.click('#btn-launch');
+            // mtg-drxh5: boot heuristic-vs-heuristic local game from URL params.
+            const ecBase = `http://localhost:${PORT}`;
+            const ecDeck = await firstBuiltinDeck(ecBase);
+            await page.goto(localGameUrl(ecBase, 'native_game.html', {
+                deck: ecDeck, p1: 'heuristic', p2: 'heuristic', seed: 42,
+            }), { waitUntil: 'load', timeout: 30000 });
             await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 15000 });
             await page.waitForTimeout(300);
 
@@ -396,7 +389,9 @@ async function runTest() {
                     const isLand = c.classList.contains('land');
                     const isCreature = c.classList.contains('creature');
                     const hasPT = !!c.querySelector('.card-pt');
-                    if (isLand && hasPT) landWithPT.push(name);
+                    // An animated land (also a creature, CR 208.3) legitimately
+                    // shows P/T — only flag NON-creature lands that show P/T.
+                    if (isLand && !isCreature && hasPT) landWithPT.push(name);
                     if (isCreature && !hasPT) creatureNoPT.push(name);
                 });
                 return { landWithPT, creatureNoPT };
@@ -408,13 +403,13 @@ async function runTest() {
 
             await page.screenshot({ path: path.join(ssDir, 'deep_edge_gameover.png') });
 
-            // Test exit and re-launch
+            // mtg-682 page 3 / mtg-drxh5: pure renderer has no launcher to return
+            // to — exit (q) navigates to the LOBBY (index.html). Assert that.
             await page.keyboard.press('q');
-            await page.waitForTimeout(500);
-            const launcherBack = await page.evaluate(() =>
-                document.getElementById('launcher')?.classList.contains('show') || false
-            );
-            finding(launcherBack ? 'OK' : 'WARN', `Exit returns to launcher: ${launcherBack}`);
+            await page.waitForFunction(() => /index\.html$/.test(window.location.pathname), null, { timeout: 5000 })
+                .catch(() => {});
+            const backToLobby = /index\.html$/.test(new URL(page.url()).pathname);
+            finding(backToLobby ? 'OK' : 'WARN', `Exit returns to lobby (index.html): ${backToLobby}`);
 
             await page.close();
         }

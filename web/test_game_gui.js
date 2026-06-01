@@ -15,6 +15,7 @@ const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 function log(message) {
     const timestamp = new Date().toISOString();
@@ -84,144 +85,29 @@ async function runTest() {
             fs.mkdirSync(screenshotDir);
         }
 
-        // ========== STEP 1: Load native_game.html ==========
-        log('Loading native_game.html...');
+        // ========== STEP 1: Boot native_game.html from URL params ==========
+        // mtg-682 page 3 / mtg-drxh5: native_game.html is now a PURE renderer
+        // with NO built-in launcher. Boot a local heuristic-vs-heuristic game
+        // straight from the param contract (mode=local&p1_deck&p2_deck&p1&p2&seed)
+        // via the shared game_boot_params.localGameUrl helper, instead of driving
+        // the (deleted) #p1-deck / #p1-controller / #btn-launch form.
+        log('Booting native_game.html (local game from URL params)...');
+        const base = `http://localhost:${PORT}`;
+        const firstDeck = await firstBuiltinDeck(base);
+        finding('OK', `Booting local heuristic-vs-heuristic game with deck "${firstDeck}", seed 42`);
         const loadStart = Date.now();
-        await page.goto(`http://localhost:${PORT}/native_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        const launchStart = loadStart;
+        await page.goto(localGameUrl(base, 'native_game.html', {
+            deck: firstDeck, p1: 'heuristic', p2: 'heuristic', seed: 42, debug: true,
+        }), { waitUntil: 'networkidle', timeout: 60000 });
         testResults.steps.push({
             name: 'page_load',
             timestamp: new Date().toISOString(),
             durationMs: Date.now() - loadStart
         });
 
-        // Wait for WASM init
-        const wasmStart = Date.now();
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
-        testResults.steps.push({
-            name: 'wasm_init',
-            timestamp: new Date().toISOString(),
-            durationMs: Date.now() - wasmStart
-        });
-        log('WASM initialized');
-
-        // ========== STEP 2: Verify launcher UI ==========
-        log('Verifying launcher UI...');
-
-        // Check header
-        const headerText = await page.textContent('.header h1');
-        if (!headerText.includes('Native GUI')) {
-            finding('WARN', `Header says "${headerText}" — expected "Native GUI"`);
-        } else {
-            finding('OK', `Header: "${headerText}"`);
-        }
-
-        // Check status shows WASM version and deck count
-        const status = await page.textContent('#status');
-        if (!status.includes('WASM') || !status.includes('decks')) {
-            finding('WARN', `Status text unexpected: "${status}"`);
-        } else {
-            finding('OK', `Status: "${status}"`);
-        }
-
-        // Check player panes exist
-        const p1Pane = await page.$('.player-pane.p1');
-        const p2Pane = await page.$('.player-pane.p2');
-        if (!p1Pane || !p2Pane) {
-            throw new Error('Player panes not found');
-        }
-        finding('OK', 'Both player panes present');
-
-        // Check deck dropdowns populated
-        const p1DeckCount = await page.evaluate(() =>
-            document.getElementById('p1-deck')?.options.length || 0
-        );
-        const p2DeckCount = await page.evaluate(() =>
-            document.getElementById('p2-deck')?.options.length || 0
-        );
-        if (p1DeckCount === 0 || p2DeckCount === 0) {
-            throw new Error(`Deck dropdowns empty: P1=${p1DeckCount}, P2=${p2DeckCount}`);
-        }
-        finding('OK', `Deck dropdowns: P1=${p1DeckCount} decks, P2=${p2DeckCount} decks`);
-
-        // Check controller dropdowns
-        const p1Controllers = await page.evaluate(() => {
-            const sel = document.getElementById('p1-controller');
-            return Array.from(sel.options).map(o => o.value);
-        });
-        if (!p1Controllers.includes('human') || !p1Controllers.includes('heuristic')) {
-            finding('WARN', 'Missing controller options');
-        } else {
-            finding('OK', `P1 controllers: ${p1Controllers.join(', ')}`);
-        }
-
-        // Check debug mode checkbox exists and toggles
-        const debugCheckbox = await page.$('#debug-mode');
-        if (!debugCheckbox) {
-            finding('FAIL', 'Debug mode checkbox (#debug-mode) not found');
-        } else {
-            const initiallyChecked = await page.isChecked('#debug-mode');
-            finding('OK', `Debug mode checkbox present (initially ${initiallyChecked ? 'checked' : 'unchecked'})`);
-            await page.check('#debug-mode');
-            const nowChecked = await page.isChecked('#debug-mode');
-            if (!nowChecked) {
-                finding('FAIL', 'Debug mode checkbox did not toggle on');
-            } else {
-                finding('OK', 'Debug mode checkbox toggles on');
-            }
-            await page.uncheck('#debug-mode');
-        }
-
-        // Check navigation links
-        const links = await page.evaluate(() => {
-            return Array.from(document.querySelectorAll('.header a')).map(a => ({
-                text: a.textContent,
-                href: a.getAttribute('href')
-            }));
-        });
-        finding('OK', `Nav links: ${links.map(l => `${l.text} -> ${l.href}`).join(', ')}`);
-
-        // Screenshot: launcher
-        await page.screenshot({ path: path.join(screenshotDir, 'game_01_launcher.png'), fullPage: true });
-        log('Screenshot: game_01_launcher.png');
-
-        // ========== STEP 3: Configure and launch game ==========
-        log('Configuring game...');
-
-        // Set both to heuristic AI
-        await page.selectOption('#p1-controller', 'heuristic');
-        await page.selectOption('#p2-controller', 'heuristic');
-
-        // Use the same deck for both players
-        const firstDeck = await page.evaluate(() => {
-            const sel = document.getElementById('p1-deck');
-            return sel?.options[0]?.value || '';
-        });
-        if (firstDeck) {
-            await page.evaluate((deck) => {
-                document.getElementById('p2-deck').value = deck;
-            }, firstDeck);
-        }
-
-        // Set a fixed seed for reproducibility
-        await page.fill('#game-seed', '42');
-
-        // Enable debug mode to verify debug logging works
-        await page.check('#debug-mode');
-
-        // Screenshot: configured
-        await page.screenshot({ path: path.join(screenshotDir, 'game_02_configured.png'), fullPage: true });
-        log('Screenshot: game_02_configured.png');
-
-        // Launch
-        log('Launching game...');
-        const launchStart = Date.now();
-        await page.click('#btn-launch');
-
-        // Wait for game area to become visible
-        await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 15000 });
+        // Pure renderer: there is no #launcher to wait on; wait for the booted game.
+        await page.waitForSelector('#game-area.show', { state: 'visible', timeout: 30000 });
         testResults.steps.push({
             name: 'game_launch',
             timestamp: new Date().toISOString(),
