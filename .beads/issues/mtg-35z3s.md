@@ -4,7 +4,7 @@ status: open
 priority: 1
 issue_type: task
 created_at: 2026-06-01T12:31:21.332680376+00:00
-updated_at: 2026-06-01T12:31:21.332680376+00:00
+updated_at: 2026-06-01T12:42:24.486872771+00:00
 ---
 
 # Description
@@ -34,8 +34,14 @@ coordinator rubber-stamped plausible-looking diffs instead of diffing intent vs 
    Editor" launch** button + **your renderer: Native GUI (DEFAULT) or Web TUI**
    (alternate). Renderer is a per-player experience detail chosen HERE, never in
    the lobby. Then "Play" → go to the matching game page. This is the ONE launcher.
-   (The good launcher logic — collections/decks/controllers — currently lives
-   built-into native_game.html lines ~824-929; extract it here.)
+   EXTRACTION SOURCE: the BETTER built-in launcher to lift from is **tui_game.html**
+   (lines ~750-893): it has Deck COLLECTIONS (3-pane layout, `#p1-collection`/
+   `#p2-collection`, deck-buttons incl. the deck-editor link) — the richer UX the
+   user remembers. native_game.html's built-in launcher is WEAKER (no deck-editor
+   link, fewer collection refs). So `launcher.html` should be extracted from
+   tui_game.html's launcher, generalized to be renderer-agnostic (renderer =
+   native default / TUI alternate), and BOTH game pages then lose their built-in
+   launcher entirely.
 3. **Native game** (`native_game.html`): PURE renderer (card DOM). NO built-in
    launcher (delete the `#launcher` block). Receives everything via params.
 4. **Web TUI game** (`tui_game.html`): PURE renderer (ratzilla). NO built-in launcher.
@@ -56,7 +62,28 @@ mtg-uzvu4: human-controller network desync). A clean UI on a broken play path is
 still broken. So the played-game acceptance test (below) is what surfaces these,
 and the netarch finish (mtg-c9fuc) is in-scope for "playable", not optional.
 
-## ACCEPTANCE TEST (the definition of done — build FIRST, red is expected)
+## TEST STRATEGY (user steer 2026-06-01) — incremental + AI-driven
+- **Incremental, not big-bang.** Do NOT write a full Playwright test against the
+  CURRENT (broken) DOM — it'll be obsolete after the overhaul. Grow the e2e test
+  WITH the rebuilt flow: first just "Create button press", then "Create →
+  launcher.html loads", then "+ join", then "+ game renders", then "+ plays N
+  turns", then "+ reload-resilience". Each flow increment lands with its test step.
+- **AI controllers + spacebar-advance** is the preferred driver. If random-vs-random
+  or random-vs-heuristic works over NETWORKED web play, the e2e driver is just
+  "press Space, assert the UI keeps updating and the game advances without getting
+  stuck" — no need to script human card plays. This also sidesteps mtg-uzvu4 (the
+  HUMAN-controller network desync); AI controllers are the ones validate proves
+  DIVERGED:0. (User precedent: in the non-networked web UI, pressing Space auto-
+  advanced an AI-vs-AI game.)
+- **FOUNDATIONAL ASSUMPTION TO VERIFY FIRST (before any UI rework):** does an
+  AI-vs-AI game over the NETWORKED web path actually run to completion via
+  spacebar, with the UI updating and no freeze? The human game froze after 1 land;
+  if AI-over-network also gets stuck, that's an engine/network blocker that gates
+  everything and must be found NOW. Build the smallest harness that drives a
+  networked AI game (bypassing the broken lobby via a direct launch URL if needed)
+  and confirm it advances ≥3 turns. THIS is step 0.
+
+## ACCEPTANCE TEST (the definition of done — built INCREMENTALLY per above)
 A single automated harness (Playwright 2-client + headless WASM, under
 `web/test_*_e2e` invoked by a dedicated make target, NOT just the existing shallow
 smoke) that drives the REAL flow and PASSES:
