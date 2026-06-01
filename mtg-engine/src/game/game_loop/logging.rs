@@ -326,14 +326,19 @@ impl<'a> GameLoop<'a> {
                 self.game.logger.gamelog(&message);
             }
             Effect::TapPermanent { target } => {
-                let target_name = self
-                    .game
-                    .cards
-                    .get(*target)
-                    .map(|c| c.name.as_str())
-                    .unwrap_or("Unknown");
-                let message = format!("{source_name} ({source_id}) taps {target_name} ({target})");
-                self.game.logger.gamelog(&message);
+                // A placeholder target means the tap fizzled (e.g. Falling Star's
+                // "if it survives, tap it" when the creature died to the damage):
+                // emit no log line rather than a misleading "taps Unknown (0)".
+                if !target.is_placeholder() {
+                    let target_name = self
+                        .game
+                        .cards
+                        .get(*target)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("Unknown");
+                    let message = format!("{source_name} ({source_id}) taps {target_name} ({target})");
+                    self.game.logger.gamelog(&message);
+                }
             }
             Effect::UntapPermanent { target } => {
                 let target_name = self

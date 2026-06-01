@@ -1,0 +1,24 @@
+[metadata]
+Name:Falling Star Damage and Tap
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Verify Falling Star ({2}{R} Sorcery, digital single-target approximation): deals 3 damage to target creature, and taps it only if it survives. P0 has Falling Star + 3 Mountains. P1 has Grizzly Bears (2/2, dies to 3 damage, no tap) and Hill Giant (3/3, dies to 3 damage) and Sengir Vampire (4/4, survives 3 damage and gets tapped). Pick a target to exercise the dies-vs-survives branch.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Falling Star
+p0library=Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain; Mountain
+p0graveyard=
+p0battlefield=Mountain; Mountain; Mountain
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest; Forest
+p1graveyard=
+p1battlefield=Grizzly Bears; Sengir Vampire
+p1exile=

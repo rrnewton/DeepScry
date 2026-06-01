@@ -1,0 +1,24 @@
+[metadata]
+Name:Psionic Blast Cross-Player Self-Damage
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Regression for mtg-533. P2 (the OPPONENT, puzzle p1) casts Psionic Blast at P1 (puzzle p0). Psionic Blast deals 4 damage to any target and 2 damage to YOU (the caster, P2). The 2 self-damage must land on the CASTER P2, NOT on the targeted player's controller P1. After resolution targeting P1: P1 life 20->16 (4 damage), P2 life 20->18 (2 self-damage). Before the fix the Defined$ You placeholder PlayerId(0) resolved to the literal player 0 (P1), so both halves hit P1 (life 14) and P2 took nothing. activeplayer=p1 makes P2 the caster.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=
+p0exile=
+
+p1life=20
+p1hand=Psionic Blast
+p1library=Island; Island; Island; Island; Island; Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Island; Island; Island
+p1exile=

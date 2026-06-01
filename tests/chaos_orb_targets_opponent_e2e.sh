@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# E2E test: Chaos Orb FlipOntoBattlefield targets opponent permanents
+# E2E test: Chaos Orb targeted-destroy (mtg-389).
 #
-# Regression test for mtg-392 (was: mtg-389 compat issue).
-# Before the fix, Chaos Orb's FlipOntoBattlefield was a `DestroyPermanent`
-# with `requires_nontoken=true` and no controller restriction. The activation
-# auto-targeted the first valid nontoken permanent which was the Orb itself,
-# never any opponent permanent.
+# Owner's interpretation: Chaos Orb is a paper DEXTERITY card. We approximate
+# it digitally as a single targeted destroy:
+#   "{1}, {T}: Destroy target nontoken permanent, then destroy Chaos Orb."
+# (We DIVERGE from Forge-Java, which models the physical flip with
+# FlipOntoBattlefield + DestroyAll Remembered. See cardsfolder/c/chaos_orb.txt.)
 #
-# After the fix the converter sets `restriction.controller = OppCtrl`, so
-# valid_targets only contains opponent permanents, and the Orb correctly
-# destroys an opponent permanent (in addition to self-destroying via the
-# Defined$ Self subability chain).
-#
-# Test scenario:
-# - Player 1 has Chaos Orb on the battlefield + 2 Plains for {1} cost
-# - Player 2 has Mountain + Grizzly Bears
-# - Activate Chaos Orb; verify both an opponent permanent AND Chaos Orb are
-#   moved to a graveyard.
+# This test drives the interactive (stdin) controller so we can pick a SPECIFIC
+# target by menu index, exercising three aspects per the targeted_compatibility
+# skill:
+#   1. destroy an opponent CREATURE (Grizzly Bears) + Chaos Orb self-destroys
+#   2. destroy an opponent NONCREATURE permanent (Mountain) + self-destroy
+#   3. destroy the controller's OWN noncreature permanent (Plains) + self-destroy
+# In every case the Defined$ Self subability destroys Chaos Orb itself.
 
 set -euo pipefail
 
@@ -29,80 +26,50 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-echo "=== Chaos Orb: Targets Opponent Permanent E2E Test ==="
+echo "=== Chaos Orb: Targeted Destroy E2E Test ==="
 echo
 
 cd "$WORKSPACE_ROOT"
 
-if [[ ! -d "$WORKSPACE_ROOT/cardsfolder" ]]; then
-    echo -e "${RED}Error: $WORKSPACE_ROOT/cardsfolder not found${NC}"
-    exit 1
-fi
-
 PUZZLE="$WORKSPACE_ROOT/test_puzzles/chaos_orb_destroys_target.pzl"
-if [[ ! -f "$PUZZLE" ]]; then
-    echo -e "${RED}Error: puzzle not found: $PUZZLE${NC}"
-    exit 1
-fi
+# Menu (P1's turn, after activating Chaos Orb):
+#   [0] Chaos Orb (yours)  [1] Plains  [2] Plains  [3] Mountain (theirs)  [4] Grizzly Bears (theirs)
 
-LOG=/tmp/chaos_orb_targets_opponent_test.txt
+run_case() {
+    local label="$1" target_idx="$2" expect_target="$3" log="$4"
+    # stdin: [1] activate Chaos Orb, then target index, then passes.
+    printf '1\n%s\n0\n0\n0\n0\n' "$target_idx" \
+        | "$MTG_BIN" tui --start-state "$PUZZLE" --p1 tui --p2 zero \
+            --seed 42 --verbosity 3 > "$log" 2>&1 || true
 
-if run_mtg_with_timeout 30 tui \
-    --start-state "$PUZZLE" \
-    --p1=fixed \
-    --p2=zero \
-    --p1-fixed-inputs="activate Chaos Orb" \
-    --p2-fixed-inputs="" \
-    --stop-on-choice=4 \
-    --json \
-    --seed 42 \
-    --verbosity 3 \
-    > "$LOG" 2>&1; then
-    echo -e "${GREEN}✓ Game completed${NC}"
-else
-    EXIT_STATUS=$?
-    echo -e "${RED}✗ Game failed (exit $EXIT_STATUS)${NC}"
-    head -80 "$LOG"
-    exit 1
-fi
+    if grep -qE "targeting $expect_target \([0-9]+\)" "$log"; then
+        echo -e "${GREEN}✓ [$label] Chaos Orb targeted $expect_target${NC}"
+    else
+        echo -e "${RED}✗ [$label] Chaos Orb did NOT target $expect_target${NC}"
+        grep -E "targeting" "$log" || echo "(no targeting lines)"
+        exit 1
+    fi
 
-# Required: Chaos Orb's flip targeted an opponent permanent (Mountain or Grizzly Bears)
-if grep -qE "^  *-> targeting (Mountain|Grizzly Bears) " "$LOG"; then
-    echo -e "${GREEN}✓ Chaos Orb targeted an opponent permanent${NC}"
-    grep -E "^  *-> targeting " "$LOG" | head -3
-else
-    echo -e "${RED}✗ Chaos Orb did NOT target an opponent permanent${NC}"
-    echo "Targeting log lines:"
-    grep -E "^  *-> targeting " "$LOG" || echo "(none)"
-    exit 1
-fi
+    if grep -qE "$expect_target \([0-9]+\) goes to graveyard" "$log"; then
+        echo -e "${GREEN}✓ [$label] $expect_target destroyed (graveyard)${NC}"
+    else
+        echo -e "${RED}✗ [$label] $expect_target was NOT destroyed${NC}"
+        grep -E "goes to graveyard" "$log" || echo "(no graveyard lines)"
+        exit 1
+    fi
 
-# Required: opponent permanent moved to graveyard from Chaos Orb's effect
-if grep -qE "^  (Mountain|Grizzly Bears) \([0-9]+\) goes to graveyard" "$LOG"; then
-    echo -e "${GREEN}✓ Opponent permanent moved to graveyard${NC}"
-    grep -E " goes to graveyard" "$LOG" | head -5
-else
-    echo -e "${RED}✗ No opponent permanent went to graveyard${NC}"
-    echo "Movement log lines:"
-    grep -E " goes to graveyard" "$LOG" || echo "(none)"
-    exit 1
-fi
+    if grep -qE "Chaos Orb \([0-9]+\) goes to graveyard" "$log"; then
+        echo -e "${GREEN}✓ [$label] Chaos Orb self-destroyed${NC}"
+    else
+        echo -e "${RED}✗ [$label] Chaos Orb did NOT self-destroy${NC}"
+        exit 1
+    fi
+}
 
-# Required: Chaos Orb itself destroyed via Defined$ Self subability chain
-if grep -qE "^  Chaos Orb \([0-9]+\) goes to graveyard" "$LOG"; then
-    echo -e "${GREEN}✓ Chaos Orb self-destroyed${NC}"
-else
-    echo -e "${RED}✗ Chaos Orb did not self-destroy${NC}"
-    exit 1
-fi
-
-# Required: Chaos Orb did NOT pick itself as the flip target
-if grep -qE "^  *-> targeting Chaos Orb " "$LOG"; then
-    echo -e "${RED}✗ Regression: Chaos Orb auto-targeted itself${NC}"
-    exit 1
-fi
+run_case "opponent creature"    4 "Grizzly Bears" /tmp/chaos_orb_creature.txt
+run_case "opponent noncreature" 3 "Mountain"      /tmp/chaos_orb_noncreature.txt
+run_case "own permanent"        1 "Plains"         /tmp/chaos_orb_own.txt
 
 echo
 echo -e "${GREEN}=== Test PASSED ===${NC}"
-echo "Full log: $LOG"
 exit 0

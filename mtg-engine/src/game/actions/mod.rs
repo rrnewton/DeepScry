@@ -2177,6 +2177,29 @@ impl GameState {
         last_resolved_target: &mut Option<CardId>,
     ) -> Effect {
         match effect {
+            // DealDamage with a player placeholder (`Defined$ You`) → the
+            // controller of the resolving spell (card_owner here). This is the
+            // self-damage rider on cards like Psionic Blast
+            // (`SVar:DBDealDamage:DB$ DealDamage | Defined$ You | NumDmg$ 2`).
+            //
+            // The effect_converter encodes `Defined$ You` as
+            // `TargetRef::Player(PlayerId::new(0))`, and `PLACEHOLDER_ID == 0`,
+            // so this is `is_placeholder()`. Without this arm the unresolved
+            // placeholder `PlayerId(0)` fell through to execute_effect and dealt
+            // the damage to the *literal* player 0 (P1) — correct only when the
+            // caster happened to be P1, but wrong on a cross-player cast (P2
+            // casting Psionic Blast at P1 dealt the 2 self-damage to P1 instead
+            // of the caster P2). Mirrors the PreventDamage `Defined$ You` arm
+            // below and the trigger-path arm in resolve_effect_placeholder.
+            // (mtg-533: Psionic Blast cross-player self-damage bug.)
+            Effect::DealDamage {
+                target: TargetRef::Player(player_id),
+                amount,
+            } if player_id.is_placeholder() => Effect::DealDamage {
+                target: TargetRef::Player(card_owner),
+                amount: *amount,
+            },
+
             // Target resolution for permanent-targeting effects
             Effect::DealDamage {
                 target: TargetRef::None,
@@ -2400,6 +2423,37 @@ impl GameState {
                     }
                 } else {
                     effect.clone()
+                }
+            }
+            // `DB$ Tap | Defined$ Targeted` chained after damage (Falling Star:
+            // "deal 3 damage to target creature; if it survives, tap it").
+            // Reuse the parent ability's target rather than consuming a fresh
+            // chosen target, AND gate on survival: skip the tap (fizzle to an
+            // already-resolved placeholder) if the creature has accumulated
+            // lethal damage and is therefore about to die to a state-based
+            // action (CR 704.5g). A creature with toughness 0 or less is also
+            // dead. Mirrors the UntapPermanent reuse_previous arm below.
+            Effect::TapPermanent { target } if target.is_reuse_previous() => {
+                let prev = match *last_resolved_target {
+                    Some(prev_target) => prev_target,
+                    None => {
+                        log::warn!(target: "resolve_effect", "TapPermanent has reuse_previous but no previous target");
+                        return effect.clone();
+                    }
+                };
+                let survives = self.battlefield.contains(prev)
+                    && self.cards.try_get(prev).is_some_and(|c| {
+                        let toughness = i32::from(c.current_toughness());
+                        toughness > 0 && toughness > c.damage
+                    });
+                if survives {
+                    Effect::TapPermanent { target: prev }
+                } else {
+                    // Creature died (or left the battlefield) — no tap. Resolve to
+                    // a placeholder so execute_effect treats it as a no-op fizzle.
+                    Effect::TapPermanent {
+                        target: CardId::placeholder(),
+                    }
                 }
             }
             Effect::TapPermanent { target } if target.is_placeholder() => {

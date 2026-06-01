@@ -1,0 +1,24 @@
+[metadata]
+Name:Psionic Blast Creature Target Cross-Player
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:P2 (puzzle p1) casts Psionic Blast at a P1 (puzzle p0) CREATURE. The 4 damage hits the creature; the 2 self-damage hits the CASTER P2 (mtg-533). After resolution: P1 creature (Sengir Vampire 4/4) takes 4 lethal damage and dies; P1 life stays 20; P2 life 20->18.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=MAIN1
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Sengir Vampire
+p0exile=
+
+p1life=20
+p1hand=Psionic Blast
+p1library=Island; Island; Island; Island; Island; Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=Island; Island; Island
+p1exile=

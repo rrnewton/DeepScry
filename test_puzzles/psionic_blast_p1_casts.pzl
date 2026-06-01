@@ -1,0 +1,24 @@
+[metadata]
+Name:Psionic Blast P1 Casts At P2
+Goal:Win
+Turns:5
+Difficulty:Easy
+Description:Non-regression: P1 (puzzle p0, caster) casts Psionic Blast at P2 (puzzle p1). 4 to P2, 2 self-damage to caster P1. P2 20->16, P1 20->18.
+
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Psionic Blast
+p0library=Island; Island; Island; Island; Island; Island; Island; Island; Island; Island
+p0graveyard=
+p0battlefield=Island; Island; Island
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

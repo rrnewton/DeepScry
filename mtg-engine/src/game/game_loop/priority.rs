@@ -129,6 +129,22 @@ impl<'a> GameLoop<'a> {
                         target_index += 1;
                         replaced
                     }
+                    // `DB$ DealDamage | Defined$ You` self-damage rider
+                    // (Psionic Blast "and 2 damage to you"). The converter
+                    // encodes `Defined$ You` as TargetRef::Player(PlayerId(0)),
+                    // which is_placeholder(). Resolve the LOG target to the
+                    // caster (card_owner) so the gamelog names the player who
+                    // actually takes the damage — matching the execution-time
+                    // resolution in actions/mod.rs (mtg-533). Without this the
+                    // log read "deals 2 damage to Player 1" on a cross-player
+                    // cast even though the 2 correctly hit the caster.
+                    Effect::DealDamage {
+                        target: TargetRef::Player(player_id),
+                        amount,
+                    } if player_id.is_placeholder() => Effect::DealDamage {
+                        target: TargetRef::Player(card_owner),
+                        amount: *amount,
+                    },
                     Effect::CounterSpell {
                         target,
                         required_color,
@@ -164,6 +180,31 @@ impl<'a> GameLoop<'a> {
                         restriction: restriction.clone(),
                         no_regenerate: *no_regenerate,
                     },
+                    // `DB$ Tap | Defined$ Targeted` chained after damage
+                    // (Falling Star "if it survives, tap it"): resolve the log
+                    // target to the parent ability's target, gated on survival
+                    // so the gamelog matches the execution path in
+                    // actions/mod.rs (mtg-503). If the creature died to the
+                    // damage (or left the battlefield), no tap is logged.
+                    Effect::TapPermanent { target } if target.is_reuse_previous() => {
+                        match last_resolved_target {
+                            Some(prev)
+                                if self.game.battlefield.contains(prev)
+                                    && self.game.cards.try_get(prev).is_some_and(|c| {
+                                        let toughness = i32::from(c.current_toughness());
+                                        toughness > 0 && toughness > c.damage
+                                    }) =>
+                            {
+                                Effect::TapPermanent { target: prev }
+                            }
+                            // Creature died / gone → fizzle to a placeholder so
+                            // log_effect_execution emits nothing meaningful
+                            // (it skips placeholder targets).
+                            _ => Effect::TapPermanent {
+                                target: CardId::placeholder(),
+                            },
+                        }
+                    }
                     Effect::TapPermanent { target } if target.is_placeholder() && target_index < targets.len() => {
                         let replaced = Effect::TapPermanent {
                             target: targets[target_index],

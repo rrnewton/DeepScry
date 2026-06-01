@@ -4,7 +4,7 @@
 
 use super::ability_parser::{AbilityParams, ApiType};
 use super::svar_parser::{parse_svar, ParsedSVar, StaticAbilityMode};
-use crate::core::{CardId, ControllerRestriction, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
+use crate::core::{CardId, Effect, Keyword, PlayerId, TargetRef, TargetRestriction};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 
@@ -332,9 +332,17 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             if params.contains_key("TapAll") {
                 None // TapAll not yet supported
             } else {
-                Some(Effect::TapPermanent {
-                    target: CardId::new(0), // Placeholder
-                })
+                // `Defined$ Targeted` (Falling Star: tap the creature this spell
+                // already targeted, if it survived the damage) → reuse_previous
+                // sentinel so the resolver taps the parent ability's target
+                // instead of consuming a fresh chosen target. Mirrors the Untap
+                // arm below.
+                let target = if params.get("Defined") == Some("Targeted") {
+                    CardId::reuse_previous()
+                } else {
+                    CardId::new(0) // Placeholder for independent targeting
+                };
+                Some(Effect::TapPermanent { target })
             }
         }
 
@@ -1554,7 +1562,23 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
                 .map(TargetRestriction::parse)
                 .unwrap_or_else(TargetRestriction::any);
 
-            Some(Effect::TapAll { restriction })
+            // Falling Star (mtg-503) digital divergence: its upstream
+            // `DBTapAllDamaged` is `TapAll | ValidCards$ Creature.IsRemembered+DamagedBy`
+            // — "tap each creature this card just damaged." Since we approximate
+            // the flip as a single TARGETED 3 damage (see the FlipOntoBattlefield
+            // arm), there is exactly one such creature: the spell's target. We
+            // convert the IsRemembered mass-tap into a survival-gated single tap
+            // chained to the damage target (`Tap | Defined$ Targeted`), so a
+            // surviving creature is tapped and a creature that died to the 3
+            // damage is not. requires_remembered is the tokenized signal for the
+            // `IsRemembered` qualifier (set by TargetRestriction::parse).
+            if restriction.requires_remembered {
+                Some(Effect::TapPermanent {
+                    target: CardId::reuse_previous(),
+                })
+            } else {
+                Some(Effect::TapAll { restriction })
+            }
         }
 
         ApiType::UntapAll => {
@@ -1706,24 +1730,47 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             })
         }
 
-        // Chaos Orb: physical flip can't be simulated digitally.
-        // Convert to "destroy target nontoken permanent controlled by an opponent"
-        // — the closest digital approximation. Java Forge picks via RNG over
-        // permanents near a simulated landing spot; without RNG-driven physics,
-        // restricting to opponent permanents matches typical AI/competitive intent
-        // (Chaos Orb is a removal piece, not a self-destruct of your own board).
-        // The chained DBDestroyChaosOrb (Defined$ Self) still destroys the Orb
-        // itself via the SubAbility chain — see cardsfolder/c/chaos_orb.txt.
-        // Tracking: mtg-392, mtg-389.
+        // `FlipOntoBattlefield` (Chaos Orb mtg-389 / Falling Star mtg-503) are
+        // paper DEXTERITY cards: the player physically flips the card and it
+        // affects whatever it lands on. There is no faithful digital analog, so
+        // — per the project owner — we DIVERGE to a single TARGETED
+        // approximation (a skilled flipper hits exactly the permanent aimed at;
+        // a smart opponent spreads their board so only one is caught). We keep
+        // the upstream Forge-Java card scripts UNEDITED (they live in the
+        // forge-java submodule) and express the divergence here, the same place
+        // the project handles every other Rust-vs-Java card divergence.
+        //
+        // We branch on the structured `SubAbility$` reference (tokenized, not a
+        // substring match) to tell the two cards apart:
+        //   - Chaos Orb:    `... | SubAbility$ DBDestroyTouched`  (DestroyAll)
+        //     -> destroy TARGET nontoken permanent. The upstream chain's
+        //        `DBDestroyChaosOrb` (`Destroy | Defined$ Self`) still
+        //        self-destroys the Orb; the intervening `DestroyAll` over the
+        //        (always-empty) Remembered set is a harmless no-op.
+        //   - Falling Star: `... | SubAbility$ DBDamageTouched`   (DamageAll 3)
+        //     -> deal 3 to TARGET creature. The chained `DBTapAllDamaged`
+        //        (`TapAll | ValidCards$ Creature.IsRemembered+DamagedBy`) is
+        //        converted to a survival-gated `Tap | Defined$ Targeted` (see
+        //        the TapAll arm) so a surviving creature is tapped and a dead
+        //        one is not.
         ApiType::Unknown(ref s) if s == "FlipOntoBattlefield" => {
-            let mut restriction = TargetRestriction::any();
-            restriction.requires_nontoken = true;
-            restriction.controller = ControllerRestriction::OppCtrl;
-            Some(Effect::DestroyPermanent {
-                target: CardId::new(0),
-                restriction,
-                no_regenerate: false,
-            })
+            match params.get("SubAbility") {
+                // Falling Star: deal 3 damage to target creature.
+                Some("DBDamageTouched") => Some(Effect::DealDamage {
+                    target: TargetRef::None, // resolved from the chosen creature target
+                    amount: 3,
+                }),
+                // Chaos Orb (and the default): destroy target nontoken permanent.
+                _ => {
+                    let mut restriction = TargetRestriction::any();
+                    restriction.requires_nontoken = true;
+                    Some(Effect::DestroyPermanent {
+                        target: CardId::placeholder(),
+                        restriction,
+                        no_regenerate: false,
+                    })
+                }
+            }
         }
 
         // Recognized but not yet implemented API types produce an Unimplemented effect
@@ -3500,30 +3547,166 @@ Oracle:Target creature gets +3/+1 until end of turn. Create a Clue token.
     }
 
     #[test]
-    fn test_convert_flip_onto_battlefield_targets_opponent() {
-        // Chaos Orb's "FlipOntoBattlefield" cannot be physically simulated;
-        // we degrade it to "destroy target nontoken permanent controlled by an
-        // opponent." Without the OppCtrl restriction the auto-target picker
-        // would pick the Orb itself (mtg-392). This test pins that contract.
+    fn test_convert_chaos_orb_targeted_destroy() {
+        // Chaos Orb (mtg-389) is approximated as a single targeted destroy of any
+        // NONTOKEN permanent (no controller restriction — the owner may aim it at
+        // their own board too), plus a Defined$ Self subability that destroys the
+        // Orb. This test pins the primary-ability shape.
         let params = AbilityParams::parse(
-            "A:AB$ FlipOntoBattlefield | Cost$ 1 T | SubAbility$ DBDestroyTouched | ActivationZone$ Battlefield",
+            "A:AB$ Destroy | Cost$ 1 T | ActivationZone$ Battlefield | ValidTgts$ Permanent.!token | SubAbility$ DBDestroySelf",
         )
         .unwrap();
-        let effect = params_to_effect(&params).expect("FlipOntoBattlefield should produce an effect");
+        let effect = params_to_effect(&params).expect("Chaos Orb destroy should produce an effect");
 
         match effect {
             Effect::DestroyPermanent {
                 target, restriction, ..
             } => {
-                assert!(target.is_placeholder(), "target should be placeholder until resolution");
+                assert!(
+                    target.is_placeholder(),
+                    "target is a placeholder until cast-time targeting"
+                );
                 assert!(restriction.requires_nontoken, "must restrict to nontoken permanents");
                 assert_eq!(
                     restriction.controller,
-                    crate::core::ControllerRestriction::OppCtrl,
-                    "must restrict to opponent permanents (else Chaos Orb auto-targets itself)"
+                    crate::core::ControllerRestriction::Any,
+                    "any controller (owner may target their own permanents)"
                 );
             }
             other => panic!("Expected DestroyPermanent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_chaos_orb_flip_diverges_to_targeted_destroy() {
+        // The REAL Chaos Orb card script (cardsfolder/c/chaos_orb.txt) is left
+        // UNEDITED and still uses the upstream `AB$ FlipOntoBattlefield |
+        // SubAbility$ DBDestroyTouched`. The divergence to a single targeted
+        // destroy lives in the FlipOntoBattlefield converter arm. Pin that the
+        // real card head converts to a nontoken-restricted DestroyPermanent with
+        // no controller restriction (owner may aim at their own board).
+        let params = AbilityParams::parse(
+            "A:AB$ FlipOntoBattlefield | Cost$ 1 T | SubAbility$ DBDestroyTouched | ActivationZone$ Battlefield",
+        )
+        .unwrap();
+        let effect = params_to_effect(&params).expect("FlipOntoBattlefield (Chaos Orb) must convert");
+        match effect {
+            Effect::DestroyPermanent {
+                target, restriction, ..
+            } => {
+                assert!(
+                    target.is_placeholder(),
+                    "target is a placeholder until cast-time targeting"
+                );
+                assert!(restriction.requires_nontoken, "must restrict to nontoken permanents");
+                assert_eq!(
+                    restriction.controller,
+                    crate::core::ControllerRestriction::Any,
+                    "any controller (owner may target their own permanents)"
+                );
+            }
+            other => panic!("Expected DestroyPermanent, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_falling_star_flip_diverges_to_targeted_damage() {
+        // The REAL Falling Star card script (cardsfolder/f/falling_star.txt) is
+        // left UNEDITED and still uses `A:SP$ FlipOntoBattlefield | SubAbility$
+        // DBDamageTouched`. The divergence to a single 3-damage-to-target lives in
+        // the FlipOntoBattlefield converter arm, distinguished from Chaos Orb by
+        // the tokenized SubAbility$ reference.
+        let params =
+            AbilityParams::parse("A:SP$ FlipOntoBattlefield | SubAbility$ DBDamageTouched | AILogic$ DamageCreatures")
+                .unwrap();
+        let effect = params_to_effect(&params).expect("FlipOntoBattlefield (Falling Star) must convert");
+        match effect {
+            Effect::DealDamage { target, amount } => {
+                assert_eq!(amount, 3, "Falling Star deals 3 damage");
+                assert!(
+                    matches!(target, TargetRef::None),
+                    "target resolved from the chosen creature at cast time, got {:?}",
+                    target
+                );
+            }
+            other => panic!("Expected DealDamage(3), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_falling_star_tapall_remembered_diverges_to_single_tap() {
+        // Falling Star's chained `DBTapAllDamaged` is upstream
+        // `TapAll | ValidCards$ Creature.IsRemembered+DamagedBy`. Since the flip
+        // is approximated as a single target, the IsRemembered mass-tap converts
+        // to a survival-gated single reuse_previous tap (resolved + gated at
+        // runtime). Pin that the IsRemembered TapAll becomes a TapPermanent.
+        let params = AbilityParams::parse("A:DB$ TapAll | ValidCards$ Creature.IsRemembered+DamagedBy").unwrap();
+        let effect = params_to_effect(&params).expect("IsRemembered TapAll must convert");
+        match effect {
+            Effect::TapPermanent { target } => {
+                assert!(
+                    target.is_reuse_previous(),
+                    "IsRemembered TapAll must reuse the parent damage target"
+                );
+            }
+            other => panic!("Expected TapPermanent reuse_previous, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_chaos_orb_self_destroy_subability() {
+        // The DBDestroySelf subability destroys the Orb itself (Defined$ Self).
+        let params = AbilityParams::parse("A:DB$ Destroy | Defined$ Self").unwrap();
+        let effect = params_to_effect(&params).expect("self-destroy should produce an effect");
+        match effect {
+            Effect::DestroyPermanent { target, .. } => {
+                assert!(
+                    target.is_self_target(),
+                    "Defined$ Self must produce the self-target sentinel"
+                );
+            }
+            other => panic!("Expected DestroyPermanent self-target, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_falling_star_tap_targeted() {
+        // Falling Star (mtg-503): `DB$ Tap | Defined$ Targeted` must reuse the
+        // parent ability's target (reuse_previous sentinel) so the chained tap
+        // hits the same creature the SP$ DealDamage targeted, not a fresh target.
+        let params = AbilityParams::parse("A:DB$ Tap | Defined$ Targeted").unwrap();
+        let effect = params_to_effect(&params).expect("Tap Defined$ Targeted should produce an effect");
+        match effect {
+            Effect::TapPermanent { target } => {
+                assert!(
+                    target.is_reuse_previous(),
+                    "Defined$ Targeted Tap must reuse the parent target (reuse_previous sentinel)"
+                );
+            }
+            other => panic!("Expected TapPermanent reuse_previous, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_psionic_blast_self_damage_placeholder() {
+        // Psionic Blast (mtg-533): the "2 damage to you" rider parses to a
+        // DealDamage at a PLACEHOLDER player target (Defined$ You -> PlayerId(0)),
+        // resolved to the caster at runtime. Pin that the placeholder is produced
+        // (the resolution-to-caster is covered by the cross-player e2e test).
+        let params = AbilityParams::parse("A:DB$ DealDamage | Defined$ You | NumDmg$ 2").unwrap();
+        let effect = params_to_effect(&params).expect("Defined$ You DealDamage should produce an effect");
+        match effect {
+            Effect::DealDamage { target, amount } => {
+                assert_eq!(amount, 2, "self-damage amount is 2");
+                match target {
+                    TargetRef::Player(pid) => assert!(
+                        pid.is_placeholder(),
+                        "Defined$ You must encode a placeholder player resolved to the caster"
+                    ),
+                    other => panic!("Expected TargetRef::Player(placeholder), got {:?}", other),
+                }
+            }
+            other => panic!("Expected DealDamage, got {:?}", other),
         }
     }
 
