@@ -44,6 +44,11 @@ function parseArgs() {
     let deckName = 'grizzly_bears.dck';
     let seed = 42;
     let humanMode = false;
+    // mtg-610: --undo-dump opts INTO the heavyweight per-choice-point server
+    // full-undo-log dump (MTG_NET_FULL_UNDO_DUMP). OFF by default so the routine
+    // gate stays quiet/fast; turn it on when diagnosing a specific desync. The
+    // WASM-side mismatch dump fires regardless (only on a desync, bounded).
+    let undoDump = false;
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--deck' && args[i + 1]) {
             deckName = args[++i];
@@ -52,12 +57,14 @@ function parseArgs() {
             seed = parseInt(args[++i]);
         } else if (args[i] === '--human') {
             humanMode = true;
+        } else if (args[i] === '--undo-dump') {
+            undoDump = true;
         }
     }
-    return { deckName, seed, humanMode };
+    return { deckName, seed, humanMode, undoDump };
 }
 
-const { deckName: DECK_NAME, seed: GAME_SEED, humanMode: HUMAN_MODE } = parseArgs();
+const { deckName: DECK_NAME, seed: GAME_SEED, humanMode: HUMAN_MODE, undoDump: UNDO_DUMP } = parseArgs();
 
 // Test limits
 const MAX_CHOICES = 200;            // Maximum human choices before declaring success
@@ -74,9 +81,20 @@ async function runTest() {
     const serverErrors = [];
     const screenshotDir = path.join(__dirname, 'screenshots');
     const projectRoot = path.join(__dirname, '..');
+    // mtg-610: raw, untruncated accumulators for the full undo-log dumps so a
+    // desync can be root-caused by diffing the EXACT diverging entries (the
+    // per-line console logging truncates for display). serverRawStderr holds the
+    // native server's complete stderr (incl. SERVER_FULL_UNDO_DUMP_* blocks);
+    // the WASM full dumps live untruncated in browserLogs[].text.
+    let serverRawStderr = '';
+    // Debug-dump destination is gitignored (debug/), never tracked.
+    const debugDumpDir = path.join(projectRoot, 'debug', 'netarch-undo-dumps');
 
     if (!fs.existsSync(screenshotDir)) {
         fs.mkdirSync(screenshotDir);
+    }
+    if (!fs.existsSync(debugDumpDir)) {
+        fs.mkdirSync(debugDumpDir, { recursive: true });
     }
 
     const prefix = HUMAN_MODE ? 'gui_human' : 'gui_random';
@@ -121,13 +139,21 @@ async function runTest() {
             '--network-debug'
         ], {
             cwd: projectRoot,
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // mtg-610: only enable the server's per-choice-point bounded undo-log
+            // dump when explicitly diagnosing (--undo-dump). OFF by default so the
+            // routine gate stays fast and quiet; the WASM-side mismatch dump still
+            // fires on any desync regardless of this flag.
+            env: UNDO_DUMP ? { ...process.env, MTG_NET_FULL_UNDO_DUMP: '1' } : process.env,
         });
         server.stdout.on('data', data => {
             log(`Server: ${data.toString().trim()}`);
         });
         server.stderr.on('data', data => {
             const text = data.toString().trim();
+            // mtg-610: keep the COMPLETE raw stderr (untruncated, including the
+            // multi-line SERVER_FULL_UNDO_DUMP_* blocks) for file-based diffing.
+            serverRawStderr += data.toString();
             if (text.includes('SYNC MISMATCH') || text.includes('DESYNC') || text.includes('InvalidAction')) {
                 serverErrors.push(text);
                 log(`Server SYNC ERROR: ${text}`);
@@ -315,6 +341,40 @@ async function runTest() {
             for (const entry of errorLogs.slice(-10)) {
                 log(`  ${entry.text.substring(0, 300)}`);
             }
+        }
+
+        // mtg-610: write the FULL, untruncated undo-log dumps to files so the
+        // exact diverging entries can be diffed. The WASM shadow's full dump is
+        // in browserLogs (WASM_FULL_UNDO_DUMP_BEGIN/END); the server's is in
+        // serverRawStderr (SERVER_FULL_UNDO_DUMP_BEGIN/END, one block per choice
+        // point — the LAST one before the failure is at the desync action_count).
+        try {
+            const stamp = `${prefix}_${path.basename(DECK_NAME).replace(/\.dck$/i, '')}_seed${GAME_SEED}`;
+            // All WASM full-dump blocks (keep every one; the last is the desync).
+            const wasmDumps = browserLogs
+                .map(l => l.text)
+                .filter(t => t.includes('WASM_FULL_UNDO_DUMP_BEGIN'));
+            const wasmPath = path.join(debugDumpDir, `${stamp}_wasm_undo.log`);
+            fs.writeFileSync(wasmPath, wasmDumps.join('\n\n========\n\n') || '(no WASM full-undo dumps captured)\n');
+            // Server full dumps: extract every SERVER_FULL_UNDO_DUMP block.
+            const serverBlocks = [];
+            const re = /SERVER_FULL_UNDO_DUMP_BEGIN[\s\S]*?SERVER_FULL_UNDO_DUMP_END/g;
+            let m;
+            while ((m = re.exec(serverRawStderr)) !== null) serverBlocks.push(m[0]);
+            const serverPath = path.join(debugDumpDir, `${stamp}_server_undo.log`);
+            fs.writeFileSync(serverPath, serverBlocks.join('\n\n========\n\n') || '(no SERVER full-undo dumps captured)\n');
+            // Also dump the WASM hash-debug mismatch lines for quick orientation.
+            const mismatchLines = browserLogs
+                .map(l => l.text)
+                .filter(t => t.includes('ACTION COUNT MISMATCH') || t.includes('state hash mismatch'));
+            const mismatchPath = path.join(debugDumpDir, `${stamp}_mismatch.log`);
+            fs.writeFileSync(mismatchPath, mismatchLines.join('\n') || '(no mismatch lines)\n');
+            log(`\nmtg-610 full undo-log dumps written:`);
+            log(`  WASM  : ${wasmPath} (${wasmDumps.length} block(s))`);
+            log(`  SERVER: ${serverPath} (${serverBlocks.length} block(s))`);
+            log(`  MISMATCH lines: ${mismatchPath}`);
+        } catch (e) {
+            log(`  (failed to write undo-log dumps: ${e.message})`);
         }
 
         return false;
