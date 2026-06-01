@@ -241,7 +241,13 @@ pub mod asset_graph {
     /// HTML pages (besides `ENTRY_HTML`) that participate in hashing.
     /// Listed explicitly so the staging-tree walk is deterministic and
     /// surfaces any new HTML page as a deliberate addition.
-    pub const HASHED_HTML_PAGES: &[&str] = &["native_game.html", "tui_game.html", "demo.html", "wasm_ai_harness.html"];
+    pub const HASHED_HTML_PAGES: &[&str] = &[
+        "native_game.html",
+        "tui_game.html",
+        "demo.html",
+        "wasm_ai_harness.html",
+        "deck_editor.html",
+    ];
 
     /// JS leaves loaded by `<script src>` or ES `import`. None of these
     /// have internal JS imports of their own (verified 2026-05-31), so

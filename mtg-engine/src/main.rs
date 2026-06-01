@@ -3949,6 +3949,30 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         hash: String,
     }
 
+    /// Compact card record for the WASM-free deck editor catalog.
+    /// Serialized as JSON (not bincode) so the editor page can fetch and
+    /// parse it without WASM. Only the fields needed for search + display.
+    #[derive(serde::Serialize)]
+    struct CatalogEntry {
+        /// Canonical card name (same key used in `cards` map and per-set bins).
+        name: String,
+        /// Mana cost as a compact string, e.g. "2RR", "1UB", "XR".
+        mana_cost: String,
+        /// Converted mana cost (not counting X).
+        cmc: u8,
+        /// Color identity letters, e.g. ["W","U"] or [] for colorless.
+        colors: Vec<String>,
+        /// Primary card types, e.g. ["Creature","Artifact"].
+        types: Vec<String>,
+        /// Subtypes joined by space, e.g. "Elf Warrior".
+        subtypes: String,
+        /// Power/toughness as strings (None = not a creature).
+        power: Option<i8>,
+        toughness: Option<i8>,
+        /// Oracle text (rules text).
+        oracle: String,
+    }
+
     #[derive(serde::Serialize)]
     struct SetIndex<'a> {
         version: u32,
@@ -3969,6 +3993,12 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         /// binary decks bin. Allows the lobby page (index.html) to populate a
         /// deck picker without loading WASM or parsing the binary.
         deck_names: Vec<String>,
+        /// Content-addressed name of the card catalog JSON, RELATIVE TO `data/`
+        /// (i.e. `catalog.<hash>.json`). The deck editor page fetches this to
+        /// build a searchable card list without WASM or parsing binary bins.
+        /// None if no cards were loaded (should not happen in practice).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        card_catalog: Option<String>,
     }
 
     let mut sets_manifest: Vec<SetManifestEntry> = Vec::with_capacity(buckets.len());
@@ -4174,6 +4204,67 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks_data.len()
     );
 
+    // ── Build and write the card catalog JSON (WASM-free deck editor). ──
+    // Compact per-card records with the fields the editor needs (name, mana
+    // cost, cmc, colors, types, subtypes, P/T, oracle). Serialized as a JSON
+    // array sorted by card name for determinism (identical cardsfolder =>
+    // identical bytes => identical hash). Content-addressed exactly like
+    // tokens/decks bins: `catalog.<hash>.json` recorded in index.json.
+    //
+    // The sweep below removes any stale `catalog.*.json` from prior exports
+    // before writing the new one, matching the tokens/decks sweep above.
+    for entry in fs::read_dir(&output).map_err(mtg_engine::MtgError::IoError)? {
+        let path = entry.map_err(mtg_engine::MtgError::IoError)?.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("catalog.") && name.ends_with(".json") {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    // Sort by card name for deterministic output.
+    let mut catalog_entries: Vec<CatalogEntry> = {
+        let mut names: Vec<&str> = card_definitions.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        names
+            .into_iter()
+            .map(|name| {
+                let def = &card_definitions[name];
+                CatalogEntry {
+                    name: name.to_string(),
+                    mana_cost: def.mana_cost.to_string(),
+                    cmc: def.mana_cost.cmc(),
+                    colors: def.colors.iter().map(|c| c.to_string()).collect(),
+                    types: def.types.iter().map(|t| t.as_str().to_string()).collect(),
+                    subtypes: def.subtypes.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" "),
+                    power: def.power,
+                    toughness: def.toughness,
+                    oracle: def.oracle.clone(),
+                }
+            })
+            .collect()
+    };
+    // Sort by name (already sorted via BTreeMap-ordered `names`; this is
+    // belt-and-suspenders — stable sort keeps the order).
+    catalog_entries.sort_by(|a, b| a.name.cmp(&b.name));
+    let catalog_json = serde_json::to_string(&catalog_entries)
+        .map_err(|e| mtg_engine::MtgError::InvalidCardFormat(format!("Failed to serialize card catalog: {}", e)))?;
+    let catalog_hash = mtg_engine::asset_hash::asset_hash_hex(catalog_json.as_bytes());
+    let catalog_file_name = format!("catalog.{}.json", catalog_hash);
+    let catalog_path = output.join(&catalog_file_name);
+    fs::write(&catalog_path, &catalog_json).map_err(mtg_engine::MtgError::IoError)?;
+    println!(
+        "Wrote card catalog {} ({} bytes, {} cards)",
+        catalog_file_name,
+        catalog_json.len(),
+        catalog_entries.len()
+    );
+    let catalog_file_name_opt = if catalog_entries.is_empty() {
+        None
+    } else {
+        Some(catalog_file_name.clone())
+    };
+
     // ── Write index.json LAST: it now records the content-addressed tokens +
     //    decks names (relative to `data/`) alongside the per-set bins. ──
     // Sorted deck names included so the lobby page (index.html) can populate
@@ -4187,6 +4278,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         tokens: tokens_file_name.clone(),
         decks: decks_file_name.clone(),
         deck_names: deck_names_sorted,
+        card_catalog: catalog_file_name_opt,
     };
     let index_path = sets_dir.join("index.json");
     let index_json = serde_json::to_string(&index)
@@ -4237,6 +4329,12 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks_file_name,
         decks.len(),
         decks_data.len()
+    );
+    println!(
+        "  {:<16} - {} cards in catalog ({} bytes)",
+        catalog_file_name,
+        catalog_entries.len(),
+        catalog_json.len()
     );
 
     Ok(())
