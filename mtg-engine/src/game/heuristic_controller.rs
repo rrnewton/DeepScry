@@ -3315,6 +3315,25 @@ impl HeuristicController {
             return true;
         }
 
+        // Utility artifacts with non-mana activated abilities (Icy Manipulator, etc.).
+        // These have no spell effects themselves but provide board control via their
+        // activated abilities once on the battlefield. Cast them when the opponent has
+        // permanents that those abilities could affect (CR 302.6: artifacts are permanent
+        // spells, they don't need ETB effects to be useful).
+        if spell.is_artifact() && !spell.is_creature() {
+            let has_useful_activated = spell.activated_abilities.iter().any(|ab| !ab.is_mana_ability);
+            if has_useful_activated {
+                // Only cast if the opponent has relevant permanents the ability can affect
+                let opponent_has_permanents = view
+                    .battlefield()
+                    .iter()
+                    .any(|&card_id| view.get_card(card_id).is_some_and(|c| c.controller != self.player_id));
+                if opponent_has_permanents {
+                    return true;
+                }
+            }
+        }
+
         // Always-beneficial effects: search library, create tokens, scry, surveil, etc.
         // These effects always benefit the caster and should be cast when possible.
         // Examples: Demonic Tutor (SearchLibrary), Dragon Fodder (CreateToken),
@@ -3577,6 +3596,44 @@ impl HeuristicController {
                         .is_some_and(|c| c.is_creature() && c.controller == self.player_id)
                 });
                 return has_creatures;
+            }
+
+            // Check for RaiseCost / ReduceCost statics (Gloom, Karma, etc.).
+            // These are "hate" enchantments that hose a colour or type.
+            // Cast if the opponent controls permanents that share the targeted
+            // colour — even one permanent is enough to make the enchantment
+            // valuable (it slows down every future spell of that colour).
+            // CR 601.2f: cost-raising statics apply to all players, but the
+            // primary value here is hosing the opponent.
+            let raise_cost_abilities: Vec<_> = spell
+                .static_abilities
+                .iter()
+                .filter_map(|ab| {
+                    if let crate::core::StaticAbility::RaiseCost { valid_card, .. } = ab {
+                        Some(valid_card)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !raise_cost_abilities.is_empty() {
+                // Cast if the opponent has any permanent whose colour/type
+                // matches the RaiseCost target — meaning the effect will hose them.
+                let opponent_has_target = view.battlefield().iter().any(|&card_id| {
+                    let Some(card) = view.get_card(card_id) else {
+                        return false;
+                    };
+                    if card.controller == self.player_id {
+                        return false;
+                    }
+                    raise_cost_abilities
+                        .iter()
+                        .any(|&valid_card| crate::game::actions::spell_matches_cost_filter(card, valid_card))
+                });
+                if opponent_has_target {
+                    return true;
+                }
             }
 
             // Unknown enchantment type - don't cast
@@ -5440,6 +5497,21 @@ impl PlayerController for HeuristicController {
                 })
         });
 
+        // Check if the spell/ability has a tap effect (Icy Manipulator, etc.)
+        // These should target opponent's permanents — tapping your own stuff is useless.
+        // CR 602.1: activated ability effects are chosen at activation time; the
+        // heuristic must pick an opponent permanent where available.
+        let has_tap_effect = spell_card.is_some_and(|c| {
+            c.effects
+                .iter()
+                .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }))
+                || c.activated_abilities.iter().any(|a| {
+                    a.effects
+                        .iter()
+                        .any(|e| matches!(e, crate::core::Effect::TapPermanent { .. }))
+                })
+        });
+
         // Choose targeting strategy based on spell/ability type
         let filtered_target_ids: Vec<CardId> = if let Some(damage) = damage_amount {
             // Damage abilities: Target opponent's best KILLABLE creature
@@ -5502,6 +5574,24 @@ impl PlayerController for HeuristicController {
             if opponent_targets.is_empty() {
                 // No opponent targets available - fallback to any valid target
                 // (This shouldn't normally happen for removal spells, but be safe)
+                valid_targets.to_vec()
+            } else {
+                opponent_targets
+            }
+        } else if has_tap_effect {
+            // Tap effects (Icy Manipulator, etc.): Target opponent's permanents.
+            // Tapping your own lands/creatures is self-defeating. Prefer the
+            // opponent's most relevant (creature) permanent; fall back to any
+            // opponent permanent; last resort is any valid target.
+            // CR 602.1b: effect choice is part of activation, not a separate game
+            // action — the heuristic is purely advisory and produces no
+            // rules-illegal outcome regardless of which legal target it picks.
+            let opponent_targets: Vec<CardId> = valid_targets
+                .iter()
+                .filter(|&&id| view.get_card(id).map(|c| c.owner != self.player_id).unwrap_or(false))
+                .copied()
+                .collect();
+            if opponent_targets.is_empty() {
                 valid_targets.to_vec()
             } else {
                 opponent_targets

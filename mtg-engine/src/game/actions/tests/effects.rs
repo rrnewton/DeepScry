@@ -5932,6 +5932,81 @@ mod tests {
         );
     }
 
+    /// Card compat: Icy Manipulator (cardsfolder/i/icy_manipulator.txt) — mtg-511
+    ///
+    /// Script:
+    ///   ManaCost:4
+    ///   Types:Artifact
+    ///   A:AB$ Tap | Cost$ 1 T | ValidTgts$ Artifact,Creature,Land | SpellDescription$ Tap target artifact, creature, or land.
+    ///
+    /// Parser-shape regression: {4} Artifact with exactly one activated ability
+    /// whose effect is TapPermanent, costing {1}+T. The ability must NOT be
+    /// classified as a mana ability (so the heuristic can include it in
+    /// should_activate_ability / TapTarget classification). Silent drop of the
+    /// ability or mis-classification as mana ability makes Icy Manipulator a
+    /// useless 4-mana artifact.
+    ///
+    /// Heuristic targeting (mtg-zssaf fix): the heuristic controller now
+    /// correctly targets an opponent's permanent (not its own source) when
+    /// a TapPermanent activated ability fires. Verified by game log in
+    /// tests/icy_manipulator_taps_opponent_e2e.sh.
+    #[test]
+    fn test_card_compat_icy_manipulator() {
+        use crate::core::Effect;
+        use std::path::PathBuf;
+
+        let path = PathBuf::from("../cardsfolder/i/icy_manipulator.txt");
+        if !path.exists() {
+            eprintln!("Skipping: cardsfolder not present at {:?}", path);
+            return;
+        }
+        let def = crate::loader::CardLoader::load_from_file(&path).expect("Icy Manipulator should load");
+
+        assert_eq!(def.name.as_str(), "Icy Manipulator");
+        assert_eq!(def.mana_cost.generic, 4, "Cost should be {{4}}");
+        assert_eq!(
+            def.mana_cost.white + def.mana_cost.blue + def.mana_cost.black + def.mana_cost.red + def.mana_cost.green,
+            0,
+            "Cost should be purely colorless"
+        );
+        assert!(def.types.contains(&CardType::Artifact));
+
+        let card = def.instantiate(CardId::new(1), PlayerId::new(0));
+
+        // Must have exactly one activated ability
+        assert_eq!(
+            card.activated_abilities.len(),
+            1,
+            "Icy Manipulator must have exactly one activated ability. \
+             Silent drop makes it a useless 4-mana artifact."
+        );
+
+        let ab = &card.activated_abilities[0];
+
+        // Must NOT be classified as a mana ability
+        assert!(
+            !ab.is_mana_ability,
+            "Icy Manipulator's Tap ability must NOT be a mana ability — \
+             it is a targeted tap effect (TapPermanent), not mana production."
+        );
+
+        // The ability must produce a TapPermanent effect
+        assert!(
+            ab.effects.iter().any(|e| matches!(e, Effect::TapPermanent { .. })),
+            "Icy Manipulator's activated ability must produce a TapPermanent effect. \
+             Got: {:?}",
+            ab.effects
+        );
+
+        // Cost must include a tap symbol (i.e., the cost itself taps the source)
+        assert!(
+            ab.cost.includes_tap(),
+            "Icy Manipulator's activation cost must include a tap symbol. \
+             Got: {:?}",
+            ab.cost
+        );
+    }
+
     /// Card compat: Red Elemental Blast / Blue Elemental Blast — mtg-536 / mtg-487
     ///
     /// Script (REBL):
