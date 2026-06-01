@@ -80,6 +80,10 @@ fn full_graph_hashes_everything_but_index_html() {
         &web.join("wasm_ai_harness.html"),
         r#"<html><body><script>fetch('/data/sets/index.json');</script></body></html>"#,
     );
+    write(
+        &web.join("deck_editor.html"),
+        r#"<html><body><a href="index.html">Back to Lobby</a><script>fetch('./data/sets/index.json');</script></body></html>"#,
+    );
 
     // ENTRY: launch buttons + JS redirect with query string.
     write(
