@@ -799,14 +799,19 @@
         }
         ws.onopen = function () {
             setConnState('ok', 'Connected');
-            // If we already have a registered name (from sessionStorage), re-register
-            // after a reconnect so the session is valid.
-            if (currentUsername && nameRegistered) {
-                nameRegistered = false;
+            if (currentUsername && !nameRegistered) {
+                // We have a username but haven't registered on this WS yet
+                // (fresh connect, reconnect after cancel, or reconnect after drop).
+                // Re-register; requestGameList() fires inside handleRegisterResult
+                // on success.
                 sendRegister(currentUsername);
-            } else {
+            } else if (!currentUsername) {
+                // No username yet — just fetch the game list (lobby-only browsing).
                 requestGameList();
             }
+            // If nameRegistered is already true (shouldn't happen since we
+            // reset it on close/cancel), the WS was reused without reset; just
+            // continue browsing.
         };
         ws.onerror = function () {
             setConnState('err', 'Connection error');
@@ -1344,6 +1349,17 @@
         document.getElementById('waiting-invite-block').classList.add('hidden');
         document.getElementById('wr-ready-check').checked = false;
         document.getElementById('pane-lobby').classList.remove('hidden');
+        // After CreateGame/JoinGame, the server's WS task is in "waiting for
+        // joiner" state (only accepts SetDeck/SetReady/Disconnect). To evict
+        // the pending game and return to browse mode, close and reconnect.
+        // connect() will re-register (since nameRegistered is now false) and
+        // then request the game list.
+        nameRegistered = false;
+        if (ws) {
+            try { ws.close(1000, 'cancel-waiting-room'); } catch (e) { /* ignore */ }
+            ws = null;
+        }
+        connect();
     }
 
     // -------------------------------------------------------------------------
@@ -1477,9 +1493,9 @@
 
     document.getElementById('btn-cancel-waiting').addEventListener('click', function (ev) {
         ev.preventDefault();
+        // cancelWaitingRoom() reconnects the WS and re-registers; that will
+        // trigger requestGameList on connect, so no explicit call is needed here.
         cancelWaitingRoom();
-        startRefreshTimer();
-        requestGameList();
     });
 
     document.getElementById('btn-copy-invite').addEventListener('click', function () {
