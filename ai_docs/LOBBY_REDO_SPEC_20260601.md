@@ -106,3 +106,4 @@ architecture before any merge.
 - Join has no per-player renderer choice → launcher gives each player their own.
 - Game freeze after first land → netarch mtg-c9fuc / play-path robustness.
 - Reload/back corrupts → reconnect-token resume or clean failure.
+- Lobby layout (mtg-595): solo launchers on TOP (fixed), Lobby below w/ Logged-in Players list (left, same filter/count/cap as Open Games) + Open Games (right) — implement on the NEW lobby page. Depends on eager username registration (mtg-594).
