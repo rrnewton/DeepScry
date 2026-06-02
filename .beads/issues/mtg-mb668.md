@@ -4,10 +4,16 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T21:01:22.116102983+00:00
+updated_at: 2026-06-02T22:01:02.790120239+00:00
 ---
 
 # Description
+
+STATUS 2026-06-02 (netarch-dev, deeper localization via all-site WASM instrumentation):
+The real Demonic-Tutor search path is NOT priority.rs:1758 — it is the SearchLibrary block at priority.rs ~3748-3815 (placeholder player -> spell_owner; calls choose_from_library_with_hook then log_choice_point). Instrumented ALL 6 search paths (5 priority sites + actions/mod.rs:4600 non-interactive) + WasmRemoteController.choose_from_library + a forced WASM/server LIBSRCH trace dump.
+KEY DATA (robots42 seed=42, a failing run): server fetched CardId 0 — `Choice(LibrarySearch(Some(0))) -> MoveCard(0 Library->Hand) -> Shuffle 37`. WASM recorded `LibrarySearch(None) -> Shuffle 38` (fetch lost). PASSING runs emit ZERO library-search markers on the WASM; only the FAILING run ran the search resolution (30x LIBSRCH_SITE_PRIO chosen=None during rewind+replay re-entries + 1x LIBSRCH_REMOTE last_lib_result=Some(0)). So the WasmRemoteController DID receive the authoritative result Some(CardId 0) at least once, but the RECORDED ReplayChoice is None.
+ROOT (refined): on P2's shadow the opponent's authoritative library_search_result is recorded as None on the FIRST resolution of P0's embedded search — an async choice-delivery / choice-ordering race (the OpponentChoice carrying library_search_result isn't reliably popped/available at the moment site ~3790 resolves the search). Once None is recorded it is replayed forever (replay_library_search returns the recorded None before consulting the remote). Step-1 CardId recording (d9a697fe) is correct + necessary but inert here because there is no Some to record at first resolution.
+NEXT: make the opponent's embedded-search result deterministically available before/at resolution (frontier-gate it like the reveal-history buffer), OR source the recorded value from the authoritative server broadcast that survives rewind. Then the same authoritative-outcome-replay extends to (2) Timetwister mass-draw. Debug instrumentation reverted; worktree clean @7e20bf8b.
 
 STATUS 2026-06-02 (agent-teams netarch-dev VERIFICATION — fix does NOT hold; precise root cause found):
 
