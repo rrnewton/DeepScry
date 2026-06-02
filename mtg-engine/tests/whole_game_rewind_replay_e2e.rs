@@ -38,17 +38,20 @@
 //! replayed gamelog tail would be shorter / divergent and `verify_gamelog_tail`
 //! reports the first offending message + buffer index.
 //!
-//! ## Turn-1 baseline limitation (mtg-610)
+//! ## Turn-1 boundary marker (mtg-610 — RESOLVED)
 //!
-//! `rewind_to_turn_start` rewinds to the most recent `ChangeTurn` marker. Turn 1
-//! has NO such marker, so rewinding a turn-1-only game empties the entire undo
-//! log and re-triggers PRE-GAME setup (shuffle + opening hands), which advances
-//! the RNG and re-orders libraries — that is the known "turn-1 hash inexactness"
-//! and is non-reproducible. We therefore pause and rewind at the DEEPEST CLEAN
-//! turn-start the recorder reaches (turn 2+), where a real `ChangeTurn` boundary
-//! survives the rewind. That still exercises CROSS-TURN rewind, which the older
-//! single-turn tests never did. A clean post-setup turn-1 checkpoint primitive
-//! is tracked in mtg-610; once it lands, the baseline can move to turn 1.
+//! `rewind_to_turn_start` rewinds to the most recent `ChangeTurn` marker.
+//! Historically turn 1 had NO such marker, so rewinding a turn-1 game emptied the
+//! entire undo log and re-triggered PRE-GAME setup (shuffle + opening hands),
+//! advancing the RNG and re-ordering libraries — the "turn-1 hash inexactness".
+//! That is now FIXED: `GameState::ensure_turn_one_boundary` emits a clean
+//! post-setup `ChangeTurn` boundary for turn 1, so a turn-1 rewind stops there
+//! just like turn 2+. The `run_deck_scenario` driver still pauses on turn 2+ to
+//! exercise CROSS-TURN rewind, but turn 1 now has dedicated coverage via
+//! `run_turn1_playland_scenario` (the user-reported A1 PlayLand desync), which
+//! asserts the land play survives rewind+replay. See also
+//! `rewind_replay_oracle_e2e`, which exercises turn-1 round-trips at every
+//! decision point through the same unified path.
 
 use mtg_engine::{
     core::{CardId, ManaCost, PlayerId, SpellAbility},
@@ -840,6 +843,151 @@ async fn run_deck_scenario(deck_relpath: &str, rng_seed: u64, scenario: &str) ->
     Ok(())
 }
 
+/// Turn-1 PlayLand regression scenario (mtg-610 THREAD A / A1).
+///
+/// Directly reproduces the user-reported live-game desync: "FATAL DESYNC: Local
+/// abilities [PlayLand{..}] != Server []" on turn 1, after the human played ONE
+/// land. The shadow LOST the "a land was already played this turn" state under
+/// rewind+replay and re-offered `PlayLand`, while the server (correctly tracking
+/// the one-land-per-turn rule) offered nothing.
+///
+/// Root cause: turn 1 had no `ChangeTurn` boundary marker, so `rewind_to_turn_start`
+/// popped the ENTIRE undo log — unwinding pre-game setup (shuffle + opening-hand
+/// draws) and re-running it non-deterministically on replay, which dropped the
+/// turn-1 land play. The fix (`GameState::ensure_turn_one_boundary`) emits a clean
+/// post-setup turn-1 boundary so the rewind stops there, exactly like turn 2+.
+///
+/// This asserts BOTH halves of the guarantee after rewind+replay:
+///   1. the state hash returns to its pre-rewind value (no setup re-run), and
+///   2. `lands_played_this_turn` is restored to 1 and `can_play_land()` is false
+///      — i.e. `PlayLand` is NOT re-offered (the exact user symptom).
+async fn run_turn1_playland_scenario(deck_relpath: &str, rng_seed: u64, scenario: &str) -> Result<()> {
+    // Find the first P1 priority decision K at which, on turn 1, a land has
+    // already been played this turn — that is the pause point that reproduces the
+    // bug (the shadow must NOT re-offer PlayLand on replay).
+    for k in 0..40usize {
+        let mut game = load_deck_game(deck_relpath, rng_seed).await?;
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let stopped = {
+            let mut p1 = RecorderController::new(p1_id, Some(k));
+            let mut p2 = RecorderController::new(p2_id, None);
+            let result = {
+                let mut game_loop = GameLoop::new(&mut game)
+                    .with_verbosity(VerbosityLevel::Silent)
+                    .with_max_turns(12);
+                game_loop.run_until_input(&mut p1, &mut p2)?
+            };
+            matches!(result, GameLoopState::AwaitingInput(_))
+        };
+        if !stopped {
+            break; // game ended before reaching this decision point
+        }
+
+        // We want a turn-1 pause AFTER a land has been played this turn, by
+        // EITHER player (the active player on turn 1 may be P1 or P2 depending on
+        // the deck/seed). Assert the invariant on whichever player played a land.
+        let land_player = if game.get_player(p1_id)?.lands_played_this_turn >= 1 {
+            p1_id
+        } else if game.get_player(p2_id)?.lands_played_this_turn >= 1 {
+            p2_id
+        } else {
+            continue;
+        };
+        let lands_played = game.get_player(land_player)?.lands_played_this_turn;
+        if game.turn.turn_number != 1 {
+            continue;
+        }
+
+        // The turn-1 boundary marker MUST exist in the undo log now.
+        assert_eq!(
+            game.undo_log.current_turn(),
+            Some(1),
+            "[{scenario}] turn-1 boundary marker missing from the undo log; \
+             ensure_turn_one_boundary did not fire"
+        );
+
+        let hash_after_forward = compute_state_hash(&game);
+        let forward_log = snapshot_log(&game);
+        let pre_rewind_log_count = forward_log.len();
+
+        // ── Rewind to the turn-1 boundary marker (must NOT empty the log) ──────
+        let mut undo_log = std::mem::take(&mut game.undo_log);
+        let rewind = undo_log.rewind_to_turn_start(&mut game);
+        let log_empty_after_rewind = undo_log.is_empty();
+        game.undo_log = undo_log;
+        let (turn, choice_actions, _rewound, log_size_at_turn) =
+            rewind.expect("rewind_to_turn_start must succeed (undo log enabled)");
+        assert_eq!(turn, 1, "[{scenario}] expected a turn-1 rewind");
+        assert!(
+            !log_empty_after_rewind,
+            "[{scenario}] turn-1 rewind emptied the whole undo log -> over-rewound into pre-game \
+             setup. The turn-1 boundary marker should have stopped the rewind. See mtg-610."
+        );
+
+        // After rewinding to turn-1 start the land has NOT been played yet.
+        assert_eq!(
+            game.get_player(land_player)?.lands_played_this_turn,
+            0,
+            "[{scenario}] lands_played_this_turn should be 0 at the turn-1 boundary"
+        );
+
+        let baseline_hash = compute_state_hash(&game);
+        game.logger.truncate_to(log_size_at_turn);
+        assert_ne!(
+            baseline_hash, hash_after_forward,
+            "[{scenario}] rewind did not change the state hash; round-trip would be vacuous"
+        );
+
+        // ── Replay the recorded intra-turn choices ────────────────────────────
+        let (p1_choices, p2_choices) = partition_choices(choice_actions, p1_id);
+        let mut p1_replay = ReplayController::new(p1_id, Box::new(StopController::new(p1_id)), p1_choices);
+        let mut p2_replay = ReplayController::new(p2_id, Box::new(StopController::new(p2_id)), p2_choices);
+        {
+            let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Silent);
+            let _ = game_loop.run_until_input(&mut p1_replay, &mut p2_replay)?;
+        }
+
+        // ── Invariant 1: state hash round-trips ───────────────────────────────
+        let hash_after_replay = compute_state_hash(&game);
+        assert_eq!(
+            hash_after_replay, hash_after_forward,
+            "[{scenario}] TURN-1 REWIND/REPLAY STATE-HASH ROUND-TRIP FAILED \
+             ({hash_after_replay:#x} != {hash_after_forward:#x}). Turn-1 setup was re-run \
+             non-deterministically instead of being preserved by the boundary marker. See mtg-610."
+        );
+
+        // ── Invariant 2: the land play is restored — PlayLand NOT re-offered ───
+        let lands_played_after = game.get_player(land_player)?.lands_played_this_turn;
+        assert_eq!(
+            lands_played_after, lands_played,
+            "[{scenario}] lands_played_this_turn was LOST on rewind+replay ({lands_played_after} != \
+             {lands_played}). This is the user-reported A1 bug: the shadow re-offers PlayLand after \
+             the server already used the one-land-per-turn rule. See mtg-610 THREAD A."
+        );
+        assert!(
+            !game.get_player(land_player)?.can_play_land(),
+            "[{scenario}] can_play_land() is true after replaying a turn-1 land play — PlayLand \
+             would be wrongly re-offered (the A1 desync). See mtg-610 THREAD A."
+        );
+
+        // The gamelog tail must also regenerate (an un-logged choice would truncate it).
+        let captured_tail = &forward_log[log_size_at_turn..pre_rewind_log_count];
+        let replay_buffer: Vec<LogEntry> = game.logger.logs().iter().cloned().collect();
+        let outcome = verify_gamelog_tail(captured_tail, &replay_buffer, log_size_at_turn);
+        assert_eq!(
+            outcome,
+            GamelogCheck::Ok,
+            "[{scenario}] TURN-1 REWIND/REPLAY GAMELOG ROUND-TRIP FAILED. See mtg-610 THREAD A."
+        );
+
+        return Ok(());
+    }
+
+    panic!("[{scenario}] no turn-1 post-land-play decision point found; the deck/seed may not play a land on turn 1");
+}
+
 /// Bazaar scenario: load the Bazaar-of-Baghdad puzzle, activate Bazaar (logging a
 /// mid-resolution Discard ChoicePoint), pause, then rewind/replay/verify. This
 /// preserves both the `bazaar_rewind_loop_e2e` ChoicePoint-logging coverage AND
@@ -987,6 +1135,19 @@ deck_rewind_cases! {
     // the deck the old rewind_replay_oracle_e2e used.
     combat_4ed_seed_42 => ("decks/combat_test_4ed.dck", 42),
     combat_4ed_seed_99 => ("decks/combat_test_4ed.dck", 99),
+}
+
+/// Turn-1 PlayLand round-trip cases (mtg-610 THREAD A / A1): the boundary marker
+/// makes a turn-1 rewind stop at a clean post-setup checkpoint, so the turn-1
+/// land play survives rewind+replay and PlayLand is not re-offered.
+#[tokio::test]
+async fn turn1_playland_round_trip_simple_bolt_42424() -> Result<()> {
+    run_turn1_playland_scenario("decks/simple_bolt.dck", 42424, "turn1_playland_simple_bolt_42424").await
+}
+
+#[tokio::test]
+async fn turn1_playland_round_trip_simple_bolt_7() -> Result<()> {
+    run_turn1_playland_scenario("decks/simple_bolt.dck", 7, "turn1_playland_simple_bolt_7").await
 }
 
 /// Bazaar-of-Baghdad mid-resolution discard scenario (preserves the

@@ -2782,6 +2782,71 @@ impl GameState {
         }
     }
 
+    /// Serialize the current RNG state into a compact `SmallVec` for storage in
+    /// a `ChangeTurn` undo-log marker.
+    ///
+    /// Uses bincode for compact serialization (56 bytes vs 152 bytes for JSON).
+    /// `SmallVec<[u8; 64]>` fits ChaCha12Rng serialization (56 bytes, no heap
+    /// allocation). Returns `None` if serialization fails.
+    ///
+    /// OPTIMIZATION: Uses `serialize_into` with a fixed buffer to avoid a `Vec`
+    /// allocation — ChaCha12Rng bincode serialization is exactly 56 bytes.
+    pub fn capture_rng_state(&self) -> Option<smallvec::SmallVec<[u8; 64]>> {
+        let rng = self.rng.borrow();
+        let mut buffer = [0u8; 64];
+        let mut cursor = std::io::Cursor::new(&mut buffer[..]);
+        if bincode::serialize_into(&mut cursor, &*rng).is_ok() {
+            let len = cursor.position() as usize;
+            // INVARIANT: ChaCha12Rng bincode serialization is exactly 56 bytes
+            debug_assert_eq!(
+                len, 56,
+                "ChaCha12Rng bincode serialization changed from 56 bytes to {} bytes - update buffer size!",
+                len
+            );
+            // Create SmallVec from the fixed buffer slice (no heap allocation)
+            Some(smallvec::SmallVec::from_slice(&buffer[..len]))
+        } else {
+            None
+        }
+    }
+
+    /// Emit a clean turn-1 start boundary marker into the undo log (mtg-610).
+    ///
+    /// Turn 2+ each begin with a `ChangeTurn` marker logged by `advance_step`'s
+    /// turn-transition path, which `undo::rewind_to_turn_start` uses as the
+    /// "rewind here and stop" boundary. Turn 1 has no preceding turn transition,
+    /// so without this it has NO boundary marker — a turn-1 rewind then pops the
+    /// ENTIRE undo log, unwinding pre-game setup (shuffle + opening-hand draws)
+    /// and re-running it non-deterministically on replay. The most visible
+    /// symptom is a turn-1 land play lost on rewind+replay (the shadow re-offers
+    /// `PlayLand` after the server already used the one-land-per-turn rule).
+    ///
+    /// We emit a `ChangeTurn` marker for turn 1 (reusing the existing variant so
+    /// `rewind_to_turn_start` / `current_turn` need no special-casing) right
+    /// after setup completes and before any turn-1 play. It is gated on "turn 1
+    /// AND no `ChangeTurn` marker yet", so it fires exactly once across every
+    /// entry path (`run_game` / `run_turns` / `run_one_turn`) and is idempotent
+    /// under WASM step-harness / network re-entry (which recreates the GameLoop
+    /// each call). `ChangeTurn::undo` special-cases `turn_number == 1` so a full
+    /// undo-to-empty restores the initial turn 1 (there is no turn 0).
+    pub fn ensure_turn_one_boundary(&mut self) {
+        if self.turn.turn_number != 1 || self.undo_log.current_turn().is_some() {
+            return;
+        }
+        let active_player = self.turn.active_player;
+        let rng_state = self.capture_rng_state();
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::ChangeTurn {
+                from_player: active_player,
+                to_player: active_player,
+                turn_number: 1,
+                rng_state,
+            },
+            prior_log_size,
+        );
+    }
+
     /// Advance the game to the next step
     ///
     /// # Errors
@@ -2833,32 +2898,10 @@ impl GameState {
             };
             let old_turn_number = self.turn.turn_number;
 
-            // Serialize RNG state BEFORE changing turns
-            // This captures the RNG state at the END of the current turn,
-            // which will be the START of the next turn after next_turn() is called
-            // Using bincode for compact serialization (56 bytes vs 152 bytes for JSON)
-            // SmallVec<[u8; 64]> fits ChaCha12Rng serialization (56 bytes, no heap allocation)
-            //
-            // OPTIMIZATION: Use serialize_into with a fixed buffer to avoid Vec allocation.
-            // ChaCha12Rng bincode serialization is exactly 56 bytes, so we use a [u8; 64] buffer.
-            let rng_state = {
-                let rng = self.rng.borrow();
-                let mut buffer = [0u8; 64];
-                let mut cursor = std::io::Cursor::new(&mut buffer[..]);
-                if bincode::serialize_into(&mut cursor, &*rng).is_ok() {
-                    let len = cursor.position() as usize;
-                    // INVARIANT: ChaCha12Rng bincode serialization is exactly 56 bytes
-                    debug_assert_eq!(
-                        len, 56,
-                        "ChaCha12Rng bincode serialization changed from 56 bytes to {} bytes - update buffer size!",
-                        len
-                    );
-                    // Create SmallVec from the fixed buffer slice (no heap allocation)
-                    Some(smallvec::SmallVec::from_slice(&buffer[..len]))
-                } else {
-                    None
-                }
-            };
+            // Serialize RNG state BEFORE changing turns. This captures the RNG
+            // state at the END of the current turn, which will be the START of
+            // the next turn after next_turn() is called.
+            let rng_state = self.capture_rng_state();
 
             self.turn.next_turn(next_player);
 
@@ -3178,8 +3221,9 @@ impl GameState {
                             turn_number,
                             rng_state,
                         } => {
+                            // turn-1 boundary marker (mtg-610): no turn 0, keep at 1.
                             self.turn.active_player = from_player;
-                            self.turn.turn_number = turn_number - 1;
+                            self.turn.turn_number = if turn_number <= 1 { 1 } else { turn_number - 1 };
 
                             if let Some(rng_bytes) = rng_state {
                                 if let Ok(rng) = serde_json::from_slice::<ChaCha12Rng>(&rng_bytes) {
@@ -3513,9 +3557,12 @@ impl GameState {
                     turn_number,
                     rng_state,
                 } => {
-                    // Revert to previous turn
+                    // Revert to previous turn.
+                    // EXCEPTION (mtg-610): the turn-1 start boundary marker
+                    // (`ensure_turn_one_boundary`) logs turn_number == 1; there is
+                    // no turn 0, so undoing it lands back on the initial turn 1.
                     self.turn.active_player = from_player;
-                    self.turn.turn_number = turn_number - 1;
+                    self.turn.turn_number = if turn_number <= 1 { 1 } else { turn_number - 1 };
 
                     // Restore RNG state if available (using bincode + SmallVec)
                     if let Some(rng_bytes) = rng_state {

@@ -1335,6 +1335,14 @@ impl<'a> GameLoop<'a> {
             println!("🔄 RESUMING TURN {} (will suppress header)", self.turns_elapsed + 1);
         }
 
+        // Emit the turn-1 start boundary marker (mtg-610) so a turn-1 rewind has
+        // a `ChangeTurn` boundary to stop at, exactly like turn 2+. Without it,
+        // `rewind_to_turn_start` on turn 1 pops the whole undo log and re-runs
+        // pre-game setup non-deterministically — losing e.g. a turn-1 land play.
+        // Gated on "turn 1 && no ChangeTurn yet", so it fires once across every
+        // entry path and is idempotent under WASM/network re-entry.
+        self.game.ensure_turn_one_boundary();
+
         // Reset turn-based state. No re-entry guard needed (mtg-610): a WASM
         // network re-entry rewinds to the turn start and replays, so
         // reset_turn_state runs exactly once per turn from a clean state — it no
