@@ -1807,14 +1807,34 @@ impl WasmFancyTuiState {
     }
 
     /// Clear shadow card instances that an asynchronous state-sync reveal
-    /// leaked into a hand zone but are NOT revealed to the local player
-    /// (mtg-610). See the call site in `rewind_to_turn_start` for the full
-    /// rationale: these are the opponent's hand cards, whose async-reveal
-    /// timing makes the rewound `cards` set history-dependent. Clearing them
-    /// (and letting the forward replay re-apply the reveals) makes the rewound
-    /// turn-start state deterministic. Our OWN hand cards (revealed to us) and
-    /// public-zone cards (battlefield/stack/graveyard/exile, revealed to all)
-    /// are deliberately left intact. No-op outside shadow games.
+    /// materialized but whose presence is NOT a deterministic function of the
+    /// rewound game position (mtg-610).
+    ///
+    /// The shadow learns an OPPONENT card's identity only via the server's
+    /// `CardRevealed` state-sync stream, which `process_card_reveal` applies
+    /// with a NON-undo-logged `game.cards.insert(...)`. Those inserts are keyed
+    /// by the reveal's wall-clock ARRIVAL order (a monotonic `next_state_sync_ac`
+    /// counter — see `WasmNetworkClient::push_state_sync`), NOT by the shadow's
+    /// game `action_count`. So whether a given opponent card is materialized at
+    /// a turn boundary depends on how many reveals had arrived from the server
+    /// by that moment — pure async timing, divergent across repeated rewinds to
+    /// the same turn. This is the one disclosure class the deterministic
+    /// zone-change reveal CANNOT make stable, because on the shadow the
+    /// materialization is server-pushed, not zone-driven (a cast Counterspell
+    /// that resolves to the opponent's graveyard is async-`Played`-revealed and
+    /// the engine's own move_card on the shadow no-ops the zone move for an
+    /// opponent card it never had in hand). The verifier saw this as a
+    /// `cards[id]` PRIOR-null / CURRENT-present turn-start drift.
+    ///
+    /// `rewind_to_turn_start` (undo.rs) already clears library-zone leaks
+    /// (hidden from everyone); here we additionally clear opponent HAND-zone
+    /// instances NOT revealed to the local player, whose async-reveal timing
+    /// (keyed by reveal ARRIVAL order, not game position) makes the rewound
+    /// `cards` set history-dependent. We use PERSPECTIVE (only undo.rs runs
+    /// perspective-free for libraries) because OUR OWN hand cards ARE
+    /// legitimately revealed to us and must keep their instances. A forward
+    /// replay re-applies the server reveals (frontier mode) and re-instantiates
+    /// anything cleared. No-op outside shadow games.
     #[cfg(feature = "wasm-network")]
     fn clear_shadow_hidden_hand_leaks(&mut self, our_id: PlayerId) {
         if !self.game.is_shadow_game {
@@ -1827,12 +1847,7 @@ impl WasmFancyTuiState {
             .filter(|p| p.id != our_id)
             .filter_map(|p| self.game.get_player_zones(p.id))
             .flat_map(|z| z.hand.cards.iter().copied())
-            .filter(|cid| {
-                self.game
-                    .cards
-                    .try_get(*cid)
-                    .is_some_and(|c| !c.is_revealed_to(our_id))
-            })
+            .filter(|cid| self.game.cards.try_get(*cid).is_some_and(|c| !c.is_revealed_to(our_id)))
             .collect();
         for cid in leaked {
             self.game.cards.clear(cid);
@@ -1932,12 +1947,18 @@ impl WasmFancyTuiState {
                                                     // async-reveal-leak class), name the card +
                                                     // owner + its zone so the leak is identifiable
                                                     // without reading the truncated console blob.
-                                                    let present = c_el.filter(|v| !v.is_null()).or(p_el.filter(|v| !v.is_null()));
+                                                    let present =
+                                                        c_el.filter(|v| !v.is_null()).or(p_el.filter(|v| !v.is_null()));
                                                     if k == "cards" {
                                                         if let Some(serde_json::Value::Object(card)) = present {
-                                                            let nm = card.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                                            let cid = card.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-                                                            let owner = card.get("owner").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                            let nm = card
+                                                                .get("name")
+                                                                .and_then(|v| v.as_str())
+                                                                .unwrap_or("?");
+                                                            let cid =
+                                                                card.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                            let owner =
+                                                                card.get("owner").and_then(|v| v.as_u64()).unwrap_or(0);
                                                             let zone = self
                                                                 .game
                                                                 .find_card_zone(crate::core::CardId::new(cid as u32));
@@ -1963,8 +1984,16 @@ impl WasmFancyTuiState {
                                     } else {
                                         let cs = serde_json::to_string(cv).unwrap_or_default();
                                         let ps = serde_json::to_string(pv).unwrap_or_default();
-                                        let cs_s = if cs.len() > 600 { format!("{}…", &cs[..600]) } else { cs };
-                                        let ps_s = if ps.len() > 600 { format!("{}…", &ps[..600]) } else { ps };
+                                        let cs_s = if cs.len() > 600 {
+                                            format!("{}…", &cs[..600])
+                                        } else {
+                                            cs
+                                        };
+                                        let ps_s = if ps.len() > 600 {
+                                            format!("{}…", &ps[..600])
+                                        } else {
+                                            ps
+                                        };
                                         log::error!(
                                             target: "wasm_tui",
                                             "[VERIFIER FIELD DIFF] '{}' \nPRIOR: {}\nCURRENT: {}",
@@ -2395,7 +2424,13 @@ impl WasmFancyTuiState {
                 // before being replayed — instead of the old no-rewind path
                 // that re-ran them and relied on the 9 TurnStructure guards.
                 self.ensure_net_our_controller(our_controller_type, our_player_id, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, opponent_id, we_are_p1, network_client, &mut remote_controller);
+                self.run_network_mode_ai_v2(
+                    our_player_id,
+                    opponent_id,
+                    we_are_p1,
+                    network_client,
+                    &mut remote_controller,
+                );
             }
             WasmControllerType::Remote => {
                 // This shouldn't happen - our_controller_type should never be Remote

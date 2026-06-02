@@ -4513,11 +4513,19 @@ impl GameState {
                 let _old_power = card.current_power();
                 let _old_toughness = card.current_toughness();
 
-                // Grant temporary keywords (until end of turn)
-                // Note: Uses same approach as PumpCreature - keywords added to permanent set
-                // TODO: Consider tracking temp keywords separately for proper EOT cleanup
+                // Grant temporary keywords (until end of turn).
+                // Note: Uses same approach as PumpCreature - keywords added to permanent set.
+                // Record ONLY the keywords this animate actually adds (those not
+                // already present) so the `AnimateTypeline` undo entry can remove
+                // exactly them on a rewind without stripping a printed/other-source
+                // keyword (mtg-610: Soulstone Sanctuary's Vigilance was leaking
+                // across rewind+replay because it was inserted but never undone).
+                let mut granted_keywords: smallvec::SmallVec<[crate::core::Keyword; 2]> = smallvec::SmallVec::new();
                 for kw in keywords_granted {
-                    card.keywords.insert(*kw);
+                    if !card.keywords.contains(*kw) {
+                        card.keywords.insert(*kw);
+                        granted_keywords.push(*kw);
+                    }
                 }
 
                 // Snapshot the pre-animate typeline + tracking vectors so the
@@ -4595,9 +4603,12 @@ impl GameState {
                 let is_mana_source_now = card.definition.cache.is_mana_source;
 
                 // Log the typeline mutation as a reversible GameAction so a
-                // rewind+replay restores the exact prior typeline (mtg-610).
-                // Only when we actually changed the typeline.
-                if types_changed {
+                // rewind+replay restores the exact prior typeline AND removes the
+                // keywords this animate granted (mtg-610). Logged when we changed
+                // the typeline OR newly granted a keyword (Soulstone Sanctuary
+                // changes both, but a hypothetical keyword-only animate must still
+                // be reversible).
+                if types_changed || !granted_keywords.is_empty() {
                     let prior_log_size = self.logger.log_count();
                     self.undo_log.log(
                         crate::undo::GameAction::AnimateTypeline {
@@ -4607,6 +4618,7 @@ impl GameState {
                             prev_temp_animate_types,
                             prev_temp_animate_subtypes,
                             prev_temp_removed_subtypes,
+                            granted_keywords,
                         },
                         prior_log_size,
                     );
@@ -6576,34 +6588,31 @@ impl GameState {
     /// Returns an error if the card or player cannot be found, or if the
     /// card cannot be moved from hand to graveyard.
     pub fn discard_card(&mut self, player_id: PlayerId, card_id: CardId) -> Result<()> {
-        // Get card name for logging before move (unrevealed cards use fallback name)
+        let player_name = self.get_player(player_id)?.name.clone();
+
+        // Move card from hand to graveyard. The graveyard is a PUBLIC zone
+        // (CR 400.2, 404), so this move reveals the card's identity to ALL
+        // players: `move_card`'s Hand→Graveyard arm calls `maybe_reveal_to_all`
+        // BEFORE the move, deterministically materializing the instance on a
+        // network shadow (the late-binding `RevealCard` undo entry). Read the
+        // name AFTER the move so the discard log line always reflects the now-
+        // public identity — identical on the server, the shadow, the forward
+        // pass, and any rewind+replay (mtg-610). Because the card is revealed-
+        // to-all by construction at this point, `card_name` resolves to the
+        // real name everywhere; there is no reveal-timing-dependent fallback.
+        self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
+
         let card_name = self
             .cards
             .get(card_id)
             .map(|c| c.name.to_string())
             .unwrap_or_else(|_| format!("card#{}", card_id.as_u32()));
-        let player_name = self.get_player(player_id)?.name.clone();
 
-        // Move card from hand to graveyard
-        self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
-
-        // Log the discard as a PRIVATE entry (owner sees the card identity;
-        // opponents / a network shadow see the masked "P discards a card").
-        // The discarded card's identity is owner-private until revealed; on a
-        // network CLIENT shadow the card instance may not yet be materialized
-        // (its reveal is asynchronous), so the full name is unknown on the
-        // forward pass — but on a rewind+replay the reveal-inserted instance
-        // persists and the name becomes known, which would change the log
-        // string purely as a function of reveal timing. Masking the public
-        // form (same approach as the per-card draw log in state.rs) keeps the
-        // verifier comparing the stable owner-independent string, so this
-        // presentation-layer asymmetry is not flagged as a state desync
-        // (mtg-610). The underlying STATE is guarded by the turn-start hash.
-        self.logger.gamelog_private(
-            &format!("{} discards {}", player_name, card_name),
-            player_id,
-            &format!("{} discards a card", player_name),
-        );
+        // Log the discard PUBLICLY: a discard puts the card into the graveyard,
+        // a public zone, so every player learns its identity (CR 400.2). This
+        // is the OPPOSITE of the draw log (drawing to hand is private); the log
+        // visibility follows zone publicness.
+        self.logger.gamelog(&format!("{} discards {}", player_name, card_name));
 
         Ok(())
     }
