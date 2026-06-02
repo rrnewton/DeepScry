@@ -396,6 +396,17 @@ pub enum GameAction {
         prev_temp_animate_types: SmallVec<[crate::core::CardType; 2]>,
         prev_temp_animate_subtypes: SmallVec<[crate::core::Subtype; 2]>,
         prev_temp_removed_subtypes: SmallVec<[crate::core::Subtype; 2]>,
+        /// Keywords the animate ACTUALLY inserted (those not already present on
+        /// the card), so `undo()` removes exactly them. An animate like
+        /// Soulstone Sanctuary ("becomes a 3/3 creature with vigilance") grants
+        /// Vigilance until end of turn; without recording it here the keyword
+        /// rode along through a rewind+replay (the keyword bit was re-granted on
+        /// replay but never removed by the rewind), making the turn-start
+        /// `keywords` history-dependent and breaking the round-trip (mtg-610).
+        /// Only the keywords this animate newly added are listed (the insert
+        /// site dedups against the existing set), so undo never strips a keyword
+        /// the card printed or gained from another source.
+        granted_keywords: SmallVec<[crate::core::Keyword; 2]>,
     },
     /// Records that `source` was appended to `target`'s `damaged_by_this_turn`
     /// list when combat (or other) damage was dealt. `undo()` pops that exact
@@ -617,9 +628,7 @@ impl fmt::Display for GameAction {
                 prev_toughness
             ),
             GameAction::AnimateTypeline {
-                card_id,
-                prev_subtypes,
-                ..
+                card_id, prev_subtypes, ..
             } => write!(
                 f,
                 "AnimateTypeline({} prev_subtypes={})",
@@ -627,7 +636,12 @@ impl fmt::Display for GameAction {
                 prev_subtypes.len()
             ),
             GameAction::MarkDamagedBy { target, source } => {
-                write!(f, "MarkDamagedBy(target={} source={})", target.as_u32(), source.as_u32())
+                write!(
+                    f,
+                    "MarkDamagedBy(target={} source={})",
+                    target.as_u32(),
+                    source.as_u32()
+                )
             }
         }
     }
@@ -1156,6 +1170,7 @@ impl GameAction {
                 prev_temp_animate_types,
                 prev_temp_animate_subtypes,
                 prev_temp_removed_subtypes,
+                granted_keywords,
             } => {
                 // Restore the exact pre-animate typeline + tracking vectors and
                 // refresh the definition cache. get_mut tolerates a missing card
@@ -1167,6 +1182,13 @@ impl GameAction {
                     card.temp_animate_types = prev_temp_animate_types.clone();
                     card.temp_animate_subtypes = prev_temp_animate_subtypes.clone();
                     card.temp_removed_subtypes = prev_temp_removed_subtypes.clone();
+                    // Remove the keywords this animate newly granted (e.g.
+                    // Vigilance from Soulstone Sanctuary). Only those the insert
+                    // site actually added are listed, so this never strips a
+                    // printed or otherwise-granted keyword (mtg-610).
+                    for kw in granted_keywords {
+                        card.keywords.remove(*kw);
+                    }
                     let types = card.types.clone();
                     let subtypes = card.subtypes.clone();
                     let name = card.name.clone();

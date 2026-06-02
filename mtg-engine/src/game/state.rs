@@ -1334,19 +1334,19 @@ impl GameState {
                     // Spell resolved or was countered - logged elsewhere
                 }
                 (Zone::Hand, Zone::Graveyard) => {
-                    // Discards are logged by the caller: `discard_card` emits a
-                    // count-stable, reveal-timing-robust PRIVATE "P discards X"
-                    // (masked "P discards a card") line, and the bulk-discard
-                    // sites (DiscardHand / Balance / cost payments) emit their
-                    // own summary lines. A second per-card line here would be
-                    // (a) redundant double-logging (DRY) and (b) reveal-timing
-                    // fragile: on a network shadow the card instance is absent
-                    // on the forward pass (so this `try_get` guard skips it) but
-                    // present after a rewind+replay (the reveal insert is not
-                    // undone), making it fire ONLY on replay — an extra,
-                    // history-dependent log entry that desyncs the replay
-                    // verifier's log tail (mtg-610). Intentionally not logged
-                    // here.
+                    // A discard puts the card into the graveyard, a PUBLIC zone
+                    // (CR 400.2, 404), so its identity is revealed to every
+                    // player. The reveal happened deterministically just above
+                    // (the Hand→Graveyard arm of the auto-reveal match calls
+                    // `maybe_reveal_to_all` BEFORE the move, materializing the
+                    // instance on a network shadow), so `card_name` here is the
+                    // real, now-public name on the server, the shadow, the
+                    // forward pass, and any rewind+replay alike — identity-
+                    // stable by construction (mtg-610). Logged PUBLICLY; this
+                    // does NOT leak hidden information because the graveyard is
+                    // public. (The owner-private DRAW log is the opposite case:
+                    // drawing to hand is hidden, so that line is masked.)
+                    self.logger.normal(&format!("{} is discarded", card_name));
                 }
                 (Zone::Library, Zone::Graveyard) => {
                     // Mill - don't spam, this is logged by mill effect
@@ -3676,16 +3676,20 @@ impl GameState {
                     prev_temp_animate_types,
                     prev_temp_animate_subtypes,
                     prev_temp_removed_subtypes,
+                    granted_keywords,
                 } => {
-                    // Restore the exact pre-animate typeline + tracking vectors
-                    // and refresh the definition cache (mtg-610). Mirrors
-                    // `GameAction::undo`'s arm.
+                    // Restore the exact pre-animate typeline + tracking vectors,
+                    // remove the keywords this animate granted, and refresh the
+                    // definition cache (mtg-610). Mirrors `GameAction::undo`'s arm.
                     if let Ok(card) = self.cards.get_mut(card_id) {
                         card.types = prev_types;
                         card.subtypes = prev_subtypes;
                         card.temp_animate_types = prev_temp_animate_types;
                         card.temp_animate_subtypes = prev_temp_animate_subtypes;
                         card.temp_removed_subtypes = prev_temp_removed_subtypes;
+                        for kw in granted_keywords {
+                            card.keywords.remove(kw);
+                        }
                         let types = card.types.clone();
                         let subtypes = card.subtypes.clone();
                         let name = card.name.clone();
