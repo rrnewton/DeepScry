@@ -100,6 +100,21 @@ impl ReplayController {
         self.replay_index < self.replay_choices.len()
     }
 
+    /// Recover the wrapped (inner) controller, consuming the [`ReplayController`].
+    ///
+    /// This is the counterpart of [`ReplayController::new`]: it lets a caller
+    /// wrap a **persistent** controller in a fresh `ReplayController` for each
+    /// rewind+replay re-entry (passing the accumulated choice history), run the
+    /// game loop, then take the persistent controller back out so its internal
+    /// state (e.g. a `RandomController`'s Xoshiro RNG) carries forward to the
+    /// next re-entry. See `fancy_tui.rs::run_network_mode_replayable` (the WASM
+    /// network rewind+replay path) — the persistent inner is delegated to ONLY
+    /// for the genuinely-new frontier choice, so its RNG advances exactly once
+    /// per real choice, byte-identical to the server's forward-only run.
+    pub fn into_inner(self) -> Box<dyn PlayerController> {
+        self.inner
+    }
+
     /// Consume the next replay choice of the expected type
     ///
     /// Returns the choice if available and of the correct type, otherwise None.

@@ -1207,15 +1207,40 @@ impl WasmNetworkClient {
             Some(f) => f,
             None => return 0,
         };
-        if frontier <= self.last_applied_state_sync_ac {
+        self.apply_state_sync_reveals_up_to(shadow, local_player, frontier)
+    }
+
+    /// Like [`apply_state_sync_reveals_up_to_frontier`] but caps application at
+    /// `target_action` (the cursor still advances only over the applied window).
+    ///
+    /// LOCKSTEP REPLAY (mtg-610): during a rewind+replay the GameLoop's sync
+    /// callback passes the shadow's CURRENT `action_count` as the target. We
+    /// must apply reveals only up to that point — NOT all the way to the server
+    /// frontier — so a reveal whose action_count falls AFTER an upcoming draw
+    /// is not applied early. Applying eagerly to the frontier would
+    /// instantiate a drawn card BEFORE the replay's `draw_card` runs, flipping
+    /// its late-binding `RevealCard{name:None}` (instance absent → "draws a
+    /// card") to a `RevealCard{name:Some}` (instance present → "draws X"), which
+    /// changes the undo log's shape and makes the rewound turn-start state
+    /// history-dependent (the `cards[id]` leak that fails the turn-start-hash
+    /// determinism check). Capping at the replay position reproduces the
+    /// original forward ordering: reveal applies AFTER the draw, exactly once.
+    pub fn apply_state_sync_reveals_up_to(
+        &mut self,
+        shadow: &mut crate::game::GameState,
+        local_player: Option<PlayerId>,
+        target_action: u64,
+    ) -> usize {
+        if target_action <= self.last_applied_state_sync_ac {
             return 0;
         }
+        let cap = target_action;
 
         let mut applied = 0;
         let to_apply: Vec<(u64, StateSyncEntry)> = self
             .state_sync
             .iter()
-            .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= frontier)
+            .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= cap)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         for (ac, entry) in to_apply {

@@ -914,12 +914,38 @@ impl GameAction {
                 old_mask,
                 ..
             } => {
-                // Undo reveal: restore the previous mask state
+                // Undo reveal: restore the previous mask state.
+                //
+                // Late-binding network reveals (mtg-610): a shadow client that
+                // draws a card it does not yet know logs
+                // `RevealCard{name:None, old_mask:0}` — the instance does NOT
+                // exist at log time (that is precisely why `name` is None).
+                // The card's identity arrives LATER via an asynchronous
+                // state-sync `RevealCard` message, which `process_card_reveal`
+                // applies by `game.cards.insert(...)` (NOT an undo-logged
+                // action). On rewind we therefore find an instance present that
+                // did not exist at this log point. Restoring only the mask
+                // would LEAK that async-inserted instance into the rewound
+                // turn-start state, making the undo log a non-faithful inverse
+                // (the same turn-start rewound twice would hash differently,
+                // because the second rewind retains the leaked instance). So
+                // when undoing a late-binding reveal (`name` is None) we CLEAR
+                // any instance present — its async insertion logically belongs
+                // strictly after this point, and a forward replay re-applies
+                // the state-sync reveal to re-instantiate it deterministically.
+                let is_late_binding = name.is_none() && *old_mask == 0;
                 if let Ok(card) = game.cards.get_mut(*card_id) {
-                    // Card exists - restore the mask
-                    card.revealed_to_mask = *old_mask;
+                    if is_late_binding {
+                        // Async-inserted-after-this-point instance; remove it so
+                        // the rewound state matches the (instance-free) state at
+                        // the moment this late-binding reveal was logged.
+                        game.cards.clear(*card_id);
+                    } else {
+                        // Card existed at log time — restore the mask only.
+                        card.revealed_to_mask = *old_mask;
+                    }
                 } else if *old_mask == 0 && name.is_some() {
-                    // Card doesn't exist but was created by this reveal
+                    // Card doesn't exist but was created by this (named) reveal.
                     game.cards.clear(*card_id);
                 }
             }
@@ -1326,6 +1352,54 @@ impl UndoLog {
                 card.power_bonus = 0;
                 card.toughness_bonus = 0;
                 card.clear_temp_base_stats();
+            }
+        }
+
+        // Regeneration shields are "until end of turn" (CR 614.8 / 701.15):
+        // created when a regenerate ability resolves, removed in the cleanup
+        // step. They are NOT undo-logged, so at any turn boundary the count
+        // must be 0 for EVERY card — not just battlefield permanents. A
+        // reanimated creature (e.g. Sedge Troll) can regenerate in combat and
+        // then leave the battlefield (die / be exiled) within the same turn, so
+        // a stale shield can ride along on a card now in the graveyard/exile;
+        // the battlefield-only loop above would miss it, leaving the rewound
+        // turn-start `regeneration_shields` history-dependent (mtg-610). Reset
+        // it for all cards; a forward replay re-activates the regen and re-sets
+        // the shield where appropriate. (Same per-turn-transient class as
+        // `damage`, but zone-independent.)
+        for card in game.cards.values_mut() {
+            card.regeneration_shields = 0;
+        }
+
+        // SHADOW-ONLY: clear card instances that leaked into a hidden library
+        // zone (mtg-610 undo-completeness hole). On a network CLIENT shadow,
+        // library cards are reserved-but-vacant slots — their identity is only
+        // known once the server's asynchronous `RevealCard` state-sync entry is
+        // applied (which `process_card_reveal` does via a NON-undo-logged
+        // `game.cards.insert`). When the shadow draws such a card and is then
+        // rewound, the `MoveCard` is undone (card returns to the library) but
+        // the async-inserted instance is NOT (the insert was never an undo-log
+        // action). Worse, WHEN the async reveal lands relative to the draw is
+        // history-dependent (the state-sync entry is keyed by SERVER
+        // action_count, which diverges from the shadow's after a rewind), so
+        // the post-rewind `cards` set differs across repeated rewinds to the
+        // same turn — failing the turn-start determinism invariant. Because a
+        // library card in the shadow must be a vacant reserved slot at any
+        // turn boundary, we deterministically clear every instance currently
+        // sitting in a library zone. A forward replay re-applies the reveal and
+        // re-instantiates it identically. This is a no-op on the SERVER / native
+        // (non-shadow) game, where library cards are legitimately instantiated.
+        if game.is_shadow_game {
+            let library_card_ids: SmallVec<[crate::core::CardId; 64]> = game
+                .players
+                .iter()
+                .filter_map(|p| game.get_player_zones(p.id))
+                .flat_map(|z| z.library.cards.iter().copied())
+                .collect();
+            for card_id in library_card_ids {
+                if game.cards.contains(card_id) {
+                    game.cards.clear(card_id);
+                }
             }
         }
 

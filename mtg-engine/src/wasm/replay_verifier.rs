@@ -241,6 +241,31 @@ fn is_replayable_entry(entry: &LogEntry) -> bool {
     !matches!(entry.category.as_deref(), Some("controller_choice"))
 }
 
+/// The message text the verifier compares for a log entry.
+///
+/// For PRIVATE entries (`private_to.is_some()`) we compare the **public masked**
+/// form, not the owner-visible full text. Rationale (mtg-610): a private
+/// per-card line such as the draw log — `"P draws Scrubland (112)"` masked to
+/// `"P draws a card"` — embeds the card identity, which the shadow only learns
+/// when the server's `RevealCard` state-sync entry is applied. That reveal is
+/// asynchronous: on the original forward pass the shadow often draws a card
+/// BEFORE its reveal has been applied (so `self.cards.try_get` fails and it
+/// logs `"draws a card"`), whereas on a rewind+replay the card instance left
+/// behind by the earlier reveal persists (the `insert` is not undo-logged), so
+/// the same draw now logs the full `"draws Scrubland"`. The underlying game
+/// STATE is identical either way — the turn-start hash check (which runs first
+/// and must pass) guards that. Only the owner-private identity string differs,
+/// purely as a function of reveal-application timing. Comparing the stable
+/// PUBLIC form keeps full rigor on state-relevant content while not flagging
+/// this presentation-layer asymmetry as a fatal desync. This is the same
+/// principle as the `controller_choice` exclusion above.
+fn replay_compare_message(entry: &LogEntry) -> &str {
+    match &entry.private_to {
+        Some(info) => &info.public_message,
+        None => &entry.message,
+    }
+}
+
 /// Run all post-replay consistency checks against the live `game` state.
 ///
 /// `prior_turn_start_hash` is the hash we previously cached for this turn (if
@@ -292,7 +317,7 @@ pub fn verify_replay(
     if replay_filtered_len < captured_filtered_len {
         let first_missing = captured_filtered
             .get(replay_filtered_len)
-            .map(|(_, e)| e.message.clone());
+            .map(|(_, e)| replay_compare_message(e).to_string());
         return ReplayCheckOutcome::LogTruncated {
             captured_len: captured_filtered_len,
             replay_tail_len: replay_filtered_len,
@@ -303,15 +328,15 @@ pub fn verify_replay(
     for offset in 0..captured_filtered_len {
         let (cap_raw_idx, captured) = captured_filtered[offset];
         let (rep_raw_idx, actual) = replay_filtered[offset];
-        if captured.message != actual.message {
+        if replay_compare_message(captured) != replay_compare_message(actual) {
             // Report the absolute buffer index in the live `logger.logs()`
             // view — that's what a developer would grep against.
             let _ = cap_raw_idx;
             return ReplayCheckOutcome::LogMismatch {
                 index: replay_tail_start + rep_raw_idx,
                 prefix_offset: offset,
-                expected: captured.message.clone(),
-                actual: actual.message.clone(),
+                expected: replay_compare_message(captured).to_string(),
+                actual: replay_compare_message(actual).to_string(),
                 captured_len: captured_filtered_len,
                 replay_tail_len: replay_filtered_len,
             };
