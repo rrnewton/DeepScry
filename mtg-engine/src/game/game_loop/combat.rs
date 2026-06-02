@@ -206,13 +206,11 @@ impl<'a> GameLoop<'a> {
             controller2
         };
 
-        // Check if the blocker declaration has already been done for this turn.
-        // This flag prevents re-asking the controller for blockers when the game loop resumes
-        // after a NeedInput return from priority_round(). Without this guard, re-entering this
-        // function would find available blockers again and consume the wrong ChoiceRequest from
-        // the server queue, causing the WASM shadow state's action_count to fall behind the server.
-        let current_turn = self.game.turn.turn_number;
-        let already_declared = self.game.turn.blockers_declared_turn == Some(current_turn);
+        // No re-entry guard needed (mtg-610): a WASM network re-entry rewinds to
+        // the turn start and replays, so blocker declaration happens exactly once
+        // per turn from a clean state and the recorded Blockers ChoicePoint is
+        // replayed rather than re-asked. The former `blockers_declared_turn` guard
+        // is deleted.
 
         // Get available blockers and attackers.
         //
@@ -237,7 +235,7 @@ impl<'a> GameLoop<'a> {
             .filter(|&blocker_id| crate::game::combat_rules::is_useful_blocker(self.game, blocker_id, &attackers))
             .collect();
 
-        if !available_blockers.is_empty() && !attackers.is_empty() && !already_declared {
+        if !available_blockers.is_empty() && !attackers.is_empty() {
             // Clear replay mode if all choices have been replayed
             // This happens BEFORE checking stop conditions, so a snapshot taken here will NOT
             // include the upcoming choice (which hasn't been presented yet)
@@ -291,10 +289,6 @@ impl<'a> GameLoop<'a> {
             // Log this choice point for snapshot/replay
             let replay_choice = crate::game::ReplayChoice::Blockers(blocks.clone());
             self.log_choice_point(defending_player, Some(replay_choice), prior_log_size);
-
-            // Mark blockers as declared so that if priority_round returns NeedInput
-            // and the game loop is re-entered, we skip the blocker declaration above.
-            self.game.turn.blockers_declared_turn = Some(current_turn);
 
             // Validate blocking restrictions and remove illegal block assignments:
             // - Flying (MTG 702.9b): Can only be blocked by flying/reach
@@ -354,14 +348,19 @@ impl<'a> GameLoop<'a> {
         controller2: &mut dyn PlayerController,
     ) -> Result<Option<GameResult>> {
         // Check if any attacking or blocking creature has first strike or double strike
-        // MTG Rules 510.4: If so, we have two combat damage steps
-        let current_turn = self.game.turn.turn_number;
+        // MTG Rules 510.4: If so, we have two combat damage steps.
+        //
+        // No re-entry guards needed (mtg-610): a WASM network re-entry rewinds to
+        // the turn start and replays the whole combat from a clean state, so each
+        // combat-damage sub-step runs exactly once and `has_first_strike_combat()`
+        // is evaluated against the consistent pre-damage board (first-strike
+        // creatures are alive again at turn start). The former
+        // `combat_first_strike_damage_dealt_turn` / `_priority_done_turn` /
+        // `combat_damage_dealt_turn` guards are deleted.
         let has_first_strike = self.has_first_strike_combat();
-        let first_strike_damage_dealt = self.game.turn.combat_first_strike_damage_dealt_turn == Some(current_turn);
 
-        // First strike damage: deal only if applicable and not yet dealt this turn.
-        // Guard prevents re-dealing on WASM step_harness re-entry after NeedInput.
-        if has_first_strike && !first_strike_damage_dealt {
+        // First strike damage.
+        if has_first_strike {
             if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                 self.game.logger.normal("--- First Strike Combat Damage ---");
             }
@@ -371,7 +370,6 @@ impl<'a> GameLoop<'a> {
             // applied (including SMART multi-blocker assignments) right before any
             // resulting "X dies from combat damage" lines.
             self.game.assign_combat_damage(controller1, controller2, true)?;
-            self.game.turn.combat_first_strike_damage_dealt_turn = Some(current_turn);
 
             // Check for game end before priority (state-based actions)
             // MTG Rule 704.3: Check state-based actions before players receive priority
@@ -381,31 +379,20 @@ impl<'a> GameLoop<'a> {
                     return Ok(Some(result));
                 }
             }
-        }
 
-        // First-strike priority round: run if first-strike damage was dealt (this call or
-        // a prior step_harness call) and the priority round has not yet completed.
-        // We track completion separately because has_first_strike_combat() can return false
-        // on re-entry if first-strike creatures died, which would wrongly skip this round.
-        let first_strike_damage_dealt = self.game.turn.combat_first_strike_damage_dealt_turn == Some(current_turn);
-        let first_strike_priority_done = self.game.turn.combat_first_strike_priority_done_turn == Some(current_turn);
-        if first_strike_damage_dealt && !first_strike_priority_done {
+            // First-strike priority round.
             if let Some(result) = self.priority_round(controller1, controller2)? {
                 return Ok(Some(result));
             }
-            self.game.turn.combat_first_strike_priority_done_turn = Some(current_turn);
         }
 
         // Normal combat damage step (or only step if no first strike).
-        // Guard prevents re-dealing on WASM step_harness re-entry after NeedInput.
-        let normal_damage_dealt = self.game.turn.combat_damage_dealt_turn == Some(current_turn);
-        if !normal_damage_dealt {
-            if self.verbosity >= VerbosityLevel::Normal && first_strike_damage_dealt && !self.replaying {
+        {
+            if self.verbosity >= VerbosityLevel::Normal && has_first_strike && !self.replaying {
                 self.game.logger.normal("--- Normal Combat Damage ---");
             }
             // Per-direction damage lines emitted from within assign_combat_damage (see above).
             self.game.assign_combat_damage(controller1, controller2, false)?;
-            self.game.turn.combat_damage_dealt_turn = Some(current_turn);
 
             // Check for game end before priority (state-based actions)
             // MTG Rule 704.3: Check state-based actions before players receive priority

@@ -4945,7 +4945,7 @@ impl GameState {
                     return Ok(());
                 }
 
-                // Get card info and apply modifications
+                // Validate the target is a land before earthbending.
                 let card_name = {
                     let card = self.cards.get_mut(*target)?;
 
@@ -4956,17 +4956,14 @@ impl GameState {
                         ));
                     }
 
-                    // Add Creature type (still remains a land)
-                    if !card.is_creature() {
-                        card.add_type(CardType::Creature);
-                    }
-
-                    // Add Haste keyword so it can attack immediately
-                    use crate::core::Keyword;
-                    card.keywords.insert(Keyword::Haste);
-
                     card.name.clone()
                 };
+
+                // Add Creature type (still remains a land) + Haste via the logged
+                // helper so the grant is reversible by the undo log (mtg-610: the
+                // inline insert leaked Haste/Creature-type across rewind+replay,
+                // making the turn-start keywords history-dependent).
+                self.earthbend_animate_creature_haste_logged(*target);
 
                 // Set temp base power/toughness to 0/0 (animate effect) via the
                 // logged helper so the override is reversible by the undo log
