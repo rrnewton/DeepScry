@@ -4,10 +4,18 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T22:01:02.790120239+00:00
+updated_at: 2026-06-02T22:30:00.820435+00:00
 ---
 
 # Description
+
+STATUS 2026-06-02 (netarch-dev, on rebased base 7b235b32; action_count ALIGNS, Searched reveal NOT applied on WASM):
+Instrumented SRCH_RESOLVE (priority.rs ~3843 search resolution) + SRCH_BUF (apply_state_sync RevealCard reason==Searched) on the rebased tree. Caught a failing library-search run:
+- WASM SRCH_RESOLVE: 49x all at ac=900, replaying=false, chosen=None. SERVER SRCH_RESOLVE: 1x at ac=900. => action_count ALIGNS (both resolve at 900); alignment is NOT the problem.
+- WASM SRCH_BUF: ZERO across all 49 re-entries. The Searched dummy reveal (server.rs:2928-2942, RevealReason::Searched carrying the fetched CardId) is NEVER applied via apply_state_sync on the WASM shadow. So the fetched card is never materialized -> choose_from_library returns None -> recorded None -> P0 library not decremented -> view-hash mismatch.
+So the fix is NOT "frontier-gate / read at action_count" (the data is already action_count-aligned). The fix is to make the authoritative Searched reveal ACTUALLY reach + apply on the opponent shadow at ac=900. SRCH_BUF=0 means one of: (a) the server didn't SEND the dummy Searched reveal for this search (info.library_search_result=None because this ChangeZone->SearchLibrary path produced a non-LibrarySearchByName ChoiceType, so server.rs:2491 left it None -> 2928 skipped); (b) P2 received CardRevealed(Searched) but it wasn't pushed to state_sync (client.rs:782-807 pushes it stamped — should work); (c) it's in state_sync but frontier/cursor never includes it during the replay re-apply.
+NEXT (focused session): instrument the SERVER send path (does it send the dummy Searched reveal for THIS search? what ChoiceType does the ChangeZone->SearchLibrary use on the server — LibrarySearchByName or not?) + the P2 CardRevealed receive/push. Leading hypothesis = (a): the Demonic-Tutor ChangeZone search resolves on the server WITHOUT a LibrarySearchByName network choice, so library_search_result is never computed/sent, so the opponent never learns the fetch. If so the fix is server-side: ensure the opponent gets the authoritative fetched-card reveal for ALL library searches, not only LibrarySearchByName-typed ones. step-1 (CardId record/replay, committed) remains the necessary replay-side half.
+Worktree clean @7b235b32 (rebased onto integration, deployable). Instrumentation reverted.
 
 STATUS 2026-06-02 (netarch-dev, deeper localization via all-site WASM instrumentation):
 The real Demonic-Tutor search path is NOT priority.rs:1758 — it is the SearchLibrary block at priority.rs ~3748-3815 (placeholder player -> spell_owner; calls choose_from_library_with_hook then log_choice_point). Instrumented ALL 6 search paths (5 priority sites + actions/mod.rs:4600 non-interactive) + WasmRemoteController.choose_from_library + a forced WASM/server LIBSRCH trace dump.
