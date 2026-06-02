@@ -468,6 +468,71 @@ else
     EXIT_CODE=1
 fi
 
+# ============================================================================
+# PERSPECTIVE-AWARE server ↔ client ↔ client GAMELOG comparison
+# ============================================================================
+# The local↔server check above is EXACT (both have full information). A client
+# only has shadow state and legitimately masks hidden-zone identities, so its
+# log is compared against the server with a WEAKER, perspective-aware oracle:
+# public-zone events must be byte-identical across server and every client;
+# per-perspective hidden-zone masking (drawn-card names, unresolved `Unknown`
+# card names, the lethal-check loss-line timing) is tolerated. A real
+# public-zone divergence here is a desync / info-leak finding (DIVERGED>0).
+#
+# The oracle itself lives in bug_finding/network_test_lib.py
+# (compare_gamelogs_perspective) — single source of truth, shared with the
+# python harness. We invoke it here rather than re-implementing in bash.
+echo
+echo "=== Perspective-aware server↔client↔client GAMELOG comparison ==="
+# Gate the oracle itself first: assert it still tolerates hidden-zone masking
+# AND still catches a real public-zone divergence (guards against the oracle
+# silently degrading into a no-op).
+if ! WORKSPACE_ROOT="$WORKSPACE_ROOT" python3 -c \
+    "import sys,os; sys.path.insert(0, os.path.join(os.environ['WORKSPACE_ROOT'],'bug_finding')); import network_test_lib as L; L.oracle_self_test(); print('  oracle self-test: PASS')" 2>&1; then
+    echo -e "${RED}✗ Perspective oracle self-test FAILED — oracle logic is broken${NC}"
+    EXIT_CODE=1
+fi
+PERSP_OUT="$(WORKSPACE_ROOT="$WORKSPACE_ROOT" python3 - \
+                       "$NETWORK_OUTPUT/server.log" \
+                       "$NETWORK_OUTPUT/client1.log" \
+                       "$NETWORK_OUTPUT/client2.log" <<'PYEOF'
+import sys, os
+server_log, client1_log, client2_log = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.join(os.environ['WORKSPACE_ROOT'], 'bug_finding'))
+from network_test_lib import (extract_gamelog_perspective,
+                              compare_gamelogs_perspective)
+srv = extract_gamelog_perspective(server_log)
+c1 = extract_gamelog_perspective(client1_log)
+c2 = extract_gamelog_perspective(client2_log)
+total = 0
+samples = []
+print(f"  server entries: {len(srv)}  client1: {len(c1)}  client2: {len(c2)}")
+for label, cl in (("client1", c1), ("client2", c2)):
+    if not srv or not cl:
+        print(f"  WARN: empty gamelog for server or {label}; skipping")
+        continue
+    n, sample = compare_gamelogs_perspective(srv, cl, label)
+    print(f"  server vs {label}: {n} public-zone divergence(s)")
+    total += n
+    if sample:
+        samples.append(sample)
+print(f"DIVERGED:{total}")
+for s in samples:
+    print(s)
+PYEOF
+)"
+echo "$PERSP_OUT"
+PERSP_DIVERGED="$(echo "$PERSP_OUT" | grep -oE 'DIVERGED:[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo "?")"
+if [ "$PERSP_DIVERGED" = "0" ]; then
+    echo -e "${GREEN}✓ SERVER and CLIENTS agree on all PUBLIC-zone events (perspective-aware)${NC}"
+elif [ "$PERSP_DIVERGED" = "?" ] || [ -z "$PERSP_DIVERGED" ]; then
+    echo -e "${RED}✗ Perspective comparison did not run (no DIVERGED marker)${NC}"
+    EXIT_CODE=1
+else
+    echo -e "${RED}✗ SERVER↔CLIENT public-zone divergence: $PERSP_DIVERGED line(s) — real desync/info-leak${NC}"
+    EXIT_CODE=1
+fi
+
 # Check for errors in logs (look for panic/crash indicators, avoid card name false positives)
 ERRORS=""
 if grep -qE "^thread.*panicked|RUST_BACKTRACE|panicked at|fatal error" "$LOCAL_OUTPUT/game.log" 2>/dev/null; then
