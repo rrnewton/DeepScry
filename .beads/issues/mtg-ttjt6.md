@@ -1,10 +1,10 @@
 ---
 title: Launcher feature-parity restore + nav-regression fixes (lobby redo dropped launcher settings)
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-02T01:22:07.914763361+00:00
-updated_at: 2026-06-02T01:22:07.914763361+00:00
+updated_at: 2026-06-02T01:55:16.690417761+00:00
 ---
 
 # Description
@@ -26,3 +26,19 @@ FIX PLAN:
 - deck_editor.html: add Back to Launcher (preserves game/role/pass/name/ws/selected deck + image/debug params); make Use-in-Lobby/back preserve sticky params.
 
 GATE: make validate green (DIVERGED:0/Failed:0). Extend web e2e: image-source gate (Local hidden default, shown w/ ?allow_local_img_load=true), gate SURVIVES back-to-lobby round trip, deck-editor->Back to Launcher returns context intact.
+
+--- DONE (branch launcher-parity-fixes, commit 757410f2, 2026-06-01) ---
+ALL 5 regressions + audit findings FIXED. Web pages only; Native GUI still launcher default. make validate GREEN: validate_logs/validate_757410f22ac6da297c6736846cfcbbc1bdc55914.log (All validation checks passed, DIVERGED:0, Failed:0).
+
+Where settings were re-homed:
+ - launcher.html now hosts Show-card-images + image-source picker (Local gated by ?allow_local_img_load=, sticky sessionStorage; Scryfall; Gatherer) + Debug(TRACE) toggle, persisted in localStorage (mtg-forge-launcher-settings), forwarded to the game page via &images/&img_src=csv/&debug.
+ - lobby_launcher.js: buildRedirectUrl extended; consumeGamePrefs() parses prefs ONCE for both game pages; forwardStickyParams/forwardStickyParamsOnAnchor/stickyUrl + STICKY_PARAM_KEYS centralise sticky-param propagation (DRY).
+ - tui_game getEnabledSources() reads gamePrefs.imageSources (was reading DELETED checkboxes -> [] -> no TUI images); showImages/debug from prefs.
+ - native_game filterImageUrls honours &img_src (classifyImageUrl) on top of the local gate; isDebugMode ORs gamePrefs.debug.
+ - deck_editor 'Back to Launcher' added (from=launcher context: game/role/pass/name/ws + renderer/collection/deck); 'Use in Lobby' returns to launcher w/ deck preselected when from launcher; back-to-lobby preserves sticky params.
+
+Param propagation: every inter-page hop (lobby->launcher->game->deck-editor and back) now forwards the sticky set. allow_local_img_load survives back-to-lobby (verified e2e). deck-editor->Back-to-Launcher returns with context intact (verified e2e).
+
+E2e: web/test_redo_lobby_e2e.js new testLauncherParityAndNav() (16 assertions): gate hidden-by-default, gate unlocked via param, prefs forwarded on Play, gate SURVIVES back-to-lobby, deck-editor->Back-to-Launcher round trip. ALL PASS. test_deck_editor.js + test_landing_page_ux.js green.
+
+Coordinator: closeout + redeploy + live-verify pending. Branch pushed, not merged.
