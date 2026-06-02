@@ -60,6 +60,8 @@ from pathlib import Path
 # networked and WASM runners agree on seed semantics.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from agentplay.lib.web_game_common import (  # noqa: E402
+    build_mtg_connect_cmd,
+    build_mtg_server_cmd,
     derive_controller_seeds,
     find_free_port,
 )
@@ -351,24 +353,22 @@ def main():
     env = os.environ.copy()
     env['RUST_LOG'] = rust_log
 
-    # Start server
-    # NOTE: --deck-visibility is REQUIRED for synchronized GameLoop mode
-    # Without it, clients don't receive opponent decklists and fall back to
-    # using their own deck for both players, causing entity ID mismatches.
-    server_cmd = [
-        mtg_binary, 'server',
-        '--port', str(port),
-        '--password', password,
-        '--cardsfolder', cardsfolder,
-        '--verbosity', args.verbosity,
-        '--deck-visibility',  # Required for entity ID synchronization
-    ]
-    if args.seed:
-        server_cmd.extend(['--seed', args.seed])
-    if args.tag_gamelogs:
-        server_cmd.append('--tag-gamelogs')
-    if args.network_debug:
-        server_cmd.append('--network-debug')
+    # Start server. --deck-visibility is REQUIRED for synchronized GameLoop
+    # mode (without it clients fall back to their own deck for both players,
+    # causing entity-ID mismatches). The server argv is built by the shared
+    # web_game_common.build_mtg_server_cmd so the native and WASM networked
+    # runners agree on the flag surface (DRY).
+    server_cmd = build_mtg_server_cmd(
+        mtg_binary,
+        port=port,
+        password=password,
+        cardsfolder=cardsfolder,
+        seed=args.seed if args.seed else None,
+        deck_visibility=True,
+        tag_gamelogs=args.tag_gamelogs,
+        network_debug=args.network_debug,
+        verbosity=args.verbosity,
+    )
 
     print(f"[mtg_tui_networked] Starting server: {' '.join(server_cmd)}")
 
@@ -427,35 +427,29 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        # Build client commands
-        # Clients run a synchronized GameLoop that stays in sync with the server
+        # Build client commands via the shared web_game_common helper so the
+        # `mtg connect` flag surface is identical between this native
+        # 2-client runner and the networked-WASM runner (DRY).
+        # Clients run a synchronized GameLoop that stays in sync with the server.
+        #
+        # Note: We don't pass --tag-gamelogs to clients by default because:
+        # 1. The 2-way equivalence test (local vs server) only needs server logs
+        # 2. Client logs are for 4-way testing which requires separate file outputs
+        # TODO(mtg-193): Add --tag-gamelogs-clients flag for 4-way testing
         def build_client_cmd(deck, controller, name, fixed_inputs, seed_player, is_p1):
-            cmd = [
-                mtg_binary, 'connect',
-                '--server', f'localhost:{port}',
-                '--password', password,
-                '--name', name,
-                '--controller', controller,
-                '--cardsfolder', cardsfolder,
-                '--verbosity', args.verbosity,
-                deck,
-            ]
-
-            if controller == 'fixed' and fixed_inputs:
-                cmd.extend(['--fixed-inputs', fixed_inputs])
-
-            if seed_player:
-                cmd.extend(['--seed-player', seed_player])
-
-            if args.visual_stacks:
-                cmd.append('--visual-stacks')
-
-            # Note: We don't pass --tag-gamelogs to clients by default because:
-            # 1. The 2-way equivalence test (local vs server) only needs server logs
-            # 2. Client logs are for 4-way testing which requires separate file outputs
-            # TODO(mtg-193): Add --tag-gamelogs-clients flag for 4-way testing
-
-            return cmd
+            return build_mtg_connect_cmd(
+                mtg_binary,
+                server=f'localhost:{port}',
+                password=password,
+                name=name,
+                controller=controller,
+                deck=deck,
+                cardsfolder=cardsfolder,
+                seed_player=seed_player,
+                fixed_inputs=fixed_inputs,
+                visual_stacks=args.visual_stacks,
+                verbosity=args.verbosity,
+            )
 
         # Start client 1
         p1_cmd = build_client_cmd(

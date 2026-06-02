@@ -4,12 +4,16 @@ Both `scripts/mtg_tui_networked.py` (native server + 2 clients) and
 `scripts/mtg_wasm_game.py` (headless WASM/Playwright) — and the agentplay
 WASM driver (`agentplay/lib/wasm_process.py`) — need the SAME small pieces:
 
-  * a free-port picker,
+  * a free-port picker + TCP-readiness wait,
   * the `mtg tui --seed N` → per-controller-seed derivation (so a network /
     WASM run is a true drop-in for `mtg tui --seed N`),
   * the common `mtg tui` CLI surface (deck(s), --p1/--p2, --seed,
     --max-turns) parsed into one struct,
-  * deck path → WASM deck-name mapping.
+  * deck path → WASM deck-name mapping,
+  * the static `http.server` spawn (rooted at `web/`) every browser backend
+    needs, and the `mtg server` / `mtg connect` argv builders the native
+    networked runner (`scripts/mtg_tui_networked.py`) and the networked-WASM
+    runner (`WasmPlaywrightProcess.run_network_ui`) share.
 
 Centralizing these here keeps the runners thin and guarantees they agree on
 seed semantics and argument names. The runners add their own backend-specific
@@ -20,6 +24,8 @@ from __future__ import annotations
 
 import argparse
 import socket
+import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -40,6 +46,103 @@ def find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
+
+
+def wait_for_tcp(port: int, *, host: str = "127.0.0.1", timeout_s: float = 5.0) -> None:
+    """Block until `host:port` accepts a TCP connection, or raise after
+    `timeout_s`. Shared by every backend that spawns a local server (the
+    static http.server for WASM, and the native `mtg server`) so they agree
+    on the readiness check instead of each sleeping a fixed interval."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"server on {host}:{port} did not accept connections within {timeout_s:.0f}s")
+
+
+def spawn_http_server(web_dir: Path, port: int, *, verbose: bool = False) -> subprocess.Popen[bytes]:
+    """Spawn `python3 -m http.server <port>` rooted at `web_dir` and wait for
+    it to accept connections. The single static-file server used by EVERY
+    browser-driven backend (local WASM, networked WASM, the e2e tests'
+    equivalent), so the cwd/readiness logic lives in one place."""
+    cmd = ["python3", "-m", "http.server", str(port)]
+    if verbose:
+        print(f"[web] http server: $ {' '.join(cmd)} (cwd={web_dir})")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(web_dir),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    wait_for_tcp(port)
+    return proc
+
+
+def build_mtg_server_cmd(
+    binary: str | Path,
+    *,
+    port: int,
+    password: str,
+    cardsfolder: str | Path,
+    seed: int | str | None = None,
+    deck_visibility: bool = True,
+    tag_gamelogs: bool = False,
+    network_debug: bool = False,
+    verbosity: str | None = None,
+) -> list[str]:
+    """Build the argv for a headless `mtg server`. Centralized so the native
+    networked runner (`scripts/mtg_tui_networked.py`) and the networked-WASM
+    runner agree on the server flag surface — `--deck-visibility` in
+    particular is REQUIRED for entity-ID sync (see mtg_tui_networked notes)."""
+    cmd: list[str] = [str(binary), "server", "--port", str(port), "--password", password,
+                      "--cardsfolder", str(cardsfolder)]
+    if verbosity is not None:
+        cmd += ["--verbosity", verbosity]
+    if deck_visibility:
+        cmd.append("--deck-visibility")
+    if seed is not None:
+        cmd += ["--seed", str(seed)]
+    if tag_gamelogs:
+        cmd.append("--tag-gamelogs")
+    if network_debug:
+        cmd.append("--network-debug")
+    return cmd
+
+
+def build_mtg_connect_cmd(
+    binary: str | Path,
+    *,
+    server: str,
+    password: str,
+    name: str,
+    controller: str,
+    deck: str | Path,
+    cardsfolder: str | Path | None = None,
+    seed_player: str | None = None,
+    fixed_inputs: str | None = None,
+    visual_stacks: bool = False,
+    verbosity: str | None = None,
+) -> list[str]:
+    """Build the argv for an `mtg connect` native client (the AI peer that
+    pairs with a networked WASM/native client). Centralized for the same
+    reason as `build_mtg_server_cmd`."""
+    cmd: list[str] = [str(binary), "connect", "--server", server, "--password", password,
+                      "--name", name, "--controller", controller]
+    if cardsfolder is not None:
+        cmd += ["--cardsfolder", str(cardsfolder)]
+    if verbosity is not None:
+        cmd += ["--verbosity", verbosity]
+    if controller == "fixed" and fixed_inputs:
+        cmd += ["--fixed-inputs", fixed_inputs]
+    if seed_player:
+        cmd += ["--seed-player", seed_player]
+    if visual_stacks:
+        cmd.append("--visual-stacks")
+    cmd.append(str(deck))
+    return cmd
 
 
 def derive_controller_seeds(master_seed: int) -> tuple[int, int]:

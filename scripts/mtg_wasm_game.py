@@ -85,7 +85,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--headed", action="store_true",
                    help="Show the Chromium window (default: headless).")
     p.add_argument("--networked", action="store_true",
-                   help="Run via a native `mtg server` + WASM WebSocket client instead of pure local WASM.")
+                   help="Run via a native `mtg server` + native AI peer + WASM WebSocket "
+                        "client (the ?mode=network auto-match contract) instead of pure "
+                        "local in-tab WASM. Needs target/release/mtg; P1 plays in the "
+                        "browser, P2 is the native peer; both must be engine controllers.")
     p.add_argument("--verbose", action="store_true", help="Verbose driver logging to stderr.")
     return p
 
@@ -105,21 +108,6 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
-
-    if args.networked:
-        print(
-            "NOTE: --networked WASM play (server + WASM WebSocket client) is "
-            "driven through the same WasmPlaywrightProcess against the "
-            "network-enabled page; falling through to the local WASM path "
-            "is not equivalent. This path is wired but the WASM build must "
-            "be the network build (`make wasm-dev` uses wasm-network).",
-            file=sys.stderr,
-        )
-        # The current WasmPlaywrightProcess launches an in-tab local session.
-        # A true networked run would point the page at a running `mtg server`.
-        # We surface a clear, actionable message rather than silently doing
-        # the local thing, and run the local WASM path so the user still gets
-        # artifacts. (Full server-backed WASM CLI is tracked as follow-up.)
 
     # Resolve run-output dir.
     if args.out_dir:
@@ -154,11 +142,24 @@ def main() -> int:
         print(f"ERROR: decks bin {_decks_rel} missing under {web_dir/'data'}. Run: mtg export-wasm", file=sys.stderr)
         return 1
 
+    if args.networked:
+        if not (REPO_ROOT / "target" / "release" / "mtg").exists():
+            print("ERROR: --networked needs the native `mtg` binary at "
+                  "target/release/mtg. Build: cargo build --release --features network",
+                  file=sys.stderr)
+            return 1
+        for ctrl in (common.p1_controller, common.p2_controller):
+            if ctrl not in _ENGINE_CONTROLLERS:
+                print(f"ERROR: --networked auto-play needs engine controllers "
+                      f"({sorted(_ENGINE_CONTROLLERS)}); got {ctrl!r}.", file=sys.stderr)
+                return 2
+
     p1_name = deck_path_to_wasm_name(common.p1_deck)
     p2_name = deck_path_to_wasm_name(common.p2_deck)
     seed = common.seed if common.seed is not None else 0
 
-    print(f"[mtg_wasm_game] page={args.page} seed={seed} max_turns={common.max_turns}")
+    mode = "networked" if args.networked else "local"
+    print(f"[mtg_wasm_game] mode={mode} page={args.page} seed={seed} max_turns={common.max_turns}")
     print(f"[mtg_wasm_game] P1={common.p1_controller} deck={p1_name}  P2={common.p2_controller} deck={p2_name}")
     print(f"[mtg_wasm_game] run dir: {out_dir}")
 
@@ -183,9 +184,30 @@ def main() -> int:
     game_log_path = out_dir / "game.log"
     final_turn = None
     try:
-        # Drive the page's OWN launcher UI so screenshots show the rendered
-        # game (not the idle launcher). Engine controllers auto-play.
-        result = proc.run_autoplay_ui(max_turns=common.max_turns)
+        if args.networked:
+            # Networked WASM: spawn a native `mtg server` + AI peer and boot
+            # this browser tab as the second network client (proven
+            # ?mode=network auto-match contract). Shared core in
+            # WasmPlaywrightProcess.run_network_ui — the DRY counterpart to
+            # the native-only scripts/mtg_tui_networked.py.
+            import random as _random
+
+            cardsfolder = REPO_ROOT / "cardsfolder"
+            if not cardsfolder.exists():
+                cardsfolder = REPO_ROOT / "mtg-engine" / "cardsfolder"
+            result = proc.run_network_ui(
+                mtg_binary=REPO_ROOT / "target" / "release" / "mtg",
+                cardsfolder=cardsfolder,
+                peer_deck=Path(common.p2_deck),
+                password=f"test_{_random.randint(1000, 9999)}",
+                max_turns=common.max_turns,
+                server_seed=common.seed,
+            )
+        else:
+            # Local WASM: boot an in-tab engine-vs-engine session from URL
+            # params so screenshots show the rendered game. Engine
+            # controllers auto-play.
+            result = proc.run_autoplay_ui(max_turns=common.max_turns)
         final_turn = result["final_turn"]
         log_lines = result["log_lines"]
         game_log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")

@@ -42,7 +42,6 @@ that flow; an async loop would just add ceremony with no benefit.
 from __future__ import annotations
 
 import json
-import socket
 import subprocess
 import sys
 import time
@@ -53,7 +52,14 @@ from typing import Any, Sequence
 from urllib.parse import urlencode
 
 from .game_process import ChoicePoint, GameOver
-from .web_game_common import deck_path_to_wasm_name, find_free_port
+from .web_game_common import (
+    build_mtg_connect_cmd,
+    build_mtg_server_cmd,
+    deck_path_to_wasm_name,
+    find_free_port,
+    spawn_http_server,
+    wait_for_tcp,
+)
 from .text_formatter import (
     strip_menu_prefix,
     view_model_choices,
@@ -158,7 +164,10 @@ class WasmPlaywrightProcess:
         self._pw = None
         self._browser = None
         self._page = None
-        self._http_proc: subprocess.Popen[str] | None = None
+        self._http_proc: subprocess.Popen[bytes] | None = None
+        # Native `mtg server` + AI peer procs, only used by run_network_ui().
+        self._server_proc: subprocess.Popen[bytes] | None = None
+        self._peer_proc: subprocess.Popen[bytes] | None = None
         self._console_lines: list[str] = []
         self._cumulative_log_lines: list[str] = []
         self._decision_count = 0
@@ -238,11 +247,13 @@ class WasmPlaywrightProcess:
                 self._pw.stop()
         self._pw = None
 
-        if self._http_proc is not None:
-            with suppress(Exception):
-                self._http_proc.terminate()
-                self._http_proc.wait(timeout=5)
-            self._http_proc = None
+        for attr in ("_http_proc", "_peer_proc", "_server_proc"):
+            proc = getattr(self, attr)
+            if proc is not None:
+                with suppress(Exception):
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                setattr(self, attr, None)
 
     # ------------------------------------------------------------------
     # UI-driven auto-play (engine-vs-engine; visual screenshots)
@@ -353,30 +364,165 @@ class WasmPlaywrightProcess:
         }
 
     # ------------------------------------------------------------------
+    # Networked auto-play (native server + native AI peer + WASM client)
+    # ------------------------------------------------------------------
+
+    def run_network_ui(
+        self,
+        *,
+        mtg_binary: Path,
+        cardsfolder: Path,
+        peer_deck: Path,
+        password: str,
+        max_turns: int,
+        server_seed: int | None = None,
+    ) -> dict[str, Any]:
+        """Drive a NETWORKED WASM game: spawn a native `mtg server`, attach a
+        native AI peer (`mtg connect`), then boot THIS browser tab as the
+        second network client via the proven `?mode=network&ws=...` auto-match
+        contract (the same one `web/test_network_*_e2e.js` exercise). Capture
+        per-turn screenshots + the WASM client's gamelog exactly like the
+        local path.
+
+        This is the DRY core: `scripts/mtg_wasm_game.py --networked` is a thin
+        wrapper around it. The native peer plays `config.p2_controller`; the
+        WASM client plays `config.p1_controller` (must be an engine controller
+        — random/heuristic/zero — for headless auto-play).
+
+        Returns the same dict shape as `run_autoplay_ui`.
+        """
+        if self.config.page not in WASM_PAGES:
+            raise ValueError(f"unknown WASM page: {self.config.page!r}")
+        self.game_dir.mkdir(parents=True, exist_ok=True)
+        if self.screenshot_dir is not None:
+            self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Static file server for the WASM assets.
+        self._start_http_server()
+
+        # 2. Native game server + AI peer. Use a SEPARATE free port for the
+        #    websocket server (distinct from the http.server port).
+        ws_port = find_free_port()
+        server_cmd = build_mtg_server_cmd(
+            mtg_binary, port=ws_port, password=password, cardsfolder=cardsfolder,
+            seed=server_seed, deck_visibility=True, network_debug=True,
+        )
+        if self.verbose:
+            print(f"[wasm-net] server: $ {' '.join(server_cmd)}", file=sys.stderr)
+        self._server_proc = subprocess.Popen(
+            server_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        wait_for_tcp(ws_port, timeout_s=10.0)
+
+        peer_cmd = build_mtg_connect_cmd(
+            mtg_binary, server=f"localhost:{ws_port}", password=password,
+            name="NativePeer", controller=self.config.p2_controller,
+            deck=peer_deck, cardsfolder=cardsfolder,
+        )
+        if self.verbose:
+            print(f"[wasm-net] peer: $ {' '.join(peer_cmd)}", file=sys.stderr)
+        self._peer_proc = subprocess.Popen(
+            peer_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        # Give the native peer a moment to register + create its game slot so
+        # the browser client's JoinGame auto-match finds a waiting opponent.
+        if self._page is None:
+            self._launch_browser()
+        assert self._page is not None
+        self._page.wait_for_timeout(3000)
+
+        # 3. Boot the browser tab as the second network client.
+        page_file = WASM_PAGE_FILES[self.config.page]
+        qp = {
+            "mode": "network",
+            "ws": f"ws://localhost:{ws_port}",
+            "server_pass": password,
+            "name": "WebClient",
+            "deck": self.config.p1_deck,
+            "controller": self.config.p1_controller,
+        }
+        url = f"http://127.0.0.1:{self._port}/{page_file}?{urlencode(qp)}"
+        if self.verbose:
+            print(f"[wasm-net] (ui) navigating to {url}", file=sys.stderr)
+        self._page.goto(url, wait_until="networkidle", timeout=60_000)
+        self._install_bridge()
+
+        # Wait for the network game to actually start (terminal visible).
+        with suppress(Exception):
+            self._page.wait_for_selector("#ratzilla-terminal", state="visible", timeout=30_000)
+
+        # 4. Per-turn poll + screenshots (engine controllers auto-play, so we
+        #    just observe the WASM client's view model advancing). The network
+        #    client races through turns fast once paired, so poll tightly
+        #    (100ms) and snapshot on every turn change to maximise per-turn
+        #    coverage rather than coalescing many turns into one shot.
+        last_turn = None
+        game_over = False
+        shot_seq = 0
+        last_log_len = 0
+        # The WASM NETWORK client is a passive shadow: its view-model
+        # turn_number often only advances at sync points, not every turn, so
+        # turn-keyed screenshots alone are sparse. Also snapshot whenever the
+        # gamelog grows by a meaningful chunk so the run dir shows the game
+        # progressing (named progress_NNNN to distinguish from turn_ shots).
+        deadline = time.monotonic() + min(600, max(120, max_turns * 4))
+        while time.monotonic() < deadline:
+            self._page.wait_for_timeout(100)
+            view = self._read_view_model()
+            turn = view_model_turn_number(view)
+            if turn is not None and turn != last_turn:
+                last_turn = turn
+                if self.screenshot_dir is not None:
+                    with suppress(Exception):
+                        self._page.screenshot(
+                            path=str(self.screenshot_dir / f"turn_{turn:04d}.png"),
+                            full_page=True,
+                        )
+            log_len = len(view_model_log_lines(view))
+            if self.screenshot_dir is not None and log_len >= last_log_len + 12:
+                last_log_len = log_len
+                with suppress(Exception):
+                    self._page.screenshot(
+                        path=str(self.screenshot_dir / f"progress_{shot_seq:04d}.png"),
+                        full_page=True,
+                    )
+                shot_seq += 1
+            if view_model_is_game_over(view):
+                game_over = True
+                break
+            if turn is not None and turn > max_turns:
+                break
+            # Surface a dead native peer / server as a hard error rather than
+            # silently timing out.
+            if self._peer_proc.poll() is not None and not game_over:
+                raise RuntimeError(
+                    f"[wasm-net] native peer exited (rc={self._peer_proc.returncode}) "
+                    "before game over — networked WASM game did not complete"
+                )
+
+        view = self._read_view_model()
+        if self.screenshot_dir is not None:
+            with suppress(Exception):
+                self._page.screenshot(
+                    path=str(self.screenshot_dir / "final.png"), full_page=True
+                )
+        return {
+            "final_turn": view_model_turn_number(view),
+            "game_over": game_over or view_model_is_game_over(view),
+            "log_lines": view_model_log_lines(view),
+        }
+
+    # ------------------------------------------------------------------
     # Setup helpers
     # ------------------------------------------------------------------
 
     def _start_http_server(self) -> None:
         if self._port is None:
             self._port = find_free_port()
-        cmd = ["python3", "-m", "http.server", str(self._port)]
-        if self.verbose:
-            print(f"[wasm] http server: $ {' '.join(cmd)} (cwd={self.web_dir})", file=sys.stderr)
-        self._http_proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.web_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        # Wait for the server to start accepting connections.
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", self._port), timeout=0.5):
-                    return
-            except OSError:
-                time.sleep(0.1)
-        raise RuntimeError(f"WASM driver: http.server on port {self._port} failed to start")
+        # Shared spawn+readiness helper (web_game_common) — the static-file
+        # server is identical across the local-WASM, networked-WASM, and
+        # native-networked backends.
+        self._http_proc = spawn_http_server(self.web_dir, self._port, verbose=self.verbose)
 
     def _launch_browser(self) -> None:
         # Lazy import so consumers without playwright installed don't break
