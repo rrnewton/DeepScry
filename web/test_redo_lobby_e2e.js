@@ -1094,27 +1094,40 @@ async function testLauncherWaitingRoomAutoStart() {
     }
     await shot(creatorPage, '09_wr_creator_opponent_joined.png');
 
-    // --- (2b) Creator button label flips to "Start Game!" once P2 joins (mtg-682 fix C). ---
-    // Before the joiner is present the creator button reads "Ready — start on P2
-    // join"; after WaitingRoomUpdate carries the joiner it must read "Start Game!".
+    // --- (2b) Creator button label flips to "Start Game!" once P2 is READY (mtg-682). ---
+    // On mere JOIN the creator button must STILL read "Ready — autostart on P2
+    // ready" (NOT flipped); it flips to "Start Game!" only after the joiner SETS
+    // READY — at which point the creator clicking it readies and both navigate.
     if (creatorSawJoin) {
+        // Right after join (joiner not yet ready): creator label must NOT have flipped.
+        const labelOnJoin = await creatorPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
+        if (labelOnJoin === 'Ready — autostart on P2 ready') {
+            pass('wr-creator-label-on-join', 'creator button stays "Ready — autostart on P2 ready" on mere join (not flipped)');
+        } else {
+            fail('wr-creator-label-on-join',
+                `creator button should read "Ready — autostart on P2 ready" on join (saw "${labelOnJoin}")`);
+        }
+        // Joiner-side label reads "Ready" before it readies (mirrored joiner semantics).
+        const joinerLabel = await joinerPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
+        if (joinerLabel === 'Ready') {
+            pass('wr-joiner-button-ready', 'joiner button reads "Ready"');
+        } else {
+            fail('wr-joiner-button-ready', `joiner button expected "Ready" but saw "${joinerLabel}"`);
+        }
+        // Now the joiner SETS READY → the creator label must flip to "Start Game!".
+        await joinerPage.waitForFunction(() => !document.getElementById('btn-play').disabled,
+            null, { timeout: 5000 }).catch(() => {});
+        await joinerPage.click('#btn-play');
         const flipped = await creatorPage.waitForFunction(
             () => document.getElementById('btn-play').textContent.trim() === 'Start Game!',
             null, { timeout: 5000 },
         ).then(() => true).catch(() => false);
         const label = await creatorPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
         if (flipped) {
-            pass('wr-creator-button-start-on-join', 'creator button flipped to "Start Game!" after joiner joined');
+            pass('wr-creator-button-start-on-p2-ready', 'creator button flipped to "Start Game!" after joiner readied');
         } else {
-            fail('wr-creator-button-start-on-join',
-                `creator button did NOT flip to "Start Game!" after join (saw "${label}")`);
-        }
-        // Joiner-side label stays "Ready" (mirrored joiner semantics).
-        const joinerLabel = await joinerPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
-        if (joinerLabel === 'Ready') {
-            pass('wr-joiner-button-ready', 'joiner button reads "Ready"');
-        } else {
-            fail('wr-joiner-button-ready', `joiner button expected "Ready" but saw "${joinerLabel}"`);
+            fail('wr-creator-button-start-on-p2-ready',
+                `creator button did NOT flip to "Start Game!" after joiner readied (saw "${label}")`);
         }
     }
 
@@ -1150,14 +1163,13 @@ async function testLauncherWaitingRoomAutoStart() {
         }
     }
 
-    // --- (3) Both Ready → both auto-navigate to the game page. ---
-    // Wait for both Ready buttons enabled (valid deck on record).
+    // --- (3) Joiner already Ready (set in 2b); creator Readies → both auto-navigate. ---
+    // Wait for the creator Ready button enabled (valid deck on record), then click.
+    // The joiner readied in 2b to drive the "Start Game!" flip, so it is NOT
+    // clicked again here (a second click would un-ready it).
     await creatorPage.waitForFunction(() => !document.getElementById('btn-play').disabled,
         null, { timeout: 5000 }).catch(() => {});
-    await joinerPage.waitForFunction(() => !document.getElementById('btn-play').disabled,
-        null, { timeout: 5000 }).catch(() => {});
     await creatorPage.click('#btn-play');
-    await joinerPage.click('#btn-play');
 
     const creatorStarted = await creatorPage.waitForFunction(
         () => /native_game\.html|tui_game\.html/.test(window.location.href),

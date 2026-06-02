@@ -754,8 +754,10 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;
 
     // Initial button intent (no joiner yet). refreshReadyButton() keeps it in
-    // sync afterward, flipping the creator label to "Start Game!" on P2 join.
-    playBtn.textContent = isCreator ? 'Ready — start on P2 join' : 'Ready';
+    // sync afterward, flipping the creator label to "Start Game!" only once P2 is
+    // READY (not merely joined) — at that point clicking it readies the creator
+    // and immediately triggers WaitingRoomReady so both navigate (mtg-682).
+    playBtn.textContent = isCreator ? 'Ready — autostart on P2 ready' : 'Ready';
 
     const connEl = document.getElementById('wr-conn');
     const creatorNameEl = document.getElementById('wr-creator-name');
@@ -770,12 +772,13 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     let createdOrJoined = false;
     // True once WE (this client) have sent SetReady{true} and not yet un-readied.
     let weAreReady = false;
-    // True once a 2nd player is present in the waiting room (driven by
-    // WaitingRoomUpdate). Drives the creator's button label flip from
-    // "Ready — start on P2 join" → "Start Game!" so the host sees P2 has arrived
-    // (mtg-682 fix C). The game still auto-starts only when BOTH are ready
-    // (Variant-1 semantics) — this is a label/state cue, not a start trigger.
-    let joinerPresent = false;
+    // True once the joiner (P2) has SET READY in the waiting room (driven by
+    // WaitingRoomUpdate's joiner.ready). Drives the creator's button label flip
+    // from "Ready — autostart on P2 ready" → "Start Game!" — at which point the
+    // creator clicking it readies and immediately triggers WaitingRoomReady, so
+    // the label genuinely means "click to start" (mtg-682). The game still
+    // auto-starts only when BOTH are ready (Variant-1 semantics).
+    let joinerReady = false;
     // Expose for Playwright assertions.
     window.__launcherWaiting = { connected: false, ready: false, lastUpdate: null, started: false };
 
@@ -857,11 +860,12 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     /** Render a WaitingRoomUpdate snapshot into the panel. */
     function renderWaitingRoom(creator, joiner) {
         window.__launcherWaiting.lastUpdate = { creator, joiner };
-        // Track opponent presence so the creator's button label can flip to
-        // "Start Game!" once P2 has arrived (mtg-682 fix C).
-        const wasPresent = joinerPresent;
-        joinerPresent = !!joiner;
-        if (wasPresent !== joinerPresent) refreshReadyButton();
+        // Track opponent READY (not mere presence) so the creator's button label
+        // flips to "Start Game!" only once P2 has readied — at which point the
+        // creator clicking it triggers WaitingRoomReady and both start (mtg-682).
+        const wasReady = joinerReady;
+        joinerReady = !!(joiner && joiner.ready);
+        if (wasReady !== joinerReady) refreshReadyButton();
         if (creator) {
             creatorNameEl.textContent = creator.name || 'Host';
             creatorNameEl.classList.remove('empty');
@@ -1031,15 +1035,17 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
 
     // ==================== READY HANDSHAKE ====================
     /** The text for the ready/start button given the current state. The creator's
-     *  label reacts to the joiner's presence (mtg-682 fix C): before a 2nd player
-     *  is present it reads "Ready — start on P2 join"; once the joiner has joined
-     *  it reads "Start Game!" so the host sees P2 has arrived. The game still
-     *  auto-starts only when BOTH players are ready (Variant-1 semantics) — this
-     *  is purely a label cue, not a start trigger. The joiner side stays "Ready". */
+     *  label reacts to the joiner's READY state (mtg-682): before P2 has readied
+     *  it reads "Ready — autostart on P2 ready"; once P2 is ready it reads
+     *  "Start Game!" — because the creator clicking it then readies and the server
+     *  immediately sends WaitingRoomReady (both ready), so both navigate. The game
+     *  auto-starts only when BOTH players are ready (Variant-1 semantics); keying
+     *  the label on P2-ready (not P2-join) makes "Start Game!" mean exactly
+     *  "click to start". The joiner side stays "Ready". */
     function readyButtonLabel() {
         if (weAreReady) return 'Cancel ready';
         if (!isCreator) return 'Ready';
-        return joinerPresent ? 'Start Game!' : 'Ready — start on P2 join';
+        return joinerReady ? 'Start Game!' : 'Ready — autostart on P2 ready';
     }
 
     function refreshReadyButton() {
