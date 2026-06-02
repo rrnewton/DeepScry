@@ -4,10 +4,25 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T20:10:15.405563166+00:00
+updated_at: 2026-06-02T21:01:22.116102983+00:00
 ---
 
 # Description
+
+STATUS 2026-06-02 (agent-teams netarch-dev VERIFICATION — fix does NOT hold; precise root cause found):
+
+VERIFY RESULT on clean 19c10c3a (pending_cast deleted): robots42 seed=42 WASM gate = 7 PASS / 3 FAIL of 10 (~30% desync), NOT green. The prior "1 green pass" was luck. Three distinct desync signatures, all = WASM shadow (P2 view) diverging from server under rewind+replay of HIDDEN-info events:
+ (1) Demonic Tutor library search: server undo-log Choice(LibrarySearch(Some(idx)))->RevealCard(Island)->MoveCard(Lib->Hand)->Shuffle(38); WASM replay Choice(LibrarySearch(None))->Shuffle(39) — fetched NOTHING.
+ (2) Mass-draw (Timetwister/Wheel) CONTENT divergence at EQUAL counts (Hands[7,7] Libs[50,50]) — replay shuffle/draw not byte-reproducing server's forward result.
+ (3) Available-actions divergence ("Local abilities 3 != server 6") — shadow hand content already diverged.
+
+CODE-CONFIRMED ROOT CAUSE for (1): Demonic Tutor = SP$ ChangeZone | Origin$ Library -> effect_converter.rs:456 makes Effect::SearchLibrary { player: PlayerId::new(0) /*placeholder*/ }. Placeholder routes to the INTERACTIVE path priority.rs:1720/1758 (NOT the non-interactive actions/mod.rs:4600). At priority.rs:1776 the ChoicePoint records a POSITIONAL INDEX: chosen_index = chosen_card_opt.and_then(|id| valid_cards.iter().position(|&c| c==id)). On the OPPONENT's shadow (P2 viewing P0's search) P0's library cards are hidden/uninstantiated, so valid_cards is empty and the fetched card isn't in it -> position() = None -> records ReplayChoice::LibrarySearch(None). In FORWARD play the correct count change still lands because it comes from the server's broadcast MoveCard (external sync), NOT the shadow's own search logic. Under REWIND+REPLAY that broadcast is undone and only the recorded None is replayed -> the fetch is lost -> P0 library 39 vs server 38 -> P2 view-hash mismatch.
+
+state_sync (client.rs ActionLog<StateSyncEntry>) only carries RevealCard + LibraryReorder; a hidden opponent library-search MOVE is not represented there, and the card identity is never revealed to P2, so neither the index nor a CardId is reconstructable on P2's shadow from recorded data alone.
+
+FIX DIRECTION (NOT yet implemented — awaiting scope decision): the rewind+replay of an opponent's hidden library search must reproduce the count-change move that forward play got from the server broadcast. Either (A) record/replay the authoritative move via state_sync so it survives rewind (preferred — matches non-destructive state-sync design), or (B) instantiate opponent library as opaque placeholders so the interactive search picks a stable placeholder index. Do NOT re-add a bypass. Signatures (2)/(3) are the same class (replay of hidden draws/shuffles) and likely need the same state-sync-driven replay, or RNG-state capture in the undo log for shuffles.
+
+===== PRIOR CHECKPOINT BELOW =====
 
 STATUS 2026-06-02 (SESSION-RESTART CHECKPOINT — fix implemented, verification incomplete):
 
