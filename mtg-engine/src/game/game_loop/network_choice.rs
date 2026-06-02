@@ -383,6 +383,19 @@ impl<'a> GameLoop<'a> {
         let player = controller.player_id();
 
         if !self.is_network_mode() {
+            // Hidden-info-replay: if the controller is replaying a recorded
+            // library search, APPLY the authoritative fetched CardId directly
+            // (mtg-610 / mtg-mb668). On an opponent's shadow the fetched card is
+            // hidden and excluded from `valid_cards`, so re-deriving a positional
+            // index here would lose the fetch — replay carries the CardId.
+            if let Some(recorded) = controller.replay_library_search() {
+                // Materialise the fetched card (via the reveal-history buffer)
+                // before the caller's move_card, mirroring the live branch.
+                if recorded.is_some() {
+                    self.sync_to_action();
+                }
+                return ChoiceResult::Ok(recorded);
+            }
             // Build CardDefinition references for the controller
             let valid_card_definitions: Vec<&crate::loader::CardDefinition> = valid_cards
                 .iter()

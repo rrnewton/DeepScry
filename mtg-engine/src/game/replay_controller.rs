@@ -25,8 +25,17 @@ pub enum ReplayChoice {
     DamageOrder(SmallVec<[CardId; 4]>),
     /// Choice of cards to discard
     Discard(SmallVec<[CardId; 7]>),
-    /// Choice of card from library (or None to fail to find) - stores index, not CardId
-    LibrarySearch(Option<usize>),
+    /// Choice of card from library (or None to fail to find).
+    ///
+    /// Stores the AUTHORITATIVE fetched [`CardId`], NOT a positional index into
+    /// the searcher's `valid_cards` view. The index was shadow-fragile: on an
+    /// opponent's shadow the fetched card is hidden/face-down and excluded from
+    /// the filtered `valid_cards`, so a `position()` lookup collapsed a real
+    /// `Some(card)` fetch to `None` and the fetch was LOST on rewind+replay
+    /// (mtg-mb668). Recording the CardId lets replay APPLY the authoritative
+    /// move directly instead of re-deriving the selection against the shadow's
+    /// incomplete view (mtg-610 hidden-info-replay principle).
+    LibrarySearch(Option<CardId>),
     /// Choice of permanents to sacrifice
     Sacrifice(SmallVec<[CardId; 8]>),
     /// Choice of modes for a modal spell
@@ -341,19 +350,23 @@ impl PlayerController for ReplayController {
         view: &GameStateView,
         valid_cards: &[&crate::loader::CardDefinition],
     ) -> ChoiceResult<Option<usize>> {
-        // Try to consume a replay choice first
-        if let Some(choice) = self.consume_replay_choice(|c| {
+        // NOTE: the recorded LibrarySearch choice is NOT consumed here. The
+        // authoritative fetched CardId is replayed via `replay_library_search`
+        // (called by `choose_from_library_with_hook` BEFORE this), so the index
+        // returned here would be meaningless on a shadow whose `valid_cards`
+        // omit the hidden fetched card. Delegate to the inner controller for
+        // any non-replay call.
+        self.inner.choose_from_library(view, valid_cards)
+    }
+
+    fn replay_library_search(&mut self) -> Option<Option<CardId>> {
+        self.consume_replay_choice(|c| {
             if let ReplayChoice::LibrarySearch(card_opt) = c {
                 Some(*card_opt)
             } else {
                 None
             }
-        }) {
-            return ChoiceResult::Ok(choice);
-        }
-
-        // No replay choice available, delegate to inner controller
-        self.inner.choose_from_library(view, valid_cards)
+        })
     }
 
     fn choose_permanents_to_sacrifice(
