@@ -7,7 +7,7 @@ labels:
 - network
 - desync
 created_at: 2026-06-02T14:24:51.850768051+00:00
-updated_at: 2026-06-02T14:24:51.850768051+00:00
+updated_at: 2026-06-02T18:46:49.509547765+00:00
 ---
 
 # Description
@@ -17,6 +17,14 @@ USER LIVE REPRO 2026-06-02 (deepscry.net cb9b15d9), MIXED GUI(P1)/TUI(P2) networ
 - Console: `FATAL DESYNC: Local abilities (2) != server abilities (3). Local: [PlayLand { card_id: 73 }, PlayLand { card_id: 78 }], Server: [PlayLand { card_id: 72 }, PlayLand { card_id: 73 }, PlayLand { card_id: 78 }]`
 - I.e. the TUI client shadow is MISSING PlayLand{72} that the server offers — the shadow's hand/abilities diverge from the authoritative server at P2's turn-2 priority. Likely card 72 is P2's own freshly-drawn land that the shadow didn't materialize/register as playable (a draw/hand-state or re-entry/rewind issue on the shadow).
 
-KEY: this is the HUMAN/TUI path (fancy_tui::run_network_mode_human_v2), NOT the AI path netarch (mtg-610) unified + gated. The netarch gate (rogerbrand/robots42) is AI-vs-AI mirrors, so netarch going green there does NOT exercise/guarantee this human-path case. The reveal-history-buffer / strict-rewind work must be verified on the HUMAN path too (a human P2 drawing + playing on turn 2), and this specific own-drawn-land-missing desync reproduced + fixed.
+UPDATE 2026-06-02 — NATIVE-vs-NATIVE repro (confirms NOT TUI-specific):
+- Same turn-2 own-drawn-land-missing desync reproduced with BOTH players on the native web GUI (native_game.html, role=join player2, deck=eric_avatar_draft, ui=native, mode=network).
+- Console: `FATAL DESYNC: Local abilities (3) != server abilities (4). Local: [PlayLand{74}, PlayLand{77}, PlayLand{78}], Server: [PlayLand{72}, PlayLand{74}, PlayLand{77}, PlayLand{78}]` — shadow again MISSING PlayLand{72} (P2's own freshly-drawn land).
+- Stack: run_network_mode_human_v2 -> WasmNetworkLocalController<WasmHumanController>::choose_spell_ability_to_play -> game loop returned on turn 2, undo_log=89, result=Error.
+- CONFIRMS this is the HUMAN-path shadow logic generally (WasmNetworkLocalController<WasmHumanController>), NOT TUI-specific rendering. The shadow simply never registers P2's own turn-2 draw (card 72) as a playable land.
 
-NEXT: reproduce in a test (mixed GUI/TUI or at least a human-controller networked game advancing to turn 2 with a draw + land play); root-cause why the shadow lacks PlayLand{72}; confirm the netarch reveal-buffer/rewind covers the human path. Relates mtg-610 (netarch rewind/replay), mtg-679 (human-controller desync). compute_view_hash is the arbiter; this is a real divergence (the abilities differ), not a benign masking artifact.
+KEY: this is the HUMAN path (fancy_tui::run_network_mode_human_v2 + WasmNetworkLocalController<WasmHumanController>), NOT the AI path netarch (mtg-610) unified + gated. The netarch gate (rogerbrand/robots42) is AI-vs-AI mirrors, so netarch going green there does NOT exercise/guarantee this human-path case. The reveal-history-buffer / strict-rewind work must be verified on the HUMAN path too (a human P2 drawing + playing on turn 2), and this specific own-drawn-land-missing desync reproduced + fixed.
+
+ACCEPTANCE TARGET for netarch (mtg-610) human/AI unification + human-path test step. USER DEFERRED the FIX until the full netarch changes fold into integration + deploy (2026-06-02). The netarch human-path test MUST cover a NATIVE human controller (WasmNetworkLocalController<WasmHumanController>), reproduce this missing-own-drawn-land turn-2 desync, and fix it.
+
+NEXT: reproduce in a test (human-controller networked game advancing to turn 2 with a draw + land play — native or TUI, the bug is path-general); root-cause why the shadow lacks PlayLand{72}; confirm the netarch reveal-buffer/rewind covers the human path. Relates mtg-610 (netarch rewind/replay), mtg-679 (human-controller desync). compute_view_hash is the arbiter; this is a real divergence (the abilities differ), not a benign masking artifact.
