@@ -195,10 +195,15 @@ def main() -> int:
             cardsfolder = REPO_ROOT / "cardsfolder"
             if not cardsfolder.exists():
                 cardsfolder = REPO_ROOT / "mtg-engine" / "cardsfolder"
+            # Resolve the peer's .dck relative to the repo root so the native
+            # peer finds it regardless of the caller's cwd.
+            peer_deck = Path(common.p2_deck)
+            if not peer_deck.is_absolute():
+                peer_deck = (REPO_ROOT / peer_deck).resolve()
             result = proc.run_network_ui(
                 mtg_binary=REPO_ROOT / "target" / "release" / "mtg",
                 cardsfolder=cardsfolder,
-                peer_deck=Path(common.p2_deck),
+                peer_deck=peer_deck,
                 password=f"test_{_random.randint(1000, 9999)}",
                 max_turns=common.max_turns,
                 server_seed=common.seed,
