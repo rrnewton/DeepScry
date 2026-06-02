@@ -11,9 +11,16 @@
 //      ?allow_local_img_load=true is set.
 //   6. No cards.bin 404 occurs on game launch; per-set bins load instead.
 //
-// Usage:
-//   DEEPSCRY_BASE_URL=https://deepscry.net      node web/smoke_test_live.js  # CF-proxied (real cert)
-//   DEEPSCRY_BASE_URL=https://deepscry.net:8080 node web/smoke_test_live.js  # direct VM (CF origin cert)
+// Usage (no baked-in default host):
+//   node web/smoke_test_live.js
+//     → BASE is derived from the local, gitignored .deepscry-deploy.env as
+//       https://${REMOTE_HOST}[:${REMOTE_PORT}] (REMOTE_PORT optional). Same
+//       three search locations as scripts/deploy-cloud.sh. If no config is
+//       found (or REMOTE_HOST is unset), the test throws with template-fill
+//       instructions instead of guessing a host.
+//   DEEPSCRY_BASE_URL=https://<host>      node web/smoke_test_live.js  # CF-proxied (real cert)
+//   DEEPSCRY_BASE_URL=https://<host>:8080 node web/smoke_test_live.js  # direct VM (CF origin cert)
+//     → an explicit override always wins over the config file.
 //
 // All browser contexts are created with `ignoreHTTPSErrors: true` so the
 // test passes regardless of whether the URL terminates at a public CA
@@ -28,8 +35,82 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
-const BASE = process.env.DEEPSCRY_BASE_URL || 'https://deepscry.net';
+// Resolve the deploy target host from the local, gitignored
+// .deepscry-deploy.env — mirroring the shell loader in
+// scripts/load-deploy-env.sh (same three search locations, same
+// template-fill error). No hardcoded host fallback: if neither the
+// DEEPSCRY_BASE_URL env override nor a config file supplies a host, we
+// throw with instructions to fill in the template.
+//
+// This script lives in web/, so the repo root is one level up and the
+// dev-harness parent dir is two levels up.
+const REPO_ROOT = path.resolve(__dirname, '..');
+const PARENT_DIR = path.resolve(REPO_ROOT, '..');
+
+function configSearchPaths() {
+    return [
+        path.join(PARENT_DIR, '.deepscry-deploy.env'),
+        path.join(REPO_ROOT, '.deepscry-deploy.env'),
+        path.join(os.homedir(), '.config', 'deepscry', 'deploy.env'),
+    ];
+}
+
+// Minimal KEY=VALUE parser for the .deepscry-deploy.env file. Returns a
+// plain object of the keys it understands (REMOTE_HOST, REMOTE_PORT).
+// Comments (#...) and blank lines are ignored; surrounding quotes on a
+// value are stripped. We do NOT shell-source it (no Node equivalent),
+// but the file is a flat KEY=VALUE list so a line parse is faithful.
+function parseDeployEnv(file) {
+    const out = {};
+    const text = fs.readFileSync(file, 'utf8');
+    for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eq = line.indexOf('=');
+        if (eq < 0) continue;
+        const key = line.slice(0, eq).trim();
+        let val = line.slice(eq + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) ||
+            (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+        }
+        out[key] = val;
+    }
+    return out;
+}
+
+function templateFillError() {
+    return new Error(
+        'no deploy config found. Copy scripts/deepscry-deploy.env.example to\n' +
+        '       ' + path.join(PARENT_DIR, '.deepscry-deploy.env') + ' (the dev harness parent dir, preferred)\n' +
+        '       — or ' + path.join(REPO_ROOT, '.deepscry-deploy.env') + ', or ~/.config/deepscry/deploy.env —\n' +
+        '       and fill in REMOTE_HOST (and REMOTE_USER). Alternatively set DEEPSCRY_BASE_URL=https://<host>.',
+    );
+}
+
+function resolveBaseUrl() {
+    if (process.env.DEEPSCRY_BASE_URL) return process.env.DEEPSCRY_BASE_URL;
+    for (const p of configSearchPaths()) {
+        if (!fs.existsSync(p)) continue;
+        const cfg = parseDeployEnv(p);
+        if (!cfg.REMOTE_HOST) {
+            throw new Error(
+                p + ' is missing REMOTE_HOST.\n' + templateFillError().message,
+            );
+        }
+        // REMOTE_PORT is optional. When set, append it (matches the
+        // two-form usage documented in the header comment); when unset,
+        // use the bare https://<host> (CF-proxied) form.
+        return cfg.REMOTE_PORT
+            ? `https://${cfg.REMOTE_HOST}:${cfg.REMOTE_PORT}`
+            : `https://${cfg.REMOTE_HOST}`;
+    }
+    throw templateFillError();
+}
+
+const BASE = resolveBaseUrl();
 const SHOTS = path.join(__dirname, 'screenshots', 'live_smoke');
 fs.mkdirSync(SHOTS, { recursive: true });
 

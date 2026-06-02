@@ -1,0 +1,31 @@
+---
+title: Scrub hardcoded deepscry.net defaults from live/remote test scripts; add shared deploy-env loader
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-02T01:23:14.096495664+00:00
+updated_at: 2026-06-02T01:23:14.096495664+00:00
+---
+
+# Description
+
+Removed the two hardcoded `deepscry.net` defaults from the manually-invoked (NOT make-validate) live/remote test scripts and replaced them with a config-driven flow keyed on the gitignored `.deepscry-deploy.env`.
+
+DRY change — single shared loader:
+- NEW `scripts/load-deploy-env.sh` (sourceable, not executable): defines `load_deploy_env` which searches the SAME three locations as before ($DEPLOY_CONFIG_FILE_OVERRIDE, <parent>/.deepscry-deploy.env, <repo>/.deepscry-deploy.env, ~/.config/deepscry/deploy.env), sources the first found, and on no-config OR unset REMOTE_HOST prints an explicit error pointing at `scripts/deepscry-deploy.env.example` and returns non-zero.
+- `scripts/deploy-cloud.sh` now sources the shared loader instead of duplicating the config-search inline (tolerates absent config so --user/--host CLI/env-only runs still work; its existing required-vars error remains the canonical message in that case). Behaviour verified identical (banner resolves, live status reached).
+
+Two scrubbed defaults:
+- `tests/remote/network_e2e_remote.sh:30` was `SERVER_URL="${1:-wss://deepscry.net:8080/lobby}"` → now: explicit $1 wins; else source the loader and build `wss://${REMOTE_HOST}:${REMOTE_PORT:-8080}/lobby`; no host fallback. (Also fixed REPO_ROOT: the file lives at tests/remote/ so repo root is two levels up.)
+- `web/smoke_test_live.js:32` was `const BASE = process.env.DEEPSCRY_BASE_URL || 'https://deepscry.net'` → now a JS KEY=VALUE parser mirroring the shell loader (same 3 search paths, same template-fill error). BASE = DEEPSCRY_BASE_URL override, else https://${REMOTE_HOST}[:${REMOTE_PORT}] (port optional). Throws if neither supplies a host.
+
+Template `scripts/deepscry-deploy.env.example` updated: corrected a stale `scripts/deploy.sh` reference to name the real loader + deploy-cloud.sh.
+
+Verification (these scripts are NOT in make validate; checked directly):
+- bash -n on all shell scripts; node --check on the JS — all clean.
+- Config PRESENT: loader resolves REMOTE_HOST; deploy-cloud.sh banner + live status work; remote-e2e derives wss://deepscry.net:8080/lobby; JS resolves https://deepscry.net:8080.
+- Config ABSENT: loader, remote-e2e (no $1), JS, and deploy-cloud.sh all emit the explicit template-fill error and exit non-zero.
+- Explicit overrides bypass config (remote-e2e $1, JS DEEPSCRY_BASE_URL).
+- git grep deepscry.net is CLEAN in both target scripts.
+
+Relationship to Java Forge: N/A — deploy/test harness tooling, no engine/gameplay change.

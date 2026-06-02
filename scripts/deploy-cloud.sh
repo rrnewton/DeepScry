@@ -52,9 +52,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# Parent dev harness (one level above the repo if the repo is the
-# primary checkout); used as the first config-file search location.
-PARENT_DIR="$(cd "$REPO_ROOT/.." && pwd 2>/dev/null || echo "$REPO_ROOT")"
+# Shared, sourceable deploy-config loader (DRY: the config-file search
+# logic lives in ONE place, also used by tests/remote/*.sh).
+# shellcheck source=scripts/load-deploy-env.sh
+source "$SCRIPT_DIR/load-deploy-env.sh"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -119,28 +120,19 @@ while [ $# -gt 0 ]; do
 done
 
 # ---------------------------------------------------------------------------
-# Load config file
+# Load config file (via the shared loader — DRY)
 # ---------------------------------------------------------------------------
-
-config_search_paths=(
-    "${CONFIG_FILE_OVERRIDE:-}"
-    "$PARENT_DIR/.deepscry-deploy.env"
-    "$REPO_ROOT/.deepscry-deploy.env"
-    "$HOME/.config/deepscry/deploy.env"
-)
-CONFIG_FILE=""
-for p in "${config_search_paths[@]}"; do
-    [[ -z "$p" ]] && continue
-    if [[ -f "$p" ]]; then
-        CONFIG_FILE="$p"
-        break
-    fi
-done
-
-if [[ -n "$CONFIG_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
-    echo "→ loaded config: $CONFIG_FILE"
+#
+# The loader searches the standard three locations and sources the first
+# config file found. Here we TOLERATE "no config file" because
+# deploy-cloud.sh can also be driven purely by --user/--host CLI flags or
+# env vars; the required-vars check below emits the canonical error when
+# neither a config file nor the flags supply REMOTE_USER + REMOTE_HOST.
+DEPLOY_CONFIG_FILE_OVERRIDE="$CONFIG_FILE_OVERRIDE" \
+    DEPLOY_CONFIG_REPO_ROOT="$REPO_ROOT" \
+    load_deploy_env >/dev/null 2>&1 || true
+if [[ -n "${DEPLOY_CONFIG_FILE:-}" ]]; then
+    echo "→ loaded config: $DEPLOY_CONFIG_FILE"
 fi
 
 # Layer precedence: CLI > pre-existing env > config file > default.

@@ -16,18 +16,36 @@
 # browser, so a failure here points cleanly at the Rust server side.
 #
 # Usage:
-#   tests/network_e2e_remote.sh                        # default deepscry.net:8080
-#   tests/network_e2e_remote.sh wss://host:port/lobby  # custom
+#   tests/remote/network_e2e_remote.sh                        # target derived from .deepscry-deploy.env
+#   tests/remote/network_e2e_remote.sh wss://host:port/lobby  # explicit override
+#
+# With NO argument, the target is built from the local, gitignored
+# `.deepscry-deploy.env` as wss://${REMOTE_HOST}:${REMOTE_PORT:-8080}/lobby.
+# If no config is found (or REMOTE_HOST is unset), this errors with
+# template-fill instructions and exits non-zero — there is NO baked-in
+# default host. An explicit wss://host:port/lobby argument bypasses the
+# config entirely.
 #
 # Exits 0 on success, non-zero on any failure.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# This script lives at tests/remote/, so the repo root is TWO levels up.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-SERVER_URL="${1:-wss://deepscry.net:8080/lobby}"
+# Derive SERVER_URL: an explicit $1 wins; otherwise build it from the
+# shared deploy-config loader (DRY — same search/source logic as
+# deploy-cloud.sh). No hardcoded host fallback.
+if [[ -n "${1:-}" ]]; then
+    SERVER_URL="$1"
+else
+    # shellcheck source=../../scripts/load-deploy-env.sh
+    source "$REPO_ROOT/scripts/load-deploy-env.sh"
+    DEPLOY_CONFIG_REPO_ROOT="$REPO_ROOT" load_deploy_env || exit 1
+    SERVER_URL="wss://${REMOTE_HOST}:${REMOTE_PORT:-8080}/lobby"
+fi
 DECK="${DECK:-decks/grizzly_bears.dck}"
 TIMEOUT_SECS="${TIMEOUT_SECS:-60}"
 GAME_NAME="smoke-$$-$(date +%s)"

@@ -1,0 +1,87 @@
+# load-deploy-env.sh — shared, SOURCEABLE deploy-config loader.
+#
+# This is NOT an executable script: `source` it from another bash
+# script (deploy-cloud.sh, tests/remote/*.sh, ...) to populate the
+# deploy environment variables (REMOTE_USER, REMOTE_HOST, REMOTE_PORT,
+# ...) from the local, gitignored `.deepscry-deploy.env` file.
+#
+# DRY: this is the SINGLE source of the config-file search logic. It
+# searches the same three locations in the same order as every caller
+# expects:
+#   1. $DEPLOY_CONFIG_FILE_OVERRIDE  (if set non-empty — e.g. a --config flag)
+#   2. <parent>/.deepscry-deploy.env (the dev harness root; preferred)
+#   3. <repo>/.deepscry-deploy.env   (the mtg-forge-rs primary checkout)
+#   4. ~/.config/deepscry/deploy.env
+#
+# Usage (from a sourcing script):
+#   # Optionally narrow / override the search:
+#   #   DEPLOY_CONFIG_FILE_OVERRIDE=/path/to/file   (force one file)
+#   #   DEPLOY_CONFIG_REPO_ROOT=/path/to/repo       (repo root; default: dir above this script)
+#   source "$SCRIPT_DIR/load-deploy-env.sh"
+#   load_deploy_env || exit 1   # prints an explicit error + returns 1 if no config found
+#
+# After a successful `load_deploy_env`, the config file has been
+# sourced into the current shell, so REMOTE_HOST / REMOTE_USER / etc.
+# are available. The function FAILS (non-zero, with a template-fill
+# message) when no config file is found OR when the found file does
+# not set REMOTE_HOST.
+
+# Resolve this loader's own location so we can compute the default
+# repo root and parent dir even when sourced from elsewhere.
+_LOAD_DEPLOY_ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Print the canonical "no config" / "missing REMOTE_HOST" error,
+# pointing the user at the tracked template. Single definition so the
+# message stays identical across every caller.
+deploy_env_error() {
+    local repo_root="$1"
+    cat >&2 <<ERR
+ERROR: no deploy config found. Copy scripts/deepscry-deploy.env.example to
+       ${repo_root%/}/../.deepscry-deploy.env (the dev harness parent dir, preferred)
+       — or ${repo_root%/}/.deepscry-deploy.env, or ~/.config/deepscry/deploy.env —
+       and fill in REMOTE_HOST (and REMOTE_USER).
+ERR
+}
+
+# Search the standard locations, source the first config file found,
+# and verify REMOTE_HOST is set. Returns 0 on success, 1 otherwise
+# (printing deploy_env_error). The chosen file path is exported as
+# DEPLOY_CONFIG_FILE for the caller to log.
+load_deploy_env() {
+    local repo_root="${DEPLOY_CONFIG_REPO_ROOT:-$(cd "$_LOAD_DEPLOY_ENV_DIR/.." && pwd)}"
+    local parent_dir
+    parent_dir="$(cd "$repo_root/.." 2>/dev/null && pwd || echo "$repo_root")"
+
+    local search_paths=(
+        "${DEPLOY_CONFIG_FILE_OVERRIDE:-}"
+        "$parent_dir/.deepscry-deploy.env"
+        "$repo_root/.deepscry-deploy.env"
+        "$HOME/.config/deepscry/deploy.env"
+    )
+
+    DEPLOY_CONFIG_FILE=""
+    local p
+    for p in "${search_paths[@]}"; do
+        [[ -z "$p" ]] && continue
+        if [[ -f "$p" ]]; then
+            DEPLOY_CONFIG_FILE="$p"
+            break
+        fi
+    done
+
+    if [[ -z "$DEPLOY_CONFIG_FILE" ]]; then
+        deploy_env_error "$repo_root"
+        return 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$DEPLOY_CONFIG_FILE"
+
+    if [[ -z "${REMOTE_HOST:-}" ]]; then
+        echo "ERROR: $DEPLOY_CONFIG_FILE is missing REMOTE_HOST." >&2
+        deploy_env_error "$repo_root"
+        return 1
+    fi
+
+    return 0
+}
