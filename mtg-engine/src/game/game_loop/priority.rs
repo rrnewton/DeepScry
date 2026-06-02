@@ -636,8 +636,9 @@ impl<'a> GameLoop<'a> {
                         self.game.pending_cycling_search = None;
 
                         // Log this choice point for undo/replay (mirrors the cycling handler).
-                        let chosen_index = chosen_card_opt.and_then(|c| valid_cards.iter().position(|&v| v == c));
-                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                        // Record the AUTHORITATIVE fetched CardId (not a shadow-fragile
+                        // positional index) so rewind+replay applies the exact move.
+                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                         self.log_choice_point(search_player, Some(replay_choice), prior_log_size);
 
                         // Move chosen card from library to hand.
@@ -1819,11 +1820,14 @@ impl<'a> GameLoop<'a> {
                                                     }
                                                 };
 
-                                                // Log the choice for replay - convert CardId to index
-                                                let chosen_index = chosen_card_opt
-                                                    .and_then(|card_id| valid_cards.iter().position(|&c| c == card_id));
+                                                // Log the choice for replay — record the
+                                                // AUTHORITATIVE fetched CardId, not a positional
+                                                // index. On an opponent's shadow the fetched card
+                                                // is hidden and absent from `valid_cards`, so an
+                                                // index collapsed Some(card)->None and lost the
+                                                // fetch under rewind+replay (mtg-mb668).
                                                 let replay_choice =
-                                                    crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                                                    crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                                                 self.log_choice_point(
                                                     current_priority,
                                                     Some(replay_choice),
@@ -2825,10 +2829,9 @@ impl<'a> GameLoop<'a> {
                                         // Library search succeeded — clear the pending state.
                                         self.game.pending_cycling_search = None;
 
-                                        // Log the choice for replay - convert CardId to index
-                                        let chosen_index = chosen_card_opt
-                                            .and_then(|card_id| valid_cards.iter().position(|&c| c == card_id));
-                                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                                        // Log the choice for replay — record the AUTHORITATIVE
+                                        // fetched CardId (not a shadow-fragile positional index).
+                                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                                         self.log_choice_point(current_priority, Some(replay_choice), prior_log_size);
 
                                         // If a card was chosen, move it to hand
@@ -3430,10 +3433,9 @@ impl<'a> GameLoop<'a> {
                                 };
 
                                 // Log the choice for snapshot/replay (mirrors
-                                // typecycling). Index is into the local
-                                // valid_ids — None means declined.
-                                let chosen_index = chosen_card_opt.and_then(|c| valid_ids.iter().position(|&v| v == c));
-                                let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                                // typecycling). Record the AUTHORITATIVE fetched
+                                // CardId (not a positional index) — None means declined.
+                                let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                                 self.log_choice_point(digger, Some(replay_choice), prior_log_size);
 
                                 if let Some(c) = chosen_card_opt {
@@ -3868,12 +3870,11 @@ impl<'a> GameLoop<'a> {
                             crate::game::controller::ChoiceResult::UndoRequest(_) => None,
                         };
 
-                        // Log the choice for snapshot/replay determinism. Index
-                        // is into the local valid_cards (None == declined / not
-                        // found, which is legal in MTG for non-mandatory and even
-                        // mandatory searches per CR 701.19c "may fail to find").
-                        let chosen_index = chosen_card_opt.and_then(|c| valid_cards.iter().position(|&v| v == c));
-                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_index);
+                        // Log the choice for snapshot/replay determinism. Record
+                        // the AUTHORITATIVE fetched CardId (not a positional index;
+                        // None == declined / not found, legal per CR 701.19c
+                        // "may fail to find").
+                        let replay_choice = crate::game::ReplayChoice::LibrarySearch(chosen_card_opt);
                         self.log_choice_point(search_player, Some(replay_choice), prior_log_size);
 
                         // Move the chosen card from library to destination. The

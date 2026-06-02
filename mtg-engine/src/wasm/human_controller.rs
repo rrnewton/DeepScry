@@ -148,10 +148,20 @@ impl PendingChoice {
                     ReplayChoice::Discard(SmallVec::new())
                 }
             }
-            PendingChoice::LibrarySearch(opt_idx) => match opt_idx {
-                None => ReplayChoice::LibrarySearch(None),
-                Some(idx) => ReplayChoice::LibrarySearch(Some(*idx)),
-            },
+            PendingChoice::LibrarySearch(opt_idx) => {
+                // Resolve the UI index to the AUTHORITATIVE fetched CardId via the
+                // ChoiceContext (ReplayChoice stores CardId, not an index, so the
+                // fetch survives rewind+replay on a shadow whose valid_cards omit
+                // the hidden card — mtg-mb668).
+                if let Some(ChoiceContext::LibrarySearch { valid_cards, .. }) = context {
+                    match opt_idx {
+                        None => ReplayChoice::LibrarySearch(None),
+                        Some(idx) => ReplayChoice::LibrarySearch(valid_cards.get(*idx).copied()),
+                    }
+                } else {
+                    ReplayChoice::LibrarySearch(None)
+                }
+            }
             PendingChoice::Sacrifice(indices) => {
                 if let Some(ChoiceContext::SacrificePermanents { valid_permanents, .. }) = context {
                     let permanents: SmallVec<[CardId; 8]> = indices
@@ -249,6 +259,11 @@ pub struct WasmHumanController {
     /// we need to map those indices to CardIds using the ORIGINAL valid_targets list
     /// that was shown to the user, NOT the current valid_targets which may have changed.
     pending_context: Option<ChoiceContext>,
+    /// CardIds of the cards offered in the pending library search, supplied by
+    /// the game loop via `set_pending_library_search_card_ids`. Used to surface
+    /// real CardIds in `ChoiceContext::LibrarySearch` so the UI index maps to the
+    /// AUTHORITATIVE fetched CardId for rewind+replay (mtg-mb668).
+    pending_library_search_ids: Vec<CardId>,
 }
 
 impl WasmHumanController {
@@ -258,6 +273,7 @@ impl WasmHumanController {
             player_id,
             pending_choice: None,
             pending_context: None,
+            pending_library_search_ids: Vec::new(),
         }
     }
 
@@ -544,13 +560,19 @@ impl PlayerController for WasmHumanController {
             };
         }
 
-        // No pending choice - request input
-        // Note: We no longer have CardIds, so we provide indices and formatted names
+        // No pending choice - request input. Surface the authoritative CardIds
+        // (supplied via set_pending_library_search_card_ids) so the UI index can
+        // be resolved to a CardId for rewind+replay (mtg-mb668). formatted_cards
+        // stays parallel to valid_cards by index.
         let formatted_cards: Vec<String> = valid_cards.iter().map(|def| def.name.to_string()).collect();
         ChoiceResult::NeedInput(ChoiceContext::LibrarySearch {
-            valid_cards: vec![], // CardIds not available in new architecture
+            valid_cards: self.pending_library_search_ids.clone(),
             formatted_cards,
         })
+    }
+
+    fn set_pending_library_search_card_ids(&mut self, card_ids: &[CardId]) {
+        self.pending_library_search_ids = card_ids.to_vec();
     }
 
     fn choose_permanents_to_sacrifice(

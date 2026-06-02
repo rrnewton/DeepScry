@@ -1935,6 +1935,22 @@ pub trait PlayerController {
     /// No-op for non-network controllers.
     fn set_pending_library_search_card_ids(&mut self, _card_ids: &[CardId]) {}
 
+    /// Replay an authoritative library-search outcome during rewind+replay.
+    ///
+    /// Returns `Some(card_opt)` when this controller has a recorded library
+    /// search choice to replay (`card_opt` = the fetched [`CardId`], or `None`
+    /// for a declined / failed-to-find search); returns `None` when there is no
+    /// recorded choice (live play — the caller should ask `choose_from_library`).
+    ///
+    /// This is the hidden-info-replay path: the recorded CardId is APPLIED
+    /// directly rather than re-deriving a positional selection against a
+    /// shadow's incomplete `valid_cards` view (mtg-610 / mtg-mb668). Only
+    /// [`crate::game::ReplayController`] returns `Some`; all live controllers
+    /// use the default.
+    fn replay_library_search(&mut self) -> Option<Option<CardId>> {
+        None
+    }
+
     /// Choose permanents to sacrifice
     ///
     /// Called when a player must sacrifice a specific number of permanents,
