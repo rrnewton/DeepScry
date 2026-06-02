@@ -4,10 +4,21 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T22:30:00.820435+00:00
+updated_at: 2026-06-02T22:36:43.520795421+00:00
 ---
 
 # Description
+
+========================================================================
+RESUME HERE (2026-06-02 netarch-dev handoff) — TWO OPEN, INDEPENDENT THREADS
+Branch netarch-undo-holes @ aa18e6f7 (REBASED onto integration, 0 behind, deployable; engine == the shipping 7b235b32, beads-only commits on top). Worktree clean, builds green (build-network + wasm-network). robots42 10x is the eventual gate but is BLOCKED on both threads below. Repro harness: `cd web && node test_network_gui_e2e.js [--deck decks/old_school/03_robots_jesseisbak.dck --seed 42] --undo-dump`; dumps land in debug/netarch-undo-dumps/gui_random_*_{wasm,server}_undo.log + _mismatch.log.
+
+THREAD 1 (MERGE BLOCKER, do FIRST — deterministic, easiest): vanilla grizzly_bears mirror seed 42 baseline desync. CI "Network GUI E2E (baseline)" = `node test_network_gui_e2e.js` (no args). Undo logs identical through action [865] (combat) then FORK at [866]: server P0 casts Grizzly Bears (CastSpell card 48); WASM P0 passes (SpellAbility None) -> WASM 7 behind. NORMAL play, no hidden info. Suspects: (1) RNG not restored on rewind -> P0 RandomController re-decides; (2) opponent CastSpell OpponentChoice not replayed -> None; (3) guard-deletion (44c57bc2) step mis-sequence. Deterministic => ONE instrumented run on the action-866 P0 spell-ability resolution distinguishes them. Fix = complete the rewind+replay/restore RNG, NOT re-add a guard. Full detail: this issue's mtg-610 entry "DETERMINISTIC vanilla-deck baseline desync".
+
+THREAD 2 (hidden-info DELIVERY gap): library-search (+ very likely Timetwister mass-draw) fetch lost on opponent shadow. CONFIRMED: action_count ALIGNS (server+WASM resolve search at same ac); the authoritative Searched reveal is NEVER applied on the WASM (SRCH_BUF=0) -> fetched card never materialized -> choose_from_library=None -> recorded None -> library not decremented -> desync. ROOT (team-lead-confirmed hypothesis): server.rs:2491 computes library_search_result ONLY for ChoiceType::LibrarySearchByName (the only by-name search type); the tutor's ChangeZone->SearchLibrary at priority.rs ~3790 likely resolves under a GENERIC choice type -> server never computes library_search_result -> never sends the dummy Searched reveal (server.rs:2928) -> SRCH_BUF=0. DECISIVE 5-MIN CHECK: confirm the ChoiceType the ~3790 search uses (LibrarySearchByName vs ChooseCards/ChooseFromList). FIX = SERVER-SIDE: emit the authoritative fetched-CardId reveal whenever a library search MATERIALIZES a card the opponent's shadow must track, regardless of choice-type. Step-1 (replay-side CardId record/apply) is ALREADY LANDED (commit d9a697fe) and is the necessary other half. Timetwister = same delivery class (are opponent drawn-card reveals sent to the shadow at all?). One root: incomplete authoritative-reveal SEND stream for hidden-info events.
+
+ORACLE NOTE: rebase kept our rewind_replay_oracle_e2e.rs (integration consolidated to whole_game_rewind_replay_e2e.rs); team-lead OK'd keeping it for now; reconcile (port per-decision-point loop into whole_game, or add header comments) BEFORE the netarch merge.
+========================================================================
 
 STATUS 2026-06-02 (netarch-dev, on rebased base 7b235b32; action_count ALIGNS, Searched reveal NOT applied on WASM):
 Instrumented SRCH_RESOLVE (priority.rs ~3843 search resolution) + SRCH_BUF (apply_state_sync RevealCard reason==Searched) on the rebased tree. Caught a failing library-search run:
