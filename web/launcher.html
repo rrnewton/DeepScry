@@ -33,6 +33,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeepScry &mdash; Launcher</title>
+    <!-- Derives window.MTG_WS_URL for the waiting-room lobby socket (mtg-682). -->
+    <script src="server-config.js"></script>
     <style>
         :root {
             --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
@@ -110,6 +112,27 @@
         #btn-play:disabled { background: #2a2a40; color: #666; cursor: not-allowed; filter: none; }
         .status { font-size: 12px; color: var(--muted); min-height: 1.2em; }
         .status.error { color: #ff8080; }
+        .wr-conn { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+        .wr-conn.ok { color: var(--accent); }
+        .wr-conn.err { color: #ff8080; }
+        .wr-players { display: flex; flex-direction: column; gap: 6px; }
+        .wr-player {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 10px; border-radius: 6px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            font-size: 13px;
+        }
+        .wr-player.ready { border-color: #2a9d4a; }
+        .wr-role {
+            font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+            color: var(--bg); background: var(--muted); border-radius: 3px;
+            padding: 2px 6px;
+        }
+        .wr-player.ready .wr-role { background: #2a9d4a; }
+        .wr-name { flex: 1; font-weight: 600; }
+        .wr-name.empty { color: var(--muted); font-weight: 400; font-style: italic; }
+        .wr-ready { font-size: 11px; color: var(--muted); }
+        .wr-ready.is-ready { color: #4ade80; font-weight: 600; }
         .footer { margin-top: 22px; font-size: 12px; }
         .footer a { color: var(--accent); }
         .params-dump { margin-top: 14px; font-size: 11px; color: var(--muted); }
@@ -194,8 +217,33 @@
         <label class="cb-row"><input type="checkbox" id="debug-mode"> Debug logging (TRACE)</label>
     </div>
 
+    <!--
+      Waiting-room panel (mtg-682 Variant 1). The launcher holds a lobby
+      WebSocket for the pre-game rendezvous: the creator CreateGames (so the
+      game is LISTED for a 2nd browser) and the joiner JoinGames, both with
+      waiting_room=true. WaitingRoomUpdate drives the live opponent + ready
+      display below. When BOTH players SetReady, the server sends
+      WaitingRoomReady and each client auto-navigates to its game page.
+    -->
+    <div class="field" id="waiting-room">
+        <label class="field-label">Waiting Room</label>
+        <div class="wr-conn" id="wr-conn">Connecting to server…</div>
+        <div class="wr-players">
+            <div class="wr-player" id="wr-creator">
+                <span class="wr-role">Host</span>
+                <span class="wr-name" id="wr-creator-name">—</span>
+                <span class="wr-ready" id="wr-creator-ready">not ready</span>
+            </div>
+            <div class="wr-player" id="wr-joiner">
+                <span class="wr-role">Opponent</span>
+                <span class="wr-name" id="wr-joiner-name">waiting…</span>
+                <span class="wr-ready" id="wr-joiner-ready">—</span>
+            </div>
+        </div>
+    </div>
+
     <div class="field play-row">
-        <button id="btn-play" type="button">Play &rarr;</button>
+        <button id="btn-play" type="button">Ready</button>
     </div>
     <p class="status" id="status"></p>
 
@@ -339,6 +387,11 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
 
     // Built-in deck names, populated WASM-free from index.json.
     let allDeckNames = [];
+    // Built-in deck CONTENTS keyed by deck name, also WASM-free from index.json's
+    // `deck_contents` field. Each value is { main_deck: [[name,count],...],
+    // sideboard: [...] } — the exact DeckSubmission wire shape (mtg-682). This is
+    // what lets the launcher CreateGame/JoinGame a real, valid deck without WASM.
+    let allDeckContents = {};
 
     function getCustomDecks() {
         try {
@@ -394,8 +447,12 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     const newDeckBtn = document.getElementById('btn-deck-editor');
 
     function refreshPlayEnabled() {
-        playBtn.disabled = !deckSelect.value;
+        // The Play/Ready button's enabled state is owned by the waiting-room
+        // ready logic (refreshReadyButton, defined later — needs a valid 40+
+        // card deck). Here we only keep the Edit-Deck link in sync. Guard for
+        // the brief window before refreshReadyButton exists in the call graph.
         refreshEditDeckLink();
+        if (typeof refreshReadyButton === 'function') refreshReadyButton();
     }
 
     /**
@@ -463,6 +520,8 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
             const idx = await r.json();
             allDeckNames = Array.isArray(idx.deck_names) ? idx.deck_names.slice() : [];
             allDeckNames.sort();
+            allDeckContents = (idx.deck_contents && typeof idx.deck_contents === 'object')
+                ? idx.deck_contents : {};
         } catch (err) {
             console.warn('Could not load deck list from index.json:', err);
             allDeckNames = [];
@@ -621,28 +680,22 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     // prefs survive a back-to-lobby hop.
     forwardStickyParamsOnAnchor(document.querySelector('.footer a'), qs);
 
-    // ==================== PLAY ====================
-    playBtn.addEventListener('click', () => {
+    // ==================== GAME-PAGE NAVIGATION ====================
+    // Build the game-page redirect URL from the current picks + handoff params.
+    // Shared by the auto-start (WaitingRoomReady) path. Reuses buildRedirectUrl
+    // so the role→lobby_create/lobby_join translation + param names live in one
+    // place (DRY); the game page then opens its OWN durable game WebSocket and
+    // performs the real CreateGame/JoinGame that drives the game.
+    /** Build the game-page redirect URL string WITHOUT navigating. Exposed for
+     *  Playwright assertions of the forwarded per-game prefs (mtg-ttjt6/682). */
+    function buildGamePageUrl() {
         const deckName = deckSelect.value;
-        if (!deckName) {
-            setStatus('Pick a deck first.', true);
-            return;
-        }
         const gameName = qs.get('game') || '';
-        if (!gameName) {
-            setStatus('No game to launch — open this page from the lobby.', true);
-            return;
-        }
         const ui = selectedRenderer();
         const role = qs.get('role') === 'join' ? 'join' : 'create';
         const gamePass = qs.get('pass') || '';
         const playerName = qs.get('name') || '';
         const wsUrl = qs.get('ws') || '';
-        // Reuse the shared redirect builder: it performs the
-        // role→lobby_create/lobby_join translation (the form the game pages
-        // actually consume via consumeLobbyParams) and owns those param names,
-        // so this page never duplicates that contract (DRY). It also encodes
-        // &deck, &ui, &name, &ws, &mode and the reconnect token.
         const baseUrl = buildRedirectUrl({
             action: role,
             gameName,
@@ -654,25 +707,336 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
             reconnectToken: qs.get('reconnect_token') || '',
             ui,
             mode: 'network',
-            // Per-game prefs re-homed from the old launcher (mtg-ttjt6).
             showImages: showImagesCb.checked,
             imageSources: selectedImageSources(),
             debug: debugCb.checked,
         });
-        // Also forward the lobby's own param names (game/role/pass) verbatim so
-        // the full inherited contract is present on the game-page URL alongside
-        // the lobby_create/lobby_join form. Harmless to the game pages (they
-        // ignore unknown params) and keeps the handoff self-describing.
         const url = new URL(baseUrl, window.location.href);
         url.searchParams.set('game', gameName);
         url.searchParams.set('role', role);
         if (gamePass) url.searchParams.set('pass', gamePass);
-        setStatus(`Launching ${ui === 'native' ? 'Native GUI' : 'Web TUI'}…`);
-        window.location.href = url.pathname.split('/').pop() + url.search;
+        return url.pathname.split('/').pop() + url.search;
+    }
+    window.__buildGamePageUrl = buildGamePageUrl;
+
+    function navigateToGamePage() {
+        const ui = selectedRenderer();
+        setStatus(`Starting ${ui === 'native' ? 'Native GUI' : 'Web TUI'}…`);
+        window.location.href = buildGamePageUrl();
+    }
+
+    // ==================== WAITING ROOM (Variant 1, mtg-682) ====================
+    // The launcher holds a lobby WebSocket for the pre-game rendezvous. On entry
+    // it CreateGames (creator) or JoinGames (joiner) with waiting_room=true and a
+    // REAL deck submission, so the slot is LISTED for a 2nd browser. Both players
+    // SetReady; when both are ready the server sends WaitingRoomReady and each
+    // client navigates to its game page (no extra click). Ready REQUIRES a valid
+    // deck and AUTO-RESETS on deck/renderer change. This is all pre-game state —
+    // no game RNG / no controller decisions — so determinism is preserved.
+
+    const role = qs.get('role') === 'join' ? 'join' : 'create';
+    const isCreator = role === 'create';
+    const gameName = qs.get('game') || '';
+    const playerName = qs.get('name') || '';
+    const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;
+
+    // Make the host-side button intent explicit (spec: creator button label).
+    playBtn.textContent = isCreator ? 'Ready — start on P2 join' : 'Ready';
+
+    const connEl = document.getElementById('wr-conn');
+    const creatorNameEl = document.getElementById('wr-creator-name');
+    const creatorReadyEl = document.getElementById('wr-creator-ready');
+    const joinerNameEl = document.getElementById('wr-joiner-name');
+    const joinerReadyEl = document.getElementById('wr-joiner-ready');
+    const creatorRowEl = document.getElementById('wr-creator');
+    const joinerRowEl = document.getElementById('wr-joiner');
+
+    let lobbyWs = null;
+    let wsRegistered = false;
+    let createdOrJoined = false;
+    // True once WE (this client) have sent SetReady{true} and not yet un-readied.
+    let weAreReady = false;
+    // Expose for Playwright assertions.
+    window.__launcherWaiting = { connected: false, ready: false, lastUpdate: null, started: false };
+
+    function setConn(text, cls) {
+        connEl.textContent = text;
+        connEl.className = 'wr-conn' + (cls ? ' ' + cls : '');
+    }
+
+    /** Build a DeckSubmission { main_deck, sideboard } for the selected deck,
+     *  WASM-free. Built-in decks come from index.json's deck_contents; custom
+     *  decks from the shared localStorage key. Returns null if unavailable. */
+    function buildDeckSubmission() {
+        const name = deckSelect.value;
+        if (!name) return null;
+        if (collectionSelect.value === 'custom') {
+            const decks = getCustomDecks();
+            const d = decks[name];
+            if (!d || !Array.isArray(d.main_deck)) return null;
+            return { main_deck: d.main_deck, sideboard: Array.isArray(d.sideboard) ? d.sideboard : [] };
+        }
+        const c = allDeckContents[name];
+        if (!c || !Array.isArray(c.main_deck)) return null;
+        return { main_deck: c.main_deck, sideboard: Array.isArray(c.sideboard) ? c.sideboard : [] };
+    }
+
+    /** Total main-deck card count of the current selection (for the >=40 gate). */
+    function selectedDeckSize() {
+        const sub = buildDeckSubmission();
+        if (!sub) return 0;
+        return sub.main_deck.reduce((sum, pair) => sum + (pair[1] || 0), 0);
+    }
+
+    function wsSend(obj) {
+        if (!lobbyWs || lobbyWs.readyState !== WebSocket.OPEN) return false;
+        lobbyWs.send(JSON.stringify(obj));
+        return true;
+    }
+
+    /** Render a WaitingRoomUpdate snapshot into the panel. */
+    function renderWaitingRoom(creator, joiner) {
+        window.__launcherWaiting.lastUpdate = { creator, joiner };
+        if (creator) {
+            creatorNameEl.textContent = creator.name || 'Host';
+            creatorNameEl.classList.remove('empty');
+            creatorReadyEl.textContent = creator.ready ? 'ready' : 'not ready';
+            creatorReadyEl.classList.toggle('is-ready', !!creator.ready);
+            creatorRowEl.classList.toggle('ready', !!creator.ready);
+        }
+        if (joiner) {
+            joinerNameEl.textContent = joiner.name || 'Opponent';
+            joinerNameEl.classList.remove('empty');
+            joinerReadyEl.textContent = joiner.ready ? 'ready' : 'not ready';
+            joinerReadyEl.classList.toggle('is-ready', !!joiner.ready);
+            joinerRowEl.classList.toggle('ready', !!joiner.ready);
+            setConn('Opponent joined.', 'ok');
+        } else {
+            joinerNameEl.textContent = 'waiting for opponent…';
+            joinerNameEl.classList.add('empty');
+            joinerReadyEl.textContent = '—';
+            joinerReadyEl.classList.remove('is-ready');
+            joinerRowEl.classList.remove('ready');
+            setConn(isCreator ? 'Game listed — waiting for an opponent to join.' : 'Joining…', 'ok');
+        }
+    }
+
+    /** Send the initial CreateGame (creator) or JoinGame (joiner) with a real
+     *  deck so the slot is listed/joined. Called once the deck list is loaded. */
+    function sendCreateOrJoin() {
+        if (createdOrJoined) return;
+        const deck = buildDeckSubmission();
+        if (!deck) {
+            setStatus('Could not load the selected deck. Pick another deck.', true);
+            return;
+        }
+        createdOrJoined = true;
+        const gamePass = qs.get('pass') || '';
+        if (isCreator) {
+            wsSend({
+                type: 'create_game',
+                password: '',
+                game_name: gameName,
+                game_password: gamePass || null,
+                player_name: playerName || null,
+                deck,
+                waiting_room: true,
+            });
+        } else {
+            wsSend({
+                type: 'join_game',
+                password: '',
+                game_name: gameName,
+                game_password: gamePass || null,
+                player_name: playerName || null,
+                deck,
+                waiting_room: true,
+            });
+        }
+    }
+
+    function handleLobbyMessage(msg) {
+        switch (msg.type) {
+        case 'register_result':
+            if (msg.success) {
+                wsRegistered = true;
+                sendCreateOrJoin();
+            } else {
+                // Name already held (e.g. our own lobby tab still connected).
+                // Proceed without a reserved name — CreateGame/JoinGame still
+                // carry our display name as a field.
+                wsRegistered = true;
+                sendCreateOrJoin();
+            }
+            break;
+        case 'game_created':
+            setConn('Game listed — waiting for an opponent to join.', 'ok');
+            renderWaitingRoom({ name: playerName || 'Host', ready: false }, null);
+            break;
+        case 'waiting_room_update':
+            renderWaitingRoom(msg.creator, msg.joiner);
+            break;
+        case 'waiting_room_ready':
+            // Both players ready — auto-navigate to the game page (no click).
+            // The game page opens its OWN game WebSocket and performs the real
+            // CreateGame (creator) / JoinGame (joiner). Stagger the joiner's
+            // navigation slightly so the creator's game page re-creates the slot
+            // first, avoiding a JoinGame-before-Create race (both clients receive
+            // WaitingRoomReady at nearly the same instant).
+            window.__launcherWaiting.started = true;
+            setStatus('Both players ready — starting game…');
+            setConn('Both ready — starting…', 'ok');
+            try { lobbyWs.close(1000, 'waiting-room-ready'); } catch (e) { /* ignore */ }
+            if (msg.is_creator) {
+                navigateToGamePage();
+            } else {
+                setTimeout(navigateToGamePage, 400);
+            }
+            break;
+        case 'join_failed':
+            setStatus('Could not join: ' + (msg.reason && (msg.reason.detail || JSON.stringify(msg.reason)) || 'unavailable'), true);
+            setConn('Join failed.', 'err');
+            break;
+        case 'server_full':
+            setStatus(msg.reason || 'Server is full, try again later.', true);
+            setConn('Server full.', 'err');
+            break;
+        case 'error':
+            // Non-fatal server errors (e.g. "Cannot ready without a deck").
+            setStatus(msg.message || 'Server error', true);
+            if (msg.message && /ready/i.test(msg.message)) {
+                // Our ready was rejected — reflect un-ready in the UI.
+                weAreReady = false;
+                window.__launcherWaiting.ready = false;
+                refreshReadyButton();
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    function connectLobby() {
+        if (!gameName) {
+            setConn('Opened directly (no game) — nothing to wait for.', '');
+            setStatus('Open this page from the lobby to host or join a game.', true);
+            playBtn.disabled = true;
+            return;
+        }
+        setConn('Connecting to server…');
+        try {
+            lobbyWs = new WebSocket(lobbyWsUrl);
+        } catch (e) {
+            setConn('Cannot open WebSocket: ' + e.message, 'err');
+            return;
+        }
+        lobbyWs.onopen = () => {
+            window.__launcherWaiting.connected = true;
+            setConn('Connected — registering…', 'ok');
+            // Register a name (best-effort); CreateGame/JoinGame fire on the
+            // register result. A blank name skips registration.
+            if (playerName) {
+                wsSend({ type: 'register', password: '', player_name: playerName });
+            } else {
+                wsRegistered = true;
+                sendCreateOrJoin();
+            }
+        };
+        lobbyWs.onmessage = (ev) => {
+            let msg;
+            try { msg = JSON.parse(ev.data); } catch (e) { return; }
+            handleLobbyMessage(msg);
+        };
+        lobbyWs.onerror = () => {
+            setConn('Connection error', 'err');
+        };
+        lobbyWs.onclose = () => {
+            window.__launcherWaiting.connected = false;
+            // If the game already started we navigated away; otherwise show the
+            // disconnect (the slot is freed server-side on creator/joiner drop).
+            if (!window.__launcherWaiting.started) {
+                setConn('Disconnected from server.', 'err');
+            }
+        };
+    }
+
+    // ==================== READY HANDSHAKE ====================
+    function refreshReadyButton() {
+        const haveDeck = selectedDeckSize() >= 40;
+        // Can only ready with a valid deck; the button toggles ready/un-ready.
+        playBtn.disabled = !haveDeck && !weAreReady;
+        playBtn.textContent = weAreReady
+            ? 'Cancel ready'
+            : (isCreator ? 'Ready — start on P2 join' : 'Ready');
+    }
+
+    /** Push the current deck to the server (SetDeck) so the opponent sees it and
+     *  the server resets our ready flag. Called on deck change after create/join. */
+    function pushDeck() {
+        if (!createdOrJoined) return;
+        const deck = buildDeckSubmission();
+        if (!deck) return;
+        wsSend({ type: 'set_deck', deck });
+    }
+
+    /** Reset our ready state (e.g. after a deck/renderer change) and tell the
+     *  server. Mirrors the server's "deck change resets ready" rule for renderer
+     *  changes too (renderer is a config change the opponent should re-confirm). */
+    function autoUnready(reason) {
+        if (!weAreReady) return;
+        weAreReady = false;
+        window.__launcherWaiting.ready = false;
+        wsSend({ type: 'set_ready', ready: false });
+        refreshReadyButton();
+        setStatus(reason ? `Ready cleared — ${reason}.` : 'Ready cleared.');
+    }
+
+    playBtn.addEventListener('click', () => {
+        if (!createdOrJoined) {
+            setStatus('Still connecting…', true);
+            return;
+        }
+        if (weAreReady) {
+            // Toggle OFF.
+            autoUnready('');
+            return;
+        }
+        if (selectedDeckSize() < 40) {
+            setStatus('Pick a valid deck (40+ cards) before readying.', true);
+            return;
+        }
+        weAreReady = true;
+        window.__launcherWaiting.ready = true;
+        // Ensure the server has our latest deck on record, then ready up.
+        pushDeck();
+        wsSend({ type: 'set_ready', ready: true });
+        refreshReadyButton();
+        setStatus(isCreator
+            ? 'Ready — the game auto-starts when your opponent is also ready.'
+            : 'Ready — waiting for the host.');
     });
 
-    // Kick off deck loading.
-    loadDeckNames();
+    // Deck change → push the new deck (server resets ready) + clear our ready.
+    deckSelect.addEventListener('change', () => {
+        autoUnready('deck changed');
+        pushDeck();
+        refreshReadyButton();
+    });
+    collectionSelect.addEventListener('change', () => {
+        autoUnready('collection changed');
+        refreshReadyButton();
+    });
+    // Renderer change → clear ready (config change the opponent should re-see).
+    for (const r of [radioNative, radioTui]) {
+        r.addEventListener('change', () => { autoUnready('renderer changed'); });
+    }
+
+    // Kick off deck loading, THEN connect the lobby socket (create/join needs a
+    // resolved deck). loadDeckNames resolves the dropdown; connect afterwards.
+    loadDeckNames().then(() => {
+        refreshReadyButton();
+        connectLobby();
+    });
 })();
 </script>
 </body>
