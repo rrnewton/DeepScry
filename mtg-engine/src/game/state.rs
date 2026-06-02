@@ -553,6 +553,87 @@ impl GameState {
         );
     }
 
+    /// Earthbend-style animate: add the `Creature` card type (keeping the land a
+    /// land) and grant `Haste`, logging a reversible `GameAction::AnimateTypeline`
+    /// so a rewind+replay removes exactly the type/keyword this granted (mtg-610).
+    ///
+    /// Soulstone Sanctuary's earthbend animates a land into a 0/0 creature with
+    /// haste + counters. The Creature-type add and the `Haste` insert were
+    /// previously mutated directly with NO undo entry, so a rewind left them on
+    /// the card while replay re-granted them — making the turn-start `keywords`
+    /// (Haste, ordinal 4) and type line history-dependent across rewinds (monored
+    /// seed=13 turn-12 `cards[N].keywords` drift). Routing through the same
+    /// `AnimateTypeline` action the Animate effect uses makes the grant reversible.
+    /// Captures the prior typeline + the keywords this call actually adds (dedup
+    /// against the existing set) so undo never strips a printed keyword. No-op (no
+    /// log entry) if the card does not exist.
+    pub fn earthbend_animate_creature_haste_logged(&mut self, card_id: CardId) {
+        use crate::core::{CardType, Keyword};
+        let (
+            prev_types,
+            prev_subtypes,
+            prev_temp_animate_types,
+            prev_temp_animate_subtypes,
+            prev_temp_removed_subtypes,
+            granted_keywords,
+            types_changed,
+        ) = {
+            let card = match self.cards.get_mut(card_id) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let prev_types = card.types.clone();
+            let prev_subtypes = card.subtypes.clone();
+            let prev_temp_animate_types = card.temp_animate_types.clone();
+            let prev_temp_animate_subtypes = card.temp_animate_subtypes.clone();
+            let prev_temp_removed_subtypes = card.temp_removed_subtypes.clone();
+
+            let mut types_changed = false;
+            if !card.is_creature() {
+                card.add_type(CardType::Creature);
+                card.temp_animate_types.push(CardType::Creature);
+                types_changed = true;
+            }
+            let mut granted: smallvec::SmallVec<[Keyword; 2]> = smallvec::SmallVec::new();
+            if !card.keywords.contains(Keyword::Haste) {
+                card.keywords.insert(Keyword::Haste);
+                granted.push(Keyword::Haste);
+            }
+            if types_changed {
+                let types = card.types.clone();
+                let subtypes = card.subtypes.clone();
+                let name = card.name.clone();
+                card.definition.cache.update_from_types(&types);
+                card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+            }
+            (
+                prev_types,
+                prev_subtypes,
+                prev_temp_animate_types,
+                prev_temp_animate_subtypes,
+                prev_temp_removed_subtypes,
+                granted,
+                types_changed,
+            )
+        };
+
+        if types_changed || !granted_keywords.is_empty() {
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::AnimateTypeline {
+                    card_id,
+                    prev_types,
+                    prev_subtypes,
+                    prev_temp_animate_types,
+                    prev_temp_animate_subtypes,
+                    prev_temp_removed_subtypes,
+                    granted_keywords,
+                },
+                prior_log_size,
+            );
+        }
+    }
+
     /// Clear a card's temporary base P/T overrides (end-of-turn cleanup of
     /// Animate effects), logging a reversible `GameAction::SetTempBaseStats`
     /// (mtg-614 hole (c)). No-op (and no log entry) if the card does not exist or
@@ -2733,11 +2814,11 @@ impl GameState {
         if from_step == crate::game::Step::EndCombat && self.extra_combat_phases > 0 {
             self.extra_combat_phases -= 1;
             self.turn.current_step = crate::game::Step::BeginCombat;
-            // Reset combat-specific turn guards so combat steps work again
-            self.turn.blockers_declared_turn = None;
-            self.turn.combat_first_strike_damage_dealt_turn = None;
-            self.turn.combat_first_strike_priority_done_turn = None;
-            self.turn.combat_damage_dealt_turn = None;
+            // No combat-guard reset needed (mtg-610): the per-turn combat guards
+            // (blockers_declared / first-strike / damage-dealt) were deleted now
+            // that WASM re-entry resumes via rewind+replay, so an additional
+            // combat phase declares blockers and deals damage afresh with no guard
+            // to clear.
             self.logger.gamelog("Additional combat phase begins!");
             return Ok(());
         }
@@ -3754,14 +3835,14 @@ impl GameState {
                 cache.mark_dirty();
             }
 
-            // When fully rewound to the initial state, reset transient guard fields.
-            // These fields are #[serde(skip)] (not in undo log) so they persist their
-            // end-of-game values after rewind. This matters for rewind benchmarks where
-            // the game is fully rewound and replayed in the same session: without this
-            // reset, guards like draw_step_executed_turn = Some(N) would fire on turn N
-            // in the replay, corrupting game state (e.g. skipping mandatory draw steps).
+            // When fully rewound to the initial state, clear the transient
+            // pending-resolution fields. These are #[serde(skip)] (not in the undo
+            // log) so they persist their end-of-game values after rewind; clearing
+            // them lets a fully-rewound game replay cleanly in the same session.
+            // (The per-turn re-entry guard family was deleted in mtg-610 once WASM
+            // re-entry started resuming via rewind+replay, so there is no longer a
+            // guard family to reset here.)
             if self.undo_log.is_empty() {
-                self.turn.reset_transient_guards();
                 self.pending_cast = None;
                 self.pending_activation = None;
                 self.pending_activation_effect_idx = None;
@@ -4050,7 +4131,7 @@ impl GameState {
 
                         if let Some(land_id) = target_land {
                             // Execute earthbend on the land (inline the logic)
-                            use crate::core::{CardType, CounterType, Keyword};
+                            use crate::core::CounterType;
 
                             // Get land name before mutable borrow
                             let land_name = self
@@ -4059,18 +4140,11 @@ impl GameState {
                                 .map(|c| c.name.to_string())
                                 .unwrap_or_else(|_| "Land".to_string());
 
-                            // Modify the land card
-                            {
-                                let card = self.cards.get_mut(land_id)?;
-
-                                // Add Creature type (still remains a land)
-                                if !card.is_creature() {
-                                    card.add_type(CardType::Creature);
-                                }
-
-                                // Add Haste keyword
-                                card.keywords.insert(Keyword::Haste);
-                            }
+                            // Add Creature type (still remains a land) + Haste via
+                            // the logged helper so the grant is reversible by the
+                            // undo log (mtg-610: the inline insert leaked Haste
+                            // across rewind+replay).
+                            self.earthbend_animate_creature_haste_logged(land_id);
 
                             // Set base P/T to 0/0 via the logged helper so the
                             // override is reversible by the undo log (mtg-614
