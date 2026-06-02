@@ -1474,8 +1474,7 @@ impl UndoLog {
         game.turn.priority_player = None;
         game.turn.consecutive_passes = 0;
 
-        // Clear pending cast/activation state (not tracked by undo log)
-        game.pending_cast = None;
+        // Clear pending activation state (not tracked by undo log)
         game.pending_activation = None;
         game.pending_cycling_search = None;
         game.spell_targets.clear();

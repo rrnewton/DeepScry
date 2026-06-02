@@ -2099,7 +2099,6 @@ impl WasmFancyTuiState {
                 // These fields are not tracked in the undo log, so they'd be stale
                 // from the previous run and could cause incorrect behavior on replay.
                 self.game.spell_targets.clear();
-                self.game.pending_cast = None;
                 self.game.pending_activation = None;
                 self.game.pending_activation_effect_idx = None;
                 self.game.pending_cycling_search = None;
@@ -2480,7 +2479,6 @@ impl WasmFancyTuiState {
             // These fields are not tracked in the undo log, so they'd be stale
             // from the previous run and could cause incorrect behavior on replay.
             self.game.spell_targets.clear();
-            self.game.pending_cast = None;
             self.game.pending_activation = None;
             self.game.pending_activation_effect_idx = None;
             self.game.pending_cycling_search = None;
@@ -2851,7 +2849,6 @@ impl WasmFancyTuiState {
         // Clear transient game-loop state not tracked by the undo log so the
         // replay starts clean (mirrors the human replay branch).
         self.game.spell_targets.clear();
-        self.game.pending_cast = None;
         self.game.pending_activation = None;
         self.game.pending_activation_effect_idx = None;
         self.game.pending_cycling_search = None;

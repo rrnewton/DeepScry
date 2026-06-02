@@ -669,177 +669,6 @@ impl<'a> GameLoop<'a> {
                     }
                 }
 
-                // WASM RESUMPTION: Complete a pending spell cast.
-                //
-                // When the WASM game loop is interrupted (NeedInput) during mode selection
-                // or target selection of a spell cast, `pending_cast` is set to the card_id.
-                // On the next game loop invocation, we bypass `choose_spell_ability_to_play`
-                // and resume the cast from where it was interrupted. Without this, the queued
-                // mode or target ChoiceRequest would be mistakenly consumed by
-                // `choose_spell_ability_to_play`, causing a desync.
-                if let Some((cast_player, card_id)) = self.game.pending_cast {
-                    if cast_player == current_priority {
-                        log::debug!(
-                            "[WASM RESUME] Resuming pending cast of {:?} for player {:?}",
-                            card_id,
-                            cast_player
-                        );
-
-                        // Step 1: Mode selection (only if ModalChoice effect still present).
-                        // If the previous iteration already applied modes (via apply_selected_modes),
-                        // get_modal_choice_info returns Ok(None) and we skip directly to targeting.
-                        if let Ok(Some(Effect::ModalChoice {
-                            modes,
-                            num_to_choose,
-                            min_to_choose,
-                            can_repeat_modes,
-                        })) = self.game.get_modal_choice_info(card_id)
-                        {
-                            let valid_modes = self
-                                .game
-                                .get_valid_modes_for_spell(card_id, cast_player)
-                                .unwrap_or_default();
-                            let valid_mode_indices: Vec<usize> = valid_modes
-                                .iter()
-                                .filter(|(_, has_targets)| *has_targets)
-                                .map(|(idx, _)| *idx)
-                                .collect();
-
-                            if !valid_mode_indices.is_empty() {
-                                let mode_descriptions: Vec<String> = valid_mode_indices
-                                    .iter()
-                                    .filter_map(|&idx| modes.get(idx).map(|m| m.description.clone()))
-                                    .collect();
-
-                                let prior_log_size = self.game.logger.log_count();
-                                let choice = self.choose_modes_with_hook(
-                                    controller,
-                                    cast_player,
-                                    card_id,
-                                    &mode_descriptions,
-                                    num_to_choose as usize,
-                                    min_to_choose as usize,
-                                    can_repeat_modes,
-                                );
-                                let selected_modes = handle_choice_result_break!(choice, self.game, cast_player);
-
-                                let original_indices: Vec<usize> = selected_modes
-                                    .iter()
-                                    .filter_map(|&idx| valid_mode_indices.get(idx).copied())
-                                    .collect();
-
-                                let replay_choice =
-                                    crate::game::ReplayChoice::Modes(original_indices.iter().copied().collect());
-                                self.log_choice_point(cast_player, Some(replay_choice), prior_log_size);
-
-                                if let Err(e) = self.game.apply_selected_modes(card_id, &original_indices) {
-                                    log::warn!("[WASM RESUME] Failed to apply selected modes: {}", e);
-                                }
-
-                                if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
-                                    for &mode_idx in &original_indices {
-                                        if let Some(mode) = modes.get(mode_idx) {
-                                            let message = format!(
-                                                "{} chooses mode: {}",
-                                                self.get_player_name(cast_player),
-                                                mode.description
-                                            );
-                                            self.game.logger.gamelog(&message);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Step 2: Target selection (runs after mode selection, or directly for non-modal spells).
-                        let valid_targets = self
-                            .game
-                            .get_valid_targets_for_spell(card_id)
-                            .unwrap_or_else(|_| SmallVec::new());
-
-                        log::debug!(
-                            target: "priority",
-                            "[WASM RESUME] Target selection: card_id={}, valid_targets={:?}",
-                            card_id.as_u32(),
-                            valid_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
-                        );
-
-                        let chosen_targets_vec: SmallVec<[CardId; 2]> = if valid_targets.is_empty() {
-                            log::debug!(target: "priority", "[WASM RESUME] No valid targets, using empty vec");
-                            SmallVec::new()
-                        } else if valid_targets.len() == 1 {
-                            log::debug!(
-                                target: "priority",
-                                "[WASM RESUME] Auto-selecting single target: {:?}",
-                                valid_targets[0].as_u32()
-                            );
-                            smallvec::smallvec![valid_targets[0]]
-                        } else {
-                            let prior_log_size = self.game.logger.log_count();
-                            let choice =
-                                // Single-target site (WASM resume) — bounds (1, 1).
-                                self.choose_targets_with_hook(controller, cast_player, card_id, &valid_targets, 1, 1);
-                            let chosen_targets = handle_choice_result_break!(choice, self.game, cast_player);
-                            log::debug!(
-                                target: "priority",
-                                "[WASM RESUME] User chose targets: {:?}",
-                                chosen_targets.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
-                            );
-                            let replay_choice = crate::game::ReplayChoice::Targets(chosen_targets.clone());
-                            self.log_choice_point(cast_player, Some(replay_choice), prior_log_size);
-                            chosen_targets.into_iter().collect()
-                        };
-
-                        log::debug!(
-                            target: "priority",
-                            "[WASM RESUME] Final chosen_targets_vec: {:?}",
-                            chosen_targets_vec.iter().map(|c| c.as_u32()).collect::<Vec<_>>()
-                        );
-
-                        // Step 3: Cast the spell — mana is paid automatically (GreedyManaResolver).
-                        let targets_for_callback = chosen_targets_vec.clone();
-                        let targeting_callback = move |_game: &GameState, _spell_id: CardId| targets_for_callback;
-
-                        self.mana_engine.update_mut(self.game, cast_player);
-
-                        match self
-                            .game
-                            .cast_spell_8_step(cast_player, card_id, targeting_callback, &self.mana_engine)
-                        {
-                            Ok(()) => {
-                                self.game.spell_targets.push((card_id, chosen_targets_vec));
-                                self.game.pending_cast = None;
-                                consecutive_passes = 0;
-                                self.game.turn.consecutive_passes = 0;
-                                // Mirror the main-path priority switch at the end of Some(ability).
-                                // Without this, the recovery block would keep current_priority on the
-                                // caster, causing the WASM to skip the opponent's priority pass and
-                                // creating a 1-action desync (log_choice_point missing for opponent).
-                                current_priority = if current_priority == active_player {
-                                    non_active_player
-                                } else {
-                                    active_player
-                                };
-                                self.game.turn.priority_player = Some(current_priority);
-                                continue;
-                            }
-                            Err(e) => {
-                                log::error!("[WASM RESUME] Failed to cast spell {:?}: {} (undo_log_len={} consec_passes->{} new_priority={:?})", card_id, e, self.game.undo_log.len(), consecutive_passes + 1, if current_priority == active_player { non_active_player } else { active_player });
-                                self.game.pending_cast = None;
-                                consecutive_passes += 1;
-                                self.game.turn.consecutive_passes = consecutive_passes;
-                                current_priority = if current_priority == active_player {
-                                    non_active_player
-                                } else {
-                                    active_player
-                                };
-                                self.game.turn.priority_player = Some(current_priority);
-                                continue;
-                            }
-                        }
-                    }
-                }
-
                 // WASM RESUMPTION: Bypass spell ability selection when resuming pending activation.
                 //
                 // When the WASM game loop is interrupted (NeedInput) during target selection
@@ -1127,11 +956,6 @@ impl<'a> GameLoop<'a> {
                                         self.game.logger.verbose(&message);
                                     }
                                 }
-
-                                // Mark this cast as in-progress for WASM resumption.
-                                // If mode selection or target selection below returns NeedInput,
-                                // the next game loop invocation will resume via `pending_cast`.
-                                self.game.pending_cast = Some((current_priority, card_id));
 
                                 // MTG Rule 601.2b: Modal choice happens BEFORE targeting
                                 // Check if this is a modal spell and prompt for mode selection
@@ -1422,9 +1246,6 @@ impl<'a> GameLoop<'a> {
                                 } else {
                                     // Store targets for this spell (will be used when it resolves)
                                     self.game.spell_targets.push((card_id, chosen_targets_vec));
-
-                                    // Cast fully committed — clear WASM resumption flag.
-                                    self.game.pending_cast = None;
 
                                     // Spell is now on the stack - it will resolve later
                                     // when both players pass priority
