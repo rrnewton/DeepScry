@@ -966,12 +966,27 @@ impl GameState {
         // this turn dies, ..." can check membership later. Done BEFORE lethal-
         // damage processing so check_death_triggers can read the field.
         for (target_id, sources) in &damage_sources_per_target {
+            // Collect the sources actually newly-added (the dedup guard means a
+            // repeat push is a no-op), then log each as a reversible
+            // `MarkDamagedBy` so a rewind restores the exact list (mtg-610).
+            let mut added: SmallVec<[CardId; 2]> = SmallVec::new();
             if let Ok(target_card) = self.cards.get_mut(*target_id) {
                 for &source_id in sources {
                     if !target_card.damaged_by_this_turn.contains(&source_id) {
                         target_card.damaged_by_this_turn.push(source_id);
+                        added.push(source_id);
                     }
                 }
+            }
+            for source_id in added {
+                let prior_log_size = self.logger.log_count();
+                self.undo_log.log(
+                    crate::undo::GameAction::MarkDamagedBy {
+                        target: *target_id,
+                        source: source_id,
+                    },
+                    prior_log_size,
+                );
             }
         }
 

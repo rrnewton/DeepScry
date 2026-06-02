@@ -1416,6 +1416,45 @@ impl Card {
         self.temp_base_power = power;
         self.temp_base_toughness = toughness;
     }
+
+    /// Revert an until-end-of-turn `AB$ Animate` typeline change (Mishra's
+    /// Factory and friends becoming land-only again), draining
+    /// `temp_animate_types` / `temp_animate_subtypes` / `temp_removed_subtypes`
+    /// and refreshing the definition cache. Returns `true` if the card's
+    /// typeline was actually touched (so the caller can invalidate
+    /// mana-source caches), and the post-revert `is_mana_source` flag.
+    ///
+    /// Shared by the end-of-turn cleanup step (`GameState::cleanup_temporary_effects`)
+    /// and `UndoLog::rewind_to_turn_start`: both must return an animated
+    /// permanent to its printed typeline at a turn boundary, since animate is
+    /// "until end of turn" (it never spans a turn boundary) and is not
+    /// undo-logged (mtg-610). Centralizing the revert keeps the two paths
+    /// byte-identical (DRY).
+    pub fn revert_temp_animation(&mut self) -> (bool, bool) {
+        let touched_types = !self.temp_animate_types.is_empty();
+        let touched_subtypes = !self.temp_animate_subtypes.is_empty() || !self.temp_removed_subtypes.is_empty();
+        if touched_types {
+            let removed: SmallVec<[CardType; 2]> = self.temp_animate_types.drain(..).collect();
+            self.types.retain(|t| !removed.contains(t));
+        }
+        if touched_subtypes {
+            let added: SmallVec<[Subtype; 2]> = self.temp_animate_subtypes.drain(..).collect();
+            self.subtypes.retain(|s| !added.contains(s));
+            // Restore subtypes that RemoveCreatureTypes$ True stripped.
+            let restored: SmallVec<[Subtype; 2]> = self.temp_removed_subtypes.drain(..).collect();
+            self.subtypes.extend(restored);
+        }
+        if touched_types || touched_subtypes {
+            let types = self.types.clone();
+            let subtypes = self.subtypes.clone();
+            let name = self.name.clone();
+            self.definition.cache.update_from_types(&types);
+            self.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+            (true, self.definition.cache.is_mana_source)
+        } else {
+            (false, false)
+        }
+    }
 }
 
 impl GameEntity<Card> for Card {

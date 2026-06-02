@@ -4520,6 +4520,18 @@ impl GameState {
                     card.keywords.insert(*kw);
                 }
 
+                // Snapshot the pre-animate typeline + tracking vectors so the
+                // mutation can be logged as a reversible `AnimateTypeline`
+                // GameAction (mtg-610). Captured BEFORE any push/drain below so
+                // `undo()` restores the exact prior state and a rewind+replay
+                // round-trips deterministically (the cleanup-step revert relies
+                // on the tracking vectors, which can drift across rewinds).
+                let prev_types = card.types.clone();
+                let prev_subtypes = card.subtypes.clone();
+                let prev_temp_animate_types = card.temp_animate_types.clone();
+                let prev_temp_animate_subtypes = card.temp_animate_subtypes.clone();
+                let prev_temp_removed_subtypes = card.temp_removed_subtypes.clone();
+
                 // Animate: add card types (Mishra's Factory becomes
                 // Land + Artifact + Creature). We track only the types we
                 // actually push so cleanup_temporary_effects can remove them
@@ -4581,6 +4593,24 @@ impl GameState {
                 let new_power = card.current_power();
                 let new_toughness = card.current_toughness();
                 let is_mana_source_now = card.definition.cache.is_mana_source;
+
+                // Log the typeline mutation as a reversible GameAction so a
+                // rewind+replay restores the exact prior typeline (mtg-610).
+                // Only when we actually changed the typeline.
+                if types_changed {
+                    let prior_log_size = self.logger.log_count();
+                    self.undo_log.log(
+                        crate::undo::GameAction::AnimateTypeline {
+                            card_id: *target,
+                            prev_types,
+                            prev_subtypes,
+                            prev_temp_animate_types,
+                            prev_temp_animate_subtypes,
+                            prev_temp_removed_subtypes,
+                        },
+                        prior_log_size,
+                    );
+                }
 
                 // If a permanent's typeline changed AND it's a mana source,
                 // the per-player ManaSourceCache classification may now be
@@ -6557,8 +6587,23 @@ impl GameState {
         // Move card from hand to graveyard
         self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
 
-        // Log the discard
-        self.logger.gamelog(&format!("{} discards {}", player_name, card_name));
+        // Log the discard as a PRIVATE entry (owner sees the card identity;
+        // opponents / a network shadow see the masked "P discards a card").
+        // The discarded card's identity is owner-private until revealed; on a
+        // network CLIENT shadow the card instance may not yet be materialized
+        // (its reveal is asynchronous), so the full name is unknown on the
+        // forward pass — but on a rewind+replay the reveal-inserted instance
+        // persists and the name becomes known, which would change the log
+        // string purely as a function of reveal timing. Masking the public
+        // form (same approach as the per-card draw log in state.rs) keeps the
+        // verifier comparing the stable owner-independent string, so this
+        // presentation-layer asymmetry is not flagged as a state desync
+        // (mtg-610). The underlying STATE is guarded by the turn-start hash.
+        self.logger.gamelog_private(
+            &format!("{} discards {}", player_name, card_name),
+            player_id,
+            &format!("{} discards a card", player_name),
+        );
 
         Ok(())
     }
