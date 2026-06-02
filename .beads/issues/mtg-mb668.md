@@ -4,10 +4,16 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T22:36:43.520795421+00:00
+updated_at: 2026-06-02T22:37:56.876884313+00:00
 ---
 
 # Description
+
+RESUME REFRAME 2026-06-02: the two threads are now named A and B.
+THREAD A = NORMAL-PLAY COMPLETENESS (do FIRST, likely upstream of B; merge blocker): non-undo-logged turn/combat transients lost on rewind+replay. TWO repros, same root: (A1) turn-1 PlayLand — live human game on 7b235b32, "Local abilities [PlayLand{35}] != Server []" after one land; root = reset_turn_state's reset_lands_played/mana_pool.clear/loyalty_activated_this_turn NOT undo-logged. (A2) grizzly_bears mirror seed 42 CI baseline — forks at action 866 (server casts / WASM passes), turn 16. Fix = undo-log or replay-reconstruct those transients (+combat declarations); do NOT re-add guards. Full detail in mtg-610 (top entry).
+THREAD B = HIDDEN-INFO DELIVERY (after A): library-search/Timetwister authoritative reveal never sent to opponent shadow (SRCH_BUF=0; server computes library_search_result only for LibrarySearchByName). See "THREAD 2" below + the decisive ChoiceType check. Step-1 replay-side landed (d9a697fe).
+(The "THREAD 1/THREAD 2" headers below predate this A/B rename: THREAD 1 == A2 grizzly; THREAD 2 == B.)
+========================================================================
 
 ========================================================================
 RESUME HERE (2026-06-02 netarch-dev handoff) — TWO OPEN, INDEPENDENT THREADS
