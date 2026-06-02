@@ -4,11 +4,17 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-02T23:54:07.666054352+00:00
-updated_at: 2026-06-02T23:54:07.666054352+00:00
+updated_at: 2026-06-02T23:55:31.579153837+00:00
 ---
 
 # Description
 
-User 2026-06-02 (BACKLOG / future, AFTER the mtg-4irju CAS rework lands). Today index.html serves BOTH login (enter name) AND lobby (list games / create game). Refactor so index.html is JUST the login page (enter name) + the release-token dispatcher to its immediate children via the asset manifest — VERY thin, with almost NO release-divergent functionality. Move the lobby (list/create games) into a separate HASHED child page (e.g. lobby.<hash>.html), reachable as a normal forward DAG edge from index.
+User 2026-06-02 (BACKLOG / future, AFTER mtg-4irju). REFINED per team-lead advice + user request: make index.html a PURE FORWARDER — NO login UI at all, not even a login+dispatch hybrid. index.html's entire job: (1) determine release (release= param else baked latest-token), (2) resolve the entry child via the manifest, (3) location.replace() to it. ZERO UI, ZERO release-divergent logic.
 
-WHY: index.html is the ONE mutable, no-cache resource. Minimizing its FUNCTIONALITY (not merely keeping it one file) means it rarely changes between releases, so the deferred multi-release dispatch (mtg-4irju 'DEFERRED' section) becomes trivial — the mutable root contains almost nothing that diverges across releases; nearly all behavior lives in immutable hashed pages. Relates mtg-4irju (CAS DAG / cache-hardening); do AFTER that lands. Design the mtg-4irju index.html dispatcher to be cleanly separable from the lobby so this split is easy.
+Move BOTH the login (enter name) AND the lobby (list/create games) into HASHED child pages: login.<hash>.html (name entry) -> lobby.<hash>.html (list/create) -> launcher.<hash> -> game pages. All immutable, release-versioned.
+
+WHY pure-forwarder (stronger than the original 'thin login+dispatch'): the login form/validation/lobby-protocol/styling are release-divergent; keeping them in the mutable no-cache index.html means changing login = changing the mutable root. Putting them in hashed children means every release's index.html is structurally IDENTICAL (same tiny forwarder, differing only in the baked latest-token + manifest hash). That makes the deferred multi-release dispatch (mtg-4irju) trivial — the forwarder is release-agnostic and can resolve ANY retained release's children; minimal cache-attack surface; even the login becomes a release=-pinnable immutable artifact (provenance).
+
+TRADEOFF (accepted, mitigable): one redirect hop on fresh visit deepscry.net/ -> login.<hash>.html. Mitigate with location.replace() (keeps back-button clean) + a minimal inline loading state (logo, never changes) so no flash. Sub-100ms same-origin.
+
+SEQUENCING: do AFTER mtg-4irju lands. Asked cas-dev to keep the mtg-4irju index.html dispatcher cleanly SEPARABLE from the lobby so this becomes a small follow-on, not a rework. Relates mtg-4irju.
