@@ -365,26 +365,20 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
         let p2_id = game.players[1].id;
 
         // ── Forward pass: pause at P1's K-th priority decision ────────────────
-        // Capture the turn-1-start baseline (post-setup: opening hands drawn,
-        // library shuffled, before the first turn ran) via the GameLoop
-        // post-setup hook. Turn 1 has no preceding ChangeTurn marker, so
-        // `rewind_to_turn_start` would over-rewind past the RNG-consuming
-        // opening-hand draws — which a local replay cannot reconstruct (the
-        // shuffle RNG is already consumed). On a turn-1 pause point we restore
-        // from this full-state baseline instead and replay the intra-turn
-        // choices, mirroring the WASM AI harness (mtg-614 hole (a)).
-        let turn1_baseline: Rc<RefCell<Option<mtg_engine::game::GameState>>> = Rc::new(RefCell::new(None));
+        // Turn 1 now carries a clean post-setup `ChangeTurn` boundary marker
+        // (`GameState::ensure_turn_one_boundary`, mtg-610), so a turn-1 rewind
+        // stops at that boundary instead of over-rewinding into the RNG-consuming
+        // opening-hand setup. Every turn — including turn 1 — therefore goes
+        // through the SAME `rewind_to_turn_start` path, with no full-state
+        // baseline-clone special case (the former WASM AI-harness workaround is
+        // now obsolete; this is the unification the marker buys).
         let stopped = {
             let mut p1 = RecorderController::new(p1_id, Some(k), Rc::clone(&tally));
             let mut p2 = RecorderController::new(p2_id, None, Rc::clone(&tally));
-            let baseline_capture = Rc::clone(&turn1_baseline);
             let result = {
                 let mut game_loop = GameLoop::new(&mut game)
                     .with_verbosity(VerbosityLevel::Silent)
-                    .with_max_turns(12)
-                    .with_post_setup_hook(move |g: &mtg_engine::game::GameState| {
-                        *baseline_capture.borrow_mut() = Some(g.clone());
-                    });
+                    .with_max_turns(12);
                 game_loop.run_until_input(&mut p1, &mut p2)?
             };
             matches!(result, GameLoopState::AwaitingInput(_))
@@ -399,30 +393,13 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
         let hash_after_forward = compute_state_hash(&game);
         let forward_json = strip_for_diff(serde_json::to_value(&game).unwrap());
 
-        // Determine turn-1-ness BEFORE rewinding: turn 1 has no ChangeTurn marker
-        // in the undo log (mirrors the WASM AI harness's `in_turn_one` check).
-        let in_turn_one = game.undo_log.current_turn().is_none();
+        // Track turn-1-ness (for the hole-(a) coverage assertion below) before
+        // rewinding. With the turn-1 boundary marker the undo log now HAS a
+        // ChangeTurn for turn 1, so detect via the turn number directly.
+        let in_turn_one = game.turn.turn_number == 1;
 
-        let (p1_choices, p2_choices) = if in_turn_one {
-            // ── Turn-1 baseline restore path (hole (a)) ───────────────────────
-            // Extract the intra-turn ChoicePoints BEFORE the restore replaces the
-            // whole game (including its undo log), then restore the full-state
-            // turn-1-start baseline rather than rewinding the undo log into setup.
-            let choice_actions: Vec<GameAction> = game
-                .undo_log
-                .actions()
-                .iter()
-                .filter(|a| matches!(a, GameAction::ChoicePoint { choice: Some(_), .. }))
-                .cloned()
-                .collect();
-            let baseline = turn1_baseline
-                .borrow()
-                .clone()
-                .expect("post-setup hook must have captured a turn-1 baseline");
-            game = baseline;
-            partition_choices(choice_actions, p1_id)
-        } else {
-            // ── Turn >= 2 undo-log rewind path ────────────────────────────────
+        // ── Unified undo-log rewind path (all turns, incl. turn 1) ────────────
+        let (p1_choices, p2_choices) = {
             let mut undo_log = std::mem::take(&mut game.undo_log);
             let rewind = undo_log.rewind_to_turn_start(&mut game);
             game.undo_log = undo_log;
@@ -463,7 +440,7 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
             eprintln!("DIVERGENCE at K={k}: wrote {} and {}", fp.display(), rp.display());
         }
         let path = if in_turn_one {
-            "turn-1 baseline-restore"
+            "turn-1 undo-log rewind (boundary marker)"
         } else {
             "turn>=2 undo-log rewind"
         };
@@ -489,14 +466,16 @@ async fn rewind_replay_oracle_round_trips_at_every_decision_point() -> Result<()
         verified_points > 0,
         "oracle must have verified at least one rewind+replay round-trip"
     );
-    // Hole (a): the turn-1 baseline-restore path MUST be exercised — that is the
-    // strong-suspect root cause of the user-reported "froze after the first land"
-    // bug. If this is 0 the deck/policy stopped reaching turn-1 decision points
-    // and the turn-1 guarantee is silently unverified.
+    // Hole (a): the turn-1 rewind+replay path MUST be exercised — that is the
+    // root cause of the user-reported "froze after the first land" bug (turn-1
+    // PlayLand lost on rewind+replay). With the turn-1 boundary marker this now
+    // goes through the SAME `rewind_to_turn_start` path as turn 2+. If this is 0
+    // the deck/policy stopped reaching turn-1 decision points and the turn-1
+    // guarantee is silently unverified.
     assert!(
         verified_turn1_points > 0,
         "oracle must have verified at least one TURN-1 rewind+replay round-trip (hole (a)); \
-         got 0 — the turn-1 baseline path was never exercised"
+         got 0 — the turn-1 rewind path was never exercised"
     );
     let t = tally.borrow();
     eprintln!(

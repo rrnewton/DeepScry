@@ -865,9 +865,14 @@ impl GameAction {
                     game.turn.active_player_idx = idx;
                 }
 
-                // Restore turn number to the previous turn
-                // ChangeTurn logs the NEW turn number, so previous is turn_number - 1
-                game.turn.turn_number = turn_number.saturating_sub(1);
+                // Restore turn number to the previous turn.
+                // ChangeTurn logs the NEW turn number, so previous is turn_number - 1.
+                // EXCEPTION (mtg-610): the turn-1 start boundary marker
+                // (`GameState::ensure_turn_one_boundary`) logs turn_number == 1.
+                // There is no turn 0 — undoing past the start of turn 1 lands at
+                // the game's initial turn, which is 1 — so keep it at 1 rather
+                // than `saturating_sub(1)`-ing to 0.
+                game.turn.turn_number = if *turn_number <= 1 { 1 } else { turn_number - 1 };
 
                 // Restore RNG state if available (using bincode + SmallVec)
                 if let Some(rng_bytes) = rng_state {
