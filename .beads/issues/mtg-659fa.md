@@ -1,0 +1,65 @@
+---
+title: 'Network-equivalence e2e: perspective-aware server↔client↔client gamelog oracle'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-02T14:16:01.929707157+00:00
+updated_at: 2026-06-02T14:16:01.929707157+00:00
+---
+
+# Description
+
+Tracker: mtg-5 (cross-cutting testing/methodology).
+
+DONE (branch net-log-equivalence, commit eccdc743, TEST-ONLY — no engine change):
+Extended the network-equivalence e2e to compare the SERVER full-information
+game log against EACH AI client's shadow-state log, not just LOCAL↔SERVER.
+
+Where it lives:
+- Oracle (single source of truth): bug_finding/network_test_lib.py
+    * extract_gamelog_perspective() — strict [GAMELOG TurnN STEP] prefix
+      (drops the client's 'Tag gamelogs ENABLED' INFO line whose text
+      contains the substring [GAMELOG]).
+    * compare_gamelogs_perspective() — public-zone lines compared BYTE-EXACT;
+      hidden-zone per-perspective lines tolerated after canonicalisation.
+    * oracle_self_test() — positive + negative (injected Bolt 3->4) + reverse-
+      mask guard, so the oracle can't silently become a no-op.
+    * run_equivalence_test() now folds the perspective divergence into diff_count.
+- Gate: tests/network_vs_local_equivalence_e2e.sh (the make-validate target)
+  runs oracle_self_test then the live server↔client1 / server↔client2
+  comparison via the shared python lib (no bash reimpl). Emits DIVERGED:N.
+
+Oracle classification:
+- EXACT (public): spells resolving, permanents ETB/LTB, combat declares,
+  damage dealt to a named target, life totals on public events, etc.
+- TOLERATED (hidden, per-perspective, mirrors the engine's own masking):
+    * per-card draws: server 'X draws CardName (id)' vs client 'X draws a card (id)'
+      (GameLogger::gamelog_private / PrivateLogInfo::public_message; id is public).
+    * unresolved card NAME the client renders as the literal 'Unknown' token
+      (.unwrap_or("Unknown") shadow-state fallback) — tolerated as a wildcard
+      absorbing the server's possibly-multi-word name (e.g. 'Zhao, Ruthless
+      Admiral'); REVERSE direction (server Unknown / client named) NEVER tolerated.
+    * loss/win line: server short-circuits the lethal SBA after the first lethal
+      combat-damage (step CD, life snapshot then) vs client applying all combat
+      damage first (step CL, lower life) — public fact (who lost/won) identical,
+      step+life are a per-perspective timing artifact.
+
+Why regex-normalisation (not LogEntry::message_for): the shell/python harness
+consumes rendered stdout logs, not the in-memory LogEntry stream, so it cannot
+call message_for directly. The normalisation mirrors exactly what message_for /
+shadow-state name resolution produce; a TOLERATED line is one the engine's own
+masking would have produced.
+
+Result: GREEN — no real public-zone divergence found. zero/random/heuristic
+seed-3 all DIVERGED:0 for both clients across full networked games (incl. an
+independent 24-turn, action_count=1512 game). make validate PASSED:
+validate_logs/validate_eccdc7431900d2f93f9fc96660aa59a7b5859aa2.log
+(1499 tests passed, Failed:0, DIVERGED:0).
+
+Note (out of scope, pre-existing, NOT in the validate gate): the standalone
+python CLI tests/network_vs_local_equivalence.py reports 'network_timeout'
+because run_network_game() waits on the now-long-lived lobby server process to
+EXIT (it no longer does post-lobby); the game itself completes and logs are
+written. The shell e2e already handles this (detects client-exit, then kills
+the server). Folding that client-exit completion logic into the python
+run_network_game() is a separate cleanup (lobby-protocol lane).
