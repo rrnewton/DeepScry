@@ -298,7 +298,7 @@
       launching. Shown only when from=launcher; populated by JS. Back-to-Lobby
       stays as the always-available fallback.
     -->
-    <a class="back-link" id="back-to-launcher" href="launcher.html" style="display:none;">&larr; Back to Launcher</a>
+    <a class="back-link" id="back-to-launcher" href="launcher.html" data-asset-href="launcher.html" style="display:none;">&larr; Back to Launcher</a>
     <a class="back-link" id="back-to-lobby" href="index.html">&larr; Back to Lobby</a>
     <span style="flex:1"></span>
     <span id="header-status" style="font-size:12px; color: var(--muted);"></span>
@@ -462,6 +462,26 @@ const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
 const EDITOR_QS = new URLSearchParams(window.location.search);
 const FROM_LAUNCHER = EDITOR_QS.get('from') === 'launcher';
 
+/**
+ * Resolve a logical asset name (e.g. 'launcher.html') to the name actually
+ * served. The companion `<script type="module">` at the end of this file
+ * imports `resolveAsset` from asset_manifest.js and publishes it here. Until
+ * that module runs (it is deferred), and on the un-hashed dev tree, this is the
+ * identity — exactly matching asset_manifest.js's own dev/empty-manifest
+ * behaviour. deck_editor.html is a CLASSIC <script> so it cannot `import`
+ * directly (mtg-682); the module bridges the resolver across to here.
+ *
+ * `launcher.html` is a HASHED page reached via a CYCLE back-edge
+ * (launcher→deck_editor forward + deck_editor→launcher back), so the static CAS
+ * renamer leaves it for runtime manifest resolution — it MUST go through this,
+ * never a literal name, or it 404s on the deploy. `index.html` is the stable
+ * unhashed entry and is intentionally NOT resolved.
+ */
+function resolveAssetName(logical) {
+    const r = window.__mtgResolveAsset;
+    return typeof r === 'function' ? r(logical) : logical;
+}
+
 /** Build launcher.html?<context> carrying the inherited launcher params, with
  *  the given deck preselected into the custom collection (when provided). */
 function launcherReturnUrl(deckName) {
@@ -478,7 +498,7 @@ function launcherReturnUrl(deckName) {
         qp.set('deck', deckName);
     }
     const q = qp.toString();
-    return 'launcher.html' + (q ? '?' + q : '');
+    return resolveAssetName('launcher.html') + (q ? '?' + q : '');
 }
 
 /** Max copies of a non-basic land card allowed in the main deck. */
@@ -1283,12 +1303,18 @@ useBtn.addEventListener('click', () => {
 // edit); the editor's selected deck is NOT preselected here on purpose so the
 // launcher restores whatever it last had. "Use in Lobby"/save is the path that
 // preselects the new deck. Back-to-Lobby stays as the always-present fallback.
-(function setupBackToLauncher() {
+// Exposed (not an IIFE) so the manifest module at the end of this file can
+// RE-RUN it once the runtime resolver is published — on the hashed deploy tree
+// the parse-time call below resolves 'launcher.html' to the identity (the
+// resolver module is deferred), so we re-wire with the real hashed name once it
+// is available. On the dev tree both calls produce the same logical URL.
+function setupBackToLauncher() {
     const link = document.getElementById('back-to-launcher');
     if (!link || !FROM_LAUNCHER) return;
     link.href = launcherReturnUrl(EDITOR_QS.get('deck') || '');
     link.style.display = '';
-})();
+}
+setupBackToLauncher();
 
 document.getElementById('btn-export').addEventListener('click', exportDck);
 document.getElementById('btn-import').addEventListener('click', openImportPanel);
@@ -1359,6 +1385,28 @@ renderDeck();
 renderSavedList();
 loadCatalog();
 loadEditTarget();
+</script>
+
+<!--
+  Runtime asset-manifest bridge (mtg-682). deck_editor.html's main logic is a
+  CLASSIC <script> (it does not `import`), but the back-link to launcher.html is
+  a CYCLE back-edge the CAS renamer leaves for runtime resolution. This deferred
+  module imports the stable-named resolver, publishes it to the classic script
+  via window.__mtgResolveAsset, and fixes up the navigation:
+    - installManifestHrefRewrite() rewrites the [data-asset-href] back-link
+      anchor to the hashed launcher name (matches the game pages' pattern).
+    - re-running setupBackToLauncher() re-wires the JS-built href (with its
+      query context) now that the real resolver is available.
+  On the un-hashed dev tree the manifest is empty so every resolve is identity.
+-->
+<script type="module">
+    import { resolveAsset, installManifestHrefRewrite } from './asset_manifest.js';
+    window.__mtgResolveAsset = resolveAsset;
+    installManifestHrefRewrite();
+    // Re-wire the JS-built launcher back-link with the now-available resolver.
+    // setupBackToLauncher is a top-level function in the classic <script> above,
+    // so it is a global the module can reach via window.
+    if (typeof window.setupBackToLauncher === 'function') window.setupBackToLauncher();
 </script>
 </body>
 </html>

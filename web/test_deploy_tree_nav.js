@@ -120,6 +120,48 @@ function htmlPageTokens(src) {
     return [...tokens];
 }
 
+// A served HTML page may legitimately emit a LOGICAL (manifest-key) nav target
+// — e.g. a CYCLE back-edge like deck_editor→launcher that the CAS renamer leaves
+// unhashed for RUNTIME resolution. An HTTP-only walk can't see a browser rewrite
+// the href, so a page that emits a logical name but NEVER loads the runtime
+// resolver (asset_manifest.js's resolveAsset / installManifestHrefRewrite) ships
+// a DANGLING literal that 404s live — exactly the mtg-682 user-reported bug,
+// which a pure fetch-through-the-manifest walk silently masks.
+//
+// This asserts the deploy-correctness INVARIANT directly on the page source:
+// if the page emits any logical (manifest-resolved) *.html nav target other than
+// the stable index.html, it MUST carry the runtime resolver, i.e. it must import
+// the stable-named asset_manifest.js AND wire it (installManifestHrefRewrite for
+// [data-asset-href] anchors and/or resolveAsset for JS-built URLs). A NEW literal
+// hashed/cycle-edge link added without that machinery FAILS here.
+function assertPageNavResolvable(pageSrc, manifest, label) {
+    const logicalTargets = htmlPageTokens(pageSrc).filter(
+        (t) => t !== 'index.html' && Object.prototype.hasOwnProperty.call(manifest, t),
+    );
+    if (logicalTargets.length === 0) return; // no cycle-edge nav → nothing to wire
+    // The stable resolver is imported by its stable name (never hashed).
+    const importsResolver = /asset_manifest\.js/.test(pageSrc);
+    const wiresRewrite = /installManifestHrefRewrite\s*\(/.test(pageSrc);
+    const usesResolve = /resolveAsset\w*\s*\(/.test(pageSrc); // resolveAsset or local resolveAssetName wrapper
+    check(
+        importsResolver && (wiresRewrite || usesResolve),
+        `${label} emits logical cycle-edge nav (${logicalTargets.join(', ')}) and carries the runtime resolver `
+            + `(asset_manifest.js import + installManifestHrefRewrite()/resolveAsset()) — `
+            + `importsResolver=${importsResolver} wiresRewrite=${wiresRewrite} usesResolve=${usesResolve}`,
+    );
+    // Every logical anchor href should also be tagged data-asset-href so the
+    // browser's installManifestHrefRewrite can fix it (a bare href= logical link
+    // with no data-asset-href stays literal at runtime → 404). JS-built links are
+    // covered by the resolveAsset() check above instead.
+    for (const t of logicalTargets) {
+        const bareAnchor = new RegExp(`<a\\b[^>]*\\bhref=["']${t.replace(/\./g, '\\.')}["'][^>]*>`, 'i');
+        const m = pageSrc.match(bareAnchor);
+        if (m && !/data-asset-href/i.test(m[0])) {
+            check(false, `${label}: anchor to logical '${t}' lacks data-asset-href (stays literal at runtime): ${m[0].slice(0, 120)}`);
+        }
+    }
+}
+
 async function startServer(staticDir, port) {
     const mtg = findMtgBinary();
     log(`Launching: ${mtg} server-web --bind ${LOCALHOST}:${port} --static-dir ${staticDir}`);
@@ -246,14 +288,52 @@ async function main() {
         // (c) The launcher hub's forward nav — Deck Editor → deck_editor — must
         //     resolve to a HASHED 200, NOT be flattened to index.html (the
         //     rejected hack). Walk every *.html token the served launcher emits.
+        let deckEditorHashed = null;
         if (launcherHtml) {
             const launcherTokens = htmlPageTokens(launcherHtml).filter((t) => t !== 'index.html');
+            deckEditorHashed = launcherTokens.find((t) => /^deck_editor\.[0-9a-f]{16}\.html$/.test(t)) || null;
             check(
-                launcherTokens.some((t) => /^deck_editor\.[0-9a-f]{16}\.html$/.test(t)),
+                !!deckEditorHashed,
                 `launcher forward-links to a HASHED deck_editor page; saw: ${launcherTokens.join(', ')}`,
             );
             for (const t of launcherTokens) {
                 await fetchNav(t, 'launcher forward-nav');
+            }
+        }
+
+        // (c2) THE REVERSE / BACK-EDGE class (mtg-682, the live 404 this gate
+        //      previously missed). deck_editor.html is reached FROM launcher.html
+        //      (forward DAG edge, statically rewritten above), but its own
+        //      "Back to Launcher" link is a CYCLE back-edge: launcher→deck_editor
+        //      forward + deck_editor→launcher back puts launcher in the runtime
+        //      manifest, so deck_editor MUST emit launcher.html as a LOGICAL name
+        //      (resolveAsset / data-asset-href) — a literal 'launcher.html' there
+        //      stays unhashed and 404s on the deploy (the user-reported bug).
+        //      We fetch the served deck_editor and walk EVERY nav target it emits
+        //      (incl. the back-edge to launcher and the lobby fallback to index)
+        //      through the manifest resolver, asserting each is a hashed/stable
+        //      200. A NEW literal hashed-page link in deck_editor FAILS here.
+        if (deckEditorHashed) {
+            const deckEditorHtml = await fetchOk(base, '/' + deckEditorHashed, 'launcher→deck_editor (forward)');
+            check(!!deckEditorHtml, 'hashed deck_editor page resolves 200 on the deploy tree');
+            if (deckEditorHtml) {
+                assertPageNavResolvable(deckEditorHtml, manifest, 'deck_editor');
+                const editorTokens = htmlPageTokens(deckEditorHtml);
+                // The back-edge to launcher MUST be present as a LOGICAL name
+                // (resolved via the manifest), NOT a bare unhashed nav target and
+                // NOT flattened away — that is exactly the regression.
+                check(
+                    editorTokens.includes('launcher.html'),
+                    `deck_editor emits launcher.html as a LOGICAL (manifest-resolved) back-edge; saw: ${editorTokens.join(', ')}`,
+                );
+                check(
+                    Object.prototype.hasOwnProperty.call(manifest, 'launcher.html'),
+                    `deck_editor's logical 'launcher.html' back-edge is in the runtime manifest`,
+                );
+                for (const t of editorTokens) {
+                    if (t === 'index.html') continue; // stable unhashed entry — exempt
+                    await fetchNav(t, 'deck_editor reverse/back-nav');
+                }
             }
         }
 
@@ -271,6 +351,9 @@ async function main() {
         for (const gp of gamePageTokens) {
             const body = await fetchOk(base, '/' + gp, 'game page');
             if (!body) continue;
+            // The tui⇄native cross-link is a logical cycle edge: the page MUST
+            // carry the runtime resolver (same invariant as deck_editor's back-edge).
+            assertPageNavResolvable(body, manifest, `game-page ${gp}`);
             // Its cross-page nav (logical or hashed) must resolve.
             for (const t of htmlPageTokens(body).filter((t) => t !== 'index.html')) {
                 await fetchNav(t, 'game-page cross-nav');
