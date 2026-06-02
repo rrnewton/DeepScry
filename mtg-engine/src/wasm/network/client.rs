@@ -546,6 +546,10 @@ impl WasmNetworkClient {
                 Some(player_name.to_string())
             },
             deck,
+            // The game page plays the game with legacy immediate-start; the
+            // launcher's lobby socket already ran the Variant-1 waiting-room
+            // rendezvous (mtg-682) and freed the slot before navigating here.
+            waiting_room: false,
         };
         self.queue_outbound(msg);
     }
@@ -570,6 +574,9 @@ impl WasmNetworkClient {
                 Some(player_name.to_string())
             },
             deck,
+            // Game-page join uses legacy immediate-start; the launcher already
+            // did the Variant-1 waiting-room rendezvous (mtg-682).
+            waiting_room: false,
         };
         self.queue_outbound(msg);
     }

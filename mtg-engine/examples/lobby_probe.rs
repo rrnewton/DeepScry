@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
         game_password: None,
         player_name: Some("probe".to_string()),
         deck: DeckSubmission::new(vec![("Mountain".to_string(), 40)], vec![]),
+        waiting_room: false,
     };
     ws.send(Message::Text(serde_json::to_string(&msg)?.into())).await?;
 
