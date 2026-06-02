@@ -185,6 +185,7 @@ impl NetworkMessage {
             | ServerMessage::BugReportResult { .. }
             | ServerMessage::WaitingForOpponent
             | ServerMessage::WaitingRoomUpdate { .. }
+            | ServerMessage::WaitingRoomReady { .. }
             | ServerMessage::ReconnectResult { .. }
             | ServerMessage::GameStarted { .. }
             | ServerMessage::GameList { .. }

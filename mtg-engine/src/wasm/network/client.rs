@@ -931,6 +931,14 @@ impl WasmNetworkClient {
                 log::debug!("WasmNetworkClient: WaitingRoomUpdate (lobby layer)");
             }
 
+            ServerMessage::WaitingRoomReady { .. } => {
+                // Pre-game rendezvous "go" signal. The launcher's plain-JS lobby
+                // socket consumes this, not the WASM game client — by the time
+                // the game page (which owns this WASM client) connects, the
+                // waiting-room handshake is already done. No-op here.
+                log::debug!("WasmNetworkClient: WaitingRoomReady (launcher lobby layer)");
+            }
+
             ServerMessage::ReconnectResult { success, game_name, .. } => {
                 log::info!(
                     "WasmNetworkClient: ReconnectResult success={} game={:?}",

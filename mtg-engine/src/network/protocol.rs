@@ -219,6 +219,17 @@ pub enum ClientMessage {
         player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
+        /// Opt in to the Variant-1 *rendezvous* waiting room (mtg-682).
+        ///
+        /// `false` (default — legacy / game-page clients): the game starts the
+        /// instant a second player joins, exactly as before. `true` (the
+        /// launcher's lobby socket): the game is created and LISTED but does
+        /// NOT auto-start on join; instead both players SetReady, and when both
+        /// are ready the server sends `WaitingRoomReady` to both and frees the
+        /// slot so each can navigate to its game page. Pre-game only —
+        /// determinism is untouched.
+        #[serde(default)]
+        waiting_room: bool,
     },
 
     /// Join an existing pre-game lobby slot.
@@ -233,6 +244,13 @@ pub enum ClientMessage {
         player_name: Option<String>,
         /// Deck to use for the game
         deck: DeckSubmission,
+        /// Opt in to the Variant-1 rendezvous waiting room (mtg-682). See
+        /// [`ClientMessage::CreateGame::waiting_room`]. A joiner sets this to
+        /// `true` when joining a game created by a launcher waiting room; the
+        /// server then keeps both players in the waiting room until both
+        /// `SetReady`, rather than starting immediately on join.
+        #[serde(default)]
+        waiting_room: bool,
     },
 
     /// Update the deck choice for this player in an active waiting room.
@@ -471,6 +489,36 @@ pub enum ServerMessage {
         creator: WaitingRoomPlayerState,
         /// Joiner's current state. `None` until the second player joins.
         joiner: Option<WaitingRoomPlayerState>,
+    },
+
+    /// Both players in a waiting room have marked themselves ready — the match
+    /// is cleared to start (Variant 1 auto-start, mtg-682).
+    ///
+    /// This is the pre-game *rendezvous* "go" signal for the launcher waiting
+    /// room. The launcher holds a lobby WebSocket purely for the waiting-room
+    /// handshake (CreateGame/JoinGame → SetDeck/SetReady → WaitingRoomUpdate);
+    /// it is NOT a game-playing socket. When the server observes BOTH players
+    /// ready it sends `WaitingRoomReady` to both launcher sockets, frees the
+    /// pending slot, and closes the lobby connection. Each client then
+    /// navigates to its chosen game page, which opens its OWN durable game
+    /// WebSocket and performs the real `CreateGame` / `JoinGame` that drives
+    /// `run_game` and emits the full `GameStarted` payload.
+    ///
+    /// Splitting the rendezvous (launcher) from the game socket (game page) is
+    /// deliberate: a browser WebSocket cannot survive a full page navigation,
+    /// and the in-game `Reconnect` resume path is still a stub. Keeping the
+    /// handshake on a throwaway lobby socket lets the launcher show live join +
+    /// ready status without entangling it with the game task. All of this is
+    /// strictly PRE-GAME state — no game RNG, no controller decisions, no
+    /// hidden information — so the network-determinism invariants are untouched.
+    WaitingRoomReady {
+        /// Final game name the two players agreed on (echoed so the launcher
+        /// can build the game-page redirect even if the server rewrote it).
+        game_name: String,
+        /// `true` for the player who created the game (P1), `false` for the
+        /// joiner (P2). The launcher uses this to decide whether the game page
+        /// should `CreateGame` (creator) or `JoinGame` (joiner) on its own WS.
+        is_creator: bool,
     },
 
     /// Result of a `ClientMessage::Reconnect` request.

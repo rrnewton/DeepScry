@@ -96,6 +96,7 @@ async fn pending_game_handoff_oneshot_round_trip() {
         joiner_name: None,
         creator_update_tx: Some(update_tx),
         handoff_tx: Some(tx),
+        rendezvous: false,
     };
 
     let joiner = JoinedPlayer {
@@ -214,6 +215,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                             game_password,
                             player_name,
                             deck,
+                            ..
                         } => {
                             if !auth_pw_ok(&password, &server_password) {
                                 let r = ServerMessage::AuthResult {
@@ -281,6 +283,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                                         joiner_name: None,
                                         creator_update_tx: Some(upd_tx),
                                         handoff_tx: Some(tx),
+                                        rendezvous: false,
                                     },
                                 );
                                 (id, name)
@@ -304,6 +307,7 @@ async fn start_lobby_only_server(server_password: &str, max_memory_percent: u32)
                             game_password,
                             player_name,
                             deck,
+                            ..
                         } => {
                             if !auth_pw_ok(&password, &server_password) {
                                 let r = ServerMessage::JoinFailed {
@@ -468,6 +472,7 @@ async fn create_game_then_list_shows_it() {
             game_password: None,
             player_name: Some("alice".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -512,6 +517,7 @@ async fn join_succeeds_and_promotes_to_active() {
             game_password: None,
             player_name: Some("p1".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -527,6 +533,7 @@ async fn join_succeeds_and_promotes_to_active() {
             game_password: None,
             player_name: Some("p2".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -575,6 +582,7 @@ async fn join_fails_with_not_found_for_unknown_game() {
             game_password: None,
             player_name: Some("p2".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -599,6 +607,7 @@ async fn join_fails_with_bad_password() {
             game_password: Some("hunter2".to_string()),
             player_name: Some("p1".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -614,6 +623,7 @@ async fn join_fails_with_bad_password() {
             game_password: Some("wrong".to_string()),
             player_name: Some("p2".to_string()),
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -637,6 +647,7 @@ async fn create_fails_with_invalid_deck() {
             game_password: None,
             player_name: None,
             deck: too_small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -662,6 +673,7 @@ async fn server_full_when_memory_ceiling_is_one_percent() {
             game_password: None,
             player_name: None,
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -701,6 +713,7 @@ async fn duplicate_create_rejected() {
             game_password: None,
             player_name: None,
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -716,6 +729,7 @@ async fn duplicate_create_rejected() {
             game_password: None,
             player_name: None,
             deck: small_deck(),
+            waiting_room: false,
         },
     )
     .await;
@@ -745,6 +759,7 @@ async fn list_games_orders_entries_by_creation_time() {
                 game_password: None,
                 player_name: None,
                 deck: small_deck(),
+                waiting_room: false,
             },
         )
         .await;

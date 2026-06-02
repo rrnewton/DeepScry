@@ -807,6 +807,7 @@ async fn run_lobby_dispatch(
                 game_password,
                 player_name,
                 deck,
+                waiting_room,
             } => {
                 // Prefer the registered name if the client didn't supply one.
                 let resolved_name = player_name.or_else(|| registered_name.clone());
@@ -821,6 +822,7 @@ async fn run_lobby_dispatch(
                     resolved_name,
                     deck,
                     connection_id,
+                    waiting_room,
                 )
                 .await;
             }
@@ -831,6 +833,7 @@ async fn run_lobby_dispatch(
                 game_password,
                 player_name,
                 deck,
+                waiting_room,
             } => {
                 let resolved_name = player_name.or_else(|| registered_name.clone());
                 return run_join_flow(
@@ -842,6 +845,7 @@ async fn run_lobby_dispatch(
                     game_password,
                     resolved_name,
                     deck,
+                    waiting_room,
                 )
                 .await;
             }
@@ -871,6 +875,7 @@ async fn run_lobby_dispatch(
                         None,
                         resolved_name,
                         deck,
+                        false, // legacy auto-match: start immediately on join
                     )
                     .await;
                 } else {
@@ -885,6 +890,7 @@ async fn run_lobby_dispatch(
                         resolved_name,
                         deck,
                         connection_id,
+                        false, // legacy auto-match: start immediately on join
                     )
                     .await;
                 }
@@ -1010,6 +1016,7 @@ async fn run_create_flow(
     player_name: Option<String>,
     deck: DeckSubmission,
     _connection_id: u64,
+    rendezvous: bool,
 ) -> Result<()> {
     if !check_server_password(&config, &server_password) {
         send_message(
@@ -1063,6 +1070,7 @@ async fn run_create_flow(
         },
         joiner_name: None,
         joiner_state: None,
+        start_game: false,
     };
     let (update_tx, mut update_rx) = tokio::sync::watch::channel(initial_snapshot);
 
@@ -1106,6 +1114,7 @@ async fn run_create_flow(
                 joiner_name: None,
                 creator_update_tx: Some(update_tx),
                 handoff_tx: Some(handoff_tx),
+                rendezvous,
             },
         );
         (id, name)
@@ -1148,7 +1157,15 @@ async fn run_create_flow(
     let joiner = loop {
         tokio::select! {
             // Joiner arrived (or sender dropped / timeout).
-            joiner_result = tokio::time::timeout(WAIT_FOR_JOINER, &mut handoff_rx) => {
+            //
+            // The `if !rendezvous` guard DISABLES this arm in rendezvous mode:
+            // there the joiner never uses the handoff channel (it runs its own
+            // waiting-room loop), so the handoff Sender lives inside the
+            // PendingGame and is dropped when the slot is freed on both-ready.
+            // That drop would otherwise resolve `handoff_rx` with `Err` and be
+            // mis-read as "joiner died". With the arm disabled, the rendezvous
+            // exit is driven solely by `update_rx` (start_game) / the WS read.
+            joiner_result = tokio::time::timeout(WAIT_FOR_JOINER, &mut handoff_rx), if !rendezvous => {
                 match joiner_result {
                     Ok(Ok(j)) => break j,
                     Ok(Err(_)) => {
@@ -1177,9 +1194,33 @@ async fn run_create_flow(
 
             // Waiting-room state changed (joiner updated their deck/ready).
             _ = update_rx.changed() => {
+                // In rendezvous mode, the joiner's SetReady that crossed the
+                // both-ready threshold sets `start_game` on the broadcast
+                // snapshot. React by sending the "go" signal to the creator and
+                // exiting (the joiner's task does the same on its side).
+                let start_game = rendezvous && update_rx.borrow().start_game;
                 let snapshot = update_rx.borrow().to_server_message();
                 if send_message(&mut ws_stream, &snapshot).await.is_err() {
                     // Creator's WS dropped — evict the waiting game.
+                    let mut l = lobby.lock().await;
+                    l.waiting_games.remove(&key);
+                    return Ok(());
+                }
+                if start_game {
+                    log::info!(
+                        "Game {} ({}): both ready (rendezvous) — signalling creator to proceed",
+                        game_id, game_name
+                    );
+                    let _ = send_message(
+                        &mut ws_stream,
+                        &ServerMessage::WaitingRoomReady {
+                            game_name: game_name.clone(),
+                            is_creator: true,
+                        },
+                    )
+                    .await;
+                    // The joiner's task frees the slot from waiting_games; be
+                    // defensive and remove here too (idempotent).
                     let mut l = lobby.lock().await;
                     l.waiting_games.remove(&key);
                     return Ok(());
@@ -1218,6 +1259,7 @@ async fn run_create_flow(
                                         creator_state: pg.creator_state.clone(),
                                         joiner_name: pg.joiner_name.clone(),
                                         joiner_state: pg.joiner_state.clone(),
+                                        start_game: false,
                                     };
                                     if let Some(tx) = &pg.creator_update_tx {
                                         let _ = tx.send(snap.clone());
@@ -1242,16 +1284,19 @@ async fn run_create_flow(
                                     pg.creator_state.ready = ready;
                                     let joiner_ready = pg.joiner_state.as_ref().map(|s| s.ready).unwrap_or(false);
                                     let creator_ready = pg.creator_state.ready;
+                                    let both = creator_ready && joiner_ready;
                                     let snap = WaitingRoomSnapshot {
                                         creator_name: pg.creator_name.clone(),
                                         creator_state: pg.creator_state.clone(),
                                         joiner_name: pg.joiner_name.clone(),
                                         joiner_state: pg.joiner_state.clone(),
+                                        // Notify the joiner's task to proceed too.
+                                        start_game: rendezvous && both,
                                     };
                                     if let Some(tx) = &pg.creator_update_tx {
                                         let _ = tx.send(snap.clone());
                                     }
-                                    (Some(snap), creator_ready && joiner_ready)
+                                    (Some(snap), both)
                                 }
                             } else {
                                 (None, false)
@@ -1262,10 +1307,33 @@ async fn run_create_flow(
                         } else if let Some(snap) = snapshot {
                             let _ = send_message(&mut ws_stream, &snap.to_server_message()).await;
                             if both_ready {
-                                // Both players ready — the joiner's SetReady
-                                // already triggered the handoff via the watch
-                                // channel; we'll receive the joiner via handoff_rx
-                                // in the next loop iteration.
+                                if rendezvous {
+                                    // Variant-1 rendezvous: the creator's ready
+                                    // crossed the threshold. Send the "go" signal
+                                    // here (the joiner's task reacts to the
+                                    // start_game snapshot it just broadcast) and
+                                    // exit; the game runs on the GAME PAGE's own
+                                    // socket, not this lobby socket.
+                                    log::info!(
+                                        "Game {} ({}): both ready (rendezvous) — signalling creator to proceed",
+                                        game_id, game_name
+                                    );
+                                    let _ = send_message(
+                                        &mut ws_stream,
+                                        &ServerMessage::WaitingRoomReady {
+                                            game_name: game_name.clone(),
+                                            is_creator: true,
+                                        },
+                                    )
+                                    .await;
+                                    let mut l = lobby.lock().await;
+                                    l.waiting_games.remove(&key);
+                                    return Ok(());
+                                }
+                                // Legacy mode: the joiner's SetReady already
+                                // triggered the handoff via the watch channel;
+                                // we'll receive the joiner via handoff_rx in the
+                                // next loop iteration.
                                 log::info!(
                                     "Game {} ({}): both players ready, awaiting game start handoff",
                                     game_id, game_name
@@ -1373,6 +1441,7 @@ async fn run_join_flow(
     game_password: Option<String>,
     player_name: Option<String>,
     deck: DeckSubmission,
+    rendezvous: bool,
 ) -> Result<()> {
     if !check_server_password(&config, &server_password) {
         send_message(
@@ -1413,8 +1482,11 @@ async fn run_join_flow(
 
     // Atomically: look up + password-check. We do NOT remove yet — we update
     // the joiner's state in the pending entry first so the creator's watch
-    // channel fires a WaitingRoomUpdate, then we remove when handing off.
-    let (handoff_tx, creator_update_tx, initial_snapshot) = {
+    // channel fires a WaitingRoomUpdate, then we either:
+    //   - (legacy) take the handoff sender + remove the entry, OR
+    //   - (rendezvous) leave the entry in place and subscribe to the watch
+    //     channel so the joiner can run its own waiting-room loop.
+    let (handoff_tx, creator_update_tx, joiner_update_rx, initial_snapshot, is_rendezvous) = {
         let mut l = lobby.lock().await;
         let Some(pg) = l.waiting_games.get_mut(&key) else {
             drop(l);
@@ -1445,6 +1517,10 @@ async fn run_join_flow(
             }
         }
 
+        // The pending game's own flag is authoritative; OR the joiner's request
+        // in case the joiner opted in but the game was created legacy.
+        let is_rendezvous = pg.rendezvous || rendezvous;
+
         // Register joiner state in the pending entry.
         let joiner_state = WaitingPlayerState {
             deck: Some(deck.clone()),
@@ -1458,6 +1534,7 @@ async fn run_join_flow(
             creator_state: pg.creator_state.clone(),
             joiner_name: pg.joiner_name.clone(),
             joiner_state: pg.joiner_state.clone(),
+            start_game: false,
         };
 
         // Notify the creator task that a joiner arrived.
@@ -1465,14 +1542,20 @@ async fn run_join_flow(
             let _ = tx.send(snap.clone());
         }
 
-        let handoff_tx = pg.handoff_tx.take().expect("handoff_tx must be present");
-        let update_tx = pg.creator_update_tx.clone();
-
-        // Now remove from waiting_games (the creator's task will pick up the
-        // joiner via the oneshot).
-        l.waiting_games.remove(&key);
-
-        (handoff_tx, update_tx, snap)
+        if is_rendezvous {
+            // Rendezvous: keep the entry (slot stays listed until both ready),
+            // subscribe to the watch channel, and run a joiner waiting loop.
+            let joiner_rx = pg.creator_update_tx.as_ref().map(|tx| tx.subscribe());
+            let update_tx = pg.creator_update_tx.clone();
+            (None, update_tx, joiner_rx, snap, true)
+        } else {
+            // Legacy: take the handoff sender + remove the entry; the creator's
+            // task picks up the joiner and starts the game immediately.
+            let handoff_tx = pg.handoff_tx.take().expect("handoff_tx must be present");
+            let update_tx = pg.creator_update_tx.clone();
+            l.waiting_games.remove(&key);
+            (Some(handoff_tx), update_tx, None, snap, false)
+        }
     };
 
     send_message(
@@ -1490,6 +1573,16 @@ async fn run_join_flow(
     let update_msg = initial_snapshot.to_server_message();
     send_message(&mut ws_stream, &update_msg).await?;
 
+    if is_rendezvous {
+        // Variant-1 rendezvous: the joiner runs its own waiting-room loop on
+        // its lobby socket. The game runs on each player's GAME PAGE socket,
+        // not here, so this loop never calls run_game — on both-ready it sends
+        // WaitingRoomReady and returns. See WaitingRoomReady protocol docs.
+        let result = run_joiner_waiting_room(&mut ws_stream, &lobby, &key, &game_name, joiner_update_rx).await;
+        drop(creator_update_tx);
+        return result;
+    }
+
     // Hand the WebSocket to the creator's task. If the Sender is gone (creator
     // died after we removed the entry) we lose the joiner — close cleanly.
     let payload = JoinedPlayer {
@@ -1497,11 +1590,196 @@ async fn run_join_flow(
         deck,
         ws_stream,
     };
-    if handoff_tx.send(payload).is_err() {
-        log::error!("Pending game '{game_name}' creator gone — joiner dropped");
+    if let Some(handoff_tx) = handoff_tx {
+        if handoff_tx.send(payload).is_err() {
+            log::error!("Pending game '{game_name}' creator gone — joiner dropped");
+        }
     }
     drop(creator_update_tx); // release our handle so the watch channel closes cleanly
     Ok(())
+}
+
+/// Joiner-side waiting-room loop for the Variant-1 rendezvous (mtg-682).
+///
+/// Mirrors the creator's in-loop `SetDeck`/`SetReady`/`Ping` handling but for
+/// the joiner socket. Updates the joiner's slice of the shared `PendingGame`
+/// state, broadcasts `WaitingRoomUpdate` to the creator via the watch channel,
+/// and forwards creator-side updates to the joiner. When both players are
+/// ready it sends `WaitingRoomReady` to the joiner and returns (the creator's
+/// task does the same on its side); the actual game runs on the GAME PAGE.
+async fn run_joiner_waiting_room(
+    ws_stream: &mut WebSocketStream<TcpStream>,
+    lobby: &SharedLobby,
+    key: &str,
+    game_name: &str,
+    update_rx: Option<tokio::sync::watch::Receiver<WaitingRoomSnapshot>>,
+) -> Result<()> {
+    let Some(mut update_rx) = update_rx else {
+        // No watch channel — the creator already vanished; nothing to wait on.
+        let _ = send_error(ws_stream, "Waiting room is no longer available", true).await;
+        return Ok(());
+    };
+
+    /// Rebuild a snapshot from the live PendingGame after mutating the joiner's
+    /// state, broadcast it, and report whether both players are now ready.
+    fn rebuild_and_broadcast(pg: &PendingGame, rendezvous_both: bool) -> (WaitingRoomSnapshot, bool) {
+        let joiner_ready = pg.joiner_state.as_ref().map(|s| s.ready).unwrap_or(false);
+        let both = pg.creator_state.ready && joiner_ready;
+        let snap = WaitingRoomSnapshot {
+            creator_name: pg.creator_name.clone(),
+            creator_state: pg.creator_state.clone(),
+            joiner_name: pg.joiner_name.clone(),
+            joiner_state: pg.joiner_state.clone(),
+            start_game: rendezvous_both && both,
+        };
+        (snap, both)
+    }
+
+    loop {
+        tokio::select! {
+            // Creator-side state changed (deck/ready) — forward to the joiner.
+            changed = update_rx.changed() => {
+                if changed.is_err() {
+                    // Creator's task dropped the channel — the game is gone.
+                    let _ = send_error(ws_stream, "Host left the waiting room", true).await;
+                    return Ok(());
+                }
+                let start_game = update_rx.borrow().start_game;
+                let msg = update_rx.borrow().to_server_message();
+                if send_message(ws_stream, &msg).await.is_err() {
+                    let mut l = lobby.lock().await;
+                    l.waiting_games.remove(key);
+                    return Ok(());
+                }
+                if start_game {
+                    log::info!("Game ({game_name}): both ready (rendezvous) — signalling joiner to proceed");
+                    let _ = send_message(
+                        ws_stream,
+                        &ServerMessage::WaitingRoomReady {
+                            game_name: game_name.to_string(),
+                            is_creator: false,
+                        },
+                    )
+                    .await;
+                    let mut l = lobby.lock().await;
+                    l.waiting_games.remove(key);
+                    return Ok(());
+                }
+            }
+
+            // Joiner sends a message (SetDeck / SetReady / Ping / Disconnect).
+            msg = read_one_lobby_message(ws_stream) => {
+                match msg {
+                    Err(_) => {
+                        // Joiner disconnected — clear the joiner slice so the
+                        // creator sees "opponent left" and the slot reverts to
+                        // waiting-for-opponent rather than leaking.
+                        let mut l = lobby.lock().await;
+                        if let Some(pg) = l.waiting_games.get_mut(key) {
+                            pg.joiner_name = None;
+                            pg.joiner_state = None;
+                            let snap = WaitingRoomSnapshot {
+                                creator_name: pg.creator_name.clone(),
+                                creator_state: pg.creator_state.clone(),
+                                joiner_name: None,
+                                joiner_state: None,
+                                start_game: false,
+                            };
+                            if let Some(tx) = &pg.creator_update_tx {
+                                let _ = tx.send(snap);
+                            }
+                        }
+                        return Ok(());
+                    }
+                    Ok(ClientMessage::SetDeck { deck: new_deck }) => {
+                        if new_deck.main_deck_size() < 40 {
+                            let _ = send_error(
+                                ws_stream,
+                                &format!("Deck too small: {} cards (minimum 40)", new_deck.main_deck_size()),
+                                false,
+                            )
+                            .await;
+                        } else {
+                            let snapshot = {
+                                let mut l = lobby.lock().await;
+                                if let Some(pg) = l.waiting_games.get_mut(key) {
+                                    if let Some(js) = pg.joiner_state.as_mut() {
+                                        js.deck = Some(new_deck);
+                                        js.ready = false; // reset on deck change
+                                    }
+                                    let (snap, _) = rebuild_and_broadcast(pg, true);
+                                    if let Some(tx) = &pg.creator_update_tx {
+                                        let _ = tx.send(snap.clone());
+                                    }
+                                    Some(snap)
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some(snap) = snapshot {
+                                let _ = send_message(ws_stream, &snap.to_server_message()).await;
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::SetReady { ready }) => {
+                        let (snapshot, both_ready) = {
+                            let mut l = lobby.lock().await;
+                            if let Some(pg) = l.waiting_games.get_mut(key) {
+                                let has_deck = pg.joiner_state.as_ref().and_then(|s| s.deck.as_ref()).is_some();
+                                if ready && !has_deck {
+                                    (None, false)
+                                } else {
+                                    if let Some(js) = pg.joiner_state.as_mut() {
+                                        js.ready = ready;
+                                    }
+                                    let (snap, both) = rebuild_and_broadcast(pg, true);
+                                    if let Some(tx) = &pg.creator_update_tx {
+                                        let _ = tx.send(snap.clone());
+                                    }
+                                    (Some(snap), both)
+                                }
+                            } else {
+                                (None, false)
+                            }
+                        };
+                        if ready && snapshot.is_none() {
+                            let _ = send_error(ws_stream, "Cannot ready without a deck", false).await;
+                        } else if let Some(snap) = snapshot {
+                            let _ = send_message(ws_stream, &snap.to_server_message()).await;
+                            if both_ready {
+                                log::info!("Game ({game_name}): both ready (rendezvous) — signalling joiner to proceed");
+                                let _ = send_message(
+                                    ws_stream,
+                                    &ServerMessage::WaitingRoomReady {
+                                        game_name: game_name.to_string(),
+                                        is_creator: false,
+                                    },
+                                )
+                                .await;
+                                let mut l = lobby.lock().await;
+                                l.waiting_games.remove(key);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Ok(ClientMessage::Ping { timestamp_ms }) => {
+                        let _ = send_message(ws_stream, &ServerMessage::Pong { timestamp_ms }).await;
+                    }
+                    Ok(ClientMessage::Disconnect) => {
+                        let mut l = lobby.lock().await;
+                        if let Some(pg) = l.waiting_games.get_mut(key) {
+                            pg.joiner_name = None;
+                            pg.joiner_state = None;
+                        }
+                        return Ok(());
+                    }
+                    Ok(_) => {
+                        let _ = send_error(ws_stream, "Unexpected message in waiting room", false).await;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

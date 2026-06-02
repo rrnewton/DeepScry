@@ -1218,4 +1218,125 @@ mod websocket_integration {
 
         server_handle.abort();
     }
+
+    /// Variant-1 rendezvous waiting room (mtg-682): a `CreateGame`/`JoinGame`
+    /// with `waiting_room: true` must NOT auto-start the game when the joiner
+    /// arrives. Instead the slot stays listed, both players exchange
+    /// `WaitingRoomUpdate`s, and only when BOTH `SetReady` does the server send
+    /// `WaitingRoomReady` to both — at which point the slot is freed.
+    ///
+    /// This is the server side of the launcher waiting room: the launcher holds
+    /// a lobby socket for the handshake, then navigates to the game page which
+    /// opens its own game socket. Pre-game only, so determinism is unaffected.
+    #[tokio::test]
+    async fn test_rendezvous_waiting_room_both_ready_starts() {
+        let port = allocate_random_port();
+        let config = ServerConfig {
+            port,
+            password: String::new(),
+            cardsfolder: cardsfolder_path(),
+            starting_life: 20,
+            network_debug: true,
+            ..Default::default()
+        };
+        let mut server = GameServer::new(config);
+        let server_handle = tokio::spawn(async move {
+            let _ = timeout(Duration::from_secs(60), server.run()).await;
+        });
+        assert!(wait_for_server(port, 20).await, "Server did not start");
+
+        let url = format!("ws://localhost:{}", port);
+
+        // --- Creator: CreateGame with waiting_room=true. ---
+        let (mut creator, _) = connect_async(&url).await.expect("creator connect");
+        send_message(
+            &mut creator,
+            &ClientMessage::CreateGame {
+                password: String::new(),
+                game_name: Some("rendezvous-game".to_string()),
+                game_password: None,
+                player_name: Some("Alice".to_string()),
+                deck: simple_deck(),
+                waiting_room: true,
+            },
+        )
+        .await
+        .expect("send CreateGame");
+
+        // Creator should receive GameCreated, WaitingForOpponent, and an initial
+        // WaitingRoomUpdate — but crucially NOT GameStarted yet.
+        let m1 = receive_message(&mut creator).await.expect("GameCreated");
+        assert!(
+            matches!(m1, ServerMessage::GameCreated { .. }),
+            "expected GameCreated, got {:?}",
+            m1
+        );
+
+        // --- Joiner: JoinGame with waiting_room=true. ---
+        let (mut joiner, _) = connect_async(&url).await.expect("joiner connect");
+        send_message(
+            &mut joiner,
+            &ClientMessage::JoinGame {
+                password: String::new(),
+                game_name: "rendezvous-game".to_string(),
+                game_password: None,
+                player_name: Some("Bob".to_string()),
+                deck: simple_deck(),
+                waiting_room: true,
+            },
+        )
+        .await
+        .expect("send JoinGame");
+
+        // Joiner gets AuthResult + initial WaitingRoomUpdate, but NOT GameStarted.
+        // Drain a few messages and assert no GameStarted arrives before ready.
+        let mut joiner_saw_waiting = false;
+        for _ in 0..3 {
+            match timeout(Duration::from_millis(500), receive_message(&mut joiner)).await {
+                Ok(Ok(ServerMessage::WaitingRoomUpdate { .. })) => joiner_saw_waiting = true,
+                Ok(Ok(ServerMessage::AuthResult { success, .. })) => assert!(success),
+                Ok(Ok(ServerMessage::GameStarted { .. })) => {
+                    panic!("GameStarted fired before both players were ready (waiting_room broken)")
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        assert!(joiner_saw_waiting, "joiner should receive a WaitingRoomUpdate");
+
+        // --- Both SetReady. The decks are already on record (from Create/Join),
+        // so a bare SetReady{true} is valid. ---
+        send_message(&mut creator, &ClientMessage::SetReady { ready: true })
+            .await
+            .expect("creator SetReady");
+        send_message(&mut joiner, &ClientMessage::SetReady { ready: true })
+            .await
+            .expect("joiner SetReady");
+
+        // Both must receive WaitingRoomReady (the rendezvous "go" signal).
+        async fn await_ready(ws: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> (String, bool) {
+            loop {
+                match timeout(Duration::from_secs(5), receive_message(ws)).await {
+                    Ok(Ok(ServerMessage::WaitingRoomReady { game_name, is_creator })) => {
+                        return (game_name, is_creator);
+                    }
+                    Ok(Ok(ServerMessage::GameStarted { .. })) => {
+                        panic!("rendezvous must NOT run the game on the lobby socket")
+                    }
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(e)) => panic!("ws error awaiting WaitingRoomReady: {e}"),
+                    Err(_) => panic!("timed out awaiting WaitingRoomReady"),
+                }
+            }
+        }
+
+        let (cg, c_is_creator) = await_ready(&mut creator).await;
+        let (jg, j_is_creator) = await_ready(&mut joiner).await;
+        assert_eq!(cg, "rendezvous-game");
+        assert_eq!(jg, "rendezvous-game");
+        assert!(c_is_creator, "creator's WaitingRoomReady.is_creator must be true");
+        assert!(!j_is_creator, "joiner's WaitingRoomReady.is_creator must be false");
+
+        server_handle.abort();
+    }
 }

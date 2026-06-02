@@ -148,6 +148,12 @@ pub struct PendingGame {
     /// field exists as `Option` only so the Sender can be moved out without
     /// destructuring the surrounding `PendingGame`).
     pub handoff_tx: Option<oneshot::Sender<JoinedPlayer>>,
+    /// `true` iff this game was created by a launcher waiting room (Variant 1
+    /// rendezvous, mtg-682): the game must NOT auto-start when the joiner
+    /// arrives; both players must `SetReady` first, after which the server
+    /// emits `WaitingRoomReady` to both and frees the slot. `false` (legacy /
+    /// game-page clients) starts the game immediately on join.
+    pub rendezvous: bool,
 }
 
 /// A point-in-time snapshot of the waiting room state, distributed to both
@@ -159,6 +165,12 @@ pub struct WaitingRoomSnapshot {
     pub creator_state: WaitingPlayerState,
     pub joiner_name: Option<String>,
     pub joiner_state: Option<WaitingPlayerState>,
+    /// Internal-only flag (NOT serialized): set `true` on the snapshot that
+    /// crosses the both-ready threshold in a Variant-1 rendezvous waiting room
+    /// (mtg-682). The peer task watching this channel reacts by sending
+    /// `WaitingRoomReady` to its own socket and exiting. The wire
+    /// `WaitingRoomUpdate` produced by [`to_server_message`] never carries it.
+    pub start_game: bool,
 }
 
 impl WaitingRoomSnapshot {
@@ -511,6 +523,7 @@ mod tests {
             joiner_name: None,
             creator_update_tx: Some(update_tx),
             handoff_tx: Some(tx),
+            rendezvous: false,
         }
     }
 
@@ -705,6 +718,7 @@ mod tests {
             creator_state: WaitingPlayerState::default(),
             joiner_name: None,
             joiner_state: None,
+            start_game: false,
         };
         let msg = snap.to_server_message();
         match msg {
@@ -723,6 +737,7 @@ mod tests {
             creator_state: WaitingPlayerState::default(),
             joiner_name: Some("Bob".to_string()),
             joiner_state: Some(WaitingPlayerState::default()),
+            start_game: false,
         };
         let msg = snap.to_server_message();
         match msg {
