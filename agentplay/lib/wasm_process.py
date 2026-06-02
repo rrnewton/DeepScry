@@ -492,12 +492,20 @@ class WasmPlaywrightProcess:
                 break
             if turn is not None and turn > max_turns:
                 break
-            # Surface a dead native peer / server as a hard error rather than
-            # silently timing out.
-            if self._peer_proc.poll() is not None and not game_over:
+            # Surface an ABNORMAL native-peer exit as a hard error rather than
+            # silently timing out. A clean exit (rc==0) can race slightly ahead
+            # of the browser flipping game_over, so re-read the view model and
+            # only fail if the peer crashed (nonzero) or the game truly isn't
+            # over after the peer is gone.
+            peer_rc = self._peer_proc.poll()
+            if peer_rc is not None and not game_over:
+                final_view = self._read_view_model()
+                if view_model_is_game_over(final_view):
+                    game_over = True
+                    break
                 raise RuntimeError(
-                    f"[wasm-net] native peer exited (rc={self._peer_proc.returncode}) "
-                    "before game over — networked WASM game did not complete"
+                    f"[wasm-net] native peer exited (rc={peer_rc}) before game over "
+                    "— networked WASM game did not complete"
                 )
 
         view = self._read_view_model()
