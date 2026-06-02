@@ -416,6 +416,32 @@ pub enum GameAction {
     /// the marking site means a no-op push is never logged), so undo simply
     /// removes the last occurrence of `source` (mtg-610).
     MarkDamagedBy { target: CardId, source: CardId },
+
+    /// Records a Clone copy-transformation (`GameState::apply_clone`, CR 707.2:
+    /// Copy Artifact, Clone, Vesuvan Doppelganger, ...) so a rewind+replay can
+    /// reverse it exactly. `apply_clone` overwrites ~15 copiable characteristics
+    /// of the cloning permanent IN PLACE with no undo support, so a rewind left
+    /// the card stuck as the copied permanent (mtg-559/mtg-610: robots42's Copy
+    /// Artifact stayed Mishra's Factory across rewinds, making the turn-start
+    /// hash history-dependent). `undo()` restores the captured prior state.
+    /// Boxed to keep the `GameAction` enum small.
+    CloneCard {
+        card_id: CardId,
+        prev: Box<crate::core::CardCopiableState>,
+    },
+
+    /// Records that `player` was appended to the `extra_turns` queue by an
+    /// `AddTurn` effect (Time Walk, Temporal Manipulation, ...; CR 500.7).
+    /// `undo()` pops it back off the BACK of the queue. The push happens during
+    /// a turn (when the extra-turn spell resolves), so a rewind+replay that
+    /// unwinds past the resolution must remove the queued entry — otherwise it
+    /// rode through the rewind and replay re-pushed it, making the turn-start
+    /// `extra_turns` history-dependent (mtg-559/mtg-610: robots42 extra_turns[0]
+    /// drift). The pop_front that CONSUMES the queue happens AT the ChangeTurn
+    /// boundary, which `rewind_to_turn_start` stops at without undoing, so only
+    /// the push needs logging for the rewind path; logging it also keeps the
+    /// per-action undo oracle exact.
+    PushExtraTurn { player: PlayerId },
 }
 
 impl fmt::Display for GameAction {
@@ -642,6 +668,12 @@ impl fmt::Display for GameAction {
                     target.as_u32(),
                     source.as_u32()
                 )
+            }
+            GameAction::CloneCard { card_id, prev } => {
+                write!(f, "CloneCard({} prev_name={})", card_id.as_u32(), prev.name.as_str())
+            }
+            GameAction::PushExtraTurn { player } => {
+                write!(f, "PushExtraTurn(P{})", player.as_u32())
             }
         }
     }
@@ -1208,6 +1240,31 @@ impl GameAction {
                     if let Some(pos) = card.damaged_by_this_turn.iter().rposition(|s| s == source) {
                         card.damaged_by_this_turn.remove(pos);
                     }
+                }
+            }
+            GameAction::CloneCard { card_id, prev } => {
+                // Restore the copiable characteristics overwritten by the clone
+                // (CR 707.2) so the cloning permanent reverts to its pre-clone
+                // identity exactly (mtg-559/mtg-610). Refresh the type-flag cache
+                // afterward so is_artifact()/is_creature()/etc. match the
+                // restored type line.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.restore_copiable_state((**prev).clone());
+                    let types = card.types.clone();
+                    let subtypes = card.subtypes.clone();
+                    let name = card.name.clone();
+                    card.definition.cache.update_from_types(&types);
+                    card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+                }
+            }
+            GameAction::PushExtraTurn { player } => {
+                // Reverse the AddTurn push: pop the matching entry off the BACK
+                // of the queue (mtg-559/mtg-610). The forward push always
+                // appends to the back, so the most-recently-pushed entry is the
+                // one to remove. Tolerate an unexpectedly-empty queue (the
+                // boundary pop_front may have already drained it).
+                if game.extra_turns.back() == Some(player) {
+                    game.extra_turns.pop_back();
                 }
             }
         }

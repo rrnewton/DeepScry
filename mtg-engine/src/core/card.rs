@@ -729,7 +729,13 @@ pub struct Card {
     /// the bit history-dependent across rewinds (mtg-610: Rockface Village haste
     /// at turn-12-start). PERMANENT keyword grants (Soulstone Sanctuary
     /// `Duration$ Permanent` Animate) deliberately do NOT route through here.
-    #[serde(default, skip_serializing_if = "KeywordSet::is_empty")]
+    ///
+    /// NOTE: `#[serde(default)]` only (NOT `skip_serializing_if`): the snapshot/
+    /// resume + undo-log paths serialize `Card` with bincode, a non-self-
+    /// describing format that mishandles conditionally-skipped fields (a skipped
+    /// field corrupts the byte stream on deserialize). `default` covers loading
+    /// older JSON snapshots that predate the field.
+    #[serde(default)]
     pub temp_keywords_until_eot: KeywordSet,
 
     /// Damage marked on this permanent (cleared at end of turn per CR 704.5g)
@@ -906,6 +912,31 @@ pub struct Card {
     /// Original card definition this was instantiated from
     /// Stored as owned copy for name-based card evaluation (library search, etc.)
     /// Inline storage avoids pointer indirection when accessing definition fields
+    pub definition: CardDefinition,
+}
+
+/// Snapshot of the copiable characteristics a Clone overwrites (CR 707.2),
+/// captured by [`Card::capture_copiable_state`] before
+/// [`crate::game::GameState::apply_clone`] mutates the card and restored by
+/// [`Card::restore_copiable_state`] when the undo log reverses the clone
+/// (mtg-559/mtg-610). Boxed at the `GameAction::CloneCard` use-site to keep the
+/// `GameAction` enum small.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardCopiableState {
+    pub name: CardName,
+    pub mana_cost: ManaCost,
+    pub types: SmallVec<[CardType; 2]>,
+    pub subtypes: SmallVec<[Subtype; 3]>,
+    pub colors: SmallVec<[Color; 2]>,
+    pub base_power: Option<i8>,
+    pub base_toughness: Option<i8>,
+    pub text: String,
+    pub is_legendary: bool,
+    pub keywords: KeywordSet,
+    pub activated_abilities: Vec<crate::core::ActivatedAbility>,
+    pub static_abilities: Vec<crate::core::StaticAbility>,
+    pub triggers: Vec<Trigger>,
+    pub svars: std::collections::HashMap<String, String>,
     pub definition: CardDefinition,
 }
 
@@ -1457,6 +1488,55 @@ impl Card {
             self.keywords.remove(keyword);
         }
         self.temp_keywords_until_eot.clear();
+    }
+
+    /// Snapshot exactly the copiable characteristics that
+    /// [`crate::game::GameState::apply_clone`] overwrites (CR 707.2), so a Clone
+    /// (Copy Artifact, Clone, Vesuvan Doppelganger, ...) can be reverted exactly
+    /// by the undo log. Without this the in-resolution clone-copy transformation
+    /// was a one-way mutation: a rewind+replay left the card stuck as the copied
+    /// permanent (mtg-559/mtg-610: robots42 Copy Artifact -> Mishra's Factory
+    /// drift across rewinds). Captured BEFORE the overwrite; restored by
+    /// [`Card::restore_copiable_state`].
+    pub fn capture_copiable_state(&self) -> CardCopiableState {
+        CardCopiableState {
+            name: self.name.clone(),
+            mana_cost: self.mana_cost,
+            types: self.types.clone(),
+            subtypes: self.subtypes.clone(),
+            colors: self.colors.clone(),
+            base_power: self.base_power,
+            base_toughness: self.base_toughness,
+            text: self.text.clone(),
+            is_legendary: self.is_legendary,
+            keywords: self.keywords.clone(),
+            activated_abilities: self.activated_abilities.clone(),
+            static_abilities: self.static_abilities.clone(),
+            triggers: self.triggers.clone(),
+            svars: self.svars.clone(),
+            definition: self.definition.clone(),
+        }
+    }
+
+    /// Restore the copiable characteristics captured by
+    /// [`Card::capture_copiable_state`], reversing an [`crate::game::GameState::apply_clone`]
+    /// exactly (mtg-559/mtg-610).
+    pub fn restore_copiable_state(&mut self, state: CardCopiableState) {
+        self.name = state.name;
+        self.mana_cost = state.mana_cost;
+        self.types = state.types;
+        self.subtypes = state.subtypes;
+        self.colors = state.colors;
+        self.base_power = state.base_power;
+        self.base_toughness = state.base_toughness;
+        self.text = state.text;
+        self.is_legendary = state.is_legendary;
+        self.keywords = state.keywords;
+        self.activated_abilities = state.activated_abilities;
+        self.static_abilities = state.static_abilities;
+        self.triggers = state.triggers;
+        self.svars = state.svars;
+        self.definition = state.definition;
     }
 
     /// Revert an until-end-of-turn `AB$ Animate` typeline change (Mishra's

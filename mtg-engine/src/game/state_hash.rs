@@ -29,6 +29,13 @@ use std::hash::{Hash, Hasher};
 ///   otherwise rewinding the same turn twice (e.g. WASM rewind/replay loop) would
 ///   produce a different turn-start hash on every rewind, falsely tripping the
 ///   replay verifier (see `wasm/replay_verifier.rs`).
+///
+/// NOTE: `rng` is deliberately NOT excluded here — the snapshot/resume fidelity
+/// check (`compute_state_hash`) requires the RNG to round-trip exactly across a
+/// serialize→resume (a resumed game MUST reproduce the same RNG). The WASM
+/// rewind verifier, which CAN see a legitimate RNG `word_pos` drift under
+/// memoizing rewind+replay, uses the dedicated [`compute_rewind_verifier_hash`]
+/// that additionally drops `rng` (mtg-559/mtg-610).
 const EXCLUDED_FIELDS: &[&str] = &[
     "choice_id",
     "undo_log",
@@ -39,6 +46,38 @@ const EXCLUDED_FIELDS: &[&str] = &[
     "numeric_choices",
     "step_header_printed",
     "mana_state_version",
+];
+
+/// Fields to exclude for the WASM REWIND/REPLAY VERIFIER turn-start hash.
+///
+/// Identical to [`EXCLUDED_FIELDS`] plus `rng`. The rewind verifier compares the
+/// turn-start hash across successive rewinds of the SAME turn to catch a real
+/// undo-log incompleteness (a field that fails to round-trip). On the WASM
+/// shadow the RNG `word_pos` at a turn boundary is NOT a deterministic function
+/// of game position: the memoizing `ReplayController` echoes cached past choices
+/// WITHOUT consuming RNG and delegates only the live frontier choice to the
+/// inner `RandomController` (which advances RNG). So the number of RNG draws
+/// between turn-start and a rewind point shifts as more choices become cached on
+/// successive rewinds, drifting `rng.word_pos` even though no gameplay state
+/// differs. The RNG is server-authoritative for cross-machine sync
+/// (`EXCLUDED_FIELDS_NETWORK` already drops it as "Server-only"), so the local
+/// rewind verifier must not treat its position as a state-equivalence field
+/// either (mtg-559/mtg-610: robots42 turn-15/18 `rng` turn-start drift was a
+/// verifier-only artifact, NOT a real cross-machine desync — `compute_view_hash`
+/// stayed green throughout). This is the SAME class as the reveal-determinism
+/// tolerance already in the verifier: stricter-than-cross-machine fields that
+/// vary by rewind path, not by game state.
+const EXCLUDED_FIELDS_REWIND_VERIFIER: &[&str] = &[
+    "choice_id",
+    "undo_log",
+    "logger",
+    "show_choice_menu",
+    "output_mode",
+    "output_format",
+    "numeric_choices",
+    "step_header_printed",
+    "mana_state_version",
+    "rng",
 ];
 
 /// Fields to exclude for UNDO TESTING (stricter - only metadata)
@@ -132,6 +171,41 @@ pub fn compute_state_hash(game: &GameState) -> u64 {
     hasher.finish()
 }
 
+/// Compute the WASM rewind/replay verifier's turn-start hash.
+///
+/// Identical to [`compute_state_hash`] but additionally excludes the server-only
+/// `rng` field (see [`EXCLUDED_FIELDS_REWIND_VERIFIER`]). Used by
+/// `wasm/replay_verifier.rs` to compare a turn's start-of-turn state across
+/// successive rewinds without falsely tripping on a legitimate RNG `word_pos`
+/// drift that the memoizing rewind+replay produces (mtg-559/mtg-610).
+#[allow(clippy::collection_is_never_read)] // False positive: canonical is used via .hash()
+pub fn compute_rewind_verifier_hash(game: &GameState) -> u64 {
+    let json_value = match serde_json::to_value(game) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "Warning: Failed to serialize game state for rewind-verifier hashing: {}",
+                e
+            );
+            return 0;
+        }
+    };
+
+    let cleaned = strip_metadata_with(json_value, EXCLUDED_FIELDS_REWIND_VERIFIER);
+
+    let canonical = match serde_json::to_string(&cleaned) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Warning: Failed to canonicalize rewind-verifier state: {}", e);
+            return 0;
+        }
+    };
+
+    let mut hasher = DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Compute a deterministic hash of game state FOR UNDO TESTING
 ///
 /// This is stricter than compute_state_hash() - it only excludes true metadata,
@@ -167,16 +241,24 @@ pub fn compute_undo_test_hash(game: &GameState) -> u64 {
     hasher.finish()
 }
 
-/// Recursively strip metadata fields from JSON value (for snapshot/replay)
+/// Recursively strip metadata fields from a JSON value (snapshot/replay hash).
+fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
+    strip_metadata_with(value, EXCLUDED_FIELDS)
+}
+
+/// Recursively strip `excluded` fields (plus the always-stripped turn-scoped
+/// counters) from a JSON value. Shared by [`strip_metadata`] (snapshot/replay)
+/// and [`compute_rewind_verifier_hash`] (rewind verifier, which also drops
+/// `rng`) so the two paths stay byte-identical apart from the field list (DRY).
 ///
 /// Note: Wildcard is intentional - serde_json::Value primitives (Null/Bool/Number/String)
 /// pass through unchanged; only Object/Array are recursively processed.
 #[allow(clippy::wildcard_enum_match_arm)]
-fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
+fn strip_metadata_with(value: serde_json::Value, excluded: &[&str]) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
             // Remove excluded fields
-            for field in EXCLUDED_FIELDS {
+            for field in excluded {
                 map.remove(*field);
             }
 
@@ -187,12 +269,14 @@ fn strip_metadata(value: serde_json::Value) -> serde_json::Value {
 
             // Recursively clean nested objects
             for (_, v) in map.iter_mut() {
-                *v = strip_metadata(v.clone());
+                *v = strip_metadata_with(v.clone(), excluded);
             }
 
             serde_json::Value::Object(map)
         }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(strip_metadata).collect()),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(|v| strip_metadata_with(v, excluded)).collect())
+        }
         other => other,
     }
 }
