@@ -569,6 +569,21 @@ async function testLauncherParityAndNav() {
             const checked = await local.isChecked();
             if (checked) pass('parity-gate-unlocked', 'Local source shown + checked with ?allow_local_img_load=true');
             else fail('parity-gate-unlocked', '#img-src-local present but not checked when unlocked');
+            // (mtg-682 fix D) The user-facing label must read "Load from DeepScry
+            // server" (NOT the old misleading "Local (fastest, offline)"); the
+            // internal id #img-src-local / img_src=local token stays unchanged.
+            const labelText = await page.$eval('#img-src-local-label', (l) => l.textContent.trim()).catch(() => '');
+            if (/Load from DeepScry server/.test(labelText)) {
+                pass('parity-img-src-label', 'image-source label reads "Load from DeepScry server"');
+            } else {
+                fail('parity-img-src-label',
+                    `image-source label expected "Load from DeepScry server" but saw "${labelText}"`);
+            }
+            if (/fastest, offline/.test(labelText)) {
+                fail('parity-img-src-label-old', 'old misleading "fastest, offline" label still present');
+            } else {
+                pass('parity-img-src-label-old', 'old "fastest, offline" label removed');
+            }
         } else {
             fail('parity-gate-unlocked', '#img-src-local must be PRESENT with allow_local_img_load=true');
         }
@@ -1079,6 +1094,62 @@ async function testLauncherWaitingRoomAutoStart() {
     }
     await shot(creatorPage, '09_wr_creator_opponent_joined.png');
 
+    // --- (2b) Creator button label flips to "Start Game!" once P2 joins (mtg-682 fix C). ---
+    // Before the joiner is present the creator button reads "Ready — start on P2
+    // join"; after WaitingRoomUpdate carries the joiner it must read "Start Game!".
+    if (creatorSawJoin) {
+        const flipped = await creatorPage.waitForFunction(
+            () => document.getElementById('btn-play').textContent.trim() === 'Start Game!',
+            null, { timeout: 5000 },
+        ).then(() => true).catch(() => false);
+        const label = await creatorPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
+        if (flipped) {
+            pass('wr-creator-button-start-on-join', 'creator button flipped to "Start Game!" after joiner joined');
+        } else {
+            fail('wr-creator-button-start-on-join',
+                `creator button did NOT flip to "Start Game!" after join (saw "${label}")`);
+        }
+        // Joiner-side label stays "Ready" (mirrored joiner semantics).
+        const joinerLabel = await joinerPage.$eval('#btn-play', (b) => b.textContent.trim()).catch(() => '');
+        if (joinerLabel === 'Ready') {
+            pass('wr-joiner-button-ready', 'joiner button reads "Ready"');
+        } else {
+            fail('wr-joiner-button-ready', `joiner button expected "Ready" but saw "${joinerLabel}"`);
+        }
+    }
+
+    // --- (2c) Waiting socket emits a keepalive ping that the server accepts (mtg-682 fix A). ---
+    // A true ~100s idle is impractical to drive in an e2e, so we drive ONE real
+    // ping over the live waiting socket via the same code path the periodic timer
+    // uses (window.__launcherWaiting.sendKeepalivePing) and assert (1) the
+    // exposed pings-sent counter increments and (2) the socket stays connected
+    // afterward — proving the server accepted the ping (it answers Pong in the
+    // rendezvous waiting-loop) rather than treating it as an idle drop.
+    {
+        const result = await creatorPage.evaluate(() => {
+            const w = window.__launcherWaiting;
+            const before = w.pingsSent;
+            const sent = typeof w.sendKeepalivePing === 'function' ? w.sendKeepalivePing() : false;
+            return { before, after: w.pingsSent, sent };
+        });
+        if (result.sent && result.after === result.before + 1) {
+            pass('wr-keepalive-ping-sent',
+                `keepalive ping emitted on the waiting socket (pingsSent ${result.before} → ${result.after})`);
+        } else {
+            fail('wr-keepalive-ping-sent',
+                `keepalive ping not emitted (sent=${result.sent}, before=${result.before}, after=${result.after})`);
+        }
+        // The socket must remain connected after the ping (server accepted it).
+        await creatorPage.waitForTimeout(500);
+        const stillConnected = await creatorPage.evaluate(
+            () => !!(window.__launcherWaiting && window.__launcherWaiting.connected));
+        if (stillConnected) {
+            pass('wr-keepalive-survives', 'waiting socket still connected after keepalive ping');
+        } else {
+            fail('wr-keepalive-survives', 'waiting socket dropped after a keepalive ping');
+        }
+    }
+
     // --- (3) Both Ready → both auto-navigate to the game page. ---
     // Wait for both Ready buttons enabled (valid deck on record).
     await creatorPage.waitForFunction(() => !document.getElementById('btn-play').disabled,
@@ -1167,6 +1238,39 @@ async function testLauncherWaitingRoomAutoStart() {
         } else {
             fail('wr-ready-resets-on-deck-change',
                 `ready reset failed (wasReady=${wasReady}, changed=${changed}, stillReady=${stillReady})`);
+        }
+        await ctx.close();
+    }
+
+    // --- (5) Ready RESETS on a Debug toggle after ready (mtg-682 fix B). ---
+    // Debug is a pre-game config forwarded to the game page at auto-start, so
+    // toggling it after readying must clear ready — "ready" must always mean the
+    // exact config that will launch.
+    {
+        const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+        const page = await ctx.newPage();
+        page.on('pageerror', (e) => fail('wr-debug-reset-page-error', e.message));
+        await page.goto(launcherUrl('create', 'wr-debug-host') + '&t=' + Date.now(), { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(
+            () => window.__launcherWaiting && window.__launcherWaiting.connected === true,
+            null, { timeout: 8000 },
+        ).catch(() => fail('wr-debug-reset-connected', 'debug-reset launcher did not connect'));
+        await page.waitForFunction(() => !document.getElementById('btn-play').disabled,
+            null, { timeout: 5000 }).catch(() => {});
+        // Ready up.
+        await page.click('#btn-play');
+        await page.waitForFunction(() => window.__launcherWaiting && window.__launcherWaiting.ready === true,
+            null, { timeout: 4000 }).catch(() => {});
+        const wasReady = await page.evaluate(() => !!(window.__launcherWaiting && window.__launcherWaiting.ready));
+        // Toggle the Debug checkbox.
+        await page.click('#debug-mode');
+        await page.waitForTimeout(300);
+        const stillReady = await page.evaluate(() => !!(window.__launcherWaiting && window.__launcherWaiting.ready));
+        if (wasReady && !stillReady) {
+            pass('wr-ready-resets-on-debug-toggle', 'toggling Debug after Ready cleared the ready flag');
+        } else {
+            fail('wr-ready-resets-on-debug-toggle',
+                `Debug toggle did not clear ready (wasReady=${wasReady}, stillReady=${stillReady})`);
         }
         await ctx.close();
     }

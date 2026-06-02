@@ -202,7 +202,7 @@
         <label class="field-label">Card Images</label>
         <label class="cb-row"><input type="checkbox" id="show-card-images" checked> Show card images</label>
         <div class="image-sources" id="image-source-options">
-            <label class="cb-row" id="img-src-local-label"><input type="checkbox" id="img-src-local"> Local (fastest, offline)</label>
+            <label class="cb-row" id="img-src-local-label"><input type="checkbox" id="img-src-local"> Load from DeepScry server</label>
             <label class="cb-row"><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
             <label class="cb-row"><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
             <div id="img-src-local-gate-note" class="gate-note" style="display:none;">
@@ -675,6 +675,19 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     if (imgSrcLocalCb) imgSrcLocalCb.addEventListener('change', saveSettings);
     showImagesCb.addEventListener('change', refreshImageSourceUI);
 
+    // mtg-682 fix B: EVERY pre-game config change must reset "ready" so "ready"
+    // always means the exact config that will launch. The launcher already
+    // resets on deck/collection/renderer change (see the waiting-room handlers
+    // below); these display/diagnostic prefs (Debug, Show-images, image-source
+    // checkboxes) are forwarded to the game page at auto-start too, so a toggle
+    // after readying would otherwise launch a different config than the user
+    // confirmed. autoUnready() is a no-op (and broadcasts nothing) when we are
+    // not currently ready, so the handler is safe to attach unconditionally; it
+    // is defined later in this IIFE but hoisted as a function declaration.
+    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, imgSrcLocalCb, debugCb]) {
+        if (el) el.addEventListener('change', () => autoUnready('settings changed'));
+    }
+
     // Keep the lobby/deck-editor links carrying the session's sticky params
     // (allow_local_img_load, debug, images, img_src, name, ws) so the unlock and
     // prefs survive a back-to-lobby hop.
@@ -740,7 +753,8 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     const playerName = qs.get('name') || '';
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;
 
-    // Make the host-side button intent explicit (spec: creator button label).
+    // Initial button intent (no joiner yet). refreshReadyButton() keeps it in
+    // sync afterward, flipping the creator label to "Start Game!" on P2 join.
     playBtn.textContent = isCreator ? 'Ready — start on P2 join' : 'Ready';
 
     const connEl = document.getElementById('wr-conn');
@@ -756,6 +770,12 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     let createdOrJoined = false;
     // True once WE (this client) have sent SetReady{true} and not yet un-readied.
     let weAreReady = false;
+    // True once a 2nd player is present in the waiting room (driven by
+    // WaitingRoomUpdate). Drives the creator's button label flip from
+    // "Ready — start on P2 join" → "Start Game!" so the host sees P2 has arrived
+    // (mtg-682 fix C). The game still auto-starts only when BOTH are ready
+    // (Variant-1 semantics) — this is a label/state cue, not a start trigger.
+    let joinerPresent = false;
     // Expose for Playwright assertions.
     window.__launcherWaiting = { connected: false, ready: false, lastUpdate: null, started: false };
 
@@ -794,9 +814,54 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
         return true;
     }
 
+    // ==================== WAITING-ROOM KEEPALIVE (mtg-682 fix A) ====================
+    // While the creator waits for an opponent (or both sides wait to ready up),
+    // the lobby socket is otherwise IDLE — it only reads SetDeck/SetReady and
+    // forwards WaitingRoomUpdate. Cloudflare (and many proxies) close an idle
+    // WebSocket after ~100s of silence, which surfaced in playtests as
+    // "Disconnected from server" after ~1 minute. The server's rendezvous
+    // waiting-loop already answers ClientMessage::Ping with Pong (server.rs) and
+    // does NOT time-prune a waiting game, so a periodic client→server ping keeps
+    // an idle "waiting for an opponent" session alive for hours — well past the
+    // ~100s proxy idle limit, up to the 4h game timeout. This is pre-game
+    // network only (no game RNG / no controller state) so determinism holds.
+    const KEEPALIVE_INTERVAL_MS = 25000; // < the ~100s proxy idle cutoff.
+    let keepaliveTimer = null;
+    // Count of pings sent on the current socket — exposed for e2e assertion
+    // (a true 100s idle is impractical to drive in a test, so we assert the
+    // ping is emitted, mtg-682 gate).
+    window.__launcherWaiting.pingsSent = 0;
+    // Send exactly one keepalive ping over the live waiting socket, incrementing
+    // the exposed counter on success. This is the SAME path the periodic timer
+    // uses; exposed as a hook so the e2e can drive one real ping (a true ~100s
+    // idle is impractical to e2e) and assert it is emitted (mtg-682 gate).
+    function sendKeepalivePing() {
+        if (wsSend({ type: 'ping', timestamp_ms: Date.now() })) {
+            window.__launcherWaiting.pingsSent += 1;
+            return true;
+        }
+        return false;
+    }
+    window.__launcherWaiting.sendKeepalivePing = sendKeepalivePing;
+    function startKeepalive() {
+        stopKeepalive();
+        keepaliveTimer = setInterval(sendKeepalivePing, KEEPALIVE_INTERVAL_MS);
+    }
+    function stopKeepalive() {
+        if (keepaliveTimer !== null) {
+            clearInterval(keepaliveTimer);
+            keepaliveTimer = null;
+        }
+    }
+
     /** Render a WaitingRoomUpdate snapshot into the panel. */
     function renderWaitingRoom(creator, joiner) {
         window.__launcherWaiting.lastUpdate = { creator, joiner };
+        // Track opponent presence so the creator's button label can flip to
+        // "Start Game!" once P2 has arrived (mtg-682 fix C).
+        const wasPresent = joinerPresent;
+        joinerPresent = !!joiner;
+        if (wasPresent !== joinerPresent) refreshReadyButton();
         if (creator) {
             creatorNameEl.textContent = creator.name || 'Host';
             creatorNameEl.classList.remove('empty');
@@ -933,6 +998,9 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
         lobbyWs.onopen = () => {
             window.__launcherWaiting.connected = true;
             setConn('Connected — registering…', 'ok');
+            // Start the idle-keepalive so a long wait for an opponent survives
+            // Cloudflare's ~100s idle-WS timeout (mtg-682 fix A).
+            startKeepalive();
             // Register a name (best-effort); CreateGame/JoinGame fire on the
             // register result. A blank name skips registration.
             if (playerName) {
@@ -952,6 +1020,7 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
         };
         lobbyWs.onclose = () => {
             window.__launcherWaiting.connected = false;
+            stopKeepalive();
             // If the game already started we navigated away; otherwise show the
             // disconnect (the slot is freed server-side on creator/joiner drop).
             if (!window.__launcherWaiting.started) {
@@ -961,13 +1030,25 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     }
 
     // ==================== READY HANDSHAKE ====================
+    /** The text for the ready/start button given the current state. The creator's
+     *  label reacts to the joiner's presence (mtg-682 fix C): before a 2nd player
+     *  is present it reads "Ready — start on P2 join"; once the joiner has joined
+     *  it reads "Start Game!" so the host sees P2 has arrived. The game still
+     *  auto-starts only when BOTH players are ready (Variant-1 semantics) — this
+     *  is purely a label cue, not a start trigger. The joiner side stays "Ready". */
+    function readyButtonLabel() {
+        if (weAreReady) return 'Cancel ready';
+        if (!isCreator) return 'Ready';
+        return joinerPresent ? 'Start Game!' : 'Ready — start on P2 join';
+    }
+
     function refreshReadyButton() {
         const haveDeck = selectedDeckSize() >= 40;
         // Can only ready with a valid deck; the button toggles ready/un-ready.
         playBtn.disabled = !haveDeck && !weAreReady;
-        playBtn.textContent = weAreReady
-            ? 'Cancel ready'
-            : (isCreator ? 'Ready — start on P2 join' : 'Ready');
+        playBtn.textContent = readyButtonLabel();
+        // Expose for Playwright assertions (mtg-682).
+        window.__launcherWaiting.buttonLabel = playBtn.textContent;
     }
 
     /** Push the current deck to the server (SetDeck) so the opponent sees it and
