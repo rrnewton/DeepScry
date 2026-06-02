@@ -423,8 +423,16 @@
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/** localStorage key for all custom decks: { [name: string]: string (dck) } */
-const CUSTOM_DECKS_KEY = 'mtg_custom_decks';
+/**
+ * localStorage key for all custom decks. SHARED with launcher.html, the game
+ * pages (tui_game.html / native_game.html), and the network e2e tests, which
+ * all read this exact key. Stored shape (mtg-682): a map
+ *   { [name: string]: { main_deck: [[card, count], ...], sideboard: [...] } }
+ * — the same `{main_deck, sideboard}` object the launcher/game pages consume
+ * (NOT a raw .dck string, which the old `mtg_custom_decks` key used and which
+ * nothing else could read).
+ */
+const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 
 /** localStorage key for lobby preselect: written when user clicks "Use in Lobby" */
 const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
@@ -701,6 +709,9 @@ function removeCard(name, zone) {
 function clearDeck() {
     deck.main.clear();
     deck.sideboard.clear();
+    // A cleared board is a brand-new deck, not an edit of the premade we may
+    // have arrived from — drop the edit context so Save uses the typed name.
+    editContext = { source: null, originalName: null };
     renderDeck();
     renderCatalog();
 }
@@ -998,28 +1009,76 @@ function writeCustomDecks(obj) {
     localStorage.setItem(CUSTOM_DECKS_KEY, JSON.stringify(obj));
 }
 
+/** Convert a Map<name,count> to the canonical [[name,count], ...] array form. */
+function mapToPairs(map) {
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([n, c]) => [n, c]);
+}
+
+/** Convert canonical [[name,count], ...] pairs back into a Map<name,count>. */
+function pairsToMap(pairs) {
+    const m = new Map();
+    if (Array.isArray(pairs)) {
+        for (const pair of pairs) {
+            if (!Array.isArray(pair) || pair.length < 2) continue;
+            const name = String(pair[0]);
+            const count = parseInt(pair[1], 10);
+            if (name && count > 0) m.set(name, (m.get(name) || 0) + count);
+        }
+    }
+    return m;
+}
+
+/**
+ * Editing context (mtg-682). When the launcher sends `?edit=<name>&source=...`:
+ *   - source='premade' → we loaded a built-in deck for editing; saving MUST
+ *     write a COPY under a NEW name (never mutate the premade). We force a
+ *     distinct default name and never let Save overwrite the premade's identity.
+ *   - source='custom'  → editing an existing custom deck in place is fine.
+ */
+let editContext = { source: null, originalName: null };
+
 function saveDeck() {
-    const name = deckNameInput.value.trim() || 'Unnamed Deck';
+    let name = deckNameInput.value.trim() || 'Unnamed Deck';
     if (deck.main.size === 0 && deck.sideboard.size === 0) {
         showStatus('Deck is empty — add some cards first.', 'err');
         return;
     }
-    const dck = emitDck(name, deck.main, deck.sideboard);
     const all = readCustomDecks();
-    all[name] = dck;
+    // Editing a PREMADE always saves a copy: if the name still matches the
+    // premade we came from, derive a fresh "(copy)" name so we never shadow or
+    // claim to be the built-in deck. (Custom decks save in place.)
+    if (editContext.source === 'premade' && name === editContext.originalName) {
+        name = uniqueCopyName(editContext.originalName + ' (copy)', all);
+        deckNameInput.value = name;
+        showStatus('Saved a COPY as "' + name + '" (premade left unchanged).', 'ok');
+    } else {
+        showStatus('Saved "' + name + '"!', 'ok');
+    }
+    all[name] = { main_deck: mapToPairs(deck.main), sideboard: mapToPairs(deck.sideboard) };
     writeCustomDecks(all);
-    showStatus('Saved "' + name + '"!', 'ok');
+    // After the first save of a premade copy, subsequent saves are an in-place
+    // custom-deck edit on that copy.
+    editContext = { source: 'custom', originalName: name };
     renderSavedList();
+}
+
+/** Find a custom-deck name not already taken (appends " 2", " 3", … if needed). */
+function uniqueCopyName(base, all) {
+    if (!all[base]) return base;
+    for (let i = 2; ; i++) {
+        const candidate = base + ' ' + i;
+        if (!all[candidate]) return candidate;
+    }
 }
 
 function loadDeckFromStorage(name) {
     const all = readCustomDecks();
-    const dckText = all[name];
-    if (!dckText) return;
-    const parsed = parseDck(dckText);
-    deckNameInput.value = parsed.name || name;
-    deck.main = parsed.main;
-    deck.sideboard = parsed.sideboard;
+    const entry = all[name];
+    if (!entry) return;
+    deckNameInput.value = name;
+    deck.main = pairsToMap(entry.main_deck);
+    deck.sideboard = pairsToMap(entry.sideboard);
+    editContext = { source: 'custom', originalName: name };
     renderDeck();
     renderCatalog();
     showStatus('Loaded "' + name + '"', 'ok');
@@ -1171,9 +1230,55 @@ importPanel.addEventListener('click', (e) => {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 
+/**
+ * Handle the launcher's "Edit Deck" handoff: ?edit=<name>&source=<custom|premade>.
+ *   - custom  → load the named custom deck from localStorage (edit in place).
+ *   - premade → fetch the built-in deck's card list from data/sets/index.json's
+ *     `deck_contents` (WASM-free) and load it; the editContext forces a
+ *     save-as-COPY so the premade is never mutated.
+ */
+async function loadEditTarget() {
+    const qs = new URLSearchParams(window.location.search);
+    const name = qs.get('edit');
+    if (!name) return;
+    const source = qs.get('source') === 'premade' ? 'premade' : 'custom';
+
+    if (source === 'custom') {
+        const all = readCustomDecks();
+        if (all[name]) {
+            loadDeckFromStorage(name);
+        } else {
+            showStatus('Custom deck "' + name + '" not found — starting blank.', 'err');
+        }
+        return;
+    }
+
+    // Premade: pull the card list from index.json deck_contents (no WASM needed).
+    try {
+        const r = await fetch('./data/sets/index.json', { cache: 'no-store' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const idx = await r.json();
+        const entry = idx.deck_contents && idx.deck_contents[name];
+        if (!entry) {
+            showStatus('Premade "' + name + '" not found in deck index — starting blank.', 'err');
+            return;
+        }
+        deck.main = pairsToMap(entry.main_deck);
+        deck.sideboard = pairsToMap(entry.sideboard);
+        deckNameInput.value = name;
+        editContext = { source: 'premade', originalName: name };
+        renderDeck();
+        renderCatalog();
+        showStatus('Editing premade "' + name + '" — Save will store a COPY (premade unchanged).', 'ok');
+    } catch (err) {
+        showStatus('Could not load premade "' + name + '": ' + err.message, 'err');
+    }
+}
+
 renderDeck();
 renderSavedList();
 loadCatalog();
+loadEditTarget();
 </script>
 </body>
 </html>

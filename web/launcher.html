@@ -78,6 +78,7 @@
             text-decoration: none; display: inline-flex; align-items: center;
         }
         .deck-editor-btn:hover { background: #16406b; }
+        .deck-editor-btn.disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
         .renderer-toggle { display: flex; gap: 10px; }
         .renderer-opt {
             flex: 1; cursor: pointer; padding: 12px 14px; border-radius: 6px;
@@ -132,7 +133,15 @@
         <label class="field-label" for="deck-select">Deck</label>
         <div class="deck-row">
             <select id="deck-select"></select>
-            <a id="btn-deck-editor" class="deck-editor-btn" href="deck_editor.html" title="Open the Deck Editor">&#9998; Deck Editor</a>
+            <!--
+              Split Deck Editor (mtg-682): "New Deck" opens the editor blank;
+              "Edit Deck" opens the CURRENTLY SELECTED deck for editing. Editing a
+              premade saves a COPY as a custom deck (the editor never mutates a
+              premade — see deck_editor.html ?edit=). #btn-deck-editor is kept as
+              an alias of "New Deck" so existing references/tests still resolve.
+            -->
+            <a id="btn-deck-editor" class="deck-editor-btn" href="deck_editor.html" title="Open the Deck Editor with a blank deck">&#10010; New Deck</a>
+            <a id="btn-edit-deck" class="deck-editor-btn" href="deck_editor.html" title="Edit the selected deck (saves a copy)">&#9998; Edit Deck</a>
         </div>
     </div>
 
@@ -318,8 +327,33 @@ import { buildRedirectUrl } from './lobby_launcher.js';
         refreshPlayEnabled();
     }
 
+    const editDeckBtn = document.getElementById('btn-edit-deck');
+
     function refreshPlayEnabled() {
         playBtn.disabled = !deckSelect.value;
+        refreshEditDeckLink();
+    }
+
+    /**
+     * Point "Edit Deck" at deck_editor.html?edit=<name>&source=<custom|premade>.
+     * The editor loads that deck and, for a premade source, forces a save-as-copy
+     * so the premade is never mutated. Disabled (no selectable deck) → blank New.
+     */
+    function refreshEditDeckLink() {
+        const name = deckSelect.value;
+        if (!name) {
+            editDeckBtn.classList.add('disabled');
+            editDeckBtn.removeAttribute('href');
+            editDeckBtn.title = 'Select a deck to edit';
+            return;
+        }
+        const source = collectionSelect.value === 'custom' ? 'custom' : 'premade';
+        const qp = new URLSearchParams({ edit: name, source });
+        editDeckBtn.href = 'deck_editor.html?' + qp.toString();
+        editDeckBtn.classList.remove('disabled');
+        editDeckBtn.title = source === 'premade'
+            ? `Edit "${name}" (saves a COPY — premade is never changed)`
+            : `Edit custom deck "${name}"`;
     }
 
     collectionSelect.addEventListener('change', updateDeckDropdown);

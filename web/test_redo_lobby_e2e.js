@@ -1,15 +1,20 @@
-// test_redo_lobby_e2e.js — lobby + launcher acceptance gate (mtg-35z3s lobby redo).
+// test_redo_lobby_e2e.js — lobby + launcher acceptance gate (mtg-35z3s lobby
+// redo; mtg-682 lobby-flow-fixes).
 //
 // Asserts the contract for pages 1 (lobby) and 2 (launcher):
 //   - Renderer selector (#lobby-ui-*) is ABSENT from the lobby.
-//   - Deck picker (#wr-deck-select) is ABSENT from the waiting room.
-//   - "Create" → waiting room → "Go to Launcher" navigates to
-//     launcher.html?game=<name>&role=create&name=<user>&ws=<wsurl>
-//     (no deck, no renderer, no lobby_create/lobby_join in URL).
+//   - There is NO waiting-room pane (#pane-waiting) and NO sharable-link junk —
+//     "Create" goes STRAIGHT to launcher.html (mtg-682 item 1).
+//   - "Create" → launcher.html?game=<name>&role=create&name=<user>&ws=<wsurl>
+//     directly (no deck, no renderer, no lobby_create/lobby_join in URL).
+//   - A created/visible game appears in a SECOND browser's Open Games list even
+//     after the creator left the LOBBY page for the game page (mtg-682 item 2).
+//   - Pressing Join navigates ONLY the joiner to the launcher; the creator's
+//     own tab is never yanked (mtg-682 item 3).
 //   - The launcher page loads (200, displays received params).
 //   - The launcher exposes the per-player pre-game controls: a deck-COLLECTION
-//     picker, a renderer toggle with Native SELECTED BY DEFAULT, and a
-//     Deck-Editor launch button (linking to deck_editor.html).
+//     picker, a renderer toggle with Native SELECTED BY DEFAULT, and BOTH a
+//     "New Deck" and an "Edit Deck" launch button (linking to deck_editor.html).
 //   - Picking a deck + leaving renderer on Native → Play lands on
 //     native_game.html with deck=, ui=native, game=, name= in the URL.
 //   - Choosing Web TUI → Play lands on tui_game.html with ui=tui.
@@ -26,7 +31,7 @@
 // (same pattern as test_landing_page_ux.js).
 //
 // Run: cd web && node test_redo_lobby_e2e.js
-// NOT in make validate yet (gated on full redo completion per mtg-35z3s).
+// Wired into `make validate` (validate-network-e2e-step) as of mtg-682.
 
 'use strict';
 
@@ -148,7 +153,7 @@ async function testLobbyToLauncherHandoff() {
         await ctx.close();
     }
 
-    // ---- (b) Create → waiting room → launcher.html?game=...&role=create&name=... ----
+    // ---- (b) Create → STRAIGHT to launcher.html (no waiting room) ----
     {
         const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
         const page = await ctx.newPage();
@@ -165,6 +170,20 @@ async function testLobbyToLauncherHandoff() {
         await page.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 })
             .catch(() => fail('lobby-appear', 'lobby pane never appeared'));
 
+        // mtg-682 item 1: the waiting-room pane must be GONE entirely.
+        const waitingPane = await page.$('#pane-waiting');
+        if (waitingPane) {
+            fail('no-waiting-room', '#pane-waiting must NOT exist (Create goes straight to launcher)');
+        } else {
+            pass('no-waiting-room', '#pane-waiting absent from lobby');
+        }
+        // No sharable-link junk anywhere.
+        const inviteBlock = await page.$('#waiting-invite-block, .invite-block');
+        if (inviteBlock) {
+            fail('no-sharable-link', 'a sharable-invite block must NOT exist on the lobby');
+        } else {
+            pass('no-sharable-link', 'no sharable-invite block present');
+        }
         // Deck picker must be absent from the create form.
         const deckPickerInForm = await page.$('#create-deck, select[name="deck"]');
         if (deckPickerInForm) {
@@ -173,29 +192,17 @@ async function testLobbyToLauncherHandoff() {
             pass('deck-absent-form', 'no deck picker in Create form');
         }
 
-        // Create a game.
+        // Create a game → must navigate DIRECTLY to launcher.html (no pane).
         await page.fill('#create-game', 'step1-test-game');
         await page.fill('#create-pass', 'abc123');
         await page.click('#btn-create');
-        await page.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 5000 })
-            .catch(() => fail('waiting-room', 'waiting room never appeared after Create'));
-
-        // Deck picker must be absent from the waiting room.
-        const deckPickerInWr = await page.$('#wr-deck-select');
-        if (deckPickerInWr) {
-            fail('deck-absent-wr', '#wr-deck-select must not be in the waiting room (deck moves to launcher.html)');
-        } else {
-            pass('deck-absent-wr', '#wr-deck-select absent from waiting room');
-        }
-
-        await shot(page, '02_waiting_room_no_deck.png');
-
-        // Click "Go to Launcher".
-        await page.click('#btn-launch-game');
         await page.waitForFunction(
             () => /launcher\.html/.test(window.location.href),
             null, { timeout: 5000 },
-        ).catch(() => fail('launcher-redirect', '"Go to Launcher" did not navigate to launcher.html'));
+        ).catch(() => fail('launcher-redirect', 'Create did not navigate STRAIGHT to launcher.html'));
+        pass('create-straight-to-launcher', 'Create navigated directly to launcher.html (no waiting room)');
+
+        await shot(page, '02_create_straight_to_launcher.png');
 
         const url = page.url();
         console.log('  launcher URL:', url);
@@ -368,17 +375,35 @@ async function testLauncherControlsAndPlay() {
                 `Native must be default; native=${nativeChecked} tui=${tuiChecked}`);
         }
 
-        // Deck-Editor launch button/link present → deck_editor.html.
+        // Deck-Editor launch button/link present → deck_editor.html ("New Deck").
         const deckEditor = await page.$('#btn-deck-editor');
         if (deckEditor) {
             const href = await deckEditor.getAttribute('href');
             if (href && href.includes('deck_editor.html')) {
-                pass('launcher-deck-editor', 'Deck Editor button links to deck_editor.html');
+                pass('launcher-deck-editor', '"New Deck" button links to deck_editor.html');
             } else {
-                fail('launcher-deck-editor', 'Deck Editor button href wrong: ' + href);
+                fail('launcher-deck-editor', '"New Deck" button href wrong: ' + href);
             }
         } else {
-            fail('launcher-deck-editor', '#btn-deck-editor missing from launcher');
+            fail('launcher-deck-editor', '#btn-deck-editor (New Deck) missing from launcher');
+        }
+        // mtg-682 item 4: split Deck Editor → also an "Edit Deck" button.
+        const editDeck = await page.$('#btn-edit-deck');
+        if (editDeck) {
+            pass('launcher-edit-deck', '"Edit Deck" button present (split from Deck Editor)');
+        } else {
+            fail('launcher-edit-deck', '#btn-edit-deck (Edit Deck) missing from launcher');
+        }
+        // With a deck selected, Edit Deck must carry ?edit=<name>&source=...
+        await page.selectOption('#deck-collection', 'custom').catch(() => {});
+        await page.waitForTimeout(150);
+        await page.selectOption('#deck-select', 'E2E Test Deck').catch(() => {});
+        await page.waitForTimeout(100);
+        const editHref = editDeck ? await editDeck.getAttribute('href') : '';
+        if (editHref && /deck_editor\.html\?.*edit=/.test(editHref) && /source=/.test(editHref)) {
+            pass('launcher-edit-deck-href', 'Edit Deck href carries ?edit=&source= : ' + editHref);
+        } else {
+            fail('launcher-edit-deck-href', 'Edit Deck href missing edit/source params: ' + editHref);
         }
 
         await shot(page, '04_launcher_controls.png');
@@ -576,11 +601,10 @@ async function testGamePagesArePureRenderers() {
         await p.click('#btn-name');
         await p.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }).catch(() => {});
         await p.fill('#create-game', 'flow-game');
+        // mtg-682: Create goes STRAIGHT to launcher (no waiting room).
         await p.click('#btn-create');
-        await p.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 5000 }).catch(() => {});
-        await p.click('#btn-launch-game');
         await p.waitForFunction(() => /launcher\.html/.test(window.location.href), null, { timeout: 5000 })
-            .catch(() => fail('flow-launcher', 'did not reach launcher.html'));
+            .catch(() => fail('flow-launcher', 'Create did not navigate straight to launcher.html'));
         await p.waitForTimeout(400);
         // Pick the custom deck, leave renderer on Native (default).
         await p.selectOption('#deck-collection', 'custom').catch(() => {});
@@ -618,6 +642,116 @@ async function testGamePagesArePureRenderers() {
     await browser.close();
 }
 
+// ---------------------------------------------------------------------------
+// Test: mtg-682 items 2 + 3 — created game stays listed for a SECOND browser
+// after the creator left the lobby page, and Join redirects ONLY the joiner.
+//
+// Flow (matches the real architecture: the GAME PAGE hosts on its own durable
+// WS, not the lobby browse WS):
+//   - Creator browser registers on the lobby, clicks Create → navigates to the
+//     launcher (its lobby browse WS closes). It then proceeds to the native game
+//     page, which opens a fresh WS and sends CreateGame → the game is now LISTED
+//     and stays listed for the life of that game tab.
+//   - A SECOND browser registers on the lobby and refreshes the Open Games list;
+//     it MUST see the created game (item 2) even though the creator already left
+//     the lobby page.
+//   - The second browser clicks Join → ONLY it navigates to the launcher; the
+//     creator's game tab is unaffected (item 3).
+// ---------------------------------------------------------------------------
+async function testGameStaysListedAndJoinOnlyJoiner() {
+    console.log('\n=== Test: game stays listed + join only redirects joiner (mtg-682 items 2+3) ===');
+    const browser = await chromium.launch();
+    const rootUrl = BASE + '/?ws=' + encodeURIComponent(WS_OVERRIDE);
+    const GAME = 'stays-listed-game-' + Date.now();
+    // native_game.html boots BUILT-IN decks only (no custom-deck registration),
+    // so the host must create with a built-in deck name.
+    const builtinDeck = await firstBuiltinDeck(BASE);
+
+    // --- Creator: boot the native game page directly as the host. (The lobby's
+    // Create just forwards to the launcher → game page; we drive the game page
+    // directly with the same lobby_create contract the launcher emits, plus an
+    // AI controller so it auto-plays/holds without a human.)
+    const creatorCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const creatorPage = await creatorCtx.newPage();
+    creatorPage.on('pageerror', (e) => fail('creator-page-error', e.message));
+    const creatorBoot = BASE + '/native_game.html?' + new URLSearchParams({
+        ws: WS_OVERRIDE, name: 'host-alice', deck: builtinDeck,
+        controller: 'random', mode: 'network', ui: 'native', lobby_create: GAME,
+    }).toString();
+    await creatorPage.goto(creatorBoot, { waitUntil: 'domcontentloaded' });
+    const creatorUrlBefore = creatorPage.url();
+
+    // --- Second browser: register on the lobby and look for the game.
+    const joinerCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const joinerPage = await joinerCtx.newPage();
+    joinerPage.on('pageerror', (e) => fail('joiner-page-error', e.message));
+    await joinerPage.goto(rootUrl);
+    await joinerPage.waitForFunction(
+        () => document.getElementById('ws-state').textContent.trim() === 'Connected',
+        null, { timeout: 8000 },
+    ).catch(() => fail('joiner-ws', 'second browser never connected to lobby'));
+    await joinerPage.fill('#username', 'joiner-bob');
+    await joinerPage.click('#btn-name');
+    await joinerPage.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 5000 }).catch(() => {});
+
+    // Poll the Open Games list (lobby auto-refreshes every 5s; also click Refresh)
+    // until the created game shows up — proving it is listed independent of the
+    // creator's lobby tab (the creator never had one open here).
+    let seen = false;
+    for (let i = 0; i < 20 && !seen; i++) {
+        await joinerPage.click('#btn-refresh').catch(() => {});
+        await joinerPage.waitForTimeout(700);
+        seen = await joinerPage.evaluate((g) => {
+            const cells = [...document.querySelectorAll('#games-tbody td')];
+            return cells.some((td) => td.textContent.trim() === g);
+        }, GAME);
+    }
+    if (seen) {
+        pass('game-listed-second-browser', `second browser sees "${GAME}" in Open Games (item 2)`);
+    } else {
+        fail('game-listed-second-browser', `second browser never saw "${GAME}" in Open Games (item 2)`);
+    }
+    await shot(joinerPage, '08_second_browser_sees_game.png');
+
+    // --- Join: only the joiner should navigate to the launcher.
+    if (seen) {
+        await joinerPage.evaluate((g) => {
+            const rows = [...document.querySelectorAll('#games-tbody tr')];
+            for (const tr of rows) {
+                const nameTd = tr.querySelector('td');
+                if (nameTd && nameTd.textContent.trim() === g) {
+                    const btn = tr.querySelector('button');
+                    if (btn) btn.click();
+                    return;
+                }
+            }
+        }, GAME);
+        await joinerPage.waitForFunction(
+            () => /launcher\.html/.test(window.location.href),
+            null, { timeout: 5000 },
+        ).catch(() => fail('joiner-redirect', 'Join did not navigate the joiner to launcher.html'));
+        const joinerUrl = joinerPage.url();
+        if (/launcher\.html/.test(joinerUrl) && /role=join/.test(joinerUrl)) {
+            pass('join-redirects-joiner', 'joiner navigated to launcher.html?role=join (item 3)');
+        } else {
+            fail('join-redirects-joiner', 'joiner URL wrong after Join: ' + joinerUrl);
+        }
+        // The CREATOR's tab must NOT have been yanked anywhere by the join.
+        await creatorPage.waitForTimeout(500);
+        const creatorUrlAfter = creatorPage.url();
+        if (creatorUrlAfter === creatorUrlBefore) {
+            pass('join-no-creator-yank', 'creator tab unchanged by joiner Join (item 3)');
+        } else {
+            fail('join-no-creator-yank',
+                `creator tab navigated unexpectedly: "${creatorUrlBefore}" -> "${creatorUrlAfter}"`);
+        }
+    }
+
+    await creatorCtx.close();
+    await joinerCtx.close();
+    await browser.close();
+}
+
 (async () => {
     let spawned = null;
     if (!BASE) {
@@ -626,6 +760,7 @@ async function testGamePagesArePureRenderers() {
     try {
         await testLobbyToLauncherHandoff();
         await testLauncherControlsAndPlay();
+        await testGameStaysListedAndJoinOnlyJoiner();
         await testGamePagesArePureRenderers();
     } catch (e) {
         fail('harness', 'uncaught: ' + e.message);

@@ -86,95 +86,29 @@ async function scenarioFullFlow() {
     await alice.fill('#create-game', 'qa-test-game');
     await alice.fill('#create-pass', 'secret');
 
-    // Phase 2: btn-create is always enabled (deck picker moved to waiting room).
-    // We still wait briefly in case DOM settling takes a moment.
-    await alice.waitForFunction(
-        () => !document.getElementById('btn-create').disabled,
-        null,
-        { timeout: 5000 },
-    ).catch(() => record('blocking', 'deck picker', 'btn-create stayed disabled'));
-
-    // Step 1 (mtg-35z3s): clicking "Create & Wait" shows the waiting-room pane.
-    // After game creation is confirmed the user clicks "Go to Launcher" →
-    // navigates to launcher.html (NOT a game page — that comes in Step 2).
-    await alice.click('#btn-create');
-    await alice.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'create flow', 'waiting-room pane never appeared after alice clicked Create'),
-    );
-
-    // Verify waiting-room detail fields.
-    const waitingTitle = await alice.textContent('#waiting-title').catch(() => '');
-    if (!waitingTitle.includes('qa-test-game')) {
-        record('major', 'waiting room', 'waiting-title missing game name: ' + waitingTitle);
+    // mtg-682 item 1: there is NO waiting-room pane anymore — clicking Create
+    // navigates STRAIGHT to launcher.html (the game page, not the lobby, holds
+    // the durable host WS). Confirm the pane is gone and the redirect is direct.
+    const waitingPane = await alice.$('#pane-waiting');
+    if (waitingPane) {
+        record('major', 'no waiting room', '#pane-waiting must NOT exist (Create goes straight to launcher)');
     }
-    const inviteText = await alice.textContent('#wr-invite-text').catch(() => '');
-    if (!inviteText.includes('qa-test-game')) {
-        record('major', 'waiting room', 'invite text missing game name: ' + inviteText);
+    const inviteBlock = await alice.$('#waiting-invite-block, .invite-block');
+    if (inviteBlock) {
+        record('major', 'no sharable link', 'a sharable-invite block must NOT exist on the lobby');
     }
-    if (!inviteText.includes('secret')) {
-        record('major', 'waiting room', 'invite text missing passcode: ' + inviteText);
-    }
-    // The creator's name slot should show alice's username.
-    const creatorName = await alice.textContent('#wr-creator-name').catch(() => '');
-    if (!creatorName.includes('alice')) {
-        record('minor', 'waiting room', 'wr-creator-name missing alice: ' + creatorName);
-    }
-    // Renderer selector MUST NOT be present on the lobby (mtg-35z3s Step 1).
+    // Renderer selector MUST NOT be present on the lobby (belongs in launcher).
     const lobbyUiRadio = await alice.$('#lobby-ui-tui, #lobby-ui-native');
     if (lobbyUiRadio) {
         record('major', 'redo step1', 'renderer radio (#lobby-ui-*) must NOT appear on the lobby — belongs in launcher.html');
     }
 
-    await shot(alice, 'landing_03_waiting_room.png');
-
-    // --- Bob (while alice is STILL in the waiting room, lobby WS alive) ---
-    // Step 1: a game created on the lobby is visible to other players while the
-    // creator waits. We check visibility BEFORE alice navigates to the launcher,
-    // because sustaining the game across the lobby→launcher handoff (so it stays
-    // listed after the creator leaves the lobby) is explicitly Step 2+ work
-    // (the launcher reconnects/keeps the game alive). The lobby's Step 1 job is
-    // to create the game and reach the launcher with the right params.
-    const bobCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const bob = await bobCtx.newPage();
-    bob.on('pageerror', (e) => record('major', 'bob page error', e.message));
-
-    await bob.goto(global.__landingRoot || (BASE + '/'));
-    await bob.waitForLoadState('domcontentloaded');
-    try { await waitForLobbyConnected(bob); } catch (e) {
-        record('blocking', 'bob lobby connect', e.message);
-    }
-
-    await bob.fill('#username', 'bob');
-    await bob.click('#btn-name');
-    await bob.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 4000 });
-
-    // Refresh the list explicitly and then look for qa-test-game.
-    await bob.click('#btn-refresh');
-    // Wait for any games_list reply to flush in.
-    await bob.waitForTimeout(1500);
-
-    const gameRows = await bob.$$eval('#games-tbody tr', (rows) =>
-        rows.map((r) => r.textContent.trim()),
-    );
-    console.log('  bob sees rows:', gameRows);
-
-    const sawQaGame = gameRows.some((t) => t.includes('qa-test-game'));
-    if (!sawQaGame) {
-        record(
-            'blocking',
-            'lobby visibility',
-            'qa-test-game NOT visible in bob lobby while alice waits — create-game intent dropped on the lobby itself',
-        );
-    }
-    await shot(bob, 'landing_04_join_wrong_passcode.png');
-
-    // Now alice clicks "Go to Launcher" → redirect to launcher.html (Step 1 target).
-    await alice.click('#btn-launch-game');
+    await alice.click('#btn-create');
     await alice.waitForFunction(
         () => /launcher\.html/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'create flow', 'alice never redirected to launcher.html after "Go to Launcher"'));
+    ).catch(() => record('blocking', 'create flow', 'alice never navigated STRAIGHT to launcher.html on Create'));
     const aliceUrl = alice.url();
     console.log('  alice redirected to:', aliceUrl);
     if (!aliceUrl.includes('game=qa-test-game')) {
@@ -186,84 +120,57 @@ async function scenarioFullFlow() {
     if (!aliceUrl.includes('pass=secret')) {
         record('major', 'create flow', 'alice URL missing pass=secret param: ' + aliceUrl);
     }
-    await alice.waitForTimeout(800);
-    await shot(alice, 'landing_03_game_created.png');
+    await alice.waitForTimeout(400);
+    await shot(alice, 'landing_03_create_straight_to_launcher.png');
 
     // --- Test username uniqueness (server-side Register enforcement) ---
-    // Phase 2: the server now enforces unique names via Register. A concurrent
-    // duplicate is rejected. However, once alice navigates away from the lobby
-    // (tab redirect to tui_game.html), her lobby WS drops and the reservation
-    // is released — so a FRESH context can register as "alice" after the redirect.
-    // We verify uniqueness while BOTH are in the lobby simultaneously.
+    // The server enforces unique names via Register; a concurrent duplicate is
+    // rejected. (Once alice left the lobby for the launcher her lobby WS dropped
+    // and the reservation was released, so we just check a fresh unique name.)
     const charlieCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const charlie = await charlieCtx.newPage();
     await charlie.goto(global.__landingRoot || (BASE + '/'));
     try { await waitForLobbyConnected(charlie); } catch (e) {}
-    await charlie.fill('#username', 'charlie');  // use a distinct name (alice is gone)
+    await charlie.fill('#username', 'charlie');
     await charlie.click('#btn-name');
     await charlie.waitForTimeout(800);
     const charlieInLobby = await charlie.isVisible('#pane-lobby:not(.hidden)');
-    // charlie should succeed (a unique name).
     if (!charlieInLobby) {
-        record(
-            'major',
-            'username uniqueness',
-            'charlie failed to enter lobby with a valid unique name',
-        );
+        record('major', 'username uniqueness', 'charlie failed to enter lobby with a valid unique name');
     }
 
-    // --- Try create with empty game name ---
-    await bob.fill('#create-game', '');
-    await bob.fill('#create-pass', '');
-    await bob.click('#btn-create');
-    await bob.waitForTimeout(300);
-    // Should still be on lobby (validation blocks empty name before showing waiting room).
-    const stillOnLobby = !bob.url().includes('launcher.html');
-    const waitingVisible = await bob.evaluate(() => !document.getElementById('pane-waiting').classList.contains('hidden'));
-    if (!stillOnLobby || waitingVisible) {
-        record('major', 'create empty name', 'empty game name allowed (should be blocked by validation, not show waiting room)');
+    // --- Try create with empty game name → validation blocks, stays on lobby ---
+    await charlie.fill('#create-game', '');
+    await charlie.fill('#create-pass', '');
+    await charlie.click('#btn-create');
+    await charlie.waitForTimeout(300);
+    const stillOnLobby = !charlie.url().includes('launcher.html');
+    if (!stillOnLobby) {
+        record('major', 'create empty name', 'empty game name allowed (should be blocked by validation, no navigation)');
     }
 
-    // --- Try create with valid name but NO passcode: shows waiting room then → launcher ---
-    await bob.fill('#create-game', 'open-game');
-    await bob.fill('#create-pass', '');
-    await bob.waitForFunction(
-        () => !document.getElementById('btn-create').disabled,
-        null,
-        { timeout: 3000 },
-    ).catch(() => record('minor', 'btn-create bob', 'btn-create stayed disabled for bob'));
-    await bob.click('#btn-create');
-    // Waiting room appears first.
-    await bob.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'create no-pass', 'bob waiting-room pane never appeared'),
-    );
-    // Verify no passcode shown in the invite text (open game).
-    const wrInviteBob = await bob.textContent('#wr-invite-text').catch(() => '');
-    if (wrInviteBob.includes('Passcode:')) {
-        record('minor', 'create no-pass', 'unexpected passcode in invite text for open game: ' + wrInviteBob);
-    }
-    await shot(bob, 'landing_04b_waiting_room_open_game.png');
-    // Click "Go to Launcher" → launcher.html (Step 1).
-    await bob.click('#btn-launch-game');
-    await bob.waitForFunction(
+    // --- Create with valid name but NO passcode → straight to launcher, no pass= ---
+    await charlie.fill('#create-game', 'open-game');
+    await charlie.fill('#create-pass', '');
+    await charlie.click('#btn-create');
+    await charlie.waitForFunction(
         () => /launcher\.html/.test(window.location.href) &&
               /game=open-game/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'create no-pass', 'bob never redirected to launcher.html with game=open-game'));
-    const bobAfterCreate = bob.url();
-    console.log('  bob after create (no pass):', bobAfterCreate);
-    if (bobAfterCreate.includes('pass=')) {
-        record('major', 'create no-pass', 'empty passcode leaked into URL: ' + bobAfterCreate);
+    ).catch(() => record('blocking', 'create no-pass', 'charlie never navigated to launcher.html with game=open-game'));
+    const charlieAfterCreate = charlie.url();
+    console.log('  charlie after create (no pass):', charlieAfterCreate);
+    if (charlieAfterCreate.includes('pass=')) {
+        record('major', 'create no-pass', 'empty passcode leaked into URL: ' + charlieAfterCreate);
     }
-    if (!bobAfterCreate.includes('role=create')) {
-        record('major', 'create no-pass', 'role=create missing from launcher URL: ' + bobAfterCreate);
+    if (!charlieAfterCreate.includes('role=create')) {
+        record('major', 'create no-pass', 'role=create missing from launcher URL: ' + charlieAfterCreate);
     }
-    await bob.waitForTimeout(800);
-    await shot(bob, 'landing_05_joined.png');
+    await charlie.waitForTimeout(400);
+    await shot(charlie, 'landing_05_create_no_pass.png');
 
     await aliceCtx.close();
-    await bobCtx.close();
     await charlieCtx.close();
     await browser.close();
 }
@@ -716,22 +623,16 @@ async function scenarioNativeGuiLaunch() {
     }
     console.log('  renderer radio absent: PASS (all three checks clean)');
 
-    // Verify Create still works and lands on launcher.html.
+    // Verify Create lands STRAIGHT on launcher.html (no waiting room, mtg-682).
     await page.fill('#create-game', 'renderer-absent-test');
     await page.fill('#create-pass', '');
     await page.click('#btn-create');
-    await page.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 4000 }).catch(() =>
-        record('blocking', 'renderer-absent create', 'waiting room never appeared'),
-    );
-    await shot(page, 'landing_16_native_gui_waiting.png');
-
-    await page.click('#btn-launch-game');
     await page.waitForFunction(
         () => /launcher\.html/.test(window.location.href) &&
               /game=renderer-absent-test/.test(window.location.href),
         null,
         { timeout: 4000 },
-    ).catch(() => record('blocking', 'renderer-absent redirect', 'not redirected to launcher.html'));
+    ).catch(() => record('blocking', 'renderer-absent redirect', 'Create did not navigate straight to launcher.html'));
 
     const finalUrl = page.url();
     console.log('  launcher redirect URL:', finalUrl);
@@ -770,44 +671,31 @@ async function scenarioWaitingRoomAndParamContract() {
         record('major', 'param contract', '#lobby-ui-native must NOT be on lobby (renderer belongs in launcher.html)');
     }
 
+    // mtg-682 item 1: Create goes STRAIGHT to launcher — there is no waiting
+    // room. Confirm the pane and any sharable-link block are gone, and the
+    // navigation is direct with the right params.
+    const waitingPaneDave = await dave.$('#pane-waiting');
+    if (waitingPaneDave) {
+        record('major', 'no waiting room', '#pane-waiting must NOT exist on the lobby');
+    }
+    const inviteBlockDave = await dave.$('#waiting-invite-block, .invite-block');
+    if (inviteBlockDave) {
+        record('major', 'no sharable link', 'a sharable-invite block must NOT exist on the lobby');
+    }
+    const wrDeckSel = await dave.$('#wr-deck-select');
+    if (wrDeckSel) {
+        record('major', 'no waiting room', '#wr-deck-select must NOT exist (deck choice is on the launcher)');
+    }
+
     await dave.fill('#create-game', 'wr-test-game');
     await dave.fill('#create-pass', '');
     await dave.click('#btn-create');
-    await dave.waitForSelector('#pane-waiting:not(.hidden)', { timeout: 5000 }).catch(() =>
-        record('blocking', 'dave waiting room', 'waiting-room pane never appeared'),
-    );
-    await shot(dave, 'landing_18_wr_creator.png');
-
-    // Verify waiting-room structure: creator slot shows dave's name.
-    const creatorNameEl = await dave.textContent('#wr-creator-name').catch(() => '');
-    if (!creatorNameEl.includes('dave')) {
-        record('major', 'waiting room display', 'creator name slot missing "dave": ' + creatorNameEl);
-    }
-
-    // The joiner slot should show the placeholder (opponent not yet present).
-    const joinerWaiting = await dave.isVisible('#wr-joiner-waiting:not(.hidden)');
-    if (!joinerWaiting) {
-        record('minor', 'waiting room display', 'joiner waiting placeholder not visible before opponent joins');
-    }
-
-    // Step 1 (mtg-35z3s): deck picker must NOT be in the waiting room.
-    // Deck choice moves to launcher.html (Step 2).
-    const deckSel = await dave.$('#wr-deck-select');
-    if (deckSel) {
-        record('major', 'waiting room display', '#wr-deck-select must NOT be in waiting room (deck choice moves to launcher.html)');
-    }
-
-    // Verify "Cancel" returns to lobby.
-    await dave.click('#btn-cancel-waiting');
-    await dave.waitForSelector('#pane-lobby:not(.hidden)', { timeout: 3000 }).catch(() =>
-        record('major', 'waiting room cancel', 'cancel did not return to lobby pane'),
-    );
-    const waitingHidden = await dave.evaluate(() =>
-        document.getElementById('pane-waiting').classList.contains('hidden'),
-    );
-    if (!waitingHidden) {
-        record('major', 'waiting room cancel', 'waiting room pane not hidden after cancel');
-    }
+    await dave.waitForFunction(
+        () => /launcher\.html/.test(window.location.href) && /game=wr-test-game/.test(window.location.href),
+        null,
+        { timeout: 5000 },
+    ).catch(() => record('blocking', 'dave create', 'Create did not navigate straight to launcher.html'));
+    await shot(dave, 'landing_18_create_straight_to_launcher.png');
 
     // Param contract test (mtg-35z3s Step 1): lobby handoff to launcher.html uses
     // game=, role=, pass=, name=, ws= (NOT lobby_create/lobby_join/deck/ui/mode).

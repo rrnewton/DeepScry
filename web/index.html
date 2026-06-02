@@ -201,93 +201,6 @@
         .dot.err { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
         .dot.warn { background: var(--accent-2); }
 
-        /* Waiting room player state cards */
-        .wr-players {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin: 14px 0;
-        }
-        @media (max-width: 600px) { .wr-players { grid-template-columns: 1fr; } }
-        .wr-player-card {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 14px;
-        }
-        .wr-player-card.wr-you { border-color: var(--accent); }
-        .wr-player-card.wr-ready-true { border-color: var(--ok); }
-        .wr-player-card .wr-player-name {
-            font-weight: 600; font-size: 14px; color: var(--accent-2);
-            margin-bottom: 6px;
-        }
-        .wr-player-card .wr-player-badge {
-            font-size: 11px; color: var(--muted);
-            background: rgba(255,255,255,0.06);
-            border-radius: 4px; padding: 1px 6px; margin-left: 6px;
-        }
-        .wr-player-card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: baseline; font-size: 12px; }
-        .wr-player-card dt { color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
-        .wr-player-card dd { margin: 0; color: var(--text); }
-        .wr-player-card dd.ok { color: var(--ok); }
-        .wr-player-card dd.warn { color: var(--accent-2); }
-        .wr-player-card .wr-waiting { color: var(--muted); font-style: italic; font-size: 12px; padding: 10px 0; }
-
-        /* Prefetch progress indicator (invisible until prefetch starts) */
-        .prefetch-bar {
-            font-size: 11px; color: var(--muted);
-            margin: 4px 0;
-            min-height: 14px;
-        }
-
-        /* Waiting room detail table */
-        .waiting-details {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 14px 16px;
-            margin: 12px 0;
-        }
-        .waiting-details dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: baseline; }
-        .waiting-details dt { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
-        .waiting-details dd { margin: 0; font-size: 14px; color: var(--text); }
-        .waiting-details dd.mono { font-family: monospace; color: var(--accent-2); }
-        .waiting-details dd.ok { color: var(--ok); }
-
-        /* Share/copy invite block */
-        .invite-block {
-            background: #0a1428;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 10px 14px;
-            margin: 10px 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .invite-block .invite-text {
-            font-family: monospace;
-            font-size: 12px;
-            color: var(--muted);
-            flex: 1 1 auto;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .invite-block .copy-btn {
-            flex: 0 0 auto;
-            padding: 5px 10px;
-            font-size: 12px;
-            background: transparent;
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            border-radius: 4px;
-        }
-        .invite-block .copy-btn:hover { background: rgba(76,201,240,0.12); }
-
-        /* Deck picker loading state */
-        .deck-loading { color: var(--muted); font-size: 12px; padding: 9px 11px; }
-
         footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
         footer a { color: var(--muted); }
         .footer-version { display: block; margin-top: 6px; opacity: 0.7; font-family: monospace; font-size: 11px; }
@@ -373,7 +286,7 @@
                             </button>
                         </div>
                         <div class="row">
-                            <button type="submit" id="btn-create">Create &amp; Wait</button>
+                            <button type="submit" id="btn-create">Create Game</button>
                             <button type="button" class="ghost" id="btn-refresh">Refresh List</button>
                         </div>
                     </form>
@@ -441,71 +354,15 @@
         </div>
     </div>
 
-    <!-- 4. Waiting room pane (hidden until CreateGame/JoinGame is confirmed). -->
     <!--
-        Phase 2 waiting room: uses the new server-side state.
-        - Creator: sends CreateGame → gets GameCreated, then WaitingRoomUpdate arrives
-          whenever either player calls SetDeck/SetReady.
-        - Joiner: sends JoinGame → gets WaitingRoomUpdate immediately (creator's state).
-        - Both players see each other's name, chosen deck, and ready flag live.
-        - Deck picker is HERE (not on the game page) — one picker, per design doc.
-        - "Launch" navigates to the chosen renderer page once both are ready (or
-          creator clicks Launch manually, since SetReady server-gating is a Phase-1
-          stub per mtg-zaqgj).
-        - Background prefetch of WASM bundle + selected deck bins starts on entry.
+        NOTE (mtg-682 lobby-flow-fixes): there is intentionally NO waiting-room
+        pane here. Create and Join go STRAIGHT to launcher.html, which picks the
+        deck + renderer; the game page then opens its own WebSocket and sends
+        CreateGame/JoinGame. The old waiting-room pane (with its bogus "sharable
+        link") and the browse-WS CreateGame were removed because creating on the
+        browse WS tied the pending game's lifetime to this lobby tab, pruning it
+        from ListGames the instant the creator navigated away.
     -->
-    <div id="pane-waiting" class="hidden">
-        <div class="card">
-            <h2 id="waiting-title">Waiting for opponent&hellip;</h2>
-
-            <!-- Live waiting-room player state (server-pushed via WaitingRoomUpdate) -->
-            <div class="wr-players">
-                <!-- Creator slot -->
-                <div class="wr-player-card" id="wr-slot-creator">
-                    <div class="wr-player-name" id="wr-creator-name">&mdash;</div>
-                    <dl>
-                        <dt>Deck</dt>
-                        <dd id="wr-creator-deck" class="warn">not selected</dd>
-                        <dt>Ready</dt>
-                        <dd id="wr-creator-ready">No</dd>
-                    </dl>
-                </div>
-                <!-- Joiner slot (shows placeholder until opponent arrives) -->
-                <div class="wr-player-card" id="wr-slot-joiner">
-                    <div class="wr-player-name" id="wr-joiner-name">
-                        <span style="color: var(--muted);">Waiting for opponent&hellip;</span>
-                    </div>
-                    <div class="wr-waiting" id="wr-joiner-waiting">Share the invite link below.</div>
-                    <dl id="wr-joiner-dl" class="hidden">
-                        <dt>Deck</dt>
-                        <dd id="wr-joiner-deck" class="warn">not selected</dd>
-                        <dt>Ready</dt>
-                        <dd id="wr-joiner-ready">No</dd>
-                    </dl>
-                </div>
-            </div>
-
-            <!-- Shareable invite snippet -->
-            <div id="waiting-invite-block" class="invite-block hidden">
-                <span class="invite-text" id="wr-invite-text"></span>
-                <button type="button" class="copy-btn" id="btn-copy-invite">Copy</button>
-            </div>
-
-            <!-- TODO(mtg-35z3s): deck + renderer choice moves to launcher.html (Step 2) -->
-            <p style="color: var(--muted); font-size: 13px; margin: 10px 0;">
-                Deck and renderer selection will be available in the next screen.
-            </p>
-
-            <!-- Prefetch status -->
-            <div id="wr-prefetch-status" class="prefetch-bar"></div>
-
-            <div class="row" style="margin-top: 12px;">
-                <button type="button" class="success" id="btn-launch-game">Go to Launcher &rarr;</button>
-                <button type="button" class="danger" id="btn-cancel-waiting">Cancel &amp; return to lobby</button>
-            </div>
-            <p id="waiting-status" class="status-line"></p>
-        </div>
-    </div>
 
 </div>
 
@@ -587,10 +444,6 @@
     var gamesOffset = 0;
     var filterDebounceTimer = null;
 
-    // Waiting-room state: set when we enter a waiting room (create or join).
-    // { gameName, gamePass, action: 'create'|'join', deckName: '', reconnectToken: null }
-    var waitingRoomState = null;
-
     // --- SVG icons for passcode show/hide toggle ----------------------------
     var ICON_EYE =
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
@@ -648,9 +501,11 @@
     // -------------------------------------------------------------------------
     var prefetchDone = false;
 
-    function setPrefetchStatus(msg) {
-        var el = document.getElementById('wr-prefetch-status');
-        if (el) el.textContent = msg;
+    // The prefetch still warms the HTTP cache so the game/launcher page boots
+    // faster, but there is no longer a waiting-room status line to write into,
+    // so this is a no-op display (the element is absent on the lobby page).
+    function setPrefetchStatus(_msg) {
+        /* no visible status element on the lobby; cache warming is silent */
     }
 
     function prefetchWasmBundle(idx) {
@@ -773,17 +628,6 @@
         listPending = send(msg);
     }
 
-    // Placeholder deck used for CreateGame/JoinGame/SetDeck when the lobby
-    // (which is WASM-free) cannot resolve actual card lists. The game page
-    // will re-submit the real deck from WASM after load. The server validates
-    // only minimum size (>=40 cards), so this 60-card placeholder passes.
-    // deckName is stored in waitingRoomState so it flows through to the game
-    // page URL where WASM resolves it properly.
-    var PLACEHOLDER_DECK = {
-        main_deck: [['Forest', 22], ['Grizzly Bears', 14], ['Plains', 12], ['Serra Angel', 12]],
-        sideboard: [],
-    };
-
     // -------------------------------------------------------------------------
     // Server message handler
     // -------------------------------------------------------------------------
@@ -795,40 +639,17 @@
         case 'game_list':
             handleGameList(msg);
             break;
-        case 'game_created':
-            handleGameCreated(msg);
-            break;
-        case 'waiting_for_opponent':
-            // Legacy / post-CreateGame signal; just update status.
-            if (waitingRoomState) {
-                setWaitingStatus('Waiting for opponent to join…', '');
-            }
-            break;
-        case 'waiting_room_update':
-            handleWaitingRoomUpdate(msg);
-            break;
-        case 'game_started':
-            handleGameStarted(msg);
-            break;
-        case 'join_failed':
-            handleJoinFailed(msg);
-            break;
         case 'server_full':
             setCreateStatus((msg.reason || 'Server is full, try again later.'), 'err');
             break;
         case 'error':
-            if (msg.fatal) {
-                setWaitingStatus('Fatal error: ' + (msg.message || 'unknown'), 'err');
-            } else {
-                console.warn('[Lobby] Server error:', msg.message);
-                if (isWaiting()) {
-                    setWaitingStatus(msg.message || 'Server error', 'err');
-                }
-            }
+            console.warn('[Lobby] Server error:', msg.message);
             break;
         default:
-            // Silently ignore game-play messages (choice_request, etc.) that
-            // belong to a running game page.
+            // The lobby browse WS only ever does Register + ListGames now;
+            // CreateGame/JoinGame (and their GameCreated/WaitingRoomUpdate/
+            // GameStarted replies) happen on the GAME PAGE's WS, not here.
+            // Silently ignore any other message.
             break;
         }
     }
@@ -854,130 +675,6 @@
             ? msg.total_count
             : lastListGames.length;
         renderGames();
-    }
-
-    function handleGameCreated(msg) {
-        if (!waitingRoomState) return;
-        waitingRoomState.gameName = msg.game_name || waitingRoomState.gameName;
-        waitingRoomState.action = 'create';
-        // Use the server-assigned name if provided.
-        if (msg.your_name) currentUsername = msg.your_name;
-        document.getElementById('waiting-title').textContent =
-            'Waiting room: "' + waitingRoomState.gameName + '"';
-        document.getElementById('wr-creator-name').textContent = currentUsername;
-        updateInviteBlock();
-        setWaitingStatus('Game created. Waiting for opponent… (Click “Go to Launcher” when ready)', '');
-    }
-
-    function handleWaitingRoomUpdate(msg) {
-        if (!isWaiting()) return;
-        renderWaitingRoomState(msg.creator, msg.joiner);
-    }
-
-    function handleGameStarted(msg) {
-        if (!waitingRoomState) return;
-        // Store the reconnect token so the launcher page can use it.
-        if (msg.reconnect_token) {
-            waitingRoomState.reconnectToken = msg.reconnect_token;
-        }
-        // Auto-redirect to the launcher — deck + renderer chosen there (Step 2).
-        doRedirectToLauncher();
-    }
-
-    function handleJoinFailed(msg) {
-        cancelWaitingRoom();
-        setCreateStatus(
-            'Join failed for "' + msg.game_name + '": ' + formatJoinFailReason(msg.reason),
-            'err'
-        );
-    }
-
-    function formatJoinFailReason(reason) {
-        if (!reason) return 'unknown reason';
-        if (typeof reason === 'string') return reason;
-        // reason is a tagged enum variant from Rust serde.
-        var key = Object.keys(reason)[0];
-        switch (key) {
-        case 'not_found':      return 'game not found';
-        case 'wrong_password': return 'wrong passcode';
-        case 'game_full':      return 'game is already full';
-        case 'already_started': return 'game has already started';
-        default:               return JSON.stringify(reason);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Waiting room state rendering
-    // -------------------------------------------------------------------------
-    function renderWaitingRoomState(creator, joiner) {
-        // Creator slot
-        var creatorNameEl = document.getElementById('wr-creator-name');
-        var creatorDeckEl = document.getElementById('wr-creator-deck');
-        var creatorReadyEl = document.getElementById('wr-creator-ready');
-        var creatorCard = document.getElementById('wr-slot-creator');
-        if (creator) {
-            creatorNameEl.textContent = creator.name;
-            if (creator.deck_selected) {
-                // Deck shown from server's deck_summary (lobby sends placeholder deck on CreateGame).
-                var deckLabel = creator.deck_summary ? formatDeckSummary(creator.deck_summary) : 'selected';
-                creatorDeckEl.textContent = deckLabel;
-                creatorDeckEl.className = 'ok';
-            } else {
-                creatorDeckEl.textContent = 'not selected';
-                creatorDeckEl.className = 'warn';
-            }
-            creatorReadyEl.textContent = creator.ready ? 'YES' : 'No';
-            creatorReadyEl.className = creator.ready ? 'ok' : '';
-            creatorCard.className = 'wr-player-card' +
-                (creator.ready ? ' wr-ready-true' : '') +
-                (creator.name === currentUsername ? ' wr-you' : '');
-        }
-
-        // Joiner slot
-        var joinerWaiting = document.getElementById('wr-joiner-waiting');
-        var joinerDl = document.getElementById('wr-joiner-dl');
-        var joinerNameEl = document.getElementById('wr-joiner-name');
-        var joinerDeckEl = document.getElementById('wr-joiner-deck');
-        var joinerReadyEl = document.getElementById('wr-joiner-ready');
-        var joinerCard = document.getElementById('wr-slot-joiner');
-        if (joiner) {
-            joinerNameEl.innerHTML = '';
-            joinerNameEl.textContent = joiner.name;
-            joinerWaiting.classList.add('hidden');
-            joinerDl.classList.remove('hidden');
-            if (joiner.deck_selected) {
-                var ds = joiner.deck_summary ? formatDeckSummary(joiner.deck_summary) : 'selected';
-                joinerDeckEl.textContent = ds;
-                joinerDeckEl.className = 'ok';
-            } else {
-                joinerDeckEl.textContent = 'not selected';
-                joinerDeckEl.className = 'warn';
-            }
-            joinerReadyEl.textContent = joiner.ready ? 'YES' : 'No';
-            joinerReadyEl.className = joiner.ready ? 'ok' : '';
-            joinerCard.className = 'wr-player-card' +
-                (joiner.ready ? ' wr-ready-true' : '') +
-                (joiner.name === currentUsername ? ' wr-you' : '');
-        } else {
-            joinerNameEl.innerHTML = '<span style="color: var(--muted);">Waiting for opponent…</span>';
-            joinerWaiting.classList.remove('hidden');
-            joinerDl.classList.add('hidden');
-            joinerCard.className = 'wr-player-card';
-        }
-
-        // Highlight launch button when both players have joined.
-        var opponentJoined = !!(joiner);
-        var launchBtn = document.getElementById('btn-launch-game');
-        if (opponentJoined) {
-            launchBtn.classList.add('success');
-            setWaitingStatus('Opponent joined! Click "Go to Launcher" to pick your deck and renderer.', 'ok');
-        }
-    }
-
-    function formatDeckSummary(summary) {
-        // summary is [[name, count], ...] — show first card name as indicator.
-        if (!Array.isArray(summary) || summary.length === 0) return 'selected';
-        return summary[0][0] + ' (+ more)';
     }
 
     // -------------------------------------------------------------------------
@@ -1065,10 +762,6 @@
         return !document.getElementById('pane-lobby').classList.contains('hidden');
     }
 
-    function isWaiting() {
-        return !document.getElementById('pane-waiting').classList.contains('hidden');
-    }
-
     // -------------------------------------------------------------------------
     // Status helpers
     // -------------------------------------------------------------------------
@@ -1080,12 +773,6 @@
 
     function setCreateStatus(text, kind) {
         var el = document.getElementById('create-status');
-        el.textContent = text || '';
-        el.className = 'status-line' + (kind ? ' ' + kind : '');
-    }
-
-    function setWaitingStatus(text, kind) {
-        var el = document.getElementById('waiting-status');
         el.textContent = text || '';
         el.className = 'status-line' + (kind ? ' ' + kind : '');
     }
@@ -1149,8 +836,8 @@
     function startRefreshTimer() {
         if (refreshTimer) return;
         refreshTimer = setInterval(function () {
-            // Only poll while browsing the lobby; not during an active game/waiting.
-            if (isInLobby() && !isWaiting()) {
+            // Only poll while browsing the lobby.
+            if (isInLobby()) {
                 requestGameList();
             }
         }, 5000);
@@ -1161,83 +848,19 @@
     }
 
     // -------------------------------------------------------------------------
-    // Waiting room
-    // -------------------------------------------------------------------------
-    function showWaitingRoom(gameName, gamePass, action) {
-        waitingRoomState = {
-            gameName: gameName,
-            gamePass: gamePass,
-            action: action,
-            reconnectToken: null,
-        };
-
-        document.getElementById('waiting-title').textContent =
-            (action === 'create' ? 'Creating: "' : 'Joining: "') + gameName + '"';
-
-        // Reset player state display.
-        resetWrPlayerSlots();
-        updateInviteBlock();
-
-        document.getElementById('waiting-status').textContent = '';
-        document.getElementById('waiting-status').className = 'status-line';
-        document.getElementById('wr-prefetch-status').textContent = '';
-        document.getElementById('btn-launch-game').disabled = false;
-        document.getElementById('btn-cancel-waiting').disabled = false;
-
-        document.getElementById('pane-lobby').classList.add('hidden');
-        document.getElementById('pane-waiting').classList.remove('hidden');
-    }
-
-    function resetWrPlayerSlots() {
-        document.getElementById('wr-creator-name').textContent = currentUsername || '—';
-        document.getElementById('wr-creator-deck').textContent = 'not selected';
-        document.getElementById('wr-creator-deck').className = 'warn';
-        document.getElementById('wr-creator-ready').textContent = 'No';
-        document.getElementById('wr-creator-ready').className = '';
-        document.getElementById('wr-slot-creator').className = 'wr-player-card wr-you';
-        document.getElementById('wr-joiner-name').innerHTML =
-            '<span style="color: var(--muted);">Waiting for opponent…</span>';
-        document.getElementById('wr-joiner-waiting').classList.remove('hidden');
-        document.getElementById('wr-joiner-dl').classList.add('hidden');
-        document.getElementById('wr-slot-joiner').className = 'wr-player-card';
-    }
-
-    function updateInviteBlock() {
-        if (!waitingRoomState) return;
-        var inviteEl = document.getElementById('waiting-invite-block');
-        var textEl = document.getElementById('wr-invite-text');
-        var parts = ['Game: ' + waitingRoomState.gameName];
-        if (waitingRoomState.gamePass) parts.push('Passcode: ' + waitingRoomState.gamePass);
-        textEl.textContent = parts.join(' \xb7 ');
-        inviteEl.classList.remove('hidden');
-    }
-
-    function cancelWaitingRoom() {
-        waitingRoomState = null;
-        document.getElementById('pane-waiting').classList.add('hidden');
-        document.getElementById('waiting-invite-block').classList.add('hidden');
-        document.getElementById('pane-lobby').classList.remove('hidden');
-        // After CreateGame/JoinGame, the server's WS task is in "waiting for
-        // joiner" state (only accepts SetDeck/SetReady/Disconnect). To evict
-        // the pending game and return to browse mode, close and reconnect.
-        // connect() will re-register (since nameRegistered is now false) and
-        // then request the game list.
-        nameRegistered = false;
-        if (ws) {
-            try { ws.close(1000, 'cancel-waiting-room'); } catch (e) { /* ignore */ }
-            ws = null;
-        }
-        connect();
-    }
-
-    // -------------------------------------------------------------------------
-    // Create / join game → send to server, enter waiting room
+    // Create / Join → go STRAIGHT to the launcher (mtg-682 lobby-flow-fixes).
+    //
+    // The lobby no longer holds a "waiting room" and does NOT send
+    // CreateGame/JoinGame on its browse WebSocket. Those are sent by the GAME
+    // PAGE (native_game.html / tui_game.html) on its own durable WebSocket via
+    // consumeLobbyParams() — that WS becomes the host (create) or joiner socket
+    // and stays listed for as long as the player's game tab is open. Creating on
+    // the browse WS (the old flow) tied the pending game's lifetime to the lobby
+    // tab, so navigating to the launcher pruned it from ListGames — the bug this
+    // change fixes. Going straight to the launcher means the game is created
+    // exactly once, on the socket that hosts it.
     // -------------------------------------------------------------------------
     function createGame() {
-        if (!nameRegistered) {
-            setCreateStatus('Please wait for name registration.', 'err');
-            return;
-        }
         var name = document.getElementById('create-game').value.trim();
         var pass = document.getElementById('create-pass').value;
         setCreateStatus('', '');
@@ -1251,27 +874,10 @@
             setCreateStatus('A game with that name is already waiting. Pick another.', 'err');
             return;
         }
-        // Enter waiting room UI immediately (optimistic), then send CreateGame.
-        showWaitingRoom(name, pass || '', 'create');
-        setWaitingStatus('Creating game…', '');
-        stopRefreshTimer();
-        send({
-            type: 'create_game',
-            password: '',
-            game_name: name,
-            game_password: pass || null,
-            player_name: currentUsername || null,
-            // Placeholder deck — waiting room SetDeck will communicate the actual
-            // chosen deck name to the server (for WaitingRoomUpdate display).
-            deck: PLACEHOLDER_DECK,
-        });
+        redirectToLauncher(name, pass || '', 'create');
     }
 
     function joinGame(g) {
-        if (!nameRegistered) {
-            setCreateStatus('Please wait for name registration.', 'err');
-            return;
-        }
         var pw = '';
         if (g.has_password) {
             var inp = document.getElementById('pw-' + g.name);
@@ -1281,36 +887,26 @@
                 return;
             }
         }
-        // Enter waiting room UI then send JoinGame.
-        showWaitingRoom(g.name, pw, 'join');
-        setWaitingStatus('Joining game…', '');
-        stopRefreshTimer();
-        send({
-            type: 'join_game',
-            password: '',
-            game_name: g.name,
-            game_password: pw || null,
-            player_name: currentUsername || null,
-            deck: PLACEHOLDER_DECK,
-        });
+        redirectToLauncher(g.name, pw, 'join');
     }
 
     // -------------------------------------------------------------------------
-    // Redirect to launcher — close lobby WS and navigate to launcher.html.
-    // TODO(mtg-35z3s): launcher.html picks deck + renderer (Step 2).
+    // Redirect to launcher — close the browse WS and navigate to launcher.html.
+    // The launcher picks deck + renderer, then the game page opens its own WS
+    // and sends CreateGame/JoinGame. Only THIS tab navigates: a creator going
+    // to the launcher never yanks any joiner, and a joiner pressing Join never
+    // affects the creator (each tab redirects only itself).
     // -------------------------------------------------------------------------
-    function doRedirectToLauncher() {
-        if (!waitingRoomState) return;
-        var s = waitingRoomState;
+    function redirectToLauncher(gameName, gamePass, role) {
         var qp = new URLSearchParams();
-        qp.set('game', s.gameName);
-        qp.set('role', s.action === 'create' ? 'create' : 'join');
-        if (s.gamePass) qp.set('pass', s.gamePass);
+        qp.set('game', gameName);
+        qp.set('role', role === 'join' ? 'join' : 'create');
+        if (gamePass) qp.set('pass', gamePass);
         if (currentUsername) qp.set('name', currentUsername);
         if (wsUrl) qp.set('ws', wsUrl);
         if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
-        if (s.reconnectToken) qp.set('reconnect_token', s.reconnectToken);
-        // Close our browse-WS so the server cleanly drops the lobby task.
+        // Close our browse WS so the server cleanly drops the lobby task; the
+        // game page will open a fresh WS for the actual create/join.
         stopRefreshTimer();
         if (ws) {
             try { ws.close(1000, 'redirect-to-launcher'); } catch (e) { /* ignore */ }
@@ -1341,31 +937,6 @@
     document.getElementById('btn-logout').addEventListener('click', function (ev) {
         ev.preventDefault();
         logout();
-    });
-
-    document.getElementById('btn-launch-game').addEventListener('click', function (ev) {
-        ev.preventDefault();
-        doRedirectToLauncher();
-    });
-
-    document.getElementById('btn-cancel-waiting').addEventListener('click', function (ev) {
-        ev.preventDefault();
-        // cancelWaitingRoom() reconnects the WS and re-registers; that will
-        // trigger requestGameList on connect, so no explicit call is needed here.
-        cancelWaitingRoom();
-    });
-
-    document.getElementById('btn-copy-invite').addEventListener('click', function () {
-        var text = document.getElementById('wr-invite-text').textContent || '';
-        if (!text) return;
-        navigator.clipboard.writeText(text).then(function () {
-            var btn = document.getElementById('btn-copy-invite');
-            var orig = btn.textContent;
-            btn.textContent = 'Copied!';
-            setTimeout(function () { btn.textContent = orig; }, 1500);
-        }).catch(function () {
-            // Clipboard API not available (e.g. non-HTTPS); silently ignore.
-        });
     });
 
     // Passcode show/hide on the create-game form.
