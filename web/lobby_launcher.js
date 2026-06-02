@@ -30,7 +30,16 @@
  *   &ui=tui|native                → which game-page UI to land on (default: tui)
  *   &mode=local|network           → game mode hint (default: network when from lobby)
  *   &reconnect_token=<token>      → reconnect token from GameStarted (Phase 1 stub)
+ *   &images=true|false            → show card images on the game page (pre-game pref)
+ *   &img_src=local,scryfall,gatherer → enabled image sources, in fallback order
+ *   &debug=true                   → enable TRACE logging on the game page
  * ──────────────────────────────────────────────────────────────────────────────
+ *
+ * GAME-PREFS contract (mtg-ttjt6 launcher-parity restore):
+ *   The lobby redo moved the launcher's per-game *preferences* (image display,
+ *   image-source selection, debug logging) off the game pages. They now live on
+ *   launcher.html and ride to the game page as the three params above. They are
+ *   parsed once by `consumeGamePrefs()` so neither game page re-derives them.
  */
 
 'use strict';
@@ -80,6 +89,9 @@ export const GAME_PAGE = {
  * @param {'tui'|'native'} [opts.ui]        - target game UI (default: 'tui')
  * @param {'local'|'network'} [opts.mode]   - game mode hint (default: 'network')
  * @param {string}  [opts.reconnectToken]   - reconnect token from GameStarted
+ * @param {boolean} [opts.showImages]       - card-image display pref (game-page)
+ * @param {string[]} [opts.imageSources]    - enabled image sources, fallback order
+ * @param {boolean} [opts.debug]            - enable TRACE logging on the game page
  * @returns {string}  Full relative URL (e.g. "tui_game.html?lobby_create=...")
  */
 export function buildRedirectUrl(opts) {
@@ -102,6 +114,14 @@ export function buildRedirectUrl(opts) {
     if (opts.wsUrl)            qp.set('ws', opts.wsUrl);
     if (opts.allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
     if (opts.reconnectToken)   qp.set('reconnect_token', opts.reconnectToken);
+    // Per-game prefs re-homed from the old built-in launcher (mtg-ttjt6). Only
+    // emit when explicitly provided so a caller that does not set them lets the
+    // game page fall back to its built-in default (images on, info-level logs).
+    if (opts.showImages !== undefined) qp.set('images', opts.showImages ? 'true' : 'false');
+    if (Array.isArray(opts.imageSources) && opts.imageSources.length > 0) {
+        qp.set('img_src', opts.imageSources.join(','));
+    }
+    if (opts.debug) qp.set('debug', 'true');
     qp.set('ui', ui);
     // Default to 'network' mode when coming from the lobby redirect.
     qp.set('mode', opts.mode === 'local' ? 'local' : 'network');
@@ -249,6 +269,130 @@ export function consumeNetworkParams() {
         serverPass: qs.get('server_pass') || '',
         controller,
     };
+}
+
+// ---------------------------------------------------------------------------
+// consumeGamePrefs — per-game display/debug prefs re-homed from the launcher
+// ---------------------------------------------------------------------------
+
+/** All recognised image-source ids, in the fixed fallback order. */
+export const IMAGE_SOURCE_IDS = ['local', 'scryfall', 'gatherer'];
+
+/**
+ * Parse the per-game preference params (`images`, `img_src`, `debug`) that the
+ * launcher forwards to a game page. These were controls on the old built-in
+ * launcher (Show-Card-Images, the image-source checkboxes, Debug-Mode); after
+ * the lobby redo they live on launcher.html and ride here as URL params. Parsed
+ * in ONE place so neither game page re-derives the contract (DRY, mtg-ttjt6).
+ *
+ * `imageSources` is filtered to the known ids in canonical fallback order; an
+ * absent/empty `img_src` falls back to `defaults.imageSources` (all sources).
+ * `showImages`/`debug` default to `defaults.*` when the param is absent, so a
+ * caller can keep each game page's own historical default (native: images on;
+ * tui: images off).
+ *
+ * @param {object} [defaults]
+ * @param {boolean} [defaults.showImages=true]
+ * @param {boolean} [defaults.debug=false]
+ * @param {string[]} [defaults.imageSources=IMAGE_SOURCE_IDS]
+ * @returns {{showImages: boolean, imageSources: string[], debug: boolean}}
+ */
+export function consumeGamePrefs(defaults) {
+    const d = Object.assign(
+        { showImages: true, debug: false, imageSources: IMAGE_SOURCE_IDS.slice() },
+        defaults || {},
+    );
+    const qs = new URLSearchParams(window.location.search);
+
+    let showImages = d.showImages;
+    if (qs.has('images')) showImages = qs.get('images') === 'true';
+
+    let debug = d.debug;
+    if (qs.has('debug')) debug = qs.get('debug') === 'true';
+
+    let imageSources = d.imageSources;
+    const raw = qs.get('img_src');
+    if (raw !== null) {
+        const picked = raw.split(',').map((s) => s.trim().toLowerCase())
+            .filter((s) => IMAGE_SOURCE_IDS.includes(s));
+        // Re-impose canonical fallback order; dedupe.
+        imageSources = IMAGE_SOURCE_IDS.filter((id) => picked.includes(id));
+    }
+    return { showImages, imageSources, debug };
+}
+
+// ---------------------------------------------------------------------------
+// Sticky-param propagation across inter-page navigation
+// ---------------------------------------------------------------------------
+
+/**
+ * The params that must SURVIVE every hop across the lobby↔launcher↔game↔
+ * deck-editor pages. The local-image unlock is the load-bearing one (the
+ * gate is meaningless if a back-to-lobby click silently drops it), but the
+ * player identity, server URL, and debug/image prefs are equally session-wide.
+ */
+export const STICKY_PARAM_KEYS = ['allow_local_img_load', 'debug', 'images', 'img_src', 'name', 'ws'];
+
+/**
+ * Copy the sticky params (those present in `source`, default
+ * `window.location.search`) onto `url`'s query string WITHOUT clobbering params
+ * already set on `url`. Returns the same URL object for chaining. Centralised
+ * here so every inter-page link forwards the same set (DRY, mtg-ttjt6) — the
+ * back-to-lobby / deck-editor links were dropping `allow_local_img_load` and
+ * friends, defeating the sticky gate.
+ *
+ * @param {URL} url                      - destination URL to augment (mutated)
+ * @param {URLSearchParams|string} [source] - source params (default current URL)
+ * @returns {URL}
+ */
+export function forwardStickyParams(url, source) {
+    const src = source instanceof URLSearchParams
+        ? source
+        : new URLSearchParams(source !== undefined ? source : window.location.search);
+    for (const key of STICKY_PARAM_KEYS) {
+        if (src.has(key) && !url.searchParams.has(key)) {
+            url.searchParams.set(key, src.get(key));
+        }
+    }
+    return url;
+}
+
+/**
+ * Build a relative URL string for `page` carrying the session's sticky params
+ * (and any explicit `extra` params). Used for PROGRAMMATIC navigation (e.g. the
+ * game page's exit-to-lobby), the counterpart of forwardStickyParamsOnAnchor
+ * for static links. DRY: same STICKY_PARAM_KEYS set (mtg-ttjt6).
+ *
+ * @param {string} page                  - e.g. "index.html"
+ * @param {object} [extra]               - extra query params to set first
+ * @param {URLSearchParams|string} [source] - source params (default current URL)
+ * @returns {string}  relative URL (e.g. "index.html?allow_local_img_load=true")
+ */
+export function stickyUrl(page, extra, source) {
+    const url = new URL(page, window.location.href);
+    if (extra) for (const [k, v] of Object.entries(extra)) {
+        if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+    forwardStickyParams(url, source);
+    return url.pathname.split('/').pop() + url.search + url.hash;
+}
+
+/**
+ * Apply `forwardStickyParams` to an anchor element's `href` in place. Skips
+ * disabled / hrefless anchors. Convenience wrapper for the common "rewrite a
+ * static <a href> so it carries the session's sticky params" case.
+ *
+ * @param {HTMLAnchorElement|null} anchor
+ * @param {URLSearchParams|string} [source]
+ */
+export function forwardStickyParamsOnAnchor(anchor, source) {
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (!href) return;
+    const url = new URL(href, window.location.href);
+    forwardStickyParams(url, source);
+    // Preserve a relative href (same-origin pages are all relative siblings).
+    anchor.setAttribute('href', url.pathname.split('/').pop() + url.search + url.hash);
 }
 
 /**

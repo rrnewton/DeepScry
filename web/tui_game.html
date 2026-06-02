@@ -667,7 +667,7 @@
 <body>
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web TUI</h1>
-        <a href="index.html">Back to lobby</a>
+        <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
         <a href="native_game.html" data-asset-href="native_game.html">Web GUI</a>
         <span id="status">Loading...</span>
         <span id="card-status" style="color: #888; font-size: 12px;"></span>
@@ -763,7 +763,7 @@
                 &mdash; pick your deck and renderer there, then press Play.
             </p>
             <p style="margin-top:18px;">
-                <a href="index.html" style="color:#4cc9f0; font-size:16px;">&rarr; Go to the Lobby</a>
+                <a href="index.html" class="back-to-lobby-link" style="color:#4cc9f0; font-size:16px;">&rarr; Go to the Lobby</a>
             </p>
         </div>
     </div>
@@ -939,7 +939,23 @@
             consumeLocalGameParams,
             consumeNetworkParams,
             buildLobbyAction,
+            consumeGamePrefs,
+            forwardStickyParamsOnAnchor,
+            stickyUrl,
         } from './lobby_launcher.js';
+
+        // Per-game display/debug prefs forwarded by launcher.html (mtg-ttjt6).
+        // The TUI's historical default was images OFF (the terminal renderer is
+        // text-first); honour that when no &images param is present.
+        const gamePrefs = consumeGamePrefs({ showImages: false });
+
+        // Keep "Back to lobby" links carrying the session's sticky params
+        // (allow_local_img_load, debug, images, img_src, name, ws) so the unlock
+        // + prefs survive the round trip (mtg-ttjt6). Module scripts run after
+        // DOM parse, so the anchors already exist.
+        for (const a of document.querySelectorAll('.back-to-lobby-link')) {
+            forwardStickyParamsOnAnchor(a);
+        }
 
         // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
         // link (tui_game.html ⇄ native_game.html) through the runtime manifest
@@ -1675,22 +1691,16 @@
             FALLBACK_ORDER: ['local', 'scryfall', 'gatherer'],
 
             /**
-             * Get which sources are currently enabled from UI checkboxes
-             * Filters out sources that have been automatically disabled due to failures
+             * Get which sources are currently enabled, from the launcher-forwarded
+             * `&img_src` prefs (mtg-ttjt6). The OLD launcher read three in-page
+             * checkboxes here; after the lobby redo those checkboxes live on
+             * launcher.html and ride to this PURE renderer via gamePrefs. Reading
+             * the (now-deleted) checkboxes always returned [] → the TUI rendered
+             * NO card images. Filters out sources auto-disabled due to failures.
              * @returns {string[]} Array of enabled source IDs in fallback order
              */
             getEnabledSources() {
-                const enabled = [];
-                if (document.getElementById('img-src-local')?.checked && !this.isDisabled('local')) {
-                    enabled.push('local');
-                }
-                if (document.getElementById('img-src-scryfall')?.checked && !this.isDisabled('scryfall')) {
-                    enabled.push('scryfall');
-                }
-                if (document.getElementById('img-src-gatherer')?.checked && !this.isDisabled('gatherer')) {
-                    enabled.push('gatherer');
-                }
-                return enabled;
+                return gamePrefs.imageSources.filter((id) => !this.isDisabled(id));
             },
 
             /**
@@ -2313,7 +2323,9 @@
             // P2 settings only used in local mode.
             const opponentDeck = bootConfig.p2Deck;
             const opponentController = getControllerType(bootConfig.p2Controller);
-            const showImages = false;  // launcher.html owns image prefs; default off here.
+            // launcher.html owns image prefs (mtg-ttjt6): forwarded via &images.
+            // TUI default is OFF (text-first renderer) when no param is present.
+            const showImages = gamePrefs.showImages;
 
             // Validate (param-driven now; a bad URL is the failure mode).
             if (!ourDeck) {
@@ -2352,8 +2364,10 @@
                 cardImagesEnabled = true;
             }
 
-            // Set log level based on debug param.
-            const debugMode = bootConfig.debug;
+            // Set log level based on debug param. bootConfig.debug is the
+            // local-boot &debug; gamePrefs.debug is the launcher's Debug toggle
+            // forwarded on the network boot path (mtg-ttjt6) — either enables it.
+            const debugMode = bootConfig.debug || gamePrefs.debug;
             CardImageOverlay.debugMode = debugMode;  // Enable image URL logging
             if (debugMode) {
                 set_log_level('trace');
@@ -2836,7 +2850,9 @@
             // mtg-35z3s page 3: PURE renderer — no launcher to return to. Exit
             // goes back to the lobby (a new game = a fresh launcher flow).
             console.log('[EXIT] TUI exited cleanly — returning to lobby.');
-            window.location.href = 'index.html';
+            // Preserve the session's sticky params (allow_local_img_load etc) on
+            // the programmatic exit, same as the "Back to lobby" links (mtg-ttjt6).
+            window.location.href = stickyUrl('index.html');
         };
 
         // ==================== CUSTOM DECKS (boot path) ====================
