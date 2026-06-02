@@ -112,9 +112,16 @@ impl NetworkMessage {
     /// Convert a ServerMessage to NetworkMessage, returning None for irrelevant messages
     pub fn from_server_message(msg: ServerMessage) -> Option<Self> {
         match msg {
-            ServerMessage::CardRevealed { owner, card, reason } => {
-                Some(NetworkMessage::CardRevealed { owner, card, reason })
-            }
+            ServerMessage::CardRevealed {
+                owner,
+                card,
+                reason,
+                // mtg-610: the effective-action_count stamp is consumed only by
+                // the WASM shadow's reveal-history rewind path. The native client
+                // uses a blocking-thread model with no client-side rewind, so it
+                // ignores the stamp (eager frontier consume is unchanged).
+                action_count: _,
+            } => Some(NetworkMessage::CardRevealed { owner, card, reason }),
             ServerMessage::ChoiceRequest {
                 action_count,
                 choice_seq,
@@ -1604,7 +1611,12 @@ impl NetworkClient {
         while reveals_received < expected_reveals {
             let msg = self.receive_message().await?;
             match msg {
-                ServerMessage::CardRevealed { owner, card, reason } => {
+                ServerMessage::CardRevealed {
+                    owner,
+                    card,
+                    reason,
+                    action_count: _, // mtg-610: native opening-hand path ignores the stamp
+                } => {
                     // HIDDEN INFO ARCHITECTURE (mtg-218):
                     // - Real reveal: name is non-empty, instantiate the card
                     // - Dummy reveal: name is empty, opponent's hidden card - don't instantiate

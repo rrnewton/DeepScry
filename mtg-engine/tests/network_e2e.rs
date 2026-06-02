@@ -195,6 +195,7 @@ mod async_tests {
                 card_def: None,
             },
             reason: RevealReason::Draw,
+            action_count: Some(0),
         };
 
         let json = serde_json::to_string(&reveal_msg).expect("serialize");

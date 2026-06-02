@@ -632,6 +632,17 @@ pub enum ServerMessage {
         card: CardReveal,
         /// Why this card is being revealed
         reason: RevealReason,
+        /// **Effective game `action_count` (mtg-610).** The server stamps this
+        /// with the `action_count` of the `ChoiceRequest` the reveal is bundled
+        /// with (reveals are collected into the choice they precede via
+        /// `collect_reveals_since_last_choice`). The shadow's reveal-history
+        /// buffer keys the reveal at this value so its application + rewind
+        /// reconstruction are a deterministic function of game position rather
+        /// than wall-clock reveal/choice-message arrival order. `None` for
+        /// reveals sent outside a choice context (e.g. opening-hand), which the
+        /// shadow falls back to stamping at the next choice it receives.
+        #[serde(default)]
+        action_count: Option<u64>,
     },
 
     /// Library has been reordered (shuffled after search)
@@ -1766,6 +1777,7 @@ mod tests {
                     card_def: None,
                 },
                 reason: RevealReason::Draw,
+                action_count: Some(0),
             },
             ServerMessage::OpponentChoice {
                 choice_seq: 5,
