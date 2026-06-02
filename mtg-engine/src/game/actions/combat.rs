@@ -99,19 +99,11 @@ impl GameState {
             .map(|p| p.id)
             .ok_or_else(|| MtgError::InvalidAction("No opponent found".to_string()))?;
 
-        // Declare attacker in combat state.
-        //
-        // NOTE (mtg-614 hole (b)): the reversible GameAction::DeclareAttacker
-        // infrastructure exists (declare_attacker_logged + CombatState::
-        // undo_declare_attacker + the per-action oracle proof), but is NOT yet
-        // wired into this LIVE path. Wiring it makes combat declarations
-        // undo-logged, which the un-migrated WASM ai_harness re-run model
-        // (mtg-610 step 2) double-counts on re-entry (it re-runs the combat step
-        // WITHOUT rewinding, so a logged DeclareAttacker inflates action_count →
-        // network desync). The N4 guard removal (d9ca8a03) is only sound while
-        // combat declarations are NOT undo-logged. Live wiring is therefore
-        // blocked on unifying ai_harness onto rewind+replay. See mtg-00i5r.
-        self.combat.declare_attacker(card_id, defending_player);
+        // Declare attacker in combat state (logged so it is reversible by the
+        // undo log — mtg-614 hole (b)). The WASM ai_harness now blocks via
+        // rewind+replay (mtg-610), so a logged DeclareAttacker is reverted on
+        // rewind and re-applied on replay — no action_count double-count.
+        self.declare_attacker_logged(card_id, defending_player);
 
         // Tap the creature (unless it has vigilance)
         // Uses has_keyword_with_effects to account for granted vigilance
@@ -228,14 +220,13 @@ impl GameState {
             ));
         }
 
-        // Declare blocker. (See the hole-(b) note in declare_attacker: the
-        // reversible DeclareBlocker infrastructure exists + is oracle-proven but
-        // is not yet LIVE-wired, pending the ai_harness rewind migration.)
+        // Declare blocker (logged so it is reversible by the undo log — mtg-614
+        // hole (b); see the note in declare_attacker re: the ai_harness rewind).
         let mut attackers_vec = smallvec::SmallVec::new();
         for &attacker in &attackers {
             attackers_vec.push(attacker);
         }
-        self.combat.declare_blocker(blocker_id, attackers_vec);
+        self.declare_blocker_logged(blocker_id, attackers_vec);
 
         Ok(())
     }

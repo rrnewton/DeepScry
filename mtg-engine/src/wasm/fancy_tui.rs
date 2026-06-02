@@ -1351,6 +1351,43 @@ struct WasmFancyTuiState {
     /// Persistent AI controller for P2 in local games. Same lifecycle as
     /// [`Self::p1_ai_controller`].
     p2_ai_controller: Option<Box<dyn PlayerController>>,
+    /// Persistent network controller for OUR player (network mode only).
+    ///
+    /// THE PRINCIPLED DESIGN (mtg-610): the inner controller is created ONCE
+    /// (lazily on the first `run_network_mode`) and reused across every
+    /// rewind+replay re-entry, exactly like the server holds a single
+    /// persistent controller whose RNG advances monotonically. Each re-entry
+    /// wraps this persistent inner in a fresh [`ReplayController`] carrying the
+    /// accumulated OUR-side choice history: the wrapper echoes all prior
+    /// choices from the undo log (inner NOT invoked → RNG untouched) and
+    /// delegates to this persistent inner ONLY for the genuinely-new frontier
+    /// choice (advancing its RNG exactly once per real choice → byte-identical
+    /// to the server). The box is a `WasmNetworkLocalController<Inner>` so the
+    /// frontier choice is also submitted to the server. Controller-agnostic:
+    /// works for Human/Random/Heuristic/Zero alike.
+    #[cfg(feature = "wasm-network")]
+    net_our_controller: Option<Box<dyn PlayerController>>,
+    /// Turn-1-start baseline snapshot for network rewind+replay (mtg-610).
+    ///
+    /// Turn 1 has no `ChangeTurn` undo-log marker, so
+    /// `undo.rs::rewind_to_turn_start` would over-rewind through the
+    /// externally-applied setup (reserved CardID slots, opening-hand reveals
+    /// pushed by the server) — state the WASM client cannot re-derive by
+    /// replay. Instead we clone the `GameState` ONCE at the moment of the very
+    /// first forward run (the externally-set-up turn-1-start state) and restore
+    /// from this clone on turn-1 re-entries, mirroring
+    /// `GameLoop::with_post_setup_hook` in the native rewind/replay oracle.
+    /// `None` until the first network run; only set in network mode.
+    #[cfg(feature = "wasm-network")]
+    net_turn1_baseline: Option<Box<GameState>>,
+    /// The turn number whose forward run we have already started in network
+    /// mode (mtg-610). When a `run_network_mode` entry finds the game on this
+    /// same turn, it is a mid-turn RE-ENTRY (the loop blocked waiting for the
+    /// opponent's choice and JS re-called us) → rewind+replay. When the turn
+    /// number differs, it is the FIRST forward run of a new turn → run forward
+    /// without rewinding. `None` until the first network run.
+    #[cfg(feature = "wasm-network")]
+    net_forward_run_turn: Option<u32>,
     /// High-water mark for action count (for monotonicity invariant checking)
     /// This tracks the maximum action count seen during FORWARD progress.
     /// During rewind/replay, action count is allowed to decrease, but after
@@ -1589,6 +1626,12 @@ impl WasmFancyTuiState {
             master_seed: controller_seed,
             p1_ai_controller: None,
             p2_ai_controller: None,
+            #[cfg(feature = "wasm-network")]
+            net_our_controller: None,
+            #[cfg(feature = "wasm-network")]
+            net_turn1_baseline: None,
+            #[cfg(feature = "wasm-network")]
+            net_forward_run_turn: None,
             high_water_action_count: 0,
             high_water_log_count: 0,
             in_rewind_replay: false,
@@ -1675,6 +1718,22 @@ impl WasmFancyTuiState {
         let result = undo_log.rewind_to_turn_start(&mut self.game);
         self.game.undo_log = undo_log;
 
+        // SHADOW UNDO-COMPLETENESS (mtg-610): clear card instances that an
+        // asynchronous state-sync `RevealCard` leaked into a HIDDEN zone past
+        // the turn boundary. `rewind_to_turn_start` (undo.rs) already clears
+        // library-zone leaks (hidden from everyone); here we additionally clear
+        // HAND-zone instances NOT revealed to the local player — i.e. the
+        // opponent's hand cards, whose identity our shadow only learns via an
+        // async reveal whose timing (keyed by SERVER action_count) drifts from
+        // our shadow's after a rewind. Without this, the rewound `cards` set is
+        // history-dependent across repeated rewinds to the same turn (the
+        // `cards[id]` field-diff that trips the turn-start determinism check).
+        // We must do this with PERSPECTIVE (only undo.rs runs perspective-free
+        // for libraries) because OUR OWN hand cards ARE legitimately revealed to
+        // us and must keep their instances. A forward replay re-applies the
+        // server reveals (frontier mode) and re-instantiates anything cleared.
+        self.clear_shadow_hidden_hand_leaks(our_id);
+
         let log_len_after = self.game.undo_log.len();
 
         // rewind_to_turn_start returns None only if undo log is disabled
@@ -1747,6 +1806,39 @@ impl WasmFancyTuiState {
         (our_choices, opponent_choices)
     }
 
+    /// Clear shadow card instances that an asynchronous state-sync reveal
+    /// leaked into a hand zone but are NOT revealed to the local player
+    /// (mtg-610). See the call site in `rewind_to_turn_start` for the full
+    /// rationale: these are the opponent's hand cards, whose async-reveal
+    /// timing makes the rewound `cards` set history-dependent. Clearing them
+    /// (and letting the forward replay re-apply the reveals) makes the rewound
+    /// turn-start state deterministic. Our OWN hand cards (revealed to us) and
+    /// public-zone cards (battlefield/stack/graveyard/exile, revealed to all)
+    /// are deliberately left intact. No-op outside shadow games.
+    #[cfg(feature = "wasm-network")]
+    fn clear_shadow_hidden_hand_leaks(&mut self, our_id: PlayerId) {
+        if !self.game.is_shadow_game {
+            return;
+        }
+        let leaked: smallvec::SmallVec<[crate::core::CardId; 16]> = self
+            .game
+            .players
+            .iter()
+            .filter(|p| p.id != our_id)
+            .filter_map(|p| self.game.get_player_zones(p.id))
+            .flat_map(|z| z.hand.cards.iter().copied())
+            .filter(|cid| {
+                self.game
+                    .cards
+                    .try_get(*cid)
+                    .is_some_and(|c| !c.is_revealed_to(our_id))
+            })
+            .collect();
+        for cid in leaked {
+            self.game.cards.clear(cid);
+        }
+    }
+
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
     fn pending_choice_to_replay_choice(&self, pending: &PendingChoice) -> ReplayChoice {
         pending.to_replay_choice(self.pending_context.as_ref())
@@ -1800,23 +1892,62 @@ impl WasmFancyTuiState {
                         for (k, cv) in cur.iter() {
                             if let Some(pv) = prior_obj.get(k) {
                                 if pv != cv {
-                                    let cs = serde_json::to_string(cv).unwrap_or_default();
-                                    let ps = serde_json::to_string(pv).unwrap_or_default();
-                                    let cs_s = if cs.len() > 600 {
-                                        format!("{}…", &cs[..600])
+                                    // For array fields (e.g. `cards`), report only
+                                    // the differing element indices so the leaking
+                                    // entry is nameable without a 600-char truncated
+                                    // blob (mtg-610 diagnostics).
+                                    if let (serde_json::Value::Array(ca), serde_json::Value::Array(pa)) = (cv, pv) {
+                                        let max = ca.len().max(pa.len());
+                                        for i in 0..max {
+                                            let c_el = ca.get(i);
+                                            let p_el = pa.get(i);
+                                            if c_el != p_el {
+                                                // If both sides are objects (e.g. a Card
+                                                // instance), recurse one level to name the
+                                                // exact differing sub-field instead of dumping
+                                                // the whole truncated instance (mtg-610).
+                                                if let (
+                                                    Some(serde_json::Value::Object(co)),
+                                                    Some(serde_json::Value::Object(po)),
+                                                ) = (c_el, p_el)
+                                                {
+                                                    for (sk, scv) in co.iter() {
+                                                        if let Some(spv) = po.get(sk) {
+                                                            if spv != scv {
+                                                                log::error!(
+                                                                    target: "wasm_tui",
+                                                                    "[VERIFIER FIELD DIFF] '{}'[{}].{}\nPRIOR: {}\nCURRENT: {}",
+                                                                    k, i, sk,
+                                                                    serde_json::to_string(spv).unwrap_or_default(),
+                                                                    serde_json::to_string(scv).unwrap_or_default(),
+                                                                );
+                                                            }
+                                                        } else {
+                                                            log::error!(target: "wasm_tui", "[VERIFIER FIELD DIFF] '{}'[{}].{} only-in-CURRENT", k, i, sk);
+                                                        }
+                                                    }
+                                                } else {
+                                                    log::error!(
+                                                        target: "wasm_tui",
+                                                        "[VERIFIER FIELD DIFF] '{}'[{}]\nPRIOR: {}\nCURRENT: {}",
+                                                        k, i,
+                                                        p_el.map(|v| serde_json::to_string(v).unwrap_or_default()).unwrap_or_else(|| "<missing>".to_string()),
+                                                        c_el.map(|v| serde_json::to_string(v).unwrap_or_default()).unwrap_or_else(|| "<missing>".to_string()),
+                                                    );
+                                                }
+                                            }
+                                        }
                                     } else {
-                                        cs
-                                    };
-                                    let ps_s = if ps.len() > 600 {
-                                        format!("{}…", &ps[..600])
-                                    } else {
-                                        ps
-                                    };
-                                    log::error!(
-                                        target: "wasm_tui",
-                                        "[VERIFIER FIELD DIFF] '{}' \nPRIOR: {}\nCURRENT: {}",
-                                        k, ps_s, cs_s
-                                    );
+                                        let cs = serde_json::to_string(cv).unwrap_or_default();
+                                        let ps = serde_json::to_string(pv).unwrap_or_default();
+                                        let cs_s = if cs.len() > 600 { format!("{}…", &cs[..600]) } else { cs };
+                                        let ps_s = if ps.len() > 600 { format!("{}…", &ps[..600]) } else { ps };
+                                        log::error!(
+                                            target: "wasm_tui",
+                                            "[VERIFIER FIELD DIFF] '{}' \nPRIOR: {}\nCURRENT: {}",
+                                            k, ps_s, cs_s
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -2230,27 +2361,18 @@ impl WasmFancyTuiState {
                     &mut remote_controller,
                 );
             }
-            WasmControllerType::Random => {
-                // Random controller - runs directly without user input
-                // IMPORTANT: Use self.controller_seed to match native client behavior (mtg-254)
-                let inner = RandomController::with_seed(our_player_id, self.controller_seed);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
-            }
-            WasmControllerType::Heuristic => {
-                // Heuristic controller — same seeding rule as the Random branch above:
-                // seed from `self.controller_seed` so two clients with the same master
-                // seed produce identical heuristic decisions for whichever slot they're
-                // assigned. (HeuristicController::new would silently use seed 0.)
-                let inner = HeuristicController::with_seed(our_player_id, self.controller_seed);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
-            }
-            WasmControllerType::Zero => {
-                // Zero controller (always passes)
-                let inner = ZeroController::new(our_player_id);
-                let mut network_local = WasmNetworkLocalController::new(inner, network_client.clone());
-                self.run_network_mode_ai_v2(our_player_id, we_are_p1, &mut network_local, &mut remote_controller);
+            WasmControllerType::Random | WasmControllerType::Heuristic | WasmControllerType::Zero => {
+                // AI controllers — unified rewind+replay path (mtg-610).
+                //
+                // THE PRINCIPLED DESIGN: lazily create the persistent inner
+                // controller ONCE (its RNG advances monotonically across all
+                // re-entries, mirroring the server's single persistent
+                // controller) and drive every re-entry through rewind+replay
+                // so already-applied begin-of-step / combat actions are undone
+                // before being replayed — instead of the old no-rewind path
+                // that re-ran them and relied on the 9 TurnStructure guards.
+                self.ensure_net_our_controller(our_controller_type, our_player_id, network_client.clone());
+                self.run_network_mode_ai_v2(our_player_id, opponent_id, we_are_p1, network_client, &mut remote_controller);
             }
             WasmControllerType::Remote => {
                 // This shouldn't happen - our_controller_type should never be Remote
@@ -2506,86 +2628,359 @@ impl WasmFancyTuiState {
         }
     }
 
-    /// Run network mode with an AI controller (no replay needed)
-    ///
-    /// # Arguments
-    /// * `_our_id` - Our player ID (for logging)
-    /// * `we_are_p1` - Whether we are player 1 (index 0) or player 2 (index 1)
-    /// * `our_controller` - Our local controller
-    /// * `remote_controller` - The remote controller for opponent
+    /// Lazily construct the persistent network controller for OUR player
+    /// (mtg-610). Created ONCE on the first network run and reused across every
+    /// rewind+replay re-entry so the inner controller's RNG advances
+    /// monotonically — byte-identical to the server's single persistent
+    /// controller. The box is a `WasmNetworkLocalController<Inner>` so the
+    /// genuinely-new frontier choice is also submitted to the server.
     #[cfg(feature = "wasm-network")]
-    fn run_network_mode_ai_v2<C: PlayerController>(
+    fn ensure_net_our_controller(
         &mut self,
+        controller_type: WasmControllerType,
         our_id: PlayerId,
-        we_are_p1: bool,
-        our_controller: &mut WasmNetworkLocalController<C>,
-        remote_controller: &mut WasmRemoteController,
+        network_client: SharedNetworkClient,
     ) {
-        let start_turn = self.game.turn.turn_number;
-        log::debug!(
-            target: "wasm_tui",
-            "NETWORK AI: Running game loop, turn {}, we_are_p1={}",
-            start_turn,
-            we_are_p1
-        );
-
-        // Get the network client for the sync callback
-        let network_client = ensure_client();
-
-        // Scope game_loop so borrow of self.game ends before accessing self
-        let result = {
-            // Apply pending state-sync entries from the shadow log
-            // (Phase 2 step 1 — non-destructive ActionLog read).
-            //
-            // AI-v2 path note: the LEGACY `run_network_mode_ai_v2`
-            // sync_callback ONLY applied reveals — it never drained the
-            // library-reorder queue. Reorders sit in the log here and are
-            // consumed by later sync points (e.g. via the
-            // `run_network_mode_human_v2` / replay paths). Preserving that
-            // behaviour avoids opening-hand divergence for AI clients
-            // (mtg-559 family); the ActionLog primitive lets us do this
-            // by filtering the apply pass instead of holding back the
-            // log itself. The reorders remain visible to any subsequent
-            // apply call.
-            let client_for_sync = network_client.clone();
-            let local_player = our_id;
-            let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                let applied = client_for_sync
-                    .borrow_mut()
-                    .apply_state_sync_reveals_up_to_frontier(game, Some(local_player));
-                if applied > 0 {
-                    log::debug!(
-                        "WASM sync_callback (ai): applied {} reveal-only state-sync entries at action_count={}",
-                        applied,
-                        game.action_count()
-                    );
-                }
-            };
-
-            let mut game_loop = GameLoop::new(&mut self.game)
-                .with_verbosity(VerbosityLevel::Normal)
-                .with_sync_callback(sync_callback)
-                .skip_opening_hands() // Server handles opening hands via CardRevealed
-                .with_deferred_game_end(); // Server is authoritative about game end
-
-            // Pass controllers in the correct order based on which player we are
-            // GameLoop expects (p1_controller, p2_controller)
-            if we_are_p1 {
-                game_loop.run_until_input(our_controller, remote_controller)
-            } else {
-                game_loop.run_until_input(remote_controller, our_controller)
+        if self.net_our_controller.is_some() {
+            return;
+        }
+        // IMPORTANT: seed from `self.controller_seed` so two clients with the
+        // same master seed produce identical decisions for whichever slot they
+        // are assigned (mtg-254). The persistent inner is wrapped in
+        // `WasmNetworkLocalController` to coordinate submit/ack with the server.
+        let boxed: Box<dyn PlayerController> = match controller_type {
+            WasmControllerType::Random => Box::new(WasmNetworkLocalController::new(
+                RandomController::with_seed(our_id, self.controller_seed),
+                network_client,
+            )),
+            WasmControllerType::Heuristic => Box::new(WasmNetworkLocalController::new(
+                HeuristicController::with_seed(our_id, self.controller_seed),
+                network_client,
+            )),
+            WasmControllerType::Zero => Box::new(WasmNetworkLocalController::new(
+                ZeroController::new(our_id),
+                network_client,
+            )),
+            other => {
+                log::error!("ensure_net_our_controller: unsupported controller type {:?}", other);
+                return;
             }
         };
+        self.net_our_controller = Some(boxed);
+    }
 
-        let end_turn = self.game.turn.turn_number;
+    /// Run network mode for an AI controller via the PRINCIPLED rewind+replay
+    /// model (mtg-610), unified with the human path's resume mechanism.
+    ///
+    /// On the FIRST forward run of a turn we run the game loop straight
+    /// through. On every mid-turn RE-ENTRY (the loop blocked awaiting the
+    /// opponent's choice and JS re-called us) we rewind to the turn start and
+    /// replay both players' recorded choices, delegating ONLY the genuinely-new
+    /// frontier choice to the persistent inner controller — so no begin-of-step
+    /// / combat action is re-applied (the bug the 9 TurnStructure guards papered
+    /// over) and the inner's RNG advances exactly once per real choice.
+    ///
+    /// Turn 1 has no `ChangeTurn` undo marker, so a re-entry restores the
+    /// captured turn-1-start baseline instead of over-rewinding setup.
+    ///
+    /// # Arguments
+    /// * `our_id` - Our player ID
+    /// * `opponent_id` - Opponent's player ID
+    /// * `we_are_p1` - Whether we are player 1 (index 0) or player 2 (index 1)
+    /// * `network_client` - The shared network client
+    /// * `remote_controller` - The remote controller for the opponent (forward run only)
+    #[cfg(feature = "wasm-network")]
+    fn run_network_mode_ai_v2(
+        &mut self,
+        our_id: PlayerId,
+        opponent_id: PlayerId,
+        we_are_p1: bool,
+        network_client: SharedNetworkClient,
+        remote_controller: &mut WasmRemoteController,
+    ) {
+        let current_turn = self.game.turn.turn_number;
+
+        // Capture the turn-1-start baseline ONCE, before the very first forward
+        // run, so turn-1 re-entries can restore it (rewind_to_turn_start would
+        // over-rewind through the externally-applied setup since turn 1 has no
+        // ChangeTurn marker). Mirrors GameLoop::with_post_setup_hook in the
+        // native rewind/replay oracle.
+        if self.net_turn1_baseline.is_none() && current_turn <= 1 {
+            self.net_turn1_baseline = Some(Box::new(self.game.clone()));
+            log::debug!(
+                target: "wasm_tui",
+                "NETWORK AI: captured turn-1 baseline at undo_log={}",
+                self.game.undo_log.len()
+            );
+        }
+
+        // Re-entry detection: if we already started a forward run for this turn
+        // number, this entry is a mid-turn re-entry (loop blocked waiting for
+        // the opponent) → rewind+replay. Otherwise it is the first forward run
+        // of a fresh turn → run straight through.
+        let is_reentry = self.net_forward_run_turn == Some(current_turn);
+
         log::debug!(
             target: "wasm_tui",
-            "NETWORK AI: Game loop returned on turn {}",
-            end_turn
+            "NETWORK AI: turn {}, we_are_p1={}, is_reentry={}, undo_log={}",
+            current_turn, we_are_p1, is_reentry, self.game.undo_log.len()
+        );
+
+        let result = if is_reentry {
+            self.run_network_ai_replay(our_id, opponent_id, we_are_p1, network_client)
+        } else {
+            self.run_network_ai_forward(our_id, we_are_p1, network_client, remote_controller)
+        };
+
+        // Track the turn we last ran so the next entry can tell forward-vs-reentry.
+        self.net_forward_run_turn = Some(self.game.turn.turn_number);
+
+        log::debug!(
+            target: "wasm_tui",
+            "NETWORK AI: game loop returned on turn {}, undo_log={}",
+            self.game.turn.turn_number,
+            self.game.undo_log.len()
         );
 
         self.handle_game_result(result);
         self.needs_redraw = true;
+    }
+
+    /// First forward run of a turn (AI network path). Drives the persistent
+    /// inner controller (wrapped in `WasmNetworkLocalController`) and the live
+    /// remote controller straight through `run_until_input`.
+    #[cfg(feature = "wasm-network")]
+    fn run_network_ai_forward(
+        &mut self,
+        our_id: PlayerId,
+        we_are_p1: bool,
+        network_client: SharedNetworkClient,
+        remote_controller: &mut WasmRemoteController,
+    ) -> crate::Result<GameLoopState> {
+        let mut our_controller = self
+            .net_our_controller
+            .take()
+            .expect("net_our_controller must be initialised before run_network_ai_forward");
+
+        let result = {
+            let sync_callback = Self::make_ai_sync_callback(network_client, our_id);
+            let mut game_loop = GameLoop::new(&mut self.game)
+                .with_verbosity(VerbosityLevel::Normal)
+                .with_sync_callback(sync_callback)
+                .skip_opening_hands()
+                .with_deferred_game_end();
+
+            if we_are_p1 {
+                game_loop.run_until_input(our_controller.as_mut(), remote_controller)
+            } else {
+                game_loop.run_until_input(remote_controller, our_controller.as_mut())
+            }
+        };
+
+        // Restore the persistent controller so its RNG carries forward.
+        self.net_our_controller = Some(our_controller);
+
+        // Forward runs make monotonic progress, so the monotonicity invariant
+        // applies (unlike replay, which legitimately rewinds the action count).
+        if let Some(violation_msg) = self.check_monotonicity_invariants() {
+            self.error_message = Some(violation_msg);
+            self.game_over = true;
+        }
+        result
+    }
+
+    /// Mid-turn re-entry (AI network path): rewind to the turn start and replay
+    /// both players' recorded choices, delegating ONLY the new frontier choice
+    /// to the persistent inner controller. This is the SAME resume mechanism as
+    /// `run_network_mode_human_v2`'s replay branch, but the "new choice" is
+    /// computed live by the persistent AI inner rather than injected from a
+    /// human's pending choice.
+    #[cfg(feature = "wasm-network")]
+    fn run_network_ai_replay(
+        &mut self,
+        our_id: PlayerId,
+        opponent_id: PlayerId,
+        we_are_p1: bool,
+        network_client: SharedNetworkClient,
+    ) -> crate::Result<GameLoopState> {
+        self.in_rewind_replay = true;
+
+        // Rewind to the start of the current turn, extracting both players'
+        // recorded choices. Turn 1 has no ChangeTurn marker, so restore the
+        // captured baseline instead of over-rewinding through setup.
+        let (our_choices, opponent_choices) = self.rewind_for_network_replay(our_id);
+
+        // Clear transient game-loop state not tracked by the undo log so the
+        // replay starts clean (mirrors the human replay branch).
+        self.game.spell_targets.clear();
+        self.game.pending_cast = None;
+        self.game.pending_activation = None;
+        self.game.pending_activation_effect_idx = None;
+        self.game.pending_cycling_search = None;
+
+        log::debug!(
+            target: "wasm_tui",
+            "NETWORK AI REPLAY: after rewind turn {}, undo_log={}, {} our + {} opponent choices",
+            self.game.turn.turn_number, self.game.undo_log.len(), our_choices.len(), opponent_choices.len()
+        );
+
+        // Wrap the PERSISTENT inner controller in a fresh ReplayController
+        // carrying our accumulated choice history. The wrapper echoes every
+        // prior choice from cache (inner NOT invoked → RNG untouched) and
+        // delegates to the persistent inner ONLY for the new frontier choice
+        // (advancing its RNG exactly once → byte-identical to the server).
+        let inner = self
+            .net_our_controller
+            .take()
+            .expect("net_our_controller must be initialised before run_network_ai_replay");
+        let mut our_replay = ReplayController::new(our_id, inner, our_choices);
+
+        // The remote opponent's choices can't be recomputed locally, so replay
+        // them from the saved log, then delegate to a fresh remote controller.
+        let fresh_remote = WasmRemoteController::new(opponent_id, network_client.clone());
+        let mut opponent_replay = ReplayController::new(opponent_id, Box::new(fresh_remote), opponent_choices);
+
+        let result = {
+            let sync_callback = Self::make_ai_sync_callback(network_client, our_id);
+            let mut game_loop = GameLoop::new(&mut self.game)
+                .with_verbosity(VerbosityLevel::Normal)
+                .with_sync_callback(sync_callback)
+                .skip_opening_hands()
+                .with_deferred_game_end();
+
+            if we_are_p1 {
+                game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
+            } else {
+                game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
+            }
+        };
+
+        // Recover the persistent inner so its RNG carries forward to the next
+        // re-entry / turn.
+        self.net_our_controller = Some(our_replay.into_inner());
+
+        self.in_rewind_replay = false;
+
+        // Reset high-water marks to post-replay values (the action count may be
+        // lower than the pre-rewind peak; the replay verification — not the
+        // monotonicity check — guards correctness here).
+        self.high_water_action_count = self.game.undo_log.len();
+        self.high_water_log_count = self.game.logger.log_count();
+
+        // Replay verification mirrors the human path: any divergence between
+        // the captured pre-rewind snapshot and the post-replay state is fatal.
+        if let Some(violation) = self.run_replay_verification() {
+            log::error!(target: "wasm_tui", "{}", violation);
+            self.error_message = Some(violation);
+            self.game_over = true;
+        }
+        result
+    }
+
+    /// Rewind to the current turn's start for the AI network replay path,
+    /// returning `(our_choices, opponent_choices)`. On turn 1 (no ChangeTurn
+    /// marker) restore the captured turn-1 baseline and read the choices from
+    /// the pre-rewind undo log; otherwise delegate to `rewind_to_turn_start`.
+    #[cfg(feature = "wasm-network")]
+    fn rewind_for_network_replay(&mut self, our_id: PlayerId) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
+        let on_turn_one = self.game.turn.turn_number <= 1 && self.game.undo_log.current_turn().is_none();
+        if on_turn_one {
+            if let Some(baseline) = self.net_turn1_baseline.as_ref() {
+                // Extract this turn's choices from the live (pre-restore) log
+                // BEFORE replacing the game with the baseline clone.
+                let (our_choices, opponent_choices) = Self::partition_choices(&self.game, our_id);
+                let baseline_clone = (**baseline).clone();
+                self.game = baseline_clone;
+                // The baseline clone reverts `game.cards` to turn-1-start, so the
+                // card instances that the state-sync reveal pass instantiated
+                // during the forward run are gone. Reset the sync cursor so the
+                // reveals re-apply (re-instantiating those cards) in lockstep
+                // with the forward replay — exactly the rewind/replay contract
+                // `reset_state_sync_cursor` documents (the log is
+                // non-destructive; only the cursor rewinds).
+                ensure_client().borrow_mut().reset_state_sync_cursor();
+                return (our_choices, opponent_choices);
+            }
+            log::warn!(target: "wasm_tui", "NETWORK AI REPLAY: turn-1 re-entry but no baseline captured");
+        }
+        // Turn >= 2: undo-log rewind. `rewind_to_turn_start` (undo.rs) clears
+        // any shadow card instance sitting in a hidden library zone, so the
+        // rewound `cards` set is deterministic regardless of when async reveals
+        // landed — fixing the turn-start-hash determinism hole (mtg-610). The
+        // verifier's turn-start hash is captured INSIDE that call, AFTER the
+        // library clear, so it reflects the clean (instance-free-library) state.
+        //
+        // We then reset the state-sync cursor so the forward replay re-applies
+        // the reveals (frontier mode) and RE-INSTANTIATES the cards that were
+        // just cleared — e.g. a land drawn earlier this turn must come back as a
+        // known card so it is offered as a PlayLand again, matching the server.
+        // This re-application happens during replay (after the turn-start hash
+        // is already captured), so it cannot perturb the determinism check; the
+        // masked-private-form verifier comparison tolerates the "draws a card"
+        // vs "draws X" log wording the re-application timing produces.
+        let result = self.rewind_to_turn_start(our_id);
+        ensure_client().borrow_mut().reset_state_sync_cursor();
+        result
+    }
+
+    /// Partition the undo log's recorded `ChoicePoint` choices into
+    /// `(our_choices, opponent_choices)` in forward chronological order. Used
+    /// by the turn-1 baseline-restore path, which does not pop the undo log.
+    #[cfg(feature = "wasm-network")]
+    fn partition_choices(game: &GameState, our_id: PlayerId) -> (Vec<ReplayChoice>, Vec<ReplayChoice>) {
+        let mut our_choices = Vec::new();
+        let mut opponent_choices = Vec::new();
+        for action in game.undo_log.actions() {
+            if let GameAction::ChoicePoint {
+                player_id,
+                choice: Some(c),
+                ..
+            } = action
+            {
+                if *player_id == our_id {
+                    our_choices.push(c.clone());
+                } else {
+                    opponent_choices.push(c.clone());
+                }
+            }
+        }
+        (our_choices, opponent_choices)
+    }
+
+    /// Build the state-sync callback used by the AI network path.
+    ///
+    /// Uses the reveal-only apply pass (`apply_state_sync_reveals_up_to_frontier`):
+    /// the AI path drains card reveals at each sync point but lets library
+    /// reorders be consumed by the broader apply pass elsewhere, preserving the
+    /// opening-hand `draw_card_silent` order the GameLoop expects (mtg-559
+    /// family). The non-destructive ActionLog keeps every entry visible across
+    /// rewind+replay re-entries — the cursor is monotonic, so a replayed run
+    /// re-applies the same entries in the same order (bit-identical shadow).
+    ///
+    /// Both the forward run and the rewind+replay use frontier application:
+    /// the replay path resets the state-sync cursor first, so frontier mode
+    /// re-applies every reveal and re-instantiates the cards the rewind cleared
+    /// (e.g. a land drawn earlier this turn) so they are offered again, matching
+    /// the server. The rewound turn-start hash is captured BEFORE the replay
+    /// (with library instances already cleared in `rewind_to_turn_start`), so
+    /// the eager re-application cannot perturb the determinism check.
+    #[cfg(feature = "wasm-network")]
+    fn make_ai_sync_callback(
+        network_client: SharedNetworkClient,
+        local_player: PlayerId,
+    ) -> impl Fn(&mut GameState, u64) {
+        move |game: &mut GameState, _target_action: u64| {
+            let applied = network_client
+                .borrow_mut()
+                .apply_state_sync_reveals_up_to_frontier(game, Some(local_player));
+            if applied > 0 {
+                log::debug!(
+                    "WASM sync_callback (ai): applied {} reveal-only state-sync entries at action_count={}",
+                    applied,
+                    game.action_count()
+                );
+            }
+        }
     }
 
     /// Handle game result after running (for human player games)

@@ -576,6 +576,12 @@ where
         self.entities.iter().filter_map(|opt| opt.as_ref())
     }
 
+    /// Mutably iterate over all entities (skips None gaps). Used for sweeping
+    /// per-turn transient fields across every card during rewind cleanup.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.entities.iter_mut().filter_map(|opt| opt.as_mut())
+    }
+
     /// Get count of actual entities (not including None gaps)
     #[inline]
     pub fn len(&self) -> usize {
