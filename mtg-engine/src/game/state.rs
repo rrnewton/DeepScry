@@ -1334,7 +1334,19 @@ impl GameState {
                     // Spell resolved or was countered - logged elsewhere
                 }
                 (Zone::Hand, Zone::Graveyard) => {
-                    self.logger.normal(&format!("{} is discarded", card_name));
+                    // Discards are logged by the caller: `discard_card` emits a
+                    // count-stable, reveal-timing-robust PRIVATE "P discards X"
+                    // (masked "P discards a card") line, and the bulk-discard
+                    // sites (DiscardHand / Balance / cost payments) emit their
+                    // own summary lines. A second per-card line here would be
+                    // (a) redundant double-logging (DRY) and (b) reveal-timing
+                    // fragile: on a network shadow the card instance is absent
+                    // on the forward pass (so this `try_get` guard skips it) but
+                    // present after a rewind+replay (the reveal insert is not
+                    // undone), making it fire ONLY on replay — an extra,
+                    // history-dependent log entry that desyncs the replay
+                    // verifier's log tail (mtg-610). Intentionally not logged
+                    // here.
                 }
                 (Zone::Library, Zone::Graveyard) => {
                     // Mill - don't spam, this is logged by mill effect
@@ -2671,32 +2683,11 @@ impl GameState {
                 // Roll back animation type changes (Mishra's Factory and
                 // friends become land-only again at end of turn). We have to
                 // refresh the cache flags so combat / mana / target logic
-                // stops treating the manland as a creature.
-                let touched_types = !card.temp_animate_types.is_empty();
-                let touched_subtypes = !card.temp_animate_subtypes.is_empty() || !card.temp_removed_subtypes.is_empty();
-                if touched_types {
-                    let removed: smallvec::SmallVec<[crate::core::CardType; 2]> =
-                        card.temp_animate_types.drain(..).collect();
-                    card.types.retain(|t| !removed.contains(t));
-                }
-                if touched_subtypes {
-                    let added: smallvec::SmallVec<[crate::core::Subtype; 2]> =
-                        card.temp_animate_subtypes.drain(..).collect();
-                    card.subtypes.retain(|s| !added.contains(s));
-                    // Restore subtypes that RemoveCreatureTypes$ True stripped.
-                    let restored: smallvec::SmallVec<[crate::core::Subtype; 2]> =
-                        card.temp_removed_subtypes.drain(..).collect();
-                    card.subtypes.extend(restored);
-                }
-                if touched_types || touched_subtypes {
-                    let types = card.types.clone();
-                    let subtypes = card.subtypes.clone();
-                    let name = card.name.clone();
-                    card.definition.cache.update_from_types(&types);
-                    card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
-                    if card.definition.cache.is_mana_source {
-                        any_mana_source_typeline_reverted = true;
-                    }
+                // stops treating the manland as a creature. Shared with
+                // `UndoLog::rewind_to_turn_start` via `Card::revert_temp_animation`.
+                let (_touched, reverted_mana_source) = card.revert_temp_animation();
+                if reverted_mana_source {
+                    any_mana_source_typeline_reverted = true;
                 }
             }
         }
@@ -3675,6 +3666,41 @@ impl GameState {
                     // (c)).
                     if let Ok(card) = self.cards.get_mut(card_id) {
                         card.restore_temp_base_stats(prev_power, prev_toughness);
+                    }
+                }
+
+                crate::undo::GameAction::AnimateTypeline {
+                    card_id,
+                    prev_types,
+                    prev_subtypes,
+                    prev_temp_animate_types,
+                    prev_temp_animate_subtypes,
+                    prev_temp_removed_subtypes,
+                } => {
+                    // Restore the exact pre-animate typeline + tracking vectors
+                    // and refresh the definition cache (mtg-610). Mirrors
+                    // `GameAction::undo`'s arm.
+                    if let Ok(card) = self.cards.get_mut(card_id) {
+                        card.types = prev_types;
+                        card.subtypes = prev_subtypes;
+                        card.temp_animate_types = prev_temp_animate_types;
+                        card.temp_animate_subtypes = prev_temp_animate_subtypes;
+                        card.temp_removed_subtypes = prev_temp_removed_subtypes;
+                        let types = card.types.clone();
+                        let subtypes = card.subtypes.clone();
+                        let name = card.name.clone();
+                        card.definition.cache.update_from_types(&types);
+                        card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+                    }
+                }
+
+                crate::undo::GameAction::MarkDamagedBy { target, source } => {
+                    // Remove the source appended when combat damage was recorded
+                    // (mtg-610). Mirrors `GameAction::undo`'s arm.
+                    if let Ok(card) = self.cards.get_mut(target) {
+                        if let Some(pos) = card.damaged_by_this_turn.iter().rposition(|s| *s == source) {
+                            card.damaged_by_this_turn.remove(pos);
+                        }
                     }
                 }
             }

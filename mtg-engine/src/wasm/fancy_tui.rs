@@ -1927,6 +1927,29 @@ impl WasmFancyTuiState {
                                                         }
                                                     }
                                                 } else {
+                                                    // Diagnostic (mtg-610): when a `cards` slot is
+                                                    // null on one side and a card on the other (the
+                                                    // async-reveal-leak class), name the card +
+                                                    // owner + its zone so the leak is identifiable
+                                                    // without reading the truncated console blob.
+                                                    let present = c_el.filter(|v| !v.is_null()).or(p_el.filter(|v| !v.is_null()));
+                                                    if k == "cards" {
+                                                        if let Some(serde_json::Value::Object(card)) = present {
+                                                            let nm = card.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                                            let cid = card.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                            let owner = card.get("owner").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                            let zone = self
+                                                                .game
+                                                                .find_card_zone(crate::core::CardId::new(cid as u32));
+                                                            log::error!(
+                                                                target: "wasm_tui",
+                                                                "[VERIFIER CARD LEAK] cards[{}] name={:?} id={} owner=P{} live_zone={:?} (PRIOR {} / CURRENT {})",
+                                                                i, nm, cid, owner, zone,
+                                                                if p_el.map(|v| v.is_null()).unwrap_or(true) { "null" } else { "present" },
+                                                                if c_el.map(|v| v.is_null()).unwrap_or(true) { "null" } else { "present" },
+                                                            );
+                                                        }
+                                                    }
                                                     log::error!(
                                                         target: "wasm_tui",
                                                         "[VERIFIER FIELD DIFF] '{}'[{}]\nPRIOR: {}\nCURRENT: {}",

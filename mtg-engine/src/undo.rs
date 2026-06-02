@@ -375,6 +375,36 @@ pub enum GameAction {
         prev_power: Option<i8>,
         prev_toughness: Option<i8>,
     },
+    /// Records an until-end-of-turn `AB$ Animate` typeline mutation (Mishra's
+    /// Factory et al. becoming a creature, robots-deck animated artifacts) so
+    /// `undo()` restores the card's `types` / `subtypes` and the three
+    /// animate-tracking vectors EXACTLY, then refreshes the definition cache.
+    ///
+    /// Animate mutates `types`/`subtypes` directly plus the
+    /// `temp_animate_types` / `temp_animate_subtypes` / `temp_removed_subtypes`
+    /// bookkeeping, none of which were undo-logged. The end-of-turn cleanup
+    /// reverts them, but a rewind+replay (network shadow / MCTS) needs an exact
+    /// inverse keyed by the undo log — relying on the bookkeeping vectors alone
+    /// is fragile because the animate re-application guard
+    /// (`if !card.subtypes.contains(st)`) can leave them out of sync with
+    /// `subtypes` after a rewind. Capturing the full prior snapshot makes the
+    /// round-trip exact (mtg-610).
+    AnimateTypeline {
+        card_id: CardId,
+        prev_types: SmallVec<[crate::core::CardType; 2]>,
+        prev_subtypes: SmallVec<[crate::core::Subtype; 3]>,
+        prev_temp_animate_types: SmallVec<[crate::core::CardType; 2]>,
+        prev_temp_animate_subtypes: SmallVec<[crate::core::Subtype; 2]>,
+        prev_temp_removed_subtypes: SmallVec<[crate::core::Subtype; 2]>,
+    },
+    /// Records that `source` was appended to `target`'s `damaged_by_this_turn`
+    /// list when combat (or other) damage was dealt. `undo()` pops that exact
+    /// source so the until-end-of-turn damage-source tracking (read by death
+    /// triggers like Sengir Vampire, CR 514.2) round-trips through a rewind.
+    /// Only logged for the entry that was ACTUALLY added (the dedup guard in
+    /// the marking site means a no-op push is never logged), so undo simply
+    /// removes the last occurrence of `source` (mtg-610).
+    MarkDamagedBy { target: CardId, source: CardId },
 }
 
 impl fmt::Display for GameAction {
@@ -586,6 +616,19 @@ impl fmt::Display for GameAction {
                 prev_power,
                 prev_toughness
             ),
+            GameAction::AnimateTypeline {
+                card_id,
+                prev_subtypes,
+                ..
+            } => write!(
+                f,
+                "AnimateTypeline({} prev_subtypes={})",
+                card_id.as_u32(),
+                prev_subtypes.len()
+            ),
+            GameAction::MarkDamagedBy { target, source } => {
+                write!(f, "MarkDamagedBy(target={} source={})", target.as_u32(), source.as_u32())
+            }
         }
     }
 }
@@ -680,6 +723,20 @@ impl GameAction {
                 // Reverse the life change
                 if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
                     player.life -= delta;
+                    // `has_lost` is a DERIVED flag set as a side effect of
+                    // `lose_life()` when life drops to <= 0 (player.rs); it is
+                    // not separately undo-logged. Reversing the life delta must
+                    // also reverse the derived loss flag, otherwise a rewind
+                    // that restores life back above 0 leaves a stale
+                    // `has_lost = true`, diverging the turn-start hash across
+                    // rewinds (mtg-610). This mirrors the redo path in
+                    // state.rs (apply ModifyLife re-derives has_lost). Only the
+                    // life-based loss condition is re-derived here; other loss
+                    // conditions (empty-library draw, etc.) are recorded by
+                    // their own logged actions and replayed forward.
+                    if player.life > 0 {
+                        player.has_lost = false;
+                    }
                 } else {
                     return Err(format!("Player {} not found for ModifyLife undo", player_id.as_u32()));
                 }
@@ -1091,6 +1148,43 @@ impl GameAction {
                     card.restore_temp_base_stats(*prev_power, *prev_toughness);
                 }
             }
+
+            GameAction::AnimateTypeline {
+                card_id,
+                prev_types,
+                prev_subtypes,
+                prev_temp_animate_types,
+                prev_temp_animate_subtypes,
+                prev_temp_removed_subtypes,
+            } => {
+                // Restore the exact pre-animate typeline + tracking vectors and
+                // refresh the definition cache. get_mut tolerates a missing card
+                // (it may have left the battlefield), matching the other
+                // card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.types = prev_types.clone();
+                    card.subtypes = prev_subtypes.clone();
+                    card.temp_animate_types = prev_temp_animate_types.clone();
+                    card.temp_animate_subtypes = prev_temp_animate_subtypes.clone();
+                    card.temp_removed_subtypes = prev_temp_removed_subtypes.clone();
+                    let types = card.types.clone();
+                    let subtypes = card.subtypes.clone();
+                    let name = card.name.clone();
+                    card.definition.cache.update_from_types(&types);
+                    card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+                }
+            }
+
+            GameAction::MarkDamagedBy { target, source } => {
+                // Remove the source that was appended when damage was recorded.
+                // get_mut tolerates a missing card (it may have left the
+                // battlefield), matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*target) {
+                    if let Some(pos) = card.damaged_by_this_turn.iter().rposition(|s| s == source) {
+                        card.damaged_by_this_turn.remove(pos);
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -1352,6 +1446,14 @@ impl UndoLog {
                 card.power_bonus = 0;
                 card.toughness_bonus = 0;
                 card.clear_temp_base_stats();
+                // The cleanup step (game_loop/steps.rs) also clears these
+                // per-card "until end of turn" transients on every battlefield
+                // permanent (CR 514.2): the per-source damage-prevention pool
+                // and the two combat replacement flags. None are undo-logged,
+                // so at any turn boundary they hold their post-cleanup value.
+                card.damage_prevention = 0;
+                card.exile_if_would_die_this_turn = false;
+                card.prevent_all_combat_damage_this_turn = false;
             }
         }
 
@@ -1367,8 +1469,34 @@ impl UndoLog {
         // it for all cards; a forward replay re-activates the regen and re-sets
         // the shield where appropriate. (Same per-turn-transient class as
         // `damage`, but zone-independent.)
+        //
+        // `damaged_by_this_turn` is NOT blanket-reset here: it is made
+        // reversible via `GameAction::MarkDamagedBy` (logged when combat damage
+        // records a source), so the undo-action phase above restores its exact
+        // pre-rewind value. A blanket clear would break the per-action undo
+        // oracle, whose replay re-derives combat damage by REDOING the logged
+        // marks rather than re-running the auto combat-damage step.
         for card in game.cards.values_mut() {
             card.regeneration_shields = 0;
+        }
+        // NOTE: until-end-of-turn `AB$ Animate` typeline changes (Mishra's
+        // Factory / robots-deck animated artifacts) are NOW reverted by the
+        // undo-action phase above via the reversible `GameAction::AnimateTypeline`
+        // (mtg-610): its `undo()` restores the exact prior `types`/`subtypes` +
+        // tracking vectors and refreshes the definition cache. We deliberately
+        // do NOT also call `revert_temp_animation()` here — doing so would
+        // double-revert (drain tracking vectors the undo already restored),
+        // breaking the rewind+replay round-trip. The cleanup step still uses
+        // `revert_temp_animation` for the forward end-of-turn path.
+
+        // Per-player "until end of turn" damage-prevention shields (CR 514.2),
+        // including source-filtered shields (Circle of Protection). The cleanup
+        // step clears both on every player; neither is undo-logged, so at any
+        // turn boundary they hold their post-cleanup (empty/zero) value. A
+        // forward replay re-establishes any shields cast this turn.
+        for player in &mut game.players {
+            player.damage_prevention = 0;
+            player.source_prevention_shields.clear();
         }
 
         // SHADOW-ONLY: clear card instances that leaked into a hidden library
