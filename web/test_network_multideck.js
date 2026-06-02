@@ -30,23 +30,25 @@ function log(msg) {
 // phase triggers double-firing on WASM GameLoop re-entry after a NeedInput block,
 // and fixed by a per-turn re-entry guard in check_phase_triggers (mtg-609).
 //
+// old_school/03_robots_jesseisbak seed=42 is back in the gate (mtg-559/mtg-610):
+// the WASM in-stack-resolution re-entry desync (Copy Artifact Clone, Balance,
+// extra-turn, and other interactive resolution choices returning NeedInput
+// mid-resolution) is now fixed by the unified rewind+replay AI path plus the
+// closed undo holes — CloneCard / PushExtraTurn are undoable GameActions and the
+// until-EOT keyword clear is zone-independent, so a mid-resolution rewind+replay
+// round-trips compute_state_hash exactly instead of double-applying effects.
+//
 // EXCLUDED known-broken mirror scenarios (pre-existing WASM-shadow desyncs,
 // NOT introduced by the mirror-match harness fix — they reproduce identically
 // on the prior non-mirror code too):
 //   - white_weenie seed=7: native P2 hash mismatch ~choice_seq=214 (mtg-nkd71).
-//   - old_school/03_robots_jesseisbak seed=42: WASM in-stack-resolution re-entry
-//     desync. Copy Artifact's Clone choice (and Balance / other interactive
-//     resolution effects) return NeedInput mid-resolution; on WASM GameLoop
-//     re-entry resolve_top_spell_with_discard_hook re-runs from the first effect
-//     instead of resuming, so already-executed effects (and the clone) run twice.
-//     Distinct, broader root cause than mtg-609; needs an effect-resume index
-//     for spell resolution (cf. pending_activation_effect_idx). Tracked: mtg-559.
 // These belong to the engine shadow-state work, not the gate harness; the gate
 // uses scenarios proven STABLE as mirror matches.
 const SCENARIOS = [
     { deck: 'decks/monored.dck',                     seed: 13, desc: 'Red burn + creatures (mirror)' },
     { deck: 'decks/counterspells.dck',               seed: 5,  desc: 'Control + counters (mirror)' },
     { deck: 'decks/old_school/01_rogue_rogerbrand.dck', seed: 3, desc: "Old-school reanimator: All Hallow's Eve (mirror, mtg-609)" },
+    { deck: 'decks/old_school/03_robots_jesseisbak.dck', seed: 42, desc: 'Old-school robots: Copy Artifact clone / Balance / extra-turn in-resolution choices (mirror, mtg-559/mtg-610)' },
 ];
 
 // All three mirror scenarios are proven stable and fast enough for the gate, so
