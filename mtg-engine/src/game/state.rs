@@ -259,19 +259,6 @@ pub struct GameState {
     #[serde(skip)]
     pub pending_cycling_search: Option<(PlayerId, crate::core::Subtype)>,
 
-    /// Pending spell cast (WASM game loop resumption).
-    ///
-    /// When the WASM game loop is interrupted (NeedInput) during mode selection
-    /// or target selection of a spell cast, this records the card being cast.
-    /// On the next game loop invocation, `priority_round()` checks this flag
-    /// and resumes the cast from where it was interrupted, bypassing
-    /// `choose_spell_ability_to_play` which would misroute the queued mode or
-    /// target ChoiceRequest to the spell ability choice handler.
-    ///
-    /// Not serialized — transient game loop state for WASM resumption only.
-    #[serde(skip)]
-    pub pending_cast: Option<(PlayerId, CardId)>,
-
     /// Pending activated ability (WASM game loop resumption).
     ///
     /// When the WASM game loop is interrupted (NeedInput) during target selection
@@ -423,7 +410,6 @@ impl GameState {
             is_shadow_game: false, // Default: not a shadow game
             is_commander_game: false,
             pending_cycling_search: None,
-            pending_cast: None,
             pending_activation: None,
             pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
@@ -3843,7 +3829,6 @@ impl GameState {
             // re-entry started resuming via rewind+replay, so there is no longer a
             // guard family to reset here.)
             if self.undo_log.is_empty() {
-                self.pending_cast = None;
                 self.pending_activation = None;
                 self.pending_activation_effect_idx = None;
                 self.pending_cycling_search = None;
@@ -4402,9 +4387,8 @@ impl Clone for GameState {
             extra_combat_phases: self.extra_combat_phases,
             is_shadow_game: self.is_shadow_game,
             is_commander_game: self.is_commander_game,
-            // pending_cycling_search, pending_cast, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).
+            // pending_cycling_search, pending_activation, and spell_targets are transient game loop state — not cloned (reset to empty).
             pending_cycling_search: None,
-            pending_cast: None,
             pending_activation: None,
             pending_activation_effect_idx: None,
             spell_targets: Vec::new(),
