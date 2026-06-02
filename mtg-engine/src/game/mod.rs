@@ -92,7 +92,9 @@ pub use snapshot::{ControllerState, ControllerType, GameSnapshot, SnapshotError}
 pub use state::GameState;
 #[cfg(feature = "network")]
 pub use state_hash::build_debug_sync_info;
-pub use state_hash::{compute_state_hash, compute_undo_test_hash, compute_view_hash, format_hash};
+pub use state_hash::{
+    compute_rewind_verifier_hash, compute_state_hash, compute_undo_test_hash, compute_view_hash, format_hash,
+};
 pub use stop_condition::{StopCondition, StopPlayer};
 pub use zero_controller::ZeroController;
 

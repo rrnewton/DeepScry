@@ -2677,9 +2677,6 @@ impl GameState {
                 card.toughness_bonus = 0;
                 // Reset temporary base P/T overrides (from Animate effects)
                 card.clear_temp_base_stats();
-                // Remove until-end-of-turn granted keywords (Rockface Village
-                // "gains haste until EOT", AnimateAll, etc.; CR 514.2 / mtg-610).
-                card.clear_temp_keywords_until_eot();
                 // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
                 card.damage = 0;
 
@@ -2693,6 +2690,21 @@ impl GameState {
                     any_mana_source_typeline_reverted = true;
                 }
             }
+        }
+
+        // Remove until-end-of-turn granted keywords (Rockface Village "gains
+        // haste until EOT", AnimateAll, ...) for ALL cards, NOT just battlefield
+        // permanents (CR 514.2 / mtg-610). This must be zone-independent to
+        // match `UndoLog::rewind_to_turn_start`'s all-cards sweep: a creature
+        // can be granted an until-EOT keyword and then leave the battlefield the
+        // same turn (bounced/killed/sacrificed), so a battlefield-only clear
+        // would leave the bit on the now-off-battlefield card while the rewind
+        // sweep cleared it everywhere — making the turn-start `keywords`
+        // history-dependent across rewinds (mtg-610: monored Nova Hellkite
+        // turn-20 Haste drift). Same per-turn-transient, zone-independent class
+        // as the `regeneration_shields` reset.
+        for card in self.cards.values_mut() {
+            card.clear_temp_keywords_until_eot();
         }
 
         if any_mana_source_typeline_reverted {
@@ -3712,6 +3724,26 @@ impl GameState {
                         if let Some(pos) = card.damaged_by_this_turn.iter().rposition(|s| *s == source) {
                             card.damaged_by_this_turn.remove(pos);
                         }
+                    }
+                }
+                crate::undo::GameAction::CloneCard { card_id, prev } => {
+                    // Restore the copiable characteristics overwritten by the
+                    // clone (CR 707.2) + refresh the type-flag cache. Mirrors
+                    // `GameAction::undo`'s arm (mtg-559/mtg-610).
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
+                        card.restore_copiable_state(*prev);
+                        let types = card.types.clone();
+                        let subtypes = card.subtypes.clone();
+                        let name = card.name.clone();
+                        card.definition.cache.update_from_types(&types);
+                        card.definition.cache.update_from_subtypes(&subtypes, name.as_str());
+                    }
+                }
+                crate::undo::GameAction::PushExtraTurn { player } => {
+                    // Pop the matching entry off the back of the extra-turns
+                    // queue. Mirrors `GameAction::undo`'s arm (mtg-559/mtg-610).
+                    if self.extra_turns.back() == Some(&player) {
+                        self.extra_turns.pop_back();
                     }
                 }
             }

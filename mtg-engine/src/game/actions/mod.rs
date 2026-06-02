@@ -3096,6 +3096,13 @@ impl GameState {
 
         let source_name = self.cards.get(source)?.name.clone();
 
+        // Capture the cloning permanent's prior copiable characteristics BEFORE
+        // the overwrite so the undo log can reverse the clone exactly
+        // (mtg-559/mtg-610). `apply_clone` mutates ~15 fields in place; without
+        // this a rewind+replay left the card stuck as the copied permanent.
+        let prior_log_size = self.logger.log_count();
+        let prev_copiable = self.cards.get(source)?.capture_copiable_state();
+
         let source_card = self.cards.get_mut(source)?;
 
         // --- Transplant copiable characteristics (CR 707.2) ---
@@ -3148,6 +3155,16 @@ impl GameState {
             "{} enters the battlefield as a copy of {}{}",
             source_name, target_name, added_desc
         ));
+
+        // Log the clone for undo (mtg-559/mtg-610): restores the prior copiable
+        // characteristics on rewind so the round-trip is exact.
+        self.undo_log.log(
+            crate::undo::GameAction::CloneCard {
+                card_id: source,
+                prev: Box::new(prev_copiable),
+            },
+            prior_log_size,
+        );
 
         Ok(())
     }
@@ -3964,7 +3981,15 @@ impl GameState {
                 // dead, write-only field) — otherwise the extra turn was queued
                 // somewhere nothing reads, and never taken (mtg-551).
                 for _ in 0..*num_turns {
+                    let prior_log_size = self.logger.log_count();
                     self.extra_turns.push_back(*player);
+                    // Log for undo so a rewind+replay across the AddTurn
+                    // resolution doesn't leave a stale queued extra turn
+                    // (mtg-559/mtg-610).
+                    self.undo_log.log(
+                        crate::undo::GameAction::PushExtraTurn { player: *player },
+                        prior_log_size,
+                    );
                 }
                 let player_name = self
                     .get_player(*player)

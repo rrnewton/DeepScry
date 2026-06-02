@@ -23,9 +23,9 @@
 //! All checks are zero-cost when verification is disabled: the hot path only
 //! reads a bool, and no captures, hashing, or comparisons run.
 
-use crate::game::compute_state_hash;
 use crate::game::logger::LogEntry;
 use crate::game::GameState;
+use crate::game::{compute_rewind_verifier_hash, compute_state_hash};
 
 /// Snapshot taken immediately before (and during) a rewind, used to verify
 /// that the subsequent replay reproduces the same intermediate state.
@@ -206,7 +206,9 @@ pub fn finish_capture(pre: PreRewindCapture, game: &GameState, log_size_at_turn:
 /// Fill in the post-rewind hash. Call this after `UndoLog::rewind_to_turn_start`
 /// has restored the game state but BEFORE the engine starts replaying choices.
 pub fn record_turn_start_hash(verification: &mut RewindVerification, game: &GameState) {
-    verification.post_rewind_turn_start_hash = compute_state_hash(game);
+    // Use the rewind-verifier hash (excludes the server-only `rng` whose
+    // word_pos legitimately drifts under memoizing rewind+replay; mtg-559/mtg-610).
+    verification.post_rewind_turn_start_hash = compute_rewind_verifier_hash(game);
 }
 
 /// Like [`record_turn_start_hash`] but also captures a full JSON snapshot of
@@ -214,7 +216,8 @@ pub fn record_turn_start_hash(verification: &mut RewindVerification, game: &Game
 /// hash drift can be diffed field-by-field. The snapshot is taken at the
 /// same instant as the hash, so the two are guaranteed consistent.
 pub fn record_turn_start_hash_with_snapshot(verification: &mut RewindVerification, game: &GameState) {
-    verification.post_rewind_turn_start_hash = compute_state_hash(game);
+    // Use the rewind-verifier hash (excludes the server-only `rng`; mtg-559/mtg-610).
+    verification.post_rewind_turn_start_hash = compute_rewind_verifier_hash(game);
     verification.post_rewind_state_snapshot = serde_json::to_value(game).ok();
 }
 
