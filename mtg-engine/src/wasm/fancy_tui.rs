@@ -1718,21 +1718,26 @@ impl WasmFancyTuiState {
         let result = undo_log.rewind_to_turn_start(&mut self.game);
         self.game.undo_log = undo_log;
 
-        // SHADOW UNDO-COMPLETENESS (mtg-610): clear card instances that an
-        // asynchronous state-sync `RevealCard` leaked into a HIDDEN zone past
-        // the turn boundary. `rewind_to_turn_start` (undo.rs) already clears
-        // library-zone leaks (hidden from everyone); here we additionally clear
-        // HAND-zone instances NOT revealed to the local player — i.e. the
-        // opponent's hand cards, whose identity our shadow only learns via an
-        // async reveal whose timing (keyed by SERVER action_count) drifts from
-        // our shadow's after a rewind. Without this, the rewound `cards` set is
-        // history-dependent across repeated rewinds to the same turn (the
-        // `cards[id]` field-diff that trips the turn-start determinism check).
-        // We must do this with PERSPECTIVE (only undo.rs runs perspective-free
-        // for libraries) because OUR OWN hand cards ARE legitimately revealed to
-        // us and must keep their instances. A forward replay re-applies the
-        // server reveals (frontier mode) and re-instantiates anything cleared.
-        self.clear_shadow_hidden_hand_leaks(our_id);
+        // SHADOW UNDO-COMPLETENESS (mtg-610): unwind the reveal-history buffer
+        // to the rewound game position. Every async state-sync `RevealCard`
+        // whose bound effective `action_count` is greater than the rewound
+        // action_count had not yet taken effect at the turn boundary, so the
+        // opponent instance it materialised (a non-undo-logged `cards.insert`)
+        // must be removed — otherwise the rewound `cards` set is a function of
+        // which async reveals had arrived by THIS rewind, not of game position,
+        // and the full-state turn-start hash drifts across repeated rewinds.
+        // This runs BEFORE the turn-start hash capture below, so the captured
+        // hash reflects the deterministic (position-keyed) instance set. The
+        // forward replay re-materialises each unwound reveal in lockstep, gated
+        // by its effective `action_count`, as the replay re-advances. Replaces
+        // the older perspective-based `clear_shadow_hidden_hand_leaks` (which
+        // missed async opponent instances that landed in graveyard/battlefield,
+        // e.g. a resolved opponent Counterspell — mtg-610 counterspells gate).
+        let retained_action = self.game.undo_log.len() as u64;
+        #[cfg(feature = "wasm-network")]
+        ensure_client()
+            .borrow_mut()
+            .unwind_state_sync_to(&mut self.game, retained_action);
 
         let log_len_after = self.game.undo_log.len();
 
@@ -1753,7 +1758,29 @@ impl WasmFancyTuiState {
         // truncated, then record the post-rewind turn-start hash. Order matters:
         // finish_capture must run BEFORE truncate_to (otherwise the tail is
         // gone), and record_turn_start_hash captures state-at-turn-boundary.
-        if let Some(pre) = pre_capture {
+        // REVEAL-HISTORY COMPLETENESS GATE (mtg-610): only cache/compare the
+        // turn-start full-state hash once the shadow has RECEIVED every reveal
+        // that takes effect at or before this turn boundary. The shadow advances
+        // by replaying its own recorded choices and can race ahead of the
+        // server's in-flight reveal stream; a reveal bundled with a choice at
+        // action_count ≤ R has arrived iff the shadow has received a choice at
+        // action_count ≥ R (reveals precede their choice on the wire). Skipping
+        // the capture when reveals are still in flight prevents a premature,
+        // under-materialised turn-start snapshot from being cached and then
+        // mismatching a later (fully-arrived) rewind to the same turn — the
+        // `cards[id]` PRIOR-null / CURRENT-present drift. Determinism is NOT
+        // weakened: every snapshot that IS compared is taken against the
+        // complete position-R reveal set.
+        // In non-network (local) mode there is no async reveal stream, so the
+        // reveal-history is trivially complete and every rewind may be verified.
+        #[cfg(feature = "wasm-network")]
+        let reveals_complete = ensure_client().borrow().max_received_choice_ac() >= retained_action;
+        #[cfg(not(feature = "wasm-network"))]
+        let reveals_complete = {
+            let _ = retained_action;
+            true
+        };
+        if let (Some(pre), true) = (pre_capture, reveals_complete) {
             let mut verification = finish_capture(pre, &self.game, log_size_at_turn);
             record_turn_start_hash_with_snapshot(&mut verification, &self.game);
             self.pending_verification = Some(verification);
@@ -1804,54 +1831,6 @@ impl WasmFancyTuiState {
         );
 
         (our_choices, opponent_choices)
-    }
-
-    /// Clear shadow card instances that an asynchronous state-sync reveal
-    /// materialized but whose presence is NOT a deterministic function of the
-    /// rewound game position (mtg-610).
-    ///
-    /// The shadow learns an OPPONENT card's identity only via the server's
-    /// `CardRevealed` state-sync stream, which `process_card_reveal` applies
-    /// with a NON-undo-logged `game.cards.insert(...)`. Those inserts are keyed
-    /// by the reveal's wall-clock ARRIVAL order (a monotonic `next_state_sync_ac`
-    /// counter — see `WasmNetworkClient::push_state_sync`), NOT by the shadow's
-    /// game `action_count`. So whether a given opponent card is materialized at
-    /// a turn boundary depends on how many reveals had arrived from the server
-    /// by that moment — pure async timing, divergent across repeated rewinds to
-    /// the same turn. This is the one disclosure class the deterministic
-    /// zone-change reveal CANNOT make stable, because on the shadow the
-    /// materialization is server-pushed, not zone-driven (a cast Counterspell
-    /// that resolves to the opponent's graveyard is async-`Played`-revealed and
-    /// the engine's own move_card on the shadow no-ops the zone move for an
-    /// opponent card it never had in hand). The verifier saw this as a
-    /// `cards[id]` PRIOR-null / CURRENT-present turn-start drift.
-    ///
-    /// `rewind_to_turn_start` (undo.rs) already clears library-zone leaks
-    /// (hidden from everyone); here we additionally clear opponent HAND-zone
-    /// instances NOT revealed to the local player, whose async-reveal timing
-    /// (keyed by reveal ARRIVAL order, not game position) makes the rewound
-    /// `cards` set history-dependent. We use PERSPECTIVE (only undo.rs runs
-    /// perspective-free for libraries) because OUR OWN hand cards ARE
-    /// legitimately revealed to us and must keep their instances. A forward
-    /// replay re-applies the server reveals (frontier mode) and re-instantiates
-    /// anything cleared. No-op outside shadow games.
-    #[cfg(feature = "wasm-network")]
-    fn clear_shadow_hidden_hand_leaks(&mut self, our_id: PlayerId) {
-        if !self.game.is_shadow_game {
-            return;
-        }
-        let leaked: smallvec::SmallVec<[crate::core::CardId; 16]> = self
-            .game
-            .players
-            .iter()
-            .filter(|p| p.id != our_id)
-            .filter_map(|p| self.game.get_player_zones(p.id))
-            .flat_map(|z| z.hand.cards.iter().copied())
-            .filter(|cid| self.game.cards.try_get(*cid).is_some_and(|c| !c.is_revealed_to(our_id)))
-            .collect();
-        for cid in leaked {
-            self.game.cards.clear(cid);
-        }
     }
 
     /// Convert a PendingChoice to a ReplayChoice using the current pending_context
@@ -1947,8 +1926,9 @@ impl WasmFancyTuiState {
                                                     // async-reveal-leak class), name the card +
                                                     // owner + its zone so the leak is identifiable
                                                     // without reading the truncated console blob.
-                                                    let present =
-                                                        c_el.filter(|v| !v.is_null()).or(p_el.filter(|v| !v.is_null()));
+                                                    let present = c_el
+                                                        .filter(|v| !v.is_null())
+                                                        .or_else(|| p_el.filter(|v| !v.is_null()));
                                                     if k == "cards" {
                                                         if let Some(serde_json::Value::Object(card)) = present {
                                                             let nm = card
@@ -2950,13 +2930,16 @@ impl WasmFancyTuiState {
                 let baseline_clone = (**baseline).clone();
                 self.game = baseline_clone;
                 // The baseline clone reverts `game.cards` to turn-1-start, so the
-                // card instances that the state-sync reveal pass instantiated
-                // during the forward run are gone. Reset the sync cursor so the
-                // reveals re-apply (re-instantiating those cards) in lockstep
-                // with the forward replay — exactly the rewind/replay contract
-                // `reset_state_sync_cursor` documents (the log is
-                // non-destructive; only the cursor rewinds).
-                ensure_client().borrow_mut().reset_state_sync_cursor();
+                // async-reveal-materialised instances are already gone for the
+                // baseline-captured set. Unwind the reveal-history buffer to the
+                // restored action_count (mtg-610): clears any opponent instance a
+                // reveal stamped > R materialised, and resets the cursor so the
+                // forward replay re-consumes reveals in lockstep (gated by their
+                // effective action_count) as the replay re-advances.
+                let retained = self.game.undo_log.len() as u64;
+                ensure_client()
+                    .borrow_mut()
+                    .unwind_state_sync_to(&mut self.game, retained);
                 return (our_choices, opponent_choices);
             }
             log::warn!(target: "wasm_tui", "NETWORK AI REPLAY: turn-1 re-entry but no baseline captured");
@@ -2968,17 +2951,15 @@ impl WasmFancyTuiState {
         // verifier's turn-start hash is captured INSIDE that call, AFTER the
         // library clear, so it reflects the clean (instance-free-library) state.
         //
-        // We then reset the state-sync cursor so the forward replay re-applies
-        // the reveals (frontier mode) and RE-INSTANTIATES the cards that were
-        // just cleared — e.g. a land drawn earlier this turn must come back as a
-        // known card so it is offered as a PlayLand again, matching the server.
-        // This re-application happens during replay (after the turn-start hash
-        // is already captured), so it cannot perturb the determinism check; the
-        // masked-private-form verifier comparison tolerates the "draws a card"
-        // vs "draws X" log wording the re-application timing produces.
-        let result = self.rewind_to_turn_start(our_id);
-        ensure_client().borrow_mut().reset_state_sync_cursor();
-        result
+        // `rewind_to_turn_start` already unwinds the reveal-history buffer to
+        // the rewound action_count (clearing async opponent instances stamped
+        // past it) and resets the sync cursor, so the forward replay re-consumes
+        // reveals in lockstep (gated by effective action_count) and
+        // re-instantiates exactly the cards that belong at each position — e.g.
+        // a land drawn earlier this turn comes back as a known card so it is
+        // offered as a PlayLand again, matching the server. The turn-start hash
+        // captured inside that call reflects the position-deterministic set.
+        self.rewind_to_turn_start(our_id)
     }
 
     /// Partition the undo log's recorded `ChoicePoint` choices into

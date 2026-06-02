@@ -163,6 +163,57 @@ pub struct WasmNetworkClient {
     /// of `docs/NETWORK_ACTION_LOG.md` § 8.
     last_applied_state_sync_ac: u64,
 
+    /// **Reveal-history buffer (mtg-610): the game-`action_count` at which
+    /// each state-sync entry takes effect**, keyed by the entry's synthetic
+    /// `action_count` (its `state_sync` log key).
+    ///
+    /// The `state_sync` log is keyed by a *synthetic* arrival counter
+    /// (`next_state_sync_ac`) because several reveals can be bundled into one
+    /// `ChoiceRequest` and the `ActionLog` requires strictly-increasing keys.
+    /// That synthetic key is NOT the game position, so consuming "up to the
+    /// frontier" applied reveals by wall-clock arrival, making the materialised
+    /// opponent-instance set a function of network timing rather than game
+    /// position — non-reproducible across rewind+replay (the `cards[id]`
+    /// turn-start-hash drift that fails the full-state determinism check).
+    ///
+    /// This map records, for each entry, the **game `action_count` of the
+    /// `ChoiceRequest`/`OpponentChoice` the reveal arrived bundled with** (the
+    /// server collects reveals into the choice they precede via
+    /// `collect_reveals_since_last_choice`). The reveal therefore logically
+    /// takes effect when the shadow's own `action_count` reaches that choice's
+    /// action_count. Consumption is gated by that value (NOT by the synthetic
+    /// frontier), so a reveal applies at the same game position on the forward
+    /// pass and on every replay. Entries that have arrived but not yet been
+    /// bound to a choice are absent from this map — they are NOT applied until
+    /// the choice that anchors them arrives (block-until-frontier-can-advance,
+    /// mirroring the `ActionLog` "K > frontier ⇒ NeedsInput" rule).
+    ///
+    /// Append-only and non-destructive, exactly like the log it shadows: a
+    /// rewind only resets the apply cursor + unwinds the materialised
+    /// instances; it never mutates this map.
+    state_sync_effective_ac: std::collections::BTreeMap<u64, u64>,
+
+    /// Synthetic `action_count`s pushed to `state_sync` that have not yet been
+    /// stamped with an effective game `action_count` in
+    /// [`state_sync_effective_ac`]. The next `ChoiceRequest`/`OpponentChoice`
+    /// stamps all of these with its own `action_count` and clears the list.
+    state_sync_unstamped: Vec<u64>,
+
+    /// Highest game `action_count` carried by any `ChoiceRequest` /
+    /// `OpponentChoice` the shadow has RECEIVED (mtg-610).
+    ///
+    /// The server sends a choice's bundled `CardRevealed` messages BEFORE the
+    /// choice itself, in order on the same connection. So once a choice at
+    /// action_count A has been received, EVERY reveal with effective_ac ≤ A has
+    /// also arrived. The rewind/replay verifier uses this as its
+    /// "reveal-history is complete up to R" signal: it only caches/compares a
+    /// turn-start hash for a rewind to R once `max_received_choice_ac ≥ R`,
+    /// otherwise the shadow has raced ahead of the in-flight reveal stream (it
+    /// advances by replaying its own recorded choices) and the materialised set
+    /// would be incomplete — the source of the `cards[id]` PRIOR-null /
+    /// CURRENT-present turn-start drift.
+    max_received_choice_ac: u64,
+
     /// Append-only, `choice_seq`-indexed per-controller choice buffer for
     /// opponent (remote) choices.
     ///
@@ -305,6 +356,9 @@ impl WasmNetworkClient {
             state_sync: ActionLog::new(),
             next_state_sync_ac: 0,
             last_applied_state_sync_ac: 0,
+            state_sync_effective_ac: std::collections::BTreeMap::new(),
+            state_sync_unstamped: Vec::new(),
+            max_received_choice_ac: 0,
             opponent_choices: ActionLog::new(),
             next_opponent_choice_cursor: 0,
             current_choice_request: None,
@@ -725,18 +779,31 @@ impl WasmNetworkClient {
                 let _ = opening_hand; // Acknowledge we intentionally ignore
             }
 
-            ServerMessage::CardRevealed { owner, card, reason } => {
+            ServerMessage::CardRevealed {
+                owner,
+                card,
+                reason,
+                action_count,
+            } => {
                 log::debug!(
-                    "WasmNetworkClient: Card revealed - {} ({:?}) for {:?}",
+                    "WasmNetworkClient: Card revealed - {} ({:?}) for {:?} eff_ac={:?}",
                     card.name,
                     reason,
-                    owner
-                );
-                self.push_state_sync(StateSyncEntry::RevealCard {
                     owner,
-                    card: Box::new(card),
-                    reason,
-                });
+                    action_count
+                );
+                // mtg-610: bind to the server-stamped effective action_count
+                // (the bundling choice's position) immediately when present, so
+                // the reveal-history key is independent of message arrival order.
+                // `None` (e.g. legacy/opening-hand) defers to the next choice.
+                self.push_state_sync_stamped(
+                    StateSyncEntry::RevealCard {
+                        owner,
+                        card: Box::new(card),
+                        reason,
+                    },
+                    action_count,
+                );
             }
 
             ServerMessage::ChoiceRequest {
@@ -755,6 +822,10 @@ impl WasmNetworkClient {
                     action_count,
                     abilities.as_ref().map(|a| a.len()).unwrap_or(0)
                 );
+                // Reveal-history buffer (mtg-610): anchor every reveal/reorder
+                // that arrived since the last choice to THIS choice's game
+                // action_count. They take effect when the shadow reaches it.
+                self.stamp_pending_state_sync(action_count);
                 self.current_choice_request = Some(ChoiceRequestData {
                     choice_seq,
                     choice_type,
@@ -782,6 +853,10 @@ impl WasmNetworkClient {
                     action_count,
                     description
                 );
+                // Reveal-history buffer (mtg-610): an OpponentChoice also
+                // bundles reveals collected since the opponent's last choice;
+                // anchor them to this choice's game action_count.
+                self.stamp_pending_state_sync(action_count);
                 // Phase 2 step 2: append to the per-controller choice
                 // buffer keyed by the server-reported `choice_seq`.
                 //
@@ -1091,8 +1166,55 @@ impl WasmNetworkClient {
     /// #1 of the design doc (`ActionLog<T>` is append-only), nothing else
     /// in the codebase pushes here.
     fn push_state_sync(&mut self, entry: StateSyncEntry) {
+        self.push_state_sync_stamped(entry, None)
+    }
+
+    /// Append a `StateSyncEntry`, binding it to `effective_ac` immediately when
+    /// the server stamped one on the wire (mtg-610). When `None`, the entry is
+    /// left unstamped and the next `ChoiceRequest`/`OpponentChoice` binds it (a
+    /// fallback for senders that don't yet carry the stamp, e.g. legacy paths).
+    fn push_state_sync_stamped(&mut self, entry: StateSyncEntry, effective_ac: Option<u64>) {
         self.next_state_sync_ac += 1;
-        self.state_sync.push(self.next_state_sync_ac, entry);
+        let synthetic_ac = self.next_state_sync_ac;
+        self.state_sync.push(synthetic_ac, entry);
+        match effective_ac {
+            Some(eff) => {
+                self.state_sync_effective_ac.insert(synthetic_ac, eff);
+            }
+            None => self.state_sync_unstamped.push(synthetic_ac),
+        }
+    }
+
+    /// Bind every state-sync entry that has arrived since the last choice to
+    /// the game `action_count` of the choice they precede (mtg-610).
+    ///
+    /// The server collects reveals into the `ChoiceRequest`/`OpponentChoice`
+    /// they immediately precede (`collect_reveals_since_last_choice`), so on the
+    /// shadow each such reveal logically takes effect when the game reaches that
+    /// choice's `action_count`. Stamping anchors the reveal-history buffer to
+    /// game position so consumption + rewind/replay are position-deterministic.
+    fn stamp_pending_state_sync(&mut self, effective_ac: u64) {
+        for synthetic_ac in self.state_sync_unstamped.drain(..) {
+            self.state_sync_effective_ac.insert(synthetic_ac, effective_ac);
+        }
+        // Track the highest received choice action_count: by wire ordering, all
+        // reveals with effective_ac ≤ this have now arrived (mtg-610).
+        if effective_ac > self.max_received_choice_ac {
+            self.max_received_choice_ac = effective_ac;
+        }
+    }
+
+    /// Highest game `action_count` of any choice the shadow has received. The
+    /// rewind verifier treats the reveal-history as complete up to this value
+    /// (see [`max_received_choice_ac`]).
+    pub fn max_received_choice_ac(&self) -> u64 {
+        self.max_received_choice_ac
+    }
+
+    /// The effective game `action_count` a state-sync entry takes effect at, or
+    /// `None` if it has not yet been bound to a choice (still past the frontier).
+    fn effective_ac_of(&self, synthetic_ac: u64) -> Option<u64> {
+        self.state_sync_effective_ac.get(&synthetic_ac).copied()
     }
 
     /// Apply every state-sync entry that has been received but not yet
@@ -1174,9 +1296,8 @@ impl WasmNetworkClient {
         applied
     }
 
-    /// Reset the state-sync cursor so the next
-    /// `apply_state_sync_up_to_frontier` call re-applies every entry from
-    /// scratch.
+    /// Reset the state-sync cursor so the next apply call re-applies every
+    /// entry from scratch.
     ///
     /// Used by snapshot-resume / rewind code paths: when the engine rewinds
     /// `game.action_count`, the shadow state mutations also rewind, so the
@@ -1187,17 +1308,141 @@ impl WasmNetworkClient {
         self.last_applied_state_sync_ac = 0;
     }
 
-    /// Reveal-only variant of [`apply_state_sync_up_to_frontier`].
+    /// **Rebuild the reveal-history materialisation to game `action_count` R**
+    /// (mtg-610).
     ///
-    /// Applies `RevealCard` entries but **skips** `LibraryReorder` entries
-    /// in the cursor window. The cursor still advances over BOTH so a
-    /// re-call is idempotent; skipped reorders will NOT be re-applied.
+    /// After a rewind to `action_count = retained_action`, the shadow's async
+    /// opponent-instance set must equal exactly what it was at R — independent
+    /// of how far the (now-discarded) forward pass had progressed or which
+    /// reveals had arrived by the moment of THIS particular rewind. Reveals
+    /// materialise opponent cards with a NON-undo-logged `game.cards.insert`
+    /// (the shadow's own `move_card` no-ops the opponent's hidden-zone move), so
+    /// the undo rewind alone cannot restore that set; the reveal-history buffer
+    /// is its sole lifecycle owner and the per-entry effective-`action_count`
+    /// stamp is the authoritative "does this instance exist at R" oracle.
     ///
-    /// This preserves the legacy `run_network_mode_ai_v2` behaviour where
-    /// only reveals were drained at each sync point. Reorders queued
-    /// during the AI-v2 path were never drained, and adopting them now
-    /// would diverge from the GameLoop's opening-hand `draw_card_silent`
-    /// sequence (which expects the library in its as-initialised order).
+    /// We therefore make it a pure function of R in two steps:
+    ///   1. Clear every opponent instance materialised by a reveal — both the
+    ///      "future" ones (effective_ac > R, which must NOT exist at R) and the
+    ///      "retained" ones (effective_ac ≤ R), so step 2 starts from a clean
+    ///      slate and we never depend on the forward pass's leftover state.
+    ///   2. Reset the apply cursor and re-apply every reveal with
+    ///      effective_ac ≤ R, re-materialising EXACTLY the position-R set.
+    /// The turn-start hash, captured right after this call, is then a
+    /// deterministic function of R.
+    ///
+    /// OUR OWN cards are never cleared: they have a real undo-log home
+    /// (`draw_card` etc. are undo-logged), so the rewind already restored their
+    /// instance + zone; the reveal for our own draw is only an identity echo.
+    ///
+    /// The log and the effective-ac stamps are untouched (append-only /
+    /// non-destructive). No-op outside shadow games.
+    pub fn unwind_state_sync_to(&mut self, shadow: &mut crate::game::GameState, retained_action: u64) {
+        if !shadow.is_shadow_game {
+            self.reset_state_sync_cursor();
+            return;
+        }
+        let our_id = self.our_player_id;
+
+        // Partition opponent reveal card-ids into RETAINED (some reveal with
+        // effective_ac ≤ R names them — they belong at R) and "future-only"
+        // (named ONLY by reveals with effective_ac > R, or not yet bound to any
+        // choice — they must NOT exist at R).
+        let mut retained_card_ids: std::collections::BTreeSet<crate::core::CardId> = std::collections::BTreeSet::new();
+        let mut future_card_ids: Vec<crate::core::CardId> = Vec::new();
+        for (synthetic_ac, entry) in self.state_sync.iter() {
+            if let StateSyncEntry::RevealCard { owner, card, .. } = entry {
+                if our_id == Some(*owner) {
+                    continue; // our own card — undo log owns its lifecycle
+                }
+                // A DUMMY reveal (empty name) does NOT materialise an instance
+                // (`process_card_reveal` early-returns), so it must not count as
+                // "this card belongs at R" — otherwise an opponent card whose
+                // ONLY ≤ R reveal is the opening-hand dummy, but whose real
+                // identity reveal is a future (> R) Played, would be wrongly
+                // retained and its leaked future instance never cleared.
+                if card.name.is_empty() {
+                    continue;
+                }
+                match self.effective_ac_of(synthetic_ac) {
+                    Some(eff) if eff <= retained_action => {
+                        retained_card_ids.insert(card.card_id);
+                    }
+                    _ => future_card_ids.push(card.card_id),
+                }
+            }
+        }
+
+        // Step 1: clear ONLY the future-only instances. We must NOT clear a
+        // RETAINED card: if it is currently present its per-instance state
+        // (tapped / damage / counters) was restored by the undo rewind for a
+        // public-zone card, and re-instantiating from the card def would lose
+        // it — a real `compute_view_hash` desync. A future-only card that is
+        // also covered by a retained reveal is kept (it belongs at R).
+        for cid in future_card_ids {
+            if retained_card_ids.contains(&cid) {
+                continue;
+            }
+            shadow.cards.clear(cid);
+        }
+
+        // Step 2: ensure EVERY retained reveal (effective_ac ≤ R) is
+        // materialised, in arrival order. `process_card_reveal` is idempotent —
+        // it instantiates ONLY when the card is not already known, so a present
+        // instance keeps its undo-restored per-instance state (tapped / damage /
+        // counters) while an absent one (a prior rewind hadn't materialised it
+        // yet, e.g. its reveal arrived only after that earlier rewind) is
+        // re-created. We `filter` (NOT `take_while`) so an unstamped or
+        // effective_ac > R entry interleaved among the retained ones does not
+        // halt the scan and leave a later retained reveal unapplied — that gap
+        // was the `cards[id]` PRIOR-null / CURRENT-present turn-start drift.
+        let retained_to_apply: Vec<(PlayerId, Box<crate::network::CardReveal>, crate::network::RevealReason)> = self
+            .state_sync
+            .iter()
+            .filter(|(ac, _)| self.effective_ac_of(*ac).is_some_and(|eff| eff <= retained_action))
+            .filter_map(|(_, entry)| match entry {
+                StateSyncEntry::RevealCard { owner, card, reason } => Some((*owner, card.clone(), *reason)),
+                _ => None,
+            })
+            .collect();
+        for (owner, card, reason) in retained_to_apply {
+            crate::wasm::network::game_init::process_card_reveal_wasm(shadow, owner, *card, reason, our_id);
+        }
+
+        // Reset the apply cursor so the forward replay re-consumes the WHOLE log
+        // (eagerly, frontier mode) as it re-advances — the turn-start hash has
+        // already been captured against this deterministic position-R set.
+        self.reset_state_sync_cursor();
+    }
+
+    /// Reveal-only consume gated by the shadow's CURRENT game `action_count`
+    /// (mtg-610 reveal-history buffer).
+    ///
+    /// Applies `RevealCard` entries whose bound effective `action_count` has
+    /// been reached by `shadow.action_count()`, in synthetic (arrival) order,
+    /// but **skips** `LibraryReorder` entries (the cursor still advances over
+    /// both, so a skipped reorder is never re-applied). This preserves the
+    /// `run_network_mode_ai_v2` behaviour where only reveals are drained at each
+    /// sync point: reorders queued during the AI path are not adopted (they
+    /// would diverge from the GameLoop's opening-hand `draw_card_silent` order).
+    ///
+    /// CONSUMPTION IS KEYED BY GAME POSITION, not by message arrival: a reveal
+    /// bound to effective `action_count` K is applied exactly when the shadow's
+    /// own `action_count` reaches K — identically on the forward pass and on
+    /// every replay. This is what makes the opponent-instance materialisation
+    /// (and hence the reveal-conditional discard/draw LOG identity, the live
+    /// "card#39 flash") a deterministic function of game position rather than
+    /// wall-clock arrival. Effective `action_count`s are non-decreasing in
+    /// synthetic order (server choice action_counts are monotonic and reveals
+    /// arrive bundled, in order, with the choice they precede), so the apply
+    /// window is a prefix; we stop at the first reveal whose effective
+    /// `action_count` exceeds the target or which is not yet bound to a choice
+    /// (block-until-frontier-can-advance, mirroring the `ActionLog` rule).
+    ///
+    /// At a choice point the shadow's `action_count` equals that choice's
+    /// `action_count` K, and the reveals bundled with the choice are stamped at
+    /// K, so they ARE applied (K ≤ K) before the choice's `compute_view_hash` is
+    /// taken — the cross-machine check stays in sync.
     pub fn apply_state_sync_reveals_up_to_frontier(
         &mut self,
         shadow: &mut crate::game::GameState,
@@ -1207,56 +1452,34 @@ impl WasmNetworkClient {
             Some(f) => f,
             None => return 0,
         };
-        self.apply_state_sync_reveals_up_to(shadow, local_player, frontier)
-    }
-
-    /// Like [`apply_state_sync_reveals_up_to_frontier`] but caps application at
-    /// `target_action` (the cursor still advances only over the applied window).
-    ///
-    /// LOCKSTEP REPLAY (mtg-610): during a rewind+replay the GameLoop's sync
-    /// callback passes the shadow's CURRENT `action_count` as the target. We
-    /// must apply reveals only up to that point — NOT all the way to the server
-    /// frontier — so a reveal whose action_count falls AFTER an upcoming draw
-    /// is not applied early. Applying eagerly to the frontier would
-    /// instantiate a drawn card BEFORE the replay's `draw_card` runs, flipping
-    /// its late-binding `RevealCard{name:None}` (instance absent → "draws a
-    /// card") to a `RevealCard{name:Some}` (instance present → "draws X"), which
-    /// changes the undo log's shape and makes the rewound turn-start state
-    /// history-dependent (the `cards[id]` leak that fails the turn-start-hash
-    /// determinism check). Capping at the replay position reproduces the
-    /// original forward ordering: reveal applies AFTER the draw, exactly once.
-    pub fn apply_state_sync_reveals_up_to(
-        &mut self,
-        shadow: &mut crate::game::GameState,
-        local_player: Option<PlayerId>,
-        target_action: u64,
-    ) -> usize {
-        if target_action <= self.last_applied_state_sync_ac {
+        if frontier <= self.last_applied_state_sync_ac {
             return 0;
         }
-        let cap = target_action;
-
+        let target_action = shadow.action_count();
         let mut applied = 0;
-        let to_apply: Vec<(u64, StateSyncEntry)> = self
-            .state_sync
-            .iter()
-            .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= cap)
-            .map(|(ac, entry)| (ac, entry.clone()))
-            .collect();
+        // Collect the prefix of not-yet-applied entries whose RevealCard payload
+        // (if any) is bound to effective_ac ≤ target_action. A LibraryReorder or
+        // a stamped reveal at eff ≤ target advances the cursor; the scan stops at
+        // the first reveal with eff > target or an unbound (None) reveal.
+        let mut to_apply: Vec<(u64, StateSyncEntry)> = Vec::new();
+        for (ac, entry) in self.state_sync.iter() {
+            if ac <= self.last_applied_state_sync_ac || ac > frontier {
+                continue;
+            }
+            if let StateSyncEntry::RevealCard { .. } = entry {
+                match self.effective_ac_of(ac) {
+                    Some(eff) if eff <= target_action => {}
+                    // Future or not-yet-bound reveal: stop the prefix here.
+                    _ => break,
+                }
+            }
+            to_apply.push((ac, entry.clone()));
+        }
         for (ac, entry) in to_apply {
             if let StateSyncEntry::RevealCard { owner, card, reason } = entry {
-                log::debug!(
-                    "apply_state_sync_reveals: reveal ac={} owner={:?} card={}",
-                    ac,
-                    owner,
-                    card.name
-                );
                 crate::wasm::network::game_init::process_card_reveal_wasm(shadow, owner, *card, reason, local_player);
                 applied += 1;
             }
-            // Cursor advances for BOTH reveals and reorders. Reorders in
-            // this window are intentionally skipped and will NOT be
-            // re-applied by a later call to either apply method.
             self.last_applied_state_sync_ac = ac;
         }
         applied
@@ -1378,6 +1601,9 @@ impl WasmNetworkClient {
         self.state_sync = ActionLog::new();
         self.next_state_sync_ac = 0;
         self.last_applied_state_sync_ac = 0;
+        self.state_sync_effective_ac.clear();
+        self.state_sync_unstamped.clear();
+        self.max_received_choice_ac = 0;
         self.opponent_choices = ActionLog::new();
         self.next_opponent_choice_cursor = 0;
         self.current_choice_request = None;

@@ -2080,6 +2080,7 @@ async fn run_game(
                 owner: p1_id,
                 card: card.clone(), // Real reveal - P1 sees own cards
                 reason: RevealReason::Draw,
+                action_count: Some(0), // mtg-610: opening hand = game-start position
             })
             .await?;
     }
@@ -2095,6 +2096,7 @@ async fn run_game(
                 owner: p2_id,
                 card: dummy_reveal,
                 reason: RevealReason::Draw,
+                action_count: Some(0), // mtg-610: opening hand = game-start position
             })
             .await?;
     }
@@ -2112,6 +2114,7 @@ async fn run_game(
                 owner: p1_id,
                 card: dummy_reveal,
                 reason: RevealReason::Draw,
+                action_count: Some(0), // mtg-610: opening hand = game-start position
             })
             .await?;
     }
@@ -2121,6 +2124,7 @@ async fn run_game(
                 owner: p2_id,
                 card: card.clone(), // Real reveal - P2 sees own cards
                 reason: RevealReason::Draw,
+                action_count: Some(0), // mtg-610: opening hand = game-start position
             })
             .await?;
     }
@@ -2806,6 +2810,10 @@ async fn handle_player_websocket(
                                         owner: reveal_info.owner,
                                         card: card_reveal,
                                         reason,
+                                        // mtg-610: stamp with the bundling choice's
+                                        // action_count so the shadow keys this reveal
+                                        // by game position, not message arrival.
+                                        action_count: Some(choice_request.action_count),
                                     }).await?;
                                 }
                             }
@@ -2831,6 +2839,7 @@ async fn handle_player_websocket(
                                         owner: conn.player_id, // Player searching their own library
                                         card: card_reveal,
                                         reason: RevealReason::Searched,
+                                        action_count: Some(choice_request.action_count),
                                     }).await?;
                                 }
                             }
@@ -2908,6 +2917,8 @@ async fn handle_player_websocket(
                                     owner: info.player,
                                     card: card_reveal,
                                     reason,
+                                    // mtg-610: bundled with this OpponentChoice.
+                                    action_count: Some(info.action_count),
                                 }).await?;
                             }
                         }
@@ -2928,6 +2939,7 @@ async fn handle_player_websocket(
                                 owner: info.player,
                                 card: dummy_reveal,
                                 reason: RevealReason::Searched,
+                                action_count: Some(info.action_count),
                             }).await?;
                         }
 
@@ -2972,6 +2984,8 @@ async fn handle_player_websocket(
                                     owner: conn.player_id,
                                     card: card_reveal,
                                     reason: RevealReason::Searched,
+                                    // mtg-610: bundled with this ChoiceAccepted.
+                                    action_count: Some(action_count),
                                 }).await?;
                             }
                         }
