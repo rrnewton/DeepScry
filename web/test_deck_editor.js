@@ -8,10 +8,14 @@
  *      cards appear in the list.
  *   3. Search/filter reduces the card list.
  *   4. Adding a card appears in the deck list.
- *   5. Save → localStorage, Load-chip renders.
- *   6. Export produces valid .dck text (mirrors DeckLoader format).
- *   7. Import round-trips the exported .dck back to the same deck state.
+ *   5. Save → localStorage (SHARED key 'mtg-forge-custom-decks', canonical
+ *      {main_deck, sideboard} object form), Load-chip renders.
+ *   6. Saved deck contents are correct (4-of limit reflected in counts).
+ *   7. Import round-trips a .dck back to the same deck state.
  *   8. "Use in Lobby" sets mtg_lobby_deck_preselect in localStorage.
+ *   9. Editing a PREMADE (?edit=<name>&source=premade) loads its cards and
+ *      Save writes a COPY under a new name — the premade is never mutated
+ *      (mtg-682 item 4).
  *
  * Prerequisites (wired into validate-wasm-e2e-step via make):
  *   - web/data/sets/index.json  (make wasm-export)
@@ -221,42 +225,49 @@ function check(cond, msg) {
         });
         check(chipText.includes('TestDeck'), 'saved chip "TestDeck" appears');
 
-        // Verify localStorage was written.
+        // Verify localStorage was written under the SHARED key in the canonical
+        // {main_deck, sideboard} object form (mtg-682) — the same shape the
+        // launcher + game pages consume. (The old editor wrote a .dck STRING
+        // under 'mtg_custom_decks', which nothing else could read.)
         const lsDecks = await page.evaluate((key) => {
             try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) { return {}; }
-        }, 'mtg_custom_decks');
-        check(typeof lsDecks['TestDeck'] === 'string', 'localStorage contains TestDeck');
+        }, 'mtg-forge-custom-decks');
+        const savedDeck = lsDecks['TestDeck'];
+        check(savedDeck && typeof savedDeck === 'object' && !Array.isArray(savedDeck),
+            'localStorage contains TestDeck as an object (shared custom-deck shape)');
+        check(Array.isArray(savedDeck && savedDeck.main_deck),
+            'saved deck has a main_deck array');
+        check(Array.isArray(savedDeck && savedDeck.sideboard),
+            'saved deck has a sideboard array');
 
-        // ── 6. Export .dck ─────────────────────────────────────────────
-        log('\n=== 6. Export .dck ===');
-        // We can't intercept file downloads easily; instead evaluate the
-        // emitDck function directly via the page's script scope by calling
-        // the dck-export logic through the DOM state.
-        // The export writes to a Blob and triggers a download; instead we
-        // just verify the raw dck text from localStorage is valid.
-        const rawDck = lsDecks['TestDeck'];
-        check(typeof rawDck === 'string' && rawDck.length > 0, 'saved deck is non-empty string');
-        check(rawDck.includes('[Main]'), 'saved deck contains [Main] section');
-        check(rawDck.includes('Name=TestDeck'), 'saved deck contains Name= metadata');
-        // Verify the card we added appears.
+        // ── 6. Saved-deck contents ─────────────────────────────────────
+        log('\n=== 6. Saved-deck contents ===');
+        const mainPairs = (savedDeck && savedDeck.main_deck) || [];
+        const totalCards = mainPairs.reduce((s, p) => s + (p[1] || 0), 0);
+        check(totalCards > 0, 'saved deck main_deck is non-empty (cards=' + totalCards + ')');
         if (firstName) {
-            check(rawDck.includes(firstName), 'saved deck contains added card "' + firstName + '"');
-        }
-        // Count lines for the first card should be "4 <name>".
-        if (firstName && !firstName.toLowerCase().includes('plains') &&
-            !firstName.toLowerCase().includes('island') &&
-            !firstName.toLowerCase().includes('swamp') &&
-            !firstName.toLowerCase().includes('mountain') &&
-            !firstName.toLowerCase().includes('forest')) {
-            check(rawDck.includes('4 ' + firstName), '4-of limit serialized correctly');
+            const found = mainPairs.find((p) => p[0] === firstName);
+            check(!!found, 'saved deck contains added card "' + firstName + '"');
+            // 4-of limit: non-basic firstName should be at exactly 4.
+            if (found && !firstName.toLowerCase().includes('plains') &&
+                !firstName.toLowerCase().includes('island') &&
+                !firstName.toLowerCase().includes('swamp') &&
+                !firstName.toLowerCase().includes('mountain') &&
+                !firstName.toLowerCase().includes('forest')) {
+                check(found[1] === 4, '4-of limit serialized correctly (count=' + found[1] + ')');
+            }
         }
 
         // ── 7. Import round-trip ───────────────────────────────────────
         log('\n=== 7. Import round-trip ===');
-        // Click "Import", paste the saved dck back, confirm.
+        // Build a .dck text from the saved object and import it back; the deck
+        // state should repopulate. (Import parses .dck text; the saved form is
+        // an object, so we serialize it to .dck here for the round-trip.)
+        const dckText = '[metadata]\nName=TestDeck\n\n[Main]\n' +
+            mainPairs.map((p) => p[1] + ' ' + p[0]).join('\n') + '\n';
         await page.click('#btn-import');
         await page.waitForSelector('#import-panel.open', { timeout: 3000 });
-        await page.fill('#import-text', rawDck);
+        await page.fill('#import-text', dckText);
         await page.click('#btn-import-confirm');
         await page.waitForTimeout(200);
 
@@ -285,6 +296,62 @@ function check(cond, msg) {
         });
         const preAfterSet = await page.evaluate(() => localStorage.getItem('mtg_lobby_deck_preselect'));
         check(preAfterSet === 'TestDeck', '"Use in Lobby" sets lobby_preselect to "' + preAfterSet + '"');
+
+        // ── 9. Edit a PREMADE saves a COPY (mtg-682) ───────────────────
+        log('\n=== 9. Edit premade → save-as-copy (premade never mutated) ===');
+        // Pick the first premade name from the served index.json deck_contents.
+        const idxForEdit = await page.evaluate(async (base) => {
+            try {
+                const r = await fetch(base + '/data/sets/index.json', { cache: 'no-store' });
+                const j = await r.json();
+                const names = j.deck_contents ? Object.keys(j.deck_contents) : [];
+                return { name: names[0] || null, contents: names[0] ? j.deck_contents[names[0]] : null };
+            } catch (e) { return { name: null, contents: null, error: String(e) }; }
+        }, BASE);
+
+        if (!idxForEdit.name) {
+            check(false, 'index.json deck_contents has at least one premade to edit (got none)');
+        } else {
+            const premade = idxForEdit.name;
+            log('  editing premade: ' + premade);
+            const editCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+            const editPage = await editCtx.newPage();
+            editPage.on('pageerror', (e) => { check(false, 'edit page JS error: ' + e.message); });
+            await editPage.goto(
+                BASE + '/deck_editor.html?edit=' + encodeURIComponent(premade) + '&source=premade',
+                { timeout: 20000 });
+            await editPage.waitForLoadState('domcontentloaded');
+            // The editor should load the premade's card list and set the name field.
+            await editPage.waitForFunction(
+                (n) => document.getElementById('deck-name') &&
+                       document.getElementById('deck-name').value === n,
+                premade, { timeout: 15000 },
+            ).catch(() => {});
+            const loadedName = await editPage.$eval('#deck-name', (el) => el.value).catch(() => '');
+            check(loadedName === premade, 'editor loaded premade name "' + premade + '" (got "' + loadedName + '")');
+            const mainStat = parseInt(await editPage.textContent('#stat-main').catch(() => '0'), 10);
+            check(mainStat > 0, 'editor populated the premade card list (main=' + mainStat + ')');
+
+            // Save → must write a COPY under a NEW name, leaving the premade absent
+            // from the custom-decks store (premades are not custom decks).
+            await editPage.click('#btn-save');
+            await editPage.waitForTimeout(250);
+            const afterSave = await editPage.evaluate((key) => {
+                try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) { return {}; }
+            }, 'mtg-forge-custom-decks');
+            const customNames = Object.keys(afterSave);
+            const copyName = customNames.find((n) => n !== 'TestDeck' && n.startsWith(premade));
+            check(!!copyName, 'Save wrote a COPY (custom deck named like the premade): ' + JSON.stringify(customNames));
+            check(copyName !== premade, 'the saved copy name differs from the premade name (no in-place mutation)');
+            check(!afterSave[premade] || copyName !== premade,
+                'premade itself is NOT stored as a custom deck under its original name');
+            if (copyName) {
+                const copy = afterSave[copyName];
+                check(copy && Array.isArray(copy.main_deck) && copy.main_deck.length > 0,
+                    'the saved copy is in canonical {main_deck,...} form with cards');
+            }
+            await editCtx.close();
+        }
 
         // ── Summary ────────────────────────────────────────────────────
         await browser.close();

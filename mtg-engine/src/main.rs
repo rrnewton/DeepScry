@@ -4014,6 +4014,22 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         /// None if no cards were loaded (should not happen in practice).
         #[serde(skip_serializing_if = "Option::is_none")]
         card_catalog: Option<String>,
+        /// Per-deck card lists for the built-in decks, keyed by deck name, in
+        /// the SAME `{main_deck, sideboard}` JSON shape the web custom-deck
+        /// store uses (`[[card_name, count], ...]`). This lets the launcher's
+        /// "Edit Deck" button and the deck editor load a premade's cards
+        /// WASM-free (the binary `decks.<hash>.bin` is WASM-only), so editing a
+        /// premade can save a COPY as a custom deck. Sorted keys for
+        /// deterministic output (mtg-682).
+        deck_contents: std::collections::BTreeMap<String, DeckContentsJson>,
+    }
+
+    /// JSON-friendly mirror of a built-in deck's card lists, matching the web
+    /// custom-deck shape: `{ main_deck: [[name, count], ...], sideboard: [...] }`.
+    #[derive(serde::Serialize)]
+    struct DeckContentsJson {
+        main_deck: Vec<(String, u8)>,
+        sideboard: Vec<(String, u8)>,
     }
 
     let mut sets_manifest: Vec<SetManifestEntry> = Vec::with_capacity(buckets.len());
@@ -4286,6 +4302,26 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
     // a deck picker from a single lightweight JSON fetch without WASM/binary.
     let mut deck_names_sorted: Vec<String> = decks.keys().cloned().collect();
     deck_names_sorted.sort();
+    // Per-deck card lists in the web custom-deck shape so the launcher/editor
+    // can load a premade WASM-free (mtg-682). BTreeMap = sorted, deterministic.
+    let deck_contents: std::collections::BTreeMap<String, DeckContentsJson> = decks
+        .iter()
+        .map(|(name, deck)| {
+            let to_pairs = |entries: &[mtg_engine::loader::DeckEntry]| {
+                entries
+                    .iter()
+                    .map(|e| (e.card_name.clone(), e.count))
+                    .collect::<Vec<_>>()
+            };
+            (
+                name.clone(),
+                DeckContentsJson {
+                    main_deck: to_pairs(&deck.main_deck),
+                    sideboard: to_pairs(&deck.sideboard),
+                },
+            )
+        })
+        .collect();
     let index = SetIndex {
         version: 1,
         sets: sets_manifest,
@@ -4294,6 +4330,7 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         decks: decks_file_name.clone(),
         deck_names: deck_names_sorted,
         card_catalog: catalog_file_name_opt,
+        deck_contents,
     };
     let index_path = sets_dir.join("index.json");
     let index_json = serde_json::to_string(&index)

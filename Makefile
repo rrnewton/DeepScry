@@ -357,6 +357,11 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@echo "    a well-defined state, never silent corruption. Covers BOTH renderers"
 	@echo "    (native_game default + tui_game). The redo play-path gate."
 	@cd web && node test_redo_multiturn_reload_e2e.js
+	@echo "=== Running lobby-flow-fixes e2e (mtg-682 items 1-4): no waiting room, ==="
+	@echo "    Create straight-to-launcher, game stays listed for a second browser"
+	@echo "    after the creator left the lobby page, Join redirects only the joiner,"
+	@echo "    and the launcher's split New Deck / Edit Deck buttons."
+	@cd web && node test_redo_lobby_e2e.js
 	@echo "=== Running hermetic content-addressed web-asset smoke test (mtg-571) ==="
 	@echo "    Local-only: launches 'mtg server-web' on a temp port; asserts"
 	@echo "    index.json no-cache, hashed bin/wasm/js immutable, fixed pkg no-cache."
