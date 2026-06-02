@@ -2677,6 +2677,9 @@ impl GameState {
                 card.toughness_bonus = 0;
                 // Reset temporary base P/T overrides (from Animate effects)
                 card.clear_temp_base_stats();
+                // Remove until-end-of-turn granted keywords (Rockface Village
+                // "gains haste until EOT", AnimateAll, etc.; CR 514.2 / mtg-610).
+                card.clear_temp_keywords_until_eot();
                 // Clear damage marked on permanents (MTG CR 514.2, CR 704.5f)
                 card.damage = 0;
 
@@ -3114,9 +3117,11 @@ impl GameState {
                             if let Some(card) = self.cards.try_get_mut(card_id) {
                                 card.power_bonus -= power_delta;
                                 card.toughness_bonus -= toughness_delta;
-                                // Remove granted keywords
+                                // Remove granted keywords from BOTH the live set
+                                // and the until-EOT tracking set (mtg-610).
                                 for keyword in keywords_granted {
                                     card.keywords.remove(keyword);
+                                    card.temp_keywords_until_eot.remove(keyword);
                                 }
                             }
                         }
@@ -3454,9 +3459,11 @@ impl GameState {
                     if let Some(card) = self.cards.try_get_mut(card_id) {
                         card.power_bonus -= power_delta;
                         card.toughness_bonus -= toughness_delta;
-                        // Remove granted keywords
+                        // Remove granted keywords from BOTH the live set and the
+                        // until-EOT tracking set (mtg-610).
                         for keyword in keywords_granted {
                             card.keywords.remove(keyword);
+                            card.temp_keywords_until_eot.remove(keyword);
                         }
                     }
                 }

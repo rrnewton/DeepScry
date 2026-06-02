@@ -859,9 +859,12 @@ impl GameAction {
                     // Reverse the power/toughness bonus
                     card.power_bonus -= power_delta;
                     card.toughness_bonus -= toughness_delta;
-                    // Remove granted keywords
+                    // Remove granted keywords from BOTH the live set and the
+                    // until-EOT tracking set so the tracking field round-trips
+                    // exactly across the per-action undo oracle (mtg-610).
                     for keyword in keywords_granted {
                         card.keywords.remove(*keyword);
+                        card.temp_keywords_until_eot.remove(*keyword);
                     }
                 } else {
                     return Err(format!("Card {} not found for PumpCreature undo", card_id.as_u32()));
@@ -1500,6 +1503,21 @@ impl UndoLog {
         // marks rather than re-running the auto combat-damage step.
         for card in game.cards.values_mut() {
             card.regeneration_shields = 0;
+            // Until-end-of-turn granted keywords (Rockface Village "gains haste
+            // until EOT", AnimateAll, ...) are removed at the forward cleanup
+            // step (GameState::cleanup_temporary_effects) but are NOT all
+            // undo-logged for the cleanup transition, so at any turn boundary
+            // the until-EOT keyword set must be empty for EVERY card — same
+            // per-turn-transient, zone-independent class as regeneration_shields
+            // (a pumped creature can leave the battlefield same turn). A forward
+            // replay re-grants the keyword via PumpCreature/AnimateAll where
+            // appropriate. Without this the Haste bit from a turn-N grant rode
+            // through a rewind to turn N+1 start, making turn-start keywords
+            // history-dependent across rewinds (mtg-610: Rockface Village
+            // turn-12-start haste drift). clear_temp_keywords_until_eot removes
+            // exactly the granted-until-EOT bits from the live set, never a
+            // printed/permanent keyword.
+            card.clear_temp_keywords_until_eot();
         }
         // NOTE: until-end-of-turn `AB$ Animate` typeline changes (Mishra's
         // Factory / robots-deck animated artifacts) are NOW reverted by the

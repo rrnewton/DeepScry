@@ -3677,9 +3677,10 @@ impl GameState {
                 let card = self.cards.get_mut(*target)?;
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
-                // Grant keywords
+                // Grant keywords until end of turn (tracked so forward cleanup
+                // + rewind sweep can remove them deterministically; mtg-610).
                 for keyword in keywords_granted.iter() {
-                    card.keywords.insert(*keyword);
+                    card.grant_keyword_until_eot(*keyword);
                 }
 
                 // Log the pump effect
@@ -3730,7 +3731,7 @@ impl GameState {
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
                 for keyword in keywords_granted.iter() {
-                    card.keywords.insert(*keyword);
+                    card.grant_keyword_until_eot(*keyword);
                 }
 
                 // Log for undo
@@ -3877,9 +3878,11 @@ impl GameState {
                     if let Ok(card) = self.cards.get_mut(target) {
                         let card_name = card.name.clone();
 
-                        // Grant keywords
+                        // Grant keywords until end of turn (AnimateAll is an
+                        // until-EOT mass animate; track them so forward cleanup
+                        // + rewind sweep remove them deterministically; mtg-610).
                         for kw in keywords_granted {
-                            card.keywords.insert(*kw);
+                            card.grant_keyword_until_eot(*kw);
                         }
 
                         if self.logger.verbosity() >= crate::game::VerbosityLevel::Normal {
