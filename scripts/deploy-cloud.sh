@@ -640,7 +640,13 @@ PYGC
     # --- 9. Post-deploy HTTP probe ---
     # Verifies the freshly-restarted server is actually serving the new
     # bundle. Any FAIL aborts non-zero so CI / human operators notice.
-    run_post_deploy_probe "$url_scheme" "$PUBLIC_HOST" "$REMOTE_PORT" "$BUILD_SHA"
+    # Probe the ORIGIN DIRECTLY (REMOTE_SSH_HOST:REMOTE_PORT), NOT the public
+    # host: the public host (PUBLIC_HOST) resolves to the Cloudflare proxy,
+    # which only HTTPS-proxies 443/2053/8443/... — NOT :8080 — so an HTTPS
+    # probe to PUBLIC_HOST:8080 fails with "wrong version number" even though
+    # the origin is healthy. The origin presents the CF Origin Cert (handled
+    # by the probe's -k), so REMOTE_SSH_HOST:REMOTE_PORT is the correct target.
+    run_post_deploy_probe "$url_scheme" "$REMOTE_SSH_HOST" "$REMOTE_PORT" "$BUILD_SHA"
 
     echo ""
     echo "═════════════════════════════════════════════════════════════════════"
