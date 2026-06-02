@@ -715,6 +715,23 @@ pub struct Card {
     #[serde(default)]
     pub temp_removed_subtypes: SmallVec<[Subtype; 2]>,
 
+    /// Keywords granted to this card by an "until end of turn" pump effect
+    /// (`PumpCreature` / `PumpCreatureVariable` carrying `KW$` — e.g. Rockface
+    /// Village's "gains haste until end of turn"). Mirrors `temp_base_power` /
+    /// `temp_base_toughness`: the keyword bits are ALSO live in `keywords`, but
+    /// this records which ones were granted-until-EOT so they can be removed
+    /// deterministically by game position in BOTH the forward end-of-turn
+    /// cleanup (`GameState::cleanup_temporary_effects`) AND the rewind
+    /// per-turn-transient sweep (`UndoLog::rewind_to_turn_start`). Without this,
+    /// a keyword granted on turn N and surviving until cleanup was only ever
+    /// removed by the `GameAction::PumpCreature` undo, so a rewind landing at a
+    /// turn boundary AFTER the grant (but the undo not unwinding past it) left
+    /// the bit history-dependent across rewinds (mtg-610: Rockface Village haste
+    /// at turn-12-start). PERMANENT keyword grants (Soulstone Sanctuary
+    /// `Duration$ Permanent` Animate) deliberately do NOT route through here.
+    #[serde(default, skip_serializing_if = "KeywordSet::is_empty")]
+    pub temp_keywords_until_eot: KeywordSet,
+
     /// Damage marked on this permanent (cleared at end of turn per CR 704.5g)
     /// Only meaningful for creatures on the battlefield
     pub damage: i32,
@@ -926,6 +943,7 @@ impl Card {
             temp_animate_types: SmallVec::new(),
             temp_animate_subtypes: SmallVec::new(),
             temp_removed_subtypes: SmallVec::new(),
+            temp_keywords_until_eot: KeywordSet::new(),
             damage: 0,
             damaged_by_this_turn: SmallVec::new(),
             text,
@@ -1415,6 +1433,30 @@ impl Card {
     pub fn restore_temp_base_stats(&mut self, power: Option<i8>, toughness: Option<i8>) {
         self.temp_base_power = power;
         self.temp_base_toughness = toughness;
+    }
+
+    /// Record that `keyword` was granted to this card by an until-end-of-turn
+    /// pump effect, AND insert it into the live keyword set. Routing all
+    /// "gains <keyword> until end of turn" grants through here lets the
+    /// forward EOT cleanup and the rewind transient sweep remove exactly the
+    /// granted-until-EOT keywords by game position (mtg-610). No-op for a
+    /// keyword the card already had (so cleanup never strips a printed/other-
+    /// source keyword).
+    pub fn grant_keyword_until_eot(&mut self, keyword: Keyword) {
+        self.keywords.insert(keyword);
+        self.temp_keywords_until_eot.insert(keyword);
+    }
+
+    /// Remove all until-end-of-turn granted keywords from the live keyword set
+    /// and clear the tracking set. Called from the forward end-of-turn cleanup
+    /// (`GameState::cleanup_temporary_effects`) and the rewind per-turn-transient
+    /// sweep (`UndoLog::rewind_to_turn_start`), so the until-EOT keyword set is
+    /// a deterministic function of game position on both paths (mtg-610).
+    pub fn clear_temp_keywords_until_eot(&mut self) {
+        for keyword in self.temp_keywords_until_eot.iter() {
+            self.keywords.remove(keyword);
+        }
+        self.temp_keywords_until_eot.clear();
     }
 
     /// Revert an until-end-of-turn `AB$ Animate` typeline change (Mishra's
