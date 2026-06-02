@@ -486,6 +486,197 @@ async function testLauncherControlsAndPlay() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: launcher feature-parity restore + nav-regression fixes (mtg-ttjt6).
+// The lobby redo moved the launcher off the game pages but DROPPED the
+// card-image source picker, the debug toggle, and dropped sticky params on
+// inter-page nav. This asserts they are restored:
+//   (a) image-source GATE: #img-src-local is HIDDEN by default and SHOWN with
+//       ?allow_local_img_load=true; the show-images + debug toggles exist.
+//   (b) Play forwards the prefs: &images=&img_src=&debug= reach the game page,
+//       AND &allow_local_img_load= survives the launcher→game hop.
+//   (c) the gate SURVIVES a back-to-lobby round trip: the launcher's
+//       "Back to Lobby" link carries allow_local_img_load=true.
+//   (d) deck-editor → Back to Launcher returns with the launcher context
+//       intact: New/Edit Deck links carry from=launcher + game/role/name/ws,
+//       and the editor's "Back to Launcher" link points back at launcher.html
+//       with that context.
+// ---------------------------------------------------------------------------
+async function testLauncherParityAndNav() {
+    console.log('\n=== Test: launcher parity + nav regressions (mtg-ttjt6) ===');
+    const browser = await chromium.launch();
+
+    const SEED = `localStorage.setItem('mtg-forge-custom-decks', JSON.stringify({
+        'E2E Test Deck': { main_deck: [['Mountain', 40]], sideboard: [] }
+    }));`;
+
+    const launcherUrl = (extra) => {
+        const qp = new URLSearchParams({
+            game: 'parity-game', role: 'create', pass: 'pw9',
+            name: 'parity-tester', ws: WS_OVERRIDE,
+        });
+        if (extra) for (const [k, v] of Object.entries(extra)) qp.set(k, v);
+        return BASE + '/launcher.html?' + qp.toString();
+    };
+
+    async function open(extra) {
+        const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        const page = await ctx.newPage();
+        page.on('pageerror', (e) => fail('parity-page-error', e.message));
+        await page.addInitScript(SEED);
+        await page.goto(launcherUrl(extra), { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(400);
+        return { ctx, page };
+    }
+
+    // ---- (a) image-source gate: Local hidden by default ----
+    {
+        const { ctx, page } = await open();
+        const showImages = await page.$('#show-card-images');
+        const debugCb = await page.$('#debug-mode');
+        const scryfall = await page.$('#img-src-scryfall');
+        const local = await page.$('#img-src-local');
+        const note = await page.$('#img-src-local-gate-note');
+        if (showImages) pass('parity-show-images', 'Show-card-images toggle present');
+        else fail('parity-show-images', '#show-card-images missing from launcher');
+        if (debugCb) pass('parity-debug-toggle', 'Debug(TRACE) toggle present');
+        else fail('parity-debug-toggle', '#debug-mode missing from launcher');
+        if (scryfall) pass('parity-scryfall', 'Scryfall image source present');
+        else fail('parity-scryfall', '#img-src-scryfall missing');
+        if (!local) {
+            pass('parity-gate-default-hidden', 'Local image source hidden by default (gated)');
+        } else {
+            fail('parity-gate-default-hidden', '#img-src-local must be ABSENT without allow_local_img_load');
+        }
+        const noteVisible = note ? await note.isVisible() : false;
+        if (noteVisible) pass('parity-gate-note', 'gate explanatory note shown by default');
+        else fail('parity-gate-note', 'gate note must be visible when Local is hidden');
+        await ctx.close();
+    }
+
+    // ---- (a') gate UNLOCKED: Local shown + checked with the param ----
+    {
+        const { ctx, page } = await open({ allow_local_img_load: 'true' });
+        const local = await page.$('#img-src-local');
+        if (local) {
+            const checked = await local.isChecked();
+            if (checked) pass('parity-gate-unlocked', 'Local source shown + checked with ?allow_local_img_load=true');
+            else fail('parity-gate-unlocked', '#img-src-local present but not checked when unlocked');
+        } else {
+            fail('parity-gate-unlocked', '#img-src-local must be PRESENT with allow_local_img_load=true');
+        }
+        await ctx.close();
+    }
+
+    // ---- (b) Play forwards prefs + (c) back-to-lobby preserves the gate ----
+    {
+        const { ctx, page } = await open({ allow_local_img_load: 'true' });
+        await page.selectOption('#deck-collection', 'custom');
+        await page.waitForTimeout(120);
+        await page.selectOption('#deck-select', 'E2E Test Deck').catch(() => {});
+        // Turn on debug, turn off Gatherer (so img_src is a non-default subset).
+        await page.check('#debug-mode');
+        await page.uncheck('#img-src-gatherer');
+
+        // (c) the "Back to Lobby" footer link must carry the sticky gate param.
+        const backHref = await page.$eval('.footer a', (a) => a.getAttribute('href')).catch(() => '');
+        if (/allow_local_img_load=true/.test(backHref)) {
+            pass('parity-back-to-lobby-gate', 'Back-to-Lobby link preserves allow_local_img_load: ' + backHref);
+        } else {
+            fail('parity-back-to-lobby-gate', 'Back-to-Lobby link DROPPED allow_local_img_load: ' + backHref);
+        }
+
+        await page.click('#btn-play');
+        await page.waitForFunction(
+            () => /native_game\.html/.test(window.location.href),
+            null, { timeout: 5000 },
+        ).catch(() => fail('parity-play', 'Play did not navigate to native_game.html'));
+        const parsed = new URL(page.url());
+        const want = [
+            ['debug', 'true'],
+            ['allow_local_img_load', 'true'],
+        ];
+        for (const [k, v] of want) {
+            const got = parsed.searchParams.get(k);
+            if (got === v) pass('parity-fwd-' + k, `${k}=${v} forwarded to game page`);
+            else fail('parity-fwd-' + k, `expected ${k}=${v}, got: ${got}`);
+        }
+        const imgSrc = parsed.searchParams.get('img_src') || '';
+        // Gatherer unchecked → img_src must include scryfall+local but NOT gatherer.
+        if (/local/.test(imgSrc) && /scryfall/.test(imgSrc) && !/gatherer/.test(imgSrc)) {
+            pass('parity-fwd-img_src', 'img_src reflects the picker (local,scryfall; no gatherer): ' + imgSrc);
+        } else {
+            fail('parity-fwd-img_src', 'img_src wrong: ' + imgSrc);
+        }
+        const images = parsed.searchParams.get('images');
+        if (images === 'true') pass('parity-fwd-images', 'images=true forwarded');
+        else fail('parity-fwd-images', 'images param wrong: ' + images);
+        await ctx.close();
+    }
+
+    // ---- (d) deck-editor → Back to Launcher round trip ----
+    {
+        const { ctx, page } = await open({ allow_local_img_load: 'true' });
+        await page.selectOption('#deck-collection', 'custom');
+        await page.waitForTimeout(120);
+        await page.selectOption('#deck-select', 'E2E Test Deck').catch(() => {});
+
+        // New Deck + Edit Deck links must carry the launcher context (from=launcher
+        // + game/name/ws) so the editor can return here.
+        const newHref = await page.$eval('#btn-deck-editor', (a) => a.getAttribute('href')).catch(() => '');
+        const editHref = await page.$eval('#btn-edit-deck', (a) => a.getAttribute('href')).catch(() => '');
+        for (const [label, href] of [['new', newHref], ['edit', editHref]]) {
+            if (/deck_editor\.html\?/.test(href) && /from=launcher/.test(href)
+                && /game=parity-game/.test(href) && /ws=/.test(href)) {
+                pass('parity-editor-link-' + label, `${label}-deck link carries launcher context: ${href}`);
+            } else {
+                fail('parity-editor-link-' + label, `${label}-deck link missing launcher context: ${href}`);
+            }
+        }
+
+        // Follow the Edit Deck link into the editor and assert Back-to-Launcher.
+        await page.click('#btn-edit-deck');
+        await page.waitForFunction(
+            () => /deck_editor\.html/.test(window.location.href),
+            null, { timeout: 5000 },
+        ).catch(() => fail('parity-editor-nav', 'Edit Deck did not navigate to deck_editor.html'));
+        await page.waitForTimeout(300);
+
+        const backLink = await page.$('#back-to-launcher');
+        const backVisible = backLink ? await backLink.isVisible() : false;
+        if (backVisible) {
+            const href = await backLink.getAttribute('href');
+            if (/launcher\.html\?/.test(href) && /game=parity-game/.test(href)
+                && /allow_local_img_load=true/.test(href)) {
+                pass('parity-back-to-launcher', 'editor "Back to Launcher" returns with context: ' + href);
+            } else {
+                fail('parity-back-to-launcher', 'Back-to-Launcher href missing context: ' + href);
+            }
+        } else {
+            fail('parity-back-to-launcher', '"Back to Launcher" link must be shown when from=launcher');
+        }
+
+        // Click it → must land back on launcher.html with the deck preselected.
+        if (backVisible) {
+            await backLink.click();
+            await page.waitForFunction(
+                () => /launcher\.html/.test(window.location.href),
+                null, { timeout: 5000 },
+            ).catch(() => fail('parity-return-nav', 'Back to Launcher did not navigate to launcher.html'));
+            const ret = new URL(page.url());
+            if (ret.searchParams.get('game') === 'parity-game'
+                && ret.searchParams.get('allow_local_img_load') === 'true') {
+                pass('parity-return-context', 'returned to launcher with game + gate intact');
+            } else {
+                fail('parity-return-context', 'launcher return dropped context: ' + page.url());
+            }
+        }
+        await ctx.close();
+    }
+
+    await browser.close();
+}
+
+// ---------------------------------------------------------------------------
 // Test: page 3 — the game pages are PURE renderers (no built-in launcher) and
 // boot from URL params. (mtg-35z3s page 3.)
 //
@@ -760,6 +951,7 @@ async function testGameStaysListedAndJoinOnlyJoiner() {
     try {
         await testLobbyToLauncherHandoff();
         await testLauncherControlsAndPlay();
+        await testLauncherParityAndNav();
         await testGameStaysListedAndJoinOnlyJoiner();
         await testGamePagesArePureRenderers();
     } catch (e) {

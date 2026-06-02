@@ -290,7 +290,16 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <div class="header">
     <h1>Deck Editor</h1>
-    <a class="back-link" href="index.html">&larr; Back to Lobby</a>
+    <!--
+      Back-to-Launcher (mtg-ttjt6): the editor is reached FROM launcher.html
+      (New Deck / Edit Deck) carrying the launcher context (from=launcher +
+      game/role/pass/name/ws + renderer/collection). This link returns there with
+      that context intact so a player can tweak a deck mid-pre-game and resume
+      launching. Shown only when from=launcher; populated by JS. Back-to-Lobby
+      stays as the always-available fallback.
+    -->
+    <a class="back-link" id="back-to-launcher" href="launcher.html" style="display:none;">&larr; Back to Launcher</a>
+    <a class="back-link" id="back-to-lobby" href="index.html">&larr; Back to Lobby</a>
     <span style="flex:1"></span>
     <span id="header-status" style="font-size:12px; color: var(--muted);"></span>
 </div>
@@ -436,6 +445,41 @@ const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 
 /** localStorage key for lobby preselect: written when user clicks "Use in Lobby" */
 const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
+
+/**
+ * Launcher-context handoff (mtg-ttjt6). When the editor is reached FROM the
+ * launcher (New Deck / Edit Deck), launcher.html appends `from=launcher` plus
+ * the launcher's own context (game/role/pass/name/ws/reconnect_token +
+ * allow_local_img_load + renderer). This module echoes those back so the editor
+ * can RETURN to the launcher with the pre-game state intact — and so the just-
+ * saved deck is preselected there (collection=custom&deck=<name>).
+ *
+ * Kept as a small self-contained helper (deck_editor.html is a non-module
+ * <script>, so it cannot import lobby_launcher.js). The param NAMES are the same
+ * contract launcher.html emits; the sticky subset matches lobby_launcher's
+ * STICKY_PARAM_KEYS for the load-bearing ones (allow_local_img_load/name/ws).
+ */
+const EDITOR_QS = new URLSearchParams(window.location.search);
+const FROM_LAUNCHER = EDITOR_QS.get('from') === 'launcher';
+
+/** Build launcher.html?<context> carrying the inherited launcher params, with
+ *  the given deck preselected into the custom collection (when provided). */
+function launcherReturnUrl(deckName) {
+    const qp = new URLSearchParams();
+    for (const k of ['game', 'role', 'pass', 'name', 'ws', 'reconnect_token']) {
+        const v = EDITOR_QS.get(k);
+        if (v) qp.set(k, v);
+    }
+    if (EDITOR_QS.get('allow_local_img_load') === 'true') qp.set('allow_local_img_load', 'true');
+    const renderer = EDITOR_QS.get('renderer');
+    if (renderer === 'tui' || renderer === 'native') qp.set('renderer', renderer);
+    if (deckName) {
+        qp.set('collection', 'custom');
+        qp.set('deck', deckName);
+    }
+    const q = qp.toString();
+    return 'launcher.html' + (q ? '?' + q : '');
+}
 
 /** Max copies of a non-basic land card allowed in the main deck. */
 const MAX_COPIES = 4;
@@ -1203,12 +1247,48 @@ filterCmc.addEventListener('change', renderCatalog);
 // Deck actions.
 document.getElementById('btn-save').addEventListener('click', saveDeck);
 
-document.getElementById('btn-use-in-lobby').addEventListener('click', () => {
+const useBtn = document.getElementById('btn-use-in-lobby');
+useBtn.addEventListener('click', () => {
     saveDeck();
     const name = deckNameInput.value.trim() || 'Unnamed Deck';
+    // When the editor was opened FROM the launcher, "Use" returns to the
+    // LAUNCHER (the pre-game flow it came from) with this deck preselected,
+    // preserving the launcher context (mtg-ttjt6). Otherwise it goes to the
+    // lobby and leaves a preselect hint (legacy behaviour).
+    if (FROM_LAUNCHER) {
+        window.location.href = launcherReturnUrl(name);
+        return;
+    }
     localStorage.setItem(LOBBY_PRESELECT_KEY, name);
     window.location.href = 'index.html';
 });
+
+// Keep the "Back to Lobby" link carrying the session's sticky params
+// (allow_local_img_load/name/ws) so the gate + identity survive the hop.
+(function setupBackToLobbyLink() {
+    const link = document.getElementById('back-to-lobby');
+    if (!link) return;
+    const qp = new URLSearchParams();
+    for (const k of ['name', 'ws']) {
+        const v = EDITOR_QS.get(k);
+        if (v) qp.set(k, v);
+    }
+    if (EDITOR_QS.get('allow_local_img_load') === 'true') qp.set('allow_local_img_load', 'true');
+    const q = qp.toString();
+    if (q) link.href = 'index.html?' + q;
+})();
+
+// Reveal + wire the "Back to Launcher" link when we arrived from the launcher.
+// It returns WITHOUT forcing a deck selection (the user may be abandoning an
+// edit); the editor's selected deck is NOT preselected here on purpose so the
+// launcher restores whatever it last had. "Use in Lobby"/save is the path that
+// preselects the new deck. Back-to-Lobby stays as the always-present fallback.
+(function setupBackToLauncher() {
+    const link = document.getElementById('back-to-launcher');
+    if (!link || !FROM_LAUNCHER) return;
+    link.href = launcherReturnUrl(EDITOR_QS.get('deck') || '');
+    link.style.display = '';
+})();
 
 document.getElementById('btn-export').addEventListener('click', exportDck);
 document.getElementById('btn-import').addEventListener('click', openImportPanel);

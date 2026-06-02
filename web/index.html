@@ -346,7 +346,7 @@
                 </a>
             </div>
             <div style="margin-top: 12px;">
-                <a class="launcher-link" href="deck_editor.html" title="Build and save custom decks">
+                <a id="launch-deck-editor" class="launcher-link" href="deck_editor.html" title="Build and save custom decks">
                     <strong>Deck Editor</strong>
                     <small>Build, save, and export custom decks</small>
                 </a>
@@ -828,6 +828,10 @@
         document.getElementById('launch-native').href = 'native_game.html' + suffix;
         document.getElementById('launch-tui').href = 'tui_game.html' + suffix;
         document.getElementById('launch-demo').href = 'demo.html' + suffix;
+        // Carry the sticky params (name/ws/allow_local_img_load) onto the deck
+        // editor too so the gate + identity survive a lobby→editor hop (mtg-ttjt6).
+        var editorEl = document.getElementById('launch-deck-editor');
+        if (editorEl) editorEl.href = 'deck_editor.html' + suffix;
     }
 
     // -------------------------------------------------------------------------

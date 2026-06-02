@@ -816,7 +816,7 @@
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web GUI</h1>
         <a href="tui_game.html" data-asset-href="tui_game.html">Web TUI</a>
-        <a href="index.html">Back to lobby</a>
+        <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
         <span id="status">Loading...</span>
     </div>
 
@@ -836,7 +836,7 @@
                 &mdash; pick your deck and renderer there, then press Play.
             </p>
             <p style="margin-top:18px;">
-                <a href="index.html" style="color:#4cc9f0; font-size:16px;">&rarr; Go to the Lobby</a>
+                <a href="index.html" class="back-to-lobby-link" style="color:#4cc9f0; font-size:16px;">&rarr; Go to the Lobby</a>
             </p>
         </div>
     </div>
@@ -1043,7 +1043,21 @@
             consumeNetworkParams,
             hasNoLaunchParams,
             buildLobbyAction,
+            consumeGamePrefs,
+            forwardStickyParamsOnAnchor,
+            stickyUrl,
         } from './lobby_launcher.js';
+
+        // Per-game display/debug prefs forwarded by launcher.html (mtg-ttjt6).
+        // The native GUI's historical default is images ON.
+        const gamePrefs = consumeGamePrefs({ showImages: true });
+
+        // Keep "Back to lobby" links carrying the session's sticky params
+        // (allow_local_img_load, debug, images, img_src, name, ws) so the unlock
+        // + prefs survive the round trip (mtg-ttjt6).
+        for (const a of document.querySelectorAll('.back-to-lobby-link')) {
+            forwardStickyParamsOnAnchor(a);
+        }
 
         // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
         // link (tui_game.html ⇄ native_game.html) through the runtime manifest
@@ -1132,9 +1146,26 @@
                 return parsed.origin === window.location.origin;
             } catch (e) { return false; }
         }
+        // Classify an image URL into its source id (mirrors tui_game's
+        // ImageSource.detectSource). Used to honour the launcher's &img_src pref.
+        function classifyImageUrl(u) {
+            if (!u) return null;
+            if (u.includes('gatherer.wizards.com')) return 'gatherer';
+            if (u.includes('scryfall.com')) return 'scryfall';
+            if (isLocalImageUrl(u)) return 'local';
+            return null;
+        }
         function filterImageUrls(urls) {
-            if (window.__allowLocalImgLoad) return urls;
-            return urls.filter(u => !isLocalImageUrl(u));
+            // (1) drop sources the launcher did not enable (&img_src, mtg-ttjt6);
+            //     an unclassifiable URL is kept (fail-open, never worse than before).
+            // (2) drop local unless the gate is unlocked.
+            const enabled = gamePrefs.imageSources;
+            return urls.filter((u) => {
+                const src = classifyImageUrl(u);
+                if (src && !enabled.includes(src)) return false;
+                if (!window.__allowLocalImgLoad && isLocalImageUrl(u)) return false;
+                return true;
+            });
         }
         function getCardImageUrl(cardName, heightPx) {
             if (typeof tui_get_image_urls !== 'function') return null;
@@ -1217,7 +1248,7 @@
         const loadedSetFiles = new Set();
         let tuiLaunched = false;
         let autoRunning = false;
-        let showImages = true;
+        let showImages = gamePrefs.showImages;
         let fullCardsLoaded = false;
         let fullTokensLoaded = false;
         let allDeckNames = [];
@@ -1236,7 +1267,9 @@
         let _lastStateSummary = null;
 
         function isDebugMode() {
-            return !!bootConfig.debug;
+            // bootConfig.debug is the local-boot &debug; gamePrefs.debug is the
+            // launcher's Debug toggle forwarded on network boots (mtg-ttjt6).
+            return !!bootConfig.debug || gamePrefs.debug;
         }
         function debugLog(...args) {
             if (isDebugMode()) console.log('[Debug]', ...args);
@@ -1513,7 +1546,7 @@
             const p2Controller = isNetworkMode ? p1Controller
                 : getControllerType(bootConfig.p2Controller);
 
-            if (bootConfig.debug) {
+            if (isDebugMode()) {
                 set_log_level('trace');
                 console.log('[DEBUG] TRACE logging enabled');
             } else {
@@ -1690,7 +1723,7 @@
                 msgEl.innerHTML = `<div class="global-pane" style="text-align:center; max-width:520px; margin:0 auto;">
                     <h2>Could not start the game</h2>
                     <p style="color:#ff8080;">${escapeHtml(msg)}</p>
-                    <p style="margin-top:18px;"><a href="index.html" style="color:#4cc9f0;">&rarr; Back to the Lobby</a></p>
+                    <p style="margin-top:18px;"><a href="${escapeHtml(stickyUrl('index.html'))}" style="color:#4cc9f0;">&rarr; Back to the Lobby</a></p>
                 </div>`;
             }
             const st = document.getElementById('status');
@@ -2513,7 +2546,9 @@
             // mtg-35z3s page 3: PURE renderer — there is no launcher to return
             // to. Exit goes back to the lobby (new game = new launcher flow).
             console.log('Game exited cleanly — returning to lobby.');
-            window.location.href = 'index.html';
+            // Preserve the session's sticky params (allow_local_img_load etc) on
+            // the programmatic exit, same as the "Back to lobby" links (mtg-ttjt6).
+            window.location.href = stickyUrl('index.html');
         }
 
         // ==================== POST-RENDER HOOK ====================
