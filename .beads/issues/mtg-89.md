@@ -4,11 +4,12 @@ status: open
 priority: 0
 issue_type: task
 created_at: 2025-10-27T09:12:20+00:00
-updated_at: 2026-05-28T13:30:38.424296577+00:00
+updated_at: 2026-06-03T04:41:43.263929522+00:00
 closed_at: 2025-10-28T00:55:30+00:00
 ---
 
 # Description
+
 
 We have a partial implementation of the `--stop-every`/`--stop-from` suspend resume mechanism.
 You can use this to test the engine yourself and write e2e tests.
@@ -193,3 +194,58 @@ Still TODO for closing mtg-89:
 - Add --seed-shuffle / --seed-engine flags (currently only --seed-p1/-p2 split).
 - Run on royal_assassin / white_aggro_4ed / moonred decks per the
   closing criteria above.
+
+Tracking - Update 2026-06-02_#2680(ec1a7941) [agent backlog-logfix / netarch]
+==============================================================================
+
+REOPEN REASON (clarified): mtg-89 was closed 2025-10-28 then reopened to track
+the leftover stress-test TODOs (re-adapt the harness to the renamed
+--stop-on-choice CLI, add seed-split flags, run the 3 close-criteria decks) —
+NOT a recurring determinism regression. The reopen rides on commit 21ff552a
+(snapshot mana_caches rebuild on resume) + the new tests/snapshot_resume_e2e.sh.
+
+BASELINE FINDING: the engine snapshot/resume is ALREADY fully deterministic.
+The bug_finding/ stress harnesses had bit-rotted and reported spurious FAILs
+(masking the green engine). Fixed in commit ec1a7941:
+- bug_finding/snapshot_stress_test_single.py: --stop-every=both:choice:N ->
+  --stop-on-choice=N (real engine flag); diff_logs.py/diff_gamestate.py paths
+  pointed at bug_finding/ instead of <repo>/scripts/.
+- bug_finding/test_snapshot_determinism.py: same --stop-every -> --stop-on-choice
+  N:p1 / 0:p1 fix + missing --json (snapshots parsed as JSON); strip_metadata
+  now also excludes `mana_state_version` to match the engine's authoritative
+  EXCLUDED_FIELDS (state_hash.rs, Replay mode) — it is a ManaEngine cache-
+  invalidation counter that rewind_to_turn_start bumps unconditionally (Rust
+  unit test asserts bumps don't change the Replay hash), so a post-rewind
+  snapshot legitimately differs by +1 there. The +1 was the ONLY divergence.
+
+moonred.dck: NEVER existed in git history (no add, no -S match on any ref).
+It is a TYPO for the existing decks/monored.dck (mono-red). Resolved by using
+monored.dck as the third close-criteria deck.
+
+--seed-shuffle / --seed-engine: realized under different names — `--deck-seed`
+is the initial-shuffle seed; the game engine evolves off the master `--seed`.
+`--seed-p1` / `--seed-p2` split the controllers. No separate --seed-shuffle/
+--seed-engine aliases were added (would be redundant; the functionality and
+RNG-system independence the design asked for already exist).
+
+CLOSE-CRITERIA EVIDENCE (seed 42, native debug binary):
+3 required decks royal_assassin / white_aggro_4ed / monored(=moonred), BOTH
+random/random and heuristic/heuristic:
+- snapshot_stress_test_single.py: 6/6 PASS (stop-and-go logs match normal run).
+- test_snapshot_determinism.py: 6/6 PASS (snapshot@N == resume-then-snapshot@0,
+  choices 3 & 8).
+- DEEP FINAL-GAMESTATE compare (normal vs stop@5->resume-to-end, scripts/
+  diff_gamestate.py): all 3 decks MATCH (rc=0). diff tool proven non-vacuous
+  (rc=1 on a random-vs-heuristic state).
+Plus the CI-wired tests/snapshot_resume_e2e.sh: 7/7 (deep JSON gamestate diff
+at stop@3/8/25, bincode smoke, --override-p2 resume). make validate GREEN:
+validate_logs/validate_ec1a7941678386af386806bc783ba572cf18d206.log.
+
+STATUS: the CRITICAL close criteria (>=3 decks, exact game-action match normal
+vs stop-and-go, deep final-gamestate match) are MET (with moonred->monored typo
+resolved). RECOMMENDATION for closing: either (a) CLOSE this issue citing the
+evidence above, or (b) before closing, wire a bounded run of
+snapshot_stress_test_single.py into make validate (the harness bit-rot — stale
+CLI + tool paths — is exactly what reopened this issue; a CI gate prevents
+re-rot). Deferred to team-lead/user: which of (a)/(b), and whether to fix the
+"moonred" typo in the close-criteria text. No engine determinism bug found.
