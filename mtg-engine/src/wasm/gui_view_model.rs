@@ -792,12 +792,25 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
     // visible entry. We keep the FIRST occurrence's real engine `index` (so
     // selecting it still resolves to a valid choice — either copy produces the
     // same outcome) and renumber `display_number` 1..N over the deduped list.
+    //
+    // INVARIANT (scope): dedup is restricted to the priority action list
+    // (`ChoiceContext::SpellAbility`, surfaced here as choice_context ==
+    // "SpellAbility"). There, the choice text fully describes the action
+    // ("cast X", "activate Y (cost)"), so text-identical ⟹ functionally
+    // equivalent and collapsing to the first real engine index is correct.
+    // We must NOT dedup OTHER contexts — Targets, ManaSources, Discard,
+    // SacrificePermanents, … enumerate DISTINCT game objects that can share a
+    // label (two "Grizzly Bears" targets, two "Forest" mana sources). Their
+    // engine index identifies a specific object; collapsing same-label entries
+    // there would make the second object unselectable. So those lists pass
+    // through verbatim (still renumbered 1..N for display).
+    let dedup_actions = inputs.choice_context == "SpellAbility";
     let mut seen_texts: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let choices: Vec<ChoiceView> = inputs
         .choices
         .iter()
         .enumerate()
-        .filter(|(_, (text, _))| seen_texts.insert(text.as_str()))
+        .filter(|(_, (text, _))| !dedup_actions || seen_texts.insert(text.as_str()))
         .enumerate()
         .map(|(display_idx, (engine_idx, (text, highlighted)))| ChoiceView {
             index: engine_idx,
@@ -1198,7 +1211,8 @@ mod tests {
             current_prompt: Some("Choose an action"),
             choices: &choices,
             selected_choice_idx: 0,
-            choice_context: "None",
+            // Dedup only applies to the priority action list.
+            choice_context: "SpellAbility",
             game_over: false,
             error_message: None,
             log_tail_size: 100,
@@ -1218,6 +1232,43 @@ mod tests {
         assert_eq!(model.choices[1].index, 2);
 
         // Display numbers are renumbered 1..N over the visible list.
+        assert_eq!(model.choices[0].display_number, 1);
+        assert_eq!(model.choices[1].display_number, 2);
+    }
+
+    /// mtg-723 invariant guard: dedup is SCOPED to the action list. In
+    /// non-`SpellAbility` contexts (Targets, ManaSources, …), same-label
+    /// entries are DISTINCT game objects (two "Grizzly Bears" targets) and must
+    /// each stay selectable — collapsing them would make the second object
+    /// unreachable. Such lists pass through verbatim (only renumbered).
+    #[test]
+    fn build_view_model_does_not_dedup_target_choices() {
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+
+        // Two distinct creatures that share a label (two copies of Grizzly Bears).
+        let dup = "Grizzly Bears".to_string();
+        let choices = vec![(dup.clone(), false), (dup, false)];
+
+        let inputs = ViewModelInputs {
+            perspective_player_id: perspective,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: Some("Choose a target"),
+            choices: &choices,
+            selected_choice_idx: 0,
+            choice_context: "Targets",
+            game_over: false,
+            error_message: None,
+            log_tail_size: 100,
+        };
+
+        let model = build_view_model(&game, inputs);
+
+        // BOTH same-label targets remain, each with its own real engine index.
+        assert_eq!(model.choices.len(), 2, "distinct targets must NOT collapse");
+        assert_eq!(model.choices[0].index, 0);
+        assert_eq!(model.choices[1].index, 1);
         assert_eq!(model.choices[0].display_number, 1);
         assert_eq!(model.choices[1].display_number, 2);
     }
