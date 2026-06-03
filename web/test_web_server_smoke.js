@@ -116,12 +116,17 @@ function check(cond, msg) {
 function isImmutable(cc) {
     return !!cc && /immutable/.test(cc) && /max-age=31536000/.test(cc);
 }
-// `isNoCache` retired post-mtg-620: the global cache-tier middleware now
-// returns `max-age=60` (short-TTL) for fixed-name assets and immutable
-// for content-addressed ones — there is no longer a `no-cache` tier.
-// `index.html` (and any other mutable, fixed-name asset on the source tree)
-// is served `public, max-age=60`. mtg-620 dropped the `no-cache, must-revalidate`
-// header for index.json because the hashed `index.<h>.json` is now immutable.
+// Cache tiers (mtg-620 + mtg-727):
+//   - content-addressed (`<stem>.<16hex>.<ext>`) → immutable, max-age=1y.
+//     This includes the hashed data set-index `index.<h>.json` and the
+//     release manifest `asset-manifest.<token>.json` — the data index is
+//     FOLDED INTO the CAS graph like every other asset (mtg-727), NOT a
+//     special-cased mutable/no-cache resolver. On a deploy tree the FIXED
+//     `/data/sets/index.json` 404s (renamed to hashed) — see the
+//     `fixed404s` list below; only the hashed name resolves.
+//   - `index.html` → `public, max-age=60`. On a clean deploy it is the
+//     SOLE short-TTL fixed-name asset (recoverable: the CAS dispatcher
+//     falls back to latest for a stale token).
 function isShortTtl(cc) {
     return !!cc && /max-age=60\b/.test(cc) && !/immutable/.test(cc);
 }

@@ -854,6 +854,35 @@ except Exception:
         fi
     fi
 
+    # 4b. CAS-INVARIANT cache assertions (mtg-727). The data set-index is
+    #     folded into the CAS graph like every other asset: only the HASHED
+    #     `index.<h>.json` is served (immutable), and the FIXED
+    #     `/data/sets/index.json` MUST 404 (renamed by hash-web-assets).
+    #     The deploy that surfaced mtg-727 served the FIXED name 200 with
+    #     `public, max-age=60` — a stale-resolution 404 window AND a sign of a
+    #     stale/incomplete build (the old binary predating mtg-620). The probe
+    #     never checked this, so it passed despite the deviation. Assert both:
+    #       (a) the HASHED index.<h>.json is `immutable`;
+    #       (b) the FIXED /data/sets/index.json 404s (no 2nd mutable file —
+    #           index.html is the SOLE mutable/no-cache asset).
+    if [[ -n "$hashed_data_idx" ]]; then
+        local hcc
+        hcc="$(curl -sI "${curl_opts[@]}" "$base/$hashed_data_idx" | tr -d '\r' | grep -i '^cache-control:' | head -1)"
+        if [[ "$hcc" != *immutable* ]]; then
+            probe_failed=1; fail_reasons+=("/$hashed_data_idx cache-control not immutable (got '${hcc:-<none>}')")
+        else
+            echo "  ✓ /$hashed_data_idx  cache-control: immutable"
+        fi
+    fi
+    local fixed_idx_code
+    fixed_idx_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/data/sets/index.json")" || fixed_idx_code="000"
+    if [[ "$fixed_idx_code" == "404" ]]; then
+        echo "  ✓ /data/sets/index.json      404 (fixed resolver renamed to hashed — index.html is sole mutable file)"
+    else
+        probe_failed=1
+        fail_reasons+=("/data/sets/index.json served HTTP $fixed_idx_code (expected 404). A served fixed-name data index = stale/incomplete CAS build (mtg-727); the data index must be content-addressed (index.<hash>.json) so only the hashed name resolves.")
+    fi
+
     # 5. /health — JSON sha must match.
     local health_json
     health_json="$(curl "${curl_opts[@]}" "$base/health")" || health_json=""

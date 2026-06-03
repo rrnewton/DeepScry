@@ -54,14 +54,17 @@ scripts/deploy-cloud.sh deploy
 #   This runs, in order:
 #     - rebuild release-deploy mtg binary (--features network) + WASM/data
 #     - PRE-DEPLOY GATE: hermetic web-asset smoke (mtg server-web on a temp
-#       port; asserts index.json no-cache, hashed bin/wasm/js immutable,
-#       logical→hashed resolution, fixed-name pkg 404 on hashed tree). ABORTS
-#       before any rsync if it fails — nothing ships on a broken pipeline.
+#       port; asserts hashed bin/wasm/js + hashed index.<h>.json + manifest
+#       immutable, logical→hashed resolution, and EVERY fixed name — incl.
+#       /data/sets/index.json — 404s on the hashed tree, i.e. index.html is
+#       the sole mutable file — mtg-727). ABORTS before any rsync if it fails.
 #     - stage web/ + `mtg hash-web-assets` (content-address the pkg pair +
 #       rewrite HTML import specifiers), rsync web/ + cardsfolder + binary
 #     - restart the systemd (user) service
 #     - POST-DEPLOY PROBE against the live origin (/, hashed js/wasm,
-#       index.json, hashed bin, /health sha, /lobby)
+#       hashed index.<h>.json + its cache-control=immutable, fixed
+#       /data/sets/index.json must 404 (mtg-727: only the hashed name
+#       resolves), hashed bin, /health sha, /lobby)
 
 # 3. Restore the working baseline so coordination/worktrees branch off integration.
 git checkout integration
@@ -71,23 +74,54 @@ git checkout integration
 
 ```sh
 curl -sk https://<host>:<port>/health                       # sha == the deployed SHA
-curl -skI https://<host>:<port>/data/sets/index.json | grep -i cache-control   # no-cache, must-revalidate
+# The data set-index is CONTENT-ADDRESSED on a clean deploy → the FIXED name
+# 404s; its hashed form is immutable. (Discover the hashed name from a game page.)
+curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:<port>/data/sets/index.json  # 404 (renamed to hashed)
+curl -skI https://<host>:<port>/data/sets/index.<hash>.json | grep -i cache-control   # immutable, max-age=31536000
 curl -skI https://<host>:<port>/pkg/mtg_engine_bg.<hash>.wasm | grep -i cache-control  # immutable, max-age=31536000
 curl -sk -o /dev/null -w '%{http_code}\n' https://<host>:<port>/   # 200
 ```
 
-## Caching model (why HTML is NOT hashed)
+## Caching model (mtg-620 full-graph hashing + mtg-704 pure-DAG)
 
-- **HTML pages** (`index.html`, `native_game.html`, `tui_game.html`, …) keep
-  **stable URLs** (they are entry points / link targets) and are served
-  **short-TTL** (`public, max-age=60`). Their *content* changes each deploy
-  because the embedded pkg import specifiers point to the new hashed names.
-- **`.wasm` / `.js` / per-set `.bin`** are **content-addressed + immutable**
-  (`max-age=31536000`). Cache-busting is via the hashed FILENAME, never by
-  renaming the HTML.
-- **`index.json`** (the logical→hashed resolver) is **no-cache**.
+`index.html` is the **SOLE** stable/unhashed URL. EVERY other reachable asset
+is content-addressed (`<stem>.<16hex>.<ext>`) and immutable.
+
+- **`index.html`** — stable URL, served **short-TTL** (`public, max-age=60`).
+  A stale cached copy is recoverable: it carries a release token, and the CAS
+  dispatcher (`index.html?goto=…`) falls back to the *latest* manifest if the
+  baked release is gone, so a ≤60 s-stale entry never hard-404s.
+- **Everything else is hashed + immutable** (`max-age=31536000, immutable`):
+  the game pages (`native_game.<hash>.html`, `tui_game.<hash>.html`,
+  `launcher.<hash>.html`, …), the JS leaves (`server-config.<hash>.js`, …),
+  the pkg pair (`mtg_engine.<hash>.js` / `mtg_engine_bg.<hash>.wasm`), the
+  per-set `<YYYY>-<CODE>.<hash>.bin`, AND the **data set-index**
+  (`index.<hash>.json`). Cache-busting is via the hashed FILENAME. On a clean
+  deploy the corresponding FIXED names (`/data/sets/index.json`,
+  `/pkg/mtg_engine.js`, `/native_game.html`, …) **404** — they were renamed by
+  `mtg hash-web-assets`.
+- **No special-cased resolver (mtg-727).** The data set-index is NOT a
+  second mutable/no-cache file: it is folded into the CAS graph exactly like
+  the bins/wasm/js. Its content lists the hashed `.bin` names, so its own hash
+  transitively covers them — it is a Merkle parent rolled up by the release
+  token. Therefore the FIXED `/data/sets/index.json` **404s on a clean deploy**
+  (only `index.<hash>.json` resolves, immutable), and `index.html` is the
+  GENUINE sole mutable/no-cache file. The mtg-727 live symptom (fixed
+  `/data/sets/index.json` served `200, max-age=60`) was a STALE/incomplete
+  build (an old binary predating mtg-620's full-graph hashing). Guardrails so
+  it can't recur silently: (a) the post-deploy probe asserts the fixed
+  `/data/sets/index.json` returns **404** and the hashed `index.<h>.json` is
+  immutable; (b) `web/test_web_server_smoke.js` (in `make validate`) asserts
+  the fixed name 404s on a staged hashed tree.
 - Net effect across redeploys: unchanged card data → unchanged set-bin hashes →
-  stay cached; only changed code (wasm/js) and the short-TTL HTML re-download.
+  stay cached; only changed code (wasm/js) and the short-TTL `index.html`
+  re-download.
+
+> **Open follow-up (mtg-705):** `index.html` is the sole mutable file at the
+> *file* level, but it still inlines the splash/lobby/login PROSE. Splitting
+> that into a hashed child page (`index.html` → pure release dispatcher) is
+> tracked there, along with confirming the data-index is never fetched by a
+> fixed name anywhere.
 
 ## Notes / gotchas
 

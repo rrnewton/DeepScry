@@ -458,6 +458,15 @@ const CAS_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// Cache-Control for `index.html` and any other fixed-name (NOT
 /// content-addressed) asset. Short-TTL so a deploy propagates quickly,
 /// no `no-cache` so the browser can revalidate cheaply via 304.
+///
+/// On a fully hash-web-assets'd DEPLOY tree, `index.html` is the ONLY
+/// asset that lands here — EVERYTHING else (the pkg pair, JS leaves, the
+/// per-set `.bin`, the data set-index `index.<hash>.json`, the release
+/// manifest, and the game/launcher pages) is content-addressed and
+/// immutable, and every fixed name (`/data/sets/index.json`, …) 404s.
+/// A stale ≤60 s `index.html` is recoverable: the CAS dispatcher falls
+/// back to the latest release. This short-TTL bucket is otherwise only
+/// exercised on the un-hashed source/dev tree (mtg-620 / mtg-727).
 const MUTABLE_SHORT: &str = "public, max-age=60";
 /// Cache-Control for `/images/**`: filenames embed the scryfall art_id,
 /// so a given URL never changes bytes — safe to mark immutable even
@@ -499,20 +508,39 @@ async fn content_addressed_cache_header(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    let path = request.uri().path();
-    let file_name = path.rsplit('/').next().unwrap_or("");
-    let header = if is_content_addressed(file_name) {
-        CAS_IMMUTABLE
-    } else if path.starts_with("/images/") {
-        IMAGES_IMMUTABLE
-    } else {
-        MUTABLE_SHORT
-    };
+    let header = cache_control_for_path(request.uri().path());
     let mut response = next.run(request).await;
     response
         .headers_mut()
         .insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static(header));
     response
+}
+
+/// Pure cache-control policy: pick the `Cache-Control` value for a request
+/// path. Centralized + side-effect-free so the tiers are unit-testable.
+///
+/// Precedence (first match wins):
+///   1. content-addressed `<stem>.<16hex>.<ext>` → immutable. This covers
+///      the data set-index `index.<hash>.json`, the release manifest
+///      `asset-manifest.<token>.json`, the pkg pair, and the per-set bins —
+///      i.e. EVERY release asset except `index.html` (mtg-620: the data
+///      index is folded into the CAS graph like everything else, NOT a
+///      special-cased no-cache resolver — mtg-727).
+///   2. `/images/**` (scryfall art_id-addressed)  → immutable.
+///   3. anything else fixed-name (only `index.html` on a clean deploy) →
+///      short-TTL max-age=60.
+fn cache_control_for_path(path: &str) -> &'static str {
+    let file_name = path.rsplit('/').next().unwrap_or("");
+    if is_content_addressed(file_name) {
+        // The hashed `index.<hash>.json` data resolver lands here — immutable,
+        // which is correct: its bytes never change for that URL, and its hash
+        // transitively covers the hashed `.bin` names it lists.
+        CAS_IMMUTABLE
+    } else if path.starts_with("/images/") {
+        IMAGES_IMMUTABLE
+    } else {
+        MUTABLE_SHORT
+    }
 }
 
 // ─── Status endpoints (ops + deploy probes) ───────────────────────────
@@ -556,3 +584,61 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 // (`serve_static_file_with_header` retired with mtg-620: the per-route
 // no-cache carve-outs it implemented are now handled by the global
 // `content_addressed_cache_header` middleware above.)
+
+#[cfg(test)]
+mod cache_policy_tests {
+    use super::*;
+
+    /// mtg-727: the tiered Cache-Control policy. Anchors the IMMUTABILITY
+    /// invariant — the data set-index is folded into the CAS graph like every
+    /// other asset (the hashed `index.<hash>.json`, the release manifest, the
+    /// pkg pair, and the per-set bins are ALL immutable), and `index.html` is
+    /// the sole short-TTL fixed-name asset on a clean deploy. There is NO
+    /// special-cased no-cache resolver tier (the data index is hashed, not a
+    /// 2nd mutable file).
+    #[test]
+    fn cache_control_policy_tiers() {
+        // 1. Content-addressed assets → immutable forever.
+        assert_eq!(
+            cache_control_for_path("/pkg/mtg_engine_bg.13cb3ea056601678.wasm"),
+            CAS_IMMUTABLE
+        );
+        assert_eq!(
+            cache_control_for_path("/pkg/mtg_engine.f46b820b19c954ee.js"),
+            CAS_IMMUTABLE
+        );
+        // The HASHED data set-index is content-addressed → immutable: its bytes
+        // never change for that URL, and its hash transitively covers the
+        // hashed `.bin` names it lists (Merkle parent in the release DAG).
+        assert_eq!(
+            cache_control_for_path("/data/sets/index.d4b977e7f8818b41.json"),
+            CAS_IMMUTABLE
+        );
+        assert_eq!(
+            cache_control_for_path("/data/sets/2026-AVR.deadbeefdeadbeef.bin"),
+            CAS_IMMUTABLE
+        );
+        // The content-hashed release manifest `asset-manifest.<token>.json`
+        // is itself content-addressed → immutable (a mutable manifest would
+        // reintroduce the stale-resolution cache vuln mtg-704 eliminated).
+        assert_eq!(
+            cache_control_for_path("/asset-manifest.0011223344556677.json"),
+            CAS_IMMUTABLE
+        );
+
+        // 2. Card-art images → immutable (scryfall art_id-addressed).
+        assert_eq!(cache_control_for_path("/images/small/c/Clue.jpg"), IMAGES_IMMUTABLE);
+
+        // 3. index.html → short-TTL (recoverable; the CAS dispatcher falls back
+        //    to latest for a stale token). On a clean deploy this is the ONLY
+        //    short-TTL asset.
+        assert_eq!(cache_control_for_path("/index.html"), MUTABLE_SHORT);
+        assert_eq!(cache_control_for_path("/"), MUTABLE_SHORT);
+        // Un-hashed source/dev tree only: fixed-name pkg + the fixed-name data
+        // index fall back to short-TTL. On a DEPLOY tree these fixed names 404
+        // (renamed to hashed) — asserted by test_web_server_smoke.js — so this
+        // bucket is never the served data index in production.
+        assert_eq!(cache_control_for_path("/pkg/mtg_engine.js"), MUTABLE_SHORT);
+        assert_eq!(cache_control_for_path("/data/sets/index.json"), MUTABLE_SHORT);
+    }
+}
