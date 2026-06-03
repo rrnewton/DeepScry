@@ -177,3 +177,38 @@ STEP-1 CONCRETE: RED-prove seed 2 first (repro above), capture its signature
 (action_count at divergence, which side's hash diverges + field, the triggering
 reveal event, the count delta) — then build the harness from it.
 ========================================================================
+
+========================================================================
+CLASS-A STEP-1 RESULT + SCOPE PIVOT (slot03, 2026-06-03, commit e2e13400)
+========================================================================
+SEED-2 RED (browser, DETERMINISTIC, byte-identical x2): `FATAL: P1 state hash
+mismatch! server=92a4f5db6beab84e client=6a046ceab9665b6b at choice_seq=175
+action_count=950`. P1 = the WASM (browser) shadow's view of its OWN state diverges
+from the server's authoritative P1 hash at AC=950 (Turn-15 cleanup, P1 hand=8
+must-discard-1, Mox Emerald fresh in hand → draw-count/hidden-info reveal class).
+The per-choice undo-dump gives ONLY the hash; WASM side dumped 0 blocks (its dump
+fires on action-count mismatch, not state-hash mismatch — local_controller.rs:231).
+
+STEP-1 HARNESS BUILT: tests/netarch_lockstep_oracle_e2e.rs — pure-Rust in-process
+golden GameServer + two native NetworkClient shadows, network_debug on, seed pinned
+exactly like the browser. RESULT: UNIFORMLY GREEN across ALL class-A seeds
+(1,2,5,6,7,9,11,18,19,20) + controls (3,13,16). => the native shadow CANNOT repro
+class-A, and it's STRUCTURAL: native client = blocking-thread, NO client-side
+rewind; it frontier-WAITS (condvar) for the authoritative reveal so try_get always
+sees Some (client.rs:120-121). Class-A = branch-on-absence DURING REWIND+REPLAY,
+which ONLY the WASM shadow does (wasm/network/client.rs reveal-history buffer +
+rewind_to_turn_start/unwind_state_sync_to), and that module is wasm32-only
+(#[cfg(all(feature="wasm-network", target_arch="wasm32"))]) — NOT reachable from a
+native cargo test. So the file is committed as a NATIVE-SHADOW LOCKSTEP REGRESSION
+GUARD (valuable control; default-run lean 1 class-A + 1 control, full sweep #[ignore]d).
+
+PIVOT for the enumerating RED oracle: drive the ENGINE's shadow rewind+replay reveal
+path directly (the game_loop/mod.rs opponent_library_search_fetch_* /
+shuffle_replay_byte_* / mass_draw_replay_* native-oracle pattern) on the robots-deck
+reveal scenarios — the WASM client is a thin wasm32 wrapper over those NATIVE engine
+primitives (process_card_reveal, rewind_to_turn_start, is_shadow_game paths in
+actions/mod.rs + state.rs). If the bug is in those shared primitives, that native
+oracle catches+enumerates it; if it's purely WASM buffer plumbing
+(unwind_state_sync_to ordering), only the browser e2e catches it. NEXT: build that
+engine-level rewind+replay oracle, RED-first, reproducing the AC=950-class divergence.
+========================================================================
