@@ -8,7 +8,7 @@
 // Usage: node test_network_multideck.js
 //        node test_network_multideck.js --quick   # Run only 2 scenarios (CI fast path)
 
-const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
 const path = require('path');
 
 function log(msg) {
@@ -62,30 +62,46 @@ const scenarios = SCENARIOS;
 
 const testScript = path.join(__dirname, 'test_network_gui_e2e.js');
 
-async function main() {
-    log(`=== Network Multi-Deck E2E Test (${scenarios.length} scenarios${QUICK_MODE ? ', quick mode' : ''}) ===`);
-    const startTime = Date.now();
-    const results = [];
-
-    for (let i = 0; i < scenarios.length; i++) {
-        const s = scenarios[i];
-        log(`\n--- Scenario ${i + 1}/${scenarios.length}: ${s.desc} (${s.deck} seed=${s.seed}) ---`);
+// Run one scenario as a child `node test_network_gui_e2e.js` process, capturing
+// its output (rather than inheriting stdio) so concurrent scenarios don't
+// interleave their stdout. Each scenario allocates its OWN random server/http
+// ports (test_network_gui_e2e.js -> getRandomPorts), so concurrent runs do not
+// collide. Resolves to a result record; never rejects.
+function runScenario(s, index) {
+    return new Promise((resolve) => {
         const scenarioStart = Date.now();
-
-        try {
-            execFileSync('node', [testScript, '--deck', s.deck, '--seed', s.seed.toString()], {
-                cwd: __dirname,
-                stdio: 'inherit',
-                timeout: 240000, // 4 minute timeout per scenario
-            });
-
+        execFile('node', [testScript, '--deck', s.deck, '--seed', s.seed.toString()], {
+            cwd: __dirname,
+            timeout: 240000, // 4 minute hard timeout per scenario
+            maxBuffer: 64 * 1024 * 1024,
+        }, (err, stdout, stderr) => {
             const elapsed = ((Date.now() - scenarioStart) / 1000).toFixed(1);
-            log(`  PASS (${elapsed}s)`);
-            results.push({ ...s, result: 'PASS', elapsed });
-        } catch (err) {
-            const elapsed = ((Date.now() - scenarioStart) / 1000).toFixed(1);
-            log(`  FAIL (${elapsed}s): ${err.message}`);
-            results.push({ ...s, result: 'FAIL', elapsed, error: err.message });
+            resolve({ ...s, index, elapsed, result: err ? 'FAIL' : 'PASS', stdout, stderr, error: err ? err.message : null });
+        });
+    });
+}
+
+async function main() {
+    log(`=== Network Multi-Deck E2E Test (${scenarios.length} scenarios${QUICK_MODE ? ', quick mode' : ''}, PARALLEL) ===`);
+    const startTime = Date.now();
+
+    // mtg-717: run the scenarios CONCURRENTLY instead of sequentially. Each is a
+    // fully independent networked game on its own random ports, so wall-clock
+    // collapses from sum(scenarios) (~443s, two scenarios soaking to the 180s
+    // game-timeout cap) to max(scenario) (~190s) with ZERO change to per-game
+    // depth — every scenario still plays the exact same game to the exact same
+    // turn count and asserts the exact same no-desync / no-fatal-error invariant.
+    const results = await Promise.all(scenarios.map((s, i) => runScenario(s, i)));
+
+    // Emit each scenario's captured output in stable scenario order so a failure
+    // is still self-contained and diagnosable (parent step routes this to its
+    // per-step detail file / dumps it on failure).
+    for (const r of results) {
+        log(`\n--- Scenario ${r.index + 1}/${scenarios.length}: ${r.desc} (${r.deck} seed=${r.seed}) -> ${r.result} (${r.elapsed}s) ---`);
+        if (r.stdout) process.stdout.write(r.stdout);
+        if (r.result === 'FAIL') {
+            if (r.stderr) process.stderr.write(r.stderr);
+            log(`  scenario error: ${r.error}`);
         }
     }
 
