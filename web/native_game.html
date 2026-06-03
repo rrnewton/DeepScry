@@ -2350,11 +2350,25 @@
         /// Render the log pane from `LogEntryView` records. Color and bold
         /// come straight from Rust's shared `classify_log_message`, so the
         /// GUI and TUI never disagree on what color a message gets.
+        // Signature of the last-rendered log, so we re-render on any CONTENT
+        // change — not just a count change. mtg-2a1h8/mtg-570: a network
+        // rewind+replay re-grows the log to the SAME entry count with
+        // different content; a count-only check (the old
+        // `body.children.length === filtered.length`) would skip the
+        // re-render and leave stale or duplicated turn-banner lines locked in
+        // the DOM. This is the JS analog of the Rust LogWrapCache epoch fix
+        // (mtg-432). The signature is recomputed only when needed and the
+        // log is small, so this stays cheap.
+        let _lastLogSig = null;
         function renderLog(logs) {
             const body = document.getElementById('log-body');
             // Drop verbose <Choice> tracker entries (not interesting to humans).
             const filtered = logs.filter(e => !e.is_choice);
-            if (body.children.length === filtered.length) return;
+            // Content signature: text + styling per entry. Re-render iff it
+            // changed (covers same-count truncate+replay, not just growth).
+            const sig = filtered.map(e => `${e.text}${e.color}${e.bold ? 1 : 0}`).join('');
+            if (sig === _lastLogSig) return;
+            _lastLogSig = sig;
 
             body.innerHTML = filtered.map(e => {
                 const style = `color:${e.color || '#ccc'};${e.bold ? 'font-weight:bold;' : ''}`;
