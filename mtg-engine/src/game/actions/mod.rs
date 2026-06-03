@@ -339,7 +339,15 @@ impl GameState {
             card.mana_cost
         };
 
-        // Pay the mana cost (from both regular and combat mana pools)
+        // Pay the mana cost (from both regular and combat mana pools).
+        // Snapshot combat mana for undo when it will be spent (mtg-ba6uq #7).
+        if self
+            .get_player(player_id)
+            .map(|p| p.combat_mana_pool.is_some())
+            .unwrap_or(false)
+        {
+            self.log_combat_mana_pool(player_id);
+        }
         let player = self.get_player_mut(player_id)?;
         player
             .pay_from_total_mana(&mana_cost)
@@ -2145,7 +2153,15 @@ impl GameState {
             }
         }
 
-        // Step 7: Pay costs (from both regular and combat mana pools)
+        // Step 7: Pay costs (from both regular and combat mana pools).
+        // Snapshot combat mana for undo when it will be spent (mtg-ba6uq #7).
+        if self
+            .get_player(player_id)
+            .map(|p| p.combat_mana_pool.is_some())
+            .unwrap_or(false)
+        {
+            self.log_combat_mana_pool(player_id);
+        }
         let player = self.get_player_mut(player_id)?;
         if let Err(e) = player.pay_from_total_mana(&mana_cost) {
             // If we can't pay, we need to unwind:
@@ -5049,6 +5065,9 @@ impl GameState {
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|_| "Unknown".into());
 
+                // Snapshot the combat mana pool for undo BEFORE adding (mtg-ba6uq
+                // #7).
+                self.log_combat_mana_pool(*controller);
                 // Add red mana to combat mana pool (lazy initialization)
                 let player = self.get_player_mut(*controller)?;
                 for _ in 0..*amount {
@@ -5168,6 +5187,9 @@ impl GameState {
                 }
                 let shield = crate::core::DamagePreventionShield::colored_source_next_event(*color, *source);
                 let source_name = self.cards.get(*source).map(|c| c.name.to_string()).unwrap_or_default();
+                // Snapshot the shield list for undo BEFORE installing the new
+                // shield (mtg-ba6uq #6).
+                self.log_source_prevention_shields(*protected);
                 let player = self.get_player_mut(*protected)?;
                 player.source_prevention_shields.push(shield);
                 let player_name = self
@@ -8248,11 +8270,51 @@ impl GameState {
     ///
     /// `source == None` means the damage has no tracked source (e.g. a few
     /// internal/test paths) and no source-filtered shield can match.
+    /// Capture and log a player's current source-prevention-shield list so a
+    /// per-action undo can restore it (mtg-ba6uq #6). Call BEFORE installing or
+    /// consuming shields. The list is `#[serde]`-hashed but turn-start rewind
+    /// blanket-clears it; this covers the per-action UndoTest / human / MCTS path.
+    fn log_source_prevention_shields(&mut self, player_id: PlayerId) {
+        let prev = self
+            .get_player(player_id)
+            .map(|p| p.source_prevention_shields.clone())
+            .unwrap_or_default();
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetSourcePreventionShields { player_id, prev },
+            prior_log_size,
+        );
+    }
+
+    /// Capture and log a player's current `combat_mana_pool` so a per-action
+    /// undo can restore it (mtg-ba6uq #7). Call BEFORE adding, spending, or
+    /// emptying combat mana. Turn-start rewind blanket-clears it; this covers the
+    /// per-action UndoTest / human / MCTS path. `ManaPool` is `Copy`.
+    pub(crate) fn log_combat_mana_pool(&mut self, player_id: PlayerId) {
+        let prev = self.get_player(player_id).map(|p| p.combat_mana_pool).unwrap_or(None);
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::SetCombatManaPool { player_id, prev },
+            prior_log_size,
+        );
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
             return amount;
         }
+        // No shields installed ⇒ nothing to prevent and nothing to undo.
+        if self
+            .get_player(target_id)
+            .map(|p| p.source_prevention_shields.is_empty())
+            .unwrap_or(true)
+        {
+            return amount;
+        }
+        // Snapshot the shield list for undo BEFORE consuming/retiring shields
+        // (mtg-ba6uq #6).
+        self.log_source_prevention_shields(target_id);
         // Snapshot the source's colors up front (immutable borrow) so the
         // shield closure does not borrow the card store while we mutate the
         // player's shield list.

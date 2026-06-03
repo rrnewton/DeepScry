@@ -1353,3 +1353,231 @@ async fn create_token_undo_round_trip() -> Result<()> {
 
     Ok(())
 }
+
+/// mtg-ba6uq #8: undoing lethal commander damage must re-derive (clear) the
+/// `has_lost` flag.
+///
+/// The forward combat path sets `player.has_lost = true` when a single
+/// commander deals 21+ damage (CR 903.10a), but that derived flag is not
+/// separately undo-logged — `SetCommanderDamage::undo` restored
+/// `commander_damage_taken` yet left `has_lost = true`, diverging the (hashed)
+/// state across a rewind. (Matters for 3+ player commander; a 2-player game ends
+/// at the loss so never rewinds further.)
+///
+/// NEGATIVE-TEST-PROVEN: with the `has_lost` re-derivation removed from
+/// `SetCommanderDamage::undo`, the post-undo `!has_lost` assertion FAILS; with
+/// the fix it PASSES.
+#[tokio::test]
+async fn commander_damage_undo_re_derives_has_lost() -> Result<()> {
+    use mtg_engine::game::GameState;
+    use mtg_engine::undo::GameAction;
+
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    game.is_commander_game = true;
+    let from = game.players[0].id;
+    let target = game.players[1].id;
+
+    // Simulate lethal commander damage delivered to P2 by P1's commander, exactly
+    // as the combat path does: record the damage, log SetCommanderDamage, set the
+    // derived loss flag.
+    let old_damage = game.players[1].commander_damage_from(from);
+    let lethal = game.players[1].record_commander_damage(from, 21);
+    assert!(lethal, "21 commander damage must be lethal");
+    let new_damage = game.players[1].commander_damage_from(from);
+    game.players[1].has_lost = true;
+
+    let prior_log_size = game.logger.log_count();
+    game.undo_log.log(
+        GameAction::SetCommanderDamage {
+            player_id: target,
+            from_player: from,
+            old_damage,
+            new_damage,
+        },
+        prior_log_size,
+    );
+
+    assert!(game.players[1].has_lost, "precondition: player is marked lost");
+    assert_eq!(game.players[1].commander_damage_from(from), 21);
+
+    // Undo the lethal commander damage.
+    game.undo()?;
+
+    assert_eq!(
+        game.players[1].commander_damage_from(from),
+        0,
+        "commander damage must be reverted"
+    );
+    assert!(
+        !game.players[1].has_lost,
+        "mtg-ba6uq #8: has_lost must be re-derived (cleared) after undoing lethal commander damage"
+    );
+
+    Ok(())
+}
+
+/// mtg-ba6uq #5: undoing a regeneration-shield application must restore the
+/// shield count, the cleared damage, and the combat state.
+///
+/// `apply_regeneration_shield` consumes a `regeneration_shields`, zeroes
+/// `damage`, and removes the creature from combat — none of which was
+/// undo-logged (only the tap). NEGATIVE-TEST-PROVEN: with the
+/// `RegenerateReplaceDestroy` log removed, the post-undo assertions and the hash
+/// FAIL; with the fix they PASS.
+#[tokio::test]
+async fn regeneration_shield_undo_round_trip() -> Result<()> {
+    use mtg_engine::core::{Card, CardType};
+    use mtg_engine::game::{compute_undo_test_hash, GameState};
+
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+
+    let creature_id = game.next_card_id();
+    let mut creature = Card::new(creature_id, "Regen Troll", p1);
+    creature.add_type(CardType::Creature);
+    creature.set_base_power(Some(2));
+    creature.set_base_toughness(Some(2));
+    creature.regeneration_shields = 1;
+    creature.damage = 2;
+    game.cards.insert(creature_id, creature);
+    game.battlefield.add(creature_id);
+
+    // Put the creature into combat as an attacker (logged).
+    game.declare_attacker_logged(creature_id, p2);
+    assert!(game.combat.is_attacking(creature_id));
+
+    let hash_before = compute_undo_test_hash(&game);
+    let log_len_before = game.undo_log.len();
+
+    // Regenerate: consume the shield, clear damage, tap, remove from combat.
+    game.apply_regeneration_shield(creature_id)?;
+    {
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.regeneration_shields, 0, "shield consumed");
+        assert_eq!(card.damage, 0, "damage cleared");
+        assert!(card.tapped, "creature tapped");
+    }
+    assert!(!game.combat.is_attacking(creature_id), "removed from combat");
+
+    while game.undo_log.len() > log_len_before {
+        game.undo()?;
+    }
+
+    {
+        let card = game.cards.get(creature_id).unwrap();
+        assert_eq!(card.regeneration_shields, 1, "mtg-ba6uq #5: shield restored");
+        assert_eq!(card.damage, 2, "mtg-ba6uq #5: damage restored");
+        assert!(!card.tapped, "mtg-ba6uq #5: untapped");
+    }
+    assert!(
+        game.combat.is_attacking(creature_id),
+        "mtg-ba6uq #5: combat state (attacker) restored after undo"
+    );
+    assert_eq!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "mtg-ba6uq #5: UndoTest hash must round-trip after undoing a regeneration"
+    );
+
+    Ok(())
+}
+
+/// mtg-ba6uq #6: undoing a Circle-of-Protection source-prevention shield install
+/// must remove it from the player's shield list.
+///
+/// NEGATIVE-TEST-PROVEN: with the `SetSourcePreventionShields` log removed from
+/// the install site, the post-undo shield-list and hash assertions FAIL; with
+/// the fix they PASS.
+#[tokio::test]
+async fn source_prevention_shield_undo_round_trip() -> Result<()> {
+    use mtg_engine::core::{Card, CardType, Color, Effect};
+    use mtg_engine::game::{compute_undo_test_hash, GameState};
+
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    // Protect P2 (id != 0): PlayerId 0 is the placeholder sentinel, which the
+    // PreventDamageFromSource effect treats as unresolved and skips.
+    let protected = game.players[1].id;
+
+    // A red source (controlled by P1) the COP protects against.
+    let source_id = game.next_card_id();
+    let mut source = Card::new(source_id, "Red Source", game.players[0].id);
+    source.add_type(CardType::Creature);
+    game.cards.insert(source_id, source);
+
+    let hash_before = compute_undo_test_hash(&game);
+    let log_len_before = game.undo_log.len();
+    assert!(game.players[1].source_prevention_shields.is_empty());
+
+    game.execute_effect(&Effect::PreventDamageFromSource {
+        protected,
+        color: Color::Red,
+        source: source_id,
+    })?;
+    assert_eq!(
+        game.players[1].source_prevention_shields.len(),
+        1,
+        "COP install adds one shield"
+    );
+
+    while game.undo_log.len() > log_len_before {
+        game.undo()?;
+    }
+
+    assert!(
+        game.players[1].source_prevention_shields.is_empty(),
+        "mtg-ba6uq #6: source-prevention shield must be removed after undo"
+    );
+    assert_eq!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "mtg-ba6uq #6: UndoTest hash must round-trip after undoing a COP shield install"
+    );
+
+    Ok(())
+}
+
+/// mtg-ba6uq #7: undoing a Firebend combat-mana addition must clear the
+/// combat mana pool back to None.
+///
+/// NEGATIVE-TEST-PROVEN: with the `SetCombatManaPool` log removed from the
+/// Firebend add site, the post-undo combat-pool and hash assertions FAIL; with
+/// the fix they PASS.
+#[tokio::test]
+async fn combat_mana_pool_undo_round_trip() -> Result<()> {
+    use mtg_engine::core::Effect;
+    use mtg_engine::game::{compute_undo_test_hash, GameState};
+
+    let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+    let p1 = game.players[0].id;
+
+    assert!(game.players[0].combat_mana_pool.is_none());
+    let hash_before = compute_undo_test_hash(&game);
+    let log_len_before = game.undo_log.len();
+
+    // Firebend 2: add two red combat mana to P1.
+    game.execute_effect(&Effect::Firebend {
+        controller: p1,
+        amount: 2,
+    })?;
+    assert!(
+        game.players[0].combat_mana_pool.is_some(),
+        "Firebend must allocate the combat mana pool"
+    );
+
+    while game.undo_log.len() > log_len_before {
+        game.undo()?;
+    }
+
+    assert!(
+        game.players[0].combat_mana_pool.is_none(),
+        "mtg-ba6uq #7: combat mana pool must be cleared back to None after undo"
+    );
+    assert_eq!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "mtg-ba6uq #7: UndoTest hash must round-trip after undoing a Firebend"
+    );
+
+    Ok(())
+}
