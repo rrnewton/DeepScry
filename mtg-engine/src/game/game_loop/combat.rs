@@ -342,6 +342,47 @@ impl<'a> GameLoop<'a> {
         Ok(None)
     }
 
+    /// Run one combat-damage sub-step with rewind+replay-safe SMART
+    /// damage-assignment recording (mtg-610 A2).
+    ///
+    /// On the FIRST resolution the attacking (active) player's controller
+    /// derives the assignment plan via the SMART sub-choices — gating/submitting
+    /// over the network as needed. We then log the resolved plan as a
+    /// [`crate::game::ReplayChoice::DamageAssignment`] ChoicePoint so a later
+    /// rewind+replay APPLIES the authoritative plan via
+    /// `replay_damage_assignment` instead of re-deriving it through the
+    /// already-answered network controller (which would double-submit / stall —
+    /// the intermittent multi-blocker combat desync). Both the server's
+    /// forward-only `run_game` and the WASM shadow's replay log this ChoicePoint
+    /// identically, so action counts stay in lockstep.
+    fn assign_combat_damage_recorded(
+        &mut self,
+        controller1: &mut dyn PlayerController,
+        controller2: &mut dyn PlayerController,
+        first_strike_step: bool,
+    ) -> Result<()> {
+        let active_player = self.game.turn.active_player;
+        // The attacking (active) player makes the damage-assignment sub-choices,
+        // so any recorded plan lives on their controller.
+        let recorded = if active_player == controller1.player_id() {
+            controller1.replay_damage_assignment()
+        } else {
+            controller2.replay_damage_assignment()
+        };
+        let prior_log_size = self.game.logger.log_count();
+        let plan = self
+            .game
+            .assign_combat_damage_planned(controller1, controller2, first_strike_step, recorded)?;
+        if !plan.is_empty() {
+            self.log_choice_point(
+                active_player,
+                Some(crate::game::ReplayChoice::DamageAssignment(plan)),
+                prior_log_size,
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn combat_damage_step(
         &mut self,
         controller1: &mut dyn PlayerController,
@@ -369,7 +410,7 @@ impl<'a> GameLoop<'a> {
             // `assign_combat_damage` itself, so the reader sees the actual damage
             // applied (including SMART multi-blocker assignments) right before any
             // resulting "X dies from combat damage" lines.
-            self.game.assign_combat_damage(controller1, controller2, true)?;
+            self.assign_combat_damage_recorded(controller1, controller2, true)?;
 
             // Check for game end before priority (state-based actions)
             // MTG Rule 704.3: Check state-based actions before players receive priority
@@ -392,7 +433,7 @@ impl<'a> GameLoop<'a> {
                 self.game.logger.normal("--- Normal Combat Damage ---");
             }
             // Per-direction damage lines emitted from within assign_combat_damage (see above).
-            self.game.assign_combat_damage(controller1, controller2, false)?;
+            self.assign_combat_damage_recorded(controller1, controller2, false)?;
 
             // Check for game end before priority (state-based actions)
             // MTG Rule 704.3: Check state-based actions before players receive priority

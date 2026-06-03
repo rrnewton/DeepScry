@@ -499,67 +499,111 @@ impl GameState {
     /// # Errors
     ///
     /// Returns an error if damage assignment or application fails.
+    /// Convenience wrapper: assign combat damage WITHOUT rewind+replay plan
+    /// recording (re-derives every time). Used by unit tests and any caller
+    /// that does not drive the network rewind+replay loop. The GameLoop uses
+    /// [`Self::assign_combat_damage_planned`] directly so it can record the
+    /// resolved [`crate::game::DamageAssignmentPlan`] for replay (mtg-610 A2).
     pub fn assign_combat_damage(
         &mut self,
         attacker_controller: &mut dyn crate::game::controller::PlayerController,
         blocker_controller: &mut dyn crate::game::controller::PlayerController,
         first_strike_step: bool,
     ) -> Result<()> {
+        self.assign_combat_damage_planned(attacker_controller, blocker_controller, first_strike_step, None)?;
+        Ok(())
+    }
+
+    /// Assign and deal combat damage, returning the resolved SMART
+    /// damage-assignment plan (per multi-blocked attacker, the ordered
+    /// `(blocker_id, damage)` pairs). When `recorded_plan` is `Some`, the plan
+    /// is APPLIED directly instead of re-deriving the SMART sub-choices — the
+    /// rewind+replay path (mtg-610 A2). See [`Self::assign_combat_damage`] for
+    /// the simple `Result<()>` wrapper.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if damage assignment or application fails, or
+    /// `MtgError::NeedInput` when a network shadow is still awaiting a
+    /// server-pushed damage-assignment sub-choice.
+    pub fn assign_combat_damage_planned(
+        &mut self,
+        attacker_controller: &mut dyn crate::game::controller::PlayerController,
+        blocker_controller: &mut dyn crate::game::controller::PlayerController,
+        first_strike_step: bool,
+        recorded_plan: Option<crate::game::DamageAssignmentPlan>,
+    ) -> Result<crate::game::DamageAssignmentPlan> {
         // First pass: collect SMART damage assignments for attackers with multiple blockers
         let mut damage_assignments: BTreeMap<CardId, SmallVec<[(CardId, i32); 4]>> = BTreeMap::new();
 
-        // Checkpoint both controllers' choice-consumption cursors BEFORE the
-        // first damage-assignment sub-choice (mtg-sfihb). This first pass is
-        // synchronous and cannot yield mid-loop, but on a network shadow client
-        // the opponent's sub-choices are server-pushed `OpponentChoice`s that
-        // may not all have arrived yet. `smart_damage_assignment` propagates
-        // `MtgError::NeedInput` when a sub-choice is missing; we restore the
-        // cursors and re-raise so the harness re-enters and the WHOLE first
-        // pass re-runs idempotently (it mutates no game state here — only the
-        // local `damage_assignments` plan and the consumption cursor — so a
-        // cursor rewind makes the re-run produce the identical plan). For
-        // non-network controllers the checkpoint/restore are no-ops.
-        attacker_controller.mark_choice_checkpoint();
-        blocker_controller.mark_choice_checkpoint();
+        if let Some(plan) = recorded_plan {
+            // REWIND+REPLAY: a `DamageAssignment` was recorded on a prior pass, so
+            // APPLY it directly instead of re-deriving the SMART sub-choices. This
+            // is the hidden-info-replay principle (mtg-610 A2): re-deriving would
+            // re-consult the network-wrapped inner controller, which already
+            // submitted its sub-choices to the server (double-submit / stall).
+            // No cursor checkpoint is needed — no sub-choice is consumed.
+            for (attacker_id, assignment) in plan {
+                damage_assignments.insert(attacker_id, assignment);
+            }
+        } else {
+            // Checkpoint both controllers' choice-consumption cursors BEFORE the
+            // first damage-assignment sub-choice (mtg-sfihb). This first pass is
+            // synchronous and cannot yield mid-loop, but on a network shadow client
+            // the opponent's sub-choices are server-pushed `OpponentChoice`s that
+            // may not all have arrived yet. `smart_damage_assignment` propagates
+            // `MtgError::NeedInput` when a sub-choice is missing; we restore the
+            // cursors and re-raise so the harness re-enters and the WHOLE first
+            // pass re-runs idempotently (it mutates no game state here — only the
+            // local `damage_assignments` plan and the consumption cursor — so a
+            // cursor rewind makes the re-run produce the identical plan). For
+            // non-network controllers the checkpoint/restore are no-ops.
+            attacker_controller.mark_choice_checkpoint();
+            blocker_controller.mark_choice_checkpoint();
 
-        // Collect attackers to avoid borrow conflict
-        let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
-        for attacker_id in attackers {
-            if self.combat.is_blocked(attacker_id) {
-                let blockers = self.combat.get_blockers(attacker_id);
+            // Collect attackers to avoid borrow conflict
+            let attackers: SmallVec<[CardId; 8]> = self.combat.attackers_iter().collect();
+            for attacker_id in attackers {
+                if self.combat.is_blocked(attacker_id) {
+                    let blockers = self.combat.get_blockers(attacker_id);
 
-                // For multiple blockers, use SMART damage assignment
-                if blockers.len() > 1 {
-                    let attacker = self.cards.get(attacker_id)?;
-                    let attacker_owner = attacker.owner;
+                    // For multiple blockers, use SMART damage assignment
+                    if blockers.len() > 1 {
+                        let attacker = self.cards.get(attacker_id)?;
+                        let attacker_owner = attacker.owner;
 
-                    // Get the appropriate controller
-                    let controller: &mut dyn crate::game::controller::PlayerController =
-                        if attacker_owner == attacker_controller.player_id() {
-                            attacker_controller
-                        } else {
-                            blocker_controller
+                        // Get the appropriate controller
+                        let controller: &mut dyn crate::game::controller::PlayerController =
+                            if attacker_owner == attacker_controller.player_id() {
+                                attacker_controller
+                            } else {
+                                blocker_controller
+                            };
+
+                        // Use SMART assignment. On NeedInput (a network shadow
+                        // awaiting the next server-pushed sub-choice), rewind BOTH
+                        // cursors to the pre-pass checkpoint and re-raise so the
+                        // re-entry re-runs this entire first pass from scratch.
+                        let assignment = match self.smart_damage_assignment(attacker_id, &blockers, controller) {
+                            Ok(a) => a,
+                            Err(MtgError::NeedInput(ctx)) => {
+                                attacker_controller.restore_choice_checkpoint();
+                                blocker_controller.restore_choice_checkpoint();
+                                return Err(MtgError::NeedInput(ctx));
+                            }
+                            Err(e) => return Err(e),
                         };
-
-                    // Use SMART assignment. On NeedInput (a network shadow
-                    // awaiting the next server-pushed sub-choice), rewind BOTH
-                    // cursors to the pre-pass checkpoint and re-raise so the
-                    // re-entry re-runs this entire first pass from scratch.
-                    let assignment = match self.smart_damage_assignment(attacker_id, &blockers, controller) {
-                        Ok(a) => a,
-                        Err(MtgError::NeedInput(ctx)) => {
-                            attacker_controller.restore_choice_checkpoint();
-                            blocker_controller.restore_choice_checkpoint();
-                            return Err(MtgError::NeedInput(ctx));
+                        if !assignment.is_empty() {
+                            damage_assignments.insert(attacker_id, assignment);
                         }
-                        Err(e) => return Err(e),
-                    };
-                    if !assignment.is_empty() {
-                        damage_assignments.insert(attacker_id, assignment);
                     }
                 }
             }
         }
+
+        // Snapshot the resolved plan to return for recording (rewind+replay).
+        let resolved_plan: crate::game::DamageAssignmentPlan =
+            damage_assignments.iter().map(|(k, v)| (*k, v.clone())).collect();
 
         // Second pass: assign all damage
         // BTreeMap provides deterministic iteration order by key,
@@ -1078,7 +1122,7 @@ impl GameState {
             }
         }
 
-        Ok(())
+        Ok(resolved_plan)
     }
 
     /// Log a per-direction creature-vs-creature combat damage assignment.
