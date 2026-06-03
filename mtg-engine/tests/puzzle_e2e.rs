@@ -3788,7 +3788,7 @@ async fn test_meekstone_power3_creatures_dont_untap() -> Result<()> {
     // Remove Meekstone: the lock lifts, so the Serra Angel would untap again.
     let meekstone = find(&game, "Meekstone");
     game.cards.get_mut(serra)?.tapped = true;
-    let _ = game.battlefield.cards.retain(|&id| id != meekstone);
+    game.battlefield.cards.retain(|&id| id != meekstone);
     assert!(
         !game.has_keyword_with_effects(serra, Keyword::DoesNotUntap),
         "removing Meekstone must remove the DoesNotUntap lock"

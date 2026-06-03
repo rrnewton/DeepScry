@@ -297,7 +297,7 @@ impl GameState {
                 // Global power-threshold selector (Meekstone). Only used for
                 // keyword grants today, but match here for P/T-layer queries
                 // too so the predicate is consistent.
-                creature.is_creature() && creature.current_power() as i32 >= *n
+                creature.is_creature() && i32::from(creature.current_power()) >= *n
             }
             AffectedSelector::Self_ => creature_id == source_id,
             AffectedSelector::LandAttachedBy => false, // Not relevant for creature P/T
@@ -1697,7 +1697,7 @@ impl GameState {
                             // Global power-threshold lock (Meekstone: power-3+
                             // creatures don't untap). Controller-agnostic; uses
                             // the creature's current (effective) power.
-                            creature.is_creature() && creature.current_power() as i32 >= *n
+                            creature.is_creature() && i32::from(creature.current_power()) >= *n
                         }
                         AffectedSelector::AllCreaturesOfType { subtype } => {
                             // Grant keyword to all creatures with this subtype (global)
