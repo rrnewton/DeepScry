@@ -784,13 +784,24 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
         .collect();
 
     // Choices.
+    //
+    // Dedup textually-identical actions (mtg-723): when a player holds two
+    // copies of the same card, the engine offers one legal action per copy
+    // (e.g. two "cast Demonic Tutor (sacrificing Black Lotus)" entries). They
+    // are indistinguishable to the player, so we collapse them to a single
+    // visible entry. We keep the FIRST occurrence's real engine `index` (so
+    // selecting it still resolves to a valid choice — either copy produces the
+    // same outcome) and renumber `display_number` 1..N over the deduped list.
+    let mut seen_texts: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let choices: Vec<ChoiceView> = inputs
         .choices
         .iter()
         .enumerate()
-        .map(|(i, (text, highlighted))| ChoiceView {
-            index: i,
-            display_number: i + 1,
+        .filter(|(_, (text, _))| seen_texts.insert(text.as_str()))
+        .enumerate()
+        .map(|(display_idx, (engine_idx, (text, highlighted)))| ChoiceView {
+            index: engine_idx,
+            display_number: display_idx + 1,
             text: text.clone(),
             highlighted: *highlighted,
         })
@@ -1164,5 +1175,50 @@ mod tests {
         };
         assert_eq!(pending_choice_context_name(Some(&attackers)), "Attackers");
         assert_eq!(pending_choice_context_name(None), "None");
+    }
+
+    /// mtg-723: textually-identical actions (e.g. holding two copies of the
+    /// same card → two identical "cast X" entries) must collapse to a single
+    /// visible choice. The kept entry must retain a REAL engine index (the
+    /// first occurrence) and the deduped list must be renumbered 1..N.
+    #[test]
+    fn build_view_model_dedups_identical_choices() {
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+
+        // Engine offers two identical Demonic Tutor casts (one per copy held)
+        // plus a distinct "Pass" action.
+        let dup = "cast Demonic Tutor (sacrificing Black Lotus)".to_string();
+        let choices = vec![(dup.clone(), false), (dup.clone(), true), ("Pass".to_string(), false)];
+
+        let inputs = ViewModelInputs {
+            perspective_player_id: perspective,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: Some("Choose an action"),
+            choices: &choices,
+            selected_choice_idx: 0,
+            choice_context: "None",
+            game_over: false,
+            error_message: None,
+            log_tail_size: 100,
+        };
+
+        let model = build_view_model(&game, inputs);
+
+        // Three raw choices collapse to two distinct entries.
+        assert_eq!(model.choices.len(), 2, "duplicate actions must collapse");
+        assert_eq!(model.choices[0].text, dup);
+        assert_eq!(model.choices[1].text, "Pass");
+
+        // Kept entry retains the FIRST occurrence's real engine index (0); the
+        // distinct "Pass" keeps its original engine index (2) so selection
+        // still resolves to a valid choice.
+        assert_eq!(model.choices[0].index, 0);
+        assert_eq!(model.choices[1].index, 2);
+
+        // Display numbers are renumbered 1..N over the visible list.
+        assert_eq!(model.choices[0].display_number, 1);
+        assert_eq!(model.choices[1].display_number, 2);
     }
 }
