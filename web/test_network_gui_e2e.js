@@ -192,6 +192,16 @@ async function runTest() {
             '--password', SERVER_PASSWORD,
             '--name', 'NativeAI',
             '--controller', 'random',
+            // Pin the controller master seed (mtg-mb668): WITHOUT this the native
+            // RandomController falls back to an ENTROPY seed (main.rs ~1625), so
+            // P2's CHOICES differ every run even at a fixed --seed — the deck
+            // shuffle is pinned but the AI is not. That non-determinism is what
+            // made robots42 "intermittent on a fixed seed" (~37% fail = the
+            // fraction of random playthroughs that hit a latent desync). Both
+            // clients share the same master seed so derive_player_seed() gives
+            // each a consistent per-slot controller seed (the "MUST match" invariant
+            // in tui_game.html). Makes the gate deterministically reproducible.
+            '--seed-player', GAME_SEED.toString(),
             deckPath
         ], {
             cwd: projectRoot,
@@ -254,6 +264,12 @@ async function runTest() {
             name: `Web${HUMAN_MODE ? 'Human' : 'Random'}`,
             deck: browserDeckName,
             controller: controllerType,
+            // Pin the WASM controller master seed (mtg-mb668). Without it the page
+            // defaults controllerSeed to 0 (tui_game.html ~2473) while the native
+            // client uses entropy — so the two controllers' master seeds neither
+            // match nor stay fixed across runs. Passing the same GAME_SEED to both
+            // makes the FULL game (deck shuffle + both players' choices) reproducible.
+            seed: GAME_SEED.toString(),
         }).toString();
         await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
 
