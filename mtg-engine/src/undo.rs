@@ -483,6 +483,23 @@ pub enum GameAction {
         card_id: CardId,
         prev_counters: SmallVec<[(CounterType, u8); 2]>,
     },
+
+    /// Snapshot of a player's library order (and, for surveil, graveyard order)
+    /// captured BEFORE a deterministic reorder that mutates the zone Vec(s) with
+    /// RAW ops rather than logged `MoveCard`s: scry (reorder top + put-on-bottom),
+    /// surveil (reorder top + mill to graveyard), and Dig "rest to bottom". None
+    /// of these were undo-logged, so a mid-turn rewind left the library in its
+    /// reordered state and a replay re-derived a DIFFERENT order (the
+    /// rewind-verifier hash diverged; MCTS per-action undo desynced). The NETWORK
+    /// hash excludes library order (hidden info), so this is NOT a cross-machine
+    /// desync — but it is a real undo-log hole (mtg-ba6uq #2). `undo()` restores
+    /// the captured order(s). Mirrors `ShuffleLibrary`'s `previous_order` restore.
+    /// `previous_graveyard` is `Some` only for surveil (which also mills).
+    ReorderLibrary {
+        player: PlayerId,
+        previous_order: Vec<CardId>,
+        previous_graveyard: Option<Vec<CardId>>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -736,6 +753,22 @@ impl fmt::Display for GameAction {
                     "SetCardCounters(card={}, prev={} types)",
                     card_id.as_u32(),
                     prev_counters.len()
+                )
+            }
+            GameAction::ReorderLibrary {
+                player,
+                previous_order,
+                previous_graveyard,
+            } => {
+                write!(
+                    f,
+                    "ReorderLibrary(P{}, lib={}{})",
+                    player.as_u32(),
+                    previous_order.len(),
+                    match previous_graveyard {
+                        Some(g) => format!(", gy={}", g.len()),
+                        None => String::new(),
+                    }
                 )
             }
         }
@@ -1395,6 +1428,25 @@ impl GameAction {
                 // undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.counters = prev_counters.clone();
+                }
+            }
+            GameAction::ReorderLibrary {
+                player,
+                previous_order,
+                previous_graveyard,
+            } => {
+                // Restore the captured library order (and graveyard, for surveil)
+                // (mtg-ba6uq #2). Mirrors ShuffleLibrary's previous_order restore.
+                if let Some(zones) = game
+                    .player_zones
+                    .iter_mut()
+                    .find(|(id, _)| *id == *player)
+                    .map(|(_, z)| z)
+                {
+                    zones.library.cards = previous_order.clone();
+                    if let Some(prev_gy) = previous_graveyard {
+                        zones.graveyard.cards = prev_gy.clone();
+                    }
                 }
             }
         }
