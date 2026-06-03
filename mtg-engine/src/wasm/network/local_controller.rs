@@ -219,6 +219,25 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 view.stack().len(),
                 hash,
             );
+            // mtg-mb668 class-A: emit the WASM shadow's REAL per-card detail (the
+            // server only ever saw a reconstructed client view because the WASM
+            // SubmitChoice carries debug_info=None). log::warn so the e2e captures
+            // it. KEYED BY choice_seq (the authoritative shared sequence the server
+            // reports in its mismatch box) — NOT action_count, which is not 1:1
+            // between server and shadow. This pinpoints WHICH battlefield card's
+            // (tapped,ctrl) or graveyard id diverges at the failing choice_seq.
+            let choice_seq = client
+                .peek_choice_request()
+                .map(|req| req.choice_seq)
+                .unwrap_or(u32::MAX);
+            log::warn!(
+                "WASM_CARD_DETAIL seq={} server_ac={} local_ac={} hash={:016x} {}",
+                choice_seq,
+                action_count,
+                local_action_count,
+                hash,
+                crate::game::state_hash::format_view_card_detail(view),
+            );
             // Always dump last actions in debug mode for comparison with server
             if action_count != local_action_count {
                 log::warn!(

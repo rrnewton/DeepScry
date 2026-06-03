@@ -385,10 +385,29 @@ async function runTest() {
                 .filter(t => t.includes('ACTION COUNT MISMATCH') || t.includes('state hash mismatch'));
             const mismatchPath = path.join(debugDumpDir, `${stamp}_mismatch.log`);
             fs.writeFileSync(mismatchPath, mismatchLines.join('\n') || '(no mismatch lines)\n');
+            // mtg-mb668 class-A: per-action per-card detail (battlefield id/tapped/ctrl
+            // + graveyard ids) from BOTH sides, keyed by action_count, so the EXACT
+            // diverging field at the desync AC can be diffed. WASM lines come from the
+            // shadow's WASM_CARD_DETAIL log; the server's come from the SERVER STATE
+            // block of the NETWORK SYNC MISMATCH box in stderr.
+            const wasmCardDetail = browserLogs
+                .map(l => l.text)
+                .filter(t => t.includes('WASM_CARD_DETAIL'));
+            const cardDetailPath = path.join(debugDumpDir, `${stamp}_card_detail.log`);
+            const serverMismatchBox = (serverRawStderr.match(/NETWORK SYNC MISMATCH DETECTED[\s\S]*?DIFFERENCES:[\s\S]*?╚/g) || [])
+                .join('\n\n========\n\n');
+            fs.writeFileSync(
+                cardDetailPath,
+                `=== WASM shadow per-action card detail (last ~${wasmCardDetail.length}) ===\n` +
+                (wasmCardDetail.join('\n') || '(no WASM_CARD_DETAIL captured)') +
+                `\n\n=== SERVER mismatch box (real server detail) ===\n` +
+                (serverMismatchBox || '(no server mismatch box captured)') + '\n'
+            );
             log(`\nmtg-610 full undo-log dumps written:`);
             log(`  WASM  : ${wasmPath} (${wasmDumps.length} block(s))`);
             log(`  SERVER: ${serverPath} (${serverBlocks.length} block(s))`);
             log(`  MISMATCH lines: ${mismatchPath}`);
+            log(`  CARD DETAIL: ${cardDetailPath} (${wasmCardDetail.length} WASM line(s))`);
         } catch (e) {
             log(`  (failed to write undo-log dumps: ${e.message})`);
         }

@@ -1311,6 +1311,18 @@ pub struct DebugSyncInfo {
     /// which cards are in the player's hand.
     #[serde(default)]
     pub requesting_player_hand_ids: Vec<u32>,
+    /// Per-battlefield-card detail `(card_id, is_tapped, controller)`, sorted by
+    /// card_id — EXACTLY the per-card fields hashed by `compute_view_hash`
+    /// (mtg-mb668 class-A enumeration). When the coarse sizes all match but the
+    /// view-hash still diverges, the diverging field is one of these (a tap-status
+    /// or controller mismatch on a battlefield card) or `graveyard_ids` below.
+    #[serde(default)]
+    pub battlefield_detail: Vec<(u32, bool, u32)>,
+    /// Per-player graveyard CardIds in order `[P1_gy_ids, P2_gy_ids]` — the
+    /// graveyard CONTENTS hashed by `compute_view_hash` (the sizes alone, in
+    /// `graveyard_sizes`, can match while the ids differ).
+    #[serde(default)]
+    pub graveyard_ids: [Vec<u32>; 2],
 }
 
 impl DebugSyncInfo {
@@ -1330,6 +1342,8 @@ impl DebugSyncInfo {
             last_actions: Vec::new(),
             rng_hash: None,
             requesting_player_hand_ids: Vec::new(),
+            battlefield_detail: Vec::new(),
+            graveyard_ids: [Vec::new(), Vec::new()],
         }
     }
 

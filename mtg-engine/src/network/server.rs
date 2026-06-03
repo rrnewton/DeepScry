@@ -319,6 +319,12 @@ fn log_debug_sync_info(label: &str, info: &DebugSyncInfo) {
     if !info.requesting_player_hand_ids.is_empty() {
         log::error!("║   Hand CardIds: {:?}", info.requesting_player_hand_ids);
     }
+    if !info.battlefield_detail.is_empty() {
+        log::error!("║   Battlefield (id,tapped,ctrl): {:?}", info.battlefield_detail);
+    }
+    if info.graveyard_ids.iter().any(|g| !g.is_empty()) {
+        log::error!("║   Graveyard CardIds: {:?}", info.graveyard_ids);
+    }
 }
 
 /// Compare two DebugSyncInfo and log specific differences
@@ -344,6 +350,38 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
         log::error!("║   - Hand CardIds DIFFER");
         log::error!("║      Server: {:?}", server.requesting_player_hand_ids);
         log::error!("║      Client: {:?}", client.requesting_player_hand_ids);
+    }
+    // mtg-mb668 class-A: pinpoint the per-card battlefield divergence (a tap-status
+    // or controller mismatch on a single card) when the coarse sizes all match.
+    if server.battlefield_detail != client.battlefield_detail {
+        log::error!("║   - Battlefield (id,tapped,ctrl) DIFFERS");
+        let s: std::collections::BTreeMap<u32, (bool, u32)> = server
+            .battlefield_detail
+            .iter()
+            .map(|&(id, t, c)| (id, (t, c)))
+            .collect();
+        let c: std::collections::BTreeMap<u32, (bool, u32)> = client
+            .battlefield_detail
+            .iter()
+            .map(|&(id, t, c)| (id, (t, c)))
+            .collect();
+        for (id, sv) in &s {
+            match c.get(id) {
+                Some(cv) if cv == sv => {}
+                Some(cv) => log::error!("║      card {id}: server(tapped,ctrl)={sv:?} client={cv:?}"),
+                None => log::error!("║      card {id}: on SERVER bf {sv:?}, MISSING on client"),
+            }
+        }
+        for id in c.keys() {
+            if !s.contains_key(id) {
+                log::error!("║      card {id}: on CLIENT bf, MISSING on server");
+            }
+        }
+    }
+    if server.graveyard_ids != client.graveyard_ids {
+        log::error!("║   - Graveyard CardIds DIFFER");
+        log::error!("║      Server: {:?}", server.graveyard_ids);
+        log::error!("║      Client: {:?}", client.graveyard_ids);
     }
 }
 
@@ -397,7 +435,9 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
 enum GameToHandler {
     /// Server needs this player to make a choice.
     /// Handler should forward to client, wait for response, send back via HandlerToGame.
-    ChoiceRequest(ChoiceRequest),
+    /// Boxed: `ChoiceRequest` is the largest variant (carries reveals + optional
+    /// `DebugSyncInfo`); boxing keeps `GameToHandler` small (clippy large_enum_variant).
+    ChoiceRequest(Box<ChoiceRequest>),
     /// Opponent made a choice - handler should forward to client.
     /// No response expected.
     OpponentMadeChoice(OpponentChoiceInfo),
@@ -2420,7 +2460,7 @@ async fn run_coordinator(
                         }
 
                         // Forward to P1 handler
-                        if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
+                        if p1_to_handler_tx.send(GameToHandler::ChoiceRequest(Box::new(choice_request))).await.is_err() {
                             log::error!("Coordinator: Failed to send ChoiceRequest to P1 handler");
                             return Err(anyhow!("P1 handler channel closed"));
                         }
@@ -2611,7 +2651,7 @@ async fn run_coordinator(
                         }
 
                         // Forward to P2 handler
-                        if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(choice_request)).await.is_err() {
+                        if p2_to_handler_tx.send(GameToHandler::ChoiceRequest(Box::new(choice_request))).await.is_err() {
                             log::error!("Coordinator: Failed to send ChoiceRequest to P2 handler");
                             return Err(anyhow!("P2 handler channel closed"));
                         }
@@ -2881,7 +2921,7 @@ async fn handle_player_websocket(
                             }).await?;
 
                             // Mark that we're waiting for this choice
-                            waiting_for_choice = Some(choice_request);
+                            waiting_for_choice = Some(*choice_request);
                         }
                     }
 

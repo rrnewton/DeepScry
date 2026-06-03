@@ -479,6 +479,57 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
 /// The optional `requesting_player` parameter, when provided, causes the
 /// sorted CardIds in that player's hand to be included. This allows detecting
 /// hand desync between server and client.
+/// Per-battlefield-card `(card_id, is_tapped, controller)`, sorted by card_id —
+/// EXACTLY the per-card fields hashed by `compute_view_hash`. When the coarse
+/// view fields all match but the view-hash still diverges (mtg-mb668 class-A),
+/// the divergence is in one of these tuples (a tap-status or controller mismatch)
+/// or in `view_graveyard_ids` below. Available to BOTH the native server and the
+/// WASM shadow so a desync can be diffed field-for-field on either side.
+#[cfg(any(feature = "network", feature = "wasm-network"))]
+pub fn view_battlefield_detail(view: &crate::game::controller::GameStateView) -> Vec<(u32, bool, u32)> {
+    let mut detail: Vec<(u32, bool, u32)> = view
+        .battlefield()
+        .iter()
+        .map(|&id| {
+            let controller = view.get_card(id).map(|c| c.controller.as_u32()).unwrap_or(u32::MAX);
+            (id.as_u32(), view.is_tapped(id), controller)
+        })
+        .collect();
+    detail.sort_by_key(|&(id, _, _)| id);
+    detail
+}
+
+/// Per-player graveyard CardIds in order `[P1_gy_ids, P2_gy_ids]` — the graveyard
+/// CONTENTS hashed by `compute_view_hash` (sizes alone can match while ids differ).
+#[cfg(any(feature = "network", feature = "wasm-network"))]
+pub fn view_graveyard_ids(view: &crate::game::controller::GameStateView) -> [Vec<u32>; 2] {
+    use crate::core::PlayerId;
+    [
+        view.player_graveyard(PlayerId::new(0))
+            .iter()
+            .map(|id| id.as_u32())
+            .collect(),
+        view.player_graveyard(PlayerId::new(1))
+            .iter()
+            .map(|id| id.as_u32())
+            .collect(),
+    ]
+}
+
+/// One-line per-card detail string (battlefield tuples + graveyard ids) for
+/// desync logging. Used by the WASM shadow's `WASM_HASH_DEBUG` line and mirrors
+/// the structured fields the server reports via `DebugSyncInfo`.
+#[cfg(any(feature = "network", feature = "wasm-network"))]
+pub fn format_view_card_detail(view: &crate::game::controller::GameStateView) -> String {
+    let gy = view_graveyard_ids(view);
+    format!(
+        "bf(id,tapped,ctrl)={:?} gy=[{:?},{:?}]",
+        view_battlefield_detail(view),
+        gy[0],
+        gy[1]
+    )
+}
+
 #[cfg(feature = "network")]
 pub fn build_debug_sync_info(
     view: &crate::game::controller::GameStateView,
@@ -510,6 +561,9 @@ pub fn build_debug_sync_info(
         Vec::new()
     };
 
+    let battlefield_detail = view_battlefield_detail(view);
+    let graveyard_ids = view_graveyard_ids(view);
+
     DebugSyncInfo {
         turn: view.turn_number(),
         phase: format!("{:?}", view.current_step()),
@@ -530,6 +584,8 @@ pub fn build_debug_sync_info(
         last_actions,
         rng_hash,
         requesting_player_hand_ids,
+        battlefield_detail,
+        graveyard_ids,
     }
 }
 
