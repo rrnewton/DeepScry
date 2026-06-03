@@ -122,6 +122,7 @@ impl CardLoader {
         let mut raw_keywords = Vec::new();
         let mut svars = std::collections::HashMap::new();
         let mut enters_tapped = false;
+        let mut etb_tapped_global: Option<crate::core::effects::TargetRestriction> = None;
         let mut etb_choose_color = false;
         let mut etb_exclude_colors = Vec::new();
         // SVar name referenced by a `K:ETBReplacement:Other:<SVar>` line whose
@@ -218,11 +219,21 @@ impl CardLoader {
                     // (`R:Event$ Untap | Layer$ CantHappen`) into a continuous
                     // GrantKeyword(DoesNotUntap) static (Paralyze, Exhaustion, ...).
                     "A" | "S" | "T" | "R" => {
-                        // ETB-tapped replacement: "ReplaceWith$ ETBTapped" enters
-                        // the battlefield tapped (handled via the `enters_tapped`
-                        // flag rather than as a generic replacement).
-                        if key == "R" && value.contains("ReplaceWith$ ETBTapped") {
-                            enters_tapped = true;
+                        // ETB-tapped replacement (`ReplaceWith$ ETBTapped`).
+                        // Classify the replacement STRUCTURALLY (tokenize on `|`
+                        // then `$`, never substring-match the line — see the
+                        // "No Hacky String Operations" rule):
+                        //   - `ValidCard$ Card.Self` → the host itself enters
+                        //     tapped (the tapped-land form; `enters_tapped` flag).
+                        //   - a global predicate (`Creature.OppCtrl`, …) → OTHER
+                        //     permanents matching it enter tapped while the host
+                        //     is on the battlefield (Kismet et al.).
+                        if key == "R" {
+                            match classify_etb_tapped_replacement(value) {
+                                EtbTappedReplacement::SelfHost => enters_tapped = true,
+                                EtbTappedReplacement::Global(pred) => etb_tapped_global = Some(pred),
+                                EtbTappedReplacement::NotApplicable => {}
+                            }
                         }
                         raw_abilities.push(format!("{key}:{value}"));
                     }
@@ -327,6 +338,7 @@ impl CardLoader {
             svars,
             parsed_svars,
             enters_tapped,
+            etb_tapped_global,
             etb_choose_color,
             etb_exclude_colors,
             etb_choose_player,
@@ -364,6 +376,83 @@ where
     map.end()
 }
 
+/// Classification of an `R:Event$ Moved | … | ReplaceWith$ ETBTapped`
+/// replacement line, produced by [`classify_etb_tapped_replacement`]. See
+/// [`CardDefinition::etb_tapped_global`].
+enum EtbTappedReplacement {
+    /// `ValidCard$ Card.Self`: the host itself enters tapped (tapped lands).
+    SelfHost,
+    /// Global: OTHER permanents matching the predicate enter tapped while the
+    /// host is on the battlefield (Kismet, Loxodon Gatekeeper, Orb of Dreams, …).
+    Global(crate::core::effects::TargetRestriction),
+    /// Not an ETB-tapped replacement, or one whose qualifiers/conditions we
+    /// don't model yet — left as a no-op rather than shipping a wrong effect.
+    NotApplicable,
+}
+
+/// Classify an `R:` line body STRUCTURALLY (tokenize on `|` then `$`, never a
+/// substring match — see the "No Hacky String Operations" rule in CLAUDE.md).
+fn classify_etb_tapped_replacement(value: &str) -> EtbTappedReplacement {
+    let mut params: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for token in value.split('|') {
+        if let Some((k, v)) = token.split_once('$') {
+            params.insert(k.trim(), v.trim());
+        }
+    }
+    // Must be THE ETB-tapped zone-change replacement.
+    if params.get("Event") != Some(&"Moved") || params.get("ReplaceWith") != Some(&"ETBTapped") {
+        return EtbTappedReplacement::NotApplicable;
+    }
+    // Destination, when stated, must be the battlefield.
+    if matches!(params.get("Destination"), Some(&d) if d != "Battlefield") {
+        return EtbTappedReplacement::NotApplicable;
+    }
+    let Some(&valid_card) = params.get("ValidCard") else {
+        return EtbTappedReplacement::NotApplicable;
+    };
+    // Self-replacement form (the hundreds of tapped lands): the host taps itself.
+    if valid_card == "Card.Self" {
+        return EtbTappedReplacement::SelfHost;
+    }
+    // Global form. We only install predicates we can faithfully evaluate:
+    //   * the source must apply from the battlefield (`ActiveZones$ Battlefield`
+    //     or unspecified) — `the_doctors_childhood_barn` applies from Command;
+    //   * no `IsPresent$` / `ValidCause$` conditional gating (archelos_lagoon_
+    //     mystic, uphill_battle);
+    //   * every `ValidCard$` qualifier must be a controller restriction we model
+    //     (`OppCtrl`/`YouCtrl`). Qualifiers like `nonBasic`, `Snow`,
+    //     `nonPhyrexian`, `cmcNotChosenEvenOdd` are silently DROPPED by
+    //     `TargetRestriction::parse`, which would WIDEN the match (e.g. also tap
+    //     basic lands / your own creatures) — so we refuse them rather than ship
+    //     a wrong effect. Those cards stay no-ops; see mtg-713 B12 follow-up.
+    if params.contains_key("IsPresent") || params.contains_key("ValidCause") {
+        return EtbTappedReplacement::NotApplicable;
+    }
+    if matches!(params.get("ActiveZones"), Some(&z) if z != "Battlefield") {
+        return EtbTappedReplacement::NotApplicable;
+    }
+    if !etb_tapped_predicate_is_supported(valid_card) {
+        return EtbTappedReplacement::NotApplicable;
+    }
+    EtbTappedReplacement::Global(crate::core::effects::TargetRestriction::parse(valid_card))
+}
+
+/// True iff every `.`-qualifier in a comma-separated `ValidCard$` predicate is a
+/// controller restriction that [`crate::core::effects::TargetRestriction::parse`]
+/// models. The base type itself is unrestricted (card types, universal selectors
+/// `Permanent`/`Card`, and bare subtypes are all faithfully handled); only
+/// trailing qualifiers can silently widen the match, so those are what we check.
+fn etb_tapped_predicate_is_supported(valid_card: &str) -> bool {
+    for clause in valid_card.split(',') {
+        for qualifier in clause.split('.').skip(1).flat_map(|q| q.split('+')) {
+            if !matches!(qualifier.trim(), "OppCtrl" | "YouCtrl") {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Card definition (not yet instantiated in a game)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CardDefinition {
@@ -399,8 +488,24 @@ pub struct CardDefinition {
     #[serde(skip)]
     pub parsed_svars: std::collections::HashMap<String, super::ability_parser::AbilityParams>,
     /// Does this card enter the battlefield tapped?
-    /// Derived from R: lines containing "ReplaceWith$ ETBTapped"
+    /// Derived from an `R:Event$ Moved | ValidCard$ Card.Self | ... |
+    /// ReplaceWith$ ETBTapped` self-replacement (the form used by hundreds of
+    /// tapped lands).
     pub enters_tapped: bool,
+    /// While this permanent is on the battlefield, OTHER permanents matching this
+    /// predicate enter the battlefield tapped. Derived from the *global* form of
+    /// the ETB-tapped replacement — `R:Event$ Moved | ValidCard$ <pred> |
+    /// Destination$ Battlefield | ReplaceWith$ ETBTapped` where `<pred>` is NOT
+    /// `Card.Self` (Kismet, Loxodon Gatekeeper, Frozen Aether, Imposing
+    /// Sovereign, Authority of the Consuls, Blind Obedience, Root Maze, Orb of
+    /// Dreams, …). The predicate's controller restriction (`OppCtrl`/`YouCtrl`)
+    /// is resolved relative to THIS permanent's controller at ETB time
+    /// (CR 614 replacement applied as the object enters). `None` for everything
+    /// else. Predicates with qualifiers we don't yet model (`nonBasic`, `Snow`,
+    /// `nonPhyrexian`, `IsPresent$`/`ValidCause$` conditions, non-battlefield
+    /// `ActiveZones$`) are deliberately left `None` — see `mtg-713` B12.
+    #[serde(default)]
+    pub etb_tapped_global: Option<crate::core::effects::TargetRestriction>,
     /// Does this card require choosing a color when it enters the battlefield?
     /// Derived from K:ETBReplacement:Other:ChooseColor
     pub etb_choose_color: bool,
@@ -463,6 +568,7 @@ impl Default for CardDefinition {
             svars: std::collections::HashMap::new(),
             parsed_svars: std::collections::HashMap::new(),
             enters_tapped: false,
+            etb_tapped_global: None,
             etb_choose_color: false,
             etb_exclude_colors: Vec::new(),
             etb_choose_player: false,
@@ -6694,6 +6800,118 @@ Oracle:Whenever City of Brass becomes tapped, it deals 1 damage to you.
             post_taps.effects.iter().any(|e| matches!(e, Effect::DealDamage { .. })),
             "after rebuild_parsed_svars the Taps trigger must carry the DealDamage effect again, got: {:?}",
             post_taps.effects
+        );
+    }
+
+    /// Parser-shape regression for the 1994 World Championship compat sweep
+    /// (mtg-713 B12). The `R:Event$ Moved | … | ReplaceWith$ ETBTapped`
+    /// replacement comes in two forms and the loader must classify them
+    /// STRUCTURALLY (not by substring-matching the line):
+    ///   * `ValidCard$ Card.Self`   → host self-taps   (`enters_tapped`)
+    ///   * a global predicate       → OTHER permanents (`etb_tapped_global`)
+    ///
+    /// Predicates carrying qualifiers we don't model yet (e.g. `nonBasic`) must
+    /// be refused (left `None`) rather than silently widened.
+    #[test]
+    fn test_etb_tapped_replacement_classification() {
+        use crate::core::effects::{ControllerRestriction, TargetType};
+
+        // GLOBAL form (Kismet): the host must NOT self-tap, and the global
+        // predicate must capture all three opponent-controlled types.
+        let kismet = CardLoader::parse(
+            r#"
+Name:Kismet
+ManaCost:3 W
+Types:Enchantment
+R:Event$ Moved | ValidCard$ Artifact.OppCtrl,Creature.OppCtrl,Land.OppCtrl | Destination$ Battlefield | ReplaceWith$ ETBTapped | ReplacementResult$ Updated | ActiveZones$ Battlefield | Description$ Artifacts, creatures, and lands your opponents control enter tapped.
+SVar:ETBTapped:DB$ Tap | ETB$ True | Defined$ ReplacedCard
+Oracle:Artifacts, creatures, and lands your opponents control enter tapped.
+"#,
+        )
+        .unwrap();
+        assert!(
+            !kismet.enters_tapped,
+            "Kismet hosts a GLOBAL replacement — it must NOT set its own enters_tapped"
+        );
+        let pred = kismet
+            .etb_tapped_global
+            .as_ref()
+            .expect("Kismet must store a global ETB-tapped predicate");
+        assert_eq!(
+            pred.controller,
+            ControllerRestriction::OppCtrl,
+            "Kismet's predicate is OppCtrl-relative"
+        );
+        for ty in [TargetType::Artifact, TargetType::Creature, TargetType::Land] {
+            assert!(pred.types.contains(&ty), "Kismet predicate must include {ty:?}");
+        }
+
+        // SELF form (a tapped land): host self-taps; no global predicate.
+        let barren_moor = CardLoader::parse(
+            r#"
+Name:Barren Moor
+ManaCost:no cost
+Types:Land
+R:Event$ Moved | ValidCard$ Card.Self | Destination$ Battlefield | ReplacementResult$ Updated | ReplaceWith$ ETBTapped | Description$ CARDNAME enters tapped.
+SVar:ETBTapped:DB$ Tap | Defined$ Self | ETB$ True
+Oracle:Barren Moor enters tapped.
+"#,
+        )
+        .unwrap();
+        assert!(
+            barren_moor.enters_tapped,
+            "Card.Self form must set the host's enters_tapped"
+        );
+        assert!(
+            barren_moor.etb_tapped_global.is_none(),
+            "a self-tapping land must NOT carry a global predicate"
+        );
+
+        // SYMMETRIC global form (Root Maze): predicate with no controller filter.
+        let root_maze = CardLoader::parse(
+            r#"
+Name:Root Maze
+ManaCost:G
+Types:Enchantment
+R:Event$ Moved | ValidCard$ Artifact,Land | Destination$ Battlefield | ReplaceWith$ ETBTapped | ReplacementResult$ Updated | ActiveZones$ Battlefield | Description$ Artifacts and lands enter tapped.
+SVar:ETBTapped:DB$ Tap | ETB$ True | Defined$ ReplacedCard
+Oracle:Artifacts and lands enter tapped.
+"#,
+        )
+        .unwrap();
+        let rm_pred = root_maze
+            .etb_tapped_global
+            .as_ref()
+            .expect("Root Maze must store a global ETB-tapped predicate");
+        assert_eq!(
+            rm_pred.controller,
+            ControllerRestriction::Any,
+            "Root Maze is symmetric — Any controller"
+        );
+        assert!(!root_maze.enters_tapped, "Root Maze must not self-tap");
+
+        // GATED form (unsupported `nonBasic` qualifier — Thalia, Heretic Cathar):
+        // refused rather than over-matching every opponent land.
+        let thalia = CardLoader::parse(
+            r#"
+Name:Thalia, Heretic Cathar
+ManaCost:2 W
+Types:Legendary Creature Human Soldier
+PT:3/2
+K:First Strike
+R:Event$ Moved | ValidCard$ Creature.OppCtrl,Land.nonBasic+OppCtrl | Destination$ Battlefield | ReplaceWith$ ETBTapped | ReplacementResult$ Updated | ActiveZones$ Battlefield | Description$ Creatures and nonbasic lands your opponents control enter tapped.
+SVar:ETBTapped:DB$ Tap | ETB$ True | Defined$ ReplacedCard
+Oracle:First strike\nCreatures and nonbasic lands your opponents control enter tapped.
+"#,
+        )
+        .unwrap();
+        assert!(
+            thalia.etb_tapped_global.is_none(),
+            "unsupported `nonBasic` qualifier must be refused (no over-matching), see mtg-713 B12 follow-up"
+        );
+        assert!(
+            !thalia.enters_tapped,
+            "the gated card must not fall back to self-tap either"
         );
     }
 }

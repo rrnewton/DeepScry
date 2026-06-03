@@ -99,7 +99,9 @@ workflow, row format, and update rules.
 | SP$ Destroy ValidTgts$ Creature.nonArtifact+nonBlack NoRegen$ True | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Terror |
 | AB$ Draw Cost$ 2 T NumCards$ 1 + SubAbility$ DBDiscard | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Jalum Tome |
 | AB$ DestroyAll ValidCards$ Artifact,Creature,Enchantment | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
-| R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped (enters tapped) | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk |
+| R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped, ValidCard$ Card.Self (host self-taps) | WORKING | 2026-05-29_#2461(53f1d817) | (none) | Nevinyrral's Disk, Barren Moor |
+| R:Event$ Moved Destination$ Battlefield ReplaceWith$ ETBTapped, global predicate (OTHER perms enter tapped; OppCtrl/YouCtrl/Any) | WORKING | 2026-06-03_#2712(compat-1994-sweep) | (fixed mtg-713 B12) | Kismet, Loxodon Gatekeeper, Frozen Aether, Orb of Dreams, Root Maze |
+| ↳ global ETBTapped with unmodeled qualifier (nonBasic, Snow, nonPhyrexian, IsPresent$/ValidCause$, non-bf ActiveZones$) — refused (no-op, not over-matched) | PARTIAL | 2026-06-03_#2712(compat-1994-sweep) | (follow-up mtg-713 B12) | Thalia Heretic Cathar, Archon of Emeria, Reidane, Phyrexian Censor |
 | SP$ Charm modes enforce per-mode ValidTgts$ color restriction | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed mtg-af24s) | Red/Blue Elemental Blast |
 | DB$ GainLife LifeAmount$ X (X = Targeted$CardPower / Targeted$CardManaCost; dynamic-amount life gain) | WORKING | 2026-05-30_#2489(1db3e6c7) | (fixed mtg-297) | Swords to Plowshares, Divine Offering |
   - 2026-05-30_#2489(1db3e6c7): BROKEN→WORKING. Added the general

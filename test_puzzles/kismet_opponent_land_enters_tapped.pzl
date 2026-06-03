@@ -1,0 +1,26 @@
+[metadata]
+Name:Kismet repro — opponent plays a land, it enters tapped
+Goal:Win
+Difficulty:Easy
+
+# CLI reproducer for the 1994 compat sweep (mtg-713 B12 / mtg-5xn5n). P1 controls
+# Kismet ("Artifacts, creatures, and lands your opponents control enter tapped").
+# P0 is the active player and the opponent of Kismet's controller, so the Forest
+# P0 plays must enter TAPPED. Run:
+#   cargo run --release --features network --bin mtg -- tui \
+#     --start-state test_puzzles/kismet_opponent_land_enters_tapped.pzl \
+#     --p1 fixed --p2 fixed --p1-fixed-inputs "play forest;*" --p2-fixed-inputs "*" \
+#     --seed 42 --verbosity 3 --stop-when-fixed-exhausted
+# Expect in the log: "Forest (N) enters the battlefield tapped".
+[state]
+turn=3
+activeplayer=p0
+activephase=Main1
+p0life=20
+p0battlefield=
+p0hand=Forest
+p0library=Forest; Forest; Forest; Forest
+
+p1life=20
+p1battlefield=Kismet; Plains
+p1library=Plains; Plains; Plains; Plains

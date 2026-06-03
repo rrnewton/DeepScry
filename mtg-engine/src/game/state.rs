@@ -1158,6 +1158,39 @@ impl GameState {
                 }
             }
 
+            // Global ETB-tapped replacement: another permanent already on the
+            // battlefield (Kismet, Loxodon Gatekeeper, Frozen Aether, Orb of
+            // Dreams, …) imposes "permanents matching <predicate> enter tapped".
+            // CR 614 replacement applied as the object enters. The predicate's
+            // controller restriction (`OppCtrl`/`YouCtrl`) is resolved relative
+            // to the SOURCE permanent's controller. Skipped if the card already
+            // entered tapped via its own self-replacement above (idempotent).
+            let tap_for_global = match self.cards.try_get(card_id) {
+                Some(entering) if !entering.tapped => {
+                    let entering_controller = entering.controller;
+                    let matched = self.battlefield.cards.iter().any(|&src_id| {
+                        if src_id == card_id {
+                            return false;
+                        }
+                        let Some(src) = self.cards.try_get(src_id) else {
+                            return false;
+                        };
+                        src.definition.etb_tapped_global.as_ref().is_some_and(|pred| {
+                            pred.matches_with_controller(entering, src.controller, entering_controller)
+                        })
+                    });
+                    matched.then(|| entering.name.clone())
+                }
+                _ => None,
+            };
+            if let Some(card_name) = tap_for_global {
+                if let Ok(card_mut) = self.cards.get_mut(card_id) {
+                    card_mut.tapped = true;
+                    self.logger
+                        .verbose(&format!("{} ({}) enters the battlefield tapped", card_name, card_id));
+                }
+            }
+
             // Handle ETB color choice (e.g., Thriving lands)
             if let Some(card) = self.cards.try_get(card_id) {
                 if card.definition.cache.etb_choose_color {

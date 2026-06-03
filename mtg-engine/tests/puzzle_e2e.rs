@@ -5444,3 +5444,81 @@ async fn test_howling_mine_draws_for_active_player() -> Result<()> {
     println!("✓ Howling Mine extra draw goes to the active player, not the controller (1994 champ compat)");
     Ok(())
 }
+
+/// Regression (1994 World Championship compat — mtg-713 B12): Kismet's GLOBAL
+/// ETB-tapped replacement — "Artifacts, creatures, and lands your opponents
+/// control enter tapped" (`R:Event$ Moved | ValidCard$ Artifact.OppCtrl,
+/// Creature.OppCtrl,Land.OppCtrl | Destination$ Battlefield | ReplaceWith$
+/// ETBTapped`). The loader used to detect `ReplaceWith$ ETBTapped` with a
+/// substring match and set the HOST's own `enters_tapped`, so Kismet entered
+/// tapped and the global effect never applied. Now the replacement is classified
+/// structurally and stored as `etb_tapped_global`, honored at every ETB with the
+/// controller restriction resolved relative to Kismet's controller (CR 614).
+#[tokio::test]
+async fn test_kismet_opponents_enter_tapped() -> Result<()> {
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/kismet_opponents_enter_tapped.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+    let p1_id = game.players[1].id;
+
+    // Kismet itself must NOT have entered tapped — it is the host of a GLOBAL
+    // replacement, not a self-tapping permanent.
+    let kismet = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == "Kismet"))
+        .expect("Kismet should be on the battlefield");
+    assert!(
+        !game.cards.get(kismet)?.tapped,
+        "Kismet itself must NOT enter tapped (global replacement, not self-tap)"
+    );
+
+    let find_in_hand = |game: &mtg_engine::game::GameState, pid, name: &str| -> mtg_engine::core::CardId {
+        let zones = game.get_player_zones(pid).expect("player zones");
+        zones
+            .hand
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == name))
+            .unwrap_or_else(|| panic!("{name} should be in hand"))
+    };
+
+    // P1 (an opponent of Kismet's controller) puts a creature and a land onto
+    // the battlefield: both must enter TAPPED.
+    let opp_creature = find_in_hand(&game, p1_id, "Hill Giant");
+    let opp_land = find_in_hand(&game, p1_id, "Forest");
+    game.move_card(opp_creature, Zone::Hand, Zone::Battlefield, p1_id)?;
+    game.move_card(opp_land, Zone::Hand, Zone::Battlefield, p1_id)?;
+    assert!(
+        game.cards.get(opp_creature)?.tapped,
+        "Opponent's creature must enter tapped under Kismet"
+    );
+    assert!(
+        game.cards.get(opp_land)?.tapped,
+        "Opponent's land must enter tapped under Kismet"
+    );
+
+    // P0 (Kismet's controller) puts its own creature onto the battlefield: it
+    // must enter UNTAPPED (the predicate is OppCtrl-relative to Kismet).
+    let own_creature = find_in_hand(&game, p0_id, "Grizzly Bears");
+    game.move_card(own_creature, Zone::Hand, Zone::Battlefield, p0_id)?;
+    assert!(
+        !game.cards.get(own_creature)?.tapped,
+        "Kismet controller's OWN creature must enter untapped"
+    );
+
+    println!("✓ Kismet: opponents' permanents enter tapped, controller's own untapped (1994 champ compat)");
+    Ok(())
+}

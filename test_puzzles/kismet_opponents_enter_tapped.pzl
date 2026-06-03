@@ -1,0 +1,35 @@
+[metadata]
+Name:Kismet taps opponents' permanents as they enter
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep (mtg-713 B12).
+# Kismet: "Artifacts, creatures, and lands your opponents control enter tapped."
+# Script (the GLOBAL ETB-tapped replacement form):
+#   R:Event$ Moved | ValidCard$ Artifact.OppCtrl,Creature.OppCtrl,Land.OppCtrl
+#     | Destination$ Battlefield | ReplaceWith$ ETBTapped | ActiveZones$ Battlefield
+#
+# Bug: the loader detected "ReplaceWith$ ETBTapped" with a substring match and set
+# the HOST card's own `enters_tapped` flag — so Kismet itself entered tapped and
+# the global "opponents' permanents enter tapped" effect was never applied. Now
+# the loader classifies the replacement structurally: `ValidCard$ Card.Self` keeps
+# the self-tap (tapped lands), while a global predicate is stored as
+# `etb_tapped_global` and honored at every ETB against permanents matching it
+# (controller resolved relative to Kismet's controller — CR 614).
+#
+# Setup: P0 controls Kismet. The e2e test moves a creature and a land controlled
+# by P1 (the opponent) onto the battlefield — both must enter TAPPED — and a
+# creature controlled by P0 (Kismet's controller) — it must enter UNTAPPED.
+[state]
+turn=2
+activeplayer=p0
+activephase=Main1
+p0life=20
+p0battlefield=Kismet; Plains
+p0hand=Grizzly Bears
+p0library=Plains; Plains; Plains
+
+p1life=20
+p1battlefield=
+p1hand=Hill Giant; Forest
+p1library=Forest; Forest; Forest
