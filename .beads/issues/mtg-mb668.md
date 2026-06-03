@@ -277,3 +277,29 @@ seed-2's graveyard signature — then R4 (state.rs:3488 ReturnToBattlefield). Wa
 R2→R4→R5→R3→R6, re-running the browser acceptance sweep (robots 1,2,5,6,7,9,11,
 18-20 + fireball s1 + ur_burn s42 + white_weenie 1/7/42) as the bar.
 ========================================================================
+
+========================================================================
+CLASS-A SNAPSHOT VERIFICATION — browser bookkeeping MISALIGNED (slot03, commit 54a246d4)
+========================================================================
+Instrumented BOTH ends (WASM_SUBMIT in client.rs + SRV_P1_RECV in server.rs,
+network_debug-gated) to verify the seed-2 snapshot BEFORE fixing (coordinator's
+explicit ask). RESULT: the browser desync-detection bookkeeping is misaligned — the
+per-choice field snapshot CANNOT be trusted to pin the diverging field.
+HARD EVIDENCE (seed 2): NativeAI = player 0, so P1 = WASM. Server-rejected P1 seq=175
+client_hash=6a046cea @ ac=950; the WASM's own WASM_SUBMIT seq=175 = hash=0d60bb6a @
+ac=831. 6a046cea is NEVER produced by the WASM (absent from all WASM_SUBMIT). seq
+173/174 hashes also differ WASM_SUBMIT (a078a280/7179b30c) vs SRV_P1_RECV
+(72e7d101/55c125fa). WASM per-request ac (831) != server (950) for the same seq; WASM
+shadow ac maxes 861 vs server 950 → shadow undo-log ~89 actions SHORTER (skips actions
+= branch-on-absence).
+=> The desync is REAL (graveyard divergence + skipped shadow actions) but the
+choice_seq↔ac↔hash mapping the browser detection relies on is itself off. So the
+browser is unreliable for FIELD enumeration. DECISION (consistent with coordinator's
+GO on native oracles): drive ALL class-A fixes via the NATIVE engine-level oracle
+(deterministic, fully observable, no transport bookkeeping); use the browser e2e ONLY
+as red/green seed ACCEPTANCE. The seq↔ac misalignment is a separate follow-up (does
+NOT block the native-oracle fix path). NEXT: build the R2 native oracle (restricted /
+graveyard-origin ChangeZoneAll skips reserved opponent cards on shadow,
+actions/mod.rs:4312 None=>{}) — the seed-2 graveyard signature — RED-prove + fix via
+sig-2c/2d template; then R4/R5/R3/R6; browser acceptance sweep as the bar.
+========================================================================
