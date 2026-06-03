@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T21:29:36.524300561+00:00
+updated_at: 2026-06-03T22:07:23.801387435+00:00
 ---
 
 # Description
@@ -118,3 +118,56 @@ REMAINING = CLASS-A only (server↔shadow count/RNG lockstep): seeds 2,5,6,9,11,
 
 NEW PASS COUNT (deterministic 20-seed sweep): was 3/20 (3,13,16,42). +6 within-side (8,10,12,14,15,17) = now ~9/20 confirmed; class-A seeds (1,2,5,6,7,9,11,18,19,20) remain for slot03. (Full 20-seed re-sweep TBD; the 8 within-side seeds were re-run directly.)
 Engine lib 1005/1005 green. full make validate: running, cite validate_logs/validate_<sha>.log before merge.
+
+========================================================================
+CLASS-A RESUME (for fresh slot03 — handoff from prior slot03, 2026-06-03)
+========================================================================
+CHUNK 2 = server<->shadow per-action COUNT/RNG lockstep (class-A). Distinct from
+slot01-2's class-B within-side rewind-fidelity; this is the reserved-ID/reveal
+count-lockstep residue beyond sig-2c/2d.
+
+FAILING DETERMINISTIC SEEDS: 2,5,6,9,11,18,19,20 (+ now-exposed 1,7) on
+decks/old_school/03_robots_jesseisbak.dck.
+REPRO: node web/test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed <N> [--undo-dump]
+  -> on desync, dumps debug/netarch-undo-dumps/{stamp}_{wasm,server}_undo.log + _mismatch.log;
+     signals: "ACTION COUNT MISMATCH" / "state hash mismatch" / "DESYNC"; exit 1 = desync.
+
+BASE: fork off STABLE integration AFTER class-B merges (has the determinism gate
++ sig-2f 9c868364 / sig-2g 3cffa304). Do NOT fork off netarch-undo-holes (moving
+target: tip churned a471494b->4f9e8cb3->b253103b->c16cc7c1 within ~1h, and origin
+lags the local shared-objectstore ref — caused repeated stale-base thrash for the
+prior slot03). VERIFY before building: git merge-base --is-ancestor 9c868364 HEAD.
+
+ROOT-CAUSE CLASS (mtg-mb668 + mtg-725): the WASM shadow records None for opponent
+hidden-info events (library-search fetch, mass-draw/shuffle) because the
+authoritative reveal/move isn't available at first resolution on the shadow ->
+it BRANCHES ON ABSENCE (try_get -> None), the exact mtg-725 anti-pattern -> the
+shadow's Fisher-Yates draw COUNT / library decrement diverges from the server ->
+action-count + state-hash mismatch under rewind+replay.
+
+STEP 1 (tooling, RED-first): build a per-action server<->shadow lockstep harness
+that, per action_count, asserts parity of (action_count, RNG draw count/state,
+reveal-buffer application) between golden + shadow — ENUMERATE divergences instead
+of chasing browser runs one at a time. NEW module + NEW test file (do not touch
+basic_actions.rs). PROVEN FIX VEHICLE: the action_count-keyed REVEAL-HISTORY
+BUFFER (e27c6f97 — already solved counterspells/rogerbrand async-reveal
+nondeterminism); extend/mirror it so the authoritative search-result/move + draw
+reveals reach the shadow deterministically and SURVIVE rewind, so first replay
+reads Some (never None). Prefer total / identity-independent reserved-ID handling
+over None-driven control flow (mtg-725 principle).
+
+OWNED FILE SURFACE: game/game_loop/network_choice.rs ; wasm/network/* +
+wasm/fancy_tui.rs (shadow reserved-ID/reveal paths) ; the reveal + ChangeZoneAll
+reserved-ID region of game/actions/mod.rs (~4200/9100 — NOT the damage region
+~5309/8449, which is slot01-2's class-B). DISCIPLINE: undo.rs GameAction enum
+APPEND-ONLY; own test file; rebase onto base often; mtg-rules-review N/A
+(determinism, not rules); full make validate + validate_<sha>.log before merge.
+
+STEP-1 CONCRETE: RED-prove seed 2 first (repro above), capture its signature
+(action_count at divergence, which side's hash diverges + field, the triggering
+reveal event, the count delta) — then build the harness from it.
+
+(Prior slot03 did NOT commit any class-A code — base was a throwaway moving target.
+Also filed this session: mtg-8x7ek Playwright captureScreenshot flake (validate-infra);
+mtg-moftl Old Man of the Sea exact tapped+powerLEX control duration (parked compat).)
+========================================================================
