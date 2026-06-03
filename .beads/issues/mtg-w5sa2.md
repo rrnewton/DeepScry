@@ -4,7 +4,7 @@ status: in_progress
 priority: 2
 issue_type: bug
 created_at: 2026-06-03T01:20:26.813516624+00:00
-updated_at: 2026-06-03T03:21:34.609332285+00:00
+updated_at: 2026-06-03T04:46:44.580085575+00:00
 ---
 
 # Description
@@ -31,3 +31,9 @@ FIX (mirrors the AnimateTypeline granted-keyword guard): grant_keyword_until_eot
 RESULT: monored seed13 9/10 (was ~2/3). mana_state_version diff in the dump is INFORMATIONAL only — it is already excluded from EXCLUDED_FIELDS_REWIND_VERIFIER (line 79), so it does NOT affect the verifier hash; the keyword bit was the sole hash-changer.
 
 REMAINING (separate root, ~1/10): a cross-machine compute_view_hash desync at combat (NOT the turn-start verifier). Run 4: fork ~action_count 1446 right after 'Hired Claw deals 2 damage to Emberheart Challenger (44) blocker', with a 'NetworkController: target_card_ids [44] not in remaining_blockers, falling back to index' WARN. Likely A2-adjacent multi-blocker/blocker-identity combat issue, NOT keyword. Tracking under continued netarch combat work.
+
+--- 2026-06-03 netarch-dev5: COMBAT-REMAINDER index-fallback HARD-ERRORED (recovery hack removed) ---
+The remaining ~1/10 combat blocker-identity issue: blocker damage-assignment sub-choices (choose_blocker_for_lethal_damage / _for_remaining_damage) submit a stable CardId + a legacy index. The RECEIVING side preferred the CardId but, when the CardId was NOT in its authoritative killable/remaining_blockers, fell back to the index — silently picking a DIFFERENT order-dependent blocker. That MASKED a real combat-state divergence (the two sides disagreed on which blockers remain), cascading into a later view-hash desync.
+FIX: removed the index fallback for the CardId-present-but-not-found case at ALL 6 blocker-resolution sites — server NetworkController x2, native RemoteController x2, WASM RemoteController x2. A CardId mismatch is now a FATAL DESYNC error at the exact divergence point (desync is ALWAYS fatal; no recovery hacks). Index path kept ONLY for the legacy no-CardId case (the rewind+replay protocol always sends the CardId, so it never fires).
+VERIFIED SAFE/NO REGRESSION: the fallback WARN does NOT fire in healthy runs. monored seed13 12/12 (separate repro) + regression batch 7/7 (4x monored seed13 + grizzly42 + rogerbrand3 + counterspells5) + human oracle all GREEN with the change. So this is pure diagnostic-hardening: no behavior change in passing games, but any future recurrence is now a loud, pinpointed failure instead of silent corruption.
+NOTE: this SURFACES the divergence; it does not fix the upstream ROOT (why the shadow blocker-set occasionally diverged). The root was NOT reproducible in 12+ runs — much rarer than the historical ~1/10, likely reduced by the mtg-679 unification AND the keyword-strip fix (cc9611ab). If it recurs the hard error pinpoints it (server-side NetworkController = the remote/browser chose a blocker the server lacks). Keyword half (printed-Haste strip) already FIXED (cc9611ab). Commit: the 6-site hard-error on netarch-undo-holes.

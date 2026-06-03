@@ -469,16 +469,28 @@ impl PlayerController for RemoteController {
                 if killable_blockers.iter().any(|(id, _)| *id == blocker_id) {
                     return ChoiceResult::Ok(blocker_id);
                 }
-                // CardId not found - log warning but continue with index fallback
-                log::warn!(
-                    "RemoteController: blocker_card_ids {:?} not found in killable_blockers ({:?}), falling back to index",
+                // HARD ERROR (mtg-w5sa2): a CardId WAS submitted but is NOT in
+                // our authoritative killable_blockers — the two sides' combat
+                // state has diverged. The old index fallback MASKED this by
+                // silently picking a different, order-dependent blocker, which
+                // cascades into a later view-hash desync. Desync is ALWAYS fatal:
+                // surface it at the exact divergence point instead of recovering
+                // with the wrong blocker (the recovery hack the rewind vision
+                // forbids).
+                let error_msg = format!(
+                    "FATAL DESYNC: RemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
+                     (combat-state divergence; index fallback removed — mtg-w5sa2)",
                     card_ids,
-                    killable_blockers.iter().map(|(id, _)| id).collect::<Vec<_>>()
+                    killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
                 );
+                log::error!("{}", error_msg);
+                return ChoiceResult::Error(error_msg);
             }
         }
 
-        // Fallback to index-based selection (for backwards compatibility)
+        // Index-based selection ONLY when no CardId was provided (legacy/no-id
+        // peers). The CardId path above is authoritative for the rewind+replay
+        // network protocol.
         let idx = indices.first().copied().unwrap_or(0);
         if let Some((blocker_id, _)) = killable_blockers.get(idx) {
             ChoiceResult::Ok(*blocker_id)
@@ -519,16 +531,22 @@ impl PlayerController for RemoteController {
                 if remaining_blockers.contains(&blocker_id) {
                     return ChoiceResult::Ok(blocker_id);
                 }
-                // CardId not found - log warning but continue with index fallback
-                log::warn!(
-                    "RemoteController: blocker_card_ids {:?} not found in remaining_blockers ({:?}), falling back to index",
-                    card_ids,
-                    remaining_blockers
+                // HARD ERROR (mtg-w5sa2): submitted CardId not in our
+                // authoritative remaining_blockers → combat-state divergence.
+                // Index fallback removed (it masked the desync by picking a
+                // different order-dependent blocker). Desync is ALWAYS fatal.
+                let error_msg = format!(
+                    "FATAL DESYNC: RemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
+                     (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                    card_ids, remaining_blockers
                 );
+                log::error!("{}", error_msg);
+                return ChoiceResult::Error(error_msg);
             }
         }
 
-        // Fallback to index-based selection (for backwards compatibility)
+        // Index-based selection ONLY when no CardId was provided (legacy/no-id
+        // peers). The CardId path above is authoritative.
         let idx = indices.first().copied().unwrap_or(0);
         if let Some(&blocker_id) = remaining_blockers.get(idx) {
             ChoiceResult::Ok(blocker_id)

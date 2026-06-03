@@ -347,13 +347,22 @@ impl PlayerController for WasmRemoteController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        log::warn!(
-                            "WasmRemoteController::choose_blocker_for_lethal_damage: target CardId {:?} not in killable blockers, falling back to index",
-                            blocker_id
+                        // HARD ERROR (mtg-w5sa2): the opponent's submitted blocker
+                        // CardId is NOT in this shadow's killable_blockers →
+                        // combat-state divergence. The old index fallback masked
+                        // it (order-dependent wrong blocker → later view-hash
+                        // desync). Desync is ALWAYS fatal.
+                        let msg = format!(
+                            "FATAL DESYNC: WasmRemoteController lethal-damage blocker {:?} not in killable_blockers {:?} \
+                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                            blocker_id,
+                            killable_blockers.iter().map(|(id, _)| id).collect::<Vec<_>>()
                         );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
                     }
                 }
-                // Fall back to index-based selection.
+                // Index-based selection ONLY when no CardId was provided.
                 let idx = indices.first().copied().unwrap_or(0);
                 if let Some((blocker_id, _)) = killable_blockers.get(idx) {
                     ChoiceResult::Ok(*blocker_id)
@@ -400,12 +409,19 @@ impl PlayerController for WasmRemoteController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        log::warn!(
-                            "WasmRemoteController::choose_blocker_for_remaining_damage: target CardId {:?} not in remaining blockers, falling back to index",
-                            blocker_id
+                        // HARD ERROR (mtg-w5sa2): submitted CardId not in this
+                        // shadow's remaining_blockers → combat-state divergence.
+                        // Index fallback removed (it masked the desync). Fatal.
+                        let msg = format!(
+                            "FATAL DESYNC: WasmRemoteController remaining-damage blocker {:?} not in remaining_blockers {:?} \
+                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                            blocker_id, remaining_blockers
                         );
+                        log::error!("{}", msg);
+                        return ChoiceResult::Error(msg);
                     }
                 }
+                // Index-based selection ONLY when no CardId was provided.
                 let idx = indices.first().copied().unwrap_or(0);
                 if let Some(&blocker_id) = remaining_blockers.get(idx) {
                     ChoiceResult::Ok(blocker_id)
