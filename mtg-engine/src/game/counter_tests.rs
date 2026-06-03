@@ -189,3 +189,54 @@ fn test_remove_counter_undo() {
         assert_eq!(card.get_counter(CounterType::P1P1), 5);
     }
 }
+
+/// mtg-ey2vf: after the undo consolidation, `GameState::undo` delegates the
+/// per-variant reversal to the canonical `GameAction::undo`. The canonical
+/// AddCounter/RemoveCounter arms were switched to direct `card.add_counter` /
+/// `card.remove_counter` mutators precisely because the previous
+/// `game.add_counters` / `game.remove_counters` calls LOG a fresh GameAction —
+/// which would APPEND a spurious action to the live undo log on every undo,
+/// corrupting it. This pins that the per-action undo path leaves the log
+/// UNTOUCHED apart from the single popped action (no re-logging).
+#[test]
+fn undo_counter_does_not_corrupt_log() {
+    let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+    let p1_id = game.players[0].id;
+
+    let creature_id = game.next_card_id();
+    let mut creature = Card::new(creature_id, "Test Creature", p1_id);
+    creature.add_type(CardType::Creature);
+    game.cards.insert(creature_id, creature);
+    game.battlefield.add(creature_id);
+
+    let log_len_baseline = game.undo_log.len();
+
+    // Add then remove counters — each logs exactly one action.
+    game.add_counters(creature_id, CounterType::P1P1, 3).unwrap();
+    game.remove_counters(creature_id, CounterType::P1P1, 1).unwrap();
+    assert_eq!(
+        game.undo_log.len(),
+        log_len_baseline + 2,
+        "add + remove should log exactly two actions"
+    );
+
+    // Each undo must SHRINK the log by exactly one — never append a spurious
+    // re-logged action (the bug a naive delegation to game.add/remove_counters
+    // would reintroduce).
+    game.undo().unwrap();
+    assert_eq!(
+        game.undo_log.len(),
+        log_len_baseline + 1,
+        "undoing RemoveCounter must pop exactly one action and append none"
+    );
+    game.undo().unwrap();
+    assert_eq!(
+        game.undo_log.len(),
+        log_len_baseline,
+        "undoing AddCounter must pop exactly one action and append none"
+    );
+
+    // And the state round-tripped (no counters left).
+    let card = game.cards.get(creature_id).unwrap();
+    assert_eq!(card.get_counter(CounterType::P1P1), 0);
+}
