@@ -17,7 +17,7 @@ env:
 # is ~14 networked games (~1s/choice) ≈ 2.5-3h on a 2-vCPU runner. The three
 # --only lists union to EXACTLY the 14 network steps (no silent drop — coverage
 # parity is preserved; see ai_docs/VALIDATE_OVERHAUL_AUDIT_20260603.md §10):
-#   network-gui   : playwright-check, gui, multideck          (heavy soak games)
+#   network-gui   : playwright-check, gui, human-input, multideck   (heavy soak games)
 #   network-redo  : click, landing, redo-reload, redo-lobby, smoke, deploy-nav
 #   network-equiv : equiv-random, equiv-zero, equiv-heuristic, robots42, fuzz
 #                   (NATIVE — mtg server/connect only, no browser/wasm)
@@ -40,7 +40,7 @@ jobs:
           - { name: agentplay,     args: "--group agentplay", python: true }
           - { name: determ,        args: "--group determ" }
           - { name: wasm,          args: "--group wasm",      browser: true }
-          - { name: network-gui,   args: "--only network.playwright-check,network.gui,network.multideck", browser: true }
+          - { name: network-gui,   args: "--only network.playwright-check,network.gui,network.human-input,network.multideck", browser: true }
           - { name: network-redo,  args: "--only network.click,network.landing,network.redo-reload,network.redo-lobby,network.smoke,network.deploy-nav", browser: true }
           - { name: network-equiv, args: "--only network.equiv-random,network.equiv-zero,network.equiv-heuristic,network.robots42,network.fuzz" }
     steps:

@@ -168,6 +168,7 @@ def build_registry():
         ("playwright-check", "npm install + verify chromium provisioned",
          f"cd web && {NPM} install --silent 2>/dev/null || true; {NODE} playwright_check.js"),
         ("gui", "networked GUI e2e (baseline)", "cd web && node test_network_gui_e2e.js"),
+        ("human-input", "networked HUMAN-controller sync gate (mtg-679)", "cd web && node test_network_human_input.js"),
         ("multideck", "networked multi-deck e2e (--quick)", "cd web && node test_network_multideck.js --quick"),
         ("click", "networked click+log e2e", "cd web && node test_network_click.js"),
         ("landing", "landing-page UX e2e", "cd web && node test_landing_page_ux.js"),
