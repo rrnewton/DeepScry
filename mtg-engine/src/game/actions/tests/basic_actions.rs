@@ -176,6 +176,71 @@ mod tests {
         );
     }
 
+    /// mtg-mb668 sig-2c: on a SHADOW game, an unrestricted hand+graveyard ->
+    /// library mass shuffle (Timetwister / Wheel / Windfall) MUST move the
+    /// opponent's hidden hand cards — which are late-bound reserved CardIds with
+    /// no instance — into the library, exactly as the server does. Otherwise the
+    /// opponent's library ends up short, and the `Shuffle$ True` shuffle then
+    /// consumes a different amount of RNG on the shadow than on the server,
+    /// breaking deterministic-simulation lockstep (every later shuffle/draw
+    /// diverges; observed as intermittent robots42 P2 view-hash desyncs).
+    ///
+    /// Without the fix this is RED: the 3 reserved hand IDs are skipped
+    /// (try_get -> None), so the library holds 5 (orig) + 2 (graveyard) = 7
+    /// instead of 10, and the hand still holds 3.
+    #[test]
+    fn shadow_mass_shuffle_moves_opponent_reserved_hand_to_library_mb668_sig2c() {
+        use crate::core::effects::{Effect, TargetRestriction};
+        use crate::core::CardId;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.set_shadow_game(true);
+        game.set_skip_reveals(false);
+        let opp = game.players.first().unwrap().id;
+
+        // Reserved (instance-less) library + hand IDs for the opponent — the
+        // late-binding shadow representation of hidden zones. Use a high,
+        // non-colliding ID range and do NOT insert Card instances.
+        let lib_ids: Vec<CardId> = (1000..1005).map(CardId::new).collect(); // 5
+        let hand_ids: Vec<CardId> = (2000..2003).map(CardId::new).collect(); // 3
+        for &id in &lib_ids {
+            game.get_player_zones_mut(opp).unwrap().library.add(id);
+        }
+        for &id in &hand_ids {
+            game.get_player_zones_mut(opp).unwrap().hand.add(id);
+        }
+        // Two REAL (public) graveyard instances — present on both server+shadow.
+        let gy_ids: Vec<CardId> = (3000..3002).map(CardId::new).collect(); // 2
+        for &id in &gy_ids {
+            let card = Card::new(id, "Lightning Bolt".to_string(), opp);
+            game.cards.insert(id, card);
+            game.get_player_zones_mut(opp).unwrap().graveyard.add(id);
+        }
+
+        // Timetwister: shuffle each player's hand AND graveyard into the library.
+        let effect = Effect::ChangeZoneAll {
+            restriction: TargetRestriction::any(),
+            origins: smallvec::smallvec![Zone::Hand, Zone::Graveyard],
+            destination: Zone::Library,
+            shuffle: true,
+        };
+        game.execute_effect(&effect).expect("ChangeZoneAll should resolve");
+
+        let z = game.get_player_zones(opp).unwrap();
+        assert_eq!(
+            z.library.cards.len(),
+            lib_ids.len() + hand_ids.len() + gy_ids.len(),
+            "opponent's reserved hand IDs must be shuffled into the library on \
+             the shadow so its count matches the server (mb668 sig-2c)"
+        );
+        assert_eq!(z.hand.cards.len(), 0, "opponent hand must be emptied into library");
+        assert_eq!(
+            z.graveyard.cards.len(),
+            0,
+            "opponent graveyard must be emptied into library"
+        );
+    }
+
     #[test]
     fn test_deal_damage_to_player() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
