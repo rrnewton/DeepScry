@@ -26,6 +26,10 @@ pub mod puzzle;
 // compiles for BOTH the native downloader and the wasm client — one URL
 // implementation, no Rust/JS drift.
 pub mod scryfall;
+// Card-lookup table BUILDER (mtg-722 / task #7) — generator-only (parses the
+// Scryfall bulk dump). Native-gated; the wasm client only READS the table.
+#[cfg(feature = "native")]
+pub mod scryfall_table;
 #[cfg(feature = "native")]
 pub mod tournament;
 pub mod undo;
