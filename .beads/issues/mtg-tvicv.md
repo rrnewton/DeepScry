@@ -1,0 +1,82 @@
+---
+title: 'Card Compatibility: Meekstone'
+status: open
+priority: 3
+issue_type: task
+depends_on:
+  mtg-4zlpr: parent-child
+created_at: 2026-06-03T03:32:20.560331778+00:00
+updated_at: 2026-06-03T03:32:20.560331778+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Meekstone (Antiquities) in MTG Forge-rs.
+
+Card: cardsfolder/m/meekstone.txt
+Set: ATQ
+Deck: 01 Dolan WUG Stasis (2 copies) — 1994 World Championship (mtg-4zlpr / mtg-684)
+Test puzzle: test_puzzles/meekstone_power3_no_untap.pzl
+
+Card text:
+  {1} Artifact
+  Creatures with power 3 or greater don't untap during their controllers' untap steps.
+  Script: R:Event$ Untap | ActiveZones$ Battlefield | ValidCard$ Creature.powerGE3 | ValidStepTurnToController$ You | Layer$ CantHappen
+
+Findings (2026-06-02_#2673(cf30531e), compat-1994):
+
+1. [x] Parses as {1} Artifact.
+2. [BROKEN->FIXED] Untap lock did nothing. The R:Event$ Untap | Layer$ CantHappen
+   replacement is lowered (card.rs parse_static_abilities) into a continuous
+   GrantKeyword(DoesNotUntap) on the affected selector. But the affected selector
+   'Creature.powerGE3' was NOT recognized by parse_single_affected_selector — it
+   fell through to parse_tribal_selector (None) and the lowering's
+   unwrap_or(CreatureEnchantedBy) fallback matched nothing (Meekstone enchants
+   nothing). Net: no creature ever received DoesNotUntap; Meekstone was inert.
+   Root cause class: silent parser drop (unrecognized AffectedSelector).
+   FIX: added AffectedSelector::CreaturesWithPowerGE(i32) (controller-agnostic,
+   current effective power), parsed from 'Creature.powerGE<N>', honored in the
+   continuous keyword-grant matcher (and a no-op P/T arm). The untap step already
+   skips any permanent with DoesNotUntap.
+3. [x] Power-2 creatures still untap (asymmetric by power, not controller).
+
+Reproducer (game log):
+
+```sh
+cat > /tmp/meek.pzl <<'P'
+[metadata]
+Name:Meekstone untap lock
+Goal:Win
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Serra Angel|Tapped; Grizzly Bears|Tapped; Meekstone; Plains
+p0library=Plains; Plains; Plains
+p1life=20
+p1library=Forest; Forest; Forest
+P
+./target/release/mtg tui --start-state /tmp/meek.pzl --p1=zero --p2=zero --seed 42 --verbosity 2
+```
+
+Expected log evidence:
+
+```
+--- Untap Step ---
+  Serra Angel doesn't untap (locked tapped)
+    Serra Angel (3) - 4/4 (tapped)
+    Grizzly Bears (4) - 2/2          <- power-2 untapped normally
+```
+
+Unit/e2e test: test_meekstone_power3_creatures_dont_untap in mtg-engine/tests/puzzle_e2e.rs
+            (+ test_puzzles/meekstone_power3_no_untap.pzl), wired into make validate.
+
+MTG Rules Review: PASS. CR 502.4 untap step; "doesn't untap" continuous effect
+(CR 702-style). Power uses current effective power evaluated continuously, so a
+creature dropping below power 3 unlocks. Lock is symmetric per controller's own
+untap step — modeled by granting DoesNotUntap globally to power-3+ creatures
+(each only attempts untap on its own controller's untap step). No hidden-info,
+no string-ops on DSL.
+
+CARD STATUS: WORKING — power-3+ don't-untap lock fixed at the AffectedSelector layer.

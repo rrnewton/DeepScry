@@ -2917,6 +2917,12 @@ pub enum AffectedSelector {
     /// Corresponds to: `Affected$ Creature`
     AllCreatures,
 
+    /// All creatures (any controller) whose current power is >= the threshold.
+    /// Corresponds to: `ValidCard$ Creature.powerGE<N>` (e.g. Meekstone's
+    /// `Creature.powerGE3` doesn't-untap lock). Controller-agnostic: power is
+    /// the creature's current (effective) power, evaluated continuously.
+    CreaturesWithPowerGE(i32),
+
     /// This card itself
     /// Corresponds to: `Affected$ Card.Self`
     Self_,

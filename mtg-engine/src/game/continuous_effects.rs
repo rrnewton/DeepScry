@@ -293,6 +293,12 @@ impl GameState {
                 creature_id != source_id && creature.controller == source.controller
             }
             AffectedSelector::AllCreatures => creature.is_creature(),
+            AffectedSelector::CreaturesWithPowerGE(n) => {
+                // Global power-threshold selector (Meekstone). Only used for
+                // keyword grants today, but match here for P/T-layer queries
+                // too so the predicate is consistent.
+                creature.is_creature() && creature.current_power() as i32 >= *n
+            }
             AffectedSelector::Self_ => creature_id == source_id,
             AffectedSelector::LandAttachedBy => false, // Not relevant for creature P/T
             AffectedSelector::CreatureTypesOtherYouControl { types } => {
@@ -794,6 +800,11 @@ impl GameState {
                                     power_bonus += power;
                                     toughness_bonus += toughness;
                                 }
+                            }
+                            AffectedSelector::CreaturesWithPowerGE(_) => {
+                                // Power-threshold selector is used only for keyword
+                                // grants (Meekstone's doesn't-untap lock), never for
+                                // P/T modification. No P/T bonus to apply.
                             }
                             AffectedSelector::Self_ => {
                                 // The static buffs the source permanent itself
@@ -1682,6 +1693,12 @@ impl GameState {
                             self.get_attached_auras(creature_id).contains(&source_id)
                         }
                         AffectedSelector::AllCreatures => creature.is_creature(),
+                        AffectedSelector::CreaturesWithPowerGE(n) => {
+                            // Global power-threshold lock (Meekstone: power-3+
+                            // creatures don't untap). Controller-agnostic; uses
+                            // the creature's current (effective) power.
+                            creature.is_creature() && creature.current_power() as i32 >= *n
+                        }
                         AffectedSelector::AllCreaturesOfType { subtype } => {
                             // Grant keyword to all creatures with this subtype (global)
                             // Used by Sliver lords: "All Slivers have..."

@@ -1,0 +1,29 @@
+[metadata]
+Name:Meekstone keeps power-3+ creatures tapped
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep (Dolan WUG Stasis runs
+# 2 Meekstone). Meekstone: "Creatures with power 3 or greater don't untap during
+# their controllers' untap steps." Script:
+#   R:Event$ Untap | ActiveZones$ Battlefield | ValidCard$ Creature.powerGE3
+#     | ValidStepTurnToController$ You | Layer$ CantHappen
+# The R:Event$ Untap | Layer$ CantHappen replacement is lowered into a continuous
+# GrantKeyword(DoesNotUntap), but the affected selector `Creature.powerGE3` was
+# NOT recognized by parse_single_affected_selector, so the grant fell back to the
+# enchanted-creature selector and matched nothing -> Meekstone did nothing.
+#
+# Setup: P0 controls a Serra Angel (4/4, power>=3), a Grizzly Bears (2/2, power<3),
+# and a Meekstone. The e2e test taps both creatures, runs P0's untap step, and
+# asserts the Serra Angel STAYS tapped while the Grizzly Bears untaps.
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Serra Angel; Grizzly Bears; Meekstone; Plains
+p0library=Plains; Plains; Plains
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest

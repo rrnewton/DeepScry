@@ -4065,6 +4065,15 @@ impl CardDefinition {
                 "Card.Treasure+YouCtrl" => AffectedSelector::TreasuresYouControl,
                 // Self on top of library
                 "Card.Self+TopLibrary" => AffectedSelector::SelfTopLibrary,
+                // Power-threshold creatures (controller-agnostic), e.g.
+                // Meekstone's `Creature.powerGE3` doesn't-untap lock.
+                _ if value.starts_with("Creature.powerGE") => {
+                    return value
+                        .trim_start_matches("Creature.powerGE")
+                        .parse::<i32>()
+                        .ok()
+                        .map(AffectedSelector::CreaturesWithPowerGE);
+                }
                 _ => {
                     // Try to parse tribal type patterns
                     return parse_tribal_selector(value);

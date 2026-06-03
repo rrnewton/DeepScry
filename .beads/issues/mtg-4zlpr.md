@@ -1,0 +1,49 @@
+---
+title: 'TRACK: 1994 World Championship decks — full deck compatibility'
+status: open
+priority: 1
+issue_type: task
+depends_on:
+  mtg-684: parent-child
+created_at: 2026-06-03T03:21:05.272375037+00:00
+updated_at: 2026-06-03T03:21:05.272375037+00:00
+---
+
+# Description
+
+TRACK: full play-tested gameplay compatibility for all 1994 World Championship decks (the inaugural Worlds, Gen Con Milwaukee, Type-1/Vintage pool). Sibling of the old-school tracker mtg-563; rolls up under the championship-collections umbrella mtg-684.
+
+User goal: each 1994 World Championship deck plays COMPLETE games with NO engine errors, and every card's abilities/keywords/effects classified WORKING (or PARTIAL/BROKEN then FIXED) per the targeted_compatibility + compatibility_tracking SKILLs.
+
+== Scope ==
+decks/championship/1994/ (4 finalist decks, incl sideboards):
+- 01_dolan_wug_stasis  (1st, Zak Dolan, WUG Keeper/Stasis control)
+- 02_lestree_rg_zoo     (2nd, Bertrand Lestree, R/G Channel-Fireball Zoo)
+- 03_symens_zoo         (3rd-4th, Dominic Symens, B/R/G Zoo, Jade Statue + Animate Dead)
+- 04_defoucaud_zoo      (3rd-4th, Cyrille de Foucaud, R/G/U Zoo, Serendib/Shivan + Channel)
+
+== Quantification (2026-06-02_#2673(cf30531e)) ==
+- 95 unique cards across all 4 decks (union, incl sideboards)
+- ~44 already have CLOSED (WORKING) Card Compatibility issues
+- 3 open (Animate Dead mtg-394, Sylvan Library mtg-548, + others)
+- 48 with no per-card issue yet (mix of trivial vanilla + complex)
+
+== Baseline (clean) ==
+- 'mtg tourney' all 4 decks x 200 games (seed 7): ALL completed, NO crashes. All decks load + play end-to-end.
+- Deck 01 vs 02 full heuristic game: clean, 10 turns, no errors/sentinels (debug/baseline_01v02.log).
+
+== Known/suspected BROKEN (to confirm + fix) ==
+- Magical Hack, Sleight of Mind: SP$ ChangeText is an UNIMPLEMENTED ApiType (parses as Unknown) — likely non-functional.
+- Winter Orb: 'UntapAdjust' untap-limiting keyword not found in engine — verify lock.
+- Stasis: untap-skip replacement (R:Event$ BeginPhase Skip) — verify lock.
+(Under investigation by the compat-1994 agent batch.)
+
+== Definition of done ==
+1. Every per-card issue for these decks reaches CARD STATUS: WORKING (or accepted PARTIAL w/ bug followup).
+2. Each deck has a captured end-to-end 'mtg tui'/'mtg tourney' log playing through with no unimplemented/sentinel/silent-drop errors.
+3. The 4-deck championship tournament reaches 0% engine-failure rate.
+
+== How agents pick work ==
+Open this umbrella -> pick a deck -> pick the highest-value not-yet-WORKING card -> drive it through targeted_compatibility SKILL. Coordinate via bd update; never duplicate.
+
+Driven by agent compat-1994 (team netarch), 2026-06-02, all-night autonomous sweep.

@@ -3716,6 +3716,88 @@ async fn test_paralyze_keeps_enchanted_creature_tapped() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — Dolan WUG Stasis runs 2 Meekstone):
+/// Meekstone's "Creatures with power 3 or greater don't untap during their
+/// controllers' untap steps" (`R:Event$ Untap | Layer$ CantHappen | ValidCard$
+/// Creature.powerGE3`). The lock is lowered into a continuous
+/// GrantKeyword(DoesNotUntap) on the matching creatures; before the fix the
+/// `Creature.powerGE3` affected-selector was unrecognized so the grant matched
+/// nothing and Meekstone was inert. A power-3+ creature must STAY tapped while a
+/// power-2 creature on the same battlefield untaps normally.
+#[tokio::test]
+async fn test_meekstone_power3_creatures_dont_untap() -> Result<()> {
+    use mtg_engine::core::Keyword;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/meekstone_power3_no_untap.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+    let find = |game: &mtg_engine::game::GameState, name: &str| -> mtg_engine::core::CardId {
+        game.battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| {
+                game.cards
+                    .try_get(id)
+                    .is_some_and(|c| c.name.as_str() == name && c.controller == p0_id)
+            })
+            .unwrap_or_else(|| panic!("{} should be on the battlefield", name))
+    };
+    let serra = find(&game, "Serra Angel"); // 4/4, power >= 3
+    let bears = find(&game, "Grizzly Bears"); // 2/2, power < 3
+
+    // Tap both creatures (as if they had attacked the prior turn).
+    game.cards.get_mut(serra)?.tapped = true;
+    game.cards.get_mut(bears)?.tapped = true;
+
+    // Meekstone must grant DoesNotUntap to the power-3+ creature only.
+    assert!(
+        game.has_keyword_with_effects(serra, Keyword::DoesNotUntap),
+        "Meekstone must grant DoesNotUntap to the power-4 Serra Angel"
+    );
+    assert!(
+        !game.has_keyword_with_effects(bears, Keyword::DoesNotUntap),
+        "Meekstone must NOT lock the power-2 Grizzly Bears"
+    );
+
+    // Run P0's untap step: Serra Angel stays tapped, Grizzly Bears untaps.
+    let p1_id = game.players[1].id;
+    let mut c1 = ZeroController::new(p0_id);
+    let mut c2 = ZeroController::new(p1_id);
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.untap_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "untap step should not end the game");
+    }
+    assert!(
+        game.cards.get(serra)?.tapped,
+        "Serra Angel (power 4) must STAY tapped under Meekstone"
+    );
+    assert!(
+        !game.cards.get(bears)?.tapped,
+        "Grizzly Bears (power 2) must untap normally under Meekstone"
+    );
+
+    // Remove Meekstone: the lock lifts, so the Serra Angel would untap again.
+    let meekstone = find(&game, "Meekstone");
+    game.cards.get_mut(serra)?.tapped = true;
+    let _ = game.battlefield.cards.retain(|&id| id != meekstone);
+    assert!(
+        !game.has_keyword_with_effects(serra, Keyword::DoesNotUntap),
+        "removing Meekstone must remove the DoesNotUntap lock"
+    );
+
+    println!("✓ Meekstone keeps power-3+ creatures tapped; power-2 untaps (1994 champ compat)");
+    Ok(())
+}
+
 /// Regression: action menu must surface predicted side costs for cast actions
 /// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
 /// sees them before accepting.
