@@ -1295,14 +1295,13 @@ impl GameAction {
                 old_value,
                 new_value: _,
             } => {
-                // Restore the previous revealed_to_mask value
+                // Restore the previous revealed_to_mask value. A missing
+                // instance is tolerated (Ok, no-op): on a viewer's shadow a
+                // reserved (instance-less) opponent card carries a count-parity
+                // SetRevealedToMask{0->0} with nothing to restore (mtg-mb668
+                // sig-2d). Erroring here would spam rewind/undo warnings.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.revealed_to_mask = *old_value;
-                } else {
-                    return Err(format!(
-                        "Card {} not found for SetRevealedToMask undo",
-                        card_id.as_u32()
-                    ));
                 }
             }
 

@@ -1190,27 +1190,32 @@ impl GameState {
     /// Clearing the mask on entry makes every library card uniformly hidden, so
     /// every draw re-reveals regardless of which card lands on top.
     ///
-    /// Mirrors `maybe_reveal_to_player`: gated on `skip_reveals`, logs a
-    /// `SetRevealedToMask` (undoable) only when there is a real instance whose
-    /// mask is non-empty. No-op for late-binding reserved IDs (no instance) and
-    /// for already-hidden cards.
+    /// Mirrors `maybe_reveal_to_player`: gated on `skip_reveals`, logs an
+    /// (undoable) `SetRevealedToMask`. Concealing on library ENTRY makes the
+    /// later draw's reveal UNCONDITIONAL on both sides (mtg-mb668 sig-2d):
+    /// without it a card that cycled library->hand->library keeps a stale
+    /// `revealed_to_mask` on the SERVER (real instance) so the redraw SKIPS the
+    /// RevealCard, while the viewer's shadow holds it as a reserved ID and logs
+    /// the reveal unconditionally — diverging the RevealCard COUNT and the RNG.
+    ///
+    /// Two cases, kept SYMMETRIC between server (always real instances) and a
+    /// viewer's shadow (opponent's hidden cards are reserved, instance-less):
+    /// - Real instance with a non-empty mask: clear it + log the conceal.
+    /// - Reserved (no instance) on a shadow game: an instance-less card can only
+    ///   enter the library from a hidden zone (the owner's hand, where it had
+    ///   been revealed to its owner), so the SERVER logs a conceal for the
+    ///   corresponding real card — log a matching count-parity `SetRevealedToMask`
+    ///   so the action count stays in lockstep.
     #[inline]
     pub fn maybe_conceal_in_library(&mut self, card_id: CardId, prior_log_size: usize) {
         if self.skip_reveals {
             return;
         }
         if let Some(card) = self.cards.try_get_mut(card_id) {
-            // Only conceal PUBLIC (revealed-to-all) cards. Public cards live in
-            // public zones (graveyard / battlefield / stack / exile) and so have
-            // a real instance on BOTH the server and every viewer's shadow — the
-            // conceal is therefore logged symmetrically. A card revealed to only
-            // SOME players (e.g. an opponent's hand card, revealed to its owner
-            // only) is a hidden, late-bound reserved ID on other viewers' shadows
-            // with no instance to conceal; concealing it on the server but not on
-            // the shadow would itself diverge the action count. Such cards keep
-            // their partial mask and the existing draw-reveal path already
-            // round-trips them symmetrically.
-            if card.is_revealed_to_all() {
+            // Conceal ANY card that is revealed to anyone (mtg-mb668 sig-2d):
+            // a card in the hidden library must be revealed to nobody, so a
+            // later draw uniformly re-reveals regardless of prior reveal history.
+            if card.revealed_to_mask != 0 {
                 let old_value = card.revealed_to_mask;
                 card.clear_revealed_to_all();
                 self.undo_log.log(
@@ -1222,6 +1227,17 @@ impl GameState {
                     prior_log_size,
                 );
             }
+        } else if self.is_shadow_game {
+            // Reserved (instance-less) opponent card on a shadow — count-parity
+            // conceal mirroring the server's real-card conceal (mtg-mb668 sig-2d).
+            self.undo_log.log(
+                crate::undo::GameAction::SetRevealedToMask {
+                    card_id,
+                    old_value: 0,
+                    new_value: 0,
+                },
+                prior_log_size,
+            );
         }
     }
 

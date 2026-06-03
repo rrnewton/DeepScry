@@ -241,6 +241,101 @@ mod tests {
         );
     }
 
+    /// mtg-mb668 sig-2d: a card revealed to ONLY its owner (an owner-only mask,
+    /// e.g. a card the owner drew) must ALSO be concealed when it enters the
+    /// library — not just revealed-to-ALL cards. Otherwise, after the card
+    /// cycles library->hand->library (Timetwister/Wheel), the SERVER (real
+    /// instance) keeps the owner bit and SKIPS the redraw's RevealCard, while a
+    /// viewer's shadow (reserved ID) logs the reveal unconditionally — diverging
+    /// the RevealCard COUNT and the RNG. Concealing on entry makes the redraw
+    /// reveal uniformly on both sides.
+    ///
+    /// RED before the fix (sig-2b only concealed is_revealed_to_all cards, so an
+    /// owner-only mask survived and the redraw skipped its reveal).
+    #[test]
+    fn owner_only_revealed_card_is_concealed_entering_library_mb668_sig2d() {
+        use crate::undo::GameAction;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.set_skip_reveals(false);
+        let p1_id = game.players.first().unwrap().id;
+
+        // A card in P1's hand revealed to its OWNER ONLY (mask = owner bit, NOT
+        // revealed-to-all) — the state of a normally-drawn card.
+        let card_id = game.next_entity_id();
+        let card = Card::new(card_id, "Demonic Tutor".to_string(), p1_id);
+        game.cards.insert(card_id, card);
+        game.get_player_zones_mut(p1_id).unwrap().hand.add(card_id);
+        game.cards.get_mut(card_id).unwrap().mark_revealed_to(p1_id);
+        assert!(game.cards.get(card_id).unwrap().is_revealed_to(p1_id));
+        assert!(
+            !game.cards.get(card_id).unwrap().is_revealed_to_all(),
+            "precondition: owner-only mask, not revealed to all"
+        );
+
+        // Shuffle-back: hand -> library. Must be concealed (mask -> 0).
+        game.move_card(card_id, Zone::Hand, Zone::Library, p1_id).unwrap();
+        assert_eq!(
+            game.cards.get(card_id).unwrap().revealed_to_mask,
+            0,
+            "an owner-only-revealed card entering the library must be concealed (mb668 sig-2d)"
+        );
+
+        // Redraw: because it is now hidden, the draw MUST re-reveal it.
+        let before = game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::RevealCard { card_id: c, .. } if *c == card_id))
+            .count();
+        game.move_card(card_id, Zone::Library, Zone::Hand, p1_id).unwrap();
+        let after = game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::RevealCard { card_id: c, .. } if *c == card_id))
+            .count();
+        assert_eq!(
+            after,
+            before + 1,
+            "redraw of the concealed owner-only card must emit a RevealCard (mb668 sig-2d)"
+        );
+    }
+
+    /// mtg-mb668 sig-2d (shadow count-parity): a reserved (instance-less)
+    /// opponent card entering the library on a SHADOW must log a count-parity
+    /// `SetRevealedToMask`, mirroring the server's conceal of the corresponding
+    /// real (owner-revealed) card — so the action count stays in lockstep.
+    #[test]
+    fn shadow_reserved_card_entering_library_logs_conceal_parity_mb668_sig2d() {
+        use crate::core::CardId;
+        use crate::undo::GameAction;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.set_shadow_game(true);
+        game.set_skip_reveals(false);
+        let opp = game.players.first().unwrap().id;
+
+        // Reserved (no instance) opponent hand card.
+        let reserved = CardId::new(5000);
+        game.get_player_zones_mut(opp).unwrap().hand.add(reserved);
+
+        let before = game.undo_log.actions().len();
+        game.move_card(reserved, Zone::Hand, Zone::Library, opp).unwrap();
+        let conceals = game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::SetRevealedToMask { card_id: c, .. } if *c == reserved))
+            .count();
+        assert_eq!(
+            conceals, 1,
+            "a reserved opponent card entering the library on a shadow must log one \
+             count-parity SetRevealedToMask to match the server's conceal (mb668 sig-2d)"
+        );
+        assert!(game.undo_log.actions().len() > before);
+    }
+
     #[test]
     fn test_deal_damage_to_player() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);

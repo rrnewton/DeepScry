@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T19:04:20.795394141+00:00
+updated_at: 2026-06-03T19:17:45.324572379+00:00
 ---
 
 # Description
@@ -52,3 +52,6 @@ sig-2d (REMAINING, identified — reveal-mask lockstep on library cycle): after 
 EVIDENCE (diff=-1, server=2122 local=2123, Timetwister): server SKIPS the RevealCard for P0's own drawn cards 4 and 56 (already revealed to P0 from an earlier draw — stale revealed_to_mask retained because sig-2b only conceals is_revealed_to_all() cards, NOT owner-only-revealed cards), while the shadow (reserved/late-binding) logs the reveal unconditionally -> reveal COUNT diverges by 1 -> RNG/order drift downstream.
 ROOT: maybe_reveal_to_player is CONDITIONAL (logs iff !is_revealed_to) when an instance exists, but UNCONDITIONAL on the reserved late-binding branch. The two only agree when the server's card is not-yet-revealed. A card that cycled library->hand->library->hand keeps its owner-bit on the server (skip) but is reserved on the shadow (log).
 FIX DIRECTION (mtg-725 class): make library reveal/conceal SYMMETRIC regardless of hidden mask — e.g. (a) force the Library->Hand reveal unconditional (both sides always log), or (b) conceal the FULL mask on library ENTRY for instances AND log a symmetric late-binding conceal for reserved opponent cards (which always came from hand = mask nonzero). Both are broad reveal-semantics changes; needs a native reveal-count-parity reproducer first and careful validation. Deferred pending coordinator steer (native lockstep harness vs continue e2e dump-diff).
+
+------------------------------------------------------------------------
+sig-2d FIX LANDED: maybe_conceal_in_library now conceals ANY card with a non-empty revealed_to_mask on library entry (not just is_revealed_to_all), AND on a shadow logs a count-parity SetRevealedToMask for reserved (instance-less) opponent cards entering the library (they came from the owner's revealed hand, so the server logs a real conceal). This makes the library-exit (draw) reveal UNCONDITIONAL and symmetric on both sides: every library card is revealed to nobody, so every draw re-reveals regardless of prior reveal history -> RevealCard count stays in lockstep -> no RNG drift. SetRevealedToMask undo made tolerant of a missing instance (no-op) for the reserved count-parity entry. RED-first reproducers (basic_actions.rs): owner_only_revealed_card_is_concealed_entering_library_mb668_sig2d (RED: owner-only mask survived under sig-2b, redraw skipped reveal) + shadow_reserved_card_entering_library_logs_conceal_parity_mb668_sig2d. Full lib suite 1003/1003. Validating robots42 x30.
