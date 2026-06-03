@@ -1171,3 +1171,87 @@ async fn test_undo_to_choice_point_tui_simulation() -> Result<()> {
 
     Ok(())
 }
+
+/// mtg-ba6uq #1 (netarch undo-log completeness): a card's ETB choose-player
+/// write must round-trip under per-action undo.
+///
+/// Black Vise's `K:ETBReplacement:Other:ChooseP` sets `Card::chosen_player`
+/// from inside `GameState::move_card`. Before this fix the write rode inside the
+/// `MoveCard` action with NO covering undo action, so undoing the ETB move left
+/// `chosen_player` STALE on the off-battlefield card — the (hashed) state then
+/// diverged from the true pre-cast snapshot, breaking the per-action undo path
+/// (human undo / MCTS) and the WASM turn-start rewind verifier. The
+/// `SetChosenPlayer` covering action now restores the previous value on undo.
+///
+/// This is the NEGATIVE-test-verified guard for the fix: with the covering
+/// `SetChosenPlayer` log removed, this test fails on the final hash assertion;
+/// the whole-game forward→rewind→REPLAY oracle does NOT catch it because replay
+/// re-executes the ETB and overwrites the stale field.
+#[tokio::test]
+async fn black_vise_etb_chosen_player_undo_round_trip() -> Result<()> {
+    use mtg_engine::game::compute_undo_test_hash;
+    use mtg_engine::zones::Zone;
+
+    let cardsfolder = require_cardsfolder();
+    let card_db = CardDatabase::new(cardsfolder);
+    let deck_path = PathBuf::from("../decks/old_school2/black_vise_punisher.dck");
+    let deck = DeckLoader::load_from_file(&deck_path)?;
+    let game_init = GameInitializer::new(&card_db);
+    let mut game = game_init
+        .init_game("Player 1".to_string(), &deck, "Player 2".to_string(), &deck, 20)
+        .await?;
+    game.seed_rng(42);
+
+    let p1_id = game.players[0].id;
+
+    // Find an ETB-choose-player card (Black Vise) controlled by P1.
+    let vise_id = game
+        .cards
+        .values()
+        .find(|c| c.definition.cache.etb_choose_player && c.controller == p1_id)
+        .map(|c| c.id)
+        .expect("black_vise_punisher deck must contain an etb_choose_player card");
+
+    let from_zone = game
+        .find_card_zone(vise_id)
+        .expect("the card must be in some zone before the move");
+
+    // Pre-ETB invariant + snapshot.
+    assert!(
+        game.cards.try_get(vise_id).unwrap().chosen_player.is_none(),
+        "chosen_player must start as None before the ETB"
+    );
+    let hash_before = compute_undo_test_hash(&game);
+    let log_len_before = game.undo_log.len();
+
+    // Move it onto the battlefield → the ETB ChoosePlayer replacement fires,
+    // setting chosen_player and logging the SetChosenPlayer covering action.
+    game.move_card(vise_id, from_zone, Zone::Battlefield, p1_id)?;
+    assert!(
+        game.cards.try_get(vise_id).unwrap().chosen_player.is_some(),
+        "Black Vise ETB ChoosePlayer should set chosen_player"
+    );
+    assert!(
+        game.undo_log.len() > log_len_before,
+        "move_card should have logged at least the MoveCard + SetChosenPlayer actions"
+    );
+
+    // Undo every action logged by the move, back to the pre-ETB state.
+    while game.undo_log.len() > log_len_before {
+        game.undo()?;
+    }
+
+    // The choose-player field AND the full UndoTest state hash must round-trip.
+    assert_eq!(
+        game.cards.try_get(vise_id).unwrap().chosen_player,
+        None,
+        "mtg-ba6uq #1: chosen_player must be restored to None after undoing the ETB move"
+    );
+    assert_eq!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "mtg-ba6uq #1: UndoTest state hash must return EXACTLY to its pre-ETB value after undo"
+    );
+
+    Ok(())
+}

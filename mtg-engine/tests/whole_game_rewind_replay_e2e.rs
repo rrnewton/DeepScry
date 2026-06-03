@@ -1135,6 +1135,16 @@ deck_rewind_cases! {
     // the deck the old rewind_replay_oracle_e2e used.
     combat_4ed_seed_42 => ("decks/combat_test_4ed.dck", 42),
     combat_4ed_seed_99 => ("decks/combat_test_4ed.dck", 99),
+    // black_vise_punisher: general rewind+replay coverage for a Black Vise game
+    // (mtg-ba6uq). NOTE: this forward→rewind→REPLAY oracle does NOT by itself
+    // guard the ETB choose-player undo-hole fix — replay re-executes the ETB and
+    // overwrites the stale field, so the pause-point hash matches with or without
+    // the fix. The targeted guard for that hole is the PER-ACTION undo test
+    // `undo_e2e::black_vise_etb_chosen_player_undo_round_trip` (undo BACK to the
+    // pre-cast state and compare). These cases still lock in that the deck round-
+    // trips cleanly through the replay path with Black Vise in play.
+    black_vise_seed_42 => ("decks/old_school2/black_vise_punisher.dck", 42),
+    black_vise_seed_7 => ("decks/old_school2/black_vise_punisher.dck", 7),
 }
 
 /// Turn-1 PlayLand round-trip cases (mtg-610 THREAD A / A1): the boundary marker

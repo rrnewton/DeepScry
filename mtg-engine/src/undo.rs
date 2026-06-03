@@ -52,6 +52,22 @@ pub enum GameAction {
     /// Tap/untap a permanent
     TapCard { card_id: CardId, tapped: bool },
 
+    /// Set a card's ETB-chosen color (e.g. Thriving lands' `etb_choose_color`),
+    /// storing the PREVIOUS value so a mid-turn rewind that undoes the ETB
+    /// `MoveCard` also restores `Card::chosen_color`. Without this the choice
+    /// field stays stale on the off-battlefield card and the (hashed) turn-start
+    /// state diverges across rewinds (mtg-ba6uq #1).
+    SetChosenColor {
+        card_id: CardId,
+        prev: Option<crate::core::Color>,
+    },
+
+    /// Set a card's ETB-chosen player (e.g. Black Vise's "as ~ enters, choose a
+    /// player"), storing the PREVIOUS value so a mid-turn rewind restores
+    /// `Card::chosen_player` (mtg-ba6uq #1). Black Vise is in the 1994/old-school
+    /// target decks, so this is the most current-relevant ETB choice-field hole.
+    SetChosenPlayer { card_id: CardId, prev: Option<PlayerId> },
+
     /// Modify life total (delta is the change, not absolute value)
     ModifyLife { player_id: PlayerId, delta: i32 },
 
@@ -469,6 +485,17 @@ impl fmt::Display for GameAction {
                     write!(f, "Untap({})", card_id.as_u32())
                 }
             }
+            GameAction::SetChosenColor { card_id, prev } => {
+                write!(f, "SetChosenColor({}, prev={:?})", card_id.as_u32(), prev)
+            }
+            GameAction::SetChosenPlayer { card_id, prev } => {
+                write!(
+                    f,
+                    "SetChosenPlayer({}, prev={:?})",
+                    card_id.as_u32(),
+                    prev.map(|p| p.as_u32())
+                )
+            }
             GameAction::ModifyLife { player_id, delta } => {
                 write!(f, "Life(P{} {:+})", player_id.as_u32(), delta)
             }
@@ -762,6 +789,24 @@ impl GameAction {
                     game.increment_mana_version();
                 } else {
                     return Err(format!("Card {} not found for TapCard undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetChosenColor { card_id, prev } => {
+                // Restore the previous ETB-chosen color (mtg-ba6uq #1).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.chosen_color = *prev;
+                } else {
+                    return Err(format!("Card {} not found for SetChosenColor undo", card_id.as_u32()));
+                }
+            }
+
+            GameAction::SetChosenPlayer { card_id, prev } => {
+                // Restore the previous ETB-chosen player (mtg-ba6uq #1).
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.chosen_player = *prev;
+                } else {
+                    return Err(format!("Card {} not found for SetChosenPlayer undo", card_id.as_u32()));
                 }
             }
 

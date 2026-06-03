@@ -1279,11 +1279,20 @@ impl GameState {
                 if card.definition.cache.enters_tapped {
                     // Must drop the immutable borrow before getting mutable borrow
                     let card_name = card.name.clone();
+                    let prior_log_size = self.logger.log_count();
                     if let Ok(card_mut) = self.cards.get_mut(card_id) {
                         card_mut.tapped = true;
                         self.logger
                             .verbose(&format!("{} ({}) enters the battlefield tapped", card_name, card_id));
                     }
+                    // Cover the ETB-tapped write with an undo action so a mid-turn
+                    // rewind that undoes this MoveCard also restores tapped=false
+                    // (mtg-ba6uq #1). Reuses TapCard; its `mana_state_version`
+                    // bump on undo is excluded from every state hash.
+                    self.undo_log.log(
+                        crate::undo::GameAction::TapCard { card_id, tapped: true },
+                        prior_log_size,
+                    );
                 }
             }
 
@@ -1325,15 +1334,26 @@ impl GameState {
                 if card.definition.cache.etb_choose_color {
                     let exclude_colors = card.definition.cache.etb_exclude_colors.clone();
                     let card_name = card.name.clone();
+                    let prev_chosen_color = card.chosen_color;
 
                     // Pick the most prominent color in the player's deck (excluding excluded colors)
                     let chosen = self.pick_prominent_color(owner, &exclude_colors);
 
+                    let prior_log_size = self.logger.log_count();
                     if let Ok(card_mut) = self.cards.get_mut(card_id) {
                         card_mut.chosen_color = Some(chosen);
                         self.logger
                             .normal(&format!("{} ({}) - chose {:?}", card_name, card_id, chosen));
                     }
+                    // Cover the ETB color choice so a mid-turn rewind restores the
+                    // previous value (mtg-ba6uq #1).
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetChosenColor {
+                            card_id,
+                            prev: prev_chosen_color,
+                        },
+                        prior_log_size,
+                    );
                 }
             }
 
@@ -1350,7 +1370,9 @@ impl GameState {
                 if card.definition.cache.etb_choose_player {
                     let controller = card.controller;
                     let card_name = card.name.clone();
+                    let prev_chosen_player = card.chosen_player;
                     let chosen = self.pick_chosen_opponent(controller);
+                    let prior_log_size = self.logger.log_count();
                     if let Ok(card_mut) = self.cards.get_mut(card_id) {
                         card_mut.chosen_player = chosen;
                         if let Some(p) = chosen {
@@ -1362,6 +1384,15 @@ impl GameState {
                                 .normal(&format!("{} ({}) - chose {}", card_name, card_id, player_name));
                         }
                     }
+                    // Cover the ETB player choice (Black Vise) so a mid-turn
+                    // rewind restores the previous value (mtg-ba6uq #1).
+                    self.undo_log.log(
+                        crate::undo::GameAction::SetChosenPlayer {
+                            card_id,
+                            prev: prev_chosen_player,
+                        },
+                        prior_log_size,
+                    );
                 }
             }
         }
@@ -3468,6 +3499,18 @@ impl GameState {
                         } else {
                             card.tap();
                         }
+                    }
+                }
+                crate::undo::GameAction::SetChosenColor { card_id, prev } => {
+                    // Restore the previous ETB-chosen color (mtg-ba6uq #1).
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
+                        card.chosen_color = prev;
+                    }
+                }
+                crate::undo::GameAction::SetChosenPlayer { card_id, prev } => {
+                    // Restore the previous ETB-chosen player (mtg-ba6uq #1).
+                    if let Some(card) = self.cards.try_get_mut(card_id) {
+                        card.chosen_player = prev;
                     }
                 }
                 crate::undo::GameAction::ModifyLife { player_id, delta } => {
