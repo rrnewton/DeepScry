@@ -59,6 +59,63 @@ mod tests {
         assert!(card.tapped);
     }
 
+    /// mtg-mb668 sig-2b: a card entering the hidden library must lose its
+    /// `revealed_to_mask`, so a later draw of it re-emits `RevealCard`. Without
+    /// this, a previously-public card (e.g. shuffled in from the graveyard via
+    /// Timetwister) is drawn with NO reveal, while a fresh card on the other
+    /// side IS revealed — diverging the reveal COUNT and desyncing the view hash.
+    #[test]
+    fn card_entering_library_is_concealed_and_re_revealed_on_draw_mb668_sig2b() {
+        use crate::undo::GameAction;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        game.set_skip_reveals(false); // network mode: reveals are logged
+        let p1_id = game.players.first().unwrap().id;
+
+        // A publicly-known card sitting in the graveyard (revealed to all).
+        let card_id = game.next_entity_id();
+        let card = Card::new(card_id, "Lightning Bolt".to_string(), p1_id);
+        game.cards.insert(card_id, card);
+        game.get_player_zones_mut(p1_id).unwrap().graveyard.add(card_id);
+        game.cards.get_mut(card_id).unwrap().mark_revealed_to_all();
+        assert!(game.cards.get(card_id).unwrap().is_revealed_to(p1_id));
+
+        // Shuffle-back: graveyard -> library. The card must be concealed.
+        game.move_card(card_id, Zone::Graveyard, Zone::Library, p1_id).unwrap();
+        assert_eq!(
+            game.cards.get(card_id).unwrap().revealed_to_mask,
+            0,
+            "card entering the library must be concealed (mb668 sig-2b)"
+        );
+        assert!(
+            game.undo_log
+                .actions()
+                .iter()
+                .any(|a| matches!(a, GameAction::SetRevealedToMask { card_id: c, new_value: 0, .. } if *c == card_id)),
+            "concealment must be logged as an undoable SetRevealedToMask"
+        );
+
+        // Draw it back out: because it is now hidden, the draw MUST re-reveal it.
+        let reveals_before = game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::RevealCard { card_id: c, .. } if *c == card_id))
+            .count();
+        game.move_card(card_id, Zone::Library, Zone::Hand, p1_id).unwrap();
+        let reveals_after = game
+            .undo_log
+            .actions()
+            .iter()
+            .filter(|a| matches!(a, GameAction::RevealCard { card_id: c, .. } if *c == card_id))
+            .count();
+        assert_eq!(
+            reveals_after,
+            reveals_before + 1,
+            "drawing the concealed card must emit exactly one RevealCard (mb668 sig-2b)"
+        );
+    }
+
     #[test]
     fn test_deal_damage_to_player() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
