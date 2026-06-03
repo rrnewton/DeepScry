@@ -1071,6 +1071,10 @@
             tui_get_layout_json,
             tui_get_card_layout_json,
             tui_get_image_urls,
+            // task #7 (mtg-722): the CDN card-lookup table — load once, resolve
+            // each card to its immutable cards.scryfall.io URL.
+            tui_load_card_lookup_table,
+            tui_card_cdn_url,
             tui_get_logs_json,
             tui_get_help_text,
             cleanup_tui_state,
@@ -1219,19 +1223,48 @@
                 return true;
             });
         }
-        function getCardImageUrl(cardName, heightPx) {
-            if (typeof tui_get_image_urls !== 'function') return null;
+        // task #7 (mtg-722): resolve a card to its immutable cards.scryfall.io
+        // CDN URL via the loaded lookup table. `card` is a CardView/CardDetailView
+        // (needs .name; .power/.toughness/.colors/.is_token refine TOKEN art —
+        // missing fields fall back to a name lookup, which still hits a token's
+        // bare-name alias). Returns '' on a table miss → cascade uses gatherer.
+        function cardCdnUrl(card, heightPx) {
+            if (typeof tui_card_cdn_url !== 'function' || !card || !card.name) return '';
+            const size = heightPx <= 204 ? 'small' : 'normal';
+            const p = (card.power == null) ? '' : String(card.power);
+            const t = (card.toughness == null) ? '' : String(card.toughness);
             try {
-                const urls = filterImageUrls(JSON.parse(tui_get_image_urls(cardName, heightPx)));
-                return urls.length > 0 ? urls[0] : null;
-            } catch (e) { return null; }
+                return tui_card_cdn_url(card.name, p, t, card.colors || '', !!card.is_token, size) || '';
+            } catch (e) { return ''; }
         }
 
-        function getCardImageFallbackUrls(cardName, heightPx) {
+        // Build the image cascade for a card: [local-if-allowed → CDN-from-table
+        // → gatherer]. api.scryfall.com is DROPPED entirely (task #7): the
+        // per-image API endpoint was rate-limited + 404s on token names; the CDN
+        // (immutable, 1-yr cached) replaces it as the primary external source,
+        // with gatherer as the table-MISS fallback.
+        function cardImageCascade(card, heightPx) {
+            const name = (card && card.name) || '';
             if (typeof tui_get_image_urls !== 'function') return [];
-            try {
-                return filterImageUrls(JSON.parse(tui_get_image_urls(cardName, heightPx)));
-            } catch (e) { return []; }
+            let base = [];
+            try { base = JSON.parse(tui_get_image_urls(name, heightPx)); } catch (e) { base = []; }
+            // Drop the api.scryfall.com rung (cards.scryfall.io CDN is kept — it
+            // is NOT scryfall.com, so this filter leaves it untouched).
+            base = base.filter((u) => !u.includes('api.scryfall.com'));
+            const local = base.filter(isLocalImageUrl);
+            const gatherer = base.filter((u) => !isLocalImageUrl(u));
+            const cdn = cardCdnUrl(card, heightPx);
+            const urls = [...local, ...(cdn ? [cdn] : []), ...gatherer];
+            return filterImageUrls(urls);
+        }
+
+        function getCardImageUrl(card, heightPx) {
+            const urls = cardImageCascade(card, heightPx);
+            return urls.length > 0 ? urls[0] : null;
+        }
+
+        function getCardImageFallbackUrls(card, heightPx) {
+            return cardImageCascade(card, heightPx);
         }
 
         // Shared image-fallback cascade (mtg-m9znz). Both render paths
@@ -1356,6 +1389,21 @@
             try {
                 await init();
                 status.textContent = `WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`;
+
+                // task #7 (mtg-722): load the card→Scryfall-CDN lookup table ONCE
+                // so the image cascade can resolve cards.scryfall.io URLs. The
+                // fetch URL is the fixed name; `mtg hash-web-assets` rewrites it
+                // to card-lookup.<hash>.bin (immutable) at deploy. Best-effort:
+                // absent in dev (table not generated) → the cascade simply falls
+                // back to gatherer, so a missing table never breaks the GUI.
+                try {
+                    const tableResp = await fetch('./data/card-lookup.bin');
+                    if (tableResp.ok && typeof tui_load_card_lookup_table === 'function') {
+                        const buf = new Uint8Array(await tableResp.arrayBuffer());
+                        const n = tui_load_card_lookup_table(buf);
+                        console.log(`[mtg-722] card-lookup table: ${n} entries`);
+                    }
+                } catch (e) { /* best-effort — no table → gatherer fallback */ }
 
                 // Expose key view-model functions on `window` so headless
                 // E2E tests (which run code via `page.evaluate`) can probe
@@ -2286,7 +2334,7 @@
                 const heightPx = (typeof imgHeightPx === 'number' && imgHeightPx > 0)
                     ? imgHeightPx
                     : 106;
-                const urls = getCardImageFallbackUrls(card.name, heightPx);
+                const urls = getCardImageFallbackUrls(card, heightPx);
                 imgHtml = cardImageHtml(urls, 'card-image', card.name);
             }
 
@@ -2352,7 +2400,10 @@
             // is cheap and does not re-hit the network.
             if (showImages) {
                 _detailsImageCardId = detail.card_id;
-                const urls = getCardImageFallbackUrls(detail.name, 310);
+                // Pass the detail object so tokens resolve via the composite key
+                // when CardDetailView carries P/T+colors; non-tokens + missing
+                // fields fall back to a name lookup (task #7).
+                const urls = getCardImageFallbackUrls(detail, 310);
                 const slot = document.getElementById('card-detail-img-slot');
                 if (slot && urls.length > 0) {
                     const img = new Image();
