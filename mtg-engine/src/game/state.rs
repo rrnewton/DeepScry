@@ -2094,16 +2094,19 @@ impl GameState {
     /// Returns an error if the card cannot be found.
     pub fn add_counters(&mut self, card_id: CardId, counter_type: crate::core::CounterType, amount: u8) -> Result<()> {
         if let Some(card) = self.cards.try_get_mut(card_id) {
+            // Snapshot the FULL counter set BEFORE the add. `add_counter` may
+            // trigger +1/+1 ⟷ -1/-1 annihilation (CR 122.3), which a per-type
+            // AddCounter reversal cannot undo (the annihilated opposing counters
+            // are gone). Logging the pre-state and restoring it on undo reverses
+            // the net change exactly (mtg-ba6uq #4). The snapshot is a tiny
+            // inline SmallVec.
+            let prev_counters = card.counters.clone();
             card.add_counter(counter_type, amount);
 
             // Log the action with prior log size
             let prior_log_size = self.logger.log_count();
             self.undo_log.log(
-                crate::undo::GameAction::AddCounter {
-                    card_id,
-                    counter_type,
-                    amount,
-                },
+                crate::undo::GameAction::SetCardCounters { card_id, prev_counters },
                 prior_log_size,
             );
 
