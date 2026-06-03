@@ -6914,4 +6914,80 @@ Oracle:First strike\nCreatures and nonbasic lands your opponents control enter t
             "the gated card must not fall back to self-tap either"
         );
     }
+
+    /// Parser-shape regression for the 1994 World Championship compat sweep
+    /// (mtg-713 B1). An activated `AB$ GainControl` must convert into an
+    /// `Effect::GainControl` carrying a structured `ControlDuration` (from
+    /// `LoseControl$`) and a `TargetRestriction` (from `ValidTgts$`) — replacing
+    /// the old "no restriction + binary until_eot" shape that left Aladdin/Old
+    /// Man uncastable.
+    #[test]
+    #[allow(clippy::wildcard_enum_match_arm)] // closure only inspects GainControl
+    fn test_gaincontrol_ability_parses_duration_and_restriction() {
+        use crate::core::effects::{ControlDuration, Effect, TargetType};
+        use crate::core::PlayerId;
+
+        let gain_control = |def: &CardDefinition| -> (ControlDuration, crate::core::effects::TargetRestriction) {
+            let card = def.instantiate(crate::core::CardId::new(1), PlayerId::new(0));
+            card.activated_abilities
+                .iter()
+                .flat_map(|a| a.effects.iter())
+                .find_map(|e| match e {
+                    Effect::GainControl {
+                        duration, restriction, ..
+                    } => Some((*duration, restriction.clone())),
+                    _ => None,
+                })
+                .expect("card must have an activated GainControl effect")
+        };
+
+        // Aladdin: ValidTgts$ Artifact, LoseControl$ LeavesPlay,LoseControl ->
+        // Artifact restriction + WhileControlSource duration.
+        let aladdin = CardLoader::parse(
+            r#"
+Name:Aladdin
+ManaCost:2 R R
+Types:Creature Human Rogue
+PT:1/1
+A:AB$ GainControl | Cost$ 1 R R T | ValidTgts$ Artifact | LoseControl$ LeavesPlay,LoseControl | SpellDescription$ Gain control of target artifact for as long as you control CARDNAME.
+Oracle:{1}{R}{R}, {T}: Gain control of target artifact for as long as you control Aladdin.
+"#,
+        )
+        .unwrap();
+        let (dur, restr) = gain_control(&aladdin);
+        assert_eq!(
+            dur,
+            ControlDuration::WhileControlSource,
+            "Aladdin keeps control while it controls Aladdin"
+        );
+        assert!(restr.types.contains(&TargetType::Artifact), "Aladdin targets artifacts");
+        assert!(!restr.power_le_source, "Aladdin has no power threshold");
+
+        // Old Man of the Sea: ValidTgts$ Creature.powerLEX -> Creature restriction
+        // with the dynamic source-power threshold flagged.
+        let old_man = CardLoader::parse(
+            r#"
+Name:Old Man of the Sea
+ManaCost:1 U U
+Types:Creature Djinn
+PT:2/3
+A:AB$ GainControl | Cost$ T | ValidTgts$ Creature.powerLEX | LoseControl$ Untap,LeavesPlay,LoseControl,StaticCommandCheck | SpellDescription$ Gain control of target creature with power less than or equal to CARDNAME's power.
+SVar:X:Count$CardPower
+Oracle:{T}: Gain control of target creature with power less than or equal to Old Man of the Sea's power.
+"#,
+        )
+        .unwrap();
+        let (om_dur, om_restr) = gain_control(&old_man);
+        assert!(
+            om_restr.types.contains(&TargetType::Creature),
+            "Old Man targets creatures"
+        );
+        assert!(
+            om_restr.power_le_source,
+            "Old Man's `powerLEX` must set the dynamic source-power threshold"
+        );
+        // The precise tapped + power-comparison duration is a follow-on (mtg-713 B1);
+        // for now it is bounded by the source-presence duration rather than permanent.
+        assert_eq!(om_dur, ControlDuration::WhileControlSource);
+    }
 }

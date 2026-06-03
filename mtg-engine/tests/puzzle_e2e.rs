@@ -5522,3 +5522,97 @@ async fn test_kismet_opponents_enter_tapped() -> Result<()> {
     println!("✓ Kismet: opponents' permanents enter tapped, controller's own untapped (1994 champ compat)");
     Ok(())
 }
+
+/// Regression (1994 World Championship compat — mtg-713 B1): Aladdin's activated
+/// `AB$ GainControl | ValidTgts$ Artifact | LoseControl$ LeavesPlay,LoseControl`.
+/// `get_valid_targets_for_ability` had no GainControl arm and the activated-ability
+/// placeholder rewrite in priority.rs had none either, so the ability was never
+/// offered / never stole. `Effect::GainControl` also carried no target restriction
+/// and only a binary until_eot duration. This test pins: (1) the ability lists the
+/// opponent's artifact as a legal target; (2) resolving it moves control to the
+/// activator and records a source-duration grant; (3) once Aladdin leaves the
+/// battlefield, `recompute_source_control` returns the artifact to its owner (CR 800.4a).
+#[tokio::test]
+async fn test_aladdin_gaincontrol_artifact() -> Result<()> {
+    use mtg_engine::core::effects::{ControlDuration, TargetRestriction};
+    use mtg_engine::core::Effect;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/aladdin_gaincontrol_artifact.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+    let p1_id = game.players[1].id;
+    let find = |game: &mtg_engine::game::GameState, name: &str, ctrl| -> mtg_engine::core::CardId {
+        game.battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| {
+                game.cards
+                    .try_get(id)
+                    .is_some_and(|c| c.name.as_str() == name && c.controller == ctrl)
+            })
+            .unwrap_or_else(|| panic!("{name} should be on the battlefield under the expected controller"))
+    };
+    let aladdin = find(&game, "Aladdin", p0_id);
+    let mox = find(&game, "Mox Ruby", p1_id);
+
+    // (1) Aladdin's GainControl ability must enumerate the opponent's artifact as a
+    // legal target (the missing get_valid_targets_for_ability arm).
+    let targets = game.get_valid_targets_for_ability(aladdin, 0)?;
+    assert!(
+        targets.contains(&mox),
+        "Aladdin's activated GainControl must offer the opponent's Mox Ruby as a target, got {targets:?}"
+    );
+
+    // (2) Resolve the GainControl with the WhileControlSource duration (Aladdin as
+    // the source) and assert control transfers + the grant is recorded.
+    game.execute_effect(&Effect::GainControl {
+        target: mox,
+        new_controller: p0_id,
+        untap: false,
+        duration: ControlDuration::WhileControlSource,
+        restriction: TargetRestriction::parse("Artifact"),
+        source: Some(aladdin),
+    })?;
+    assert_eq!(
+        game.cards.get(mox)?.controller,
+        p0_id,
+        "P0 must control Mox Ruby after Aladdin's ability resolves"
+    );
+    assert_eq!(
+        game.cards.get(mox)?.control_grant,
+        Some((aladdin, p0_id)),
+        "Mox Ruby must record the (source=Aladdin, grantee=P0) control grant"
+    );
+    // The grant holds while Aladdin is still controlled by P0 (SBA pass is a no-op here).
+    game.recompute_source_control()?;
+    assert_eq!(
+        game.cards.get(mox)?.controller,
+        p0_id,
+        "control must persist while P0 still controls Aladdin"
+    );
+
+    // (3) Aladdin leaves the battlefield → the next SBA returns Mox Ruby to its owner.
+    game.battlefield.cards.retain(|&id| id != aladdin);
+    game.recompute_source_control()?;
+    assert_eq!(
+        game.cards.get(mox)?.controller,
+        p1_id,
+        "Mox Ruby must return to its owner (P1) once Aladdin leaves the battlefield"
+    );
+    assert_eq!(
+        game.cards.get(mox)?.control_grant,
+        None,
+        "the lapsed control grant must be cleared"
+    );
+
+    println!("✓ Aladdin gains control of an artifact while it controls Aladdin; reverts when Aladdin leaves (1994 champ compat)");
+    Ok(())
+}

@@ -180,6 +180,10 @@ workflow, row format, and update rules.
 | RaiseCost ValidCard$ Card.<Color> Type$ Spell   | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 | RaiseCost own-controller filter (hose effects)  | WORKING | 2026-05-29_#2469(6c054829) | (fixed)   | Gloom        |
 | Continuous GainControl$ You (control Auras)     | WORKING | 2026-05-29_#2470(be2f61b4) | (fixed)   | Control Magic |
+| AB$ GainControl (activated) ValidTgts$ + LoseControl$ LeavesPlay,LoseControl (while-you-control-source duration) | WORKING | 2026-06-03_#2713(compat-1994-sweep) | (fixed mtg-713 B1) | Aladdin |
+| AB$ GainControl ValidTgts$ Creature.powerLEX (dynamic power≤source-power target) | WORKING | 2026-06-03_#2713(compat-1994-sweep) | (fixed mtg-713 B1) | Old Man of the Sea |
+| ↳ Old Man tapped+powerLEX control DURATION (LoseControl$ Untap,...,StaticCommandCheck) — approximated by while-control-source | PARTIAL | 2026-06-03_#2713(compat-1994-sweep) | (follow-up mtg-moftl) | Old Man of the Sea |
+| AB$ GainControl LoseControl$ EOT (until-end-of-turn return) | BROKEN | 2026-06-03_#2713(compat-1994-sweep) | (TODO mtg-77) | Threaten, Act of Treason |
 | GrantKeyword Affected$ Creature (AllCreatures)  | WORKING | 2026-05-30_#2487(30dd3c20) | (none)    | Concordant Crossroads |
 
 ## Replacement effects (R:)

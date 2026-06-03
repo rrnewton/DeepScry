@@ -1306,6 +1306,15 @@ impl GameState {
             self.mana_state_version = self.mana_state_version.wrapping_add(1);
         }
 
+        // A card leaving the battlefield becomes a new object on return (CR 400.7);
+        // drop any source-duration control grant so it is not re-applied to the
+        // returned object by `recompute_source_control` (Aladdin).
+        if from == Zone::Battlefield {
+            if let Ok(card) = self.cards.get_mut(card_id) {
+                card.control_grant = None;
+            }
+        }
+
         // Clean up persistent effects when a tracked card leaves a zone
         // This handles effects like Airbend that track cards in exile
         let effects_to_remove = self
@@ -2426,6 +2435,91 @@ impl GameState {
                     self.logger
                         .gamelog(&format!("{} comes under {}'s control", card_name, target_name));
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Re-derive control of permanents stolen by a one-shot `AB$ GainControl`
+    /// with a source-dependent duration (`LoseControl$ LeavesPlay,LoseControl` —
+    /// Aladdin: "Gain control of target artifact for as long as you control
+    /// Aladdin", CR 800.4a). Sibling of [`Self::recompute_aura_control`]: control
+    /// is treated as a continuous, self-correcting effect rather than a one-way
+    /// mutation. Each SBA pass, for every permanent carrying a
+    /// [`crate::core::Card::control_grant`] `(source, grantee)`:
+    ///
+    /// - if `grantee` still controls `source` (it is on the battlefield and its
+    ///   controller is `grantee`), the grant holds — leave control with `grantee`;
+    /// - otherwise the source left play or changed hands, so control reverts to
+    ///   the permanent's OWNER and the grant is cleared.
+    ///
+    /// This makes the duration robust with no special-case cleanup: Aladdin dying,
+    /// being bounced, or being stolen back all return the artifact on the next SBA.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a card lookup fails.
+    pub fn recompute_source_control(&mut self) -> Result<()> {
+        // Snapshot which sources are on the battlefield + their controllers, so
+        // the per-target check below is a pure lookup (no nested borrow of the
+        // battlefield while mutating a target).
+        for &card_id in &self.battlefield.cards.clone() {
+            let Some(card) = self.cards.try_get(card_id) else {
+                continue;
+            };
+            let Some((source, grantee)) = card.control_grant else {
+                continue;
+            };
+            let owner = card.owner;
+            let current = card.controller;
+
+            // The grant holds iff the grantee still controls the source permanent.
+            let grant_holds = self
+                .cards
+                .try_get(source)
+                .is_some_and(|src| self.battlefield.cards.contains(&source) && src.controller == grantee);
+
+            if grant_holds {
+                // Keep control with the grantee (self-correct if some other effect
+                // nudged it). Normally already equal — only log/undo on a change.
+                if current != grantee {
+                    let prior_log_size = self.logger.log_count();
+                    let card_mut = self.cards.get_mut(card_id)?;
+                    card_mut.controller = grantee;
+                    self.undo_log.log(
+                        crate::undo::GameAction::ChangeController {
+                            card_id,
+                            old_controller: current,
+                            new_controller: grantee,
+                        },
+                        prior_log_size,
+                    );
+                }
+                continue;
+            }
+
+            // Grant lapsed: revert to owner and clear the record.
+            let card_name = card.name.to_string();
+            let prior_log_size = self.logger.log_count();
+            let card_mut = self.cards.get_mut(card_id)?;
+            card_mut.control_grant = None;
+            if current != owner {
+                card_mut.controller = owner;
+                self.undo_log.log(
+                    crate::undo::GameAction::ChangeController {
+                        card_id,
+                        old_controller: current,
+                        new_controller: owner,
+                    },
+                    prior_log_size,
+                );
+                let owner_name = self
+                    .get_player(owner)
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_else(|_| format!("Player {}", owner.as_u32() + 1));
+                self.logger
+                    .gamelog(&format!("{} returns to {}'s control", card_name, owner_name));
             }
         }
 

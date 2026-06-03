@@ -475,6 +475,12 @@ impl<'a> GameLoop<'a> {
                 eprintln!("    Failed to recompute aura control: {e}");
             }
         }
+        // Re-derive control from source-duration GainControl grants (Aladdin; CR 800.4a).
+        if let Err(e) = self.game.recompute_source_control() {
+            if should_log {
+                eprintln!("    Failed to recompute source control: {e}");
+            }
+        }
         // Check equipment attachment (MTG CR 704.5n)
         if let Err(e) = self.game.check_equipment_attachment() {
             if should_log {
@@ -2378,6 +2384,28 @@ impl<'a> GameLoop<'a> {
                                                 origin: *origin,
                                                 destination: *destination,
                                             },
+                                            // Activated GainControl (Aladdin / Old Man of the Sea):
+                                            // resolve the placeholder target to the chosen permanent,
+                                            // the new controller to the activating player, and the
+                                            // source to this card (for a WhileControlSource duration).
+                                            // Without this arm the target/new_controller stayed
+                                            // placeholders and execute_effect bailed (mtg-713 B1).
+                                            crate::core::Effect::GainControl {
+                                                target,
+                                                untap,
+                                                duration,
+                                                restriction,
+                                                ..
+                                            } if target.is_placeholder() && !chosen_targets_vec.is_empty() => {
+                                                crate::core::Effect::GainControl {
+                                                    target: chosen_targets_vec[0],
+                                                    new_controller: current_priority,
+                                                    untap: *untap,
+                                                    duration: *duration,
+                                                    restriction: restriction.clone(),
+                                                    source: Some(card_id),
+                                                }
+                                            }
                                             _ => effect.clone(),
                                         };
 
@@ -2433,6 +2461,12 @@ impl<'a> GameLoop<'a> {
                                     if let Err(e) = self.game.recompute_aura_control() {
                                         if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
                                             eprintln!("    Failed to recompute aura control: {e}");
+                                        }
+                                    }
+                                    // Re-derive source-duration GainControl grants (Aladdin; CR 800.4a).
+                                    if let Err(e) = self.game.recompute_source_control() {
+                                        if self.verbosity >= VerbosityLevel::Normal && !self.replaying {
+                                            eprintln!("    Failed to recompute source control: {e}");
                                         }
                                     }
                                     // Check equipment attachment (MTG CR 704.5n)
@@ -4216,6 +4250,11 @@ impl<'a> GameLoop<'a> {
         if let Err(e) = self.game.recompute_aura_control() {
             if should_log {
                 eprintln!("    Failed to recompute aura control: {e}");
+            }
+        }
+        if let Err(e) = self.game.recompute_source_control() {
+            if should_log {
+                eprintln!("    Failed to recompute source control: {e}");
             }
         }
         if let Err(e) = self.game.check_equipment_attachment() {

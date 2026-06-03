@@ -1109,6 +1109,29 @@ impl GameState {
                         }
                     }
                 }
+                Effect::GainControl {
+                    target, restriction, ..
+                } if target.is_placeholder() => {
+                    // Activated GainControl (Aladdin `{1}{R}{R},{T}: gain control of
+                    // target artifact`; Old Man of the Sea `{T}: gain control of
+                    // target creature with power ≤ CARDNAME's power`). The spell
+                    // path (get_valid_targets_for_spell) had a GainControl arm but
+                    // the activated path did not, so these abilities enumerated ZERO
+                    // targets and were never offered (mtg-713 B1). Honor the parsed
+                    // ValidTgts$ restriction (type + controller) and the dynamic
+                    // `powerLEX` threshold (X = this source's current power).
+                    let source_power = i32::from(source_card.current_power());
+                    for &card_id in &self.battlefield.cards {
+                        if let Ok(card) = self.cards.get(card_id) {
+                            if restriction.matches_with_source_power(card, source_power)
+                                && restriction.matches_with_controller(card, ability_controller, card.controller)
+                                && is_legal_target(card, ability_controller, &source_colors)
+                            {
+                                valid_targets.push(card_id);
+                            }
+                        }
+                    }
+                }
                 Effect::PumpCreature { target, .. } if target.is_placeholder() => {
                     // Pump / Debuff targeting a creature from an *activated* ability
                     // (e.g. Mishra's Factory's `{T}: Target Assembly-Worker

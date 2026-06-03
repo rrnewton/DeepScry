@@ -1,0 +1,39 @@
+[metadata]
+Name:Aladdin gains control of an artifact (1994 compat B1)
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep (mtg-713 B1).
+# Aladdin: "{1}{R}{R}, {T}: Gain control of target artifact for as long as you
+# control Aladdin." Script:
+#   A:AB$ GainControl | Cost$ 1 R R T | ValidTgts$ Artifact | LoseControl$ LeavesPlay,LoseControl
+#
+# Bug: `get_valid_targets_for_ability` (targeting.rs) had no GainControl arm (the
+# spell path did), AND the activated-ability placeholder-rewrite in priority.rs
+# had no GainControl arm, so the ability enumerated zero targets / its target +
+# new_controller stayed placeholders and execute_effect bailed — Aladdin's
+# ability was never offered / never stole anything. Effect::GainControl also
+# carried no ValidTgts restriction and only a binary until_eot duration.
+#
+# Fix: Effect::GainControl now carries a structured ControlDuration + a
+# TargetRestriction; the converter parses ValidTgts$/LoseControl$; both
+# targeting + activation paths resolve the target/controller/source; and a new
+# self-correcting `recompute_source_control` SBA pass reverts control to the
+# owner the moment the grantee stops controlling the source (Aladdin leaves play
+# or is itself stolen) — CR 800.4a.
+#
+# Setup: P0 controls Aladdin + 3 Mountains (for {1}{R}{R}); P1 controls a Mox
+# Ruby. The e2e test exercises: (1) Aladdin's ability lists Mox Ruby as a legal
+# target; (2) resolving it puts Mox Ruby under P0 with a recorded control grant;
+# (3) once Aladdin leaves the battlefield, the next SBA returns Mox Ruby to P1.
+[state]
+turn=2
+activeplayer=p0
+activephase=Main1
+p0life=20
+p0battlefield=Aladdin; Mountain; Mountain; Mountain
+p0library=Mountain; Mountain; Mountain
+
+p1life=20
+p1battlefield=Mox Ruby
+p1library=Forest; Forest; Forest

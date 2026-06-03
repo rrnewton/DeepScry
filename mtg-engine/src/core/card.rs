@@ -787,6 +787,18 @@ pub struct Card {
     #[serde(default)]
     pub control_from_aura: Option<CardId>,
 
+    /// If this permanent's controller was changed by a one-shot `AB$ GainControl`
+    /// with a source-dependent duration (`LoseControl$ LeavesPlay,LoseControl` —
+    /// Aladdin: "for as long as you control Aladdin"), this records
+    /// `(source, grantee)`: the permanent whose continued control by `grantee`
+    /// sustains the grant. [`crate::game::GameState::recompute_source_control`]
+    /// reverts control to the owner the moment `grantee` stops controlling
+    /// `source` (it leaves the battlefield or its controller changes), mirroring
+    /// the self-correcting Aura-control pass (CR 613 / 800.4a). `None` for
+    /// everything not under source-duration control.
+    #[serde(default)]
+    pub control_grant: Option<(CardId, PlayerId)>,
+
     /// Chosen color for cards with "choose a color" effects (e.g., Thriving lands)
     /// Set when the card enters the battlefield, affects what mana it can produce
     pub chosen_color: Option<Color>,
@@ -929,6 +941,7 @@ impl Card {
             static_abilities: Vec::new(),
             attached_to: None,
             control_from_aura: None,
+            control_grant: None,
             chosen_color: None,
             chosen_player: None,
             svars: std::collections::HashMap::new(),

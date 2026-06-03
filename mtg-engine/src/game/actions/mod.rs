@@ -460,6 +460,10 @@ impl GameState {
                     // Resolve Defined$ Self sentinels to the source card
                     let resolved = Self::resolve_self_target(resolved, card_id);
 
+                    // Patch a GainControl's source with the resolving card so a
+                    // WhileControlSource duration (Aladdin) can be tracked.
+                    let resolved = Self::resolve_gain_control_source(resolved, card_id);
+
                     // Lock a GainLifeDynamic's amount to the pre-resolution
                     // snapshot of its reference card (last-known information).
                     let resolved = Self::resolve_dynamic_gainlife_snapshot(resolved, &target_snapshots);
@@ -622,6 +626,31 @@ impl GameState {
                 // Recurse so a `Defined$ Self` inner effect (MoveSelfBetweenZones,
                 // RemoveCounter, …) is also patched to the source CardId.
                 inner: Box::new(Self::resolve_self_target(*inner, source_card_id)),
+            },
+            other => other,
+        }
+    }
+
+    /// Patch a one-shot `AB$ GainControl`'s `source` with the resolving card so a
+    /// [`ControlDuration::WhileControlSource`] grant (Aladdin) knows which
+    /// permanent's continued control sustains it. Mirrors [`Self::resolve_self_target`].
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn resolve_gain_control_source(effect: Effect, source_card_id: CardId) -> Effect {
+        match effect {
+            Effect::GainControl {
+                target,
+                new_controller,
+                untap,
+                duration,
+                restriction,
+                source: None,
+            } => Effect::GainControl {
+                target,
+                new_controller,
+                untap,
+                duration,
+                restriction,
+                source: Some(source_card_id),
             },
             other => other,
         }
@@ -805,6 +834,7 @@ impl GameState {
                 );
                 let resolved = Self::resolve_choose_color_source(resolved, card_id);
                 let resolved = Self::resolve_self_target(resolved, card_id);
+                let resolved = Self::resolve_gain_control_source(resolved, card_id);
                 let resolved = Self::resolve_dynamic_gainlife_snapshot(resolved, &target_snapshots);
                 let player_ids: smallvec::SmallVec<[PlayerId; 4]> = self.players.iter().map(|p| p.id).collect();
                 let expanded = expand_all_players_effect(&resolved, &player_ids);
@@ -2471,7 +2501,9 @@ impl GameState {
             Effect::GainControl {
                 target,
                 untap,
-                until_eot,
+                duration,
+                restriction,
+                source,
                 ..
             } if target.is_placeholder() => {
                 if *target_index < chosen_targets.len() {
@@ -2482,7 +2514,9 @@ impl GameState {
                         target: resolved_target,
                         new_controller: card_owner,
                         untap: *untap,
-                        until_eot: *until_eot,
+                        duration: *duration,
+                        restriction: restriction.clone(),
+                        source: *source,
                     }
                 } else {
                     effect.clone()
@@ -3475,8 +3509,11 @@ impl GameState {
                 target,
                 new_controller,
                 untap,
-                until_eot,
+                duration,
+                source,
+                ..
             } => {
+                use crate::core::effects::ControlDuration;
                 // Skip if target is still placeholder
                 if target.is_placeholder() {
                     return Ok(());
@@ -3497,10 +3534,22 @@ impl GameState {
                     .map(|p| p.name.clone())
                     .unwrap_or_else(|_| format!("P{}", new_controller.as_u32()).into());
 
-                // Change controller
+                // Change controller, and for a source-duration grant record the
+                // (source, grantee) so `recompute_source_control` reverts it when
+                // the grantee stops controlling the source (Aladdin).
                 {
                     let card = self.cards.get_mut(*target)?;
                     card.controller = *new_controller;
+                    match duration {
+                        ControlDuration::WhileControlSource => {
+                            if let Some(src) = source {
+                                card.control_grant = Some((*src, *new_controller));
+                            }
+                        }
+                        // Permanent / EndOfTurn grants are not source-bounded.
+                        // (EndOfTurn revert remains TODO(mtg-77).)
+                        ControlDuration::Permanent | ControlDuration::EndOfTurn => {}
+                    }
                 }
 
                 // Log the undo action
@@ -3518,14 +3567,18 @@ impl GameState {
                     self.untap_permanent(*target)?;
                 }
 
-                let duration = if *until_eot { " until end of turn" } else { "" };
+                let duration_text = match duration {
+                    ControlDuration::EndOfTurn => " until end of turn",
+                    ControlDuration::WhileControlSource => " for as long as they control the source",
+                    ControlDuration::Permanent => "",
+                };
                 self.logger.gamelog(&format!(
                     "{} gains control of {}{}",
-                    new_ctrl_name, target_name, duration
+                    new_ctrl_name, target_name, duration_text
                 ));
 
-                // TODO(mtg-77): Implement EOT control return for until_eot=true
-                // This requires end-of-turn delayed trigger infrastructure
+                // TODO(mtg-77): Implement EOT control return for ControlDuration::EndOfTurn
+                // (needs end-of-turn delayed-trigger infrastructure).
             }
             Effect::Fight { fighter, target } => {
                 // CR 701.12: Fight - each creature deals damage equal to its power to the other

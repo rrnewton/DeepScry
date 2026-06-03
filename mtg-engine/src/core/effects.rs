@@ -536,6 +536,14 @@ pub struct TargetRestriction {
     /// named land subtype instead of falling through to "match every permanent".
     #[serde(default)]
     pub required_subtype: Option<crate::core::Subtype>,
+    /// Dynamic "power ≤ X" where X is the EFFECT SOURCE's current power, from a
+    /// `powerLEX` qualifier (`ValidTgts$ Creature.powerLEX` — Old Man of the
+    /// Sea: "target creature with power less than or equal to CARDNAME's
+    /// power"). [`TargetRestriction::matches`] cannot evaluate this (it has no
+    /// source), so the targeting site must call
+    /// [`TargetRestriction::matches_with_source_power`] when this is set.
+    #[serde(default)]
+    pub power_le_source: bool,
 }
 
 impl TargetRestriction {
@@ -554,6 +562,7 @@ impl TargetRestriction {
             required_set: None,
             requires_other: false,
             required_subtype: None,
+            power_le_source: false,
         }
     }
 
@@ -572,6 +581,7 @@ impl TargetRestriction {
             required_set: None,
             requires_other: false,
             required_subtype: None,
+            power_le_source: false,
         }
     }
 
@@ -786,6 +796,7 @@ impl TargetRestriction {
         let mut required_set = None;
         let mut requires_other = false;
         let mut required_subtype = None;
+        let mut power_le_source = false;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
@@ -816,6 +827,10 @@ impl TargetRestriction {
                         "Black" => required_color = Some(crate::core::Color::Black),
                         "Red" => required_color = Some(crate::core::Color::Red),
                         "Green" => required_color = Some(crate::core::Color::Green),
+                        // Dynamic "power ≤ source's power" (Old Man of the Sea).
+                        // MUST precede the numeric `powerLE` arm, since "powerLEX"
+                        // also starts with "powerLE" (and "X" is not a number).
+                        "powerLEX" => power_le_source = true,
                         m if m.starts_with("powerGE") => {
                             // Parse powerGE4 -> power_ge = 4
                             if let Ok(n) = m.trim_start_matches("powerGE").parse::<i32>() {
@@ -863,8 +878,53 @@ impl TargetRestriction {
             required_set,
             requires_other,
             required_subtype,
+            power_le_source,
         }
     }
+
+    /// Like [`TargetRestriction::matches`], but also enforces a dynamic
+    /// `powerLEX` threshold against the effect source's current power: the
+    /// candidate's power must be ≤ `source_power` (Old Man of the Sea). When
+    /// `power_le_source` is unset this is identical to `matches`.
+    pub fn matches_with_source_power(&self, card: &crate::core::Card, source_power: i32) -> bool {
+        if !self.matches(card) {
+            return false;
+        }
+        if self.power_le_source && i32::from(card.current_power()) > source_power {
+            return false;
+        }
+        true
+    }
+}
+
+/// How long a one-shot `AB$ GainControl` (Threaten / Aladdin / Old Man of the
+/// Sea) keeps the gained control, parsed from the card-script `LoseControl$`
+/// list. Strong-typed so the resolution + the control-revert SBA pass cannot
+/// confuse "permanent steal" with a duration-bounded one (CR 613 / 800.4a).
+///
+/// `LoseControl$` token meanings (Java Forge):
+/// - `EOT`            -> [`ControlDuration::EndOfTurn`] (Threaten / Act of Treason)
+/// - `LeavesPlay` / `LoseControl` (no `Untap`/`StaticCommandCheck`) ->
+///   [`ControlDuration::WhileControlSource`] -- you keep control only as long as
+///   you control the SOURCE permanent (Aladdin: "for as long as you control
+///   Aladdin"). The control reverts on the next SBA once the source leaves the
+///   battlefield or you lose control of it.
+/// - absent          -> [`ControlDuration::Permanent`] (Control Magic-style one-shots).
+///
+/// (Old Man of the Sea's `Untap,...,StaticCommandCheck` tapped+power-comparison
+/// duration is a further variant tracked under mtg-713 B1 follow-up.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ControlDuration {
+    /// Control is kept indefinitely (no `LoseControl$`). Default.
+    #[default]
+    Permanent,
+    /// Control returns to the owner at end of turn (`LoseControl$ EOT`).
+    /// NOTE: the EOT revert hook is still TODO (mtg-77); modeled here so the
+    /// parser/resolver carry the right intent.
+    EndOfTurn,
+    /// Control is kept only while the activating player controls the SOURCE
+    /// permanent (`LoseControl$ LeavesPlay,LoseControl`). Aladdin.
+    WhileControlSource,
 }
 
 /// How a variable-amount damage effect is divided among its chosen targets.
@@ -1101,8 +1161,21 @@ pub enum Effect {
         new_controller: PlayerId,
         /// Whether to also untap the stolen permanent
         untap: bool,
-        /// Duration: true = until end of turn (Threaten), false = permanent (Control Magic)
-        until_eot: bool,
+        /// How long control is kept (parsed from `LoseControl$`). See
+        /// [`ControlDuration`].
+        duration: ControlDuration,
+        /// Type/controller restriction on the target, parsed from `ValidTgts$`
+        /// (e.g. Aladdin `Artifact`, Old Man of the Sea `Creature.powerLEX`).
+        /// Empty (`TargetRestriction::any`) means "any permanent", matching the
+        /// historical default of "an opponent's creature".
+        #[serde(default = "TargetRestriction::any")]
+        restriction: TargetRestriction,
+        /// The permanent whose continued control by `new_controller` sustains a
+        /// [`ControlDuration::WhileControlSource`] grant (Aladdin). Threaded in
+        /// at resolution time (the resolving card). `None` for durations that
+        /// don't depend on a source.
+        #[serde(default)]
+        source: Option<CardId>,
     },
 
     /// Fight - two creatures deal damage equal to their power to each other (CR 701.12)

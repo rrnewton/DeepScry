@@ -1625,13 +1625,43 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             //   "AB$ GainControl | ValidTgts$ Creature | LoseControl$ EOT" (Threaten)
             //   "AB$ GainControl | ValidTgts$ Artifact | LoseControl$ LeavesPlay" (Aladdin)
             let untap = params.get("Untap").is_some_and(|v| v.eq_ignore_ascii_case("true"));
-            let until_eot = params.get("LoseControl").is_some_and(|v| v.contains("EOT"));
+            // Map the `LoseControl$` token list to a structured duration. The
+            // tokens are comma-separated; we classify by which are present
+            // (tokenized split, not a raw substring scan of the whole value).
+            use crate::core::effects::ControlDuration;
+            let duration = match params.get("LoseControl") {
+                None => ControlDuration::Permanent,
+                Some(spec) => {
+                    let tokens: smallvec::SmallVec<[&str; 4]> = spec.split(',').map(str::trim).collect();
+                    if tokens.contains(&"EOT") {
+                        ControlDuration::EndOfTurn
+                    } else if tokens.iter().any(|t| *t == "Untap" || *t == "StaticCommandCheck") {
+                        // Old Man of the Sea's tapped + power-comparison duration is
+                        // not modeled yet (mtg-713 B1 follow-up). Fall back to the
+                        // source-presence duration so control is at least bounded by
+                        // the source leaving play rather than being permanent.
+                        ControlDuration::WhileControlSource
+                    } else {
+                        // LeavesPlay / LoseControl: keep control while you control
+                        // the source permanent (Aladdin).
+                        ControlDuration::WhileControlSource
+                    }
+                }
+            };
+            // Parse the target restriction from ValidTgts$ (Aladdin `Artifact`,
+            // Old Man `Creature.powerLEX`). Absent -> any permanent.
+            let restriction = params
+                .get("ValidTgts")
+                .map(crate::core::effects::TargetRestriction::parse)
+                .unwrap_or_else(crate::core::effects::TargetRestriction::any);
 
             Some(Effect::GainControl {
                 target: CardId::placeholder(),
                 new_controller: PlayerId::new(0), // Resolved at cast time
                 untap,
-                until_eot,
+                duration,
+                restriction,
+                source: None, // Threaded in at resolution (the resolving card)
             })
         }
 
