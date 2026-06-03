@@ -412,11 +412,26 @@ impl<'a> GameLoop<'a> {
                 ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                     ChoiceResult::Ok(Some(valid_cards[index]))
                 }
-                ChoiceResult::Ok(Some(_)) if valid_cards.is_empty() => {
-                    // Client shadow game: valid_cards is empty because unrevealed
-                    // library cards are not instantiated. The NLC communicated with
-                    // the server and stored the authoritative CardId. Retrieve it.
-                    let lib_result = controller.take_library_search_result();
+                ChoiceResult::Ok(_) if valid_cards.is_empty() => {
+                    // Client shadow game: `valid_cards` is empty because unrevealed
+                    // library cards are not instantiated, so the controller's index
+                    // (`Some(placeholder)`/`None`) cannot resolve the fetch from its
+                    // own view. On an OPPONENT's shadow the ONLY authoritative source
+                    // is the server.
+                    //
+                    // The raced `take_library_search_result` (fed by the
+                    // `OpponentChoice.library_search_result`) does NOT survive
+                    // rewind: at the FIRST resolution it can be absent, so `None`
+                    // was recorded and replayed forever (the fetch lost — mtg-mb668
+                    // sig-1). Prefer the **rewind-surviving** reveal-history-buffer
+                    // lookup: it keys the `Searched` reveal by game position, so it
+                    // returns the same `Some(CardId)` on the first forward
+                    // resolution AND on every replay. A genuine "fail to find"
+                    // (CR 701.19c) has NO `Searched` reveal, so the lookup yields
+                    // `None` and we correctly record the decline.
+                    let lib_result = self
+                        .searched_card_lookup(player)
+                        .or_else(|| controller.take_library_search_result());
                     ChoiceResult::Ok(lib_result)
                 }
                 ChoiceResult::Ok(_) => ChoiceResult::Ok(None),

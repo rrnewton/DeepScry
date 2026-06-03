@@ -66,6 +66,37 @@ use crate::{MtgError, Result};
 /// Used by network clients to sync state before operations that need revealed cards.
 type SyncCallback = Box<dyn Fn(&mut GameState, u64)>;
 
+/// Authoritative library-search-result lookup for the shadow rewind/replay path
+/// (mtg-mb668).
+///
+/// Given the current game state and the searching player, returns the
+/// authoritative fetched `CardId` for the library search resolving at the
+/// current game position, sourced from the **rewind-surviving, action_count-keyed
+/// reveal-history buffer** (the `Searched` `CardRevealed` the server stamps with
+/// the search choice's `action_count`). `None` means "no authoritative result
+/// available for this position" — the caller then falls back to the controller's
+/// own (non-rewind-surviving) `take_library_search_result`.
+///
+/// ## Why this exists
+///
+/// On an OPPONENT's shadow, the searcher's library is hidden, so the engine's
+/// `choose_from_library` returns nothing meaningful and the controller's
+/// `take_library_search_result` (fed by the raced `OpponentChoice`
+/// `library_search_result`) is the ONLY result source. That source is not
+/// rewind-surviving: at the FIRST resolution it can be absent (the authoritative
+/// datum hadn't arrived yet), so `None` is recorded into the `LibrarySearch`
+/// ChoicePoint and replayed forever — the fetch is lost, the searcher's library
+/// count diverges, and `compute_view_hash` desyncs (mtg-mb668 sig-1).
+///
+/// The reveal-history buffer, by contrast, is append-only and keyed by game
+/// position (effective `action_count`), so the same `Searched` reveal is
+/// re-selected at the same position on the forward pass AND on every replay —
+/// the recorded value is `Some(CardId)` deterministically. This closure is the
+/// engine's read-only window into that buffer; it is shadow-only (the AI WASM
+/// path wires it) and `None` everywhere else, so non-shadow behaviour is
+/// unchanged.
+type SearchedCardLookup = Box<dyn Fn(&GameState, PlayerId) -> Option<crate::core::CardId>>;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRE-CHOICE HOOK TYPES (Network Client Architecture)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -290,6 +321,9 @@ pub struct GameLoop<'a> {
     /// pending network state updates up to the current action count. This includes
     /// CardRevealed messages that instantiate cards before they're needed.
     sync_callback: Option<SyncCallback>,
+    /// Optional authoritative library-search-result lookup for the shadow
+    /// rewind/replay path (mtg-mb668). See [`SearchedCardLookup`].
+    searched_card_lookup: Option<SearchedCardLookup>,
     /// Optional reveal pusher for network mode (server-side)
     ///
     /// When set, this function is called after automatic actions (like draws) to
@@ -371,6 +405,7 @@ impl<'a> GameLoop<'a> {
             deck_seed: None,
             game_seed: None,
             sync_callback: None,
+            searched_card_lookup: None,
             reveal_pusher: None,
             skip_opening_hands: false,
             debug_validate_reveals: false,
@@ -568,6 +603,33 @@ impl<'a> GameLoop<'a> {
     {
         self.sync_callback = Some(Box::new(callback));
         self
+    }
+
+    /// Set the authoritative library-search-result lookup for the shadow
+    /// rewind/replay path (mtg-mb668). See [`SearchedCardLookup`].
+    ///
+    /// The closure reads the rewind-surviving reveal-history buffer to return the
+    /// authoritative fetched `CardId` for a library search resolving at the
+    /// current game position, so the FIRST forward resolution records
+    /// `Some(CardId)` (not the raced `None`) and the value re-derives identically
+    /// on every replay. Wired only on the WASM shadow AI path; absent elsewhere,
+    /// leaving non-shadow behaviour unchanged.
+    pub fn with_searched_card_lookup<F>(mut self, lookup: F) -> Self
+    where
+        F: Fn(&GameState, PlayerId) -> Option<crate::core::CardId> + 'static,
+    {
+        self.searched_card_lookup = Some(Box::new(lookup));
+        self
+    }
+
+    /// Query the authoritative library-search-result lookup, if configured, for
+    /// the given searcher at the current game position (mtg-mb668). Returns the
+    /// rewind-surviving fetched `CardId`, or `None` when no lookup is wired or it
+    /// has no authoritative result for this position.
+    pub(super) fn searched_card_lookup(&self, searcher: PlayerId) -> Option<crate::core::CardId> {
+        self.searched_card_lookup
+            .as_ref()
+            .and_then(|lookup| lookup(self.game, searcher))
     }
 
     /// Set the reveal pusher for network server mode.
@@ -1809,5 +1871,341 @@ mod tests {
             "Expected exactly one Turn 1 header in gamelog (no duplicates), found {}",
             turn_one_headers.len()
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // mtg-mb668: opponent-shadow hidden-info library-search rewind/replay
+    //
+    // Multi-rewind reproducer for sig-1. On an OPPONENT's shadow the searcher's
+    // library is hidden, so `choose_from_library`'s `valid_cards` is empty and the
+    // controller cannot resolve the fetch from its own view. The authoritative
+    // fetched CardId must come from the SERVER. The pre-fix code took it from the
+    // raced `take_library_search_result` (fed by the `OpponentChoice` payload),
+    // which is NOT rewind-surviving: at the FIRST forward resolution it can be
+    // absent, so `LibrarySearch(None)` is recorded into the ChoicePoint and then
+    // replayed forever — the fetch is lost, the searcher's library count diverges,
+    // and `compute_view_hash` desyncs. The fix sources the CardId from the
+    // rewind-surviving, action_count-keyed reveal-history buffer via
+    // `with_searched_card_lookup`, so the first resolution records `Some(CardId)`
+    // and it re-derives identically on every replay.
+    //
+    // These two tests are RED/GREEN twins around the fix:
+    //   * `..._lost_when_only_raced_source` proves the OLD failure mode persists
+    //     when NO rewind-surviving lookup is wired (the raced source is empty):
+    //     `LibrarySearch(None)` is recorded, and a subsequent replay returns None
+    //     forever. This is the negative guard — it documents exactly what was
+    //     broken.
+    //   * `..._survives_multi_rewind_via_lookup` proves the FIX: with the
+    //     rewind-surviving lookup wired, the FIRST resolution records
+    //     `Some(authoritative)`, and that recorded value is returned identically
+    //     across MULTIPLE rewind+replay cycles.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Mock opponent controller that models the lost-race: it has NO local view
+    /// of the hidden library (`choose_from_library` returns the shadow placeholder)
+    /// and its raced authoritative channel (`take_library_search_result`) is empty
+    /// — exactly the state at the first forward resolution before the bundled
+    /// `library_search_result` has been bound. Delegates all other choices to a
+    /// `ZeroController` (they are never exercised by the search-resolution path).
+    struct RacedOpponentSearchController {
+        inner: crate::game::ZeroController,
+    }
+
+    impl RacedOpponentSearchController {
+        fn new(player_id: PlayerId) -> Self {
+            Self {
+                inner: crate::game::ZeroController::new(player_id),
+            }
+        }
+    }
+
+    impl crate::game::controller::PlayerController for RacedOpponentSearchController {
+        fn player_id(&self) -> PlayerId {
+            self.inner.player_id()
+        }
+        fn choose_spell_ability_to_play(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            available: &[crate::core::SpellAbility],
+        ) -> crate::game::controller::ChoiceResult<Option<crate::core::SpellAbility>> {
+            self.inner.choose_spell_ability_to_play(view, available)
+        }
+        fn choose_targets(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            spell: CardId,
+            valid_targets: &[CardId],
+            min_targets: usize,
+            max_targets: usize,
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 4]>> {
+            self.inner
+                .choose_targets(view, spell, valid_targets, min_targets, max_targets)
+        }
+        fn choose_mana_sources_to_pay(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            cost: &crate::core::ManaCost,
+            available_sources: &[CardId],
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 8]>> {
+            self.inner.choose_mana_sources_to_pay(view, cost, available_sources)
+        }
+        fn choose_attackers(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            available_creatures: &[CardId],
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 8]>> {
+            self.inner.choose_attackers(view, available_creatures)
+        }
+        fn choose_blockers(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            available_blockers: &[CardId],
+            attackers: &[CardId],
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[(CardId, CardId); 8]>> {
+            self.inner.choose_blockers(view, available_blockers, attackers)
+        }
+        fn choose_damage_assignment_order(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            attacker: CardId,
+            blockers: &[CardId],
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 4]>> {
+            self.inner.choose_damage_assignment_order(view, attacker, blockers)
+        }
+        fn choose_cards_to_discard(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            hand: &[CardId],
+            count: usize,
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 7]>> {
+            self.inner.choose_cards_to_discard(view, hand, count)
+        }
+        fn choose_from_library(
+            &mut self,
+            _view: &crate::game::controller::GameStateView,
+            _valid_cards: &[&crate::loader::CardDefinition],
+        ) -> crate::game::controller::ChoiceResult<Option<usize>> {
+            // Shadow opponent: the library is hidden so `valid_cards` is empty.
+            // Returning the conventional shadow placeholder (`Some(0)`) routes
+            // resolution into the `valid_cards.is_empty()` arm of
+            // `choose_from_library_with_hook`, where the authoritative result is
+            // sourced. The raced `take_library_search_result` below is None.
+            crate::game::controller::ChoiceResult::Ok(Some(0))
+        }
+        fn take_library_search_result(&mut self) -> Option<CardId> {
+            None // The race: the authoritative result has not arrived/bound yet.
+        }
+        fn choose_permanents_to_sacrifice(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            valid_permanents: &[CardId],
+            count: usize,
+            desc: &str,
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 8]>> {
+            self.inner
+                .choose_permanents_to_sacrifice(view, valid_permanents, count, desc)
+        }
+        fn choose_permanents_to_not_untap(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            may_not_untap: &[CardId],
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[CardId; 8]>> {
+            self.inner.choose_permanents_to_not_untap(view, may_not_untap)
+        }
+        fn choose_modes(
+            &mut self,
+            view: &crate::game::controller::GameStateView,
+            spell_id: CardId,
+            descs: &[String],
+            mode_count: usize,
+            min_modes: usize,
+            can_repeat: bool,
+        ) -> crate::game::controller::ChoiceResult<smallvec::SmallVec<[usize; 4]>> {
+            self.inner
+                .choose_modes(view, spell_id, descs, mode_count, min_modes, can_repeat)
+        }
+        fn on_priority_passed(&mut self, _view: &crate::game::controller::GameStateView) {}
+        fn on_game_end(&mut self, _view: &crate::game::controller::GameStateView, _won: bool) {}
+        fn get_controller_type(&self) -> crate::game::snapshot::ControllerType {
+            crate::game::snapshot::ControllerType::Remote
+        }
+    }
+
+    /// Build a shadow game where P0 is the OPPONENT (its library hidden, no
+    /// instances) and P1 is the local viewer, plus a side "reveal-history buffer"
+    /// holding the authoritative fetched CardId the server would have stamped at
+    /// the search position. Returns `(game, opponent_id, viewer_id, fetched)`.
+    fn build_opponent_search_shadow() -> (GameState, PlayerId, PlayerId, CardId) {
+        let mut game = GameState::new_two_player("Opp".to_string(), "Us".to_string(), 20);
+        game.seed_rng(42);
+        let opp = game.players[0].id;
+        let us = game.players[1].id;
+
+        // Seed the OPPONENT's library with a few distinct cards on the SERVER's
+        // model, then capture the would-be fetched CardId. The authoritative
+        // search would return the first matching land.
+        let mut seeded: Vec<CardId> = Vec::new();
+        for i in 0..3 {
+            let id = game.next_card_id();
+            let mut card = crate::core::Card::new(id, format!("Tutored Land {i}").as_str(), opp);
+            card.types.push(crate::core::CardType::Land);
+            game.cards.insert(id, card);
+            game.get_player_zones_mut(opp).unwrap().library.add(id);
+            seeded.push(id);
+        }
+        let fetched = *seeded.first().expect("seeded at least one library card");
+
+        // On P1's shadow, the opponent's library cards are NOT instantiated
+        // (hidden info). Clear the instances and the library zone to model the
+        // shadow: `valid_cards` will be empty at the search.
+        for &id in &seeded {
+            game.cards.clear(id);
+        }
+        if let Some(zones) = game.get_player_zones_mut(opp) {
+            zones.library.cards.clear();
+        }
+        game.set_shadow_game(true);
+
+        (game, opp, us, fetched)
+    }
+
+    /// Resolve one opponent library search through `choose_from_library_with_hook`
+    /// and record the ChoicePoint, exactly as the `Effect::SearchLibrary` arm in
+    /// `priority.rs` does. `lookup` optionally supplies the rewind-surviving
+    /// authoritative CardId (the fix vehicle). Returns the recorded ReplayChoice.
+    fn forward_record_opponent_search(
+        game: &mut GameState,
+        opponent: PlayerId,
+        controller: &mut dyn PlayerController,
+        lookup: Option<CardId>,
+    ) -> Option<CardId> {
+        let prior_log_size = game.logger.log_count();
+        let mut gl = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
+        if let Some(card) = lookup {
+            gl = gl.with_searched_card_lookup(move |_g, _p| Some(card));
+        }
+        // valid_cards is empty: the opponent's hidden library has no instances.
+        let valid_cards: &[CardId] = &[];
+        let result = gl.choose_from_library_with_hook(controller, opponent, valid_cards);
+        let crate::game::controller::ChoiceResult::Ok(chosen) = result else {
+            panic!("unexpected choose_from_library_with_hook result: {result:?}");
+        };
+        gl.log_choice_point(
+            opponent,
+            Some(crate::game::ReplayChoice::LibrarySearch(chosen)),
+            prior_log_size,
+        );
+        chosen
+    }
+
+    /// Replay the most-recently-recorded LibrarySearch ChoicePoint through a
+    /// `ReplayController` (as the rewind/replay path does) and return what
+    /// `choose_from_library_with_hook` yields — i.e. what the fetch resolves to on
+    /// replay. No lookup is wired during replay (the recorded value alone must
+    /// carry the fetch).
+    fn replay_recorded_search(game: &mut GameState, opponent: PlayerId, recorded: Option<CardId>) -> Option<CardId> {
+        let inner = Box::new(RacedOpponentSearchController::new(opponent));
+        let mut replay = crate::game::ReplayController::new(
+            opponent,
+            inner,
+            vec![crate::game::ReplayChoice::LibrarySearch(recorded)],
+        );
+        let mut gl = GameLoop::new(game).with_verbosity(VerbosityLevel::Silent);
+        let valid_cards: &[CardId] = &[];
+        let result = gl.choose_from_library_with_hook(&mut replay, opponent, valid_cards);
+        let crate::game::controller::ChoiceResult::Ok(v) = result else {
+            panic!("unexpected replay result: {result:?}");
+        };
+        v
+    }
+
+    /// Collect every recorded `LibrarySearch` ChoicePoint value from the undo
+    /// log, in order. Uses `if let` (not a wildcard `match`) to satisfy the
+    /// `clippy::wildcard_enum_match_arm` lint CI enforces.
+    fn recorded_library_search_choices(game: &GameState) -> Vec<Option<CardId>> {
+        let mut out = Vec::new();
+        for a in game.undo_log.actions() {
+            if let crate::undo::GameAction::ChoicePoint {
+                choice: Some(crate::game::ReplayChoice::LibrarySearch(c)),
+                ..
+            } = a
+            {
+                out.push(*c);
+            }
+        }
+        out
+    }
+
+    /// NEGATIVE GUARD (mtg-mb668 sig-1): with ONLY the raced source (no
+    /// rewind-surviving lookup), the opponent fetch is recorded as `None` at the
+    /// first resolution and is therefore lost on every subsequent replay.
+    #[test]
+    fn opponent_library_search_fetch_lost_when_only_raced_source() {
+        let (mut game, opp, _us, _fetched) = build_opponent_search_shadow();
+        let mut controller = RacedOpponentSearchController::new(opp);
+
+        // Forward resolution with the raced source EMPTY and NO lookup wired.
+        let recorded = forward_record_opponent_search(&mut game, opp, &mut controller, None);
+        assert_eq!(
+            recorded, None,
+            "documents the bug: without a rewind-surviving lookup the first \
+             resolution records None (the raced library_search_result was absent)"
+        );
+
+        // The recorded ChoicePoint is LibrarySearch(None) ...
+        assert_eq!(
+            recorded_library_search_choices(&game),
+            vec![None],
+            "the baked-in recorded value is None"
+        );
+
+        // ... and EVERY replay returns None forever (fetch lost across re-entries).
+        for cycle in 0..3 {
+            let replayed = replay_recorded_search(&mut game, opp, None);
+            assert_eq!(
+                replayed, None,
+                "replay cycle {cycle}: the lost fetch stays lost — this is the \
+                 None-replayed-forever desync (mtg-mb668)"
+            );
+        }
+    }
+
+    /// FIX (mtg-mb668 sig-1): with the rewind-surviving reveal-history-buffer
+    /// lookup wired, the FIRST resolution records the authoritative `Some(CardId)`
+    /// and that value is returned identically across MULTIPLE rewind+replay
+    /// cycles.
+    #[test]
+    fn opponent_library_search_fetch_survives_multi_rewind_via_lookup() {
+        let (mut game, opp, _us, fetched) = build_opponent_search_shadow();
+        let mut controller = RacedOpponentSearchController::new(opp);
+
+        // Forward resolution: raced source still EMPTY, but the rewind-surviving
+        // lookup supplies the authoritative fetched CardId (the fix vehicle).
+        let recorded = forward_record_opponent_search(&mut game, opp, &mut controller, Some(fetched));
+        assert_eq!(
+            recorded,
+            Some(fetched),
+            "fix: the first resolution sources the fetched CardId from the \
+             rewind-surviving lookup, not the raced (empty) source"
+        );
+
+        assert_eq!(
+            recorded_library_search_choices(&game),
+            vec![Some(fetched)],
+            "the recorded ChoicePoint carries the authoritative CardId"
+        );
+
+        // Multi-rewind: replay the recorded value repeatedly. The fetch must
+        // survive every cycle (the recorded CardId alone carries it — no lookup
+        // is wired during replay).
+        for cycle in 0..5 {
+            let replayed = replay_recorded_search(&mut game, opp, recorded);
+            assert_eq!(
+                replayed,
+                Some(fetched),
+                "replay cycle {cycle}: the authoritative fetch must survive every \
+                 rewind+replay re-entry (mtg-mb668)"
+            );
+        }
     }
 }

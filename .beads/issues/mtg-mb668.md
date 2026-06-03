@@ -4,108 +4,33 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T06:57:20.934906244+00:00
+updated_at: 2026-06-03T16:39:48.913823088+00:00
 ---
 
 # Description
 
-========================================================================
-STATUS 2026-06-02 (netarch-dev6 — STEP-3 HANDOFF; undo-completeness leg DONE, this is the LAST blocker):
-The whole mtg-ba6uq 8-hole undo-completeness campaign + mtg-ey2vf consolidation are DONE+pushed on this branch @ 7d8f4ace (negative-test-proven). robots42/mb668 is now the SOLE remaining merge blocker (full validate). This issue is being relayed to a fresh dedicated agent.
-
-CURRENT-CODE CORRECTION (read before chasing the stale analysis below): the sig-1 "records a POSITIONAL INDEX -> position()=None" framing is STALE. The current Demonic-Tutor SearchLibrary path (priority.rs:3825-3849) ALREADY records the AUTHORITATIVE fetched CardId: ReplayChoice::LibrarySearch(chosen_card_opt), comment at 3845 "not a positional index" (step-1 / d9a697fe is landed). The index bug is FIXED.
-
-ACTUAL CURRENT GAP (matches the "fix does NOT hold" status below): on P2's shadow, choose_from_library_with_hook (priority.rs:3825) returns None at the FIRST resolution because the authoritative library_search_result isn't available at that moment -> chosen_card_opt=None is RECORDED, then replayed forever (replay_library_search returns the recorded None before consulting the remote). The CardId recording is correct but inert because there's no Some to record at first resolution.
-
-FIX SURFACE (mapped, 4 files):
-- ReplayController::replay_library_search (replay_controller.rs:445) — returns recorded choice on replay.
-- NetworkLocalController.last_library_search_result (network/local_controller.rs:101; set at :853 on ChoiceAccepted carrying library_search_result; taken at :967) — the shadow's authoritative result.
-- server.rs:2491 extracts library_search_result ONLY for LibrarySearchByName choices.
-- THE GAP: the authoritative library_search_result must be deterministically available at/before resolution on the shadow AND SURVIVE REWIND so the FIRST replay records Some, not None.
-
-INTENDED FIX VEHICLE (recommended): source the authoritative fetched-CardId from a REWIND-SURVIVING broadcast rather than the raced last_library_search_result — i.e. apply the action_count-keyed REVEAL-HISTORY BUFFER pattern (e27c6f97, which already SOLVED the counterspells/rogerbrand async-REVEAL nondeterminism) to the authoritative library-search MOVE delivery. The reveal-history buffer is the proven mechanism for "authoritative datum that survives rewind+replay"; extend it (or mirror it) to carry the search result/move so the shadow's first resolution reads Some deterministically. Sigs (2) mass-draw content divergence + (3) available-actions drift are the SAME hidden-info-replay class and likely the same vehicle (+ RNG-state capture for shuffles).
-
-RECOMMENDED FIRST STEP (unchanged): build a deterministic NATIVE multi-rewind reproducer of the opponent-shadow hidden-info search case — the native rewind_replay oracle only single-rewinds and passes; the hole is variable-re-entry/timing. Then fix one root at a time, re-run robots42 seed=42 x10 between fixes (cd web && node test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed 42 --undo-dump).
-
-NOTE: integration STEP-4 rebase target is 21ab411f (moved from f8a10fac). The whole 49-file netarch diff needs the MTG-rules-review block at merge (it changes gameplay/combat undo). New sibling issue mtg-t233k: an UNLOGGED regular mana_pool payment gap (pay_from_total_mana/pay_cost) found during #7 — separate from the 8-hole audit; likely benign for the network/turn-start path (mana_pool==0 at every boundary) but a potential PER-ACTION partial-undo hole; see that issue's risk read.
-========================================================================
-
---- 2026-06-02 netarch-dev3: THREAD B SCOPE REFINED (= FRESH-AGENT BRIEF). A2 (combat) is DONE+separate; this issue = the hidden-info complex. ---
-A2 was NOT this issue's root — A2 was multi-blocker combat-damage assignment (ReplayController missing overrides), fixed @9e1c32cb (grizzly 10/10). robots42's REMAINING failures are THIS hidden-info complex. Refined scope below (no-rebuild diagnosis via RUST_LOG=mtg_engine::network::server=debug on robots42 seed42 + WASM dumps):
-
-KILL the stale hypotheses:
-- "Server only emits library_search_result for LibrarySearchByName ChoiceType" is NOT the gap for Demonic Tutor: DT's search IS sent as ChoiceType library_search_by_name and the coordinator DOES compute+broadcast library_search_result (server.rs:2494 decode). Verified in server debug log.
-- The WASM fancy_tui AI path is NOT is_network_mode() (sets no pre_choice_hook), so choose_from_library_with_hook takes the `!is_network_mode()` branch — which DOES honor controller.replay_library_search() on replay. So replay delivery IS wired for library search.
-
-ACTUAL Thread B = MULTI-ROOT (≥3 intertwined modes, confirmed by sampling distinct failed runs):
- (1) fetch-lost: some runs record Choice(P0 #N = LibrarySearch(None)) on the WASM shadow for an opponent Demonic Tutor → the forward run captured None (timing/consumption on shadow, NOT the ChoiceType gate). Needs two-sided instrument at the search choice_seq: does the OpponentChoice popped on the shadow carry library_search_result=Some? If server broadcasts Some but shadow records None → consumption/timing race (analogous to A2: resolution runs ahead of OpponentChoice arrival, OR pops wrong/stale choice).
- (2) NO-search divergence: sampled a failed run with ZERO library_search_by_name choices sent (server kinds: priority/targets/sacrifice/attackers only) that STILL desynced — "Local abilities(1)!=server abilities(5)", shadow hand=[111] vs server=[67,76,88,97,101]. So a hidden-info source OTHER than search diverged the shadow hand = mass-draw/shuffle determinism OR cumulative reveal/shadow-library-ordering drift (mtg-mb668 sigs 2/3).
- (3) cumulative downstream hand divergence (turn ~29) = symptom of (1)/(2) upstream.
-
-RECOMMENDED APPROACH for the fresh agent: build a NATIVE multi-rewind reproducer of the opponent-shadow hidden-info case (deterministic, no browser race) — the native rewind_replay oracle only single-rewinds and passes; the hole is variable-re-entry/timing. Apply the A2 hidden-info-replay PRINCIPLE (record authoritative outcome in the FORWARD run, replay APPLIES it) to each materializing/hidden-info effect: library-search consumption timing, then mass-draw/shuffle determinism. Tackle ONE root at a time, re-run robots42 seed42 ×10 between fixes. This is a multi-session campaign (dev/dev2 history below).
-RESUME REFRAME 2026-06-02: the two threads are now named A and B.
-THREAD A = NORMAL-PLAY COMPLETENESS (do FIRST, likely upstream of B; merge blocker): non-undo-logged turn/combat transients lost on rewind+replay. TWO repros, same root: (A1) turn-1 PlayLand — live human game on 7b235b32, "Local abilities [PlayLand{35}] != Server []" after one land; root = reset_turn_state's reset_lands_played/mana_pool.clear/loyalty_activated_this_turn NOT undo-logged. (A2) grizzly_bears mirror seed 42 CI baseline — forks at action 866 (server casts / WASM passes), turn 16. Fix = undo-log or replay-reconstruct those transients (+combat declarations); do NOT re-add guards. Full detail in mtg-610 (top entry).
-THREAD B = HIDDEN-INFO DELIVERY (after A): library-search/Timetwister authoritative reveal never sent to opponent shadow (SRCH_BUF=0; server computes library_search_result only for LibrarySearchByName). See "THREAD 2" below + the decisive ChoiceType check. Step-1 replay-side landed (d9a697fe).
-(The "THREAD 1/THREAD 2" headers below predate this A/B rename: THREAD 1 == A2 grizzly; THREAD 2 == B.)
-========================================================================
+robots42 seed=42 intermittent WASM rewind+replay desync (netarch STEP-3).
 
 ========================================================================
-RESUME HERE (2026-06-02 netarch-dev handoff) — TWO OPEN, INDEPENDENT THREADS
-Branch netarch-undo-holes @ aa18e6f7 (REBASED onto integration, 0 behind, deployable; engine == the shipping 7b235b32, beads-only commits on top). Worktree clean, builds green (build-network + wasm-network). robots42 10x is the eventual gate but is BLOCKED on both threads below. Repro harness: `cd web && node test_network_gui_e2e.js [--deck decks/old_school/03_robots_jesseisbak.dck --seed 42] --undo-dump`; dumps land in debug/netarch-undo-dumps/gui_random_*_{wasm,server}_undo.log + _mismatch.log.
+STATUS 2026-06-03 (slot01 — sig-1 LIBRARY-SEARCH FIX LANDED; robots42 7/10 → working sigs 2/3):
 
-THREAD 1 (MERGE BLOCKER, do FIRST — deterministic, easiest): vanilla grizzly_bears mirror seed 42 baseline desync. CI "Network GUI E2E (baseline)" = `node test_network_gui_e2e.js` (no args). Undo logs identical through action [865] (combat) then FORK at [866]: server P0 casts Grizzly Bears (CastSpell card 48); WASM P0 passes (SpellAbility None) -> WASM 7 behind. NORMAL play, no hidden info. Suspects: (1) RNG not restored on rewind -> P0 RandomController re-decides; (2) opponent CastSpell OpponentChoice not replayed -> None; (3) guard-deletion (44c57bc2) step mis-sequence. Deterministic => ONE instrumented run on the action-866 P0 spell-ability resolution distinguishes them. Fix = complete the rewind+replay/restore RNG, NOT re-add a guard. Full detail: this issue's mtg-610 entry "DETERMINISTIC vanilla-deck baseline desync".
+sig-1 (opponent-shadow hidden-info library search) is FIXED via the reveal-history-buffer vehicle.
 
-THREAD 2 (hidden-info DELIVERY gap): library-search (+ very likely Timetwister mass-draw) fetch lost on opponent shadow. CONFIRMED: action_count ALIGNS (server+WASM resolve search at same ac); the authoritative Searched reveal is NEVER applied on the WASM (SRCH_BUF=0) -> fetched card never materialized -> choose_from_library=None -> recorded None -> library not decremented -> desync. ROOT (team-lead-confirmed hypothesis): server.rs:2491 computes library_search_result ONLY for ChoiceType::LibrarySearchByName (the only by-name search type); the tutor's ChangeZone->SearchLibrary at priority.rs ~3790 likely resolves under a GENERIC choice type -> server never computes library_search_result -> never sends the dummy Searched reveal (server.rs:2928) -> SRCH_BUF=0. DECISIVE 5-MIN CHECK: confirm the ChoiceType the ~3790 search uses (LibrarySearchByName vs ChooseCards/ChooseFromList). FIX = SERVER-SIDE: emit the authoritative fetched-CardId reveal whenever a library search MATERIALIZES a card the opponent's shadow must track, regardless of choice-type. Step-1 (replay-side CardId record/apply) is ALREADY LANDED (commit d9a697fe) and is the necessary other half. Timetwister = same delivery class (are opponent drawn-card reveals sent to the shadow at all?). One root: incomplete authoritative-reveal SEND stream for hidden-info events.
+ROOT CAUSE (confirmed by robots42 dumps): on P_viewer's shadow, when the OPPONENT tutors (e.g. Demonic Tutor → Copy Artifact), the server cannot reveal WHICH card (hidden info) so it sends a single DUMMY `Searched` reveal: empty name, but carrying the AUTHORITATIVE fetched card_id, owner=searcher, stamped with the search choice's action_count (server.rs ~2933). The pre-fix `choose_from_library_with_hook` recorded the fetch from the RACED `take_library_search_result` (OpponentChoice.library_search_result), which is absent at the FIRST resolution → recorded `LibrarySearch(None)` → replayed forever → opponent library count NOT decremented → compute_view_hash desync.
 
-ORACLE NOTE: rebase kept our rewind_replay_oracle_e2e.rs (integration consolidated to whole_game_rewind_replay_e2e.rs); team-lead OK'd keeping it for now; reconcile (port per-decision-point loop into whole_game, or add header comments) BEFORE the netarch merge.
+FIX (4 files):
+- game_loop/mod.rs: new `SearchedCardLookup` GameLoop hook + `with_searched_card_lookup` builder + `searched_card_lookup()` accessor.
+- game_loop/network_choice.rs: in `choose_from_library_with_hook` non-network (WASM AI) branch, when valid_cards is empty (shadow opponent search) source the fetched CardId from the rewind-surviving lookup FIRST, falling back to the raced `take_library_search_result`. A genuine fail-to-find (CR 701.19c) has no Searched reveal → lookup None → correctly records the decline.
+- wasm/network/client.rs: `searched_card_for(searcher, target_action)` reads the reveal-history buffer for the EMPTY-NAME (opponent dummy) `Searched` reveal owned by searcher with greatest effective_ac ≤ target_action. (Our own search gets MULTIPLE named candidate reveals + non-empty valid_cards, so the lookup is not consulted for it.)
+- wasm/fancy_tui.rs: `make_ai_searched_card_lookup` wired on BOTH `run_network_ai_forward` and `run_network_ai_replay` GameLoops.
+
+The shadow uses late-binding reserved CardID slots (game_init.rs): the opponent's library holds the REAL card_ids (uninstantiated), so recording `LibrarySearch(Some(real_id))` + move_card(id, Library, Hand) correctly decrements the opponent library count while identity stays hidden.
+
+NATIVE MULTI-REWIND REPRODUCER (RED-proven): game_loop/mod.rs `#[cfg(test)] mod tests`:
+- `opponent_library_search_fetch_lost_when_only_raced_source` — negative guard: records None, replay returns None forever.
+- `opponent_library_search_fetch_survives_multi_rewind_via_lookup` — with lookup: records Some(fetched), survives 5 replay cycles. PROVEN RED when the production lookup is bypassed (left=None, right=Some(3)).
+
+GATE: robots42 seed=42 ×10 = 7 PASS / 3 FAIL (was ~3-6/10). 3 remaining fails = sig-2 (mass-draw Timetwister/Wheel content divergence) + sig-3 (available-actions drift, downstream). Same hidden-info-replay class. NEXT: sig-2 mass-draw/shuffle RNG-state capture. Then mtg-t233k mana_pool gap. Then rebase onto origin/integration (advanced: rename→deepscry + beads renumber), full make validate, rules-review, re-enable robots42 in web/test_network_multideck.js.
+
+Commit: sig-1 fix on netarch-undo-holes (slot01). Build green (release+network, wasm-network), clippy clean, fmt clean, native oracle/network_e2e/reproducer all green.
 ========================================================================
-
-STATUS 2026-06-02 (netarch-dev, on rebased base 7b235b32; action_count ALIGNS, Searched reveal NOT applied on WASM):
-Instrumented SRCH_RESOLVE (priority.rs ~3843 search resolution) + SRCH_BUF (apply_state_sync RevealCard reason==Searched) on the rebased tree. Caught a failing library-search run:
-- WASM SRCH_RESOLVE: 49x all at ac=900, replaying=false, chosen=None. SERVER SRCH_RESOLVE: 1x at ac=900. => action_count ALIGNS (both resolve at 900); alignment is NOT the problem.
-- WASM SRCH_BUF: ZERO across all 49 re-entries. The Searched dummy reveal (server.rs:2928-2942, RevealReason::Searched carrying the fetched CardId) is NEVER applied via apply_state_sync on the WASM shadow. So the fetched card is never materialized -> choose_from_library returns None -> recorded None -> P0 library not decremented -> view-hash mismatch.
-So the fix is NOT "frontier-gate / read at action_count" (the data is already action_count-aligned). The fix is to make the authoritative Searched reveal ACTUALLY reach + apply on the opponent shadow at ac=900. SRCH_BUF=0 means one of: (a) the server didn't SEND the dummy Searched reveal for this search (info.library_search_result=None because this ChangeZone->SearchLibrary path produced a non-LibrarySearchByName ChoiceType, so server.rs:2491 left it None -> 2928 skipped); (b) P2 received CardRevealed(Searched) but it wasn't pushed to state_sync (client.rs:782-807 pushes it stamped — should work); (c) it's in state_sync but frontier/cursor never includes it during the replay re-apply.
-NEXT (focused session): instrument the SERVER send path (does it send the dummy Searched reveal for THIS search? what ChoiceType does the ChangeZone->SearchLibrary use on the server — LibrarySearchByName or not?) + the P2 CardRevealed receive/push. Leading hypothesis = (a): the Demonic-Tutor ChangeZone search resolves on the server WITHOUT a LibrarySearchByName network choice, so library_search_result is never computed/sent, so the opponent never learns the fetch. If so the fix is server-side: ensure the opponent gets the authoritative fetched-card reveal for ALL library searches, not only LibrarySearchByName-typed ones. step-1 (CardId record/replay, committed) remains the necessary replay-side half.
-Worktree clean @7b235b32 (rebased onto integration, deployable). Instrumentation reverted.
-
-STATUS 2026-06-02 (netarch-dev, deeper localization via all-site WASM instrumentation):
-The real Demonic-Tutor search path is NOT priority.rs:1758 — it is the SearchLibrary block at priority.rs ~3748-3815 (placeholder player -> spell_owner; calls choose_from_library_with_hook then log_choice_point). Instrumented ALL 6 search paths (5 priority sites + actions/mod.rs:4600 non-interactive) + WasmRemoteController.choose_from_library + a forced WASM/server LIBSRCH trace dump.
-KEY DATA (robots42 seed=42, a failing run): server fetched CardId 0 — `Choice(LibrarySearch(Some(0))) -> MoveCard(0 Library->Hand) -> Shuffle 37`. WASM recorded `LibrarySearch(None) -> Shuffle 38` (fetch lost). PASSING runs emit ZERO library-search markers on the WASM; only the FAILING run ran the search resolution (30x LIBSRCH_SITE_PRIO chosen=None during rewind+replay re-entries + 1x LIBSRCH_REMOTE last_lib_result=Some(0)). So the WasmRemoteController DID receive the authoritative result Some(CardId 0) at least once, but the RECORDED ReplayChoice is None.
-ROOT (refined): on P2's shadow the opponent's authoritative library_search_result is recorded as None on the FIRST resolution of P0's embedded search — an async choice-delivery / choice-ordering race (the OpponentChoice carrying library_search_result isn't reliably popped/available at the moment site ~3790 resolves the search). Once None is recorded it is replayed forever (replay_library_search returns the recorded None before consulting the remote). Step-1 CardId recording (d9a697fe) is correct + necessary but inert here because there is no Some to record at first resolution.
-NEXT: make the opponent's embedded-search result deterministically available before/at resolution (frontier-gate it like the reveal-history buffer), OR source the recorded value from the authoritative server broadcast that survives rewind. Then the same authoritative-outcome-replay extends to (2) Timetwister mass-draw. Debug instrumentation reverted; worktree clean @7e20bf8b.
-
-STATUS 2026-06-02 (agent-teams netarch-dev VERIFICATION — fix does NOT hold; precise root cause found):
-
-VERIFY RESULT on clean 19c10c3a (pending_cast deleted): robots42 seed=42 WASM gate = 7 PASS / 3 FAIL of 10 (~30% desync), NOT green. The prior "1 green pass" was luck. Three distinct desync signatures, all = WASM shadow (P2 view) diverging from server under rewind+replay of HIDDEN-info events:
- (1) Demonic Tutor library search: server undo-log Choice(LibrarySearch(Some(idx)))->RevealCard(Island)->MoveCard(Lib->Hand)->Shuffle(38); WASM replay Choice(LibrarySearch(None))->Shuffle(39) — fetched NOTHING.
- (2) Mass-draw (Timetwister/Wheel) CONTENT divergence at EQUAL counts (Hands[7,7] Libs[50,50]) — replay shuffle/draw not byte-reproducing server's forward result.
- (3) Available-actions divergence ("Local abilities 3 != server 6") — shadow hand content already diverged.
-
-CODE-CONFIRMED ROOT CAUSE for (1): Demonic Tutor = SP$ ChangeZone | Origin$ Library -> effect_converter.rs:456 makes Effect::SearchLibrary { player: PlayerId::new(0) /*placeholder*/ }. Placeholder routes to the INTERACTIVE path priority.rs:1720/1758 (NOT the non-interactive actions/mod.rs:4600). At priority.rs:1776 the ChoicePoint records a POSITIONAL INDEX: chosen_index = chosen_card_opt.and_then(|id| valid_cards.iter().position(|&c| c==id)). On the OPPONENT's shadow (P2 viewing P0's search) P0's library cards are hidden/uninstantiated, so valid_cards is empty and the fetched card isn't in it -> position() = None -> records ReplayChoice::LibrarySearch(None). In FORWARD play the correct count change still lands because it comes from the server's broadcast MoveCard (external sync), NOT the shadow's own search logic. Under REWIND+REPLAY that broadcast is undone and only the recorded None is replayed -> the fetch is lost -> P0 library 39 vs server 38 -> P2 view-hash mismatch.
-
-state_sync (client.rs ActionLog<StateSyncEntry>) only carries RevealCard + LibraryReorder; a hidden opponent library-search MOVE is not represented there, and the card identity is never revealed to P2, so neither the index nor a CardId is reconstructable on P2's shadow from recorded data alone.
-
-FIX DIRECTION (NOT yet implemented — awaiting scope decision): the rewind+replay of an opponent's hidden library search must reproduce the count-change move that forward play got from the server broadcast. Either (A) record/replay the authoritative move via state_sync so it survives rewind (preferred — matches non-destructive state-sync design), or (B) instantiate opponent library as opaque placeholders so the interactive search picks a stable placeholder index. Do NOT re-add a bypass. Signatures (2)/(3) are the same class (replay of hidden draws/shuffles) and likely need the same state-sync-driven replay, or RNG-state capture in the undo log for shuffles.
-
-===== PRIOR CHECKPOINT BELOW =====
-
-STATUS 2026-06-02 (SESSION-RESTART CHECKPOINT — fix implemented, verification incomplete):
-
-FIX IMPLEMENTED per user directive on branch `netarch-undo-holes` @ commit **87a220e3** (PUSHED to origin). `pending_cast` was DELETED ENTIRELY — the field + all set-sites + the WASM-resume bypass block at priority.rs ~625-792 (−179 lines); `pending_cast` references remaining = 0. On replay the interrupted cast is now re-driven by the NORMAL control flow (choose_spell_ability_to_play → mode selection → target selection), each step reading its recorded ChoicePoint from the ActionLog, reaching the same mid-cast point deterministically — NO jump-forward bypass, NO double-resolve. (User's words: "there should be no hacky jump forward in the control flow on replay... it should reexecute all the same logic, backed by ActionLog reads, to reach the same point deterministically.")
-
-VERIFICATION INCOMPLETE — got 1 GREEN robots42 seed=42 WASM-gate pass ONLY (the agent was stopped for a session restart before finishing).
-
-RESUME PLAN (fresh agent-teams session), starting from 87a220e3 (worktree clean):
-1. Loop robots42 seed=42 ~10× in the WASM gate to confirm the intermittent ~1/6 desync is GONE — one pass is NOT proof. (make build-network && make wasm-network; cd web && node test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed 42)
-2. Verify a HUMAN mid-cast resume still works — the deletion removed the path the human mid-cast flow SHARED, so confirm the unified rewind+replay re-drives a human multi-step cast (modes+targets) correctly over the network.
-3. If 10× shows any residual desync: the normal replay path has a remaining un-logged-choice hole at the mid-cast point — FIX THAT (log/replay-reconstruct the choice), do NOT re-add a bypass.
-4. Then mtg-610 step 4 (unify run_network_mode_human_v2 + run_network_mode_ai_v2 into ONE controller-agnostic entrypoint), step 5 (human-path test closing mtg-4z4r9 — native WasmNetworkLocalController turn-2 own-drawn-PlayLand desync), step 6 (full `make validate` + MTG rules-review). Then coordinator merges to integration + redeploys.
-
-DEPLOY note: a deploy of 6129694a to deepscry.net FAILED on the pre-deploy WASM-boot smoke = CPU-starvation flake under concurrent builds (NOT a regression — the netarch WASM decks boot green in-agent). Redeploy post-restart when CPU is free, or deploy once the verified fix lands.
-
-===== ORIGINAL ROOT-CAUSE (retained) =====
-NETARCH mtg-610 follow-up. Exposed once the 9 TurnStructure re-entry guards were deleted (commit 44c57bc2) and the WASM AI path unified onto undo-log rewind+replay.
-
-SYMPTOM: old_school/03_robots_jesseisbak seed=42 mirror in the WASM network gate FAILS intermittently (~1/6 standalone runs). REAL cross-machine server desync (compute_view_hash), NOT a browser flake, NOT the rewind-verifier hash. Turn 28 Main1: Server Hands[7,7] Libs[45,49]; Client(WASM) Hands[7,12] Libs[45,44] => WASM drew 5 EXTRA cards for P2 at a MATCHING action_count (content drift at equal count). Browser log: '[WASM RESUME] Failed to cast spell 47: Failed to pay mana cost: Insufficient total mana to pay 1U'.
-
-ROOT CAUSE: the pending_cast WASM-resumption path (priority.rs:625-792, built for the OLD no-rewind re-entry) resumed an interrupted cast bypassing choose_spell_ability_to_play. Under rewind+replay a multi-draw spell (robots42: Ancestral/Wheel/Braingeyser/Timetwister/Mind Twist) that blocked mid-resolution was re-driven BOTH by replay of its recorded ChoicePoint AND by the pending_cast resume -> double draw (+5). The 'Failed to pay mana' was the second attempt after mana already spent. FIX = delete pending_cast (done @87a220e3, see STATUS above).
