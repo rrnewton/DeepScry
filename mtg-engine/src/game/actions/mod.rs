@@ -8355,6 +8355,24 @@ impl GameState {
             .log(crate::undo::GameAction::SetDamage { card_id, prev }, prior_log_size);
     }
 
+    /// Set a card's `x_paid` (the chosen X for an X-spell/ability, CR 107.3),
+    /// snapshotting the prior value for undo FIRST (mtg-mb668 sig-2g). `x_paid`
+    /// was overwritten in the priority loop with no covering GameAction, so a
+    /// mid-turn rewind+replay left the chosen X stale on the card (robots42
+    /// within-side "cards[N].x_paid changed across rewinds" REWIND/REPLAY FATAL).
+    /// No-op if the card is missing.
+    pub(crate) fn set_x_paid_logged(&mut self, card_id: CardId, x_value: u8) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.x_paid) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log
+            .log(crate::undo::GameAction::SetXPaid { card_id, prev }, prior_log_size);
+        if let Ok(card) = self.cards.get_mut(card_id) {
+            card.x_paid = x_value;
+        }
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {

@@ -575,6 +575,17 @@ pub enum GameAction {
     /// restores the captured value. `get_mut` tolerates a missing card (it may
     /// have left the battlefield), matching the other card-field undos.
     SetDamage { card_id: CardId, prev: i32 },
+
+    /// Snapshot of a card's `x_paid` (the X value chosen when an X-spell/ability
+    /// was cast/activated, CR 107.3) captured BEFORE it is overwritten in the
+    /// priority loop (mtg-mb668 sig-2g). `x_paid` is set with no covering
+    /// GameAction, so a mid-turn rewind+replay (network/WASM blocking; per-action
+    /// MCTS/human undo) left the chosen X STALE on the card — the robots42
+    /// within-side "cards[N].x_paid changed across rewinds" REWIND/REPLAY FATAL
+    /// (the residual after sig-2f, seeds 1 & 7). `undo()` restores the captured
+    /// value. `get_mut` tolerates a missing card, matching the other card-field
+    /// undos.
+    SetXPaid { card_id: CardId, prev: u8 },
 }
 
 impl fmt::Display for GameAction {
@@ -872,6 +883,9 @@ impl fmt::Display for GameAction {
             }
             GameAction::SetDamage { card_id, prev } => {
                 write!(f, "SetDamage(card={}, prev={})", card_id, prev)
+            }
+            GameAction::SetXPaid { card_id, prev } => {
+                write!(f, "SetXPaid(card={}, prev={})", card_id, prev)
             }
             GameAction::SetManaPool { player_id, prev } => {
                 write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
@@ -1628,6 +1642,13 @@ impl GameAction {
                 // matching the other card-field undos.
                 if let Ok(card) = game.cards.get_mut(*card_id) {
                     card.damage = *prev;
+                }
+            }
+            GameAction::SetXPaid { card_id, prev } => {
+                // Restore the captured X-paid value (mtg-mb668 sig-2g). get_mut
+                // tolerates a missing card, matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.x_paid = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {

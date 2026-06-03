@@ -1109,10 +1109,9 @@ impl<'a> GameLoop<'a> {
                                         // Clamp to max
                                         let x_value = x_value.min(max_x);
 
-                                        // Store X paid on the card
-                                        if let Ok(card) = self.game.cards.get_mut(card_id) {
-                                            card.x_paid = x_value;
-                                        }
+                                        // Store X paid on the card, snapshotting the
+                                        // prior value for undo first (mtg-mb668 sig-2g).
+                                        self.game.set_x_paid_logged(card_id, x_value);
 
                                         // Log X value choice
                                         let replay_choice = crate::game::ReplayChoice::XValue(x_value);

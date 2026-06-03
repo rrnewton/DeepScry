@@ -395,6 +395,54 @@ mod tests {
         );
     }
 
+    /// mtg-mb668 sig-2g: setting a card's `x_paid` (the chosen X for an X-spell,
+    /// CR 107.3) must be a faithful undo-log inverse. The priority loop previously
+    /// overwrote `card.x_paid` directly with NO `GameAction`, so a rewind+replay
+    /// (network shadow / MCTS / undo) left the chosen X stale — the WASM replay
+    /// verifier caught it as "turn-start state hash changed across rewinds" with a
+    /// `cards[N].x_paid` field diff (the within-side residual after sig-2f, robots
+    /// seeds 1 & 7). RED before the fix: the write logs nothing, so the undo log
+    /// doesn't grow and the prior X is never restored.
+    #[test]
+    fn set_x_paid_round_trips_on_undo_mb668_sig2g() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // An X-spell permanent on the battlefield that already paid X=2.
+        let card_id = game.next_entity_id();
+        let mut card = Card::new(card_id, "Hydra".to_string(), p1_id);
+        card.add_type(CardType::Creature);
+        card.x_paid = 2;
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+
+        let baseline = game.undo_log.len();
+
+        // Overwrite x_paid (e.g. a fresh cast chooses X=5) via the logged setter.
+        game.set_x_paid_logged(card_id, 5);
+        assert_eq!(
+            game.cards.get(card_id).unwrap().x_paid,
+            5,
+            "setter must store the new X"
+        );
+
+        // The write MUST be logged so a rewind restores it (mb668 sig-2g).
+        assert!(
+            game.undo_log.len() > baseline,
+            "the x_paid write must be recorded in the undo log"
+        );
+
+        // Partial rewind of just the write must restore the prior X.
+        while game.undo_log.len() > baseline {
+            game.undo().expect("undo ok");
+        }
+        assert_eq!(
+            game.cards.get(card_id).unwrap().x_paid,
+            2,
+            "undo of the x_paid write must restore the prior X (mb668 sig-2g)"
+        );
+    }
+
     #[test]
     fn test_deal_damage_to_player() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
