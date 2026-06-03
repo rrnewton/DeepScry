@@ -197,7 +197,11 @@ async function runTest() {
         await step(results, 'view_model_well_formed', async () => {
             const vm = await readViewModel(page);
             if (!vm || vm.error) throw new Error(`view model unreadable: ${JSON.stringify(vm)}`);
-            if (vm.schema_version !== 1) throw new Error(`schema_version=${vm.schema_version}, expected 1`);
+            // Schema v2 (mtg-436): added the optional top-level `error_message`.
+            if (vm.schema_version !== 2) throw new Error(`schema_version=${vm.schema_version}, expected 2`);
+            // The error_message field must be PRESENT (null when no error) so the
+            // page can surface rewind/replay verifier failures (mtg-436 parity).
+            if (!('error_message' in vm)) throw new Error('view model missing error_message field');
             if (!Array.isArray(vm.players) || vm.players.length !== 2) {
                 throw new Error(`expected 2 players, got ${vm.players?.length}`);
             }

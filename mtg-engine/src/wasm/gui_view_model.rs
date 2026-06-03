@@ -57,6 +57,14 @@ pub struct GuiViewModel {
     pub our_player_idx: usize,
     /// Whether the game is over.
     pub game_over: bool,
+    /// Fatal engine/session error to surface to the player, if any. This is the
+    /// rewind/replay verifier + monotonicity-invariant failure message set on
+    /// the shared `WasmFancyTuiState` (see `fancy_tui.rs`). The terminal renderer
+    /// (tui_game.html) draws it directly; native_game.html had no way to see it
+    /// because the view model never carried it — so the same fatal assertion that
+    /// halts tui_game silently passed in native_game (mtg-436). Exposing it here
+    /// gives both pages identical surfacing. `None` when there is no error.
+    pub error_message: Option<String>,
     /// Per-player views, in seat order.
     pub players: Vec<PlayerView>,
     /// Cards on the stack (top of vec is top of stack).
@@ -622,12 +630,22 @@ pub struct ViewModelInputs<'a> {
     pub choice_context: &'static str,
     /// `true` if the game has ended.
     pub game_over: bool,
+    /// Fatal engine/session error to surface (rewind/replay verifier +
+    /// monotonicity-invariant failure from the shared session). `None` when
+    /// there is no error. Threaded through so native_game.html surfaces the
+    /// SAME assertion failures the terminal renderer shows in tui_game.html
+    /// (mtg-436).
+    pub error_message: Option<&'a str>,
     /// How many of the most recent log entries to include (oldest preserved).
     pub log_tail_size: usize,
 }
 
 /// Schema version. Bump on breaking changes to the JSON shape.
-pub const VIEW_MODEL_SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (mtg-436): added the top-level `error_message` field so native_game.html
+/// can surface the rewind/replay verifier failures the terminal renderer shows.
+/// Additive + optional, so older JS that ignores it keeps working.
+pub const VIEW_MODEL_SCHEMA_VERSION: u32 = 2;
 
 /// Build the GUI view model from a game state and UI inputs.
 ///
@@ -808,6 +826,7 @@ pub fn build_view_model(game: &GameState, inputs: ViewModelInputs<'_>) -> GuiVie
         active_player_idx: active_idx,
         our_player_idx: our_idx,
         game_over: inputs.game_over,
+        error_message: inputs.error_message.map(|s| s.to_string()),
         players,
         stack,
         status_text,
@@ -911,8 +930,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_is_one() {
-        assert_eq!(VIEW_MODEL_SCHEMA_VERSION, 1);
+    fn schema_version_is_current() {
+        // v2 (mtg-436): added the optional `error_message` field.
+        assert_eq!(VIEW_MODEL_SCHEMA_VERSION, 2);
     }
 
     /// End-to-end: build the view model from a minimal real `GameState` and
@@ -935,6 +955,7 @@ mod tests {
             selected_choice_idx: 0,
             choice_context: "None",
             game_over: false,
+            error_message: None,
             log_tail_size: 100,
         };
 
@@ -969,9 +990,61 @@ mod tests {
 
         // JSON serialization must succeed and produce a non-empty object.
         let json = serde_json::to_string(&model).expect("serialize view model");
-        assert!(json.contains("\"schema_version\":1"));
+        assert!(json.contains(&format!("\"schema_version\":{VIEW_MODEL_SCHEMA_VERSION}")));
         assert!(json.contains("\"players\""));
         assert!(json.contains("\"battlefield_sections\""));
+        // No error by default; the field is present (null) so the JS can read it.
+        assert!(model.error_message.is_none());
+        assert!(json.contains("\"error_message\":null"));
+    }
+
+    /// mtg-436: the rewind/replay verifier + monotonicity-invariant failure
+    /// message set on the shared session MUST be threaded through the view model
+    /// so native_game.html surfaces the SAME fatal assertion the terminal
+    /// renderer shows in tui_game.html. Before this fix the view model never
+    /// carried `error_message`, so a fatal rewind/replay divergence that halts
+    /// tui_game passed silently in native_game.
+    #[test]
+    fn view_model_surfaces_session_error_message() {
+        let game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let perspective = game.players[0].id;
+
+        let err = "REWIND/REPLAY DIVERGENCE: action count went backwards (42 -> 40)";
+        let inputs = ViewModelInputs {
+            perspective_player_id: perspective,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: None,
+            choices: &[],
+            selected_choice_idx: 0,
+            choice_context: "None",
+            game_over: true,
+            error_message: Some(err),
+            log_tail_size: 100,
+        };
+
+        let model = build_view_model(&game, inputs);
+        assert_eq!(model.error_message.as_deref(), Some(err));
+
+        // It must round-trip through JSON so the JS view-model reader sees it.
+        let json = build_view_model_json(
+            &game,
+            ViewModelInputs {
+                perspective_player_id: perspective,
+                selected_card_id: None,
+                valid_choices: &[],
+                current_prompt: None,
+                choices: &[],
+                selected_choice_idx: 0,
+                choice_context: "None",
+                game_over: true,
+                error_message: Some(err),
+                log_tail_size: 100,
+            },
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse view model json");
+        assert_eq!(parsed["error_message"], serde_json::Value::String(err.to_string()));
+        assert_eq!(parsed["game_over"], serde_json::Value::Bool(true));
     }
 
     /// Verify that the JSON output uses raw `u32` for card/player IDs (so
@@ -993,6 +1066,7 @@ mod tests {
             selected_choice_idx: 0,
             choice_context: "None",
             game_over: false,
+            error_message: None,
             log_tail_size: 0,
         };
         let json = build_view_model_json(&game, inputs);
@@ -1042,6 +1116,7 @@ mod tests {
             selected_choice_idx: 0,
             choice_context: "None",
             game_over: false,
+            error_message: None,
             log_tail_size: 50,
         };
         let json_p1 = build_view_model_json(&game, inputs_p1);
@@ -1067,6 +1142,7 @@ mod tests {
             selected_choice_idx: 0,
             choice_context: "None",
             game_over: false,
+            error_message: None,
             log_tail_size: 50,
         };
         let json_p2 = build_view_model_json(&game, inputs_p2);

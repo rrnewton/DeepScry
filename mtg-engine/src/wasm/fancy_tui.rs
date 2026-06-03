@@ -818,6 +818,10 @@ pub fn tui_get_gui_view_model_json() -> String {
             selected_choice_idx: s.selected_choice_idx,
             choice_context,
             game_over: s.game_over,
+            // Surface the shared session's fatal error (rewind/replay verifier +
+            // monotonicity-invariant failure) so native_game.html shows the SAME
+            // assertion that halts tui_game's terminal renderer (mtg-436).
+            error_message: s.error_message.as_deref(),
             log_tail_size: 200,
         };
 
