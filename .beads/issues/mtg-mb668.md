@@ -374,3 +374,48 @@ the residual, fix via sig-2c/2d + the shuffle-RNG capture (sig-2 already landed)
 re-check seed-2 action_count gap (89->0?) + browser flip. This deck's class-A seeds
 (robots) are very likely ALL the Timetwister/Wheel mass-shuffle family.
 ========================================================================
+
+========================================================================
+>>> FRESH SLOT03 — START HERE (handoff, 2026-06-03) <<<
+========================================================================
+BASE: branch netarch-lockstep-classa off integration (rebase onto origin/integration
+first). 15 commits banked, tree clean, lib 1024/1024 green.
+
+DONE: R1 fixed (commit 2528a1bb, reserved-card count in count_cards_matching_filter,
+sig-2c/2d template, shadow-gated). R2 RULED OUT (hidden-info design class, filed
+mtg-zfq7x — do NOT count-parity-hack it). Browser seq/ac/hash desync-detection
+misalignment filed mtg-yexvc (resolves post-fix; do not chase now). Enumeration +
+verification + shadow-undo-dump tooling all in tree, network_debug-gated.
+
+SEED-2 ROOT CAUSE (pinned via undo-log-content diff) = TIMETWISTER (card 55) mass
+hand+graveyard->library shuffle + draw 7 each. The shadow desyncs DURING resolution
+(its undo-log ends at action 860 = SpellsCast; server goes to 949). sig-2 (shuffle-RNG
+capture) + sig-2c (opponent-reserved-HAND->library) already landed; RESIDUAL is the
+GRAVEYARD->library reserved move and/or the shuffle-RNG/draw lockstep for this scenario.
+
+FIRST STEP (native, RED-first): NEW own test file (e.g. actions/tests/netarch_timetwister.rs
+or extend netarch_reserved_zone.rs) — build a shadow with reserved OPPONENT hand+graveyard
+AND its own hand+graveyard, execute Effect::ChangeZoneAll { restriction: any(), origins:
+[Hand, Graveyard], destination: Library, shuffle: true } then draw 7; assert the shadow's
+post-move library COUNTS (golden: P0 58 / P1 59 in seed-2) and the shuffle order + drawn
+cards byte-match the golden (server). RED-prove the residual, fix (sig-2c/2d symmetric
+reserved-id for the graveyard origin + ensure ShuffleLibrary RNG capture covers it), lib
+green.
+
+METRIC: shadow-vs-server action_count GAP (trustworthy counter). seed 2 = 89; drive ->0.
+Repro: node web/test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck
+--seed 2 --undo-dump ; dumps to debug/netarch-undo-dumps/*_{wasm,server}_undo.log +
+*_card_detail.log. WASM_FULL_UNDO_DUMP (shadow) now fires unconditionally (network_debug).
+
+ACCEPTANCE BAR (browser, must flip GREEN — not the native oracle): robots seeds
+1,2,5,6,7,9,11,18,19,20 + fireball_multitarget s1 + ur_burn s42 + white_weenie_classic
+1/7/42. After each fix: re-check seed ac-gap + re-run browser seed. gap->0 + green = done;
+gap->0 + still-red = mtg-yexvc misalignment is the residual (escalate).
+
+OWNED FILE SURFACE (region constraint RELAXED by coordinator — free rein): game/actions/mod.rs
+(ChangeZoneAll/reveal/reserved-id/draw paths), game/state.rs (move_card / reserved-id /
+maybe_conceal_in_library sig-2d template @1106/1148/1210), game/game_loop/network_choice.rs,
+wasm/network/* + wasm/fancy_tui.rs. KEEP undo.rs GameAction enum APPEND-ONLY. Own NEW test
+files. mtg-rules-review N/A (determinism). FULL make validate + cite
+validate_logs/validate_<sha>.log before any merge; rebase onto origin/integration, ff-only.
+========================================================================
