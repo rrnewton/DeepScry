@@ -10,10 +10,16 @@ This test verifies that:
 
 import subprocess
 import sys
+import os
 import json
 import argparse
 from pathlib import Path
 from typing import Tuple, Optional
+
+# Binary to exercise. Defaults to the debug build for local dev convenience, but
+# honors MTG_BIN so CI / the wired tests/snapshot_stress_e2e.sh can point at the
+# prebuilt RELEASE binary (CI never builds the debug binary). See mtg-89.
+MTG_BIN = os.environ.get("MTG_BIN", "./target/debug/mtg")
 
 # ANSI color codes
 RED = '\033[0;31m'
@@ -30,7 +36,7 @@ def run_to_snapshot(deck: str, p1_type: str, p2_type: str, seed: int,
                     choice_count: int, snapshot_path: Path) -> bool:
     """Run game until choice_count and save snapshot."""
     cmd = [
-        './target/debug/mtg', 'tui', deck,
+        MTG_BIN, 'tui', deck,
         '--p1', p1_type,
         '--p2', p2_type,
         '--seed', str(seed),
@@ -54,7 +60,7 @@ def resume_and_snapshot_immediately(snapshot_in: Path, snapshot_out: Path,
                                      p1_type: str, p2_type: str) -> bool:
     """Resume from snapshot and immediately take another snapshot at same point (0 new choices)."""
     cmd = [
-        './target/debug/mtg', 'tui',
+        MTG_BIN, 'tui',
         '--start-from', str(snapshot_in),
         '--p1', p1_type,
         '--p2', p2_type,
@@ -240,13 +246,20 @@ Examples:
 
     args = parser.parse_args()
 
-    # Ensure binary is built
-    print("Building project...")
-    result = subprocess.run(['cargo', 'build'], capture_output=True, text=True)
-    if result.returncode != 0:
-        print_color(RED, f"Build failed: {result.stderr}")
-        return 1
-    print_color(GREEN, "✓ Build successful\n")
+    # Ensure binary is available. If MTG_BIN was provided and points at an
+    # existing binary (CI / the wired tests/snapshot_stress_e2e.sh prebuild the
+    # RELEASE binary), trust it and skip the build — CI never builds debug, and
+    # a redundant `cargo build` here would be slow or fail. Otherwise build the
+    # default (debug) for local dev convenience.
+    if os.environ.get("MTG_BIN") and Path(MTG_BIN).exists():
+        print_color(GREEN, f"✓ Using prebuilt binary: {MTG_BIN}\n")
+    else:
+        print("Building project...")
+        result = subprocess.run(['cargo', 'build'], capture_output=True, text=True)
+        if result.returncode != 0:
+            print_color(RED, f"Build failed: {result.stderr}")
+            return 1
+        print_color(GREEN, "✓ Build successful\n")
 
     # Create temp directory
     temp_dir = Path(args.temp_dir)
