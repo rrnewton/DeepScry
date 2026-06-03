@@ -269,10 +269,24 @@ impl GameState {
                     }
                 }
                 Effect::TapPermanent { target } if target.is_placeholder() => {
-                    // Tap can target untapped permanents
+                    // Tap can target untapped permanents, honoring the spell's
+                    // ValidTgts$ type restriction. Winter Blast ("Tap X target
+                    // creatures", ValidTgts$ Creature) must only be able to tap
+                    // creatures — before this the branch checked only !tapped +
+                    // is_legal_target, so it could tap a land. A spell that taps
+                    // "any permanent" sets neither flag and stays permissive.
                     for &card_id in &self.battlefield.cards {
                         if let Ok(target_card) = self.cards.get(card_id) {
-                            if !target_card.tapped && is_legal_target(target_card, spell_owner, &spell_colors) {
+                            if target_card.tapped {
+                                continue;
+                            }
+                            if targets_creature && !target_card.is_creature() {
+                                continue;
+                            }
+                            if targets_land && !target_card.is_land() {
+                                continue;
+                            }
+                            if is_legal_target(target_card, spell_owner, &spell_colors) {
                                 valid_targets.push(card_id);
                             }
                         }

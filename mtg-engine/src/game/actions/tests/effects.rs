@@ -1355,6 +1355,54 @@ mod tests {
         );
     }
 
+    /// Regression (1994 World Championship compat — Winter Blast, deck-01 SB):
+    /// `SP$ Tap | ValidTgts$ Creature` ("Tap X target creatures") must only be
+    /// able to target CREATURES. Before the fix the TapPermanent spell-target
+    /// branch checked only `!tapped` + is_legal_target, so a land was a legal
+    /// target (Winter Blast could "tap" a Forest). With the fix the spell's
+    /// `spell_targets_creature` flag filters the target list to creatures.
+    #[test]
+    fn test_winter_blast_taps_only_creatures() {
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        let p2_id = game.players[1].id;
+
+        let winter_blast_id = match load_test_card(&mut game, "Winter Blast", p1_id) {
+            Ok(id) => id,
+            Err(e) => panic!("Failed to load Winter Blast: {e}"),
+        };
+
+        // A creature controlled by P2 — must be a valid target.
+        let creature_id = game.next_entity_id();
+        let mut creature = Card::new(creature_id, "Grizzly Bears".to_string(), p2_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        creature.controller = p2_id;
+        game.cards.insert(creature_id, creature);
+        game.battlefield.add(creature_id);
+
+        // A land controlled by P2 — must NOT be a valid target.
+        let land_id = game.next_entity_id();
+        let mut land = Card::new(land_id, "Forest".to_string(), p2_id);
+        land.add_type(CardType::Land);
+        land.controller = p2_id;
+        game.cards.insert(land_id, land);
+        game.battlefield.add(land_id);
+
+        let valid_targets = game.get_valid_targets_for_spell(winter_blast_id).unwrap();
+        assert!(
+            valid_targets.contains(&creature_id),
+            "Winter Blast must be able to target a creature. Valid targets: {:?}",
+            valid_targets
+        );
+        assert!(
+            !valid_targets.contains(&land_id),
+            "Winter Blast (Tap target CREATURES) must NOT be able to target a land. Valid targets: {:?}",
+            valid_targets
+        );
+    }
+
     /// Test Divine Offering: destroy target artifact, you gain life equal to
     /// its mana value (the dynamic-amount GainLife construct, `TargetManaValue`).
     #[test]

@@ -1,0 +1,73 @@
+---
+title: 'Card Compatibility: Winter Blast'
+status: open
+priority: 3
+issue_type: task
+depends_on:
+  mtg-4zlpr: parent-child
+created_at: 2026-06-03T04:53:45.992452495+00:00
+updated_at: 2026-06-03T04:53:45.992452495+00:00
+---
+
+# Description
+
+Test Winter Blast (LEA, X G sorcery) in MTG Forge-rs.
+
+Card: cardsfolder/w/winter_blast.txt
+  SP$ Tap | ValidTgts$ Creature | TargetMin$ X | TargetMax$ X (Tap X target
+  creatures; deals 2 to each of those with flying).
+Set: LEA. Deck: 01_dolan_wug_stasis sideboard. Umbrella mtg-4zlpr -> mtg-684; backlog mtg-dbyj8.
+
+Findings (2026-06-02_#2685(c391b010), compat-1994):
+
+1. [BROKEN->FIXED] Winter Blast could target a LAND despite ValidTgts$ Creature.
+   Root cause: the Effect::TapPermanent arm of get_valid_targets_for_spell
+   (targeting.rs) checked only `!tapped && is_legal_target` — it never applied
+   the spell's type restriction, so any untapped permanent (incl. lands) was a
+   legal target. FIX: honor the spell_targets_creature / spell_targets_land cache
+   flags in that branch (skip non-creatures when creature-restricted, skip
+   non-lands when land-restricted; a tap-any spell sets neither flag and stays
+   permissive). General fix for every creature/land-restricted Tap spell.
+2. [x] The DamageAll subability (2 damage to each tapped creature WITH flying)
+   uses ValidCards$ Card.IsRemembered+withFlying — not exercised here (no flier
+   in the repro); deferred. The targeting-type fix is the headline bug.
+
+Reproducer (game log):
+
+```sh
+cat > /tmp/wb.pzl <<'P'
+[metadata]
+Name:Winter Blast taps only creatures
+Goal:Win
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Winter Blast
+p0battlefield=Forest;Forest;Forest;Forest
+p0library=Forest;Forest;Forest
+p1life=20
+p1battlefield=Grizzly Bears;Forest;Mountain;Serra Angel
+p1library=Forest;Forest;Forest
+P
+./target/release/mtg tui --start-state /tmp/wb.pzl --p1=fixed --p1-fixed-inputs="cast winter blast;1;*;pass;pass" --p2=fixed --p2-fixed-inputs="pass;pass;pass" --seed 42 --verbosity 3
+```
+
+Expected log evidence (targets a creature, not a land):
+
+```
+Player 1 casts Winter Blast (3)
+  → targeting Grizzly Bears (11)        <- a CREATURE (pre-fix: "→ targeting Forest")
+Winter Blast (3) taps Grizzly Bears (11)
+```
+
+Unit test: test_winter_blast_taps_only_creatures in
+  mtg-engine/src/game/actions/tests/effects.rs — asserts get_valid_targets_for_spell
+  includes the creature and EXCLUDES a land. Wired into make validate.
+
+MTG Rules Review: PASS. CR 115.4/601.2c — a spell's targets must satisfy its
+ValidTgts; "tap X target creatures" may only choose creatures.
+
+CARD STATUS: PARTIAL — creature-only targeting FIXED; the flying-damage subability
+(2 dmg to tapped fliers) not separately exercised (deferred, low-risk).
