@@ -1,0 +1,27 @@
+[metadata]
+Name:Flashfires/Tsunami land-subtype filter
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep. Flashfires
+# ("Destroy all Plains", SP$ DestroyAll | ValidCards$ Plains) and Tsunami
+# ("Destroy all Islands", ValidCards$ Island) used to destroy the ENTIRE board:
+# TargetRestriction::parse only mapped the card-TYPE base-types
+# (Artifact/Enchantment/Creature/Land/Planeswalker); a bare basic-land SUBTYPE
+# like "Plains"/"Island" fell through to the catch-all -> empty type list ->
+# matches() returned true for every permanent -> whole-board destruction.
+#
+# This puzzle places one of each relevant permanent on P0's battlefield so the
+# e2e test can assert TargetRestriction::parse("Plains") matches ONLY the Plains
+# and the Savannah dual (Forest Plains), not the Forest / Mountain / creature.
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0battlefield=Plains; Savannah; Forest; Mountain; Grizzly Bears; Island
+p0library=Plains; Plains; Plains
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest

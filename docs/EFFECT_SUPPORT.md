@@ -73,6 +73,8 @@ workflow, row format, and update rules.
 | R$ Event$ Untap Layer$ CantHappen ValidCard$ Creature.powerGE3 (Meekstone lock) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Meekstone |
 | R$ Event$ BeginPhase Phase$ Untap Skip$ True (skip untap step) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Stasis |
 | DB$ Sacrifice UnlessPayer$/UnlessCost$ (self-sacrifice-unless-pay) | BROKEN | 2026-06-02_#2614(d3293adc) | mtg-xs6pa | Stasis |
+| ValidCards$/ValidTgts$ <basic-land-subtype> (Plains/Island/... subtype filter) | WORKING | 2026-06-02_#2618(5fb65d9a) | (fixed) | Flashfires, Tsunami |
+| SP$ DestroyAll ValidCards$ <subtype> (subtype-filtered board sweep) | WORKING | 2026-06-02_#2618(5fb65d9a) | (fixed) | Flashfires, Tsunami |
 | T$ Phase Upkeep ValidPlayer$ Player.EnchantedController + UnlessCost untap | BROKEN | 2026-05-30_#2525(d40c4206) | mtg-92jcg | Paralyze |
 | SP$ Destroy ValidTgts$ Artifact,Enchantment | WORKING | 2026-05-29_#2432(f85d828d) | (none)    | Disenchant          |
 | AB$ ChangeZone ActivationZone$ Graveyard   | BROKEN  | 2026-05-30_#2488(f9fcef95) | mtg-d8zuh  | Earthquake Dragon   |

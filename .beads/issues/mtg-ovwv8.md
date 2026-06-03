@@ -1,0 +1,85 @@
+---
+title: 'Card Compatibility: Flashfires + Tsunami (DestroyAll land-subtype)'
+status: open
+priority: 2
+issue_type: task
+depends_on:
+  mtg-4zlpr: parent-child
+created_at: 2026-06-03T04:25:19.442118587+00:00
+updated_at: 2026-06-03T04:25:19.442118587+00:00
+---
+
+# Description
+
+Test Flashfires + Tsunami (basic land-destruction sorceries) in MTG Forge-rs.
+
+Cards: cardsfolder/f/flashfires.txt ("Destroy all Plains", SP$ DestroyAll | ValidCards$ Plains)
+       cardsfolder/t/tsunami.txt   ("Destroy all Islands", SP$ DestroyAll | ValidCards$ Island)
+Set: LEA. Decks: Flashfires in 02_lestree / 04_defoucaud sideboards; Tsunami in 04 SB.
+Umbrella: mtg-4zlpr -> mtg-684. Backlog item B(DestroyAll) in mtg-dbyj8.
+Test puzzle: test_puzzles/flashfires_subtype_filter.pzl
+
+Findings (2026-06-02_#2677(5fb65d9a), compat-1994):
+
+1. [BROKEN->FIXED] CRITICAL: SP$ DestroyAll | ValidCards$ Plains destroyed the
+   ENTIRE board (creatures + all lands), not just Plains. Same for Tsunami
+   (ValidCards$ Island). Root cause: TargetRestriction::parse mapped only the
+   card-TYPE base-types (Artifact/Enchantment/Creature/Land/Planeswalker); a bare
+   basic-land SUBTYPE ("Plains"/"Island") fell through the base_type match's
+   catch-all -> empty 'types' list -> matches() returned true for EVERY permanent.
+   (Tranquility's ValidCards$ Enchantment worked, confirming the gap was
+   subtype-specific.) Root cause class: silent parser drop (subtype base-type).
+   FIX (principled/general): added TargetRestriction.required_subtype; any bare
+   base-type that is not a card type and not a universal selector
+   (Any/Permanent/Card/Spell/empty) becomes a required SUBTYPE, checked in
+   matches() against card.subtypes. Covers every subtype-filtered Destroy/DestroyAll
+   /target effect, not just these two cards.
+2. [x] Dual lands with the subtype are correctly hit: Savannah (Forest Plains) IS
+   destroyed by "Destroy all Plains" (CR — it has the Plains subtype).
+
+Reproducer (game log):
+
+```sh
+cat > /tmp/ff.pzl <<'P'
+[metadata]
+Name:Flashfires only Plains
+Goal:Win
+[state]
+turn=2
+activeplayer=p0
+activephase=MAIN1
+p0life=20
+p0hand=Flashfires
+p0battlefield=Mountain;Mountain;Mountain;Mountain
+p0library=Mountain;Mountain;Mountain
+p1life=20
+p1battlefield=Plains;Plains;Grizzly Bears;Forest;Savannah
+p1library=Forest;Forest;Forest
+P
+./target/release/mtg tui --start-state /tmp/ff.pzl --p1=fixed --p1-fixed-inputs="cast flashfires;pass;pass;pass;pass" --p2=fixed --p2-fixed-inputs="pass;pass;pass;pass" --seed 42 --verbosity 2
+```
+
+Expected log evidence:
+
+```
+Flashfires (3) resolves
+Plains (11) is destroyed
+Plains (12) is destroyed
+Savannah (15) is destroyed       <- Forest Plains dual = a Plains, correctly hit
+Flashfires (3) destroys all matching permanents
+  Grizzly Bears (13) - 2/2       <- creature SURVIVES
+  Forest (14)                     <- non-Plains land SURVIVES
+```
+
+Unit/e2e test: test_destroyall_land_subtype_filter in mtg-engine/tests/puzzle_e2e.rs
+  (+ test_puzzles/flashfires_subtype_filter.pzl) — asserts parse("Plains")
+  .required_subtype==Plains and matches() includes Plains+Savannah, excludes
+  Forest/Mountain/creature/Island; symmetric Island check; Permanent stays match-any.
+  Wired into make validate.
+
+MTG Rules Review: PASS. CR 109.5 / land subtypes: "Destroy all Plains" affects
+every permanent with the Plains subtype regardless of controller, including
+Plains-typed dual lands (Savannah). Other permanents are unaffected. No
+hidden-info, no string-ops on DSL (tokenized parse retained).
+
+CARD STATUS: WORKING — both Flashfires and Tsunami now hit only their land subtype.

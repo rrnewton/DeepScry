@@ -506,6 +506,14 @@ pub struct TargetRestriction {
     /// callers that know the source must use [`TargetRestriction::matches_excluding`].
     #[serde(default)]
     pub requires_other: bool,
+    /// Required *subtype* of the card, from a bare subtype base-type in the
+    /// filter (e.g. `ValidCards$ Plains`, `ValidCards$ Island`, `ValidTgts$
+    /// Goblin`). `None` = no subtype restriction. A card matches only if its
+    /// `subtypes` list contains this subtype. This is what makes Flashfires
+    /// (`Destroy all Plains`) and Tsunami (`Destroy all Islands`) hit only the
+    /// named land subtype instead of falling through to "match every permanent".
+    #[serde(default)]
+    pub required_subtype: Option<crate::core::Subtype>,
 }
 
 impl TargetRestriction {
@@ -523,6 +531,7 @@ impl TargetRestriction {
             required_color: None,
             required_set: None,
             requires_other: false,
+            required_subtype: None,
         }
     }
 
@@ -540,6 +549,7 @@ impl TargetRestriction {
             required_color: None,
             required_set: None,
             requires_other: false,
+            required_subtype: None,
         }
     }
 
@@ -661,6 +671,14 @@ impl TargetRestriction {
             }
         }
 
+        // Check subtype restriction (e.g. Flashfires `Plains`, Tsunami `Island`).
+        // A card matches only if its subtype list contains the required subtype.
+        if let Some(subtype) = &self.required_subtype {
+            if !card.subtypes.contains(subtype) {
+                return false;
+            }
+        }
+
         // Check type restriction
         if self.types.is_empty() {
             return true; // No type restriction
@@ -745,6 +763,7 @@ impl TargetRestriction {
         let mut required_color = None;
         let mut required_set = None;
         let mut requires_other = false;
+        let mut required_subtype = None;
 
         for part in valid_tgts.split(',') {
             // Check for modifiers after the base type
@@ -798,8 +817,14 @@ impl TargetRestriction {
                 "Creature" => types.push(TargetType::Creature),
                 "Land" => types.push(TargetType::Land),
                 "Planeswalker" => types.push(TargetType::Planeswalker),
-                // "Any", "Permanent", or unrecognized - allow any
-                _ => {}
+                // Universal selectors match any permanent (no type/subtype filter).
+                "" | "Any" | "Permanent" | "Card" | "Spell" => {}
+                // Any other bare base-type is a SUBTYPE filter, not a card type:
+                // `ValidCards$ Plains` / `Island` (basic land types — Flashfires,
+                // Tsunami), `ValidTgts$ Goblin`, etc. Previously these fell through
+                // to "match any", so e.g. `DestroyAll | ValidCards$ Plains` wiped
+                // EVERY permanent. Match against the card's subtypes instead.
+                other => required_subtype = Some(crate::core::Subtype::new(other)),
             }
         }
 
@@ -815,6 +840,7 @@ impl TargetRestriction {
             required_color,
             required_set,
             requires_other,
+            required_subtype,
         }
     }
 }

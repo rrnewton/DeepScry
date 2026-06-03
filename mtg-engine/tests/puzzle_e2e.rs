@@ -3867,6 +3867,78 @@ async fn test_stasis_skips_untap_step() -> Result<()> {
     Ok(())
 }
 
+/// Regression (1994 World Championship compat — Flashfires/Tsunami SB pieces):
+/// `SP$ DestroyAll | ValidCards$ Plains` ("Destroy all Plains") must hit ONLY
+/// permanents with the Plains subtype (basic Plains and Plains-typed duals like
+/// Savannah), not the whole board. Before the fix, `TargetRestriction::parse`
+/// only recognized card-TYPE base-types, so a bare land-subtype filter produced
+/// an empty type list -> `matches()` returned true for EVERY permanent ->
+/// Flashfires/Tsunami destroyed creatures and all other lands too.
+#[tokio::test]
+async fn test_destroyall_land_subtype_filter() -> Result<()> {
+    use mtg_engine::core::TargetRestriction;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/flashfires_subtype_filter.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let game = load_puzzle_into_game(&puzzle, &card_db).await?;
+
+    let find = |name: &str| -> mtg_engine::core::CardId {
+        game.battlefield
+            .cards
+            .iter()
+            .copied()
+            .find(|&id| game.cards.try_get(id).is_some_and(|c| c.name.as_str() == name))
+            .unwrap_or_else(|| panic!("{} should be on the battlefield", name))
+    };
+    let plains = game.cards.get(find("Plains"))?;
+    let savannah = game.cards.get(find("Savannah"))?; // Forest Plains dual
+    let forest = game.cards.get(find("Forest"))?;
+    let mountain = game.cards.get(find("Mountain"))?;
+    let bears = game.cards.get(find("Grizzly Bears"))?;
+    let island = game.cards.get(find("Island"))?;
+
+    // Flashfires: "Destroy all Plains".
+    let plains_filter = TargetRestriction::parse("Plains");
+    assert_eq!(
+        plains_filter.required_subtype.as_ref().map(|s| s.as_str()),
+        Some("Plains"),
+        "ValidCards$ Plains must parse into a Plains subtype filter, not an empty (match-any) restriction"
+    );
+    assert!(plains_filter.matches(plains), "Flashfires must destroy a basic Plains");
+    assert!(
+        plains_filter.matches(savannah),
+        "Flashfires must destroy Savannah (a Forest Plains dual has the Plains subtype)"
+    );
+    assert!(!plains_filter.matches(forest), "Flashfires must NOT destroy a Forest");
+    assert!(
+        !plains_filter.matches(mountain),
+        "Flashfires must NOT destroy a Mountain"
+    );
+    assert!(!plains_filter.matches(bears), "Flashfires must NOT destroy a creature");
+    assert!(!plains_filter.matches(island), "Flashfires must NOT destroy an Island");
+
+    // Tsunami: "Destroy all Islands".
+    let island_filter = TargetRestriction::parse("Island");
+    assert!(island_filter.matches(island), "Tsunami must destroy an Island");
+    assert!(!island_filter.matches(plains), "Tsunami must NOT destroy a Plains");
+    assert!(!island_filter.matches(forest), "Tsunami must NOT destroy a Forest");
+    assert!(!island_filter.matches(bears), "Tsunami must NOT destroy a creature");
+
+    // A universal selector still matches everything (no regression).
+    let any_filter = TargetRestriction::parse("Permanent");
+    assert!(
+        any_filter.matches(bears) && any_filter.matches(forest),
+        "`Permanent` must remain a match-any restriction"
+    );
+
+    println!("✓ DestroyAll land-subtype filter: Plains/Island hit only their subtype (1994 champ compat)");
+    Ok(())
+}
+
 /// Regression: action menu must surface predicted side costs for cast actions
 /// — sacrifice (Black Lotus), pain damage (City of Brass) — so the player
 /// sees them before accepting.
