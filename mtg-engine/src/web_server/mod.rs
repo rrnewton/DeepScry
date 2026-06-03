@@ -206,7 +206,17 @@ pub async fn run_web_server(mut config: WebServerConfig) -> Result<()> {
     // `mtg hash-web-assets` runs — which keeps `make validate`'s e2e
     // tests against the committed unhashed names working.
     let static_service = ServeDir::new(&config.static_dir).append_index_html_on_directories(true);
+    // Compress static responses over the wire (mtg-722 / task #7): the
+    // card-lookup.bin table is ~1.5 MB raw but ~63% over the wire, and the wasm
+    // bundle / HTML / JS compress well too. `CompressionLayer::new()` negotiates
+    // br/gzip from `Accept-Encoding`; its DefaultPredicate skips already-
+    // compressed types (image/*) and tiny bodies, so card-art `.jpg`/`.png`
+    // and the `/health` JSON are left alone. Compression is the OUTERMOST layer
+    // so it wraps the cache-header middleware's output (Cache-Control +
+    // Content-Encoding compose; the blake3 hash is over the RAW file bytes, so
+    // content-addressing is unaffected).
     let static_with_cache = tower::ServiceBuilder::new()
+        .layer(tower_http::compression::CompressionLayer::new())
         .layer(axum::middleware::from_fn(content_addressed_cache_header))
         .service(static_service);
 

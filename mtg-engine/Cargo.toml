@@ -122,6 +122,7 @@ tower-http = { version = "0.6", features = [
     "trace",
     "set-header",
     "compression-gzip",
+    "compression-br",
 ], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 rustls-pemfile = { version = "2", optional = true }

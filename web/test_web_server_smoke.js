@@ -89,6 +89,24 @@ function httpGet(url) {
     });
 }
 
+// GET advertising Accept-Encoding so we can observe the server's negotiated
+// Content-Encoding (mtg-722: the static CompressionLayer compresses the
+// card-lookup table / wasm / js over the wire, skipping already-compressed
+// image types). We do NOT auto-inflate — we only inspect the response header.
+function httpGetAcceptEncoding(url, accept = 'br, gzip') {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, { headers: { 'Accept-Encoding': accept } }, (res) => {
+            const chunks = [];
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', () =>
+                resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }),
+            );
+        });
+        req.on('error', reject);
+        req.setTimeout(15000, () => req.destroy(new Error('timeout')));
+    });
+}
+
 async function waitForHttp(base, maxAttempts = 40) {
     for (let i = 0; i < maxAttempts; i++) {
         try {
@@ -412,6 +430,14 @@ async function main() {
             check(
                 isImmutable(js.headers['cache-control']),
                 `hashed JS glue is IMMUTABLE (got "${js.headers['cache-control']}")`,
+            );
+            // mtg-722: a large compressible asset MUST be served compressed when
+            // the client advertises Accept-Encoding (the static CompressionLayer
+            // — the card-lookup.bin table relies on this for its wire size).
+            const jsEnc = await httpGetAcceptEncoding(base + '/pkg/' + hashedJs);
+            check(
+                /\b(br|gzip)\b/.test(jsEnc.headers['content-encoding'] || ''),
+                `large static asset is transport-compressed (Content-Encoding got "${jsEnc.headers['content-encoding']}")`,
             );
         }
 
