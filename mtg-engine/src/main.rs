@@ -638,6 +638,28 @@ enum Commands {
         rate_limit: u64,
     },
 
+    /// Build the compact card→Scryfall-CDN lookup table (task #7 / mtg-722).
+    ///
+    /// Fetches Scryfall `unique_artwork.json` (the ONLY scryfall.com request;
+    /// cached locally), format-drift-checks every image URL, picks the OLDEST
+    /// art per identity, and writes the encoding-D `card-lookup.bin` table the
+    /// client + `download` use to build immutable cards.scryfall.io URLs. On a
+    /// format drift it HARD-ERRORS and keeps the existing table. Run at deploy
+    /// time (the bulk dump stays ≤1/day-cached, off the per-build path).
+    BuildCardLookup {
+        /// Output path for the SCDT table (gitignored; regenerated at deploy).
+        #[arg(long, short = 'o', default_value = "web/data/card-lookup.bin")]
+        output: PathBuf,
+
+        /// Local cache path for the Scryfall unique_artwork bulk dump.
+        #[arg(long, default_value = "target/scryfall/unique_artwork.json")]
+        bulk_cache: PathBuf,
+
+        /// Force re-download of the bulk dump even if the cache exists.
+        #[arg(long)]
+        refresh: bool,
+    },
+
     /// Headless multiplayer WebSocket game server.
     ///
     /// Binds a raw TCP port (default 17771) and accepts WebSocket connections
@@ -1231,6 +1253,11 @@ async fn async_main() -> Result<()> {
             force,
             rate_limit,
         } => run_download(output, cardsfolder, deck, sizes, concurrency, force, rate_limit).await?,
+        Commands::BuildCardLookup {
+            output,
+            bulk_cache,
+            refresh,
+        } => run_build_card_lookup(output, bulk_cache, refresh).await?,
         #[cfg(feature = "network")]
         Commands::Server {
             port,
@@ -4486,6 +4513,119 @@ async fn run_download(
         println!("(e.g., custom tokens, test cards, or cards with non-standard names)");
     }
 
+    Ok(())
+}
+
+/// `mtg build-card-lookup` — fetch Scryfall `unique_artwork.json` (cached),
+/// build the encoding-D card→CDN lookup table, and write it. The only
+/// scryfall.com request in the whole image pipeline (task #7 / mtg-722).
+async fn run_build_card_lookup(output: PathBuf, bulk_cache: PathBuf, refresh: bool) -> Result<()> {
+    use mtg_engine::scryfall::{encode_card_lookup, CdnSize};
+    use mtg_engine::scryfall_table::{build_card_lookup, ScryfallRecord};
+
+    let neterr =
+        |ctx: &str, e: reqwest::Error| mtg_engine::MtgError::InvalidAction(format!("build-card-lookup: {ctx}: {e}"));
+
+    // 1. Ensure the unique_artwork bulk dump is cached (≤1/day in practice).
+    if refresh || !bulk_cache.exists() {
+        if let Some(parent) = bulk_cache.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(mtg_engine::MtgError::IoError)?;
+        }
+        let client = reqwest::Client::builder()
+            .user_agent("deepscry/1.0 (https://deepscry.net; image-table builder)")
+            .build()
+            .map_err(|e| neterr("client build", e))?;
+        log::info!("Fetching Scryfall bulk-data metadata…");
+        let meta_bytes = client
+            .get("https://api.scryfall.com/bulk-data")
+            .send()
+            .await
+            .map_err(|e| neterr("bulk-data meta GET", e))?
+            .bytes()
+            .await
+            .map_err(|e| neterr("bulk-data meta body", e))?;
+        let meta: serde_json::Value = serde_json::from_slice(&meta_bytes)
+            .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("build-card-lookup: bulk-data meta JSON: {e}")))?;
+        let entry = meta["data"]
+            .as_array()
+            .and_then(|a| a.iter().find(|x| x["type"] == "unique_artwork"))
+            .ok_or_else(|| {
+                mtg_engine::MtgError::InvalidAction(
+                    "build-card-lookup: no unique_artwork entry in bulk-data".to_string(),
+                )
+            })?;
+        let uri = entry["download_uri"].as_str().ok_or_else(|| {
+            mtg_engine::MtgError::InvalidAction("build-card-lookup: unique_artwork has no download_uri".to_string())
+        })?;
+        log::info!(
+            "Downloading {uri} (updated_at={})…",
+            entry["updated_at"].as_str().unwrap_or("?")
+        );
+        let bytes = client
+            .get(uri)
+            .send()
+            .await
+            .map_err(|e| neterr("bulk download GET", e))?
+            .bytes()
+            .await
+            .map_err(|e| neterr("bulk download body", e))?;
+        tokio::fs::write(&bulk_cache, &bytes)
+            .await
+            .map_err(mtg_engine::MtgError::IoError)?;
+        log::info!("Cached {:.1} MB to {}", bytes.len() as f64 / 1e6, bulk_cache.display());
+    } else {
+        log::info!(
+            "Using cached bulk dump {} (pass --refresh to re-download)",
+            bulk_cache.display()
+        );
+    }
+
+    // 2. Parse the bulk array into our minimal record model.
+    let data = tokio::fs::read(&bulk_cache)
+        .await
+        .map_err(mtg_engine::MtgError::IoError)?;
+    let records: Vec<ScryfallRecord> = serde_json::from_slice(&data)
+        .map_err(|e| mtg_engine::MtgError::InvalidAction(format!("build-card-lookup: parse bulk JSON: {e}")))?;
+    log::info!("Parsed {} unique_artwork records", records.len());
+
+    // 3. Build the table. A FORMAT DRIFT is a HARD ERROR: do NOT overwrite the
+    //    existing table (keep the last-good one), surface the drift, and fail.
+    let built = match build_card_lookup(&records, CdnSize::Normal) {
+        Ok(b) => b,
+        Err(drift) => {
+            return Err(mtg_engine::MtgError::InvalidAction(format!(
+                "build-card-lookup: FORMAT DRIFT — keeping existing {} unchanged: {drift}",
+                output.display()
+            )));
+        }
+    };
+
+    // 4. Encode (raw bytes — the wire size comes from HTTP transport
+    //    compression) and write.
+    let blob = encode_card_lookup(&built.entries);
+    if let Some(parent) = output.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(mtg_engine::MtgError::IoError)?;
+    }
+    tokio::fs::write(&output, &blob)
+        .await
+        .map_err(mtg_engine::MtgError::IoError)?;
+
+    println!("✓ wrote {}", output.display());
+    println!("  entries:          {}", built.entries.len());
+    println!("  skipped no-image: {}", built.skipped_no_image);
+    println!(
+        "  raw size:         {} bytes ({:.1} KB)",
+        blob.len(),
+        blob.len() as f64 / 1024.0
+    );
+    println!(
+        "  (ship raw; ~{:.0}% over the wire via HTTP transport compression — gzip/br on the .bin)",
+        100.0 * 866.0 / 1320.0
+    );
     Ok(())
 }
 
