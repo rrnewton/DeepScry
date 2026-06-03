@@ -102,14 +102,21 @@ def build_registry():
              "make test", deps=["build.mtg-release"], env=_REUSE))
     # --- examples (own debug build) ---
     add(Step("examples", "run", "run all examples (parallel)", "make examples"))
-    # --- agentplay (python / light) ---
-    add(Step("agentplay", "pytest", "pytest agentplay/", "python3 -m pytest agentplay/ -v"))
+    # --- agentplay (python; agent_game.py + mode-equivalence drive the release
+    # mtg binary, so these depend on build.mtg-release. The old monolithic CI
+    # test-unit job built the binary in-job, which MASKED this dep; an isolated
+    # agentplay CI shard has no binary unless we declare it (mtg-717). pytest is
+    # included too: its binary-needing cases skip without one, but several
+    # agentplay tests spawn the engine and would otherwise fail in a fresh shard.
+    add(Step("agentplay", "pytest", "pytest agentplay/", "python3 -m pytest agentplay/ -v",
+             deps=["build.mtg-release"]))
     add(Step("agentplay", "mock-game", "agent_game.py mock self-play (seed 42)",
              "python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- "
              "decks/simple_bolt.dck decks/simple_bolt.dck; rc=$?; "
-             "if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then exit $rc; fi"))
+             "if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then exit $rc; fi",
+             deps=["build.mtg-release"]))
     add(Step("agentplay", "mode-equiv", "native/WASM mode-equivalence orchestrator",
-             "./scripts/test_mode_equivalence.sh"))
+             "./scripts/test_mode_equivalence.sh", deps=["build.mtg-release"]))
     # --- determ (full-game determinism shell scripts; reuse release mtg) ---
     add(Step("determ", "commander", "commander format E2E (full-game determinism)",
              "bash tests/commander_e2e.sh", deps=["build.mtg-release"], env=_REUSE))

@@ -41,6 +41,19 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
+      # Materialize clippy/rustfmt SINGLE-THREADED before the parallel runner.
+      # validate_run.py runs lint.fmt + lint.clippy + lint.clippy-wasm
+      # concurrently; if rustup still has to fetch the clippy component, the
+      # concurrent `cargo clippy`/`cargo fmt` invocations race on the shared
+      # ~/.rustup/downloads/*.partial and fail with "could not rename
+      # 'downloaded' file (os error 2)". Forcing the components to fully
+      # download here, serially, removes that race.
+      - name: Warm up toolchain components
+        run: |
+          rustup component add clippy rustfmt 2>/dev/null || true
+          cargo clippy --version
+          cargo fmt --version
+
       - name: Install nextest
         if: ${{ matrix.group == 'unit' || matrix.group == 'determ' }}
         uses: taiki-e/install-action@nextest
