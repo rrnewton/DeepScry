@@ -237,6 +237,18 @@ async function main() {
         check(!!indexHtml, 'index.html served at fixed name (sole mutable URL)');
         if (!indexHtml) throw new Error('index.html did not serve');
 
+        // Lobby hero copy (mtg-uhovk): the hero logo already reads "DeepScry",
+        // so the redundant yellow <h1>DeepScry</h1> is gone and the name is
+        // worked into the teal tagline ("DeepScry is an experimental …").
+        check(
+            !/<h1>\s*DeepScry\s*<\/h1>/i.test(indexHtml),
+            'redundant hero <h1>DeepScry</h1> removed from index.html',
+        );
+        check(
+            /class="tagline">\s*DeepScry is an experimental/i.test(indexHtml),
+            'tagline leads with "DeepScry is an experimental …"',
+        );
+
         // The deleted runtime-manifest layer must NOT be served anymore.
         await fetchStatus(base, '/asset_manifest.js', 404, 'deleted stable loader');
         await fetchStatus(base, '/asset-manifest.json', 404, 'deleted stable manifest');
