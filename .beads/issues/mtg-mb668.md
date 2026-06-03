@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T20:23:14.208260238+00:00
+updated_at: 2026-06-03T20:51:52.034698423+00:00
 ---
 
 # Description
@@ -80,3 +80,11 @@ IMPLICATIONS:
   - a DETERMINISTIC gate is achievable: pass --seed-player to the native `connect` client AND pin the WASM controller_seed (fancy_tui controller_seed field) so the FULL game (deck + both controllers' choices) is reproducible. Then a given (engine-seed, p1-seed, p2-seed) tuple either always-passes or always-fails -> the failing path is reproducible -> fix the exact divergence; and once the class is fixed the gate is stably green instead of flaky.
   - This is ALSO why ×30 sampling is noisy and why the native in-process lockstep harness must PIN BOTH controller seeds (RandomController::with_seed with fixed seeds for both players) to be deterministic.
 Actionable test-harness improvement (dovetails mtg-726): make test_network_gui_e2e.js pass --seed-player (derived from --seed) to the native client and set the WASM controller_seed deterministically, so robots42/All-Hallow's-Eve become deterministic gates.
+
+------------------------------------------------------------------------
+DETERMINISTIC GATE + TRUE SCOPE (2026-06-03, after pinning controller seeds): with both controller masters pinned (e2e fix committed), robots deck swept across 20 DISTINCT seeds (each fully reproducible now) = 3 PASS / 17 FAIL. seed=42 is a clean trajectory (6/6) but most are not — the desync class is NOT closed. Every failure is now a DETERMINISTIC, reproducible RED repro: `node web/test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed <N>`.
+FAILURE BREAKDOWN (17 fails):
+  - WITHIN-side REWIND/REPLAY FATAL (largest cluster, ~8): seeds 1,7,8,10,12,14,15,17. = the rewind-fidelity undo-hole family (sig-2e counters FIXED; sig-2f damage + likely more fields TODO). DETERMINISTIC + within-side ⇒ reproduce/fix via the native rewind oracle (whole_game_rewind_replay_e2e pattern) over the robots deck with pinned RandomController seeds — NO networking. HIGHEST-LEVERAGE next batch.
+  - class-A server↔shadow: ACTION COUNT MISMATCH seeds 5,6,20; state hash mismatch seeds 2,11,19; Local-abilities drift seeds 9,18; seed 4 (other). = count/reveal lockstep residue beyond sig-2c/2d.
+RECOMMENDED PLAN: (1) fix the within-side rewind-fidelity cluster via the native oracle (sig-2f damage = add SetDamage{prev} + route card.damage += sites through it; then re-run oracle to surface the next field) — clears ~8/20 deterministically. (2) Then class-A via per-action lockstep harness. (3) Gate = all robots seeds 1..N green + a 2nd deck, deterministic.
+PASS seeds (clean trajectories): 3, 13, 16, 42.
