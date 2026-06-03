@@ -1201,6 +1201,12 @@ async fn async_main() -> Result<()> {
                 println!("    {k} -> {v}");
             }
             println!("    {} -> {}", res.data_index.0, res.data_index.1);
+            for (k, v) in &res.image_leaves {
+                println!("    {k} -> {v}");
+            }
+            if let Some((k, v)) = &res.webmanifest {
+                println!("    {k} -> {v}");
+            }
             for (k, v) in &res.graph_nodes {
                 println!("    {k} -> {v}");
             }

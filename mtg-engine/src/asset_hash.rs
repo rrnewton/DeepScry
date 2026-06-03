@@ -228,7 +228,9 @@ pub mod web_pkg {
 /// Concretely the algorithm:
 ///   1. Hash the pkg pair (delegated to [`web_pkg::hash_web_assets`]).
 ///   2. Hash the JS leaves (incl. the now-leaf `lobby_launcher.js`) + the data
-///      index (pure leaves: no graph edges).
+///      index + the top-level image leaves (logo/emblem/favicons — EXCLUDING the
+///      `images/` card-art namespace) + `site.webmanifest` (mtg-k935c). All pure
+///      leaves; the webmanifest's icon refs are rewritten before it is hashed.
 ///   3. Build the reference graph over the remaining HTML pages, assert it is
 ///      ACYCLIC (Tarjan; a multi-node SCC is a hard error naming the offending
 ///      files — reintroducing a cycle would resurrect the cache vuln), and
@@ -299,6 +301,28 @@ pub mod asset_graph {
     /// that loads card data.
     pub const DATA_INDEX_JSON: &str = "data/sets/index.json";
 
+    /// File extensions of TOP-LEVEL `web/` image assets that are content-hashed
+    /// as immutable leaves (mtg-k935c): the hero logo, emblem, and favicons
+    /// (`deepscry_logo.webp`, `emblem-64.webp`, `favicon.ico`, … synced from the
+    /// `deepscry-assets` submodule). They reference nothing, so they hash up
+    /// front like the JS leaves; every `<img src>` / `<link href>` to them is
+    /// then statically repointed at the hashed name. This makes `index.html` the
+    /// TRULY only mutable web file.
+    ///
+    /// EXCLUSION: the `web/images/**` card-art namespace is NOT touched — those
+    /// are already content-addressed by scryfall art_id and served immutable by
+    /// their own scheme. [`discover_top_level_images`] reads only the top level
+    /// (no recurse), so that subdir is never visited.
+    pub const HASHED_IMAGE_EXTS: &[&str] = &["webp", "png", "jpg", "jpeg", "gif", "svg", "ico"];
+
+    /// The PWA web-app manifest. Unlike an image it is a JSON asset that
+    /// REFERENCES top-level icon images (`icon-192.png`, `icon-512.png`) AND is
+    /// itself referenced by `<link rel="manifest" href="site.webmanifest">`. It
+    /// is hashed AFTER the images (so its icon refs are rewritten to the hashed
+    /// names first), then folded into the leaf rules so the HTML `<link>` is
+    /// repointed too — keeping it immutable like everything else.
+    pub const WEBMANIFEST: &str = "site.webmanifest";
+
     /// Result of [`hash_full_graph`]. The maps log original→hashed for each
     /// asset class so the caller (and tests) can assert / print what happened.
     #[derive(Debug, Clone)]
@@ -309,6 +333,12 @@ pub mod asset_graph {
         pub js_leaves: BTreeMap<String, String>,
         /// `data/sets/index.json` → `data/sets/index.<hash>.json`.
         pub data_index: (String, String),
+        /// Top-level image leaves (logo/emblem/favicons): logical → hashed
+        /// (mtg-k935c). The `web/images/**` art-id namespace is excluded.
+        pub image_leaves: BTreeMap<String, String>,
+        /// `site.webmanifest` → `site.<hash>.webmanifest` (present iff the file
+        /// exists). Hashed after the image leaves with its icon refs rewritten.
+        pub webmanifest: Option<(String, String)>,
         /// Auto-discovered HTML pages (besides the entry): logical → hashed.
         pub graph_nodes: BTreeMap<String, String>,
         /// The FULL `logical → hashed` map for the whole release (pkg pair, JS
@@ -436,6 +466,29 @@ pub mod asset_graph {
         Ok(pages)
     }
 
+    /// Auto-discover TOP-LEVEL `web/` image files (by [`HASHED_IMAGE_EXTS`]),
+    /// sorted for a deterministic order. Does NOT recurse, so the
+    /// `web/images/**` card-art namespace is never visited (mtg-k935c). Used to
+    /// content-hash the logo/emblem/favicons as immutable leaves.
+    fn discover_top_level_images(web_dir: &Path) -> std::io::Result<Vec<String>> {
+        let mut imgs = Vec::new();
+        for entry in std::fs::read_dir(web_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if let Some((_, ext)) = name.rsplit_once('.') {
+                if HASHED_IMAGE_EXTS.contains(&ext.to_ascii_lowercase().as_str()) {
+                    imgs.push(name.into_owned());
+                }
+            }
+        }
+        imgs.sort();
+        Ok(imgs)
+    }
+
     /// Tarjan strongly-connected components over the graph `nodes` with
     /// adjacency `edges` (node → set of nodes it references). Returns the SCCs
     /// in REVERSE-topological order (a component appears before the components
@@ -550,6 +603,36 @@ pub mod asset_graph {
         let mut leaf_rules: BTreeMap<String, String> = js_leaves.clone();
         leaf_rules.insert(data_index.0.clone(), data_index.1.clone());
 
+        // ── 2b. top-level image leaves (logo / emblem / favicons) ────────
+        // Pure leaves (reference nothing): hash up front and fold into
+        // `leaf_rules` so every page's `<img src>` / `<link href>` to them is
+        // statically repointed at the hashed name. The `web/images/**` card-art
+        // namespace is EXCLUDED (top-level only — see discover_top_level_images).
+        let mut image_leaves: BTreeMap<String, String> = BTreeMap::new();
+        for img in discover_top_level_images(web_dir)? {
+            let (k, v) = hash_in_place(web_dir, &img)?;
+            leaf_rules.insert(k.clone(), v.clone());
+            image_leaves.insert(k, v);
+        }
+
+        // ── 2c. site.webmanifest (references the icon leaves; <link>-referenced)
+        // Rewrite its icon references with the now-hashed image leaves, THEN hash
+        // it, and fold it into `leaf_rules` so the HTML `<link rel="manifest">`
+        // is repointed too. Hashed AFTER the images so its content is final
+        // before its own hash is taken.
+        let mut webmanifest: Option<(String, String)> = None;
+        if web_dir.join(WEBMANIFEST).is_file() {
+            let path = web_dir.join(WEBMANIFEST);
+            let src = std::fs::read_to_string(&path)?;
+            let rewritten = rewrite_all_references(&src, &leaf_rules);
+            if rewritten != src {
+                std::fs::write(&path, rewritten)?;
+            }
+            let (k, v) = hash_in_place(web_dir, WEBMANIFEST)?;
+            leaf_rules.insert(k.clone(), v.clone());
+            webmanifest = Some((k, v));
+        }
+
         // ── 3. build the reference graph over the non-entry HTML pages ────
         // Graph nodes = every *.html except the stable entry. (After the
         // mtg-4irju leaf-ification, NO served *.js references an HTML page, so
@@ -636,9 +719,10 @@ pub mod asset_graph {
         }
 
         // ── 4. build the FULL logical→hashed manifest + content-hash it ────
-        // Every hashed asset: pkg pair, JS leaves, data index, HTML pages. Its
-        // deterministic JSON is content-hashed → the release token (a Merkle
-        // root over the whole release graph). PURELY content-derived: identical
+        // Every hashed asset: pkg pair, JS leaves, data index, image leaves,
+        // the webmanifest, and the HTML pages. Its deterministic JSON is
+        // content-hashed → the release token (a Merkle root over the whole
+        // release graph, now incl. images). PURELY content-derived: identical
         // web/ content ⇒ identical token (no build SHA / time folded in).
         let mut manifest: BTreeMap<String, String> = BTreeMap::new();
         manifest.insert(
@@ -653,6 +737,12 @@ pub mod asset_graph {
             manifest.insert(k.clone(), v.clone());
         }
         manifest.insert(data_index.0.clone(), data_index.1.clone());
+        for (k, v) in &image_leaves {
+            manifest.insert(k.clone(), v.clone());
+        }
+        if let Some((k, v)) = &webmanifest {
+            manifest.insert(k.clone(), v.clone());
+        }
         for (k, v) in &graph_nodes {
             manifest.insert(k.clone(), v.clone());
         }
@@ -694,6 +784,8 @@ pub mod asset_graph {
             pkg,
             js_leaves,
             data_index,
+            image_leaves,
+            webmanifest,
             graph_nodes,
             manifest,
             release_token,
@@ -1007,6 +1099,16 @@ mod tests {
             }
         }
 
+        /// True iff `name` is a content-addressed `<stem>.<16-lowercase-hex>.<ext>`.
+        fn is_hashed_name(name: &str) -> bool {
+            let parts: Vec<&str> = name.split('.').collect();
+            if parts.len() < 3 {
+                return false;
+            }
+            let hash = parts[parts.len() - 2];
+            hash.len() == 16 && hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        }
+
         /// A minimal but representative pure-DAG web tree:
         ///   index.html (entry) → launcher/native/tui/deck_editor
         ///   launcher.html → {native, tui, deck_editor}
@@ -1186,6 +1288,133 @@ mod tests {
             let err = asset_graph::hash_full_graph(dir).expect_err("missing placeholder must error");
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
             assert!(err.to_string().contains("__MTG_RELEASE_TOKEN__"), "names the sentinel");
+        }
+
+        #[test]
+        fn top_level_images_and_webmanifest_are_content_hashed() {
+            // mtg-k935c: the hero logo / emblem / favicons (top-level web/
+            // images) + site.webmanifest become immutable content-addressed
+            // leaves; every <img src> / <link href> / manifest icon ref is
+            // repointed; the web/images/ card-art namespace is left untouched.
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(
+                dir,
+                &[
+                    ("pkg/mtg_engine.js", "export default function init(){}\nawait init();\n"),
+                    ("pkg/mtg_engine_bg.wasm", "wasm-bytes"),
+                    ("data/sets/index.json", "{\"sets\":[]}\n"),
+                    ("server-config.js", "window.MTG_WS_URL='';\n"),
+                    // Top-level image leaves + the PWA manifest (ASCII stand-in
+                    // bytes — only the hashing/renaming behaviour is under test).
+                    ("deepscry_logo.webp", "webp-logo-bytes"),
+                    ("emblem-64.webp", "webp-emblem-bytes"),
+                    ("favicon.ico", "ico-bytes"),
+                    ("favicon-32.png", "png32-bytes"),
+                    ("icon-192.png", "png192-bytes"),
+                    ("icon-512.png", "png512-bytes"),
+                    (
+                        "site.webmanifest",
+                        "{\n  \"icons\": [\n    { \"src\": \"icon-192.png\" },\n    { \"src\": \"icon-512.png\" }\n  ]\n}\n",
+                    ),
+                    // The card-art namespace — MUST stay byte-for-byte untouched.
+                    ("images/abc123.jpg", "card-art-jpeg-bytes"),
+                    (
+                        "index.html",
+                        "<!doctype html><html><head>\
+                         <script>const MTG_RELEASE_TOKEN='__MTG_RELEASE_TOKEN__';</script>\
+                         <link rel=\"icon\" href=\"favicon.ico\">\
+                         <link rel=\"icon\" type=\"image/png\" href=\"favicon-32.png\">\
+                         <link rel=\"manifest\" href=\"site.webmanifest\">\
+                         </head><body>\
+                         <img class=hero src=\"deepscry_logo.webp\" alt=DeepScry>\
+                         <img src=\"emblem-64.webp\" alt=\"\">\
+                         <img src=\"images/abc123.jpg\" alt=card>\
+                         </body></html>\n",
+                    ),
+                ],
+            );
+
+            let res = asset_graph::hash_full_graph(dir).expect("hash with images");
+
+            // (1) Every top-level image is hashed away + present on disk.
+            for img in [
+                "deepscry_logo.webp",
+                "emblem-64.webp",
+                "favicon.ico",
+                "favicon-32.png",
+                "icon-192.png",
+                "icon-512.png",
+            ] {
+                let hashed = res
+                    .image_leaves
+                    .get(img)
+                    .unwrap_or_else(|| panic!("image {img} content-hashed"));
+                assert!(is_hashed_name(hashed), "{img} -> {hashed} hashed");
+                assert!(dir.join(hashed).is_file(), "{hashed} on disk");
+                assert!(!dir.join(img).exists(), "{img} renamed away");
+                assert_eq!(
+                    res.manifest.get(img).map(String::as_str),
+                    Some(hashed.as_str()),
+                    "manifest pins {img}"
+                );
+            }
+
+            // (2) index.html's <img src> + <link href> repointed to hashed names.
+            let index = std::fs::read_to_string(dir.join("index.html")).unwrap();
+            let logo = &res.image_leaves["deepscry_logo.webp"];
+            assert!(index.contains(&format!("src=\"{logo}\"")), "hero <img> repointed");
+            let fav = &res.image_leaves["favicon.ico"];
+            assert!(index.contains(&format!("href=\"{fav}\"")), "favicon <link> repointed");
+            // No bare stable image name survives in the entry.
+            assert!(!index.contains("\"deepscry_logo.webp\""), "no stable logo ref left");
+            assert!(!index.contains("\"favicon.ico\""), "no stable favicon ref left");
+
+            // (3) site.webmanifest is hashed, its <link> repointed, and its icon
+            //     refs rewritten to the hashed icon names.
+            let (wm_logical, wm_hashed) = res.webmanifest.as_ref().expect("webmanifest hashed");
+            assert_eq!(wm_logical, "site.webmanifest");
+            assert!(is_hashed_name(wm_hashed), "webmanifest hashed name");
+            assert!(dir.join(wm_hashed).is_file());
+            assert!(
+                !dir.join("site.webmanifest").exists(),
+                "stable webmanifest renamed away"
+            );
+            assert!(
+                index.contains(&format!("href=\"{wm_hashed}\"")),
+                "<link rel=manifest> repointed"
+            );
+            let wm_body = std::fs::read_to_string(dir.join(wm_hashed)).unwrap();
+            let icon192 = &res.image_leaves["icon-192.png"];
+            assert!(
+                wm_body.contains(&format!("\"{icon192}\"")),
+                "webmanifest icon-192 ref → hashed"
+            );
+            assert!(
+                !wm_body.contains("\"icon-192.png\""),
+                "no stable icon ref in webmanifest"
+            );
+
+            // (4) the web/images/ card-art file is UNTOUCHED (own art-id scheme).
+            assert!(dir.join("images/abc123.jpg").is_file(), "card-art image left in place");
+            assert_eq!(
+                std::fs::read(dir.join("images/abc123.jpg")).unwrap(),
+                b"card-art-jpeg-bytes",
+                "card-art bytes unchanged"
+            );
+            assert!(
+                !res.image_leaves.contains_key("images/abc123.jpg"),
+                "card-art NOT a top-level leaf"
+            );
+            assert!(
+                !res.manifest.contains_key("images/abc123.jpg"),
+                "card-art NOT in manifest"
+            );
+            // The entry's <img src="images/abc123.jpg"> stays the stable art-id path.
+            assert!(
+                index.contains("src=\"images/abc123.jpg\""),
+                "card-art <img> ref unchanged"
+            );
         }
     }
 }

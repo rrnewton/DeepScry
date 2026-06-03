@@ -188,11 +188,26 @@ async function main() {
     log(`Staging deploy tree → ${stage}`);
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
+    // Top-level image extensions (mtg-k935c) + the PWA manifest are content-
+    // hashed as immutable leaves; stage them so the renamer hashes them and we
+    // can assert it. These are gitignored (synced from the deepscry-assets
+    // submodule), so they are PRESENT only after scripts/sync-web-assets.sh has
+    // run (local validate) — ABSENT in a bare CI checkout. The image assertions
+    // below are therefore CONDITIONAL on at least one having been staged.
+    const IMAGE_EXTS = ['.webp', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico'];
+    let stagedImages = 0;
     for (const f of fs.readdirSync(WEB_SRC)) {
         // Copy every *.html + every NON-TEST *.js sibling so imports resolve.
         // Harmless extras are never hashed unless referenced.
         if (f.endsWith('.html') || (f.endsWith('.js') && !f.startsWith('test_') && f !== 'smoke_test_live.js')) {
             fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
+        } else if (f.endsWith('.webmanifest')) {
+            fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
+        } else if (IMAGE_EXTS.includes(path.extname(f).toLowerCase()) && fs.statSync(path.join(WEB_SRC, f)).isFile()) {
+            // Top-level image (NOT the web/images/ card-art subdir, which we
+            // never copy — the renamer excludes it too).
+            fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
+            stagedImages++;
         }
     }
     const hashRes = spawnSync(mtg, ['hash-web-assets', stage], { encoding: 'utf8' });
@@ -245,6 +260,61 @@ async function main() {
                 /immutable/.test(mr.headers['cache-control'] || ''),
                 `${manifestFile} served with immutable Cache-Control (got: ${mr.headers['cache-control']})`,
             );
+        }
+
+        // ── (1b) IMAGE LEAVES (mtg-k935c): top-level images + the PWA manifest
+        //        are content-hashed/immutable too, so index.html is the ONLY
+        //        mutable web file. CONDITIONAL: these are gitignored (synced from
+        //        the deepscry-assets submodule by scripts/sync-web-assets.sh), so
+        //        present in local validate, ABSENT in a bare CI checkout. The
+        //        hermetic renamer coverage is the asset_hash unit test; here we
+        //        prove the deploy-served end-to-end behaviour when present.
+        if (stagedImages > 0) {
+            const imgRe = /["'](?:\.\/|\/)?([A-Za-z0-9_-]+\.[0-9a-f]{16}\.(?:webp|png|ico|jpg|jpeg|gif|svg))["']/g;
+            const hashedImgs = new Set();
+            let mi;
+            while ((mi = imgRe.exec(indexHtml)) !== null) hashedImgs.add(mi[1]);
+            check(hashedImgs.size > 0, `index.html references HASHED image assets; saw: ${[...hashedImgs].join(', ') || '(none)'}`);
+            const logoHashed = [...hashedImgs].find((t) => /^deepscry_logo\.[0-9a-f]{16}\.webp$/.test(t));
+            check(!!logoHashed, `index.html hero <img> repointed to a hashed logo; saw: ${[...hashedImgs].join(', ')}`);
+            // No BARE stable image name survives in the served entry.
+            check(
+                !/["'](?:\.\/|\/)?(deepscry_logo\.webp|favicon\.ico|emblem-64\.webp)["']/.test(indexHtml),
+                'no stable (unhashed) top-level image reference remains in index.html',
+            );
+            // Each hashed image resolves 200 + immutable Cache-Control.
+            for (const img of hashedImgs) {
+                const ir = await httpGet(base + '/' + img);
+                check(ir.status === 200, `hashed image ${img} → 200 (got ${ir.status})`);
+                check(
+                    /immutable/.test(ir.headers['cache-control'] || ''),
+                    `hashed image ${img} immutable Cache-Control (got: ${ir.headers['cache-control']})`,
+                );
+            }
+            // The stable image name must NOT be served (hashed-only deploy).
+            await fetchStatus(base, '/deepscry_logo.webp', 404, 'stable logo name 404 (hashed-only)');
+            // The webmanifest is hashed; index references it hashed; its icon refs hashed.
+            const wmMatch = indexHtml.match(/["'](?:\.\/|\/)?(site\.[0-9a-f]{16}\.webmanifest)["']/);
+            check(!!wmMatch, 'index.html <link rel=manifest> repointed to hashed site.<hash>.webmanifest');
+            if (wmMatch) {
+                const wmName = wmMatch[1];
+                const wmBody = await fetchOk(base, '/' + wmName, 'hashed webmanifest');
+                const wmHdr = await httpGet(base + '/' + wmName);
+                check(/immutable/.test(wmHdr.headers['cache-control'] || ''), `webmanifest immutable Cache-Control (got: ${wmHdr.headers['cache-control']})`);
+                if (wmBody) {
+                    check(/icon-\d+\.[0-9a-f]{16}\.png/.test(wmBody), 'webmanifest icon refs rewritten to hashed names');
+                    check(!/["']icon-\d+\.png["']/.test(wmBody), 'no stable icon ref remains in webmanifest');
+                }
+                await fetchStatus(base, '/site.webmanifest', 404, 'stable webmanifest name 404 (hashed-only)');
+            }
+            // Manifest maps the image logical (Merkle root now fingerprints images).
+            check(
+                Object.prototype.hasOwnProperty.call(manifest, 'deepscry_logo.webp'),
+                'content-hashed manifest maps deepscry_logo.webp → hashed name',
+            );
+            log(`  → image-asset hashing verified (${stagedImages} top-level images staged)`);
+        } else {
+            log('  → image-asset hashing assertions SKIPPED (no top-level images staged — run scripts/sync-web-assets.sh for local coverage; hermetic coverage is the asset_hash unit test)');
         }
 
         // ── (2) index → HASHED launcher + HASHED solo_launcher; solo_launcher
