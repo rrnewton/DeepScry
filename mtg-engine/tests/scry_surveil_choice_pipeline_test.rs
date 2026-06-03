@@ -260,6 +260,67 @@ fn surveil_with_empty_decision_is_a_noop() {
     assert_eq!(zones.library.cards.len(), 2);
 }
 
+/// mtg-412: a scry-1 must NOT leak the scried card's name to the OPPONENT's
+/// perspective in the WASM/web log panels.
+///
+/// Scry looks at the top of the scrying player's OWN library — hidden
+/// information; the card never enters a public zone (CR 701.18). This test
+/// drives the real `scry_apply_decision` log site and asserts the captured log
+/// entry masks the card name for the non-owner via `LogEntry::message_for`.
+///
+/// RED before the fix / GREEN after: the scry-1 line was logged with
+/// `logger.normal()`, which leaves `private_to = None`, so
+/// `message_for(opponent)` returned the FULL text including the card name —
+/// this assertion would have failed. The fix re-tags the site with
+/// `logger.normal_private(.., owner, public_form)`.
+#[test]
+fn scry_one_does_not_leak_card_name_to_opponent() {
+    let library = vec![
+        ("Lightning Bolt", &[CardType::Instant][..]), // top of library
+        ("filler", &[CardType::Land][..]),
+    ];
+    let mut game = build_game_with_library(&library);
+    game.logger.enable_capture();
+    let p1 = game.players[0].id;
+    let p2 = game.players[1].id;
+
+    let revealed = game.scry_snapshot_top_n(p1, 1);
+    assert_eq!(revealed.len(), 1, "scry-1 should reveal exactly the top card");
+
+    // Keep the single revealed card on top (scry 1, keep on top).
+    let decision = ScryDecision {
+        top: SmallVec::from_slice(&[revealed[0]]),
+        bottom: SmallVec::new(),
+    };
+    game.scry_apply_decision(p1, &revealed, &decision).expect("apply scry");
+
+    let logs = game.logger.logs();
+    let scry_entry = logs
+        .iter()
+        .find(|e| e.message.contains("scries 1"))
+        .expect("expected a 'scries 1' log entry");
+
+    // The scrying player (owner) sees the full line including the card name.
+    assert!(
+        scry_entry.message_for(p1).contains("Lightning Bolt"),
+        "owner must see the scried card name: {:?}",
+        scry_entry.message_for(p1)
+    );
+
+    // The OPPONENT must NOT see the scried card's identity.
+    assert!(
+        !scry_entry.message_for(p2).contains("Lightning Bolt"),
+        "LEAK: opponent sees the scried card name: {:?}",
+        scry_entry.message_for(p2)
+    );
+    // ...but the public form still conveys that a scry-1 occurred.
+    assert!(
+        scry_entry.message_for(p2).contains("scries 1"),
+        "public form should still report the scry: {:?}",
+        scry_entry.message_for(p2)
+    );
+}
+
 // ============================================================================
 // Protocol shape (Phase E #1, #5)
 // ============================================================================
