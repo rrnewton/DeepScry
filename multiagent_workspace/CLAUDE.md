@@ -84,10 +84,20 @@ mutating agents share the same checkout.
 
 Worktree naming:
 
-- Directory: `parent/worktrees/<branch>/`
+- Directory: `parent/worktrees/slot<NN>/` — use **opaque slot names**
+  (`slot01`, `slot02`, ...) NOT branch-derived names. Slot names are
+  permanent identifiers for the physical directory; the branch checked
+  out inside can change freely (and is tracked in `ACTIVE.md`).
 - Branch:    `<branch>` (any descriptive feature-branch name)
-- The directory name is the branch name with `/` replaced by `-` (so
-  `feature/foo-bar` → `worktrees/feature-foo-bar/`).
+- **Why slots, not branch names:** branch-derived directory names cannot
+  be safely `mv`-renamed (the worktree's `core.worktree` and the shared
+  `forge-java` gitdir rewrite both break on rename — see the
+  `feedback_no_mv_rename_worktrees` memory). Opaque slot directories
+  stay put; only the branch inside them changes. This also makes moving
+  the whole workspace to a new partition safe: you can copy or reflink
+  the slot directories without git repair.
+- Pick the next available slot number; record it in `ACTIVE.md` before
+  the agent's first commit.
 - The primary checkout (`mtg-forge-rs/`) is for integration work only:
   the donor of cached `target/` artifacts, the staging ground for
   merging accepted work, and the launchpad for new worktrees. Agents
