@@ -4,10 +4,31 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T01:15:42.015960252+00:00
+updated_at: 2026-06-03T06:57:20.934906244+00:00
 ---
 
 # Description
+
+========================================================================
+STATUS 2026-06-02 (netarch-dev6 — STEP-3 HANDOFF; undo-completeness leg DONE, this is the LAST blocker):
+The whole mtg-ba6uq 8-hole undo-completeness campaign + mtg-ey2vf consolidation are DONE+pushed on this branch @ 7d8f4ace (negative-test-proven). robots42/mb668 is now the SOLE remaining merge blocker (full validate). This issue is being relayed to a fresh dedicated agent.
+
+CURRENT-CODE CORRECTION (read before chasing the stale analysis below): the sig-1 "records a POSITIONAL INDEX -> position()=None" framing is STALE. The current Demonic-Tutor SearchLibrary path (priority.rs:3825-3849) ALREADY records the AUTHORITATIVE fetched CardId: ReplayChoice::LibrarySearch(chosen_card_opt), comment at 3845 "not a positional index" (step-1 / d9a697fe is landed). The index bug is FIXED.
+
+ACTUAL CURRENT GAP (matches the "fix does NOT hold" status below): on P2's shadow, choose_from_library_with_hook (priority.rs:3825) returns None at the FIRST resolution because the authoritative library_search_result isn't available at that moment -> chosen_card_opt=None is RECORDED, then replayed forever (replay_library_search returns the recorded None before consulting the remote). The CardId recording is correct but inert because there's no Some to record at first resolution.
+
+FIX SURFACE (mapped, 4 files):
+- ReplayController::replay_library_search (replay_controller.rs:445) — returns recorded choice on replay.
+- NetworkLocalController.last_library_search_result (network/local_controller.rs:101; set at :853 on ChoiceAccepted carrying library_search_result; taken at :967) — the shadow's authoritative result.
+- server.rs:2491 extracts library_search_result ONLY for LibrarySearchByName choices.
+- THE GAP: the authoritative library_search_result must be deterministically available at/before resolution on the shadow AND SURVIVE REWIND so the FIRST replay records Some, not None.
+
+INTENDED FIX VEHICLE (recommended): source the authoritative fetched-CardId from a REWIND-SURVIVING broadcast rather than the raced last_library_search_result — i.e. apply the action_count-keyed REVEAL-HISTORY BUFFER pattern (e27c6f97, which already SOLVED the counterspells/rogerbrand async-REVEAL nondeterminism) to the authoritative library-search MOVE delivery. The reveal-history buffer is the proven mechanism for "authoritative datum that survives rewind+replay"; extend it (or mirror it) to carry the search result/move so the shadow's first resolution reads Some deterministically. Sigs (2) mass-draw content divergence + (3) available-actions drift are the SAME hidden-info-replay class and likely the same vehicle (+ RNG-state capture for shuffles).
+
+RECOMMENDED FIRST STEP (unchanged): build a deterministic NATIVE multi-rewind reproducer of the opponent-shadow hidden-info search case — the native rewind_replay oracle only single-rewinds and passes; the hole is variable-re-entry/timing. Then fix one root at a time, re-run robots42 seed=42 x10 between fixes (cd web && node test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed 42 --undo-dump).
+
+NOTE: integration STEP-4 rebase target is 21ab411f (moved from f8a10fac). The whole 49-file netarch diff needs the MTG-rules-review block at merge (it changes gameplay/combat undo). New sibling issue mtg-t233k: an UNLOGGED regular mana_pool payment gap (pay_from_total_mana/pay_cost) found during #7 — separate from the 8-hole audit; likely benign for the network/turn-start path (mana_pool==0 at every boundary) but a potential PER-ACTION partial-undo hole; see that issue's risk read.
+========================================================================
 
 --- 2026-06-02 netarch-dev3: THREAD B SCOPE REFINED (= FRESH-AGENT BRIEF). A2 (combat) is DONE+separate; this issue = the hidden-info complex. ---
 A2 was NOT this issue's root — A2 was multi-blocker combat-damage assignment (ReplayController missing overrides), fixed @9e1c32cb (grizzly 10/10). robots42's REMAINING failures are THIS hidden-info complex. Refined scope below (no-rebuild diagnosis via RUST_LOG=mtg_engine::network::server=debug on robots42 seed42 + WASM dumps):
