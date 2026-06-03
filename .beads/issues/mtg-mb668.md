@@ -4,11 +4,24 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-02T22:37:56.876884313+00:00
+updated_at: 2026-06-03T01:15:42.015960252+00:00
 ---
 
 # Description
 
+--- 2026-06-02 netarch-dev3: THREAD B SCOPE REFINED (= FRESH-AGENT BRIEF). A2 (combat) is DONE+separate; this issue = the hidden-info complex. ---
+A2 was NOT this issue's root — A2 was multi-blocker combat-damage assignment (ReplayController missing overrides), fixed @9e1c32cb (grizzly 10/10). robots42's REMAINING failures are THIS hidden-info complex. Refined scope below (no-rebuild diagnosis via RUST_LOG=mtg_engine::network::server=debug on robots42 seed42 + WASM dumps):
+
+KILL the stale hypotheses:
+- "Server only emits library_search_result for LibrarySearchByName ChoiceType" is NOT the gap for Demonic Tutor: DT's search IS sent as ChoiceType library_search_by_name and the coordinator DOES compute+broadcast library_search_result (server.rs:2494 decode). Verified in server debug log.
+- The WASM fancy_tui AI path is NOT is_network_mode() (sets no pre_choice_hook), so choose_from_library_with_hook takes the `!is_network_mode()` branch — which DOES honor controller.replay_library_search() on replay. So replay delivery IS wired for library search.
+
+ACTUAL Thread B = MULTI-ROOT (≥3 intertwined modes, confirmed by sampling distinct failed runs):
+ (1) fetch-lost: some runs record Choice(P0 #N = LibrarySearch(None)) on the WASM shadow for an opponent Demonic Tutor → the forward run captured None (timing/consumption on shadow, NOT the ChoiceType gate). Needs two-sided instrument at the search choice_seq: does the OpponentChoice popped on the shadow carry library_search_result=Some? If server broadcasts Some but shadow records None → consumption/timing race (analogous to A2: resolution runs ahead of OpponentChoice arrival, OR pops wrong/stale choice).
+ (2) NO-search divergence: sampled a failed run with ZERO library_search_by_name choices sent (server kinds: priority/targets/sacrifice/attackers only) that STILL desynced — "Local abilities(1)!=server abilities(5)", shadow hand=[111] vs server=[67,76,88,97,101]. So a hidden-info source OTHER than search diverged the shadow hand = mass-draw/shuffle determinism OR cumulative reveal/shadow-library-ordering drift (mtg-mb668 sigs 2/3).
+ (3) cumulative downstream hand divergence (turn ~29) = symptom of (1)/(2) upstream.
+
+RECOMMENDED APPROACH for the fresh agent: build a NATIVE multi-rewind reproducer of the opponent-shadow hidden-info case (deterministic, no browser race) — the native rewind_replay oracle only single-rewinds and passes; the hole is variable-re-entry/timing. Apply the A2 hidden-info-replay PRINCIPLE (record authoritative outcome in the FORWARD run, replay APPLIES it) to each materializing/hidden-info effect: library-search consumption timing, then mass-draw/shuffle determinism. Tackle ONE root at a time, re-run robots42 seed42 ×10 between fixes. This is a multi-session campaign (dev/dev2 history below).
 RESUME REFRAME 2026-06-02: the two threads are now named A and B.
 THREAD A = NORMAL-PLAY COMPLETENESS (do FIRST, likely upstream of B; merge blocker): non-undo-logged turn/combat transients lost on rewind+replay. TWO repros, same root: (A1) turn-1 PlayLand — live human game on 7b235b32, "Local abilities [PlayLand{35}] != Server []" after one land; root = reset_turn_state's reset_lands_played/mana_pool.clear/loyalty_activated_this_turn NOT undo-logged. (A2) grizzly_bears mirror seed 42 CI baseline — forks at action 866 (server casts / WASM passes), turn 16. Fix = undo-log or replay-reconstruct those transients (+combat declarations); do NOT re-add guards. Full detail in mtg-610 (top entry).
 THREAD B = HIDDEN-INFO DELIVERY (after A): library-search/Timetwister authoritative reveal never sent to opponent shadow (SRCH_BUF=0; server computes library_search_result only for LibrarySearchByName). See "THREAD 2" below + the decisive ChoiceType check. Step-1 replay-side landed (d9a697fe).
