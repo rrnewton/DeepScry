@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T21:29:36.524300561+00:00
+updated_at: 2026-06-03T22:31:44.381893694+00:00
 ---
 
 # Description
@@ -118,3 +118,13 @@ REMAINING = CLASS-A only (server↔shadow count/RNG lockstep): seeds 2,5,6,9,11,
 
 NEW PASS COUNT (deterministic 20-seed sweep): was 3/20 (3,13,16,42). +6 within-side (8,10,12,14,15,17) = now ~9/20 confirmed; class-A seeds (1,2,5,6,7,9,11,18,19,20) remain for slot03. (Full 20-seed re-sweep TBD; the 8 within-side seeds were re-run directly.)
 Engine lib 1005/1005 green. full make validate: running, cite validate_logs/validate_<sha>.log before merge.
+
+------------------------------------------------------------------------
+DECK-BROAD WITHIN-SIDE CLOSURE CONFIRMED (2026-06-03, slot01-2, on integration tip e1052f17 after class-B merge):
+Ran the e2e rewind oracle (web/test_network_gui_e2e.js, WASM replay verifier) on 3 decks with DIFFERENT mechanics from robots, 3 seeds each (1,7,42):
+  - old_school2/fireball_multitarget (X-spell + multi-target damage → SetXPaid/SetDamage paths): seed1 class-A, seed7 PASS, seed42 PASS
+  - old_school2/ur_burn (direct burn/damage): seed1 PASS, seed7 PASS, seed42 class-A
+  - old_school2/white_weenie_classic (creature combat): all 3 class-A (incl. the known-early seed7 mtg-nkd71-style case)
+RESULT: ZERO within-side "REWIND/REPLAY FATAL: turn-start state hash changed across rewinds" on ANY new deck/seed. Every failure observed is CLASS-A (server↔shadow: "P1/P2 state hash mismatch ... at choice_seq=N action_count=M" or "ACTION COUNT MISMATCH server=X local=Y") — NOT a within-side undo-log hole.
+=> The within-side rewind-fidelity undo-hole family (counters→damage→x_paid) is DURABLY CLOSED deck-broad across 4 diverse decks (robots-artifacts/pinger, fireball-X, ur-burn, white-weenie-combat). The "no known undo-log holes" half of the netarch Stop-goal is COMPLETE.
+REMAINING work for true-green = CLASS-A only (server↔shadow count/RNG lockstep), slot03's chunk (network_choice/wasm/reveal-region; per-action lockstep harness). Seeds exhibiting class-A across decks: robots 1,2,5,6,7,9,11,18,19,20; fireball 1; ur_burn 42; white_weenie 1,7,42.
