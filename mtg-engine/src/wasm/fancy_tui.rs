@@ -244,7 +244,7 @@ pub fn tui_get_help_text() -> String {
 /// * `height_px` - Desired height in pixels (selects small vs normal size)
 #[wasm_bindgen]
 pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
-    use crate::wasm::image_overlay::{gatherer_url, local_image_url, scryfall_url_by_name, ImageVersion};
+    use crate::wasm::image_overlay::{card_image_url_cascade, ImageVersion};
 
     let version = if height_px <= 204 {
         ImageVersion::Small
@@ -252,11 +252,9 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
         ImageVersion::Normal
     };
 
-    let urls = vec![
-        local_image_url(card_name, version, "/images"),
-        scryfall_url_by_name(card_name, version),
-        gatherer_url(card_name),
-    ];
+    // Single source of truth for the [local, scryfall, gatherer] cascade,
+    // incl. the stripped-name token-art fallback (mtg-722).
+    let urls = card_image_url_cascade(card_name, version, "/images");
 
     serde_json::json!(urls).to_string()
 }
