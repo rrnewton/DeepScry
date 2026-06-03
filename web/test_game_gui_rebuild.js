@@ -153,7 +153,7 @@ async function runTest() {
         };
 
         // ---- 1. Boot native_game.html (eric vs gabriel, heuristic, seed=42) ----
-        // mtg-682 page 3 / mtg-drxh5: native_game.html is a PURE renderer with no
+        // mtg-682 page 3 / mtg-692: native_game.html is a PURE renderer with no
         // built-in launcher. Boot the heuristic-vs-heuristic local game directly
         // from URL params (mode=local) via game_boot_params.localGameUrl instead
         // of driving the deleted #p1-collection / #p1-deck / #btn-launch form.
@@ -523,7 +523,7 @@ async function runTest() {
         });
 
         // ---- 17. Exit returns to the LOBBY ----------------------------
-        // mtg-682 page 3 / mtg-drxh5: the pure renderer has no built-in launcher
+        // mtg-682 page 3 / mtg-692: the pure renderer has no built-in launcher
         // to return to — 'q' (exitGame) navigates back to the lobby (index.html).
         await step(results, 'exit_to_lobby', async () => {
             await page.keyboard.press('q');

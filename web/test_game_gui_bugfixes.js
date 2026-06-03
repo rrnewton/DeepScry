@@ -51,7 +51,7 @@ async function runTest() {
         const screenshotDir = path.join(__dirname, 'screenshots');
         if (!fs.existsSync(screenshotDir)) fs.mkdirSync(screenshotDir);
 
-        // mtg-682 page 3 / mtg-drxh5: native_game.html is a PURE renderer (no
+        // mtg-682 page 3 / mtg-692: native_game.html is a PURE renderer (no
         // built-in launcher). Boot a Human-P1 vs Heuristic-P2 local game directly
         // from URL params (mode=local) via game_boot_params.localGameUrl instead
         // of the deleted #p1-controller / #p1-deck / #btn-launch form.
@@ -248,7 +248,7 @@ async function runTest() {
         // double-FIRE bug (one keypress processed as two). When the human passes
         // priority with no play, the opponent's whole turn can legitimately
         // auto-resolve back to the human's next turn, so a +2 turn delta is valid
-        // here (mtg-drxh5: relaxed from the launcher-era "<= +1" which assumed a
+        // here (mtg-692: relaxed from the launcher-era "<= +1" which assumed a
         // specific starting interaction; the guard is monotonic + bounded, not a
         // freeze and not an erratic skip). Turn must never go BACKWARD.
         test('Enter key advances monotonically (no double-fire / no backward jump)',

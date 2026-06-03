@@ -86,7 +86,7 @@ async function runTest() {
         }
 
         // ========== STEP 1: Boot native_game.html from URL params ==========
-        // mtg-682 page 3 / mtg-drxh5: native_game.html is now a PURE renderer
+        // mtg-682 page 3 / mtg-692: native_game.html is now a PURE renderer
         // with NO built-in launcher. Boot a local heuristic-vs-heuristic game
         // straight from the param contract (mode=local&p1_deck&p2_deck&p1&p2&seed)
         // via the shared game_boot_params.localGameUrl helper, instead of driving

@@ -494,7 +494,7 @@ async function testLauncherControlsAndPlay() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: launcher feature-parity restore + nav-regression fixes (mtg-ttjt6).
+// Test: launcher feature-parity restore + nav-regression fixes (mtg-695).
 // The lobby redo moved the launcher off the game pages but DROPPED the
 // card-image source picker, the debug toggle, and dropped sticky params on
 // inter-page nav. This asserts they are restored:
@@ -510,7 +510,7 @@ async function testLauncherControlsAndPlay() {
 //       with that context.
 // ---------------------------------------------------------------------------
 async function testLauncherParityAndNav() {
-    console.log('\n=== Test: launcher parity + nav regressions (mtg-ttjt6) ===');
+    console.log('\n=== Test: launcher parity + nav regressions (mtg-695) ===');
     const browser = await chromium.launch();
 
     const SEED = `localStorage.setItem('mtg-forge-custom-decks', JSON.stringify({
@@ -676,7 +676,7 @@ async function testLauncherParityAndNav() {
         const backVisible = backLink ? await backLink.isVisible() : false;
         if (backVisible) {
             const href = await backLink.getAttribute('href');
-            // mtg-4irju: the back-edge is now the stable dispatcher URL
+            // mtg-704: the back-edge is now the stable dispatcher URL
             // index.html?goto=launcher (a direct launcher.<hash>.html link would
             // reintroduce the launcher↔deck_editor cycle the CAS pipeline forbids).
             // The index dispatcher resolves goto=launcher and forwards the context.

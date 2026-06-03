@@ -195,7 +195,7 @@
     </div>
 
     <!--
-      Card-image + debug settings (mtg-ttjt6): re-homed from the OLD built-in
+      Card-image + debug settings (mtg-695): re-homed from the OLD built-in
       game-page launcher (the lobby redo dropped these). They are per-game
       *display* prefs, chosen here pre-game and forwarded to the game page via
       &images / &img_src / &debug. The "Local" source is gated behind
@@ -275,7 +275,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     window.__launcherParams = params;
 
     // ==================== CARD-IMAGE + DEBUG SETTINGS ====================
-    // Re-homed from the OLD built-in game-page launcher (mtg-ttjt6). Persisted
+    // Re-homed from the OLD built-in game-page launcher (mtg-695). Persisted
     // in localStorage (the launcher is the durable home for these prefs now) and
     // forwarded to the game page as &images/&img_src/&debug.
     const SETTINGS_KEY = 'mtg-forge-launcher-settings';
@@ -387,7 +387,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
     // deck_editor.html writes this when "Use in Lobby" is pressed WITHOUT a
     // launcher context (legacy lobby path). The launcher consumes it as a deck
-    // preselect fallback so that flow still lands on the saved deck (mtg-ttjt6).
+    // preselect fallback so that flow still lands on the saved deck (mtg-695).
     const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
 
     // Built-in deck names, populated WASM-free from index.json.
@@ -463,14 +463,14 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     /**
      * The launcher's own context (the lobby handoff params + the current
      * renderer/collection picks), so the deck editor can return HERE with the
-     * pre-game state intact (mtg-ttjt6 "Back to Launcher"). The editor echoes
+     * pre-game state intact (mtg-695 "Back to Launcher"). The editor echoes
      * these back verbatim via `from=launcher`; selecting a deck there returns to
      * launcher.html?...&collection=custom&deck=<saved-name>.
      */
     function launcherContextParams() {
         const ctx = new URLSearchParams();
         ctx.set('from', 'launcher');
-        // `release` (CAS token, mtg-4irju) rides along so the editor's
+        // `release` (CAS token, mtg-704) rides along so the editor's
         // "Back to Launcher" (index.html?goto=launcher&release=…) returns to the
         // SAME deployment this launcher belongs to.
         for (const k of ['game', 'role', 'pass', 'name', 'ws', 'reconnect_token', 'release']) {
@@ -537,7 +537,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
                 'Custom decks still work.', true);
         }
         // Restore the collection/deck the user left with when returning FROM the
-        // deck editor (?collection=&deck=, mtg-ttjt6 Back-to-Launcher round trip);
+        // deck editor (?collection=&deck=, mtg-695 Back-to-Launcher round trip);
         // otherwise default to a populated built-in collection so a deck is
         // preselected.
         // A ?deck= (Back-to-Launcher round trip) wins; else a one-shot localStorage
@@ -708,13 +708,13 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // place (DRY); the game page then opens its OWN durable game WebSocket and
     // performs the real CreateGame/JoinGame that drives the game.
     //
-    // mtg-4irju: THIS launcher owns the game-page FILENAME (a forward DAG edge
+    // mtg-704: THIS launcher owns the game-page FILENAME (a forward DAG edge
     // the deploy hasher rewrites to the hashed name). lobby_launcher.js no longer
     // names the pages (leaf-ification killed the pages⇄leaf cycle). We also relay
     // the CAS release token + sticky params from this launcher's OWN URL onto the
     // link, merged without clobbering the redirect params.
     /** Build the game-page redirect URL string WITHOUT navigating. Exposed for
-     *  Playwright assertions of the forwarded per-game prefs (mtg-ttjt6/682). */
+     *  Playwright assertions of the forwarded per-game prefs (mtg-695/682). */
     function buildGamePageUrl() {
         const deckName = deckSelect.value;
         const gameName = qs.get('game') || '';

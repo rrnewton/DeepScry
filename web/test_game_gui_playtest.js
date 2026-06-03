@@ -183,7 +183,7 @@ async function playOneGame(browser, server, cfg) {
                 && (/404/.test(text) || /ERR_/.test(text) || /net::/.test(text))) {
                 return;
             }
-            // mtg-drxh5: exiting the game now navigates to the LOBBY (index.html),
+            // mtg-692: exiting the game now navigates to the LOBBY (index.html),
             // which opens a `/lobby` WebSocket. On this static python http.server
             // there is no lobby endpoint, so that handshake 404s — a harness
             // artifact of the redo's exit-to-lobby flow, NOT a game bug.
@@ -195,7 +195,7 @@ async function playOneGame(browser, server, cfg) {
     });
 
     try {
-        // mtg-682 page 3 / mtg-drxh5: native_game.html is a PURE renderer with no
+        // mtg-682 page 3 / mtg-692: native_game.html is a PURE renderer with no
         // built-in launcher. Boot the heuristic-vs-heuristic game straight from
         // URL params (mode=local) via game_boot_params.localGameUrl — the exact
         // decks/seed this leg used to pick via the deleted launcher form.
@@ -365,7 +365,7 @@ async function playOneGame(browser, server, cfg) {
             });
         }
 
-        // mtg-682 page 3 / mtg-drxh5: the pure renderer has no built-in launcher
+        // mtg-682 page 3 / mtg-692: the pure renderer has no built-in launcher
         // to return to — pressing 'q' (exitGame) navigates back to the LOBBY
         // (index.html). Assert that clean exit-to-lobby instead.
         await page.keyboard.press('q');

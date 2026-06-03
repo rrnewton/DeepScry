@@ -72,7 +72,7 @@ workflow, row format, and update rules.
 | ValidCard$ Creature.powerGE<N> (power-threshold AffectedSelector) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Meekstone |
 | R$ Event$ Untap Layer$ CantHappen ValidCard$ Creature.powerGE3 (Meekstone lock) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Meekstone |
 | R$ Event$ BeginPhase Phase$ Untap Skip$ True (skip untap step) | WORKING | 2026-06-02_#2614(d3293adc) | (fixed) | Stasis |
-| DB$ Sacrifice UnlessPayer$/UnlessCost$ (self-sacrifice-unless-pay) | BROKEN | 2026-06-02_#2614(d3293adc) | mtg-xs6pa | Stasis |
+| DB$ Sacrifice UnlessPayer$/UnlessCost$ (self-sacrifice-unless-pay) | BROKEN | 2026-06-02_#2614(d3293adc) | mtg-712 | Stasis |
 | ValidCards$/ValidTgts$ <basic-land-subtype> (Plains/Island/... subtype filter) | WORKING | 2026-06-02_#2618(5fb65d9a) | (fixed) | Flashfires, Tsunami |
 | SP$ DestroyAll ValidCards$ <subtype> (subtype-filtered board sweep) | WORKING | 2026-06-02_#2618(5fb65d9a) | (fixed) | Flashfires, Tsunami |
 | SP$ Tap ValidTgts$ Creature (spell tap honors target-type restriction) | WORKING | 2026-06-02_#2619(c391b010) | (fixed) | Winter Blast |

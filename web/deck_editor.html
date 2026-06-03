@@ -292,7 +292,7 @@
     <img src="emblem-64.webp" alt="" aria-hidden="true" width="28" height="28" style="flex:none;">
     <h1>Deck Editor</h1>
     <!--
-      Back-to-Launcher (mtg-ttjt6): the editor is reached FROM launcher.html
+      Back-to-Launcher (mtg-695): the editor is reached FROM launcher.html
       (New Deck / Edit Deck) carrying the launcher context (from=launcher +
       game/role/pass/name/ws + renderer/collection). This link returns there with
       that context intact so a player can tweak a deck mid-pre-game and resume
@@ -448,7 +448,7 @@ const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
 const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
 
 /**
- * Launcher-context handoff (mtg-ttjt6). When the editor is reached FROM the
+ * Launcher-context handoff (mtg-695). When the editor is reached FROM the
  * launcher (New Deck / Edit Deck), launcher.html appends `from=launcher` plus
  * the launcher's own context (game/role/pass/name/ws/reconnect_token +
  * allow_local_img_load + renderer). This module echoes those back so the editor
@@ -467,7 +467,7 @@ const FROM_LAUNCHER = EDITOR_QS.get('from') === 'launcher';
  * Build the "Back to Launcher" URL carrying the inherited launcher context,
  * with the given deck preselected into the custom collection (when provided).
  *
- * mtg-4irju: launcher.html is a HASHED page, and a DIRECT deck_editor→launcher
+ * mtg-704: launcher.html is a HASHED page, and a DIRECT deck_editor→launcher
  * link would form the launcher↔deck_editor cycle (launcher→deck_editor forward
  * + deck_editor→launcher back) that the CAS pure-DAG model forbids. So the
  * back-edge is routed through the STABLE unhashed entry as
@@ -1266,7 +1266,7 @@ useBtn.addEventListener('click', () => {
     const name = deckNameInput.value.trim() || 'Unnamed Deck';
     // When the editor was opened FROM the launcher, "Use" returns to the
     // LAUNCHER (the pre-game flow it came from) with this deck preselected,
-    // preserving the launcher context (mtg-ttjt6). Otherwise it goes to the
+    // preserving the launcher context (mtg-695). Otherwise it goes to the
     // lobby and leaves a preselect hint (legacy behaviour).
     if (FROM_LAUNCHER) {
         window.location.href = launcherReturnUrl(name);
@@ -1296,7 +1296,7 @@ useBtn.addEventListener('click', () => {
 // edit); the editor's selected deck is NOT preselected here on purpose so the
 // launcher restores whatever it last had. "Use in Lobby"/save is the path that
 // preselects the new deck. Back-to-Lobby stays as the always-present fallback.
-// mtg-4irju: launcherReturnUrl is now a pure index.html?goto=launcher URL (no
+// mtg-704: launcherReturnUrl is now a pure index.html?goto=launcher URL (no
 // async runtime resolver), so a single parse-time wire suffices.
 function setupBackToLauncher() {
     const link = document.getElementById('back-to-launcher');

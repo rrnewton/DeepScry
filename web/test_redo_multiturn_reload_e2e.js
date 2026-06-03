@@ -2,7 +2,7 @@
 /**
  * test_redo_multiturn_reload_e2e.js — the lobby-redo ACCEPTANCE gate
  * (mtg-682 acceptance test items 4 + 5; the "multiturn-e2e + reload" piece
- * left over from the gamepages closeout / mtg-drxh5 sibling work).
+ * left over from the gamepages closeout / mtg-692 sibling work).
  *
  * Builds on the Step-0 harness (test_redo_ai_network_e2e.js) but goes further:
  *

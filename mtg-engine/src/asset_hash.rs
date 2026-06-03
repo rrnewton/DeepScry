@@ -173,7 +173,7 @@ pub mod web_pkg {
 }
 
 /// Full asset-graph content-addresser (mtg-620, generalized mtg-682,
-/// CAS-hardened mtg-4irju).
+/// CAS-hardened mtg-704).
 ///
 /// A GENERAL, graph-aware renamer for the deploy-staging web tree. It hashes
 /// every web asset to an immutable `<stem>.<blake3>.<ext>` name and rewrites
@@ -190,7 +190,7 @@ pub mod web_pkg {
 /// the actual reference graph across HTML pages, JS leaves, and the data index
 /// and rewrites every reference to its real hashed target.
 ///
-/// ### Pure-DAG topology (no runtime manifest — mtg-4irju)
+/// ### Pure-DAG topology (no runtime manifest — mtg-704)
 ///
 /// The web nav graph is now a strict DAG: `index.html → launcher/game/editor
 /// pages`, `launcher.html → {game pages, deck_editor.html}`, `demo.html → game
@@ -229,7 +229,7 @@ pub mod web_pkg {
 ///   1. Hash the pkg pair (delegated to [`web_pkg::hash_web_assets`]).
 ///   2. Hash the JS leaves (incl. the now-leaf `lobby_launcher.js`) + the data
 ///      index + the top-level image leaves (logo/emblem/favicons — EXCLUDING the
-///      `images/` card-art namespace) + `site.webmanifest` (mtg-k935c). All pure
+///      `images/` card-art namespace) + `site.webmanifest` (mtg-706). All pure
 ///      leaves; the webmanifest's icon refs are rewritten before it is hashed.
 ///   3. Build the reference graph over the remaining HTML pages, assert it is
 ///      ACYCLIC (Tarjan; a multi-node SCC is a hard error naming the offending
@@ -279,7 +279,7 @@ pub mod asset_graph {
     /// JS leaves loaded by `<script src>` or ES `import` that reference NO
     /// other hashable HTML (pure leaves). Auto-discovery (step 3) treats any
     /// `.js` that DOES reference HTML as a graph node instead. These are hashed
-    /// up front in step 2. `lobby_launcher.js` is now a pure leaf (mtg-4irju
+    /// up front in step 2. `lobby_launcher.js` is now a pure leaf (mtg-704
     /// leaf-ified it: it no longer names the game pages), so it lives here and
     /// the game pages' `import './lobby_launcher.js'` is statically rewritten.
     pub const HASHED_JS_LEAVES: &[&str] = &[
@@ -302,7 +302,7 @@ pub mod asset_graph {
     pub const DATA_INDEX_JSON: &str = "data/sets/index.json";
 
     /// File extensions of TOP-LEVEL `web/` image assets that are content-hashed
-    /// as immutable leaves (mtg-k935c): the hero logo, emblem, and favicons
+    /// as immutable leaves (mtg-706): the hero logo, emblem, and favicons
     /// (`deepscry_logo.webp`, `emblem-64.webp`, `favicon.ico`, … synced from the
     /// `deepscry-assets` submodule). They reference nothing, so they hash up
     /// front like the JS leaves; every `<img src>` / `<link href>` to them is
@@ -334,7 +334,7 @@ pub mod asset_graph {
         /// `data/sets/index.json` → `data/sets/index.<hash>.json`.
         pub data_index: (String, String),
         /// Top-level image leaves (logo/emblem/favicons): logical → hashed
-        /// (mtg-k935c). The `web/images/**` art-id namespace is excluded.
+        /// (mtg-706). The `web/images/**` art-id namespace is excluded.
         pub image_leaves: BTreeMap<String, String>,
         /// `site.webmanifest` → `site.<hash>.webmanifest` (present iff the file
         /// exists). Hashed after the image leaves with its icon refs rewritten.
@@ -468,7 +468,7 @@ pub mod asset_graph {
 
     /// Auto-discover TOP-LEVEL `web/` image files (by [`HASHED_IMAGE_EXTS`]),
     /// sorted for a deterministic order. Does NOT recurse, so the
-    /// `web/images/**` card-art namespace is never visited (mtg-k935c). Used to
+    /// `web/images/**` card-art namespace is never visited (mtg-706). Used to
     /// content-hash the logo/emblem/favicons as immutable leaves.
     fn discover_top_level_images(web_dir: &Path) -> std::io::Result<Vec<String>> {
         let mut imgs = Vec::new();
@@ -635,7 +635,7 @@ pub mod asset_graph {
 
         // ── 3. build the reference graph over the non-entry HTML pages ────
         // Graph nodes = every *.html except the stable entry. (After the
-        // mtg-4irju leaf-ification, NO served *.js references an HTML page, so
+        // mtg-704 leaf-ification, NO served *.js references an HTML page, so
         // there are no graph-JS nodes; lobby_launcher.js is a pure leaf hashed
         // in step 2. We still scan *.js defensively and refuse — see below — if
         // one reintroduces an HTML reference, since that would be a NEW edge the
@@ -670,7 +670,7 @@ pub mod asset_graph {
         }
 
         // ── 3a. FULL reference graph (module + soft) → assert ACYCLIC ──────
-        // The mtg-4irju design makes the web nav graph a strict DAG: forward
+        // The mtg-704 design makes the web nav graph a strict DAG: forward
         // edges only, every back-edge rerouted through index.html?goto=. A
         // multi-node SCC means someone reintroduced a cycle (e.g. a direct
         // game→game or editor→launcher link), which would resurrect the cache
@@ -692,7 +692,7 @@ pub mod asset_graph {
                 std::io::ErrorKind::InvalidData,
                 format!(
                     "asset_graph: dependency CYCLE among [{members}] — the CAS pipeline \
-                     (mtg-4irju) requires a strict forward DAG so every reference is \
+                     (mtg-704) requires a strict forward DAG so every reference is \
                      statically hashable. A direct link between these pages forms a cycle. \
                      Reroute the BACK-edge through the stable entry as \
                      index.html?goto=<logical>&release=<token> (the entry's inline \
@@ -1080,7 +1080,7 @@ mod tests {
         }
     }
 
-    /// End-to-end tests for the CAS pure-DAG pipeline (mtg-4irju): the
+    /// End-to-end tests for the CAS pure-DAG pipeline (mtg-704): the
     /// content-hashed immutable manifest, the baked release token, and the
     /// acyclicity guard. These stage a minimal web tree in a tempdir and run
     /// the real [`asset_graph::hash_full_graph`].
@@ -1292,7 +1292,7 @@ mod tests {
 
         #[test]
         fn top_level_images_and_webmanifest_are_content_hashed() {
-            // mtg-k935c: the hero logo / emblem / favicons (top-level web/
+            // mtg-706: the hero logo / emblem / favicons (top-level web/
             // images) + site.webmanifest become immutable content-addressed
             // leaves; every <img src> / <link href> / manifest icon ref is
             // repointed; the web/images/ card-art namespace is left untouched.

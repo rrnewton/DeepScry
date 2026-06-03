@@ -35,7 +35,7 @@
  *   &debug=true                   → enable TRACE logging on the game page
  * ──────────────────────────────────────────────────────────────────────────────
  *
- * GAME-PREFS contract (mtg-ttjt6 launcher-parity restore):
+ * GAME-PREFS contract (mtg-695 launcher-parity restore):
  *   The lobby redo moved the launcher's per-game *preferences* (image display,
  *   image-source selection, debug logging) off the game pages. They now live on
  *   launcher.html and ride to the game page as the three params above. They are
@@ -60,7 +60,7 @@ export const DEFAULT_UI = 'tui';
  * "Launch Game" (creator) or "Join" (joiner). Returns ONLY the param set — the
  * CALLER owns the game-page filename (`tui_game.html` / `native_game.html`).
  *
- * This is the mtg-4irju LEAF-IFICATION: this module no longer names the game
+ * This is the mtg-704 LEAF-IFICATION: this module no longer names the game
  * pages, so it has NO back-reference to them. That turns the old
  * `game pages ⇄ lobby_launcher.js` cycle into a one-way import (pages →
  * this leaf), so the deploy hasher statically bakes the leaf's hashed name into
@@ -99,7 +99,7 @@ export function buildRedirectQuery(opts) {
     if (opts.wsUrl)            qp.set('ws', opts.wsUrl);
     if (opts.allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
     if (opts.reconnectToken)   qp.set('reconnect_token', opts.reconnectToken);
-    // Per-game prefs re-homed from the old built-in launcher (mtg-ttjt6). Only
+    // Per-game prefs re-homed from the old built-in launcher (mtg-695). Only
     // emit when explicitly provided so a caller that does not set them lets the
     // game page fall back to its built-in default (images on, info-level logs).
     if (opts.showImages !== undefined) qp.set('images', opts.showImages ? 'true' : 'false');
@@ -268,7 +268,7 @@ export const IMAGE_SOURCE_IDS = ['local', 'scryfall', 'gatherer'];
  * launcher forwards to a game page. These were controls on the old built-in
  * launcher (Show-Card-Images, the image-source checkboxes, Debug-Mode); after
  * the lobby redo they live on launcher.html and ride here as URL params. Parsed
- * in ONE place so neither game page re-derives the contract (DRY, mtg-ttjt6).
+ * in ONE place so neither game page re-derives the contract (DRY, mtg-695).
  *
  * `imageSources` is filtered to the known ids in canonical fallback order; an
  * absent/empty `img_src` falls back to `defaults.imageSources` (all sources).
@@ -316,7 +316,7 @@ export function consumeGamePrefs(defaults) {
  * gate is meaningless if a back-to-lobby click silently drops it), but the
  * player identity, server URL, and debug/image prefs are equally session-wide.
  *
- * `release` is the CAS release token (mtg-4irju): the content-hashed manifest
+ * `release` is the CAS release token (mtg-704): the content-hashed manifest
  * hash that identifies which deployment a page belongs to. The UNHASHED
  * index.html seeds it (the deploy bakes the current token); every hashed page
  * then RELAYS `release=` from its own URL onto BOTH its forward links and its
@@ -330,7 +330,7 @@ export const STICKY_PARAM_KEYS = ['allow_local_img_load', 'debug', 'images', 'im
  * Copy the sticky params (those present in `source`, default
  * `window.location.search`) onto `url`'s query string WITHOUT clobbering params
  * already set on `url`. Returns the same URL object for chaining. Centralised
- * here so every inter-page link forwards the same set (DRY, mtg-ttjt6) — the
+ * here so every inter-page link forwards the same set (DRY, mtg-695) — the
  * back-to-lobby / deck-editor links were dropping `allow_local_img_load` and
  * friends, defeating the sticky gate.
  *
@@ -354,7 +354,7 @@ export function forwardStickyParams(url, source) {
  * Build a relative URL string for `page` carrying the session's sticky params
  * (and any explicit `extra` params). Used for PROGRAMMATIC navigation (e.g. the
  * game page's exit-to-lobby), the counterpart of forwardStickyParamsOnAnchor
- * for static links. DRY: same STICKY_PARAM_KEYS set (mtg-ttjt6).
+ * for static links. DRY: same STICKY_PARAM_KEYS set (mtg-695).
  *
  * @param {string} page                  - e.g. "index.html"
  * @param {object} [extra]               - extra query params to set first

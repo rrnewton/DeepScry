@@ -943,20 +943,20 @@
             stickyUrl,
         } from './lobby_launcher.js';
 
-        // Per-game display/debug prefs forwarded by launcher.html (mtg-ttjt6).
+        // Per-game display/debug prefs forwarded by launcher.html (mtg-695).
         // The TUI's historical default was images OFF (the terminal renderer is
         // text-first); honour that when no &images param is present.
         const gamePrefs = consumeGamePrefs({ showImages: false });
 
         // Keep "Back to lobby" links carrying the session's sticky params
         // (allow_local_img_load, debug, images, img_src, name, ws) so the unlock
-        // + prefs survive the round trip (mtg-ttjt6). Module scripts run after
+        // + prefs survive the round trip (mtg-695). Module scripts run after
         // DOM parse, so the anchors already exist.
         for (const a of document.querySelectorAll('.back-to-lobby-link')) {
             forwardStickyParamsOnAnchor(a);
         }
 
-        // (mtg-4irju) The old native⇄tui renderer-switch link was removed and the
+        // (mtg-704) The old native⇄tui renderer-switch link was removed and the
         // runtime asset_manifest.js bridge with it. This page is now a pure-DAG
         // leaf consumer: its only back-edge ("Back to lobby") is the stable
         // index.html entry, and all sticky/release params ride forwardStickyParams.
@@ -1051,7 +1051,7 @@
             getHelpText: () => (typeof tui_get_help_text === 'function' ? tui_get_help_text() : null),
         });
 
-        // mtg-drxh5: the in-page deck builder was removed when this page became a
+        // mtg-692: the in-page deck builder was removed when this page became a
         // PURE renderer. The only WASM deck-builder export still needed is
         // cleanup_deck_builder_state(), which launchGame() calls defensively to
         // tear down any leftover builder render loop before starting a game.
@@ -1381,7 +1381,7 @@
         }
 
         function applyLocalImageGate() {
-            // mtg-drxh5: the built-in launcher (which had the #img-src-local
+            // mtg-692: the built-in launcher (which had the #img-src-local
             // checkbox/label/gate-note this used to toggle) was deleted when this
             // page became a PURE renderer (mtg-682 page 3). The only live effect
             // now is publishing the resolved flag on window.__allowLocalImgLoad
@@ -1389,7 +1389,7 @@
             window.__allowLocalImgLoad = resolveLocalImageAllowed();
         }
 
-        // mtg-682 page 3 / mtg-drxh5: the built-in launcher (game-mode/deck/
+        // mtg-682 page 3 / mtg-692: the built-in launcher (game-mode/deck/
         // controller pickers + settings persistence + the change-handler wiring
         // that used to live here) was DELETED. This page is a PURE renderer that
         // boots from URL params (see bootFromParams). No launcher form to persist
@@ -1690,7 +1690,7 @@
 
             /**
              * Get which sources are currently enabled, from the launcher-forwarded
-             * `&img_src` prefs (mtg-ttjt6). The OLD launcher read three in-page
+             * `&img_src` prefs (mtg-695). The OLD launcher read three in-page
              * checkboxes here; after the lobby redo those checkboxes live on
              * launcher.html and ride to this PURE renderer via gamePrefs. Reading
              * the (now-deleted) checkboxes always returned [] → the TUI rendered
@@ -2321,7 +2321,7 @@
             // P2 settings only used in local mode.
             const opponentDeck = bootConfig.p2Deck;
             const opponentController = getControllerType(bootConfig.p2Controller);
-            // launcher.html owns image prefs (mtg-ttjt6): forwarded via &images.
+            // launcher.html owns image prefs (mtg-695): forwarded via &images.
             // TUI default is OFF (text-first renderer) when no param is present.
             const showImages = gamePrefs.showImages;
 
@@ -2364,7 +2364,7 @@
 
             // Set log level based on debug param. bootConfig.debug is the
             // local-boot &debug; gamePrefs.debug is the launcher's Debug toggle
-            // forwarded on the network boot path (mtg-ttjt6) — either enables it.
+            // forwarded on the network boot path (mtg-695) — either enables it.
             const debugMode = bootConfig.debug || gamePrefs.debug;
             CardImageOverlay.debugMode = debugMode;  // Enable image URL logging
             if (debugMode) {
@@ -2849,13 +2849,13 @@
             // goes back to the lobby (a new game = a fresh launcher flow).
             console.log('[EXIT] TUI exited cleanly — returning to lobby.');
             // Preserve the session's sticky params (allow_local_img_load etc) on
-            // the programmatic exit, same as the "Back to lobby" links (mtg-ttjt6).
+            // the programmatic exit, same as the "Back to lobby" links (mtg-695).
             window.location.href = stickyUrl('index.html');
         };
 
         // ==================== CUSTOM DECKS (boot path) ====================
         //
-        // mtg-682 page 3 / mtg-drxh5: the in-page deck BUILDER + .dck-upload
+        // mtg-682 page 3 / mtg-692: the in-page deck BUILDER + .dck-upload
         // modal + deck-COLLECTIONS picker that used to live here were DELETED
         // when this page became a PURE renderer (those are launcher.html /
         // deck_editor.html concerns now). The ONLY survivor is the custom-deck

@@ -204,7 +204,7 @@ async function main() {
     const wasmMatch = indexHtml.match(/(?:\.\/)?pkg\/(mtg_engine_bg\.[0-9a-f]{16}\.wasm)/);
     // After the solo-launcher rework the game pages are NO LONGER linked
     // directly from index.html: the solo path is index → solo_launcher → game
-    // pages (mtg-4irju forward DAG). Discover the hashed game-page names from the
+    // pages (mtg-704 forward DAG). Discover the hashed game-page names from the
     // hashed solo_launcher page that index references — exactly the resolution
     // path a browser performs when clicking a Solo Launcher link.
     let tuiHashedName = null;

@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const { listBuiltinDecks, firstBuiltinDeck, pickBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
-// mtg-682 page 3 / mtg-drxh5: the game pages are PURE renderers (no built-in
+// mtg-682 page 3 / mtg-692: the game pages are PURE renderers (no built-in
 // launcher / deck-collection dropdown). These regexes approximate the OLD
 // launcher's DECK_COLLECTIONS filters (now living in launcher.html) just enough
 // to pick a representative built-in deck per "collection" for this non-gate
@@ -57,7 +57,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            // mtg-drxh5: boot native_game.html from URL params (mode=local) — the
+            // mtg-692: boot native_game.html from URL params (mode=local) — the
             // pure renderer has no launcher/collection dropdown. Pick two distinct
             // representative built-in decks for this collection label.
             const base = `http://localhost:${PORT}`;
@@ -137,7 +137,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            // mtg-drxh5: boot Human-vs-Heuristic local game from URL params.
+            // mtg-692: boot Human-vs-Heuristic local game from URL params.
             const dbase = `http://localhost:${PORT}`;
             const hDeck = await firstBuiltinDeck(dbase);
             await page.goto(localGameUrl(dbase, 'native_game.html', {
@@ -258,7 +258,7 @@ async function runTest() {
             });
 
             // Run native_game.html with seed 77, AI vs AI, 5 turns
-            // mtg-drxh5: boot from URL params (same seed 77, AI vs AI).
+            // mtg-692: boot from URL params (same seed 77, AI vs AI).
             const cmpBase = `http://localhost:${PORT}`;
             const cmpDeck = await firstBuiltinDeck(cmpBase);
             const gamePage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -291,7 +291,7 @@ async function runTest() {
             await gamePage.close();
 
             // Now run tui_game.html with same seed
-            // mtg-drxh5: boot tui_game.html from URL params (same deck + seed 77).
+            // mtg-692: boot tui_game.html from URL params (same deck + seed 77).
             const fancyPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             await fancyPage.goto(localGameUrl(cmpBase, 'tui_game.html', {
                 deck: cmpDeck, p1: 'heuristic', p2: 'heuristic', seed: 77,
@@ -337,7 +337,7 @@ async function runTest() {
             const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
             page.on('pageerror', err => jsErrors.push(err.message));
 
-            // mtg-drxh5: boot heuristic-vs-heuristic local game from URL params.
+            // mtg-692: boot heuristic-vs-heuristic local game from URL params.
             const ecBase = `http://localhost:${PORT}`;
             const ecDeck = await firstBuiltinDeck(ecBase);
             await page.goto(localGameUrl(ecBase, 'native_game.html', {
@@ -403,7 +403,7 @@ async function runTest() {
 
             await page.screenshot({ path: path.join(ssDir, 'deep_edge_gameover.png') });
 
-            // mtg-682 page 3 / mtg-drxh5: pure renderer has no launcher to return
+            // mtg-682 page 3 / mtg-692: pure renderer has no launcher to return
             // to — exit (q) navigates to the LOBBY (index.html). Assert that.
             await page.keyboard.press('q');
             await page.waitForFunction(() => /index\.html$/.test(window.location.pathname), null, { timeout: 5000 })

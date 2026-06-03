@@ -714,7 +714,7 @@ run_post_deploy_probe() {
         probe_failed=1; fail_reasons+=("index.html: no hashed tui_game.<h>.html reference (mtg hash-web-assets did not run?)")
     fi
 
-    # 2b. CAS pure-DAG NAV hardening (mtg-4irju, supersedes the mtg-682 runtime
+    # 2b. CAS pure-DAG NAV hardening (mtg-704, supersedes the mtg-682 runtime
     # manifest). The nav graph is now a strict forward DAG: index.html links the
     # HASHED launcher + game pages directly (statically rewritten), and the
     # back-edges go through index.html?goto=. We probe:

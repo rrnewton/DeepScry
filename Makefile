@@ -344,7 +344,7 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@$(MAKE) build-network
 	@$(MAKE) wasm-network
 	@echo "=== Running Network E2E tests ==="
-# mtg-cfnx2: chromium is provisioned ONCE by `make setup` (binary only, no
+# mtg-716: chromium is provisioned ONCE by `make setup` (binary only, no
 # `--with-deps`/root). Do NOT fetch a browser at validate time — a runtime
 # download is the anti-pattern and validate must stay hermetic. Verify the
 # browser is present via the Playwright API (a structured check, not a string
@@ -430,7 +430,7 @@ setup: install-hooks ensure-wasm-pack
 	@echo "=== Installing development tools ==="
 	rustup component add rustfmt clippy
 	rustup target add wasm32-unknown-unknown
-# mtg-cfnx2: provision the web e2e browser ONCE here so `make validate` never
+# mtg-716: provision the web e2e browser ONCE here so `make validate` never
 # downloads one at runtime (hermetic — validate must not depend on a network
 # fetch). Binary only (no `--with-deps`: that needs root and breaks non-root
 # sandboxes). Best-effort: skipped with a notice if npm is unavailable.

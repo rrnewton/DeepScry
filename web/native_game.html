@@ -1101,18 +1101,18 @@
             stickyUrl,
         } from './lobby_launcher.js';
 
-        // Per-game display/debug prefs forwarded by launcher.html (mtg-ttjt6).
+        // Per-game display/debug prefs forwarded by launcher.html (mtg-695).
         // The native GUI's historical default is images ON.
         const gamePrefs = consumeGamePrefs({ showImages: true });
 
         // Keep "Back to lobby" links carrying the session's sticky params
         // (allow_local_img_load, debug, images, img_src, name, ws) so the unlock
-        // + prefs survive the round trip (mtg-ttjt6).
+        // + prefs survive the round trip (mtg-695).
         for (const a of document.querySelectorAll('.back-to-lobby-link')) {
             forwardStickyParamsOnAnchor(a);
         }
 
-        // (mtg-4irju) The old tui⇄native renderer-switch link was removed and the
+        // (mtg-704) The old tui⇄native renderer-switch link was removed and the
         // runtime asset_manifest.js bridge with it. This page is now a pure-DAG
         // leaf consumer: its only back-edge ("Back to lobby") is the stable
         // index.html entry, and all sticky/release params ride forwardStickyParams.
@@ -1208,7 +1208,7 @@
             return null;
         }
         function filterImageUrls(urls) {
-            // (1) drop sources the launcher did not enable (&img_src, mtg-ttjt6);
+            // (1) drop sources the launcher did not enable (&img_src, mtg-695);
             //     an unclassifiable URL is kept (fail-open, never worse than before).
             // (2) drop local unless the gate is unlocked.
             const enabled = gamePrefs.imageSources;
@@ -1320,7 +1320,7 @@
 
         function isDebugMode() {
             // bootConfig.debug is the local-boot &debug; gamePrefs.debug is the
-            // launcher's Debug toggle forwarded on network boots (mtg-ttjt6).
+            // launcher's Debug toggle forwarded on network boots (mtg-695).
             return !!bootConfig.debug || gamePrefs.debug;
         }
         // mtg-436: in Debug Mode, enable the proactive rewind/replay verifier on
@@ -1529,7 +1529,7 @@
         }
 
         function applyLocalImageGate() {
-            // mtg-drxh5: the built-in launcher (which had the #img-src-local
+            // mtg-692: the built-in launcher (which had the #img-src-local
             // checkbox/label/gate-note this used to toggle) was deleted when this
             // page became a PURE renderer (mtg-682 page 3). The only live effect
             // now is publishing the resolved flag on window.__allowLocalImgLoad
@@ -2428,7 +2428,7 @@
         /// come straight from Rust's shared `classify_log_message`, so the
         /// GUI and TUI never disagree on what color a message gets.
         // Signature of the last-rendered log, so we re-render on any CONTENT
-        // change — not just a count change. mtg-2a1h8/mtg-570: a network
+        // change — not just a count change. mtg-707/mtg-570: a network
         // rewind+replay re-grows the log to the SAME entry count with
         // different content; a count-only check (the old
         // `body.children.length === filtered.length`) would skip the
@@ -2710,7 +2710,7 @@
             // to. Exit goes back to the lobby (new game = new launcher flow).
             console.log('Game exited cleanly — returning to lobby.');
             // Preserve the session's sticky params (allow_local_img_load etc) on
-            // the programmatic exit, same as the "Back to lobby" links (mtg-ttjt6).
+            // the programmatic exit, same as the "Back to lobby" links (mtg-695).
             window.location.href = stickyUrl('index.html');
         }
 

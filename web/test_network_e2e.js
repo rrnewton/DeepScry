@@ -146,7 +146,7 @@ async function runTest() {
         log('Starting native client as P2...');
         const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
         // Read the deck so the WEB client can seed the SAME deck as a custom deck
-        // (mtg-drxh5: the pure renderer boots from params; out-of-glob decks like
+        // (mtg-692: the pure renderer boots from params; out-of-glob decks like
         // grizzly_bears are loaded via getCustomDecks + register_custom_deck).
         const deckContent = fs.readFileSync(deckPath, 'utf8');
         const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
@@ -192,7 +192,7 @@ async function runTest() {
         const page = await browser.newPage();
 
         // Seed the deck into localStorage as a custom deck BEFORE navigation, so
-        // the param-booted page can register it by name (mtg-drxh5).
+        // the param-booted page can register it by name (mtg-692).
         const webCustomDeck = parseDckIntoCustomDeck(deckContent);
         await page.addInitScript(({ name, deck }) => {
             const KEY = 'mtg-forge-custom-decks';
@@ -216,7 +216,7 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // mtg-682 page 3 / mtg-692: tui_game.html is a PURE renderer with no
         // built-in launcher. Boot the network client ENTIRELY from URL params via
         // the auto-match contract (?mode=network&controller=...&ws=&server_pass=
         // &name=&deck=) — the server pairs this web client with the native

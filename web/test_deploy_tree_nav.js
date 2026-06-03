@@ -1,5 +1,5 @@
 // test_deploy_tree_nav.js — DEPLOY-TREE navigation regression gate for the CAS
-// pure-DAG / immutable-manifest pipeline (mtg-4irju, supersedes the mtg-682
+// pure-DAG / immutable-manifest pipeline (mtg-704, supersedes the mtg-682
 // runtime-manifest version).
 //
 // WHY THIS EXISTS
@@ -7,7 +7,7 @@
 // The other web e2e tests run against the SOURCE (fixed-name) tree served out
 // of web/. The deploy instead runs `mtg hash-web-assets` to produce a
 // CONTENT-HASHED staging tree and serves THAT. The hashing/rewrite step is
-// exactly where deploy-only 404s have lived. mtg-4irju reworked that step:
+// exactly where deploy-only 404s have lived. mtg-704 reworked that step:
 //   - the nav graph is now a strict forward DAG (no native⇄tui switch link,
 //     lobby_launcher.js is a leaf, back-edges go through index.html?goto=);
 //   - the old stable-named asset_manifest.js loader + asset-manifest.json +
@@ -188,7 +188,7 @@ async function main() {
     log(`Staging deploy tree → ${stage}`);
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
-    // Top-level image extensions (mtg-k935c) + the PWA manifest are content-
+    // Top-level image extensions (mtg-706) + the PWA manifest are content-
     // hashed as immutable leaves; stage them so the renamer hashes them and we
     // can assert it. These are gitignored (synced from the deepscry-assets
     // submodule), so they are PRESENT only after scripts/sync-web-assets.sh has
@@ -262,7 +262,7 @@ async function main() {
             );
         }
 
-        // ── (1b) IMAGE LEAVES (mtg-k935c): top-level images + the PWA manifest
+        // ── (1b) IMAGE LEAVES (mtg-706): top-level images + the PWA manifest
         //        are content-hashed/immutable too, so index.html is the ONLY
         //        mutable web file. CONDITIONAL: these are gitignored (synced from
         //        the deepscry-assets submodule by scripts/sync-web-assets.sh), so
@@ -318,7 +318,7 @@ async function main() {
         }
 
         // ── (2) index → HASHED launcher + HASHED solo_launcher; solo_launcher
-        //        → both HASHED game pages, each 200 (forward DAG, mtg-4irju) ──
+        //        → both HASHED game pages, each 200 (forward DAG, mtg-704) ──
         // After the solo-launcher rework the index no longer links the game
         // pages DIRECTLY: the MULTIPLAYER path is index → launcher → game, and
         // the SOLO path is index → solo_launcher → game. (The game pages became

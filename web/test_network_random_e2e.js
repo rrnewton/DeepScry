@@ -14,7 +14,7 @@ const fs = require('fs');
 const { enableReplayVerifier, checkForFatalErrors } = require('./test_network_utils');
 const { parseDckIntoCustomDeck } = require('./game_boot_params');
 
-// Configuration. mtg-drxh5: the old launch_network_game.sh (deleted in 43a0661f)
+// Configuration. mtg-692: the old launch_network_game.sh (deleted in 43a0661f)
 // is gone, so this test now spawns the server + native AI peer DIRECTLY (like
 // test_network_e2e.js) and boots the web client from URL params (no launcher).
 const SERVER_PORT = 17771;
@@ -103,7 +103,7 @@ async function runTest() {
         log('=== Network Random E2E Test ===');
         log('');
 
-        // mtg-drxh5: start the static HTTP server, the game server, and a native
+        // mtg-692: start the static HTTP server, the game server, and a native
         // AI peer DIRECTLY (the old launch_network_game.sh is deleted).
         log('Starting HTTP server...');
         httpServer = spawn('python3', ['-m', 'http.server', String(HTTP_PORT)], {
@@ -147,7 +147,7 @@ async function runTest() {
         });
         const page = await browser.newPage();
 
-        // Seed the deck as a custom deck before navigation (mtg-drxh5).
+        // Seed the deck as a custom deck before navigation (mtg-692).
         const webCustomDeck = parseDckIntoCustomDeck(deckContent);
         await page.addInitScript(({ name, deck }) => {
             const KEY = 'mtg-forge-custom-decks';
@@ -177,7 +177,7 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // mtg-682 page 3 / mtg-692: tui_game.html is a PURE renderer with no
         // built-in launcher. Boot the Random-controller network client ENTIRELY
         // from URL params via the auto-match contract (?mode=network&controller=
         // random&ws=&server_pass=&name=&deck=) — the server pairs it with the

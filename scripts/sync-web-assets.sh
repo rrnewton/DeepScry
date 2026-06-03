@@ -9,7 +9,7 @@
 #
 # The web/ targets are gitignored on purpose (mtg-forge-rs NEVER commits
 # images); the served filenames are content-addressed (CAS-hashed) by the web
-# build at deploy time (mtg-k935c). Run this before `make validate` (so the e2e
+# build at deploy time (mtg-706). Run this before `make validate` (so the e2e
 # web tests see the icons) and before `deploy-cloud.sh deploy`.
 set -euo pipefail
 

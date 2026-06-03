@@ -1,5 +1,5 @@
 //! Integration test for `asset_hash::asset_graph::hash_full_graph`
-//! (mtg-620 → mtg-682 → CAS-hardened mtg-4irju).
+//! (mtg-620 → mtg-682 → CAS-hardened mtg-704).
 //!
 //! Builds a synthetic `web_dir` on a tempdir that REPRODUCES THE REAL PURE-DAG
 //! TOPOLOGY after the CAS rework: a stable entry `index.html` (the SOLE mutable
@@ -58,7 +58,7 @@ fn build_web(web: &Path) {
     write(&web.join("data/sets/index.json"), r#"{"sets":[]}"#);
 
     // Pure JS leaves — INCLUDING the now-leaf lobby_launcher.js (it references
-    // NO html page after the mtg-4irju leaf-ification, so it is a pure leaf).
+    // NO html page after the mtg-704 leaf-ification, so it is a pure leaf).
     write(&web.join("server-config.js"), "window.MTG_WS_URL = 'ws://x';");
     write(&web.join("network.js"), "// network module");
     write(&web.join("bug_report.js"), "// bug report module");

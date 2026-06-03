@@ -5,7 +5,7 @@
 // 1. Starts a native MTG server
 // 2. Starts a native AI client (heuristic) as P1
 // 3. Launches browser as P2 with human controller (booted from URL params —
-//    mtg-drxh5: migrated off the deleted built-in launcher form)
+//    mtg-692: migrated off the deleted built-in launcher form)
 // 4. Waits for choice prompts, makes smart selections
 // 5. Verifies no MONOTONICITY VIOLATION, DESYNC, or other errors
 // 6. Plays through as many turns as possible
@@ -379,7 +379,7 @@ async function runTest() {
         log('Starting native AI client as P1 (heuristic)...');
         const deckPath = path.join(projectRoot, 'decks', DECK_NAME);
         // Read the deck so the web client can seed the SAME deck as a custom deck
-        // (mtg-drxh5: pure renderer boots from params; out-of-glob decks are
+        // (mtg-692: pure renderer boots from params; out-of-glob decks are
         // loaded via getCustomDecks + register_custom_deck).
         const deckContent = fs.readFileSync(deckPath, 'utf8');
         const deckNameMatch = deckContent.match(/^\s*Name\s*=\s*(.+)$/im);
@@ -411,7 +411,7 @@ async function runTest() {
         });
         const page = await browser.newPage();
 
-        // Seed the deck as a custom deck before navigation (mtg-drxh5).
+        // Seed the deck as a custom deck before navigation (mtg-692).
         const webCustomDeck = parseDckIntoCustomDeck(deckContent);
         await page.addInitScript(({ name, deck }) => {
             const KEY = 'mtg-forge-custom-decks';
@@ -453,7 +453,7 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        // mtg-682 page 3 / mtg-drxh5: tui_game.html is a PURE renderer with no
+        // mtg-682 page 3 / mtg-692: tui_game.html is a PURE renderer with no
         // built-in launcher. Boot the HUMAN-controller network client from URL
         // params via the auto-match contract (?mode=network&controller=human&ws=
         // &server_pass=&name=&deck=) — the server pairs it with the native

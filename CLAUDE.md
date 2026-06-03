@@ -178,9 +178,11 @@ require a serialization point to assign without conflict. We use BOTH, with the
 
 - **`.beads/config-minibeads.yaml` keeps `mb-hash-ids: true`** — so every NEW
   issue (anywhere, including worktrees) is born hash-based and parallel-safe.
+
 - **On a worktree:** just `bd create` (hash ID) and commit the hash-named file.
   Do NOT run `mb mb-migrate` in a worktree — let integration renumber later.
   Your branch will reference hash IDs; that is expected and fine.
+
 - **On the primary checkout, before committing a `.beads` change to
   `integration`:** run the renumber, then restore the hash setting, then stage
   the whole `.beads` dir:
@@ -193,11 +195,19 @@ require a serialization point to assign without conflict. We use BOTH, with the
   ```
   This converts any hash IDs that arrived via merged feature branches into the
   next sequential numbers and keeps `git log`/issue citations readable.
-- **Timing (orchestrator):** only renumber when **no in-flight feature branch is
+
+  After a rename occurs also run a grep and then sed to replace any references to the renamed
+  hash based issues in the CODE COMMENTS.
+  
+- **Timing (orchestrator):** you should always do the numeric compaction before committing
+  to integration.
+
+only renumber when **no in-flight feature branch is
   touching `.beads`** (do it right after a wave of card/feature branches merges,
   before dispatching the next wave). Renumbering while a branch has edits to a
   hash-named issue file causes modify/delete rebase conflicts (integration
   renamed `mtg-2b3951.md`→`mtg-393.md`; the branch still edits `mtg-2b3951.md`).
+
 - A hash ID cited in a commit message or code TODO before renumbering still
   resolves via the renamed file's history; prefer citing issues by title when the
   reference must survive a renumber.
