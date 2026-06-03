@@ -1,0 +1,90 @@
+---
+title: 'Card Compatibility: Stasis'
+status: open
+priority: 3
+issue_type: task
+depends_on:
+  mtg-4zlpr: parent-child
+created_at: 2026-06-03T03:44:10.150868964+00:00
+updated_at: 2026-06-03T03:44:10.150868964+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Stasis (LEA) in MTG Forge-rs.
+
+Card: cardsfolder/s/stasis.txt
+Set: LEA
+Deck: 01 Dolan WUG Stasis (2 copies; deck is named after it) — 1994 World Championship (mtg-4zlpr / mtg-684)
+Test puzzle: test_puzzles/stasis_skips_untap.pzl
+
+Card text:
+  {1}{U} Enchantment
+  Players skip their untap steps.
+  At the beginning of your upkeep, sacrifice Stasis unless you pay {U}.
+  Script: R:Event$ BeginPhase | ActiveZones$ Battlefield | Phase$ Untap | Skip$ True
+          T:Mode$ Phase | Phase$ Upkeep | ValidPlayer$ You | Execute$ TrigUpkeep
+          SVar:TrigUpkeep:DB$ Sacrifice | UnlessPayer$ You | UnlessCost$ U
+
+Findings (2026-06-02_#2674(51c28554), compat-1994):
+
+1. [x] Parses as {1}{U} Enchantment.
+2. [BROKEN->FIXED] "Players skip their untap steps" did nothing. The
+   R:Event$ BeginPhase | Phase$ Untap | Skip$ True replacement had ZERO engine
+   handling (Event$ BeginPhase / Skip$ were unrecognized everywhere). The untap
+   step ran normally and nothing was locked.
+   Root cause class: silent parser drop (unhandled replacement event).
+   FIX: detect the skip-untap replacement structurally at load
+   (CardLoader::skips_untap_step, tokenized | then $), precompute into
+   CardCache::skips_untap_step, and in GameLoop::untap_step short-circuit the
+   whole step (logging "Players skip their untap steps") whenever ANY battlefield
+   permanent carries the flag. Symmetric lock — correct for every player since
+   the step only ever untaps the active player's permanents.
+   Confirmed RED->GREEN: test_stasis_skips_untap_step + tui log
+   "Players skip their untap steps" with tapped permanents persisting across turns.
+3. [BROKEN] Upkeep "sacrifice unless pay {U}" drawback does NOT work. The
+   T:Mode$ Phase upkeep trigger fires (description logged) but DB$ Sacrifice |
+   UnlessPayer$ You | UnlessCost$ U is converted to a ForceSacrifice
+   (opponent-sacrifice) and no pay-{U}-or-sacrifice prompt is offered; Stasis
+   never self-sacrifices. This makes Stasis strictly better than printed (no
+   upkeep cost). Filed as shared bug below. (Game still legal/complete.)
+
+Reproducer (skip-untap, game log):
+
+```sh
+cat > /tmp/stasis.pzl <<'P'
+[metadata]
+Name:Stasis untap skip
+Goal:Win
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Stasis; Grizzly Bears|Tapped; Plains|Tapped; Island
+p0library=Island; Island; Island
+p1life=20
+p1library=Forest; Forest; Forest
+P
+./target/release/mtg tui --start-state /tmp/stasis.pzl --p1=zero --p2=zero --seed 42 --verbosity 2
+```
+
+Expected log evidence:
+
+```
+--- Untap Step ---
+  Players skip their untap steps
+    Plains (5) (tapped)
+    Grizzly Bears (4) - 2/2 (tapped)
+```
+
+E2E test: test_stasis_skips_untap_step in mtg-engine/tests/puzzle_e2e.rs
+          (+ test_puzzles/stasis_skips_untap.pzl), wired into make validate.
+
+MTG Rules Review: PASS. CR 502/614 skip-replacement on the untap step. The
+"skip your untap step" applies to every player; modeled by short-circuiting the
+untap step while a Stasis-flagged permanent is on the battlefield. No
+hidden-info, no string-ops on DSL (tokenized parse).
+
+CARD STATUS: PARTIAL — skip-untap lock FIXED + WORKING; upkeep self-sacrifice
+drawback still BROKEN (see shared Bug below).

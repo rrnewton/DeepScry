@@ -1,0 +1,25 @@
+[metadata]
+Name:Stasis makes players skip their untap steps
+Goal:Win
+Difficulty:Easy
+
+# Regression for the 1994 World Championship compat sweep (Dolan WUG Stasis is
+# named after this card and runs 2 copies). Stasis: "Players skip their untap
+# steps." Script: R:Event$ BeginPhase | ActiveZones$ Battlefield | Phase$ Untap
+# | Skip$ True. The BeginPhase/Skip replacement was entirely unhandled, so the
+# untap step ran normally and nothing was locked. With a Stasis on the
+# battlefield, NO permanent untaps during any untap step.
+#
+# Setup: P0 controls a Stasis, a (tapped) Grizzly Bears and a (tapped) Plains.
+# The e2e test taps both, runs P0's untap step, and asserts both stay tapped.
+[state]
+turn=2
+activeplayer=p0
+activephase=Upkeep
+p0life=20
+p0battlefield=Stasis; Grizzly Bears; Plains; Island
+p0library=Island; Island; Island
+
+p1life=20
+p1battlefield=
+p1library=Forest; Forest; Forest

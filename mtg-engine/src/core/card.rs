@@ -167,6 +167,11 @@ pub struct CardCache {
     /// Derived from R: lines with "ReplaceWith$ ETBTapped" replacement effect
     pub enters_tapped: bool,
 
+    /// Precomputed: While this permanent is on the battlefield, all players skip
+    /// their untap steps (Stasis). Derived from a replacement of the shape
+    /// `R:Event$ BeginPhase | Phase$ Untap | Skip$ True`.
+    pub skips_untap_step: bool,
+
     /// Precomputed: Does this card require choosing a color on ETB?
     /// Derived from K:ETBReplacement:Other:ChooseColor lines
     pub etb_choose_color: bool,
@@ -246,6 +251,7 @@ impl CardCache {
 
             // ETB effects (initialized false, set from R:/K: lines in card loader)
             enters_tapped: false,
+            skips_untap_step: false,
             etb_choose_color: false,
             etb_exclude_colors: SmallVec::new(),
             etb_choose_player: false,

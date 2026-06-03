@@ -559,6 +559,7 @@ impl CardDefinition {
             .cache
             .update_from_subtypes(&card.subtypes, card.name.as_str());
         card.definition.cache.enters_tapped = self.enters_tapped;
+        card.definition.cache.skips_untap_step = self.skips_untap_step();
         card.definition.cache.etb_choose_color = self.etb_choose_color;
         card.definition.cache.etb_exclude_colors = SmallVec::from_slice(&self.etb_exclude_colors);
         card.definition.cache.etb_choose_player = self.etb_choose_player;
@@ -4617,6 +4618,39 @@ impl CardDefinition {
                 }
             }
             if is_raise_cost && is_self && is_relative {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Detect Stasis's "Players skip their untap steps" lock, expressed as the
+    /// replacement `R:Event$ BeginPhase | Phase$ Untap | Skip$ True`. Parsed
+    /// structurally (tokenize on `|` then `$`), never via substring matching.
+    /// While such a permanent is on the battlefield the untap step is skipped
+    /// for every player (CR 502 / 614 "skip" replacement on the untap step).
+    fn skips_untap_step(&self) -> bool {
+        for ability in &self.raw_abilities {
+            // Replacement lines are stored as "R:<body>" in raw_abilities.
+            let Some(body) = ability.strip_prefix("R:") else {
+                continue;
+            };
+            let mut is_begin_phase = false;
+            let mut is_untap_phase = false;
+            let mut is_skip = false;
+            for token in body.split('|') {
+                let token = token.trim();
+                let Some((key, value)) = token.split_once('$') else {
+                    continue;
+                };
+                match (key.trim(), value.trim()) {
+                    ("Event", "BeginPhase") => is_begin_phase = true,
+                    ("Phase", "Untap") => is_untap_phase = true,
+                    ("Skip", "True") => is_skip = true,
+                    _ => {}
+                }
+            }
+            if is_begin_phase && is_untap_phase && is_skip {
                 return true;
             }
         }

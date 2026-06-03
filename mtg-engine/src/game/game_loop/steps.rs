@@ -41,6 +41,26 @@ impl<'a> GameLoop<'a> {
             );
         }
 
+        // Stasis: "Players skip their untap steps." A `R:Event$ BeginPhase |
+        // Phase$ Untap | Skip$ True` replacement on any battlefield permanent
+        // (precomputed into cache.skips_untap_step) means NO permanent untaps
+        // this step (CR 614 skip-replacement on the untap step). The lock is
+        // symmetric; since this step only ever untaps the active player's
+        // permanents, skipping it whenever any such permanent is in play is
+        // correct for every player's turn.
+        let untap_skipped = self.game.battlefield.cards.iter().any(|&id| {
+            self.game
+                .cards
+                .try_get(id)
+                .is_some_and(|c| c.definition.cache.skips_untap_step)
+        });
+        if untap_skipped {
+            if self.verbosity >= VerbosityLevel::Normal {
+                self.log_normal("Players skip their untap steps");
+            }
+            return Ok(None);
+        }
+
         // Collect tapped permanents controlled by active player
         // Separate into: normal permanents and MayNotUntap permanents
         let mut normal_to_untap: SmallVec<[CardId; 8]> = SmallVec::new();
