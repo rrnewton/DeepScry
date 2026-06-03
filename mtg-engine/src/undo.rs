@@ -469,6 +469,20 @@ pub enum GameAction {
     /// battlefield, clears it from the store, and rolls `next_entity_id` back to
     /// `card_id` (LIFO undo restores the exact counter the mint consumed).
     CreateEntity { card_id: CardId },
+
+    /// Snapshot of a card's FULL counter set captured BEFORE an `add_counters`
+    /// that may trigger +1/+1 ⟷ -1/-1 annihilation (CR 122.3). The plain
+    /// `AddCounter { type, amount }` reversal cannot restore counters that
+    /// annihilation CANCELLED: adding one -1/-1 to a card holding one +1/+1
+    /// removes BOTH, but `AddCounter`'s undo only does `remove_counter(-1/-1, 1)`
+    /// — which removes the (now-absent) -1/-1 and leaves the +1/+1 PERMANENTLY
+    /// lost (mtg-ba6uq #4). Restoring this captured snapshot reverses the net
+    /// change exactly, annihilation or not. `counters` is a tiny inline SmallVec
+    /// so the snapshot is allocation-free in the common case.
+    SetCardCounters {
+        card_id: CardId,
+        prev_counters: SmallVec<[(CounterType, u8); 2]>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -715,6 +729,14 @@ impl fmt::Display for GameAction {
             }
             GameAction::CreateEntity { card_id } => {
                 write!(f, "CreateEntity(card={})", card_id.as_u32())
+            }
+            GameAction::SetCardCounters { card_id, prev_counters } => {
+                write!(
+                    f,
+                    "SetCardCounters(card={}, prev={} types)",
+                    card_id.as_u32(),
+                    prev_counters.len()
+                )
             }
         }
     }
@@ -1363,6 +1385,17 @@ impl GameAction {
                 // slot serializes as an extra `null` and diverges the hash.
                 game.cards.clear_and_truncate(*card_id);
                 game.set_next_entity_id(card_id.as_u32());
+            }
+            GameAction::SetCardCounters { card_id, prev_counters } => {
+                // Restore the exact pre-add counter set (mtg-ba6uq #4). This is
+                // the only reversal that survives +1/+1 ⟷ -1/-1 annihilation,
+                // which destroys counters of BOTH types and cannot be undone by
+                // a per-type remove. get_mut tolerates a missing card (it may
+                // have left the battlefield), matching the other card-field
+                // undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.counters = prev_counters.clone();
+                }
             }
         }
 
