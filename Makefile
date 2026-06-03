@@ -240,14 +240,30 @@ validate-clippy-step:
 validate-clippy-wasm-step:
 	@$(VSTEP) lint clippy-wasm "clippy wasm32 target" -- $(MAKE) clippy-wasm
 
-# Build the release `mtg` binary ONCE, then run the unit/integration test suite
-# reusing it. The determinism_e2e tests (one full game x2 per .dck) invoke the
-# binary ~130 times; without a prebuilt binary they would each contend on cargo's
-# target/ build lock and run a slow DEBUG build (mtg-578). MTG_REUSE_PREBUILT=1
-# tells mtg-engine/tests/determinism_e2e.rs (and tests/lib/test_helpers.sh) to use
-# target/release/mtg directly instead of rebuilding per invocation.
-validate-test-step:
-	@$(VSTEP) unit build-mtg "build release mtg (network) for test reuse" -- cargo build --release --bin mtg --features network
+# BUILD-ONCE (mtg-717): compile the release+network `mtg` binary EXACTLY ONCE,
+# up front, then have every step that needs it reuse target/release/mtg via
+# MTG_REUSE_PREBUILT=1. This is the ONLY native binary profile any validate step
+# needs (the determinism_e2e/nextest suite, commander/snapshot scripts, the
+# native-vs-WASM equiv sweep, and the network e2e all want release+network);
+# `examples` is the lone exception — it builds its own DEBUG binary via
+# `cargo run --example`, a separate profile we intentionally leave alone.
+#
+# As a make prerequisite of every step that needs it, within the single
+# `make -j validate-parallel-steps` process make builds this target EXACTLY
+# ONCE; the dependent steps then start in parallel. Steps that DON'T need the
+# binary (fmt/clippy/clippy-wasm/examples/wasm build-dev/agentplay) run
+# concurrently WITH the prebuild, so it costs ~no extra wall-clock. Previously
+# this same binary was rebuilt 4+ times from separate sub-make processes (unit,
+# wasm-equiv, network's build-network, and commander/snapshot — which lacked
+# MTG_REUSE_PREBUILT and so each ran their own `cargo build --release`).
+.PHONY: validate-prebuild-step
+validate-prebuild-step:
+	@$(VSTEP) build mtg-release "build release+network mtg ONCE (shared by all steps)" -- cargo build --release --bin mtg --features network
+
+# Reuse the prebuilt release binary (MTG_REUSE_PREBUILT=1); the determinism_e2e
+# tests invoke the binary ~130 times and would otherwise contend on the cargo
+# target/ lock and run slow DEBUG builds (mtg-578).
+validate-test-step: validate-prebuild-step
 	@$(VSTEP) unit nextest "cargo nextest run --features network" -- env MTG_REUSE_PREBUILT=1 $(MAKE) test
 
 validate-examples-step:
@@ -259,13 +275,13 @@ validate-agentplay-step:
 		bash -c 'python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi'
 	@$(VSTEP) agentplay mode-equiv "native/WASM mode-equivalence orchestrator" -- ./scripts/test_mode_equivalence.sh
 
-validate-commander-step:
-	@$(VSTEP) determ commander "commander format E2E (full-game determinism)" -- bash tests/commander_e2e.sh
+validate-commander-step: validate-prebuild-step
+	@$(VSTEP) determ commander "commander format E2E (full-game determinism)" -- env MTG_REUSE_PREBUILT=1 bash tests/commander_e2e.sh
 
 # Snapshot/resume determinism + smoke test for `mtg resume` subcommand.
 # See tests/snapshot_resume_e2e.sh for what is covered.
-validate-snapshot-resume-step:
-	@$(VSTEP) determ snapshot-resume "snapshot/resume E2E (mtg resume subcommand)" -- bash tests/snapshot_resume_e2e.sh
+validate-snapshot-resume-step: validate-prebuild-step
+	@$(VSTEP) determ snapshot-resume "snapshot/resume E2E (mtg resume subcommand)" -- env MTG_REUSE_PREBUILT=1 bash tests/snapshot_resume_e2e.sh
 
 validate-wasm-step:
 	@$(VSTEP) wasm build-dev "wasm-pack dev build + export-wasm data" -- $(MAKE) wasm-dev
@@ -289,11 +305,10 @@ validate-wasm-step:
 #                   lifelink on NON-combat (pinger) damage, CR 119.3. (mtg-r9po1)
 # MTG_EQUIV_REQUIRE_WASM=1 => absent browser/toolchain is a HARD FAIL (never a
 # silent green-skip); MTG_EQUIV_NO_BUILD=1 reuses the bundle + binary built here.
-validate-wasm-e2e-step: validate-wasm-step
+validate-wasm-e2e-step: validate-wasm-step validate-prebuild-step
 	@$(VSTEP) wasm npm-install "web/ npm install (e2e deps)" -- bash -c 'cd web && $(NPM) install --silent 2>/dev/null'
 	@$(VSTEP) wasm browser "WASM browser e2e suite (11 playwright tests)" -- \
 		bash -c 'cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js'
-	@$(VSTEP) wasm build-mtg "build release mtg (network) for equiv sweep" -- cargo build --release --bin mtg --features network
 	@$(VSTEP) wasm equiv-base "native-vs-WASM STRICT sweep: old_school2/* (8 turns)" -- \
 		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
 	@$(VSTEP) wasm equiv-fireball "native-vs-WASM STRICT: multi-target Fireball (mtg-tyvcn)" -- \
@@ -336,9 +351,13 @@ validate-wasm-e2e-step: validate-wasm-step
 #                  local-vs-network identity (mtg-578 reuse of prebuilt binary).
 # mtg-716: chromium is provisioned ONCE by `make setup`; playwright-check
 # FAILS FAST (no runtime browser fetch — validate stays hermetic).
-validate-network-e2e-step: validate-wasm-e2e-step
-	@$(VSTEP) network build-native "build release server (network) + wasm-network client" -- \
-		bash -c '$(MAKE) build-network && $(MAKE) wasm-network'
+# build-once: the release+network `mtg` binary (the same one `mtg server` /
+# `mtg connect` run) is already produced by validate-prebuild-step, so this
+# step only builds the wasm-network browser client (a distinct wasm bundle,
+# legitimately separate from wasm-dev). The old `make build-network` here was a
+# redundant 4th compile of target/release/mtg.
+validate-network-e2e-step: validate-wasm-e2e-step validate-prebuild-step
+	@$(VSTEP) network build-client "build wasm-network browser client" -- $(MAKE) wasm-network
 	@$(VSTEP) network playwright-check "npm install + verify chromium provisioned" -- \
 		bash -c 'cd web && $(NPM) install --silent 2>/dev/null || true; $(NODE) playwright_check.js'
 	@$(VSTEP) network gui "networked GUI e2e (baseline)" -- bash -c 'cd web && node test_network_gui_e2e.js'
