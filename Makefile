@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step validate-fmt-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network validate-network-e2e-step validate-impl-no-network validate-impl-sequential-no-network validate-parallel-steps-no-network
+.PHONY: help build test validate clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -18,29 +18,6 @@ PORT ?= 8080
 SERVER_PORT ?= 17771
 # CONTROLLER: AI controller for play-web (random, heuristic, zero)
 CONTROLLER ?= heuristic
-
-# VSTEP: terse, tagged, self-contained step runner for `make validate`
-# (mtg-717). Each validation step routes through it so the validate log shows
-# only a tagged `[jobGroup.jobId]` START + PASS/FAIL+duration line per step;
-# detailed output streams to a per-step file and is dumped INTO the log only on
-# failure. Set VALIDATE_VERBOSE=1 to also stream tagged detail live, and
-# VALIDATE_VERBOSE_DIR=<dir> to persist every step's detail log (named
-# <group>.<job>.log). See scripts/validate_step.sh and
-# .claude/skills/validate-hygiene/SKILL.md.
-VSTEP := scripts/validate_step.sh
-
-# VALIDATE_JOBS: top-level `make -j` width for parallel validation (mtg-717).
-# Defaults to all cores. The case-study run was hardcoded `-j4`, which (a)
-# under-used a 16-core box and (b) — because the long wasm->network browser
-# chain head was listed 9th — kept that chain queued behind CPU steps so it
-# only started after clippy finished (~294s in), then trailed as the long pole.
-# Lighting all cores lets the chain head (wasm-dev) start at t=0 (it is now
-# listed FIRST in validate-parallel-steps) so its single-threaded browser/
-# network tail overlaps the CPU-bound Rust compiles/tests instead of trailing
-# them. (Native cargo invocations still serialize on the shared target/ build
-# lock, so a high -j does not over-subscribe the compile phase; it just lets the
-# non-cargo browser/network/python work run concurrently with it.)
-VALIDATE_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
 # WASM_TARGET_DIR: dedicated cargo target root for ALL wasm32 builds (mtg-717).
 # cargo's build lock is per-target-ROOT, and wasm32 artifacts otherwise live
@@ -170,243 +147,13 @@ examples:
 validate:
 	@./scripts/validate.sh $(ARGS)
 
-# Internal target that actually runs validation
-# This is called by scripts/validate.sh
-# Runs validation steps in parallel using make -j
-validate-impl:
-	@echo "=== Starting parallel validation ==="
-	@echo ""
-	@$(MAKE) -j$(VALIDATE_JOBS) validate-parallel-steps
-	@echo ""
-	@echo "=== All validation steps completed ==="
-	@echo ""
-
-# Sequential validation - runs steps one at a time, fails on first error
-# This is called by scripts/validate.sh when --sequential flag is used
-validate-impl-sequential:
-	@echo "=== Starting sequential validation ==="
-	@echo ""
-	@$(MAKE) validate-fmt-step
-	@echo ""
-	@$(MAKE) validate-clippy-step
-	@echo ""
-	@$(MAKE) validate-clippy-wasm-step
-	@echo ""
-	@$(MAKE) validate-test-step
-	@echo ""
-	@$(MAKE) validate-examples-step
-	@echo ""
-	@$(MAKE) validate-agentplay-step
-	@echo ""
-	@$(MAKE) validate-commander-step
-	@echo ""
-	@$(MAKE) validate-snapshot-resume-step
-	@echo ""
-	@$(MAKE) validate-wasm-step
-	@echo ""
-	@$(MAKE) validate-wasm-e2e-step
-	@echo ""
-	@$(MAKE) validate-network-e2e-step
-	@echo ""
-	@echo "=== All validation steps completed ==="
-	@echo ""
-
-# No-network variants - skip network E2E test for faster iteration
-# Use: make validate ARGS=--no-network
-validate-impl-no-network:
-	@echo "=== Starting parallel validation (no network) ==="
-	@echo ""
-	@$(MAKE) -j$(VALIDATE_JOBS) validate-parallel-steps-no-network
-	@echo ""
-	@echo "=== All validation steps completed ==="
-	@echo ""
-
-validate-impl-sequential-no-network:
-	@echo "=== Starting sequential validation (no network) ==="
-	@echo ""
-	@$(MAKE) validate-fmt-step
-	@echo ""
-	@$(MAKE) validate-clippy-step
-	@echo ""
-	@$(MAKE) validate-clippy-wasm-step
-	@echo ""
-	@$(MAKE) validate-test-step
-	@echo ""
-	@$(MAKE) validate-examples-step
-	@echo ""
-	@$(MAKE) validate-agentplay-step
-	@echo ""
-	@$(MAKE) validate-commander-step
-	@echo ""
-	@$(MAKE) validate-snapshot-resume-step
-	@echo ""
-	@$(MAKE) validate-wasm-step
-	@echo ""
-	@$(MAKE) validate-wasm-e2e-step
-	@echo ""
-	@echo "=== All validation steps completed ==="
-	@echo ""
-
-# Parallel validation steps - these will run concurrently when invoked with -j
-# WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-prebuild-step validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step
-# Prerequisite ORDER matters under `make -j`: make starts prerequisites in the
-# order listed (subject to their own deps), so the long-pole wasm->network
-# browser chain is listed FIRST — its head (validate-wasm-step, the wasm-dev
-# build) and the shared validate-prebuild-step thus start at t=0 and the
-# single-threaded browser/network tail overlaps the CPU-bound Rust steps that
-# fill the remaining cores. (validate-wasm-e2e-step waits on wasm-step+prebuild;
-# validate-network-e2e-step waits on wasm-e2e+prebuild — the serial chain edges
-# are preserved by their target prerequisites, not by list position.)
-validate-parallel-steps: validate-prebuild-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-clippy-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-fmt-step validate-clippy-wasm-step deck_list
-validate-parallel-steps-no-network: validate-prebuild-step validate-wasm-step validate-wasm-e2e-step validate-clippy-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-fmt-step validate-clippy-wasm-step deck_list
-
-# Formatting check - matches the CI `fmt` job in .github/workflows/ci.yml.
-# This must be wired into validate so that formatting drift is caught locally
-# instead of turning CI red. CI uses nightly rustfmt; we invoke the default
-# toolchain here, which has historically agreed with nightly for this repo.
-validate-fmt-step:
-	@$(VSTEP) lint fmt "cargo fmt --all --check" -- $(MAKE) fmt-check
-
-validate-clippy-step:
-	@$(VSTEP) lint clippy "clippy engine+benchmarks (-D warnings)" -- $(MAKE) clippy
-
-validate-clippy-wasm-step:
-	@$(VSTEP) lint clippy-wasm "clippy wasm32 target" -- $(MAKE) clippy-wasm
-
-# BUILD-ONCE (mtg-717): compile the release+network `mtg` binary EXACTLY ONCE,
-# up front, then have every step that needs it reuse target/release/mtg via
-# MTG_REUSE_PREBUILT=1. This is the ONLY native binary profile any validate step
-# needs (the determinism_e2e/nextest suite, commander/snapshot scripts, the
-# native-vs-WASM equiv sweep, and the network e2e all want release+network);
-# `examples` is the lone exception — it builds its own DEBUG binary via
-# `cargo run --example`, a separate profile we intentionally leave alone.
-#
-# As a make prerequisite of every step that needs it, within the single
-# `make -j validate-parallel-steps` process make builds this target EXACTLY
-# ONCE; the dependent steps then start in parallel. Steps that DON'T need the
-# binary (fmt/clippy/clippy-wasm/examples/wasm build-dev/agentplay) run
-# concurrently WITH the prebuild, so it costs ~no extra wall-clock. Previously
-# this same binary was rebuilt 4+ times from separate sub-make processes (unit,
-# wasm-equiv, network's build-network, and commander/snapshot — which lacked
-# MTG_REUSE_PREBUILT and so each ran their own `cargo build --release`).
-.PHONY: validate-prebuild-step
-validate-prebuild-step:
-	@$(VSTEP) build mtg-release "build release+network mtg ONCE (shared by all steps)" -- cargo build --release --bin mtg --features network
-
-# Reuse the prebuilt release binary (MTG_REUSE_PREBUILT=1); the determinism_e2e
-# tests invoke the binary ~130 times and would otherwise contend on the cargo
-# target/ lock and run slow DEBUG builds (mtg-578).
-validate-test-step: validate-prebuild-step
-	@$(VSTEP) unit nextest "cargo nextest run --features network" -- env MTG_REUSE_PREBUILT=1 $(MAKE) test
-
-validate-examples-step:
-	@$(VSTEP) examples run "run all examples (parallel)" -- $(MAKE) examples
-
-validate-agentplay-step:
-	@$(VSTEP) agentplay pytest "pytest agentplay/" -- python3 -m pytest agentplay/ -v
-	@$(VSTEP) agentplay mock-game "agent_game.py mock self-play (seed 42)" -- \
-		bash -c 'python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi'
-	@$(VSTEP) agentplay mode-equiv "native/WASM mode-equivalence orchestrator" -- ./scripts/test_mode_equivalence.sh
-
-validate-commander-step: validate-prebuild-step
-	@$(VSTEP) determ commander "commander format E2E (full-game determinism)" -- env MTG_REUSE_PREBUILT=1 bash tests/commander_e2e.sh
-
-# Snapshot/resume determinism + smoke test for `mtg resume` subcommand.
-# See tests/snapshot_resume_e2e.sh for what is covered.
-validate-snapshot-resume-step: validate-prebuild-step
-	@$(VSTEP) determ snapshot-resume "snapshot/resume E2E (mtg resume subcommand)" -- env MTG_REUSE_PREBUILT=1 bash tests/snapshot_resume_e2e.sh
-
-validate-wasm-step:
-	@$(VSTEP) wasm build-dev "wasm-pack dev build + export-wasm data" -- $(MAKE) wasm-dev
-
-# WASM e2e tests run after wasm-dev build completes
-# This step depends on validate-wasm-step finishing first
-# jobGroup `wasm`: dev WASM bundle (built by validate-wasm-step) + the browser
-# e2e suite + the STRICT native-vs-WASM determinism equivalence legs. Each leg
-# below is wrapped by $(VSTEP) so the validate log stays terse; the detailed
-# per-game/per-deck output streams to a per-step file and is only dumped on
-# failure. The long-form rationale for each equivalence leg (formerly emitted
-# as @echo spam) is preserved here as comments:
-#   equiv-base    : STRICT byte-identical random game across all old_school2
-#                   decks, --max-turns 8. Any divergence is a cross-compile
-#                   determinism bug. (mtg-ofl2i flipped STRICT; mtg-8scpx fix.)
-#   equiv-fireball: seed=15 fireball_multitarget, --max-turns 25 — reaches a
-#                   multi-target Fireball (DivideEvenly, per-target cost). (mtg-tyvcn)
-#   equiv-blackvise: seed=3 black_vise_punisher, --max-turns 10 — ETB ChoosePlayer
-#                   + chosen-player-upkeep Count$$ValidHand-4 damage. (mtg-cuf0e)
-#   equiv-spiritlink: seed=26 spirit_link_pinger, --max-turns 16 — Spirit Link
-#                   lifelink on NON-combat (pinger) damage, CR 119.3. (mtg-r9po1)
-# MTG_EQUIV_REQUIRE_WASM=1 => absent browser/toolchain is a HARD FAIL (never a
-# silent green-skip); MTG_EQUIV_NO_BUILD=1 reuses the bundle + binary built here.
-validate-wasm-e2e-step: validate-wasm-step validate-prebuild-step
-	@$(VSTEP) wasm npm-install "web/ npm install (e2e deps)" -- bash -c 'cd web && $(NPM) install --silent 2>/dev/null'
-	@$(VSTEP) wasm browser "WASM browser e2e suite (11 playwright tests)" -- \
-		bash -c 'cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js'
-	@$(VSTEP) wasm equiv-base "native-vs-WASM STRICT sweep: old_school2/* (8 turns)" -- \
-		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
-	@$(VSTEP) wasm equiv-fireball "native-vs-WASM STRICT: multi-target Fireball (mtg-tyvcn)" -- \
-		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25
-	@$(VSTEP) wasm equiv-blackvise "native-vs-WASM STRICT: Black Vise ETB punisher (mtg-cuf0e)" -- \
-		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 3 --decks 'decks/old_school2/black_vise_punisher.dck' --max-turns 10
-	@$(VSTEP) wasm equiv-spiritlink "native-vs-WASM STRICT: Spirit Link non-combat lifelink (mtg-r9po1)" -- \
-		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 26 --decks 'decks/old_school2/spirit_link_pinger.dck' --max-turns 16
-
-# Network E2E test: builds native server + WASM client, runs networked games
-# Depends on build-network and wasm-network targets
-# Runs: baseline single-deck test, multi-deck test (quick), and click+log test
-#
-# DEFENSE-IN-DEPTH (mtg-571): order-depend on validate-wasm-e2e-step so the two
-# browser-driven wasm steps NEVER run their `export-wasm` + `rm -rf web/pkg` +
-# `cp -r pkg web/pkg` clobbers of the SHARED web/data + web/pkg trees
-# concurrently under `make -j4`. The exporter is now byte-deterministic (so a
-# concurrent re-export would re-create identical bins), but serializing the two
-# steps also removes the web/pkg copy race and makes the build order obvious.
-# Other parallel steps (fmt/clippy/test/examples/agentplay/...) still run
-# concurrently, preserving most of the -j4 speedup.
-# jobGroup `network`: native server + WASM client build, then the networked
-# browser e2e + network-vs-local determinism legs. Each job is wrapped by
-# $(VSTEP); the long-form rationale for each leg (formerly @echo spam) is kept
-# here as comments:
-#   gui/multideck/click/landing : core networked play-path browser tests.
-#   redo-reload  : two browser AI clients advance >=3 turns in sync then RELOAD
-#                  one mid-game — survivor never silently freezes; reloaded
-#                  client lands well-defined (mtg-682 items 4+5, both renderers).
-#   redo-lobby   : no waiting room; Create->launcher-direct; game stays listed
-#                  for a 2nd browser; split New/Edit Deck buttons (mtg-682 1-4).
-#   smoke        : hermetic CAS web-asset smoke — index.json no-cache, hashed
-#                  bin/wasm/js immutable, fixed pkg no-cache (mtg-571).
-#   deploy-nav   : full lobby->launcher->game/editor nav on the HASHED deploy
-#                  tree resolves to 200s incl. runtime asset-manifest (mtg-682).
-#   equiv-*      : network-vs-local deterministic gamelog identity, random/zero/
-#                  heuristic controllers (mtg-380, mtg-yulth info-independence).
-#   robots42     : ActionLog<StateSyncEntry> reveal/reorder regression (mtg-559).
-#   fuzz         : bounded seeds x old-school deck-pair native determinism +
-#                  local-vs-network identity (mtg-578 reuse of prebuilt binary).
-# mtg-716: chromium is provisioned ONCE by `make setup`; playwright-check
-# FAILS FAST (no runtime browser fetch — validate stays hermetic).
-# build-once: the release+network `mtg` binary (the same one `mtg server` /
-# `mtg connect` run) is already produced by validate-prebuild-step, so this
-# step only builds the wasm-network browser client (a distinct wasm bundle,
-# legitimately separate from wasm-dev). The old `make build-network` here was a
-# redundant 4th compile of target/release/mtg.
-validate-network-e2e-step: validate-wasm-e2e-step validate-prebuild-step
-	@$(VSTEP) network build-client "build wasm-network browser client" -- $(MAKE) wasm-network
-	@$(VSTEP) network playwright-check "npm install + verify chromium provisioned" -- \
-		bash -c 'cd web && $(NPM) install --silent 2>/dev/null || true; $(NODE) playwright_check.js'
-	@$(VSTEP) network gui "networked GUI e2e (baseline)" -- bash -c 'cd web && node test_network_gui_e2e.js'
-	@$(VSTEP) network multideck "networked multi-deck e2e (--quick)" -- bash -c 'cd web && node test_network_multideck.js --quick'
-	@$(VSTEP) network click "networked click+log e2e" -- bash -c 'cd web && node test_network_click.js'
-	@$(VSTEP) network landing "landing-page UX e2e" -- bash -c 'cd web && node test_landing_page_ux.js'
-	@$(VSTEP) network redo-reload "lobby-redo multiturn + mid-game reload (mtg-682 4+5)" -- bash -c 'cd web && node test_redo_multiturn_reload_e2e.js'
-	@$(VSTEP) network redo-lobby "lobby-flow-fixes e2e (mtg-682 1-4)" -- bash -c 'cd web && node test_redo_lobby_e2e.js'
-	@$(VSTEP) network smoke "hermetic CAS web-asset smoke (mtg-571)" -- bash -c 'cd web && node test_web_server_smoke.js'
-	@$(VSTEP) network deploy-nav "hashed deploy-tree navigation gate (mtg-682)" -- bash -c 'cd web && node test_deploy_tree_nav.js'
-	@$(VSTEP) network equiv-random "network-vs-local gamelog identity: random (mtg-380)" -- bash tests/network_vs_local_equivalence_e2e.sh 3 random
-	@$(VSTEP) network equiv-zero "network-vs-local gamelog identity: zero" -- bash tests/network_vs_local_equivalence_e2e.sh 3 zero
-	@$(VSTEP) network equiv-heuristic "network-vs-local gamelog identity: heuristic (mtg-yulth)" -- bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic
-	@$(VSTEP) network robots42 "robots42 state-sync regression (mtg-559)" -- bash tests/robots42_state_sync_e2e.sh
-	@$(VSTEP) network fuzz "bounded determinism + net-equiv fuzz" -- env MTG_REUSE_PREBUILT=1 bash tests/fuzz_determinism_netequiv_e2e.sh
+# All validate ORCHESTRATION (step registry, parallel scheduler, build-once,
+# tagging/verbosity/stats, subset filtering, CI-shard entry) lives in
+# scripts/validate_run.py (mtg-717). validate.sh is the outer harness
+# (caching/lock/WIP-commit/clean-env/log artifact) and invokes the runner.
+# Run a subset directly:   python3 scripts/validate_run.py --group lint
+#                          python3 scripts/validate_run.py --only unit.nextest -v
+#                          python3 scripts/validate_run.py --list
 
 # Generate documentation and open in browser
 doc:
@@ -452,8 +199,8 @@ setup: install-hooks ensure-wasm-pack
 # Single, serialized wasm-pack install site (mtg-577).
 # Every wasm target depends on this instead of carrying its own inline
 # `cargo install wasm-pack` block. `make validate` runs the wasm builds from
-# SEPARATE recursive sub-make processes (validate-wasm-step -> $(MAKE) wasm-dev,
-# validate-network-e2e-step -> $(MAKE) wasm-network), so a plain shared
+# SEPARATE recursive sub-make processes (the validate_run.py wasm.bundle step
+# -> $(MAKE) wasm-dev and the network build -> $(MAKE) wasm-network), so a plain shared
 # prerequisite in one make graph is NOT sufficient — make's "build once" only
 # applies within a single process. We therefore guard the install with flock so
 # concurrent sub-make processes serialize on a lock file; once the first install

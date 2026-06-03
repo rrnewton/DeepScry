@@ -202,14 +202,20 @@ release_lock() {
 # Acquire lock before starting
 acquire_lock
 
-# Default validation commands (can be overridden via CLI flags)
+# Default validation commands (can be overridden via CLI flags).
+# mtg-717: orchestration now lives in scripts/validate_run.py (the step
+# registry + parallel scheduler + tagging/verbosity/stats); validate.sh remains
+# the OUTER harness (caching, lock, WIP-commit, clean-env, log artifact). The
+# Makefile's old validate-*-step targets are gone — the runner IS the single
+# source of truth, and CI shards call it with `--group`. Sequential = -j1.
+RUN="python3 scripts/validate_run.py"
 if [ "$NO_NETWORK" = true ]; then
-    VALIDATE_CMD="${VALIDATE_CMD:-make validate-impl-no-network}"
-    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-make validate-impl-sequential-no-network}"
+    VALIDATE_CMD="${VALIDATE_CMD:-$RUN --no-network}"
+    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-$RUN --no-network -j1}"
     echo -e "${YELLOW}Network E2E test disabled (--no-network)${NC}"
 else
-    VALIDATE_CMD="${VALIDATE_CMD:-make validate-impl}"
-    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-make validate-impl-sequential}"
+    VALIDATE_CMD="${VALIDATE_CMD:-$RUN}"
+    VALIDATE_CMD_SEQUENTIAL="${VALIDATE_CMD_SEQUENTIAL:-$RUN -j1}"
 fi
 
 # Create log directory if it doesn't exist
