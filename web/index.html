@@ -599,45 +599,50 @@
 
     function prefetchWasmBundle(idx) {
         if (prefetchDone) return;
-        // Find the hashed pkg JS + wasm from the page DOM. After hash-web-assets
-        // runs, index.html's own script src tags are rewritten to the hashed names,
-        // but the lobby page itself doesn't load WASM. Instead we probe for the pkg.
-        // In dev (un-hashed) mode, the fixed name is used.
-        var pkgBase = './pkg/';
-        // Detect if we're in hashed mode by checking for a hash in the filename.
-        var scripts = document.querySelectorAll('script[src]');
-        var pkgJs = null;
-        for (var i = 0; i < scripts.length; i++) {
-            var s = scripts[i].src;
-            if (/mtg_engine\.[0-9a-f]{16}\.js/.test(s)) {
-                pkgJs = s;
-                break;
+        // Resolve the pkg pair (JS glue + companion .wasm) via the CAS manifest
+        // BEFORE prefetching them. The lobby page itself loads no WASM, so there
+        // is no hashed <script src> in its DOM to discover the name from. The old
+        // code therefore fell back to the FIXED names `./pkg/mtg_engine.js` /
+        // `./pkg/mtg_engine_bg.wasm`, which DO NOT EXIST on the hashed deploy
+        // tree (hash-web-assets renamed them to `mtg_engine.<hash>.js` /
+        // `mtg_engine_bg.<hash>.wasm`) — producing the spurious
+        // `GET /pkg/mtg_engine_bg.wasm 404` console error (mtg-720).
+        //
+        // The manifest maps the logical names `pkg/mtg_engine.js` /
+        // `pkg/mtg_engine_bg.wasm` to their hashed served names. On the
+        // dev/un-hashed tree there is no manifest → casResolve returns identity,
+        // and the fixed names exist there, so prefetch still works in dev.
+        casLoadManifest(MTG_RELEASE_TOKEN).then(function (manifest) {
+            function casResolve(logical) {
+                if (manifest && Object.prototype.hasOwnProperty.call(manifest, logical)) {
+                    return './' + manifest[logical];
+                }
+                return './' + logical;
             }
-        }
-        // Fall back to probing the fixed name (non-hashed dev trees).
-        if (!pkgJs) pkgJs = pkgBase + 'mtg_engine.js';
+            var pkgJs = casResolve('pkg/mtg_engine.js');
+            var pkgWasm = casResolve('pkg/mtg_engine_bg.wasm');
+            setPrefetchStatus('Prefetching game engine (background)…');
 
-        // Prefetch the JS glue and the .wasm companion.
-        var pkgWasm = pkgJs.replace(/\.js$/, '_bg.wasm');
-        setPrefetchStatus('Prefetching game engine (background)…');
+            var promises = [
+                fetch(pkgJs, { cache: 'default', mode: 'no-cors' }).catch(function () {}),
+                fetch(pkgWasm, { cache: 'default', mode: 'no-cors' }).catch(function () {}),
+            ];
 
-        var promises = [
-            fetch(pkgJs, { cache: 'default', mode: 'no-cors' }).catch(function () {}),
-            fetch(pkgWasm, { cache: 'default', mode: 'no-cors' }).catch(function () {}),
-        ];
+            // Also prefetch the index.json so the game page finds it cached.
+            // (Fixed path: the outer startWasmPrefetch already fetched this same
+            // URL successfully to obtain `idx`, so it resolves on every tree.)
+            if (idx && idx.sets) {
+                promises.push(
+                    fetch('./data/sets/index.json', { cache: 'default', mode: 'no-cors' }).catch(function () {})
+                );
+            }
 
-        // Also prefetch the index.json so the game page finds it cached.
-        if (idx && idx.sets) {
-            promises.push(
-                fetch('./data/sets/index.json', { cache: 'default', mode: 'no-cors' }).catch(function () {})
-            );
-        }
-
-        Promise.all(promises).then(function () {
-            prefetchDone = true;
-            setPrefetchStatus('Engine cached — game will start faster.');
-            // Clear the status after a short delay so it doesn't linger.
-            setTimeout(function () { setPrefetchStatus(''); }, 4000);
+            return Promise.all(promises).then(function () {
+                prefetchDone = true;
+                setPrefetchStatus('Engine cached — game will start faster.');
+                // Clear the status after a short delay so it doesn't linger.
+                setTimeout(function () { setPrefetchStatus(''); }, 4000);
+            });
         }).catch(function () {
             setPrefetchStatus('');
         });

@@ -262,6 +262,46 @@ async function main() {
             );
         }
 
+        // ── (1c) PKG PAIR resolution (mtg-720): on the hashed deploy tree the
+        //        wasm-bindgen pair is renamed to pkg/mtg_engine.<hash>.js /
+        //        pkg/mtg_engine_bg.<hash>.wasm, so the FIXED names 404. The lobby
+        //        loads no WASM itself, so its background prefetch can only learn
+        //        the hashed name from the manifest. Previously it probed the fixed
+        //        names → the spurious `GET /pkg/mtg_engine_bg.wasm 404` the user
+        //        reported. Guard the full invariant: fixed names 404, manifest maps
+        //        the logical pkg pair to hashed names that 200 (immutable), and the
+        //        served index.html resolves the prefetch through the manifest.
+        check(
+            Object.prototype.hasOwnProperty.call(manifest, 'pkg/mtg_engine.js'),
+            'manifest maps pkg/mtg_engine.js → hashed name',
+        );
+        check(
+            Object.prototype.hasOwnProperty.call(manifest, 'pkg/mtg_engine_bg.wasm'),
+            'manifest maps pkg/mtg_engine_bg.wasm → hashed name',
+        );
+        const pkgJsHashed = manifest['pkg/mtg_engine.js'];
+        const pkgWasmHashed = manifest['pkg/mtg_engine_bg.wasm'];
+        if (pkgJsHashed) {
+            check(/^pkg\/mtg_engine\.[0-9a-f]{16}\.js$/.test(pkgJsHashed), `pkg JS hashed name well-formed (got ${pkgJsHashed})`);
+            const r = await httpGet(base + '/' + pkgJsHashed);
+            check(r.status === 200, `hashed pkg JS ${pkgJsHashed} → 200 (got ${r.status})`);
+        }
+        if (pkgWasmHashed) {
+            check(/^pkg\/mtg_engine_bg\.[0-9a-f]{16}\.wasm$/.test(pkgWasmHashed), `pkg WASM hashed name well-formed (got ${pkgWasmHashed})`);
+            const r = await httpGet(base + '/' + pkgWasmHashed);
+            check(r.status === 200, `hashed pkg WASM ${pkgWasmHashed} → 200 (got ${r.status})`);
+        }
+        // The fixed (un-hashed) pkg names must NOT be served on the hashed tree —
+        // this is the premise that forces manifest resolution (mtg-720).
+        await fetchStatus(base, '/pkg/mtg_engine_bg.wasm', 404, 'fixed pkg WASM name 404 (hashed-only deploy)');
+        await fetchStatus(base, '/pkg/mtg_engine.js', 404, 'fixed pkg JS name 404 (hashed-only deploy)');
+        // The served lobby must resolve its prefetch through the manifest (using
+        // the logical pkg keys) rather than probing the fixed names directly.
+        check(
+            indexHtml.includes('casLoadManifest') && indexHtml.includes("'pkg/mtg_engine_bg.wasm'"),
+            "index.html lobby prefetch resolves the pkg pair via casLoadManifest (logical key 'pkg/mtg_engine_bg.wasm')",
+        );
+
         // ── (1b) IMAGE LEAVES (mtg-706): top-level images + the PWA manifest
         //        are content-hashed/immutable too, so index.html is the ONLY
         //        mutable web file. CONDITIONAL: these are gitignored (synced from
