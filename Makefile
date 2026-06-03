@@ -42,6 +42,19 @@ VSTEP := scripts/validate_step.sh
 # non-cargo browser/network/python work run concurrently with it.)
 VALIDATE_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
 
+# WASM_TARGET_DIR: dedicated cargo target root for ALL wasm32 builds (mtg-717).
+# cargo's build lock is per-target-ROOT, and wasm32 artifacts otherwise live
+# under the SAME `target/` as native (`target/wasm32-unknown-unknown/`), so a
+# `wasm-pack`/`cargo --target wasm32` invocation CONTENDS on the one lock with
+# native `cargo build --release` and they serialize. Giving wasm its own root
+# (a SEPARATE lock) lets the wasm builds + `clippy-wasm` compile genuinely in
+# parallel with the native compiles. Measured cost: a cold wasm build into an
+# isolated root is ~45s and ~+383 MB of duplicated host-side proc-macro/
+# build-script artifacts (the wasm32 codegen itself just relocates here, not
+# duplicated). It lives UNDER `target/` so it stays gitignored by `/target` AND
+# is reflink-shared (CoW) into new worktrees by new_worktree.sh.
+WASM_TARGET_DIR ?= $(CURDIR)/target/wasm
+
 # Default target - show available commands
 help:
 	@echo "MTG Forge Rust - Available Commands:"
@@ -127,7 +140,7 @@ clippy:
 # Run clippy on WASM target (catches WASM-specific code paths like #[cfg(target_arch = "wasm32")])
 clippy-wasm:
 	@echo "=== Running clippy on WASM target ==="
-	cargo clippy -p mtg-engine --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
+	CARGO_TARGET_DIR=$(WASM_TARGET_DIR) cargo clippy -p mtg-engine --target wasm32-unknown-unknown --no-default-features --features wasm-tui -- -D warnings
 
 # Detect code duplication
 code-dups:
@@ -767,7 +780,7 @@ wasm-export:
 # Build WebAssembly module for browser
 wasm: wasm-export ensure-wasm-pack
 	@echo "=== Building WebAssembly module ==="
-	@cd mtg-engine && wasm-pack build --target web --no-default-features --features wasm-tui
+	@cd mtg-engine && CARGO_TARGET_DIR=$(WASM_TARGET_DIR) wasm-pack build --target web --no-default-features --features wasm-tui
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""
@@ -812,7 +825,7 @@ wasm-serve: wasm-network
 # Quick dev build - skips wasm-opt optimization for faster iteration
 wasm-dev: wasm-export ensure-wasm-pack
 	@echo "=== Building WebAssembly (dev mode - no optimization) ==="
-	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
+	@cd mtg-engine && CARGO_TARGET_DIR=$(WASM_TARGET_DIR) wasm-pack build --dev --target web --no-default-features --features wasm-network
 	@rm -rf web/pkg
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""
@@ -836,7 +849,7 @@ wasm-network: wasm-export ensure-wasm-pack
 	@# exports change but the cache doesn't notice (mtg-475). The build is
 	@# ~10s either way; forced clean is much cheaper than a stale-glue deploy.
 	@rm -rf mtg-engine/pkg web/pkg
-	@cd mtg-engine && wasm-pack build --dev --target web --no-default-features --features wasm-network
+	@cd mtg-engine && CARGO_TARGET_DIR=$(WASM_TARGET_DIR) wasm-pack build --dev --target web --no-default-features --features wasm-network
 	@cp -r mtg-engine/pkg web/pkg
 	@echo ""
 	@echo "=== WASM network build complete! ==="
