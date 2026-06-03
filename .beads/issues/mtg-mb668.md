@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T20:53:16.528496842+00:00
+updated_at: 2026-06-03T21:29:36.524300561+00:00
 ---
 
 # Description
@@ -101,3 +101,20 @@ NEXT TASK = sig-2f (cards[N].damage undo hole) — the biggest deterministic clu
 GREEN BAR (coordinator): robots deck seeds 1..N all deterministic-green + a 2nd deck, robots42 STILL in the make-validate gate (NO exclusion). PASS seeds today: 3,13,16,42.
 
 MERGE/OVERLAP FLAG: the e2e determinism fix touches web/tui_game.html (~2473, seed boot param) and the native client is at main.rs (~1625). slot04's CDN-image work ALSO edits tui_game.html but in a DISJOINT region (image source URLs ~1670/1772/2000) — no conflict expected; whoever merges second rebases that file. This fix de-risks slot04's All-Hallow's-Eve flake (same unpinned-controller gap) + mtg-726.
+
+------------------------------------------------------------------------
+sig-2f + sig-2g LANDED (2026-06-03, slot01-2) — WITHIN-side class-B FULLY GREEN:
+- sig-2f (commit fec60fcf): GameAction::SetDamage{card_id,prev:i32} + GameState::log_damage() snapshot helper; routed BOTH card.damage+= sites (deal_damage_to_creature = Triskelion ping; Effect::DamageAll) through it. Combat creature damage does NOT persist to card.damage (the damage_to_creatures map in actions/combat.rs is consumed only for the lethal check), so those are the only two accumulation sites. RED-first per-action oracle test rewind_replay_oracle_e2e::per_action_undo_redo_deal_damage_to_creature.
+- sig-2g (commit 3a9dbb28): GameAction::SetXPaid{card_id,prev:u8} + GameState::set_x_paid_logged() (DRY single setter, mirrors log_damage); priority.rs X-payment site (the SINGLE x_paid mutation in the engine) now routes through it. RED-first lib test basic_actions::set_x_paid_round_trips_on_undo_mb668_sig2g.
+
+DETERMINISTIC RE-SWEEP of the 8 within-side seeds (1,7,8,10,12,14,15,17), pinned controllers:
+- sig-2f cleared 6 outright: seeds 8,10,12,14,15,17 now PASS.
+- sig-2g cleared the within-side REWIND/REPLAY FATAL on the last 2 (seeds 1,7): their cards[N].x_paid turn-start-hash divergence is gone.
+- Seeds 1,7 NOW fail ONLY on a deeper CLASS-A server↔shadow lockstep mismatch (seed 1: ACTION COUNT server=3465 local=3462 diff=3; seed 7: P1 state hash mismatch at choice_seq=146 action_count=783). DIFFERENT class (reserved-ID/reveal/shuffle lockstep), NOT a within-side undo hole.
+
+=> The WITHIN-side rewind-fidelity undo-hole family is now CLOSED for the robots deck (no known per-field holes remain after damage + x_paid; sig-2e counters earlier). Field enumeration order was: cards[N].counters (sig-2e) → cards[N].damage (sig-2f) → cards[N].x_paid (sig-2g). mana_state_version is confirmed diagnostic noise (excluded from the verifier field-diff).
+
+REMAINING = CLASS-A only (server↔shadow count/RNG lockstep): seeds 2,5,6,9,11,18,19,20 (state-hash/action-count/Local-abilities drift) PLUS seeds 1,7 now (underlying class-A exposed). Per coordinator this is slot03's disjoint chunk (per-action lockstep harness; reserved-ID/reveal-mask/shuffle RNG logic in actions/mod.rs ChangeZoneAll + reveal masks — does NOT touch undo.rs damage/x_paid region or priority.rs). Recommended slot03 fork point: 3a9dbb28.
+
+NEW PASS COUNT (deterministic 20-seed sweep): was 3/20 (3,13,16,42). +6 within-side (8,10,12,14,15,17) = now ~9/20 confirmed; class-A seeds (1,2,5,6,7,9,11,18,19,20) remain for slot03. (Full 20-seed re-sweep TBD; the 8 within-side seeds were re-run directly.)
+Engine lib 1005/1005 green. full make validate: running, cite validate_logs/validate_<sha>.log before merge.
