@@ -280,7 +280,7 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
 
             if stop_after > 0:
                 cmd.extend([
-                    f"--stop-every=both:choice:{stop_after}",
+                    f"--stop-on-choice={stop_after}",
                     f"--snapshot-output={snapshot_file}",
                 ])
 
@@ -303,7 +303,7 @@ def run_stop_and_go_game(mtg_bin: Path, deck1: str, deck2: str,
 
             if stop_after > 0:
                 cmd.extend([
-                    f"--stop-every=both:choice:{stop_after}",
+                    f"--stop-on-choice={stop_after}",
                     f"--snapshot-output={snapshot_file}",
                 ])
             elif save_gamestate:
@@ -372,7 +372,8 @@ def compare_game_logs_via_tool(normal_log: str, stopgo_log: str, verbose: bool =
         f.write('\n'.join(stopgo_actions))
 
     # Call diff_logs.py tool
-    script_dir = Path(__file__).parent
+    # diff_logs.py lives in <repo>/scripts/, not in bug_finding/ (this file).
+    script_dir = Path(__file__).resolve().parent.parent / "scripts"
     diff_logs_script = script_dir / "diff_logs.py"
 
     cmd = [sys.executable, str(diff_logs_script), str(normal_log_path), str(stopgo_log_path)]
@@ -399,7 +400,8 @@ def compare_game_logs_via_tool(normal_log: str, stopgo_log: str, verbose: bool =
 
 def compare_gamestates_via_tool(normal_state_file: Path, stopgo_state_file: Path, verbose: bool = False) -> bool:
     """Compare GameState files using the diff_gamestate.py tool."""
-    script_dir = Path(__file__).parent
+    # diff_gamestate.py lives in <repo>/scripts/, not in bug_finding/ (this file).
+    script_dir = Path(__file__).resolve().parent.parent / "scripts"
     diff_gamestate_script = script_dir / "diff_gamestate.py"
 
     cmd = [sys.executable, str(diff_gamestate_script), str(normal_state_file), str(stopgo_state_file)]
