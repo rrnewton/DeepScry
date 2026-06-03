@@ -79,6 +79,14 @@ enum ActivatedAbilityType {
     /// Example: Earthquake Dragon "{2}{G}, Sac a land: Return CARDNAME from
     /// your graveyard to your hand." (ActivationZone$ Graveyard)
     ZoneReturn,
+    /// Equip ability — attach this Equipment to a creature you control.
+    /// Example: Trusty Boomerang "Equip {1}" (AttachEquipment effect).
+    /// Sorcery-speed (CR 301.5c). Reference: AttachAi.java in forge-ai.
+    Equip,
+    /// Card-draw ability — e.g. crack a Clue token (sacrifice to draw).
+    /// Example: Clue Token "{2}, Sacrifice this token: Draw a card."
+    /// (DrawCards effect). Card advantage is almost always good.
+    DrawCard,
     /// Other abilities not yet categorized
     Other,
 }
@@ -670,6 +678,11 @@ impl HeuristicController {
                 ActivatedAbilityType::ZoneReturn => {
                     // Zone-return from graveyard: moderate value — allows recursion
                     value += 15;
+                }
+                ActivatedAbilityType::Equip | ActivatedAbilityType::DrawCard => {
+                    // These appear on Equipment / token artifacts, not creatures;
+                    // they do not add to a creature's combat/eval value here.
+                    // (Their activation is handled in should_activate_ability.)
                 }
                 ActivatedAbilityType::Other => {}
             }
@@ -2642,6 +2655,34 @@ impl HeuristicController {
                         return true;
                     }
                 }
+                ActivatedAbilityType::Equip => {
+                    // Equip is sorcery-speed (CR 301.5c): only during our own
+                    // main phase with an empty stack. Attach to a creature we
+                    // control. To avoid equip-thrashing (re-attaching every turn
+                    // and wasting mana), only equip when this Equipment is
+                    // currently UNATTACHED. Activate in Main1 so the equipped
+                    // creature benefits before combat. The engine only offers
+                    // the ability when a legal target creature exists.
+                    // Reference: AttachAi.java in forge-ai.
+                    let current_step = view.current_step();
+                    let is_main = matches!(current_step, crate::game::Step::Main1 | crate::game::Step::Main2);
+                    if is_main && self.is_stack_empty(view) && self.has_equip_target(source, view) {
+                        return true;
+                    }
+                }
+                ActivatedAbilityType::DrawCard => {
+                    // Crack a Clue (sacrifice-to-draw) and similar card-draw
+                    // abilities. Card advantage is almost always good, so do it
+                    // at sorcery speed in our Main2 with the stack empty — Main2
+                    // so we keep mana available for our actual spells in Main1
+                    // first, and only spend leftover mana drawing. The engine
+                    // only offers the ability when its cost (incl. the {2}) is
+                    // payable, so reaching here means we can afford it.
+                    let current_step = view.current_step();
+                    if current_step == crate::game::Step::Main2 && self.is_stack_empty(view) {
+                        return true;
+                    }
+                }
                 ActivatedAbilityType::Other => {
                     // For now, don't activate other types
                     // Will expand as we implement more ability types
@@ -2651,6 +2692,20 @@ impl HeuristicController {
         }
 
         false
+    }
+
+    /// Whether this Equipment should be equipped now: it is currently
+    /// UNATTACHED (so we don't equip-thrash) and we control at least one
+    /// creature to attach it to. The actual best-target pick is made in
+    /// `choose_targets` (default branch → our best creature). (mtg-721)
+    fn has_equip_target(&self, source: &Card, view: &GameStateView) -> bool {
+        if source.is_attached() {
+            return false;
+        }
+        view.battlefield().iter().any(|&id| {
+            view.get_card(id)
+                .is_some_and(|c| c.controller == self.player_id && c.is_creature())
+        })
     }
 
     /// Classify the type of activated ability based on its effects
@@ -2723,6 +2778,24 @@ impl HeuristicController {
         for effect in &ability.effects {
             if matches!(effect, crate::core::Effect::MoveSelfBetweenZones { .. }) {
                 return ActivatedAbilityType::ZoneReturn;
+            }
+        }
+
+        // Check for equip (attach this Equipment to a creature you control).
+        // E.g. Trusty Boomerang's `K:Equip:1`. (mtg-721)
+        for effect in &ability.effects {
+            if matches!(effect, crate::core::Effect::AttachEquipment { .. }) {
+                return ActivatedAbilityType::Equip;
+            }
+        }
+
+        // Check for card-draw abilities (crack a Clue token, etc.). (mtg-721)
+        for effect in &ability.effects {
+            if matches!(
+                effect,
+                crate::core::Effect::DrawCards { .. } | crate::core::Effect::DrawCardsXPaid { .. }
+            ) {
+                return ActivatedAbilityType::DrawCard;
             }
         }
 
@@ -9895,5 +9968,110 @@ mod tests {
         );
 
         println!("Discard spell routing test passed");
+    }
+
+    /// mtg-721: equip + sacrifice-to-draw abilities must classify as their own
+    /// types (not the catch-all `Other`, which `should_activate_ability` never
+    /// fires). Before this fix the heuristic AI never equipped Trusty Boomerang
+    /// nor cracked Clue tokens.
+    #[test]
+    fn classify_equip_and_clue_abilities() {
+        use crate::core::{ActivatedAbility, CardId, Cost, Effect, ManaCost};
+
+        let controller = HeuristicController::new(PlayerId::new(0));
+
+        // Trusty Boomerang's `K:Equip:1` → AttachEquipment effect.
+        let equip = ActivatedAbility::new(
+            Cost::Mana(ManaCost::new()),
+            vec![Effect::AttachEquipment {
+                source_equipment: CardId::new(10),
+                target_creature: CardId::new(11),
+            }],
+            "Equip 1".to_string(),
+            false,
+        );
+        assert!(matches!(
+            controller.classify_activated_ability(&equip),
+            ActivatedAbilityType::Equip
+        ));
+
+        // Clue Token's "{2}, Sacrifice this token: Draw a card." → DrawCards.
+        let crack = ActivatedAbility::new(
+            Cost::Tap,
+            vec![Effect::DrawCards {
+                player: PlayerId::new(0),
+                count: 1,
+            }],
+            "Draw a card.".to_string(),
+            false,
+        );
+        assert!(matches!(
+            controller.classify_activated_ability(&crack),
+            ActivatedAbilityType::DrawCard
+        ));
+    }
+
+    /// mtg-721: with the new classification, `should_activate_ability` must fire
+    /// equip during our main phase when the Equipment is UNATTACHED and we
+    /// control a creature — and must NOT re-fire once attached (no equip-thrash).
+    #[test]
+    fn should_activate_equip_when_unattached_with_creature() {
+        use crate::core::{ActivatedAbility, Card, CardId, CardType, Cost, Effect, ManaCost};
+        use crate::game::controller::GameStateView;
+        use crate::game::{GameState, Step};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players[0].id;
+        game.turn.active_player = p1_id;
+        game.turn.current_step = Step::Main1;
+
+        // A creature we control to equip.
+        let creature_id = CardId::new(200);
+        let mut creature = Card::new(creature_id, "Grizzly Bears", p1_id);
+        creature.add_type(CardType::Creature);
+        creature.set_base_power(Some(2));
+        creature.set_base_toughness(Some(2));
+        game.cards.insert(creature_id, creature);
+
+        // Trusty Boomerang (Equipment) with its equip ability, UNATTACHED.
+        let boomerang_id = CardId::new(201);
+        let mut boomerang = Card::new(boomerang_id, "Trusty Boomerang", p1_id);
+        boomerang.add_type(CardType::Artifact);
+        boomerang.activated_abilities = vec![ActivatedAbility::new(
+            Cost::Mana(ManaCost::new()),
+            vec![Effect::AttachEquipment {
+                source_equipment: boomerang_id,
+                target_creature: creature_id,
+            }],
+            "Equip 1".to_string(),
+            false,
+        )];
+        game.cards.insert(boomerang_id, boomerang);
+
+        game.battlefield.add(creature_id);
+        game.battlefield.add(boomerang_id);
+
+        let controller = HeuristicController::new(p1_id);
+
+        // Unattached + creature present in Main1 → equip.
+        {
+            let view = GameStateView::new(&game, p1_id);
+            let bm = view.get_card(boomerang_id).unwrap();
+            assert!(
+                controller.should_activate_ability(bm, &view),
+                "AI should equip the unattached Boomerang in Main1"
+            );
+        }
+
+        // Once attached, do NOT re-equip (no thrash).
+        game.cards.get_mut(boomerang_id).unwrap().attached_to = Some(creature_id);
+        {
+            let view = GameStateView::new(&game, p1_id);
+            let bm = view.get_card(boomerang_id).unwrap();
+            assert!(
+                !controller.should_activate_ability(bm, &view),
+                "AI must not re-equip an already-attached Equipment"
+            );
+        }
     }
 }
