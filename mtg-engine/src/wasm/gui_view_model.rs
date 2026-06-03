@@ -203,6 +203,13 @@ pub struct CardView {
     pub toughness: Option<i32>,
     /// Pre-formatted "P/T" string for the GUI badge, `None` for non-creatures.
     pub formatted_pt: Option<String>,
+    /// Card colors as a sorted-WUBRG letter string ("" = colorless). Used by
+    /// the client image cascade to build the token composite lookup key
+    /// IDENTICALLY to the card-lookup table builder (task #7 / mtg-722).
+    pub colors: String,
+    /// True if this card is a token (has a token script). Tokens look up art
+    /// by the composite (name + P/T + colors) key; real cards by name.
+    pub is_token: bool,
     /// Marked damage (creatures).
     pub damage: i32,
     /// Pre-computed CSS classes (matches legacy `tui_get_full_state_json`).
@@ -358,6 +365,24 @@ fn format_type_line(card: &crate::core::Card) -> String {
     }
 }
 
+/// Card colors → a sorted-WUBRG letter string ("" = colorless). MUST stay
+/// byte-identical to the table builder's `scryfall_table::normalize_colors_wubrg`
+/// so the client's token composite lookup key matches the table's (task #7).
+fn colors_to_wubrg(colors: &[crate::core::Color]) -> String {
+    use crate::core::Color;
+    [
+        (Color::White, 'W'),
+        (Color::Blue, 'U'),
+        (Color::Black, 'B'),
+        (Color::Red, 'R'),
+        (Color::Green, 'G'),
+    ]
+    .iter()
+    .filter(|(c, _)| colors.contains(c))
+    .map(|(_, l)| *l)
+    .collect()
+}
+
 /// Build a `CardView`. Hand callers may pass `None` for `effective_pt_override`
 /// to compute power/toughness from the card directly; battlefield callers
 /// should pass the GameStateView-derived effective values so static buffs
@@ -424,6 +449,8 @@ fn build_card_view(
         power,
         toughness,
         formatted_pt,
+        colors: colors_to_wubrg(&card.colors),
+        is_token: card.definition.script_name.is_some(),
         damage: card.damage,
         css_classes: build_css_classes(card),
         attached_to: card.attached_to.map(|id| id.as_u32()),
@@ -1188,6 +1215,20 @@ mod tests {
         };
         assert_eq!(pending_choice_context_name(Some(&attackers)), "Attackers");
         assert_eq!(pending_choice_context_name(None), "None");
+    }
+
+    /// mtg-722: the view-model color string MUST be sorted WUBRG (and identical
+    /// to the table builder's normalization) so the client token composite key
+    /// matches the card-lookup table. Colorless yields "".
+    #[test]
+    fn colors_to_wubrg_is_sorted_wubrg() {
+        use crate::core::Color;
+        assert_eq!(colors_to_wubrg(&[Color::Green, Color::White, Color::Blue]), "WUG");
+        assert_eq!(colors_to_wubrg(&[Color::Red, Color::Black]), "BR");
+        assert_eq!(colors_to_wubrg(&[Color::Red]), "R");
+        assert_eq!(colors_to_wubrg(&[]), "");
+        // Colorless is not a WUBRG letter → contributes nothing.
+        assert_eq!(colors_to_wubrg(&[Color::Colorless]), "");
     }
 
     /// mtg-723: textually-identical actions (e.g. holding two copies of the
