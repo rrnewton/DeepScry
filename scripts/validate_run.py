@@ -38,6 +38,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Per-step wall-clock cap. A step that exceeds it is SIGKILLed (process group)
+# and marked FAIL — so a hung test fails its shard instead of hanging CI for
+# hours. Generous because CI's 2-vCPU runners are slow (build.mtg-release +
+# the full network suite). Override per Step via `timeout=`.
+DEFAULT_STEP_TIMEOUT = int(os.environ.get("VALIDATE_STEP_TIMEOUT", "2400"))
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 NODE = os.environ.get("NODE") or "node"
 NPM = os.environ.get("NPM") or "npm"
@@ -74,6 +80,7 @@ class Step:
     env: dict = field(default_factory=dict)
     resources: dict = field(default_factory=dict)  # e.g. {"browser": 1}
     networkonly: bool = False  # skipped under --no-network
+    timeout: int = DEFAULT_STEP_TIMEOUT
 
     @property
     def tag(self):
@@ -302,16 +309,58 @@ class Runner:
         env.update(step.env)
         start = time.time()
         stream = self.verbosity >= 2
-        with open(detail, "wb") as fh:
-            proc = subprocess.Popen(["bash", "-c", step.cmd], cwd=PROJECT_DIR, env=env,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for raw in proc.stdout:
-                fh.write(raw)
-                if stream:
-                    self._emit(f"[{step.tag}] " + raw.decode(errors="replace").rstrip("\n"))
-            proc.wait()
+        timed_out = False
+        fh = open(detail, "wb")
+        # Network/browser tests spawn GRANDCHILDREN (mtg server, python
+        # http.server, chromium). An orphan that survives the test holds the
+        # stdout pipe's write-end open, so a naive `for raw in proc.stdout` on
+        # the main thread would never see EOF and hang forever (this hung the
+        # wasm/network CI shards for ~73min). So we read on a DAEMON thread —
+        # the main thread blocks only on proc.wait(timeout), which returns when
+        # the test process itself exits regardless of orphans — and bound each
+        # step with a wall-clock timeout.
+        proc = subprocess.Popen(["bash", "-c", step.cmd], cwd=PROJECT_DIR, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        def _pump():
+            try:
+                for raw in proc.stdout:
+                    fh.write(raw)
+                    if stream:
+                        self._emit(f"[{step.tag}] " + raw.decode(errors="replace").rstrip("\n"))
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=_pump, daemon=True)
+        reader.start()
+        try:
+            proc.wait(timeout=step.timeout)
+        except subprocess.TimeoutExpired:
+            # Genuine hang: SIGKILL the direct child (the bash leader). We do
+            # NOT killpg the group — in some sandboxes killpg can resolve to and
+            # kill the runner's own group. Killing the leader is enough to
+            # unblock; orphan grandchildren (if any) are harmless here.
+            timed_out = True
+            try:
+                proc.kill()
+                proc.wait(timeout=10)
+            except Exception:
+                pass
+        # The daemon reader may still be blocked on an orphan-held pipe (a test
+        # left a server/chromium holding stdout). That is exactly the old hang —
+        # but because the reader is a DAEMON and we don't block on it, the step
+        # completes regardless. proc.wait() already returned once the test
+        # process itself exited; orphans don't gate us. Brief join, then move on.
+        reader.join(timeout=2)
+        try:
+            fh.close()
+        except Exception:
+            pass
         dur = round(time.time() - start)
-        ok = proc.returncode == 0
+        ok = (proc.returncode == 0) and not timed_out
+        if timed_out:
+            with open(detail, "ab") as f2:
+                f2.write(f"\n[validate_run] STEP TIMED OUT after {step.timeout}s — SIGKILLed process group\n".encode())
         summary = summarize(step, detail)
         with self.lock:
             self.running.discard(step.tag)
@@ -324,7 +373,8 @@ class Runner:
             extra = f"  [{summary}]" if (summary and self.verbosity >= 1) else ""
             self._emit(f"[{step.tag}] ✓ PASS   {step.desc} ({dur}s){extra}")
         else:
-            self._emit(f"[{step.tag}] ✗ FAIL   {step.desc} ({dur}s, exit {proc.returncode})")
+            why = f"TIMEOUT >{step.timeout}s" if timed_out else f"exit {proc.returncode}"
+            self._emit(f"[{step.tag}] ✗ FAIL   {step.desc} ({dur}s, {why})")
             # self-contained failure: dump tagged detail into the log
             self._emit(f"[{step.tag}] ----- detail ({detail}) -----")
             try:
