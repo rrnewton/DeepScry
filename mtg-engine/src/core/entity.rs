@@ -551,6 +551,24 @@ where
         }
     }
 
+    /// Clear the most-recently-inserted entity AND shrink the backing Vec back
+    /// to its pre-insert length, popping any now-trailing `None` slots.
+    ///
+    /// This is the exact inverse of `insert` for the LIFO undo of a
+    /// freshly-minted entity (a token via `GameAction::CreateEntity`): `insert`
+    /// grew the Vec to `id + 1`, so a plain `clear` would leave a trailing
+    /// `None` tombstone. Because the store serializes as a dense `Vec`, that
+    /// tombstone serializes as an extra `null` and diverges the undo/rewind
+    /// state hash from the pre-mint shape. Truncating the trailing `None`s makes
+    /// the undone store byte-identical to before the mint.
+    pub fn clear_and_truncate(&mut self, id: EntityId<T>) -> Option<T> {
+        let removed = self.clear(id);
+        while matches!(self.entities.last(), Some(None)) {
+            self.entities.pop();
+        }
+        removed
+    }
+
     /// Remove an entity (not supported - entities are never removed)
     ///
     /// This method exists only for API compatibility but will panic if called.

@@ -1255,3 +1255,101 @@ async fn black_vise_etb_chosen_player_undo_round_trip() -> Result<()> {
 
     Ok(())
 }
+
+/// mtg-ba6uq #3: token creation (`Effect::CreateToken`) must round-trip through
+/// the per-action undo path.
+///
+/// The forward mint does three previously-UNLOGGED things: `next_card_id()`
+/// advances `next_entity_id`, `cards.insert` adds the instance, and
+/// `battlefield.add` places it. Without a covering `GameAction::CreateEntity`,
+/// a rewind LEAKS the token (it stays in `cards` + `battlefield`) AND leaves
+/// `next_entity_id` advanced — so a forward replay mints a SECOND token at a
+/// higher id. Both the leaked entity and the bumped counter are HASHED
+/// (`next_entity_id` is a plain serialized field, not excluded from the UndoTest
+/// hash), so the post-undo state diverges from the pre-mint state.
+///
+/// NEGATIVE-TEST GUARD: with the `CreateEntity` log removed from
+/// `Effect::CreateToken`, this test fails on the token-cleared assertion and the
+/// final hash assertion. The whole-game forward→rewind→REPLAY oracle does NOT
+/// catch this (replay re-mints a token, papering over the leak), so this
+/// per-action test is the real guard.
+#[tokio::test]
+async fn create_token_undo_round_trip() -> Result<()> {
+    use mtg_engine::core::{Effect, PlayerId};
+    use mtg_engine::game::compute_undo_test_hash;
+    use std::sync::Arc;
+
+    let cardsfolder = require_cardsfolder();
+    let card_db = CardDatabase::new(cardsfolder);
+    // Any deck works — the token definition is loaded explicitly below.
+    let deck_path = PathBuf::from("../decks/old_school2/black_vise_punisher.dck");
+    let deck = DeckLoader::load_from_file(&deck_path)?;
+    let game_init = GameInitializer::new(&card_db);
+    let mut game = game_init
+        .init_game("Player 1".to_string(), &deck, "Player 2".to_string(), &deck, 20)
+        .await?;
+    game.seed_rng(42);
+
+    // Load a vanilla 1/1 Myr token definition into the game so CreateToken can
+    // resolve it.
+    let token_script = "c_1_1_a_myr";
+    let token_def = card_db
+        .get_token(token_script)
+        .await?
+        .expect("c_1_1_a_myr token script must exist in the cardsfolder");
+    game.token_definitions
+        .insert(token_script.to_string(), Arc::new(token_def));
+
+    let p1_id: PlayerId = game.players[0].id;
+
+    // Pre-mint snapshot. compute_undo_test_hash includes next_entity_id and the
+    // battlefield/cards contents, so it pins the full round-trip.
+    let tokens_before = game.cards.values().filter(|c| c.is_token).count();
+    let hash_before = compute_undo_test_hash(&game);
+    let log_len_before = game.undo_log.len();
+
+    // Mint one token under P1's control.
+    let effect = Effect::CreateToken {
+        controller: p1_id,
+        token_script: token_script.to_string(),
+        amount: 1,
+        for_each_player: false,
+    };
+    game.execute_effect(&effect)?;
+
+    assert_eq!(
+        game.cards.values().filter(|c| c.is_token).count(),
+        tokens_before + 1,
+        "CreateToken should mint exactly one token"
+    );
+    assert!(
+        game.undo_log.len() > log_len_before,
+        "CreateToken should have logged a CreateEntity action"
+    );
+    assert_ne!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "minting a token must change the (hashed) state"
+    );
+
+    // Undo every action logged by the mint.
+    while game.undo_log.len() > log_len_before {
+        game.undo()?;
+    }
+
+    // The token must be gone and the full UndoTest hash (which includes
+    // next_entity_id + battlefield contents) must return EXACTLY to its pre-mint
+    // value.
+    assert_eq!(
+        game.cards.values().filter(|c| c.is_token).count(),
+        tokens_before,
+        "mtg-ba6uq #3: token instance must be cleared from the EntityStore after undo"
+    );
+    assert_eq!(
+        compute_undo_test_hash(&game),
+        hash_before,
+        "mtg-ba6uq #3: UndoTest hash (incl. next_entity_id + battlefield) must round-trip after undoing CreateToken"
+    );
+
+    Ok(())
+}

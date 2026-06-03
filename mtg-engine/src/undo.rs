@@ -458,6 +458,17 @@ pub enum GameAction {
     /// the push needs logging for the rewind path; logging it also keeps the
     /// per-action undo oracle exact.
     PushExtraTurn { player: PlayerId },
+
+    /// Records that a brand-new entity (a token, via `Effect::CreateToken`) was
+    /// minted: `next_card_id()` advanced `next_entity_id`, the instance was
+    /// inserted into the EntityStore, and it was added to the battlefield — all
+    /// previously UNLOGGED. On a rewind the token LEAKED (stayed in `cards` +
+    /// `battlefield`) AND `next_entity_id` stayed advanced, so a forward replay
+    /// minted a SECOND token at a higher id → duplicate token + diverged
+    /// (hashed) state (mtg-ba6uq #3). `undo()` removes the card from the
+    /// battlefield, clears it from the store, and rolls `next_entity_id` back to
+    /// `card_id` (LIFO undo restores the exact counter the mint consumed).
+    CreateEntity { card_id: CardId },
 }
 
 impl fmt::Display for GameAction {
@@ -701,6 +712,9 @@ impl fmt::Display for GameAction {
             }
             GameAction::PushExtraTurn { player } => {
                 write!(f, "PushExtraTurn(P{})", player.as_u32())
+            }
+            GameAction::CreateEntity { card_id } => {
+                write!(f, "CreateEntity(card={})", card_id.as_u32())
             }
         }
     }
@@ -1333,6 +1347,22 @@ impl GameAction {
                 if game.extra_turns.back() == Some(player) {
                     game.extra_turns.pop_back();
                 }
+            }
+            GameAction::CreateEntity { card_id } => {
+                // Reverse a token mint (mtg-ba6uq #3): remove from the
+                // battlefield, clear the instance from the EntityStore, and roll
+                // `next_entity_id` back to this id. Because the undo log is LIFO
+                // and the forward mint did `id = next_entity_id; next_entity_id
+                // += 1`, the most-recently-minted entity is undone first, so
+                // setting `next_entity_id = card_id` exactly restores the counter
+                // the mint consumed. Without this the token leaks through a
+                // rewind and replay mints a duplicate at a higher id.
+                game.battlefield.remove(*card_id);
+                // clear_and_truncate (not plain clear) so the dense entity Vec
+                // shrinks back to its pre-mint length — a leftover trailing None
+                // slot serializes as an extra `null` and diverges the hash.
+                game.cards.clear_and_truncate(*card_id);
+                game.set_next_entity_id(card_id.as_u32());
             }
         }
 
