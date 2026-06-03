@@ -8,7 +8,7 @@ labels:
 - blocked
 - web
 created_at: 2026-06-03T21:13:12.163158889+00:00
-updated_at: 2026-06-03T21:13:12.163158889+00:00
+updated_at: 2026-06-03T21:25:57.433027759+00:00
 ---
 
 # Description
@@ -32,3 +32,19 @@ OPTIONAL FUTURE EXTENSION (separate, also design-only): opt-in "Publish deck to 
 RELATED: mtg-3t7gd (scalable P2P + the same minimalist-stateless-server philosophy); asset_hash.rs CAS (content-addressing reuse); the web image CDN-table work (same hashed-static-asset + zero-egress-CDN philosophy).
 
 IMPLEMENTATION ORDER (only after BOTH gates clear): provision R2 + OAuth app -> add OAuth verify + temp-cred-minting endpoint to the axum web_server (alongside /lobby, /health) -> client deck-collection .tgz read/write/sync + IndexedDB cache + Download button + If-Match conditional writes -> migrate existing localStorage decks into R2 on first login.
+
+=== CDN / CACHING MODEL (folded in 2026-06-03) ===
+R2 caching is ACCESS-PATH-DEPENDENT and splits along the same immutable-vs-mutable line as the rest of deepscry's CAS:
+- PRIVATE per-user collection -> served via the S3 API endpoint (<account>.r2.cloudflarestorage.com) with presigned/temp-cred URLs. NOT behind the Cloudflare CDN -> no edge caching; each GET is a direct R2 read (1 Class B op; free tier 10M/mo). Set Cache-Control: private, no-store (mutable + private -> never cache a stale/shared copy). Bonus: not proxied -> no transparent-decompression surprise; .tgz bytes are byte-clean.
+- PUBLIC content-addressed published decks -> served via a CUSTOM DOMAIN (e.g. decks.deepscry.net) THROUGH the Cloudflare CDN -> edge-cached. URL == content hash (immutable) -> Cache-Control: public, max-age=31536000, immutable -> cached forever at the edge, served globally, R2 barely touched. Exactly the hashed-web-asset + CDN-card-image-table pattern. (r2.dev public URL = dev-only, rate-limited.)
+- PRINCIPLE = the project CAS rule: immutable/hashed -> CDN-cache forever; mutable/private -> no-cache, direct from R2 (mirrors hashed assets vs index.html).
+- TWO CDN-path caveats: (a) TRANSPARENT DECOMPRESSION — a proxied object with Content-Encoding: gzip may be auto-inflated by Cloudflare for clients lacking Accept-Encoding: gzip, corrupting a .tgz; store OPAQUE (Content-Type application/gzip, NO Content-Encoding); the private S3-endpoint path avoids this entirely. (b) FORCED-DOWNLOAD FILENAME — R2 GetObject reportedly ignores response-content-disposition (CF limitation vs S3); use a tiny Worker/Transform Rule, or rely on Content-Type + a fresh presigned URL per Download click.
+
+=== READ ACCESS: PUBLIC vs PRIVATE (the fork; clarified 2026-06-03) ===
+Reads and writes are NOT symmetric:
+- WRITES are ALWAYS gated — a write uses a short-lived auth-minted credential (presigned PUT / temp cred). The world can never write to a user's collection. The <=7-day presigned cap is irrelevant for writes (minted fresh per save).
+- READS are a per-object PRIVACY CHOICE; support BOTH (mix per object):
+  * PUBLIC (world-readable): a PERMANENT public URL via custom domain + CDN — no signing, NO EXPIRY, cached forever. The <=7-day presigned cap does NOT apply (presigned URLs are only for PRIVATE reads).
+  * PRIVATE (per-user): a presigned GET / temp cred — DOES expire <=7 days (a SigV4 property; applies to GET as well as PUT) -> "Download/Open" mints fresh on demand; auth-gated, not CDN-cached.
+- THE NICE MIDDLE = CONTENT-ADDRESSED CAPABILITY URLs: a public-but-UNGUESSABLE key (decks.deepscry.net/<blake3>) is readable by anyone holding the link but NOT discoverable/enumerable unless shared — like an "unlisted" video or a secret gist. Content-addressing gives this for free: the hash IS the unguessable capability token, immutable, CDN-cacheable forever. This is the natural "share my deck via a URL" model AND the realization of "decks as first-class files-on-the-internet with their own URLs". SURVEY CONFIRMED THE GAP: among incumbents only TappedOut (?fmt=txt) and MTGGoldfish (/deck/download/<id>) expose a direct plaintext URL at all, both as HTML-site afterthoughts; NONE treat plaintext-at-a-hash-URL as the primary resource. Reuse asset_hash.rs blake3 CAS for published blobs. For an EVOLVING shared deck, pair the immutable hash-URL with a short stable id -> latest-hash redirect (IPNS-style mutable pointer).
+- DEFAULT: private-by-default per-user collection (gated reads) + opt-in "Publish -> permanent public content-addressed URL" for decks the user chooses to share. Even with fully-public reads, the WRITE path still needs OAuth + gated credentials (and to know which prefix is the user's) -> the minimalist auth server stays; it just signs writes.
