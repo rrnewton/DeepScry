@@ -1618,11 +1618,29 @@ impl GameState {
             }
         };
 
+        // mtg-mb668 class-A / mtg-725 R1: on a SHADOW game the opponent's
+        // Hand/Library cards are RESERVED (instance-less) ids. `try_get` returns
+        // None for them, so the server (real instances) counts them while the
+        // shadow drops them — a branch-on-absence count desync. Handle the
+        // reserved id SYMMETRICALLY (sig-2c/2d template): a reserved card in
+        // `player_id`'s hidden zone is owned + controlled by `player_id`, so it
+        // matches a WILDCARD type filter ("" / "Card" / "Permanent") whose
+        // ownership qualifier is zone-owner-relative (YouOwn / YouCtrl). Typed or
+        // colored filters and opponent-relative qualifiers (OppOwn / OppCtrl) are
+        // unevaluable without the instance, so a reserved id does NOT match them
+        // (no over-count; a hidden zone cannot be conditioned on by type).
+        let reserved_owner_matches = self.is_shadow_game
+            && matches!(type_filter, "" | "Card" | "Permanent")
+            && matches!(ownership, "YouOwn" | "YouCtrl")
+            && !quals
+                .iter()
+                .any(|q| matches!(*q, "White" | "Blue" | "Black" | "Red" | "Green"));
+
         zone_cards
             .iter()
             .filter(|&&cid| {
                 let Some(c) = self.cards.try_get(cid) else {
-                    return false;
+                    return reserved_owner_matches;
                 };
 
                 // Check ownership filter
