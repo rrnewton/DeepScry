@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<!--
+  solo_launcher.html — SOLO / local-play pre-game launcher (no lobby, no WebSocket).
+
+  Reached from index.html's "Standalone / Solo Launchers" pane:
+    solo_launcher.html?ui=native   (Native Web GUI)
+    solo_launcher.html?ui=tui      (Web TUI)
+  (plus inherited sticky params: name, ws, allow_local_img_load, release).
+
+  It lets one user configure a LOCAL (non-network) game — your deck + controller,
+  the opponent's deck + controller, an optional RNG seed, the renderer, and the
+  per-game image/debug prefs — then jumps STRAIGHT into the game page with the
+  local-game param contract (NO lobby, NO WebSocket):
+
+    native_game.html / tui_game.html
+      ?mode=local&p1_deck=<deck>&p2_deck=<deck>&p1=<ctrl>&p2=<ctrl>
+      [&seed=<u64>][&images=][&img_src=][&debug=][&allow_local_img_load=]
+
+  This is the SOLO counterpart of launcher.html (which is the multiplayer/lobby
+  pre-game launcher). It is deliberately SIMPLER: no waiting room, no ready
+  handshake, no lobby socket.
+
+  CONTRACT SOURCES (keep in lock-step):
+    - The local-game param names/values mirror `consumeLocalGameParams()` in
+      lobby_launcher.js (mode/p1_deck/p2_deck/p1/p2/seed/debug).
+    - The image/debug prefs mirror `consumeGamePrefs()` (images/img_src/debug)
+      and launcher.html's image-source gate.
+    - The deck COLLECTIONS + WASM-free deck loading mirror launcher.html
+      (DECK_COLLECTIONS + data/sets/index.json `deck_names`).
+
+  CAS pure-DAG (mtg-4irju): this is a forward DAG node. index.html → THIS page
+  (forward edge the deploy hasher rewrites to solo_launcher.<hash>.html), and
+  THIS page → native_game.html / tui_game.html (forward edges, statically hashed
+  via the JS filename literals below). The only back-edge is the stable entry
+  index.html (the DAG root — not a hashed sibling, so no cycle). `release=` is
+  relayed onto the forward game-page link via forwardStickyParams, exactly like
+  launcher.html.
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepScry &mdash; Solo Launcher</title>
+    <link rel="icon" href="favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    <style>
+        :root {
+            --bg: #0a0a14; --surface: #16213e; --surface-2: #0f3460;
+            --border: #1a2a50; --text: #e6e6f0; --muted: #8a8aa0;
+            --accent: #4cc9f0; --gold: #ffd700;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 24px;
+            background: var(--bg); color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            display: flex; align-items: flex-start; justify-content: center;
+            min-height: 100vh;
+        }
+        .box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 28px 32px;
+            max-width: 560px;
+            width: 100%;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        .titlebar { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; }
+        .titlebar img.header-emblem { width: 34px; height: 34px; flex: none; }
+        h1 { color: var(--gold); font-size: 24px; margin: 0; }
+        .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+        .row2 { display: flex; gap: 16px; }
+        .row2 > .field { flex: 1; min-width: 0; }
+        .field { margin-bottom: 20px; }
+        .field > label.field-label {
+            display: block; font-size: 11px; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px;
+        }
+        select, input[type="text"], input[type="number"] {
+            width: 100%; padding: 8px 10px; font-size: 14px;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 5px;
+        }
+        .renderer-toggle { display: flex; gap: 10px; }
+        .renderer-opt {
+            flex: 1; cursor: pointer; padding: 12px 14px; border-radius: 6px;
+            background: var(--surface-2); border: 2px solid var(--border);
+            display: flex; flex-direction: column; gap: 3px;
+        }
+        .renderer-opt input { margin: 0 6px 0 0; }
+        .renderer-opt.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .renderer-opt .ro-title { font-size: 14px; font-weight: 600; }
+        .renderer-opt .ro-desc { font-size: 11px; color: var(--muted); }
+        .cb-row { display: flex; align-items: center; gap: 7px; font-size: 13px; margin: 4px 0; cursor: pointer; }
+        .cb-row input { margin: 0; }
+        .image-sources { margin: 6px 0 0 18px; padding-left: 10px; border-left: 2px solid var(--border); }
+        .image-sources .cb-row { font-size: 12px; color: var(--muted); }
+        .gate-note { font-size: 10px; color: var(--muted); margin-top: 4px; }
+        .gate-note code { color: var(--accent); }
+        .seed-row { display: flex; gap: 8px; }
+        .seed-row input { flex: 1; }
+        .seed-row button {
+            white-space: nowrap; padding: 8px 12px; font-size: 13px; cursor: pointer;
+            background: var(--surface-2); color: var(--accent);
+            border: 1px solid var(--accent); border-radius: 5px;
+        }
+        .play-row { margin-top: 6px; }
+        #btn-play {
+            width: 100%; padding: 13px; font-size: 16px; font-weight: 700; cursor: pointer;
+            background: linear-gradient(135deg, #2a9d4a, #1f7d3a); color: #fff;
+            border: none; border-radius: 7px;
+        }
+        #btn-play:hover { filter: brightness(1.1); }
+        #btn-play:disabled { background: #2a2a40; color: #666; cursor: not-allowed; filter: none; }
+        .status { font-size: 12px; color: var(--muted); min-height: 1.2em; margin-top: 10px; }
+        .status.error { color: #ff8080; }
+        .footer { margin-top: 22px; font-size: 12px; }
+        .footer a { color: var(--accent); }
+    </style>
+</head>
+<body>
+<div class="box">
+    <div class="titlebar">
+        <img class="header-emblem" src="emblem-64.webp" alt="" aria-hidden="true" width="34" height="34">
+        <h1>Solo Launcher</h1>
+    </div>
+    <p class="subtitle" id="subtitle">Set up a local game (you vs the AI) &mdash; no lobby, no network.</p>
+
+    <!-- Your deck -->
+    <div class="row2">
+        <div class="field">
+            <label class="field-label" for="p1-collection">Your Deck Collection</label>
+            <select id="p1-collection"></select>
+        </div>
+        <div class="field">
+            <label class="field-label" for="p1-deck">Your Deck</label>
+            <select id="p1-deck"></select>
+        </div>
+    </div>
+
+    <!-- Opponent deck -->
+    <div class="row2">
+        <div class="field">
+            <label class="field-label" for="p2-collection">Opponent Deck Collection</label>
+            <select id="p2-collection"></select>
+        </div>
+        <div class="field">
+            <label class="field-label" for="p2-deck">Opponent Deck</label>
+            <select id="p2-deck"></select>
+        </div>
+    </div>
+
+    <!-- Controllers -->
+    <div class="row2">
+        <div class="field">
+            <label class="field-label" for="p1-controller">You Play As</label>
+            <select id="p1-controller">
+                <option value="human" selected>Human (you)</option>
+                <option value="heuristic">Heuristic AI</option>
+                <option value="random">Random AI</option>
+                <option value="zero">Zero AI (passes)</option>
+            </select>
+        </div>
+        <div class="field">
+            <label class="field-label" for="p2-controller">Opponent</label>
+            <select id="p2-controller">
+                <option value="heuristic" selected>Heuristic AI</option>
+                <option value="random">Random AI</option>
+                <option value="zero">Zero AI (passes)</option>
+                <option value="human">Human (hot-seat)</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Seed -->
+    <div class="field">
+        <label class="field-label" for="seed">RNG Seed <span style="text-transform:none;">(optional &mdash; blank = random)</span></label>
+        <div class="seed-row">
+            <input type="number" id="seed" min="0" step="1" placeholder="(random)">
+            <button type="button" id="btn-random-seed" title="Generate a random seed">&#127922; Random</button>
+        </div>
+    </div>
+
+    <!-- Renderer toggle: Native (DEFAULT) vs Web TUI -->
+    <div class="field">
+        <label class="field-label">Renderer</label>
+        <div class="renderer-toggle" id="renderer-toggle">
+            <label class="renderer-opt selected" id="renderer-opt-native">
+                <span class="ro-title"><input type="radio" name="renderer" id="renderer-native" value="native" checked>Native GUI</span>
+                <span class="ro-desc">Card-style graphical board (native_game.html).</span>
+            </label>
+            <label class="renderer-opt" id="renderer-opt-tui">
+                <span class="ro-title"><input type="radio" name="renderer" id="renderer-tui" value="tui">Web TUI</span>
+                <span class="ro-desc">Terminal-style text renderer (tui_game.html).</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Card images + debug (mirrors launcher.html's image-source gate) -->
+    <div class="field">
+        <label class="field-label">Card Images</label>
+        <label class="cb-row"><input type="checkbox" id="show-card-images" checked> Show card images</label>
+        <div class="image-sources" id="image-source-options">
+            <label class="cb-row" id="img-src-local-label"><input type="checkbox" id="img-src-local"> Load from DeepScry server</label>
+            <label class="cb-row"><input type="checkbox" id="img-src-scryfall" checked> Scryfall (high quality)</label>
+            <label class="cb-row"><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
+            <div id="img-src-local-gate-note" class="gate-note" style="display:none;">
+                Local images hidden pending licensing clarity around card images.
+                Append <code>?allow_local_img_load=true</code> to the URL to enable.
+            </div>
+        </div>
+    </div>
+
+    <div class="field">
+        <label class="field-label">Diagnostics</label>
+        <label class="cb-row"><input type="checkbox" id="debug-mode"> Debug logging (TRACE)</label>
+    </div>
+
+    <div class="field play-row">
+        <button id="btn-play" type="button">Start Solo Game</button>
+    </div>
+    <p class="status" id="status"></p>
+
+    <div class="footer">
+        <a href="index.html">&larr; Back to Lobby</a>
+    </div>
+</div>
+
+<script type="module">
+import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } from './lobby_launcher.js';
+
+(function () {
+    'use strict';
+
+    const qs = new URLSearchParams(window.location.search);
+    // Expose for Playwright/e2e assertions (parity with launcher.html).
+    window.__soloLauncherParams = Object.fromEntries(qs.entries());
+
+    const statusEl = document.getElementById('status');
+    function setStatus(msg, isError) {
+        statusEl.textContent = msg || '';
+        statusEl.classList.toggle('error', !!isError);
+    }
+
+    // ── Local-image gate (mirrors launcher.html / lobby_launcher's sticky gate) ──
+    function resolveLocalImageAllowed() {
+        let allowed;
+        if (qs.has('allow_local_img_load')) {
+            allowed = qs.get('allow_local_img_load') === 'true';
+            try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
+        } else {
+            let stored = null;
+            try { stored = sessionStorage.getItem('allowLocalImgLoad'); } catch (e) { /* ignore */ }
+            allowed = stored === 'true';
+        }
+        return allowed;
+    }
+    const allowLocalImgLoad = resolveLocalImageAllowed();
+
+    // ==================== DECK COLLECTIONS ====================
+    // MIRRORED from launcher.html (which itself lifted them from tui_game.html).
+    // Keep in lock-step so the solo + lobby launchers offer the SAME decks.
+    const DECK_COLLECTIONS = {
+        old_school: {
+            name: 'Old School 1994',
+            filter: (deckName) => deckName.includes('_') && (
+                /^\d\d_/.test(deckName) ||
+                deckName.includes('classic') ||
+                deckName.includes('erhnam') ||
+                deckName.includes('ponza') ||
+                deckName.includes('stasis') ||
+                deckName.includes('disco') ||
+                deckName.includes('zoo') ||
+                deckName.includes('monolith')
+            ),
+        },
+        booster_draft: {
+            name: 'Booster Draft',
+            filter: (deckName) => deckName.includes('avatar') || deckName.includes('spiderman'),
+        },
+        commander: {
+            name: 'Commander',
+            filter: (deckName) => deckName.includes('chandra_tokens'),
+        },
+        custom: {
+            name: 'Custom Decks (Local)',
+            filter: () => false, // handled separately from localStorage
+        },
+    };
+    const COLLECTION_ORDER = ['old_school', 'booster_draft', 'commander', 'custom'];
+    const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
+
+    let allDeckNames = [];
+
+    function getCustomDecks() {
+        try {
+            const saved = localStorage.getItem(CUSTOM_DECKS_KEY);
+            return saved ? JSON.parse(saved) : {};
+        } catch (e) {
+            console.warn('Failed to load custom decks:', e);
+            return {};
+        }
+    }
+
+    // Populate a collection <select> with the fixed collection list.
+    function fillCollectionSelect(sel) {
+        sel.innerHTML = '';
+        for (const key of COLLECTION_ORDER) {
+            sel.appendChild(new Option(DECK_COLLECTIONS[key].name, key));
+        }
+    }
+
+    // Populate a deck <select> from the chosen collection.
+    function fillDeckSelect(deckSel, collection) {
+        deckSel.innerHTML = '';
+        if (collection === 'custom') {
+            const customDecks = getCustomDecks();
+            const names = Object.keys(customDecks).sort();
+            if (names.length === 0) {
+                deckSel.appendChild(new Option('(No custom decks — use the Deck Editor)', ''));
+            } else {
+                for (const name of names) {
+                    const deck = customDecks[name];
+                    const count = (deck.main_deck || []).reduce((sum, pair) => sum + (pair[1] || 0), 0);
+                    deckSel.appendChild(new Option(`${name} (${count} cards)`, name));
+                }
+            }
+        } else {
+            const cfg = DECK_COLLECTIONS[collection];
+            const matching = (cfg ? allDeckNames.filter(cfg.filter) : []);
+            if (matching.length === 0) {
+                deckSel.appendChild(new Option('(No decks in this collection)', ''));
+            } else {
+                for (const name of matching) deckSel.appendChild(new Option(name, name));
+            }
+        }
+    }
+
+    const p1Collection = document.getElementById('p1-collection');
+    const p1Deck = document.getElementById('p1-deck');
+    const p2Collection = document.getElementById('p2-collection');
+    const p2Deck = document.getElementById('p2-deck');
+    const p1Controller = document.getElementById('p1-controller');
+    const p2Controller = document.getElementById('p2-controller');
+    const seedInput = document.getElementById('seed');
+    const playBtn = document.getElementById('btn-play');
+
+    fillCollectionSelect(p1Collection);
+    fillCollectionSelect(p2Collection);
+
+    // Pick the first collection that actually has built-in decks (so a deck is
+    // preselected on load) — same heuristic as launcher.html.
+    function firstPopulatedCollection() {
+        for (const key of ['booster_draft', 'old_school', 'commander']) {
+            if (allDeckNames.some(DECK_COLLECTIONS[key].filter)) return key;
+        }
+        return 'booster_draft';
+    }
+
+    function refreshPlayEnabled() {
+        const ok = !!p1Deck.value && !!p2Deck.value;
+        playBtn.disabled = !ok;
+    }
+
+    p1Collection.addEventListener('change', () => { fillDeckSelect(p1Deck, p1Collection.value); refreshPlayEnabled(); });
+    p2Collection.addEventListener('change', () => { fillDeckSelect(p2Deck, p2Collection.value); refreshPlayEnabled(); });
+    p1Deck.addEventListener('change', refreshPlayEnabled);
+    p2Deck.addEventListener('change', refreshPlayEnabled);
+
+    async function loadDeckNames() {
+        try {
+            const r = await fetch('./data/sets/index.json', { cache: 'no-store' });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const idx = await r.json();
+            allDeckNames = Array.isArray(idx.deck_names) ? idx.deck_names.slice() : [];
+            allDeckNames.sort();
+        } catch (err) {
+            console.warn('Could not load deck list from index.json:', err);
+            allDeckNames = [];
+            setStatus('Could not load the built-in deck list (run `make wasm-export`). ' +
+                'Custom decks still work.', true);
+        }
+        const start = firstPopulatedCollection();
+        p1Collection.value = start;
+        p2Collection.value = start;
+        fillDeckSelect(p1Deck, p1Collection.value);
+        fillDeckSelect(p2Deck, p2Collection.value);
+        refreshPlayEnabled();
+    }
+
+    // ==================== RENDERER TOGGLE ====================
+    const optNative = document.getElementById('renderer-opt-native');
+    const optTui = document.getElementById('renderer-opt-tui');
+    const radioNative = document.getElementById('renderer-native');
+    const radioTui = document.getElementById('renderer-tui');
+
+    function refreshRendererUI() {
+        const native = radioNative.checked;
+        optNative.classList.toggle('selected', native);
+        optTui.classList.toggle('selected', !native);
+    }
+    radioNative.addEventListener('change', refreshRendererUI);
+    radioTui.addEventListener('change', refreshRendererUI);
+    // Pre-select the renderer from ?ui= (index.html's Solo Launcher links pass it).
+    if (qs.get('ui') === 'tui') { radioTui.checked = true; }
+    else if (qs.get('ui') === 'native') { radioNative.checked = true; }
+    refreshRendererUI();
+
+    function selectedRenderer() { return radioTui.checked ? 'tui' : 'native'; }
+
+    // ==================== IMAGE-SOURCE PICKER + GATE ====================
+    const showImagesCb = document.getElementById('show-card-images');
+    const imgSrcLocalCb = document.getElementById('img-src-local');
+    const imgSrcScryfallCb = document.getElementById('img-src-scryfall');
+    const imgSrcGathererCb = document.getElementById('img-src-gatherer');
+    const debugCb = document.getElementById('debug-mode');
+    const imageSourceOptions = document.getElementById('image-source-options');
+
+    function applyLocalImageGate() {
+        if (allowLocalImgLoad) {
+            if (imgSrcLocalCb) imgSrcLocalCb.checked = true;
+            return;
+        }
+        if (imgSrcLocalCb) imgSrcLocalCb.checked = false;
+        const localLabel = document.getElementById('img-src-local-label');
+        if (localLabel) localLabel.remove();
+        const note = document.getElementById('img-src-local-gate-note');
+        if (note) note.style.display = 'block';
+    }
+
+    function selectedImageSources() {
+        const checked = {
+            local: imgSrcLocalCb && imgSrcLocalCb.checked,
+            scryfall: imgSrcScryfallCb.checked,
+            gatherer: imgSrcGathererCb.checked,
+        };
+        return IMAGE_SOURCE_IDS.filter((id) => checked[id]);
+    }
+
+    function refreshImageSourceUI() {
+        const on = showImagesCb.checked;
+        imageSourceOptions.style.opacity = on ? '1' : '0.45';
+        for (const cb of [imgSrcLocalCb, imgSrcScryfallCb, imgSrcGathererCb]) {
+            if (cb) cb.disabled = !on;
+        }
+    }
+    applyLocalImageGate();
+    refreshImageSourceUI();
+    showImagesCb.addEventListener('change', refreshImageSourceUI);
+
+    // ==================== SEED ====================
+    document.getElementById('btn-random-seed').addEventListener('click', () => {
+        // A reasonable u32-ish seed; the engine accepts any u64.
+        seedInput.value = String(Math.floor(Math.random() * 0xFFFFFFFF));
+    });
+
+    // ==================== GAME-PAGE NAVIGATION ====================
+    // Build the LOCAL-game redirect URL (mode=local contract). THIS page owns the
+    // game-page FILENAME (the forward DAG edge the deploy hasher rewrites to the
+    // hashed name). Relay release= + sticky params from our own URL, merged
+    // without clobbering — exactly like launcher.html's buildGamePageUrl.
+    function buildGamePageUrl() {
+        const renderer = selectedRenderer();
+        const page = renderer === 'native' ? 'native_game.html' : 'tui_game.html';
+        const qp = new URLSearchParams();
+        qp.set('mode', 'local');
+        qp.set('p1_deck', p1Deck.value);
+        qp.set('p2_deck', p2Deck.value || p1Deck.value);
+        qp.set('p1', p1Controller.value);
+        qp.set('p2', p2Controller.value);
+        const seed = seedInput.value.trim();
+        if (seed) qp.set('seed', seed);
+        // Per-game prefs (consumeGamePrefs contract).
+        qp.set('images', showImagesCb.checked ? 'true' : 'false');
+        const srcs = selectedImageSources();
+        if (srcs.length > 0) qp.set('img_src', srcs.join(','));
+        if (debugCb.checked) qp.set('debug', 'true');
+        if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+        const url = new URL(page, window.location.href);
+        url.search = qp.toString();
+        // Relay the CAS release token + other sticky params from our own URL.
+        forwardStickyParams(url, qs);
+        return url.pathname.split('/').pop() + url.search;
+    }
+    // Exposed for Playwright assertions of the forwarded local-game params.
+    window.__buildSoloGameUrl = buildGamePageUrl;
+
+    playBtn.addEventListener('click', () => {
+        if (!p1Deck.value || !p2Deck.value) {
+            setStatus('Pick a deck for both you and the opponent.', true);
+            return;
+        }
+        const renderer = selectedRenderer();
+        setStatus(`Starting ${renderer === 'native' ? 'Native GUI' : 'Web TUI'}…`);
+        window.location.href = buildGamePageUrl();
+    });
+
+    // Keep the Back-to-Lobby link carrying the session's sticky params (release,
+    // name, ws, allow_local_img_load) so they survive the hop.
+    forwardStickyParamsOnAnchor(document.querySelector('.footer a'), qs);
+
+    loadDeckNames();
+})();
+</script>
+</body>
+</html>

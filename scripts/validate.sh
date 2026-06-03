@@ -246,9 +246,27 @@ if ! git diff-index --quiet HEAD -- 2>/dev/null; then
     HAS_REGULAR_CHANGES=true
 fi
 
+# List `git submodule status` lines that indicate REAL dirtiness (+/-/U
+# prefix), EXCLUDING submodules configured `update = none` in .gitmodules. An
+# inactive (update=none) submodule (e.g. the optional `assets` design-asset
+# repo) is intentionally left un-checked-out and legitimately shows a '-'
+# prefix; that is NOT a dirty working copy. A real uninitialised REQUIRED
+# submodule (e.g. forge-java) still flags. See "Inactive-submodule policy" in
+# the deepscry-assets README.
+submodule_dirty_lines() {
+    local inactive
+    inactive=$(git config -f .gitmodules --get-regexp '\.update$' 2>/dev/null \
+        | awk '$2 == "none" { name = $1; sub(/^submodule\./, "", name); sub(/\.update$/, "", name); print name }' \
+        | while read -r n; do git config -f .gitmodules --get "submodule.$n.path" 2>/dev/null; done)
+    git submodule status 2>/dev/null | awk -v inactive="$inactive" '
+        BEGIN { n = split(inactive, a, /[ \t\n]+/); for (i = 1; i <= n; i++) if (a[i] != "") skip[a[i]] = 1 }
+        /^[+\-U]/ { if (!($2 in skip)) print }
+    '
+}
+
 # Check for submodule changes (modified, untracked, etc.)
 HAS_SUBMODULE_CHANGES=false
-if git submodule status | grep -q '^+\|^-\|^U'; then
+if [ -n "$(submodule_dirty_lines)" ]; then
     HAS_SUBMODULE_CHANGES=true
 fi
 
@@ -289,7 +307,7 @@ if [ "$HAS_REGULAR_CHANGES" = true ] || [ "$HAS_SUBMODULE_CHANGES" = true ]; the
             echo "be included in temporary WIP commits."
             echo ""
             echo "Submodule status:"
-            git submodule status | grep '^+\|^-\|^U' || true
+            submodule_dirty_lines || true
             echo ""
             echo "Please either:"
             echo "  1. Commit or stash the submodule changes before validation"

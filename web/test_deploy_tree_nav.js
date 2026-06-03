@@ -247,15 +247,43 @@ async function main() {
             );
         }
 
-        // ── (2) index → HASHED launcher + both HASHED game pages, each 200 ──
+        // ── (2) index → HASHED launcher + HASHED solo_launcher; solo_launcher
+        //        → both HASHED game pages, each 200 (forward DAG, mtg-4irju) ──
+        // After the solo-launcher rework the index no longer links the game
+        // pages DIRECTLY: the MULTIPLAYER path is index → launcher → game, and
+        // the SOLO path is index → solo_launcher → game. (The game pages became
+        // pure renderers that boot only from URL params, so the old direct
+        // native_game.html / tui_game.html links from index rotted; solo_launcher
+        // collects the local-game params and jumps in.)
         const indexTokens = htmlPageTokens(indexHtml);
         const launcherHashed = indexTokens.find((t) => /^launcher\.[0-9a-f]{16}\.html$/.test(t));
         check(!!launcherHashed, `index references a HASHED launcher.<hash>.html; saw: ${indexTokens.join(', ')}`);
         const launcherHtml = launcherHashed ? await fetchOk(base, '/' + launcherHashed, 'lobby→launcher') : null;
         check(!!launcherHtml, 'hashed launcher page resolves 200');
 
-        const gamePageTokens = indexTokens.filter((t) => /^(native_game|tui_game)\.[0-9a-f]{16}\.html$/.test(t));
-        check(gamePageTokens.length >= 2, `index references BOTH hashed game pages directly; saw: ${gamePageTokens.join(', ')}`);
+        const soloHashed = indexTokens.find((t) => /^solo_launcher\.[0-9a-f]{16}\.html$/.test(t));
+        check(!!soloHashed, `index references a HASHED solo_launcher.<hash>.html; saw: ${indexTokens.join(', ')}`);
+        const soloHtml = soloHashed ? await fetchOk(base, '/' + soloHashed, 'lobby→solo_launcher') : null;
+        check(!!soloHtml, 'hashed solo_launcher page resolves 200');
+
+        // solo_launcher forward-links BOTH hashed game pages and relays release.
+        const gamePageTokens = soloHtml
+            ? htmlPageTokens(soloHtml).filter((t) => /^(native_game|tui_game)\.[0-9a-f]{16}\.html$/.test(t))
+            : [];
+        check(gamePageTokens.length >= 2, `solo_launcher references BOTH hashed game pages (forward DAG); saw: ${gamePageTokens.join(', ')}`);
+        if (soloHtml) {
+            check(
+                /forwardStickyParams|'release'|"release"/.test(soloHtml),
+                'solo_launcher relays release= onto its forward game-page link (forwardStickyParams)',
+            );
+            // solo_launcher's only non-game *.html nav target is the stable entry.
+            const soloNav = htmlPageTokens(soloHtml)
+                .filter((t) => t !== 'index.html' && !/^(native_game|tui_game)\.[0-9a-f]{16}\.html$/.test(t));
+            check(
+                soloNav.length === 0,
+                `solo_launcher emits no unexpected cross-page nav (forward DAG); saw: ${soloNav.join(', ') || '(none)'}`,
+            );
+        }
         for (const gp of gamePageTokens) {
             const body = await fetchOk(base, '/' + gp, 'game page (forward DAG edge)');
             // The game page must NOT emit the old tui⇄native switch link (cycle

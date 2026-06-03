@@ -4,3 +4,7 @@
 [submodule ".devcontainer"]
 	path = .claude_template
 	url = git@github.com:rrnewton/claude_template.git
+[submodule "assets"]
+	path = assets
+	url = git@github.com:rrnewton/deepscry-assets.git
+	update = none
