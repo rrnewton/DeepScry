@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T20:51:52.034698423+00:00
+updated_at: 2026-06-03T20:53:16.528496842+00:00
 ---
 
 # Description
@@ -88,3 +88,16 @@ FAILURE BREAKDOWN (17 fails):
   - class-A server↔shadow: ACTION COUNT MISMATCH seeds 5,6,20; state hash mismatch seeds 2,11,19; Local-abilities drift seeds 9,18; seed 4 (other). = count/reveal lockstep residue beyond sig-2c/2d.
 RECOMMENDED PLAN: (1) fix the within-side rewind-fidelity cluster via the native oracle (sig-2f damage = add SetDamage{prev} + route card.damage += sites through it; then re-run oracle to surface the next field) — clears ~8/20 deterministically. (2) Then class-A via per-action lockstep harness. (3) Gate = all robots seeds 1..N green + a 2nd deck, deterministic.
 PASS seeds (clean trajectories): 3, 13, 16, 42.
+
+------------------------------------------------------------------------
+RESUME NOTES FOR A FRESH slot01 (context-budget handoff, 2026-06-03):
+STATE: branch netarch-undo-holes, 12 commits ahead of 75d00f45 (sig-1). Tree CLEAN. Engine lib 1004/1004. Release+wasm built. 6 engine fixes + e2e determinism fix all banked. Worktree registered in worktrees/ACTIVE.md (slot01).
+
+NEXT TASK = sig-2f (cards[N].damage undo hole) — the biggest deterministic cluster (~8/20 seeds: 1,7,8,10,12,14,15,17 → REWIND/REPLAY FATAL).
+  - Fix: add GameAction::SetDamage{card_id, prev: u16/u32} (snapshot BEFORE mutation, mirror SetManaPool/SetCardCounters) — Display + undo arm restoring card.damage = prev; tolerate missing instance on undo (like sig-2d's SetRevealedToMask). Add a `log_damage(card_id)`-style helper, call it before EVERY `card.damage += ...` site: actions/mod.rs:5309 and :8449, AND audit combat.rs for combat-damage application sites (the cards[N].damage divergence is COMBAT damage). 
+  - RED-first via the EXISTING native rewind oracle pattern: tests/whole_game_rewind_replay_e2e.rs + tests/rewind_replay_oracle_e2e.rs already drive a game with a recorder controller, rewind_to_turn_start, replay, and assert state-hash + gamelog round-trip per turn. BUILD a new case there driving the ROBOTS deck with a RandomController (pin the seed to a FAILING sweep seed, e.g. 7) — it will deterministically reproduce the REWIND/REPLAY FATAL with NO networking. After sig-2f, re-run the oracle; it surfaces the NEXT within-side field hole. Repeat until the oracle is green across the failing seeds. This is the class-B "no within-side undo holes" systematic proof.
+  - Then re-run the 20-seed e2e sweep; class-B clears ~8/20. Remaining ~9 are class-A (server↔shadow lockstep): per coordinator, class-A is now LOWER priority — if the seed-sweep goes green it's empirically covered; only build the per-action lockstep harness if a specific seed needs per-action diffing.
+
+GREEN BAR (coordinator): robots deck seeds 1..N all deterministic-green + a 2nd deck, robots42 STILL in the make-validate gate (NO exclusion). PASS seeds today: 3,13,16,42.
+
+MERGE/OVERLAP FLAG: the e2e determinism fix touches web/tui_game.html (~2473, seed boot param) and the native client is at main.rs (~1625). slot04's CDN-image work ALSO edits tui_game.html but in a DISJOINT region (image source URLs ~1670/1772/2000) — no conflict expected; whoever merges second rebases that file. This fix de-risks slot04's All-Hallow's-Eve flake (same unpinned-controller gap) + mtg-726.
