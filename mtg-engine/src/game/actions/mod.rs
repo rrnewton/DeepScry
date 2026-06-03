@@ -5358,6 +5358,8 @@ impl GameState {
                     .collect();
 
                 for card_id in targets {
+                    // Snapshot marked damage for undo BEFORE mutating (mtg-mb668 sig-2f).
+                    self.log_damage(card_id);
                     let card = self.cards.get_mut(card_id)?;
                     card.damage += *amount;
                     let card_name = card.name.clone();
@@ -8338,6 +8340,21 @@ impl GameState {
             .log(crate::undo::GameAction::SetManaPool { player_id, prev }, prior_log_size);
     }
 
+    /// Snapshot a creature's marked `damage` for undo BEFORE a `card.damage +=`
+    /// mutation (`deal_damage_to_creature` — e.g. Triskelion's ping — and
+    /// `Effect::DamageAll`) (mtg-mb668 sig-2f). Marked damage was applied with no
+    /// covering GameAction, so a mid-turn rewind+replay (network/WASM blocking;
+    /// per-action MCTS/human undo) left it STALE and replay DOUBLE-applied it.
+    /// `undo()` restores the captured value. No-op if the card is missing.
+    pub(crate) fn log_damage(&mut self, card_id: CardId) {
+        let Some(prev) = self.cards.try_get(card_id).map(|c| c.damage) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log
+            .log(crate::undo::GameAction::SetDamage { card_id, prev }, prior_log_size);
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
@@ -8507,6 +8524,8 @@ impl GameState {
 
             // Mark damage on the creature (MTG CR 120.3)
             // Damage persists until cleanup step (CR 704.5f)
+            // Snapshot marked damage for undo BEFORE mutating (mtg-mb668 sig-2f).
+            self.log_damage(target_id);
             let card = self.cards.get_mut(target_id)?;
             card.damage += actual_amount;
 
