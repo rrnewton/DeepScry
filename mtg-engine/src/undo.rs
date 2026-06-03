@@ -877,9 +877,15 @@ impl GameAction {
                 counter_type,
                 amount,
             } => {
-                // Remove the counters that were added
-                game.remove_counters(*card_id, *counter_type, *amount)
-                    .map_err(|e| format!("Failed to undo AddCounter: {}", e))?;
+                // Remove the counters that were added. Use the direct card
+                // mutator, NOT `game.remove_counters`: the latter LOGS a
+                // RemoveCounter GameAction, which would pollute the live undo
+                // log on the per-action undo path (an undo must never re-log).
+                if let Some(card) = game.cards.try_get_mut(*card_id) {
+                    card.remove_counter(*counter_type, *amount);
+                } else {
+                    return Err(format!("Card {} not found for AddCounter undo", card_id.as_u32()));
+                }
             }
 
             GameAction::RemoveCounter {
@@ -887,9 +893,14 @@ impl GameAction {
                 counter_type,
                 amount,
             } => {
-                // Add back the counters that were removed
-                game.add_counters(*card_id, *counter_type, *amount)
-                    .map_err(|e| format!("Failed to undo RemoveCounter: {}", e))?;
+                // Add back the counters that were removed. Use the direct card
+                // mutator, NOT `game.add_counters` (which would re-log an
+                // AddCounter GameAction — an undo must never re-log).
+                if let Some(card) = game.cards.try_get_mut(*card_id) {
+                    card.add_counter(*counter_type, *amount);
+                } else {
+                    return Err(format!("Card {} not found for RemoveCounter undo", card_id.as_u32()));
+                }
             }
 
             GameAction::AdvanceStep { from_step, to_step: _ } => {
@@ -903,12 +914,18 @@ impl GameAction {
                 turn_number,
                 rng_state,
             } => {
-                // Restore previous turn state
+                // Restore previous turn state.
                 game.turn.active_player = *from_player;
-                // Find the player index
-                if let Some(idx) = game.players.iter().position(|p| p.id == *from_player) {
-                    game.turn.active_player_idx = idx;
-                }
+                // NOTE: do NOT touch `active_player_idx` here. The forward turn
+                // machinery (`TurnStructure::next_turn`) updates `active_player`
+                // but NEVER `active_player_idx` — that field is set once at game
+                // construction (the starting seat) and left constant thereafter.
+                // "Restoring" it from `from_player`'s position would write a
+                // value the forward game never produces, diverging the per-action
+                // undo hash (mtg-ey2vf: this was a silent divergence between the
+                // two undo impls — the old GameState::undo correctly left it
+                // alone). `rewind_to_turn_start` never reaches this arm (it stops
+                // AT the ChangeTurn boundary without undoing it).
 
                 // Restore turn number to the previous turn.
                 // ChangeTurn logs the NEW turn number, so previous is turn_number - 1.
