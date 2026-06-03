@@ -346,3 +346,31 @@ Then diff the shadow's action sequence vs the server's captured 354-block log to
 FOLLOW-UP FILED: mtg-yexvc (seq↔ac↔hash desync-detection misalignment; resolves post-fix
 per the protocol above — do NOT chase now).
 ========================================================================
+
+========================================================================
+SEED-2 ROOT CAUSE CORRECTED = TIMETWISTER RESOLUTION (slot03, commit 8fcb0fae)
+========================================================================
+Dumped the shadow undo-log unconditionally (network_debug) and diffed vs the server's
+354-block log. RESULT corrects the earlier 'graveyard-routing R2' read (that was a
+SEQ-MISALIGNED SNAPSHOT ARTIFACT — the seq-175 shadow state is PRE-Timetwister, so its
+graveyard legitimately still held those cards).
+ACTUAL DIVERGENCE = the TIMETWISTER (card 55) mass-shuffle+draw resolution:
+- Server actions 863-872: P0 hand (61,58,51,57,48) -> P0 library (SetRevealedMask
+  0x0X->0x00 conceal each). 873-884: P1 hand (121,120,119,113,111,110) -> P1 library.
+  885-894: P0 graveyard (60,56,52,53,54) -> P0 library. 895-904: P1 graveyard
+  (118,115,114,116,112) -> P1 library. 905: ShuffleLibrary(P0 58). 906: ShuffleLibrary(P1
+  59). 907+: draw 7 each (RevealCard+MoveCard+CardsDrawn).
+- The SHADOW undo-log ENDS at action 860 (SpellsCast P0=1 — just CAST Timetwister); the
+  desync is DURING the resolution. This is the sig-2c/sig-2 family (unrestricted
+  ChangeZoneAll hand+graveyard->library + shuffle RNG + mass draw), NOT R1/R2/R4.
+  sig-2c fixed the opponent-reserved-HAND->library move; the RESIDUAL is in the
+  graveyard->library move and/or the shuffle-RNG/draw lockstep for this exact scenario.
+
+NEXT (fresh turn): build a NATIVE Timetwister shadow oracle — shadow with reserved
+opponent hand+graveyard + own hand+graveyard, execute the Timetwister ChangeZoneAll
+(origins [Hand,Graveyard]->Library, shuffle=true) + draw 7, assert the shadow's library
+counts (P0 58 / P1 59), shuffle RNG, and drawn cards match the golden/server. RED-prove
+the residual, fix via sig-2c/2d + the shuffle-RNG capture (sig-2 already landed). Then
+re-check seed-2 action_count gap (89->0?) + browser flip. This deck's class-A seeds
+(robots) are very likely ALL the Timetwister/Wheel mass-shuffle family.
+========================================================================
