@@ -38,6 +38,50 @@ def get_processes():
         return []
 
 
+def proc_cwd(pid):
+    """Resolve a process's working directory via /proc (Linux).
+
+    Returns the absolute, symlink-resolved cwd string, or None when it cannot be
+    determined — the process may have exited mid-scan, or the platform has no
+    /proc (e.g. macOS). NEVER raises, so a transient/exited PID or a non-Linux
+    host degrades gracefully instead of crashing the precheck.
+    """
+    try:
+        return os.path.realpath(os.readlink(f"/proc/{pid}/cwd"))
+    except (OSError, ValueError):
+        return None
+
+
+def _path_within(child, parent):
+    """True if `child` is `parent` or a descendant of it.
+
+    Compared with a trailing separator so a sibling worktree like
+    `<parent>-other` does NOT match `<parent>`.
+    """
+    if not child or not parent:
+        return False
+    parent = parent.rstrip(os.sep)
+    return child == parent or child.startswith(parent + os.sep)
+
+
+def cargo_conflicts_with_worktree(pid, cmd, current_dir):
+    """True if a cargo test/nextest/build process is operating WITHIN this
+    worktree (`current_dir`).
+
+    Scoping is by the process's REAL working directory (`/proc/<pid>/cwd`), NOT a
+    cmdline substring. A `cargo test -p mtg-engine` running in a DIFFERENT
+    worktree carries the same `-p mtg-engine` token but a different cwd, and must
+    NOT be flagged here — the old global `-p mtg` substring match serialized
+    every agent's validate across worktrees. When the cwd is unavailable
+    (process exited mid-scan, or no /proc on macOS), FAIL SAFE to the original
+    scoped cmdline check (`current_dir in cmd`) — never global, never crash.
+    """
+    cwd = proc_cwd(pid)
+    if cwd is not None:
+        return _path_within(cwd, os.path.realpath(current_dir))
+    return current_dir in cmd
+
+
 def is_conflicting_process(proc_line, current_dir):
     """
     Check if a process line represents a conflicting process.
@@ -69,9 +113,13 @@ def is_conflicting_process(proc_line, current_dir):
     if "validate.sh" in cmd and current_dir in cmd:
         return True, f"validate.sh (PID {pid}): {cmd[:100]}"
 
-    # Check for cargo commands for current directory
+    # Check for cargo commands operating WITHIN this worktree. Scoped by the
+    # process's real cwd (/proc/<pid>/cwd) rather than a global `-p mtg`
+    # substring, so a cargo run in ANOTHER worktree (same `-p mtg-engine` token,
+    # different cwd) no longer false-collides and serializes every agent's
+    # validate. Fail-safe (no /proc) keeps the scoped `current_dir in cmd` check.
     if "cargo" in cmd and ("test" in cmd or "nextest" in cmd or "build" in cmd):
-        if current_dir in cmd or f"-p mtg" in cmd:
+        if cargo_conflicts_with_worktree(pid, cmd, current_dir):
             return True, f"cargo (PID {pid}): {cmd[:100]}"
 
     # Check for chromium/playwright (E2E test remnants)
