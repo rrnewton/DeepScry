@@ -1951,6 +1951,25 @@ pub trait PlayerController {
         None
     }
 
+    /// Replay an authoritative SMART combat-damage assignment during
+    /// rewind+replay.
+    ///
+    /// Returns `Some(plan)` when this controller has a recorded
+    /// [`crate::game::ReplayChoice::DamageAssignment`] to apply (per attacker,
+    /// the ordered `(blocker_id, damage)` pairs the attacking player chose);
+    /// returns `None` for live play, where `assign_combat_damage` re-derives the
+    /// plan via `choose_blocker_for_lethal_damage`.
+    ///
+    /// This mirrors [`replay_library_search`](Self::replay_library_search): the
+    /// authoritative plan is APPLIED directly so the rewind+replay path does NOT
+    /// re-consult the network-wrapped inner controller (which already submitted
+    /// its sub-choices to the server and would double-submit / stall — the
+    /// mtg-610 A2 multi-blocker desync). Only [`crate::game::ReplayController`]
+    /// returns `Some`; all live controllers use the default.
+    fn replay_damage_assignment(&mut self) -> Option<crate::game::DamageAssignmentPlan> {
+        None
+    }
+
     /// Choose permanents to sacrifice
     ///
     /// Called when a player must sacrifice a specific number of permanents,

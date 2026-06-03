@@ -84,7 +84,7 @@ pub use mana_source_cache::ManaSourceCache;
 pub use crate::core::{ManaColor, ManaProduction, ManaProductionKind};
 pub use phase::{Phase, Step, TurnStructure};
 pub use random_controller::RandomController;
-pub use replay_controller::{ReplayChoice, ReplayController};
+pub use replay_controller::{DamageAssignmentPlan, ReplayChoice, ReplayController};
 #[cfg(feature = "native-tui")]
 pub use rich_input_controller::RichInputController;
 pub use seed_derivation::{derive_player_seed, PlayerSlot};

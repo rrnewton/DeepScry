@@ -8,6 +8,12 @@ use crate::core::{CardId, ManaCost, PlayerId, SpellAbility};
 use crate::game::controller::{ChoiceResult, GameStateView, PlayerController};
 use smallvec::SmallVec;
 
+/// Resolved SMART combat-damage assignment plan: per attacker, the ordered
+/// `(blocker_id, damage)` pairs the attacking player chose. Produced by
+/// [`crate::game::GameState::assign_combat_damage`] and replayed via
+/// [`ReplayChoice::DamageAssignment`] (mtg-610 A2).
+pub type DamageAssignmentPlan = Vec<(CardId, SmallVec<[(CardId, i32); 4]>)>;
+
 /// A single recorded choice from a controller
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ReplayChoice {
@@ -23,6 +29,14 @@ pub enum ReplayChoice {
     Blockers(SmallVec<[(CardId, CardId); 8]>),
     /// Choice of damage assignment order
     DamageOrder(SmallVec<[CardId; 4]>),
+    /// Resolved SMART combat-damage assignment plan for a single combat-damage
+    /// step: per attacker, the ordered `(blocker_id, damage)` pairs the attacking
+    /// player chose. Recorded so rewind+replay APPLIES the authoritative plan
+    /// instead of re-deriving it via `choose_blocker_for_lethal_damage` (which on
+    /// a network shadow re-consults the server and double-submits — mtg-610 A2).
+    /// Only attackers blocked by >1 creature appear here (single/unblocked need
+    /// no choice and are recomputed trivially on replay).
+    DamageAssignment(DamageAssignmentPlan),
     /// Choice of cards to discard
     Discard(SmallVec<[CardId; 7]>),
     /// Choice of card from library (or None to fail to find).
@@ -282,6 +296,75 @@ impl PlayerController for ReplayController {
 
         // No replay choice available, delegate to inner controller
         self.inner.choose_damage_assignment_order(view, attacker, blockers)
+    }
+
+    // Replay the authoritative SMART combat-damage plan (mtg-610 A2). When a
+    // `DamageAssignment` was recorded, `assign_combat_damage` consumes it via
+    // this method and APPLIES it directly, never reaching the per-blocker
+    // sub-choices below — so on a network shadow the already-submitted plan is
+    // not re-derived through the inner controller (which would double-submit /
+    // stall). Returns `None` for the FIRST resolution of a combat-damage step
+    // (nothing recorded yet); that pass falls through to the delegating
+    // sub-choice methods below and is itself recorded by `combat_damage_step`.
+    fn replay_damage_assignment(&mut self) -> Option<crate::game::DamageAssignmentPlan> {
+        // PEEK (non-warning): this is called at the start of EVERY combat-damage
+        // step, so a non-`DamageAssignment` next choice (e.g. the upcoming
+        // CombatDamage-step priority, or no multi-blocker combat this step) is
+        // normal — return None WITHOUT consuming and WITHOUT the type-mismatch
+        // warning that `consume_replay_choice` would emit.
+        if !self.has_replay_choice() {
+            return None;
+        }
+        if let ReplayChoice::DamageAssignment(plan) = &self.replay_choices[self.replay_index] {
+            let plan = plan.clone();
+            self.replay_index += 1;
+            Some(plan)
+        } else {
+            None
+        }
+    }
+
+    // FALLBACK sub-choices for the FIRST (un-recorded) resolution: there is no
+    // recorded `DamageAssignment` yet, so the SMART path runs and these MUST
+    // delegate to the inner controller. Without these overrides the default
+    // trait impls fire instead (auto-pick the first killable blocker), which on
+    // a network shadow BYPASSES the inner `WasmNetworkLocalController`'s
+    // server-gating + submit (and the `WasmRemoteController`'s opponent-choice
+    // pop). Delegating mirrors the forward run, where the inner controller is
+    // unwrapped and gates/submits correctly.
+    fn choose_blocker_for_lethal_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        killable_blockers: &[(CardId, i32)],
+        remaining_power: i32,
+    ) -> ChoiceResult<CardId> {
+        self.inner
+            .choose_blocker_for_lethal_damage(view, attacker, killable_blockers, remaining_power)
+    }
+
+    fn choose_blocker_for_remaining_damage(
+        &mut self,
+        view: &GameStateView,
+        attacker: CardId,
+        remaining_blockers: &[CardId],
+        remaining_damage: i32,
+    ) -> ChoiceResult<CardId> {
+        self.inner
+            .choose_blocker_for_remaining_damage(view, attacker, remaining_blockers, remaining_damage)
+    }
+
+    // The damage-assignment checkpoint/restore (mtg-sfihb) lives on the inner
+    // controller's choice-consumption cursor; the default no-op would leave the
+    // inner cursor un-checkpointed during replay, breaking the idempotent
+    // re-run of the synchronous first pass. Delegate so replay behaves exactly
+    // like the forward run.
+    fn mark_choice_checkpoint(&mut self) {
+        self.inner.mark_choice_checkpoint();
+    }
+
+    fn restore_choice_checkpoint(&mut self) {
+        self.inner.restore_choice_checkpoint();
     }
 
     fn choose_cards_to_discard(
