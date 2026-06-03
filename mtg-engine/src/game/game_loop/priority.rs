@@ -3485,6 +3485,11 @@ impl<'a> GameLoop<'a> {
                                     }
                                 }
                                 if *rest_destination == Zone::Library {
+                                    // Capture pre-reorder library order so a
+                                    // rewind can restore it (mtg-ba6uq #2): the
+                                    // raw remove/add_to_bottom below is not
+                                    // otherwise undo-logged.
+                                    self.game.log_library_reorder(digger, false);
                                     if let Some(zones) = self.game.get_player_zones_mut(digger) {
                                         for &card_id in &rest {
                                             zones.library.remove(card_id);

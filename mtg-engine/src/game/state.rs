@@ -781,6 +781,39 @@ impl GameState {
         }
     }
 
+    /// Capture `player`'s current library order (and graveyard order when
+    /// `include_graveyard` is set) and log a `ReorderLibrary` undo action.
+    ///
+    /// MUST be called BEFORE the raw zone reorder it covers — the captured
+    /// snapshot is exactly what `GameAction::ReorderLibrary`'s undo restores.
+    /// Shared by scry / surveil / Dig "rest to bottom" (mtg-ba6uq #2), all of
+    /// which reorder the library (and surveil also mills to the graveyard) with
+    /// raw `Vec` ops instead of logged `MoveCard`s, leaving the reorder
+    /// previously un-undoable. `include_graveyard` is `true` only for surveil.
+    pub fn log_library_reorder(&mut self, player: PlayerId, include_graveyard: bool) {
+        let snapshot = self.get_player_zones(player).map(|z| {
+            (
+                z.library.cards.clone(),
+                if include_graveyard {
+                    Some(z.graveyard.cards.clone())
+                } else {
+                    None
+                },
+            )
+        });
+        if let Some((previous_order, previous_graveyard)) = snapshot {
+            let prior_log_size = self.logger.log_count();
+            self.undo_log.log(
+                crate::undo::GameAction::ReorderLibrary {
+                    player,
+                    previous_order,
+                    previous_graveyard,
+                },
+                prior_log_size,
+            );
+        }
+    }
+
     /// Get next entity ID (unified across all entity types)
     /// Generic version that can return any `EntityId<T>` type
     pub fn next_id<T>(&mut self) -> EntityId<T> {
@@ -1894,6 +1927,12 @@ impl GameState {
 
         let library_actually_changed = !decision.bottom.is_empty();
 
+        // Capture the pre-reorder library order so a rewind can restore it
+        // (mtg-ba6uq #2): the raw remove/insert/push below is not otherwise
+        // undo-logged. Logged unconditionally (even a top-only reorder with no
+        // cards-to-bottom changes the order).
+        self.log_library_reorder(player_id, false);
+
         if let Some(zones) = self.get_player_zones_mut(player_id) {
             // Remove all revealed cards from library (they were on top).
             for card_id in revealed {
@@ -1977,6 +2016,11 @@ impl GameState {
         ));
 
         let library_actually_changed = !decision.graveyard.is_empty();
+
+        // Capture pre-reorder library AND graveyard order so a rewind can
+        // restore both (mtg-ba6uq #2): surveil mills to the graveyard and
+        // reorders the top with raw Vec ops, none of it otherwise undo-logged.
+        self.log_library_reorder(player_id, true);
 
         // Move graveyard cards first (in the order chosen — first element
         // ends up deepest in the graveyard pile, matching push semantics).

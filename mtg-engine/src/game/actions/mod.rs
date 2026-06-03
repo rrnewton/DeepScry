@@ -5868,6 +5868,11 @@ impl GameState {
 
                             // Move rest to rest_destination
                             if *rest_destination == Zone::Library {
+                                // Capture pre-reorder library order so a rewind
+                                // can restore it (mtg-ba6uq #2): the raw
+                                // remove/add_to_bottom below is not otherwise
+                                // undo-logged.
+                                self.log_library_reorder(digger, false);
                                 // Put on bottom of library: remove from current position,
                                 // then insert at index 0 (bottom)
                                 if let Some(zones) = self.get_player_zones_mut(digger) {
