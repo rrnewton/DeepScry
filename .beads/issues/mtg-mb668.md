@@ -328,4 +328,21 @@ Likely next sites: R4 (state.rs:3488 DelayedEffect::ReturnToBattlefield, "pure s
 shape, VERIFIED" — graveyard/exile->battlefield return skipped on shadow leaves extra
 cards in shadow gy/exile, matching the seed-2 "shadow keeps cards server moved out"
 pattern) and the reserved-id draw/discard→graveyard routing. R1 already landed.
+
+PROGRESS METRIC (coordinator): the shadow-vs-server action_count GAP is the trustworthy
+quantitative signal (a plain counter; far less suspect than the seq↔hash mapping). Seed 2
+= 89 (shadow 861 vs server 950). Each skipped action is a reserved-id branch-on-absence;
+close skip sites → gap shrinks → 0. When gap→0 on a seed: re-run browser sweep — flips
+GREEN => done; matching ac but still desync => the seq/hash misalignment (mtg-yexvc) is
+the real residual, escalate. Loop per site: native RED-prove → sig-2c/2d fix → re-check
+seed ac-gap + browser flip.
+
+NEXT CONCRETE STEP (fresh turn): dump the SHADOW undo-log unconditionally (network_debug;
+the action-count-mismatch dump never fires because the WASM ECHOES the server ac so its
+`action_count == local_action_count` is always true — that's why WASM dumped 0 blocks).
+Then diff the shadow's action sequence vs the server's captured 354-block log to NAME the
+~89 skipped actions → the exact skip sites → native-oracle + fix each (sig-2c/2d).
+
+FOLLOW-UP FILED: mtg-yexvc (seq↔ac↔hash desync-detection misalignment; resolves post-fix
+per the protocol above — do NOT chase now).
 ========================================================================
