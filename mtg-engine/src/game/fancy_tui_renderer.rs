@@ -281,6 +281,12 @@ pub struct LogWrapCache {
     pub width: u16,
     /// Number of original log entries processed into this cache
     pub processed_count: usize,
+    /// Logger epoch this cache was built against. The logger bumps its epoch
+    /// on every truncate/clear (rewind/undo), so a mismatch here means the
+    /// buffer was discarded out from under the cache — even if replay later
+    /// re-grew it to the same `processed_count` — and we must rebuild rather
+    /// than incrementally append stale/duplicate lines. See mtg-432/mtg-570.
+    pub epoch: u64,
     /// Perspective player whose `LogEntry::message_for` was used when
     /// building the cache. `None` means the cache has never been populated.
     /// Switching perspective forces a full rebuild because the masked text
@@ -312,6 +318,16 @@ impl LogWrapCache {
         self.width = 0;
         self.processed_count = 0;
         self.perspective = None;
+        self.epoch = 0;
+    }
+
+    /// True when the underlying log buffer was truncated/cleared since this
+    /// cache was built (the logger bumped its epoch), so the cached wrapped
+    /// lines no longer correspond to the live buffer and a full rebuild is
+    /// required. Pairs with `needs_rebuild` (width/perspective) and
+    /// `needs_update` (append-only growth). See mtg-432/mtg-570.
+    pub fn epoch_stale(&self, current_epoch: u64) -> bool {
+        self.epoch != current_epoch
     }
 
     /// Wrap a single log message into multiple lines
@@ -1875,8 +1891,11 @@ impl FancyTuiRenderer {
 
         let perspective = view.player_id();
         if self.state.view.log_wrap_lines {
-            // WRAPPED MODE: Use the wrap cache
-            self.draw_log_view_wrapped(f, area, &logs, perspective);
+            // WRAPPED MODE: Use the wrap cache. Pass the logger epoch so the
+            // cache can detect a rewind/undo truncation even when replay
+            // re-grew the buffer to the same length (mtg-432/mtg-570).
+            let log_epoch = view.logger().log_epoch();
+            self.draw_log_view_wrapped(f, area, &logs, perspective, log_epoch);
         } else {
             // UNWRAPPED MODE: Original truncation logic
             self.draw_log_view_unwrapped(f, area, &logs, perspective);
@@ -1967,14 +1986,25 @@ impl FancyTuiRenderer {
         area: Rect,
         logs: &[crate::game::logger::LogEntry],
         perspective: crate::core::PlayerId,
+        log_epoch: u64,
     ) {
         let visible_lines = area.height as usize;
 
-        // Update or rebuild cache as needed
-        if self.state.view.log_wrap_cache.needs_rebuild(area.width, perspective) {
-            self.state.view.log_wrap_cache.rebuild(logs, area.width, perspective);
-        } else if self.state.view.log_wrap_cache.needs_update(logs.len()) {
-            self.state.view.log_wrap_cache.update(logs, area.width, perspective);
+        // Update or rebuild cache as needed.
+        //
+        // A full rebuild is forced when width/perspective changed OR the
+        // logger epoch changed (a rewind/undo truncated the buffer — see
+        // mtg-432/mtg-570). The epoch check is essential because a truncate
+        // followed by replay can leave `processed_count` >= the live
+        // `logs.len()`, so the append-only `needs_update` path would either
+        // skip the change entirely (stale headers) or append duplicate
+        // turn-banner lines on top of the cached pre-rewind ones.
+        let cache = &mut self.state.view.log_wrap_cache;
+        if cache.needs_rebuild(area.width, perspective) || cache.epoch_stale(log_epoch) {
+            cache.rebuild(logs, area.width, perspective);
+            cache.epoch = log_epoch;
+        } else if cache.needs_update(logs.len()) {
+            cache.update(logs, area.width, perspective);
         }
 
         let total_wrapped = self.state.view.log_wrap_cache.lines.len();
@@ -4920,5 +4950,99 @@ mod tests {
 
         // Width change still triggers rebuild.
         assert!(cache.needs_rebuild(40, p2), "width change must force rebuild");
+    }
+
+    /// Regression test for mtg-432 / mtg-570: the wrapped-log cache must be
+    /// rebuilt after a rewind/undo truncates the log buffer, even when replay
+    /// re-grows it back to the same (or greater) entry count.
+    ///
+    /// Before the fix the cache invalidation was purely count-based
+    /// (`needs_update`: `processed_count < total`). A rewind truncated the
+    /// buffer and replay re-appended entries; if the new length landed at or
+    /// past the old `processed_count`, the count-only check either skipped the
+    /// change (stale turn headers — "Turn N skipped", P1 actions shown during
+    /// P2's turn) or appended fresh banners on top of the cached pre-rewind
+    /// ones (duplicated/garbled turn-banner lines). The logger now bumps an
+    /// epoch on every truncate; the cache compares it via `epoch_stale`.
+    #[test]
+    fn log_wrap_cache_rebuilds_after_truncate_regrow() {
+        use crate::game::logger::LogEntry;
+        use crate::game::VerbosityLevel;
+
+        let p = PlayerId::new(0);
+        let entry = |m: &str| LogEntry {
+            message: m.to_string(),
+            level: VerbosityLevel::Normal,
+            category: None,
+            private_to: None,
+        };
+
+        // Pre-rewind buffer: 3 entries ending on a turn-2 banner.
+        let before = vec![
+            entry(">>> Turn 1 - P1 20 (P2 20) <<<<"),
+            entry("P1 plays Forest"),
+            entry(">>> Turn 2 - P2 20 (P1 20) <<<<"),
+        ];
+
+        // epoch 0 mirrors the freshly-built dispatch state.
+        let mut cache = LogWrapCache::default();
+        let epoch_before = 0u64;
+        cache.rebuild(&before, 80, p);
+        cache.epoch = epoch_before;
+        assert_eq!(cache.processed_count, 3);
+
+        // Rewind truncates the buffer (bumping the logger epoch), then replay
+        // re-grows it to the SAME length but with DIFFERENT content (the
+        // human chose a different land this time). A count-only check
+        // (processed_count == new len == 3) would see no change.
+        let after = vec![
+            entry(">>> Turn 1 - P1 20 (P2 20) <<<<"),
+            entry("P1 plays Mountain"),
+            entry(">>> Turn 2 - P2 20 (P1 20) <<<<"),
+        ];
+        let epoch_after = 1u64;
+
+        // The count-only path is blind to this:
+        assert!(
+            !cache.needs_update(after.len()),
+            "count-only check cannot see a same-length truncate+regrow"
+        );
+        assert!(!cache.needs_rebuild(80, p), "width/perspective are unchanged");
+        // The epoch check is what catches it.
+        assert!(
+            cache.epoch_stale(epoch_after),
+            "epoch bump after truncate must mark the cache stale"
+        );
+
+        // Apply the dispatch logic and verify the cache now reflects the
+        // replayed content with NO stale or duplicated lines.
+        if cache.needs_rebuild(80, p) || cache.epoch_stale(epoch_after) {
+            cache.rebuild(&after, 80, p);
+            cache.epoch = epoch_after;
+        }
+        let texts: Vec<&str> = cache.lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|t| t.contains("Mountain")),
+            "cache must show replayed content after rewind: {:?}",
+            texts
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("Forest")),
+            "stale pre-rewind line must be gone: {:?}",
+            texts
+        );
+        // Exactly one of each turn banner — no duplication.
+        assert_eq!(
+            texts.iter().filter(|t| t.contains(">>> Turn 1")).count(),
+            1,
+            "turn-1 banner must appear exactly once: {:?}",
+            texts
+        );
+        assert_eq!(
+            texts.iter().filter(|t| t.contains(">>> Turn 2")).count(),
+            1,
+            "turn-2 banner must appear exactly once: {:?}",
+            texts
+        );
     }
 }

@@ -7,7 +7,7 @@ use crate::core::PlayerId;
 use crate::game::VerbosityLevel;
 use bumpalo::Bump;
 use serde::{Deserialize, Serialize};
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::ops::Deref;
 
 /// Output format for log messages
@@ -141,6 +141,15 @@ pub struct GameLogger {
     /// Captured log entries (owned strings)
     log_buffer: RefCell<Vec<LogEntry>>,
 
+    /// Monotonic counter bumped whenever the log buffer is truncated or
+    /// cleared (i.e. a rewind/undo discards entries). Renderers cache wrapped
+    /// log lines keyed by entry count; a truncate that replay later re-grows
+    /// to the same (or greater) count is invisible to a count-only staleness
+    /// check, so caches additionally compare this epoch and force a full
+    /// rebuild on mismatch. See mtg-432 / mtg-570 (rewind/replay left stale
+    /// or duplicated turn-banner lines in the wrapped TUI log cache).
+    log_epoch: Cell<u64>,
+
     /// Count of controller choices made in the game
     choice_count: RefCell<usize>,
 
@@ -169,6 +178,7 @@ impl GameLogger {
             gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            log_epoch: Cell::new(0),
             choice_count: RefCell::new(0),
             color_enabled: true, // Colors enabled by default
             suppressed: false,
@@ -190,6 +200,7 @@ impl GameLogger {
             gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            log_epoch: Cell::new(0),
             choice_count: RefCell::new(0),
             color_enabled: true, // Colors enabled by default
             suppressed: false,
@@ -341,6 +352,21 @@ impl GameLogger {
     pub fn clear_logs(&mut self) {
         self.log_buffer.borrow_mut().clear();
         self.format_bump.borrow_mut().reset();
+        self.bump_epoch();
+    }
+
+    /// Monotonic epoch that changes whenever the buffer is truncated or
+    /// cleared. Renderers compare this against the epoch their cache was
+    /// built with to detect a rewind/undo discard even when replay re-grows
+    /// the buffer back to an identical length. See `log_epoch` field docs.
+    #[inline]
+    pub fn log_epoch(&self) -> u64 {
+        self.log_epoch.get()
+    }
+
+    #[inline]
+    fn bump_epoch(&self) {
+        self.log_epoch.set(self.log_epoch.get().wrapping_add(1));
     }
 
     /// Truncate the log buffer to a specific size
@@ -352,6 +378,8 @@ impl GameLogger {
         let mut buffer = self.log_buffer.borrow_mut();
         if size < buffer.len() {
             buffer.truncate(size);
+            drop(buffer);
+            self.bump_epoch();
         }
     }
 
@@ -910,6 +938,10 @@ impl Clone for GameLogger {
             gamelog_step: RefCell::new(*self.gamelog_step.borrow()),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            // The clone starts with an empty buffer; bump past the source's
+            // epoch so any wrap cache built against the original is treated
+            // as stale and rebuilt rather than matching by coincidence.
+            log_epoch: Cell::new(self.log_epoch.get().wrapping_add(1)),
             choice_count: RefCell::new(0),
             color_enabled: self.color_enabled,
             suppressed: false, // Never clone the suppressed state
@@ -969,6 +1001,7 @@ impl<'de> Deserialize<'de> for GameLogger {
             gamelog_step: RefCell::new("UK"),
             format_bump: RefCell::new(Bump::new()),
             log_buffer: RefCell::new(Vec::new()),
+            log_epoch: Cell::new(0),
             choice_count: RefCell::new(0),
             color_enabled: data.color_enabled,
             suppressed: false,
@@ -1004,6 +1037,37 @@ mod tests {
         assert_eq!(logs.len(), 2);
         assert_eq!(logs[0].message, "test message");
         assert_eq!(logs[1].message, "minimal message");
+    }
+
+    /// mtg-432/mtg-570: a rewind/undo discards entries via `truncate_to` (or
+    /// `clear_logs`). Renderers cache wrapped log lines and need to know the
+    /// buffer was discarded even when replay re-grows it to the same length,
+    /// so the logger exposes a monotonic epoch that bumps on every such event.
+    #[test]
+    fn test_log_epoch_bumps_on_truncate_and_clear() {
+        let mut logger = GameLogger::new();
+        logger.enable_capture();
+
+        let e0 = logger.log_epoch();
+        logger.normal("a");
+        logger.normal("b");
+        logger.normal("c");
+        // Plain appends do NOT change the epoch.
+        assert_eq!(logger.log_epoch(), e0, "appends must not bump epoch");
+
+        // A no-op truncate (size >= len) must not bump the epoch.
+        logger.truncate_to(3);
+        assert_eq!(logger.log_epoch(), e0, "no-op truncate must not bump epoch");
+
+        // A real truncate bumps the epoch.
+        logger.truncate_to(1);
+        let e1 = logger.log_epoch();
+        assert_ne!(e1, e0, "real truncate must bump epoch");
+        assert_eq!(logger.logs().len(), 1);
+
+        // clear_logs also bumps the epoch.
+        logger.clear_logs();
+        assert_ne!(logger.log_epoch(), e1, "clear_logs must bump epoch");
     }
 
     #[test]
