@@ -17,10 +17,15 @@ pub mod core;
 pub mod deck_builder;
 #[cfg(feature = "native")]
 pub mod download;
+
 pub mod error;
 pub mod game;
 pub mod loader;
 pub mod puzzle;
+// Scryfall CDN image-URL core (mtg-722 / task #7). Dependency-free so it
+// compiles for BOTH the native downloader and the wasm client — one URL
+// implementation, no Rust/JS drift.
+pub mod scryfall;
 #[cfg(feature = "native")]
 pub mod tournament;
 pub mod undo;
