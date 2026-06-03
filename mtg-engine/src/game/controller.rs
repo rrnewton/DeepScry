@@ -1540,6 +1540,20 @@ pub trait PlayerController {
     /// Get the player ID this controller is responsible for
     fn player_id(&self) -> PlayerId;
 
+    /// Type-erased downcast hook used by the WASM network dispatch to inject a
+    /// human's UI-selected pending choice into the persistent *boxed* controller
+    /// without knowing its concrete type (mtg-679 human/AI network-path
+    /// unification). `PendingChoice` is a WASM-only type, so it cannot appear in
+    /// this core trait; instead the dispatch downcasts through this hook to the
+    /// concrete `WasmNetworkLocalController<WasmHumanController>` and sets the
+    /// pending choice on its inner human controller.
+    ///
+    /// Default: not downcastable (returns `None`) — a no-op for AI/remote/replay
+    /// controllers, which never carry an externally-injected human choice.
+    fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
+        None
+    }
+
     /// Choose a spell ability to play
     ///
     /// This is the main decision point during priority. The controller receives
