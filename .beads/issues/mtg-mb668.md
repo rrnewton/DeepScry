@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T19:50:00.873866375+00:00
+updated_at: 2026-06-03T20:19:04.000278696+00:00
 ---
 
 # Description
@@ -64,3 +64,11 @@ sig-2e is DETERMINISTIC and within-side, so it is reproducible via the existing 
 
 ------------------------------------------------------------------------
 sig-2e FIX LANDED: Cost::SubCounter (Triskelion's "remove a +1/+1 counter: deal 1 damage" ping cost, actions/mod.rs pay_ability_cost) mutated the card via a direct `card.remove_counter(...)` with NO GameAction::RemoveCounter undo entry. Routed it through the LOGGED `self.remove_counters(card_id, counter_type, amount)` so the cost is a faithful undo-log inverse (remove_counters does NOT enforce the loyalty 0->die rule, so Triskelion still lives at 1/1 with zero counters). RED-first reproducer subcounter_cost_counter_removal_round_trips_on_undo_mb668_sig2e (basic_actions.rs): pays the cost, asserts the undo log GREW, then a partial undo restores the counter (3->2->3). RED before (no log entry, undo can't restore), GREEN after. Full lib suite 1004/1004.
+
+------------------------------------------------------------------------
+sig-2f (IDENTIFIED, NOT fixed — WITHIN-side rewind-fidelity, combat/deal damage): after sig-2e, a SECOND rewind-fidelity field surfaced: VERIFIER FIELD DIFF on `cards[N].damage` ("turn-start state hash changed across rewinds", robots42 turn 26). Marked damage (`card.damage += amount`) is applied at actions/mod.rs:5309 and :8449 (and likely combat.rs) with NO undo GameAction — only MarkDamagedBy{target,source} (the SOURCE, not the AMOUNT) is logged. So damage applied during a turn's REPLAY isn't undone, and the verifier's second rewind-to-turn-start leaves it stale -> hash diverges. FIX (same pattern as sig-2e/t233k): add a logged GameAction (SetDamage{card_id, prev} snapshot, or MarkDamage{card_id, amount} whose undo saturating_sub's it) and route ALL `card.damage +=` sites through it; RED-first via the native rewind oracle. NOTE the recurring `mana_state_version` field-diff is almost certainly DIAGNOSTIC NOISE (rewind_to_turn_start bumps it by design and the replay hash excludes it) — confirm it's excluded from the verifier's field-diff or exclude it.
+
+CLASS MAP (mtg-725): the robots42 residual is a MULTI-class, multi-bug audit:
+  - WITHIN-side rewind-fidelity (undo-log not a faithful inverse): sig-2e counters (FIXED), sig-2f damage (TODO), possibly more per-field holes. DETERMINISTIC + reproducible via the native rewind oracle — RECOMMENDED next tool: a whole_game_rewind_replay_e2e-style native test driving the ROBOTS deck (RandomController, fixed seed) with the per-turn rewind-fidelity check, which enumerates ALL within-side undo holes at once with NO networking/flakiness.
+  - server<->shadow count/RNG lockstep (class A): sig-2c (reserved hand move, FIXED), sig-2d (reveal-mask conceal, FIXED); residual ACTION COUNT MISMATCH events remain (capture via --undo-dump, diff server vs wasm ShuffleLibrary counts / reveal counts). Needs the per-action lockstep harness to enumerate.
+STATUS: 6 fixes banked on netarch-undo-holes (sig-2/2b/2c/2d/2e + t233k), 1004/1004 lib green, tree clean. robots42 ~14-20/30 (high variance) — NOT green; multi-session work remains.
