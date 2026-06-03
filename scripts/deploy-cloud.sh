@@ -429,6 +429,33 @@ cmd_deploy() {
         exit 1
     }
 
+    # --- 2b. card-lookup.bin table (task #7 / mtg-722) ---
+    # Build the card→Scryfall-CDN lookup table into web/data/ so the subsequent
+    # `mtg hash-web-assets` content-addresses it into the CAS graph
+    # (card-lookup.<hash>.bin, immutable, manifest-resolved). The ONLY
+    # scryfall.com fetch (unique_artwork.json, cached under target/scryfall/);
+    # refresh the bulk dump only if >20 h old so a daily deploy picks up new
+    # Scryfall printings while same-day re-deploys reuse the cache (≤1/day).
+    # FORMAT DRIFT (Scryfall URL-scheme change) makes the build hard-error and
+    # NOT overwrite the table: we then ship the PREVIOUS table if one exists, or
+    # abort if there is none (never ship a broken/missing table silently).
+    if [[ "$SKIP_WASM" != "1" ]]; then
+        local bulk="target/scryfall/unique_artwork.json"
+        local refresh_flag=""
+        if [[ ! -f "$bulk" ]] || [[ -n "$(find "$bulk" -mmin +1200 2>/dev/null)" ]]; then
+            refresh_flag="--refresh"
+        fi
+        echo "→ building card-lookup.bin table (mtg build-card-lookup ${refresh_flag:-(cached)})"
+        if "$native_bin" build-card-lookup -o web/data/card-lookup.bin --bulk-cache "$bulk" $refresh_flag; then
+            :
+        elif [[ -f web/data/card-lookup.bin ]]; then
+            echo "⚠ build-card-lookup failed (format drift?) — shipping the PREVIOUS web/data/card-lookup.bin unchanged" >&2
+        else
+            echo "error: build-card-lookup failed and no previous table exists; aborting deploy" >&2
+            exit 1
+        fi
+    fi
+
     # --- 3. server-config.js: NO LONGER OVERRIDDEN at deploy time. ---
     # The committed web/server-config.js self-detects the WS URL from
     # window.location ("wss://" + host + "/lobby") which works for every
