@@ -3403,7 +3403,7 @@ impl GameState {
                 // have left the battlefield earlier in this resolution (e.g.
                 // Swords exiled the creature) — its retained characteristics in
                 // the entity store are its last-known information.
-                let resolved_amount = self.resolve_dynamic_amount(amount, *reference);
+                let resolved_amount = self.resolve_dynamic_amount(amount, *reference, *player);
                 let prior_log_size = self.logger.log_count();
 
                 let p = self.get_player_mut(*player)?;
@@ -7256,7 +7256,16 @@ impl GameState {
 
         // Build trigger context for placeholder resolution
         let controller = self.cards.get(card_id)?.controller;
-        let ctx = TriggerContext::new(card_id, controller);
+        let mut ctx = TriggerContext::new(card_id, controller);
+        // For a beginning-of-draw-step phase trigger (Howling Mine:
+        // `Phase$ Draw | ValidPlayer$ Player`), the "triggered player" is the
+        // player whose draw step fired the trigger — the active player — NOT the
+        // trigger source's controller. Populate `drawing_player` so a
+        // `Defined$ TriggeredPlayer` DrawCards resolves to that player (CR 504.2:
+        // the active player draws during their own draw step).
+        if event == TriggerEvent::BeginningOfDraw {
+            ctx = ctx.with_drawing_player(active_player);
+        }
         // Colors of the trigger source, needed for protection / legal-target checks.
         let trigger_source_colors: smallvec::SmallVec<[crate::core::Color; 2]> =
             self.cards.get(card_id)?.colors.clone();
@@ -9473,7 +9482,7 @@ impl GameState {
     /// This is information-independent (uses only public characteristics), so
     /// it produces identical results on the server and every client / WASM
     /// shadow game.
-    fn resolve_dynamic_amount(&self, amount: &crate::core::DynamicAmount, reference: CardId) -> i32 {
+    fn resolve_dynamic_amount(&self, amount: &crate::core::DynamicAmount, reference: CardId, player: PlayerId) -> i32 {
         use crate::core::DynamicAmount;
         match amount {
             DynamicAmount::Fixed(n) => *n,
@@ -9494,6 +9503,13 @@ impl GameState {
                 log::debug!("resolve_dynamic_amount: DamageDealt reached with no concrete value; using 0");
                 0
             }
+            // Count$… expression evaluated against the recipient player (e.g.
+            // Ivory Tower: cards in YOUR hand minus 4). Only public state (hand
+            // SIZE, permanent counts) is read, so the result is identical on the
+            // server and every client/WASM shadow. Clamp to >= 0: a player
+            // cannot gain negative life (CR 119.4), e.g. an empty hand under
+            // Ivory Tower yields 0, not -4.
+            DynamicAmount::Count(expr) => self.evaluate_count_expression(expr, player).unwrap_or(0).max(0),
         }
     }
 

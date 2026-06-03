@@ -1520,6 +1520,21 @@ impl<'a> GameLoop<'a> {
         self.untap_step(controller1, controller2)
     }
 
+    /// Expose the upkeep step for testing beginning-of-upkeep triggers
+    /// (Ivory Tower hand-size life gain, etc.). Runs the same upkeep_step the
+    /// turn loop runs, including trigger checking and the priority round that
+    /// resolves the triggered ability off the stack.
+    ///
+    /// # Errors
+    /// Returns an error if the upkeep step encounters an invalid game state.
+    pub fn upkeep_step_for_test(
+        &mut self,
+        controller1: &mut dyn crate::game::controller::PlayerController,
+        controller2: &mut dyn crate::game::controller::PlayerController,
+    ) -> crate::Result<Option<crate::game::GameResult>> {
+        self.upkeep_step(controller1, controller2)
+    }
+
     /// Expose cleanup_step for testing discard logic
     ///
     /// # Errors
