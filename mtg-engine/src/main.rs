@@ -1202,25 +1202,17 @@ async fn async_main() -> Result<()> {
             }
             println!("    {} -> {}", res.data_index.0, res.data_index.1);
             for (k, v) in &res.graph_nodes {
-                let via_manifest = if res.manifest.contains_key(k) {
-                    "  (cycle → manifest)"
-                } else {
-                    ""
-                };
-                println!("    {k} -> {v}{via_manifest}");
+                println!("    {k} -> {v}");
             }
-            if res.manifest.is_empty() {
-                println!("✓ no dependency cycles — every reference statically rewritten");
-            } else {
-                println!(
-                    "✓ {} cycle-edge name(s) resolved via the runtime manifest ({} / {})",
-                    res.manifest.len(),
-                    mtg_engine::asset_hash::asset_graph::MANIFEST_JSON,
-                    mtg_engine::asset_hash::asset_graph::MANIFEST_JS,
-                );
-            }
+            println!("✓ pure forward DAG — every reference statically rewritten (no runtime manifest)");
             println!(
-                "✓ entrypoint {} rewritten (filename UNCHANGED — short-TTL stable URL)",
+                "✓ release token {} → {} ({} entries, content-hashed Merkle root)",
+                res.release_token,
+                res.manifest_file,
+                res.manifest.len(),
+            );
+            println!(
+                "✓ entrypoint {} rewritten + token baked (filename UNCHANGED — sole mutable URL)",
                 mtg_engine::asset_hash::asset_graph::ENTRY_HTML
             );
         }

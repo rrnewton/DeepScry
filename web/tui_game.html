@@ -668,7 +668,6 @@
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web TUI</h1>
         <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
-        <a href="native_game.html" data-asset-href="native_game.html">Web GUI</a>
         <span id="status">Loading...</span>
         <span id="card-status" style="color: #888; font-size: 12px;"></span>
     </div>
@@ -957,11 +956,10 @@
             forwardStickyParamsOnAnchor(a);
         }
 
-        // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
-        // link (tui_game.html ⇄ native_game.html) through the runtime manifest
-        // so it points at the hashed name on the deploy tree. Identity on dev.
-        import { installManifestHrefRewrite } from './asset_manifest.js';
-        installManifestHrefRewrite();
+        // (mtg-4irju) The old native⇄tui renderer-switch link was removed and the
+        // runtime asset_manifest.js bridge with it. This page is now a pure-DAG
+        // leaf consumer: its only back-edge ("Back to lobby") is the stable
+        // index.html entry, and all sticky/release params ride forwardStickyParams.
 
         // mtg-35z3s page 3: boot settings resolved from URL params (no built-in
         // launcher). launchTui() reads these instead of launcher form fields.

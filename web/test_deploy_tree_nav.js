@@ -1,29 +1,47 @@
-// test_deploy_tree_nav.js — DEPLOY-TREE navigation regression gate (mtg-35z3s
-// deploy-only bug: the lobby-redo launcher hub 404'd on the content-hashed
-// deploy even though it worked on the dev fixed-name tree).
+// test_deploy_tree_nav.js — DEPLOY-TREE navigation regression gate for the CAS
+// pure-DAG / immutable-manifest pipeline (mtg-4irju, supersedes the mtg-682
+// runtime-manifest version).
 //
 // WHY THIS EXISTS
 // ---------------
-// The other web e2e tests (test_redo_lobby_e2e.js, test_deck_editor.js) run
-// against the SOURCE (fixed-name) tree served straight out of web/. The deploy,
-// however, runs `mtg hash-web-assets` to produce a CONTENT-HASHED staging tree
-// (the same staging the deploy rsyncs to the VM) and only THEN serves it. The
-// hashing/rewrite step is exactly where the lobby-redo broke: `launcher.html`
-// became a SECOND forward-linking hub (Play → native_game/tui_game, Deck Editor
-// → deck_editor), but the asset-graph rewriter only forward-rewrites links from
-// `index.html`. Any page whose nav links pointed at a now-renamed `<page>.html`
-// served a dangling fixed name → 404 / bounce-to-lobby on the live deploy. The
-// dev-server e2e never caught it because it serves FIXED names.
+// The other web e2e tests run against the SOURCE (fixed-name) tree served out
+// of web/. The deploy instead runs `mtg hash-web-assets` to produce a
+// CONTENT-HASHED staging tree and serves THAT. The hashing/rewrite step is
+// exactly where deploy-only 404s have lived. mtg-4irju reworked that step:
+//   - the nav graph is now a strict forward DAG (no native⇄tui switch link,
+//     lobby_launcher.js is a leaf, back-edges go through index.html?goto=);
+//   - the old stable-named asset_manifest.js loader + asset-manifest.json +
+//     [data-asset-href] runtime rewrite are DELETED (they were a cache
+//     vulnerability: a stale cached loader/manifest served an old hash → 404);
+//   - the manifest is content-hashed → asset-manifest.<token>.json (immutable)
+//     and the token is baked into index.html (the SOLE mutable file);
+//   - index.html threads release=<token> onto forward links and resolves
+//     ?goto= back-edges against asset-manifest.<token>.json.
 //
-// This test closes that gap: it builds the STAGED tree via the SAME
-// `mtg hash-web-assets` code path the deploy uses, serves it with
-// `mtg server-web`, and asserts the FULL lobby→launcher→game/editor navigation
-// chain RESOLVES (HTTP 200 — not 404, not a redirect bounce) by following the
-// real href / redirect-builder targets a browser would, exactly like the deploy
-// post-probe chases references from index.html.
+// This gate stages the tree via the SAME `mtg hash-web-assets` code path the
+// deploy uses, serves it with `mtg server-web`, and asserts the NEW invariants:
+//   (1) ONLY index.html is unhashed; the stale stable-named loader/manifest are
+//       GONE (404); exactly one asset-manifest.<token>.json is served.
+//   (2) index.html references the HASHED launcher + both HASHED game pages and
+//       each resolves 200 (statically-rewritten forward DAG edges).
+//   (3) The release-threading wiring is present on the SERVED (post-rename)
+//       artifacts: index.html honors release= (param-first, baked-latest
+//       fallback) and seeds release onto forward links; lobby_launcher.js's
+//       STICKY_PARAM_KEYS carries 'release'; deck_editor's back-edge is the
+//       stable index.html?goto=launcher dispatcher URL relaying release.
+//   (4) The content-hashed manifest maps every back-edge / nav target
+//       (launcher, game pages, deck_editor) to a HASHED name that 200s.
+//   (5) STALE-MANIFEST no-404: index.html?goto=launcher with a BOGUS old
+//       release= still serves index.html 200 (the dispatcher client-falls-back
+//       to latest) — a stale token can NEVER cause the hard 404 this fixes —
+//       while the bogus release manifest itself correctly 404s.
 //
 // It is HTTP-level (no headless browser) so it is hermetic + fast and safe to
 // wire into `make validate`. It is LOCAL ONLY (127.0.0.1, no TLS, no cloud VM).
+// The RUNTIME release-threading on forward links is JS-driven (applyLaunchLinks
+// / forwardStickyParams run in the browser), so this HTTP gate asserts the
+// wiring's PRESENCE on the served source; the browser e2e (test_redo_lobby_e2e)
+// exercises it live.
 //
 // Usage:
 //   node web/test_deploy_tree_nav.js
@@ -97,69 +115,19 @@ function check(cond, msg) {
 }
 
 // Extract every distinct `*.html` filename token that `src` references via an
-// `href="..."`/`href='...'` attribute OR a JS string literal (the lobby's
-// `window.location.href = 'launcher.html?...'` redirect builder and
-// lobby_launcher.js's `GAME_PAGE` map both use bare string literals). We strip
-// any ?query / #fragment so the bare served filename remains. Leading `./` or
-// `/` is normalised away. We deliberately do NOT follow `index.html` links
-// (that is the entry; following it would loop) — the caller filters as needed.
+// `href="..."`/`href='...'` attribute OR a JS string literal. We strip any
+// ?query / #fragment so the bare served filename remains; leading `./` or `/`
+// is normalised away. The page name is a run of [A-Za-z0-9_.-]+ ending in
+// `.html` — the `.` is required so a content-addressed name
+// (`launcher.<16hex>.html`) is matched as ONE token, not truncated at the hash.
 function htmlPageTokens(src) {
     const tokens = new Set();
-    // href attributes (single or double quoted) and bare JS string literals.
-    // The page name is a run of [A-Za-z0-9_-]+ ending in `.html`, bounded by a
-    // quote on the left (optionally with a ./ or / prefix) and a quote, ?, or #
-    // on the right.
-    // The page name is a run of [A-Za-z0-9_.-]+ ending in `.html` — the `.` is
-    // required so a content-addressed name (`launcher.<16hex>.html`) is matched
-    // as a single token, not truncated at the hash dot.
     const re = /['"](?:\.\/|\/)?([A-Za-z0-9_.-]+\.html)(?:['"?#])/g;
     let m;
     while ((m = re.exec(src)) !== null) {
         tokens.add(m[1]);
     }
     return [...tokens];
-}
-
-// A served HTML page may legitimately emit a LOGICAL (manifest-key) nav target
-// — e.g. a CYCLE back-edge like deck_editor→launcher that the CAS renamer leaves
-// unhashed for RUNTIME resolution. An HTTP-only walk can't see a browser rewrite
-// the href, so a page that emits a logical name but NEVER loads the runtime
-// resolver (asset_manifest.js's resolveAsset / installManifestHrefRewrite) ships
-// a DANGLING literal that 404s live — exactly the mtg-682 user-reported bug,
-// which a pure fetch-through-the-manifest walk silently masks.
-//
-// This asserts the deploy-correctness INVARIANT directly on the page source:
-// if the page emits any logical (manifest-resolved) *.html nav target other than
-// the stable index.html, it MUST carry the runtime resolver, i.e. it must import
-// the stable-named asset_manifest.js AND wire it (installManifestHrefRewrite for
-// [data-asset-href] anchors and/or resolveAsset for JS-built URLs). A NEW literal
-// hashed/cycle-edge link added without that machinery FAILS here.
-function assertPageNavResolvable(pageSrc, manifest, label) {
-    const logicalTargets = htmlPageTokens(pageSrc).filter(
-        (t) => t !== 'index.html' && Object.prototype.hasOwnProperty.call(manifest, t),
-    );
-    if (logicalTargets.length === 0) return; // no cycle-edge nav → nothing to wire
-    // The stable resolver is imported by its stable name (never hashed).
-    const importsResolver = /asset_manifest\.js/.test(pageSrc);
-    const wiresRewrite = /installManifestHrefRewrite\s*\(/.test(pageSrc);
-    const usesResolve = /resolveAsset\w*\s*\(/.test(pageSrc); // resolveAsset or local resolveAssetName wrapper
-    check(
-        importsResolver && (wiresRewrite || usesResolve),
-        `${label} emits logical cycle-edge nav (${logicalTargets.join(', ')}) and carries the runtime resolver `
-            + `(asset_manifest.js import + installManifestHrefRewrite()/resolveAsset()) — `
-            + `importsResolver=${importsResolver} wiresRewrite=${wiresRewrite} usesResolve=${usesResolve}`,
-    );
-    // Every logical anchor href should also be tagged data-asset-href so the
-    // browser's installManifestHrefRewrite can fix it (a bare href= logical link
-    // with no data-asset-href stays literal at runtime → 404). JS-built links are
-    // covered by the resolveAsset() check above instead.
-    for (const t of logicalTargets) {
-        const bareAnchor = new RegExp(`<a\\b[^>]*\\bhref=["']${t.replace(/\./g, '\\.')}["'][^>]*>`, 'i');
-        const m = pageSrc.match(bareAnchor);
-        if (m && !/data-asset-href/i.test(m[0])) {
-            check(false, `${label}: anchor to logical '${t}' lacks data-asset-href (stays literal at runtime): ${m[0].slice(0, 120)}`);
-        }
-    }
 }
 
 async function startServer(staticDir, port) {
@@ -195,6 +163,14 @@ async function fetchOk(base, rel, label) {
     return r.status === 200 ? r.body : null;
 }
 
+// Fetch `url` and assert it returns the given status (used for the "must 404"
+// stale-release-manifest probe).
+async function fetchStatus(base, rel, want, label) {
+    const r = await httpGet(base + rel);
+    check(r.status === want, `${label}: ${rel} → ${want} (got ${r.status})`);
+    return r.status;
+}
+
 async function main() {
     // --- 0. Preconditions: built assets must exist (same as smoke test) ---
     for (const [f, hint] of [
@@ -208,21 +184,15 @@ async function main() {
     const mtg = findMtgBinary();
 
     // --- 1. Stage a copy of web/ and run the REAL deploy hashing pipeline ---
-    // We copy ALL *.html (so launcher.html is present — the second hub that the
-    // bug lived in) + the JS leaves + pkg + data, then run `mtg hash-web-assets`
-    // exactly like deploy-cloud.sh does.
     const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'mtg-deploy-nav-'));
     log(`Staging deploy tree → ${stage}`);
     fs.cpSync(path.join(WEB_SRC, 'pkg'), path.join(stage, 'pkg'), { recursive: true });
     fs.cpSync(path.join(WEB_SRC, 'data'), path.join(stage, 'data'), { recursive: true });
-    const JS_LEAVES = ['server-config.js', 'network.js', 'bug_report.js', 'lobby_launcher.js', 'help_dialog.js'];
     for (const f of fs.readdirSync(WEB_SRC)) {
-        if (f.endsWith('.html') || JS_LEAVES.includes(f) || f.endsWith('.js')) {
-            // Copy every JS sibling too (game_boot_params.js etc.) so imports
-            // resolve; harmless extras are never hashed unless listed.
-            if (f.endsWith('.html') || f.endsWith('.js')) {
-                fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
-            }
+        // Copy every *.html + every NON-TEST *.js sibling so imports resolve.
+        // Harmless extras are never hashed unless referenced.
+        if (f.endsWith('.html') || (f.endsWith('.js') && !f.startsWith('test_') && f !== 'smoke_test_live.js')) {
+            fs.copyFileSync(path.join(WEB_SRC, f), path.join(stage, f));
         }
     }
     const hashRes = spawnSync(mtg, ['hash-web-assets', stage], { encoding: 'utf8' });
@@ -247,145 +217,154 @@ async function main() {
         check(up, 'server-web came up and /health returned 200');
         if (!up) throw new Error('server never came up');
 
-        // Load the runtime manifest (logical → hashed) the server serves. Soft
-        // cycle-edge nav links survive as LOGICAL names that a browser resolves
-        // through this manifest; we mirror that resolution here. On a tree with
-        // no cycles the manifest is empty and `resolve` is the identity.
-        let manifest = {};
-        {
-            const mr = await httpGet(base + '/asset-manifest.json');
-            if (mr.status === 200) {
-                try { manifest = JSON.parse(mr.body); } catch (_) { /* keep empty */ }
-            }
-        }
-        const resolve = (name) => (Object.prototype.hasOwnProperty.call(manifest, name) ? manifest[name] : name);
-        // Fetch a logical nav target the way a browser would: resolve through
-        // the manifest first, then GET. Asserts the RESOLVED name is a 200.
-        const fetchNav = async (logical, label) => {
-            const served = resolve(logical);
-            return fetchOk(base, '/' + served, `${label} (${logical}→${served})`);
-        };
-
-        // (a) Entry: index.html must serve at its fixed name (the sole stable URL).
+        // ── (1) Only index.html unhashed; stale loader/manifest GONE ────────
         const indexHtml = await fetchOk(base, '/index.html', 'entry');
-        check(!!indexHtml, 'index.html served at fixed name');
+        check(!!indexHtml, 'index.html served at fixed name (sole mutable URL)');
         if (!indexHtml) throw new Error('index.html did not serve');
 
-        // (b) THE REGRESSION (auto-discovery): index.html's lobby redirect points
-        //     at the HASHED launcher page (launcher.<hash>.html). On the OLD
-        //     renamer launcher.html was never hashed → index still emitted a bare
-        //     'launcher.html' → 404. Assert index references a HASHED launcher
-        //     and that it resolves 200.
+        // The deleted runtime-manifest layer must NOT be served anymore.
+        await fetchStatus(base, '/asset_manifest.js', 404, 'deleted stable loader');
+        await fetchStatus(base, '/asset-manifest.json', 404, 'deleted stable manifest');
+
+        // Exactly one immutable content-hashed manifest, named by the baked token.
+        const tokenMatch = indexHtml.match(/MTG_RELEASE_TOKEN\s*=\s*'([0-9a-f]{16})'/);
+        check(!!tokenMatch, 'index.html bakes a 16-hex MTG_RELEASE_TOKEN (no placeholder left)');
+        check(!indexHtml.includes('__MTG_RELEASE_TOKEN__'), 'release-token placeholder fully replaced');
+        const releaseToken = tokenMatch ? tokenMatch[1] : null;
+        let manifest = {};
+        if (releaseToken) {
+            const manifestFile = `asset-manifest.${releaseToken}.json`;
+            const mBody = await fetchOk(base, '/' + manifestFile, 'immutable manifest');
+            check(!!mBody, `${manifestFile} served (immutable, content-hashed)`);
+            if (mBody) {
+                try { manifest = JSON.parse(mBody); } catch (_) { check(false, 'manifest parses as JSON'); }
+            }
+            // The manifest's own name embeds the hash of its bytes → immutable.
+            const mr = await httpGet(base + '/' + manifestFile);
+            check(
+                /immutable/.test(mr.headers['cache-control'] || ''),
+                `${manifestFile} served with immutable Cache-Control (got: ${mr.headers['cache-control']})`,
+            );
+        }
+
+        // ── (2) index → HASHED launcher + both HASHED game pages, each 200 ──
         const indexTokens = htmlPageTokens(indexHtml);
         const launcherHashed = indexTokens.find((t) => /^launcher\.[0-9a-f]{16}\.html$/.test(t));
-        check(
-            !!launcherHashed,
-            `index.html references a HASHED launcher.<hash>.html (auto-discovery); saw: ${indexTokens.join(', ')}`,
-        );
+        check(!!launcherHashed, `index references a HASHED launcher.<hash>.html; saw: ${indexTokens.join(', ')}`);
         const launcherHtml = launcherHashed ? await fetchOk(base, '/' + launcherHashed, 'lobby→launcher') : null;
-        check(!!launcherHtml, 'hashed launcher page resolves 200 on the deploy tree');
+        check(!!launcherHtml, 'hashed launcher page resolves 200');
 
-        // (c) The launcher hub's forward nav — Deck Editor → deck_editor — must
-        //     resolve to a HASHED 200, NOT be flattened to index.html (the
-        //     rejected hack). Walk every *.html token the served launcher emits.
+        const gamePageTokens = indexTokens.filter((t) => /^(native_game|tui_game)\.[0-9a-f]{16}\.html$/.test(t));
+        check(gamePageTokens.length >= 2, `index references BOTH hashed game pages directly; saw: ${gamePageTokens.join(', ')}`);
+        for (const gp of gamePageTokens) {
+            const body = await fetchOk(base, '/' + gp, 'game page (forward DAG edge)');
+            // The game page must NOT emit the old tui⇄native switch link (cycle
+            // removed) — its only *.html nav target is the stable index.html.
+            if (body) {
+                const navOut = htmlPageTokens(body).filter((t) => t !== 'index.html');
+                check(
+                    navOut.length === 0,
+                    `${gp} emits no cross-page nav (switch-renderer link removed); saw: ${navOut.join(', ') || '(none)'}`,
+                );
+            }
+        }
+
+        // ── (4) launcher's forward + the manifest's back-edge targets 200 ───
         let deckEditorHashed = null;
         if (launcherHtml) {
             const launcherTokens = htmlPageTokens(launcherHtml).filter((t) => t !== 'index.html');
             deckEditorHashed = launcherTokens.find((t) => /^deck_editor\.[0-9a-f]{16}\.html$/.test(t)) || null;
-            check(
-                !!deckEditorHashed,
-                `launcher forward-links to a HASHED deck_editor page; saw: ${launcherTokens.join(', ')}`,
-            );
+            check(!!deckEditorHashed, `launcher forward-links a HASHED deck_editor page; saw: ${launcherTokens.join(', ')}`);
+            // Every *.html the launcher emits is a forward DAG edge → hashed 200.
             for (const t of launcherTokens) {
-                await fetchNav(t, 'launcher forward-nav');
+                check(/^[a-z_]+\.[0-9a-f]{16}\.html$/.test(t), `launcher forward link ${t} is HASHED (static DAG edge)`);
+                await fetchOk(base, '/' + t, 'launcher forward-nav');
             }
         }
 
-        // (c2) THE REVERSE / BACK-EDGE class (mtg-682, the live 404 this gate
-        //      previously missed). deck_editor.html is reached FROM launcher.html
-        //      (forward DAG edge, statically rewritten above), but its own
-        //      "Back to Launcher" link is a CYCLE back-edge: launcher→deck_editor
-        //      forward + deck_editor→launcher back puts launcher in the runtime
-        //      manifest, so deck_editor MUST emit launcher.html as a LOGICAL name
-        //      (resolveAsset / data-asset-href) — a literal 'launcher.html' there
-        //      stays unhashed and 404s on the deploy (the user-reported bug).
-        //      We fetch the served deck_editor and walk EVERY nav target it emits
-        //      (incl. the back-edge to launcher and the lobby fallback to index)
-        //      through the manifest resolver, asserting each is a hashed/stable
-        //      200. A NEW literal hashed-page link in deck_editor FAILS here.
-        if (deckEditorHashed) {
-            const deckEditorHtml = await fetchOk(base, '/' + deckEditorHashed, 'launcher→deck_editor (forward)');
-            check(!!deckEditorHtml, 'hashed deck_editor page resolves 200 on the deploy tree');
-            if (deckEditorHtml) {
-                assertPageNavResolvable(deckEditorHtml, manifest, 'deck_editor');
-                const editorTokens = htmlPageTokens(deckEditorHtml);
-                // The back-edge to launcher MUST be present as a LOGICAL name
-                // (resolved via the manifest), NOT a bare unhashed nav target and
-                // NOT flattened away — that is exactly the regression.
-                check(
-                    editorTokens.includes('launcher.html'),
-                    `deck_editor emits launcher.html as a LOGICAL (manifest-resolved) back-edge; saw: ${editorTokens.join(', ')}`,
-                );
-                check(
-                    Object.prototype.hasOwnProperty.call(manifest, 'launcher.html'),
-                    `deck_editor's logical 'launcher.html' back-edge is in the runtime manifest`,
-                );
-                for (const t of editorTokens) {
-                    if (t === 'index.html') continue; // stable unhashed entry — exempt
-                    await fetchNav(t, 'deck_editor reverse/back-nav');
-                }
-            }
+        // The content-hashed manifest must map every back-edge / nav target a
+        // browser resolves through the index dispatcher, each to a hashed 200.
+        for (const logical of ['launcher.html', 'native_game.html', 'tui_game.html', 'deck_editor.html']) {
+            const hashed = manifest[logical];
+            check(!!hashed, `manifest maps ${logical} → hashed name (got: ${hashed})`);
+            if (hashed) await fetchOk(base, '/' + hashed, `manifest target ${logical}`);
         }
 
-        // (d) The game pages (discovered from index.html, hashed) must resolve,
-        //     and EVERY nav link they emit (the tui ⇄ native cross-link — the
-        //     cycle) must resolve too: either already-hashed in the page, or a
-        //     LOGICAL name routed through the runtime manifest. This is the exact
-        //     cycle the old entry-redirect hack flattened and the un-hash backoff
-        //     avoided; here we prove it resolves on the HASHED tree.
-        const gamePageTokens = indexTokens.filter((t) =>
-            /^(native_game|tui_game)\.[0-9a-f]{16}\.html$/.test(t),
+        // ── (3) release-threading wiring present on the SERVED artifacts ────
+        // index.html: dispatcher honors release= FIRST, falls back to baked
+        // latest, and seeds release onto forward links.
+        check(/casResolveAndRedirect/.test(indexHtml), 'index.html carries the ?goto dispatcher');
+        check(
+            /casLoadManifest\(\s*requested\s*\)/.test(indexHtml),
+            'dispatcher resolves the requested release= manifest FIRST (deployment-pinned back-edge)',
         );
-        check(gamePageTokens.length >= 2, `index references both hashed game pages; saw: ${gamePageTokens.join(', ')}`);
+        check(
+            /casLoadManifest\(\s*MTG_RELEASE_TOKEN\s*\)/.test(indexHtml),
+            'dispatcher falls back to the baked-latest manifest (silent-latest)',
+        );
+        check(
+            /RELEASE_BAKED\s*\)\s*p\.set\('release'/.test(indexHtml)
+                || /RELEASE_BAKED\)\s*p\.set\("release"/.test(indexHtml),
+            'index.html seeds release= onto forward links (applyLaunchLinks)',
+        );
+        // lobby_launcher.<hash>.js: STICKY_PARAM_KEYS carries 'release' so every
+        // hop relays it merged-without-clobbering.
         let llName = null;
-        for (const gp of gamePageTokens) {
-            const body = await fetchOk(base, '/' + gp, 'game page');
-            if (!body) continue;
-            // The tui⇄native cross-link is a logical cycle edge: the page MUST
-            // carry the runtime resolver (same invariant as deck_editor's back-edge).
-            assertPageNavResolvable(body, manifest, `game-page ${gp}`);
-            // Its cross-page nav (logical or hashed) must resolve.
-            for (const t of htmlPageTokens(body).filter((t) => t !== 'index.html')) {
-                await fetchNav(t, 'game-page cross-nav');
-            }
-            const m = body.match(/(lobby_launcher\.[0-9a-f]{16}\.js)/);
+        if (gamePageTokens.length) {
+            const gpBody = await httpGet(base + '/' + gamePageTokens[0]);
+            const m = (gpBody.body || '').match(/(lobby_launcher\.[0-9a-f]{16}\.js)/);
             if (m) llName = m[1];
         }
-
-        // (e) lobby_launcher.js (the redirect BUILDER, hashed leaf): its
-        //     GAME_PAGE string literals are LOGICAL names resolved at runtime via
-        //     resolveAsset(manifest). Assert each one resolves through the
-        //     manifest to a 200 — the deploy-correctness proof for the redirect.
-        check(!!llName, 'lobby_launcher.<hash>.js discovered via a game page (imported, hashed)');
+        check(!!llName, 'lobby_launcher.<hash>.js discovered (imported by a game page, hashed leaf)');
         if (llName) {
-            const ll = await fetchOk(base, '/' + llName, 'redirect-builder module');
+            const ll = await fetchOk(base, '/' + llName, 'leaf param module');
             if (ll) {
-                const llTokens = htmlPageTokens(ll).filter((t) => t !== 'index.html');
                 check(
-                    llTokens.includes('tui_game.html') || llTokens.includes('native_game.html'),
-                    `lobby_launcher.js keeps LOGICAL game-page names (manifest-resolved); saw: ${llTokens.join(', ')}`,
+                    /STICKY_PARAM_KEYS\s*=\s*\[[^\]]*'release'[^\]]*\]/.test(ll),
+                    "lobby_launcher STICKY_PARAM_KEYS includes 'release' (threads + preserves other params)",
                 );
-                for (const t of llTokens) {
-                    check(
-                        Object.prototype.hasOwnProperty.call(manifest, t),
-                        `lobby_launcher's logical '${t}' is in the runtime manifest`,
-                    );
-                    await fetchNav(t, 'lobby_launcher redirect target');
-                }
+                // Leaf-ification: the module must NOT build redirect TARGETS to the
+                // game pages (no quoted '<page>.html' nav literal) — that was the
+                // old cycle edge. (Header-comment prose like `web/tui_game.html`
+                // is not a quoted nav literal, so it does not match.)
+                check(
+                    !/['"](?:\.\/)?(native_game|tui_game)\.html['"]/.test(ll),
+                    'lobby_launcher is a LEAF (no quoted game-page nav literal)',
+                );
+            }
+        }
+        // deck_editor: back-edge is the stable dispatcher URL, and it relays release.
+        if (deckEditorHashed) {
+            const de = await fetchOk(base, '/' + deckEditorHashed, 'launcher→deck_editor (forward)');
+            if (de) {
+                check(
+                    /index\.html\?goto=launcher/.test(de),
+                    'deck_editor back-edge is the stable index.html?goto=launcher dispatcher URL',
+                );
+                check(
+                    !/['"](?:\.\/)?launcher\.html['"]/.test(de) && !/launcher\.[0-9a-f]{16}\.html/.test(de),
+                    'deck_editor does NOT link launcher directly (no cycle; routed via dispatcher)',
+                );
+                check(
+                    /'release'/.test(de) || /"release"/.test(de),
+                    'deck_editor relays release on its launcher back-edge',
+                );
             }
         }
 
-        log('  → HASHED deploy-tree navigation graph fully resolved');
+        // ── (5) STALE-MANIFEST → no 404 (the bug this fixes) ────────────────
+        // A back-edge carrying an OLD/GC'd release token must NOT hard-404: the
+        // dispatcher entry (index.html) still serves 200 and client-falls-back
+        // to the baked-latest manifest. The bogus release manifest itself 404s
+        // (which the dispatcher catches) — proving the fallback path is real.
+        await fetchOk(base, '/index.html?goto=launcher&release=' + releaseToken + '&name=alice&deck=foo',
+            'back-edge dispatcher entry (current release)');
+        await fetchOk(base, '/index.html?goto=launcher&release=deadbeefdeadbeef&name=alice&deck=foo',
+            'back-edge dispatcher entry (STALE release → must still 200, not 404)');
+        await fetchStatus(base, '/asset-manifest.deadbeefdeadbeef.json', 404,
+            'stale release manifest correctly 404s (dispatcher catches → falls back to latest)');
+
+        log('  → CAS pure-DAG deploy-tree navigation graph fully resolved');
     } finally {
         killProc(server);
         await new Promise((r) => setTimeout(r, 500));

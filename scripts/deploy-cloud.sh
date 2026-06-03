@@ -714,18 +714,19 @@ run_post_deploy_probe() {
         probe_failed=1; fail_reasons+=("index.html: no hashed tui_game.<h>.html reference (mtg hash-web-assets did not run?)")
     fi
 
-    # 2b. Lobby-redo NAV hardening (mtg-682). The lobby-redo deploy break was a
-    # 404 on the launcher hub + the game-page cross-nav once HTML was hashed.
-    # Probe the FULL nav chain a browser walks, resolving cycle-edge links
-    # through the served runtime manifest exactly like asset_manifest.js does:
-    #   - index.html must reference a HASHED launcher.<h>.html and it must 200;
-    #   - the launcher's HASHED deck_editor.<h>.html forward link must 200;
-    #   - the lobby_launcher.<h>.js redirect builder's LOGICAL game-page names
-    #     must resolve (through the manifest) to a hashed 200.
-    local hashed_launcher manifest_json nav_code
+    # 2b. CAS pure-DAG NAV hardening (mtg-4irju, supersedes the mtg-682 runtime
+    # manifest). The nav graph is now a strict forward DAG: index.html links the
+    # HASHED launcher + game pages directly (statically rewritten), and the
+    # back-edges go through index.html?goto=. We probe:
+    #   - index.html references a HASHED launcher.<h>.html and it 200s;
+    #   - the launcher's HASHED deck_editor.<h>.html forward link 200s;
+    #   - index.html bakes a release token and serves the IMMUTABLE content-hashed
+    #     asset-manifest.<token>.json, which maps the game pages to hashed 200s;
+    #   - the ?goto= back-edge dispatcher resolves (launcher) to a 200.
+    local hashed_launcher nav_code
     hashed_launcher="$(printf '%s' "$landing_html" | grep -oE "launcher\.[0-9a-f]+\.html" | head -1)"
     if [[ -z "$hashed_launcher" ]]; then
-        probe_failed=1; fail_reasons+=("index.html: no HASHED launcher.<h>.html reference (auto-discovery / lobby-redo break)")
+        probe_failed=1; fail_reasons+=("index.html: no HASHED launcher.<h>.html reference (auto-discovery / CAS break)")
     else
         nav_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/$hashed_launcher")" || nav_code="000"
         if [[ "$nav_code" != "200" ]]; then
@@ -746,24 +747,53 @@ run_post_deploy_probe() {
             fi
         fi
     fi
-    # The runtime manifest must map the game pages to their hashed names, and
-    # those names must 200 (the cycle-edge resolution the lobby redirect uses).
-    manifest_json="$(curl "${curl_opts[@]}" "$base/asset-manifest.json")" || manifest_json=""
-    local nav_page hashed_nav
+    # The release token baked into index.html names the IMMUTABLE content-hashed
+    # manifest. There must be NO stable-named asset_manifest.js / asset-manifest.json
+    # left (the deleted cache vuln). Fetch asset-manifest.<token>.json, confirm it
+    # maps the game pages to hashed names, and that each 200s.
+    local release_token manifest_file manifest_json nav_page hashed_nav
+    release_token="$(printf '%s' "$landing_html" | grep -oE "MTG_RELEASE_TOKEN *= *'[0-9a-f]{16}'" | grep -oE "[0-9a-f]{16}" | head -1)"
+    if [[ -z "$release_token" ]]; then
+        probe_failed=1; fail_reasons+=("index.html: no baked MTG_RELEASE_TOKEN (CAS token not baked)")
+    else
+        # The stale stable-named loader/manifest MUST be gone.
+        local stale_code
+        stale_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/asset_manifest.js")" || stale_code="000"
+        if [[ "$stale_code" == "200" ]]; then
+            probe_failed=1; fail_reasons+=("asset_manifest.js still served (stale runtime loader must be deleted)")
+        fi
+        manifest_file="asset-manifest.${release_token}.json"
+        manifest_json="$(curl "${curl_opts[@]}" "$base/$manifest_file")" || manifest_json=""
+        if [[ -z "$manifest_json" ]]; then
+            probe_failed=1; fail_reasons+=("$manifest_file: empty/missing (immutable content-hashed manifest)")
+        else
+            echo "  ✓ /$manifest_file  200 (release token $release_token)"
+        fi
+    fi
     for nav_page in tui_game native_game; do
         # Pull "<nav_page>.html": "<nav_page>.<h>.html" out of the manifest JSON.
         hashed_nav="$(printf '%s' "$manifest_json" | grep -oE "${nav_page}\.[0-9a-f]+\.html" | head -1)"
         if [[ -z "$hashed_nav" ]]; then
-            probe_failed=1; fail_reasons+=("asset-manifest.json: no ${nav_page}.html → hashed mapping (cycle-edge resolver missing)")
+            probe_failed=1; fail_reasons+=("$manifest_file: no ${nav_page}.html → hashed mapping")
         else
             nav_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/$hashed_nav")" || nav_code="000"
             if [[ "$nav_code" != "200" ]]; then
-                probe_failed=1; fail_reasons+=("/$hashed_nav: HTTP $nav_code (manifest-resolved game page must 200)")
+                probe_failed=1; fail_reasons+=("/$hashed_nav: HTTP $nav_code (manifest-mapped game page must 200)")
             else
                 echo "  ✓ /$hashed_nav  200 (manifest: ${nav_page}.html)"
             fi
         fi
     done
+    # The ?goto= back-edge dispatcher: index.html?goto=launcher must NOT 404 — it
+    # serves index.html (200) which then client-resolves. (HTTP probe can't run
+    # the JS redirect, so we assert the dispatcher entry itself serves.)
+    local goto_code
+    goto_code="$(curl -o /dev/null -w '%{http_code}' "${curl_opts[@]}" "$base/index.html?goto=launcher&release=${release_token}")" || goto_code="000"
+    if [[ "$goto_code" != "200" ]]; then
+        probe_failed=1; fail_reasons+=("index.html?goto=launcher: HTTP $goto_code (back-edge dispatcher must serve)")
+    else
+        echo "  ✓ /index.html?goto=launcher  200 (back-edge dispatcher)"
+    fi
 
     game_html="$(curl "${curl_opts[@]}" "$base/$hashed_tui")" || game_html=""
     hashed_js="$(printf '%s' "$game_html" | grep -oE "pkg/mtg_engine\.[0-9a-f]+\.js" | head -1)"

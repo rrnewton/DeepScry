@@ -815,7 +815,6 @@
 <body>
     <div class="header" id="header-bar">
         <h1>DeepScry &mdash; Web GUI</h1>
-        <a href="tui_game.html" data-asset-href="tui_game.html">Web TUI</a>
         <a href="index.html" class="back-to-lobby-link">Back to lobby</a>
         <span id="status">Loading...</span>
     </div>
@@ -1059,11 +1058,10 @@
             forwardStickyParamsOnAnchor(a);
         }
 
-        // Content-addressing cycle-break (mtg-682): resolve the cross-page nav
-        // link (tui_game.html ⇄ native_game.html) through the runtime manifest
-        // so it points at the hashed name on the deploy tree. Identity on dev.
-        import { installManifestHrefRewrite } from './asset_manifest.js';
-        installManifestHrefRewrite();
+        // (mtg-4irju) The old tui⇄native renderer-switch link was removed and the
+        // runtime asset_manifest.js bridge with it. This page is now a pure-DAG
+        // leaf consumer: its only back-edge ("Back to lobby") is the stable
+        // index.html entry, and all sticky/release params ride forwardStickyParams.
 
         // Shared help modal (mtg-1vwpd DRY extraction) — one implementation reused
         // by tui_game.html and native_game.html. The page supplies the help text

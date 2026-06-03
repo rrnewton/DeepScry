@@ -676,11 +676,15 @@ async function testLauncherParityAndNav() {
         const backVisible = backLink ? await backLink.isVisible() : false;
         if (backVisible) {
             const href = await backLink.getAttribute('href');
-            if (/launcher\.html\?/.test(href) && /game=parity-game/.test(href)
-                && /allow_local_img_load=true/.test(href)) {
-                pass('parity-back-to-launcher', 'editor "Back to Launcher" returns with context: ' + href);
+            // mtg-4irju: the back-edge is now the stable dispatcher URL
+            // index.html?goto=launcher (a direct launcher.<hash>.html link would
+            // reintroduce the launcher↔deck_editor cycle the CAS pipeline forbids).
+            // The index dispatcher resolves goto=launcher and forwards the context.
+            if (/index\.html\?/.test(href) && /goto=launcher/.test(href)
+                && /game=parity-game/.test(href) && /allow_local_img_load=true/.test(href)) {
+                pass('parity-back-to-launcher', 'editor "Back to Launcher" → dispatcher with context: ' + href);
             } else {
-                fail('parity-back-to-launcher', 'Back-to-Launcher href missing context: ' + href);
+                fail('parity-back-to-launcher', 'Back-to-Launcher href missing dispatcher/context: ' + href);
             }
         } else {
             fail('parity-back-to-launcher', '"Back to Launcher" link must be shown when from=launcher');

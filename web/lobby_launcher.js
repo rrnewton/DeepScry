@@ -44,8 +44,6 @@
 
 'use strict';
 
-import { resolveAsset } from './asset_manifest.js';
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -53,30 +51,21 @@ import { resolveAsset } from './asset_manifest.js';
 /** Default launch target when `?ui=` is absent. */
 export const DEFAULT_UI = 'tui';
 
+// ---------------------------------------------------------------------------
+// buildRedirectQuery — used by launcher.html to construct the redirect params
+// ---------------------------------------------------------------------------
+
 /**
- * LOGICAL file names for the two game UIs (no path prefix — same origin).
+ * Build the QUERY PARAMS the lobby/launcher forwards to a game page on
+ * "Launch Game" (creator) or "Join" (joiner). Returns ONLY the param set — the
+ * CALLER owns the game-page filename (`tui_game.html` / `native_game.html`).
  *
- * These are the *logical* names. On the content-addressed deploy the actual
- * served file is `tui_game.<hash>.html` etc. — `buildRedirectUrl` resolves the
- * logical name through `asset_manifest.js` (the runtime manifest) before
- * emitting the redirect URL. The game pages ⇄ this module form a dependency
- * cycle, so the deploy hasher canNOT statically bake the hashed name into this
- * leaf; the manifest is the general cycle-break (see asset_manifest.js + the
- * asset_hash.rs module docs). On the source/dev tree `resolveAsset` is the
- * identity, so these fixed names are used as-is.
- */
-export const GAME_PAGE = {
-    tui:    'tui_game.html',
-    native: 'native_game.html',
-};
-
-// ---------------------------------------------------------------------------
-// buildRedirectUrl — used by index.html to construct the redirect URL
-// ---------------------------------------------------------------------------
-
-/**
- * Build the redirect URL that the lobby sends the user to when they click
- * "Launch Game" (creator) or "Join" (joiner).
+ * This is the mtg-4irju LEAF-IFICATION: this module no longer names the game
+ * pages, so it has NO back-reference to them. That turns the old
+ * `game pages ⇄ lobby_launcher.js` cycle into a one-way import (pages →
+ * this leaf), so the deploy hasher statically bakes the leaf's hashed name into
+ * each page and never needs a runtime manifest to resolve it. "Which page" now
+ * lives UP in launcher.html (a forward DAG edge the hasher rewrites).
  *
  * @param {object} opts
  * @param {'create'|'join'} opts.action
@@ -92,14 +81,10 @@ export const GAME_PAGE = {
  * @param {boolean} [opts.showImages]       - card-image display pref (game-page)
  * @param {string[]} [opts.imageSources]    - enabled image sources, fallback order
  * @param {boolean} [opts.debug]            - enable TRACE logging on the game page
- * @returns {string}  Full relative URL (e.g. "tui_game.html?lobby_create=...")
+ * @returns {URLSearchParams}  the redirect query (no page name, no leading '?')
  */
-export function buildRedirectUrl(opts) {
+export function buildRedirectQuery(opts) {
     const ui = opts.ui === 'native' ? 'native' : 'tui';
-    // Resolve the logical game-page name → the hashed name actually served on
-    // the deploy tree (identity on the dev tree). This is the runtime
-    // cycle-break: the game pages ⇄ this leaf cannot be statically rewritten.
-    const page = resolveAsset(GAME_PAGE[ui]);
     const qp = new URLSearchParams();
 
     if (opts.action === 'create') {
@@ -126,7 +111,7 @@ export function buildRedirectUrl(opts) {
     // Default to 'network' mode when coming from the lobby redirect.
     qp.set('mode', opts.mode === 'local' ? 'local' : 'network');
 
-    return page + '?' + qp.toString();
+    return qp;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,8 +315,16 @@ export function consumeGamePrefs(defaults) {
  * deck-editor pages. The local-image unlock is the load-bearing one (the
  * gate is meaningless if a back-to-lobby click silently drops it), but the
  * player identity, server URL, and debug/image prefs are equally session-wide.
+ *
+ * `release` is the CAS release token (mtg-4irju): the content-hashed manifest
+ * hash that identifies which deployment a page belongs to. The UNHASHED
+ * index.html seeds it (the deploy bakes the current token); every hashed page
+ * then RELAYS `release=` from its own URL onto BOTH its forward links and its
+ * back-edges so navigation stays pinned to one release. Because it rides the
+ * sticky-param plumbing, it is MERGED into each destination's query string
+ * WITHOUT clobbering the other params — never dropping deck/name/seed/ws/etc.
  */
-export const STICKY_PARAM_KEYS = ['allow_local_img_load', 'debug', 'images', 'img_src', 'name', 'ws'];
+export const STICKY_PARAM_KEYS = ['allow_local_img_load', 'debug', 'images', 'img_src', 'name', 'release', 'ws'];
 
 /**
  * Copy the sticky params (those present in `source`, default

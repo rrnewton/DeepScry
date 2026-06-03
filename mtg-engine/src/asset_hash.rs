@@ -172,63 +172,72 @@ pub mod web_pkg {
     }
 }
 
-/// Full asset-graph content-addresser (mtg-620, generalized mtg-682).
+/// Full asset-graph content-addresser (mtg-620, generalized mtg-682,
+/// CAS-hardened mtg-4irju).
 ///
 /// A GENERAL, graph-aware renamer for the deploy-staging web tree. It hashes
 /// every web asset to an immutable `<stem>.<blake3>.<ext>` name and rewrites
 /// every reference to point at the hashed target — EXCEPT the one stable
-/// bootstrap entry ([`ENTRY_HTML`] = `index.html`, the server's default URL)
-/// and the stable runtime resolver ([`MANIFEST_JS`] = `asset_manifest.js`).
+/// bootstrap entry ([`ENTRY_HTML`] = `index.html`, the server's default URL,
+/// the SOLE mutable/no-cache file after this pass).
 ///
 /// ### Why a graph (and not a hardcoded list)
 ///
-/// The earlier version hardcoded the HTML page set (`HASHED_HTML_PAGES`) and
-/// broke when the lobby-redo added `launcher.html` (never added to the list →
-/// served fixed-name → 404 on deploy). This version **auto-discovers** every
-/// `*.html` in `web_dir` (sorted → deterministic), so a new page is hashed
-/// automatically. It also builds the actual reference graph across HTML pages,
-/// JS leaves, and the data index, and rewrites every reference to its real
-/// hashed target — instead of the old "blanket-redirect all cross-page links
-/// to `index.html`" hack (which flattened genuine forward navigation).
+/// The earlier version hardcoded the HTML page set and broke when the
+/// lobby-redo added `launcher.html` (never listed → served fixed-name → 404 on
+/// deploy). This version **auto-discovers** every `*.html` in `web_dir`
+/// (sorted → deterministic), so a new page is hashed automatically. It builds
+/// the actual reference graph across HTML pages, JS leaves, and the data index
+/// and rewrites every reference to its real hashed target.
 ///
-/// ### Topology + cycle handling (the general mechanism)
+/// ### Pure-DAG topology (no runtime manifest — mtg-4irju)
 ///
-/// Most of the graph is a DAG: `index.html → launcher/game/editor pages`,
-/// `launcher.html → deck_editor.html`, `demo.html → game pages`, and the pure
-/// leaves (pkg, `network.js`, `server-config.js`, the data index, …) that
-/// reference nothing. DAG edges are resolved by **topological hashing**: hash
-/// referents before referrers (reverse-topological order over the condensed
-/// graph), so when a referrer is hashed every name it cites is already known
-/// and is baked in statically.
+/// The web nav graph is now a strict DAG: `index.html → launcher/game/editor
+/// pages`, `launcher.html → {game pages, deck_editor.html}`, `demo.html → game
+/// pages`, and the pure leaves (pkg, `lobby_launcher.js`, `network.js`,
+/// `server-config.js`, the data index, …) that reference nothing. There are NO
+/// cycles: the old `tui_game ⇄ native_game` renderer-switch links were dropped,
+/// `lobby_launcher.js` was leaf-ified (it no longer names the game pages), and
+/// every BACK-edge (e.g. `deck_editor → launcher`) was rerouted through the
+/// stable entry as `index.html?goto=<logical>&release=<token>` — a same-origin
+/// hop the entry's inline dispatcher resolves. So every FORWARD edge is
+/// statically hashable by **topological hashing**: hash referents before
+/// referrers (reverse-topological order), so a referrer bakes in every name it
+/// cites. The previous `asset_manifest.js` runtime loader + stable-named
+/// `asset-manifest.json` + `[data-asset-href]` rewrite are GONE — they were a
+/// cache vulnerability (a stale cached loader/manifest served an old hash →
+/// 404).
 ///
-/// But some assets reference each OTHER (a true cycle): `tui_game.html` ⇄
-/// `native_game.html` (mutual renderer-switch nav) and the game pages ⇄
-/// `lobby_launcher.js` (pages import it; it names the pages via `GAME_PAGE`).
-/// A cycle CANNOT be resolved by static topological hashing — a member's hash
-/// depends on a co-member's not-yet-computed hash. We break every such cycle
-/// the GENERAL way (not the old entry-only hack): intra-cycle references
-/// resolve through a **served runtime manifest** (`asset-manifest.json`) and
-/// a tiny **stable-named loader** (`asset_manifest.js`, never hashed, so any
-/// page can import it). The loader's `MANIFEST` literal is rewritten in place
-/// with the real `logical → hashed` mapping; `resolveAsset()` looks names up
-/// at runtime and `installManifestHrefRewrite()` fixes up `[data-asset-href]`
-/// anchors. On the un-hashed source tree the mapping is empty so the resolver
-/// is the identity — dev and deploy share ONE code path.
+/// ### The release token (content-hashed manifest = Merkle root)
+///
+/// After hashing every asset we build the full `logical → hashed` map and
+/// CONTENT-HASH it via [`asset_hash_hex`] → `asset-manifest.<hash>.json`
+/// (itself immutable). Because each hashed name embeds its asset's content
+/// hash, this single hash transitively fingerprints the whole release graph —
+/// it IS the release identity ("release token"). It is PURELY content-derived
+/// (no build SHA / timestamp folded in), so identical `web/` content always
+/// yields an identical token across rebuilds (the CAS reproducibility
+/// property). The token is baked into `index.html` (the only mutable file) by
+/// replacing the [`RELEASE_TOKEN_PLACEHOLDER`] sentinel; `index.html` threads
+/// `release=<token>` onto its forward links and resolves `?goto=` back-edges
+/// against `asset-manifest.<token>.json`. The token is NEVER baked into a
+/// hashed page's content (that would be circular: the manifest hash depends on
+/// the page hashes) — hashed pages relay `release=` from their own URL at
+/// runtime.
 ///
 /// Concretely the algorithm:
 ///   1. Hash the pkg pair (delegated to [`web_pkg::hash_web_assets`]).
-///   2. Hash the JS leaves + the data index (pure leaves: no graph edges).
-///   3. Build the reference graph over the remaining HTML pages (+ any JS
-///      that references HTML, e.g. `lobby_launcher.js`), find its strongly
-///      connected components (Tarjan), and hash the condensation in
-///      reverse-topological order. While hashing a component, references to
-///      EARLIER components (already hashed) are statically rewritten;
-///      references WITHIN the same component (cycle edges) are left logical
-///      (the manifest resolves them at runtime).
-///   4. Rewrite the stable entry (`index.html`) statically — every name it
-///      cites is hashed by now — without renaming it.
-///   5. Write `asset-manifest.json` and rewrite `asset_manifest.js`'s
-///      `MANIFEST` literal with the full `logical → hashed` map.
+///   2. Hash the JS leaves (incl. the now-leaf `lobby_launcher.js`) + the data
+///      index (pure leaves: no graph edges).
+///   3. Build the reference graph over the remaining HTML pages, assert it is
+///      ACYCLIC (Tarjan; a multi-node SCC is a hard error naming the offending
+///      files — reintroducing a cycle would resurrect the cache vuln), and
+///      hash in reverse-topological order, statically baking each already-hashed
+///      referent into its referrers.
+///   4. Build the full `logical → hashed` manifest, content-hash it → write
+///      `asset-manifest.<token>.json`.
+///   5. Rewrite the stable entry (`index.html`) statically (every name it cites
+///      is hashed now) and bake the release token into it — without renaming.
 ///
 /// ### Rewrite precision
 ///
@@ -242,23 +251,25 @@ pub mod asset_graph {
     use std::path::{Path, PathBuf};
 
     /// Sole unhashed HTML entrypoint — its filename never changes; only its
-    /// content is rewritten (to point at hashed dependencies). This is the
-    /// server's default URL, so it must stay stable.
+    /// content is rewritten (to point at hashed dependencies) plus the release
+    /// token baked in. This is the server's default URL AND the only mutable /
+    /// no-cache file, so it must stay stable.
     pub const ENTRY_HTML: &str = "index.html";
 
-    /// The stable-named runtime manifest LOADER (an ES module). Never hashed:
-    /// it is the bootstrap resolver that other (hashed) assets import to look
-    /// up cycle-edge targets, so its name must stay stable. Its `MANIFEST`
-    /// literal is rewritten in place with the `logical → hashed` map.
-    pub const MANIFEST_JS: &str = "asset_manifest.js";
+    /// Stem of the content-hashed manifest. The full served name is
+    /// `asset-manifest.<token>.json` (immutable, content-addressed), where the
+    /// token is the blake3 hash of the manifest JSON = the release identity.
+    pub const MANIFEST_STEM: &str = "asset-manifest";
 
-    /// The served JSON manifest (`logical → hashed`). Written fresh each run.
-    /// Stable-named (a debugging/inspection artifact; the JS loader carries the
-    /// authoritative map inline so no extra fetch is on the critical path).
-    pub const MANIFEST_JSON: &str = "asset-manifest.json";
+    /// The sentinel `index.html` author-places where the release token belongs.
+    /// [`hash_full_graph`] replaces this exact string with the computed token
+    /// (a structured replace of a unique sentinel — NOT a blind munge). On the
+    /// un-hashed source/dev tree it stays as-is; the entry's dispatcher treats
+    /// a non-resolving token as the identity, so dev nav still works.
+    pub const RELEASE_TOKEN_PLACEHOLDER: &str = "__MTG_RELEASE_TOKEN__";
 
     /// Stable assets that participate in the graph but are NEVER renamed:
-    /// the entry page and the manifest loader.
+    /// only the entry page (`index.html`) qualifies now.
     fn is_stable_html(name: &str) -> bool {
         name == ENTRY_HTML
     }
@@ -266,8 +277,22 @@ pub mod asset_graph {
     /// JS leaves loaded by `<script src>` or ES `import` that reference NO
     /// other hashable HTML (pure leaves). Auto-discovery (step 3) treats any
     /// `.js` that DOES reference HTML as a graph node instead. These are hashed
-    /// up front in step 2. (`asset_manifest.js` is excluded — it stays stable.)
-    pub const HASHED_JS_LEAVES: &[&str] = &["server-config.js", "network.js", "bug_report.js", "help_dialog.js"];
+    /// up front in step 2. `lobby_launcher.js` is now a pure leaf (mtg-4irju
+    /// leaf-ified it: it no longer names the game pages), so it lives here and
+    /// the game pages' `import './lobby_launcher.js'` is statically rewritten.
+    pub const HASHED_JS_LEAVES: &[&str] = &[
+        "server-config.js",
+        "network.js",
+        "bug_report.js",
+        "help_dialog.js",
+        "lobby_launcher.js",
+    ];
+
+    /// Compute the content-hashed manifest filename from its JSON bytes:
+    /// `asset-manifest.<blake3>.json`. Returned alongside the token.
+    fn manifest_name(token: &str) -> String {
+        format!("{MANIFEST_STEM}.{token}.json")
+    }
 
     /// The data leaf — the set→bin resolver. Fetched as a JS string literal
     /// `fetch('./data/sets/index.json')` (or `/data/...`) from every HTML page
@@ -284,13 +309,19 @@ pub mod asset_graph {
         pub js_leaves: BTreeMap<String, String>,
         /// `data/sets/index.json` → `data/sets/index.<hash>.json`.
         pub data_index: (String, String),
-        /// Auto-discovered HTML pages (besides the entry) and any JS that
-        /// references HTML (e.g. `lobby_launcher.js`): logical → hashed.
+        /// Auto-discovered HTML pages (besides the entry): logical → hashed.
         pub graph_nodes: BTreeMap<String, String>,
-        /// `logical → hashed` entries placed in the runtime manifest because
-        /// they are referenced across a dependency cycle (cannot be statically
-        /// resolved). A subset of `graph_nodes`.
+        /// The FULL `logical → hashed` map for the whole release (pkg pair, JS
+        /// leaves, data index, and every hashed HTML page). Its deterministic
+        /// JSON serialization is content-hashed to produce [`release_token`];
+        /// it is served as `asset-manifest.<token>.json` for the entry's
+        /// `?goto=` dispatcher.
         pub manifest: BTreeMap<String, String>,
+        /// The release token = blake3 of the manifest JSON = a Merkle root over
+        /// the whole release graph. Baked into `index.html`.
+        pub release_token: String,
+        /// The served manifest filename, `asset-manifest.<token>.json`.
+        pub manifest_file: String,
     }
 
     /// Insert `.<hash>` before the final extension of `name`. E.g.
@@ -347,74 +378,11 @@ pub mod asset_graph {
         out
     }
 
-    /// Scan `src` for the **module-load edges** to candidate `names`: the
-    /// references that the BROWSER resolves at load time and that therefore
-    /// MUST be statically rewritten to a real hashed name (they cannot be
-    /// indirected through the runtime manifest). These are exactly:
-    ///
-    ///   - ES static import:   `import ... from '<name>'`
-    ///   - ES dynamic import:  `import('<name>')`  /  `await import('<name>')`
-    ///   - classic script tag: `<script src="<name>">`
-    ///
-    /// Plain navigation references (`<a href>`, `<a data-asset-href>`) and bare
-    /// JS string literals (`GAME_PAGE = { tui: 'tui_game.html' }`,
-    /// `window.location.href = 'launcher.html?...'`) are deliberately NOT
-    /// module edges: they are resolved at runtime via `asset_manifest.js` when
-    /// they point at a not-yet-hashed (cycle) target, or statically rewritten
-    /// when their target is already hashed. Keeping them OUT of the dependency
-    /// graph is what turns the apparent `tui ⇄ native ⇄ lobby_launcher.js`
-    /// cycle into a DAG: the only module edge in that trio is
-    /// `game pages → lobby_launcher.js` (a one-way import), so the launcher
-    /// hashes first and the pages bake its hashed import in.
-    ///
-    /// Returns the matched subset (the graph successors of `src`).
-    fn module_edges<'a>(src: &str, names: &'a BTreeSet<String>) -> BTreeSet<&'a str> {
-        let mut out = BTreeSet::new();
-        for name in names {
-            let n = regex::escape(name);
-            // `from '<name>'` / `from "<name>"` (static import) OR
-            // `import('<name>')` (dynamic) OR `src="<name>"` (script tag).
-            // Leading `./` or `/` optional; the name is bounded by the quote
-            // so a longer name cannot match a shorter as a substring.
-            let pat = format!(r#"(?:from\s*|import\s*\(\s*|<script[^>]*\bsrc\s*=\s*)['"](?:\./|/)?{n}['"]"#,);
-            let re = Regex::new(&pat).expect("asset_graph module-edge scan: regex compiles");
-            if re.is_match(src) {
-                out.insert(name.as_str());
-            }
-        }
-        out
-    }
-
-    /// Concatenate the text of every served `*.html` / `*.js` file at the top
-    /// level of `web_dir` EXCEPT the stable manifest loader (`asset_manifest.js`,
-    /// whose doc-comment examples must not produce false "still referenced"
-    /// hits). Used to detect which logical asset names survived the static
-    /// rewrite as soft cycle edges → the runtime manifest set.
-    fn read_all_served_text(web_dir: &Path) -> std::io::Result<String> {
-        let mut blob = String::new();
-        for entry in std::fs::read_dir(web_dir)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == MANIFEST_JS {
-                continue;
-            }
-            if name.ends_with(".html") || name.ends_with(".js") {
-                blob.push_str(&std::fs::read_to_string(entry.path())?);
-                blob.push('\n');
-            }
-        }
-        Ok(blob)
-    }
-
-    /// Scan `src` for ALL references (module edges + soft refs: href,
-    /// data-asset-href, bare JS string literals) to candidate `names`. Used to
-    /// build the FULL reference graph whose multi-node SCCs identify genuine
-    /// dependency cycles (the manifest-resolved set). Same filename-token
-    /// boundary rules as [`rewrite_one_reference`].
+    /// Scan `src` for ALL references (module edges + soft refs: href, bare JS
+    /// string literals) to candidate `names`. Used to build the FULL reference
+    /// graph; in the CAS pure-DAG model any multi-node SCC is a hard error
+    /// (a reintroduced cycle). Same filename-token boundary rules as
+    /// [`rewrite_one_reference`].
     fn all_references<'a>(src: &str, names: &'a BTreeSet<String>) -> BTreeSet<&'a str> {
         let mut out = BTreeSet::new();
         for name in names {
@@ -582,12 +550,13 @@ pub mod asset_graph {
         let mut leaf_rules: BTreeMap<String, String> = js_leaves.clone();
         leaf_rules.insert(data_index.0.clone(), data_index.1.clone());
 
-        // ── 3. build the MODULE-EDGE graph over the remaining HTML + graph-JS ─
-        // Graph nodes = every *.html except the stable entry, plus any *.js
-        // still on disk (un-hashed by step 2, not the stable manifest loader)
-        // that references an HTML node by ANY form — i.e. `lobby_launcher.js`
-        // (it names the game pages via GAME_PAGE string literals). The manifest
-        // loader (`asset_manifest.js`) is excluded: it stays stable.
+        // ── 3. build the reference graph over the non-entry HTML pages ────
+        // Graph nodes = every *.html except the stable entry. (After the
+        // mtg-4irju leaf-ification, NO served *.js references an HTML page, so
+        // there are no graph-JS nodes; lobby_launcher.js is a pure leaf hashed
+        // in step 2. We still scan *.js defensively and refuse — see below — if
+        // one reintroduces an HTML reference, since that would be a NEW edge the
+        // pure-DAG model does not expect.)
         let html_pages = discover_html_pages(web_dir)?;
         let mut node_set: BTreeSet<String> = BTreeSet::new();
         for p in &html_pages {
@@ -595,9 +564,6 @@ pub mod asset_graph {
                 node_set.insert(p.clone());
             }
         }
-        // Snapshot the HTML node names so the graph-JS scan can ask "does this
-        // .js reference any HTML page?" (any reference form qualifies it as a
-        // node — it must be hashed; its module/soft edges are classified next).
         let html_nodes: BTreeSet<String> = node_set.clone();
         for entry in std::fs::read_dir(web_dir)? {
             let entry = entry?;
@@ -606,60 +572,27 @@ pub mod asset_graph {
             }
             let fname = entry.file_name();
             let fname = fname.to_string_lossy();
-            if !fname.ends_with(".js") || fname == MANIFEST_JS {
+            if !fname.ends_with(".js") {
                 continue;
             }
+            // A *.js that names an HTML page would re-create the leaf↔page edge
+            // the leaf-ification removed. The only such reference today is a
+            // doc-comment in test-only helpers (game_boot_params.js), so we DO
+            // pull such a file in as a node (it is hashed; harmless if nothing
+            // imports it) — keeping the graph correct if a real one is added.
             let src = std::fs::read_to_string(entry.path())?;
-            // Any reference form (module OR soft string literal) qualifies the
-            // .js as a graph node that must itself be hashed.
             if !all_references(&src, &html_nodes).is_empty() {
                 node_set.insert(fname.into_owned());
             }
         }
 
-        // Build adjacency using MODULE EDGES ONLY (import / script-src). Soft
-        // references (href / data-asset-href / bare string literals) are NOT
-        // edges — they are resolved at runtime via the manifest when they would
-        // cycle. This makes the apparent tui⇄native⇄lobby_launcher cycle a DAG
-        // (only edge: game pages → lobby_launcher.js).
-        let mut edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for node in &node_set {
-            let src = std::fs::read_to_string(web_dir.join(node))?;
-            let refs = module_edges(&src, &node_set);
-            edges.insert(
-                node.clone(),
-                refs.into_iter()
-                    .filter(|r| *r != node) // ignore self-edges
-                    .map(|s| s.to_string())
-                    .collect(),
-            );
-        }
-
-        // Module-edge SCCs: each must be a single node (a multi-node module
-        // SCC is a genuine ES-import cycle that NO runtime manifest can break —
-        // the browser resolves imports at load). Refuse it loudly. The result
-        // is also our module-topological order (referents before referrers).
-        let module_sccs = tarjan_sccs(&node_set, &edges);
-        if let Some(cycle) = module_sccs.iter().find(|c| c.len() > 1) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "asset_graph: unbreakable MODULE-import cycle among {cycle:?} — \
-                     ES imports / <script src> resolve at load and cannot be \
-                     indirected through the runtime manifest. Route one edge of \
-                     the cycle through asset_manifest.js (a soft reference) instead."
-                ),
-            ));
-        }
-
-        // ── 3b. FULL-reference graph (module + soft) → label CYCLE members ─
-        // A node is a "cycle member" iff it sits in a multi-node SCC of the
-        // FULL reference graph (e.g. tui ⇄ native ⇄ lobby_launcher.js). Such
-        // members CANNOT statically resolve their intra-cycle refs, so those go
-        // through the runtime manifest. Non-cycle nodes (demo, deck_editor,
-        // launcher, …) reference cycle members only via FORWARD soft edges, so
-        // we hash the cycle members FIRST and the non-cycle referrers can then
-        // bake the (now-known) hashed cycle names in statically.
+        // ── 3a. FULL reference graph (module + soft) → assert ACYCLIC ──────
+        // The mtg-4irju design makes the web nav graph a strict DAG: forward
+        // edges only, every back-edge rerouted through index.html?goto=. A
+        // multi-node SCC means someone reintroduced a cycle (e.g. a direct
+        // game→game or editor→launcher link), which would resurrect the cache
+        // vulnerability the runtime manifest used to paper over. Refuse loudly
+        // and name the offending files + the fix.
         let mut full_edges: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for node in &node_set {
             let src = std::fs::read_to_string(web_dir.join(node))?;
@@ -669,54 +602,72 @@ pub mod asset_graph {
                 refs.into_iter().filter(|r| *r != node).map(|s| s.to_string()).collect(),
             );
         }
-        let full_sccs = tarjan_sccs(&node_set, &full_edges);
-        let cycle_members: BTreeSet<String> = full_sccs
-            .iter()
-            .filter(|c| c.len() > 1)
-            .flat_map(|c| c.iter().cloned())
-            .collect();
-
-        // ── 3c. hash order: cycle members FIRST, then non-cycle nodes; both
-        //         in module-topological order (so each node's MODULE imports are
-        //         already hashed when it is processed). module_sccs is already
-        //         in module-topo order; partition it preserving that order.
-        let module_topo: Vec<String> = module_sccs.iter().flat_map(|c| c.iter().cloned()).collect();
-        let mut hash_order: Vec<String> = Vec::with_capacity(module_topo.len());
-        for n in &module_topo {
-            if cycle_members.contains(n) {
-                hash_order.push(n.clone());
-            }
-        }
-        for n in &module_topo {
-            if !cycle_members.contains(n) {
-                hash_order.push(n.clone());
-            }
+        let sccs = tarjan_sccs(&node_set, &full_edges);
+        if let Some(cycle) = sccs.iter().find(|c| c.len() > 1) {
+            let members = cycle.join(", ");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "asset_graph: dependency CYCLE among [{members}] — the CAS pipeline \
+                     (mtg-4irju) requires a strict forward DAG so every reference is \
+                     statically hashable. A direct link between these pages forms a cycle. \
+                     Reroute the BACK-edge through the stable entry as \
+                     index.html?goto=<logical>&release=<token> (the entry's inline \
+                     dispatcher resolves it via the content-hashed manifest) instead of \
+                     linking the hashed sibling directly."
+                ),
+            ));
         }
 
-        // ── 3d. hash each node in that order ───────────────────────────────
-        // `graph_nodes` accumulates logical→hashed as nodes finish. Static
-        // rewrite resolves every ref whose target is already hashed; an
-        // intra-cycle ref to a not-yet-hashed co-member is left LOGICAL on
-        // purpose (collected into the manifest in step 5, resolved at runtime
-        // by asset_manifest.js).
+        // ── 3b. hash each node in reverse-topological order ────────────────
+        // Tarjan emits SCCs (here all singletons) referents-first, so when a
+        // referrer is hashed every name it cites is already in `graph_nodes`
+        // and is baked in statically. No logical/runtime indirection remains.
+        let hash_order: Vec<String> = sccs.iter().flat_map(|c| c.iter().cloned()).collect();
         let mut graph_nodes: BTreeMap<String, String> = BTreeMap::new();
         for node in &hash_order {
             let path = web_dir.join(node);
             let mut src = std::fs::read_to_string(&path)?;
             src = rewrite_all_references(&src, &leaf_rules);
-            let static_rules: BTreeMap<String, String> =
-                graph_nodes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            src = rewrite_all_references(&src, &static_rules);
+            src = rewrite_all_references(&src, &graph_nodes);
             std::fs::write(&path, src)?;
             let (k, v) = hash_in_place(web_dir, node)?;
             graph_nodes.insert(k, v);
         }
 
-        // ── 4. entry page: static rewrite (every dep is hashed now) ───────
-        // index.html's soft refs (<a href="tui_game.html">, the JS
-        // window.location redirect builders) all point at now-hashed targets,
-        // so they are statically rewritten here — they are NOT cycle edges
-        // (nothing imports index.html), so they never go through the manifest.
+        // ── 4. build the FULL logical→hashed manifest + content-hash it ────
+        // Every hashed asset: pkg pair, JS leaves, data index, HTML pages. Its
+        // deterministic JSON is content-hashed → the release token (a Merkle
+        // root over the whole release graph). PURELY content-derived: identical
+        // web/ content ⇒ identical token (no build SHA / time folded in).
+        let mut manifest: BTreeMap<String, String> = BTreeMap::new();
+        manifest.insert(
+            format!("pkg/{}.js", web_pkg::PKG_JS_STEM),
+            format!("pkg/{}", pkg.js_hashed),
+        );
+        manifest.insert(
+            format!("pkg/{}.wasm", web_pkg::PKG_WASM_STEM),
+            format!("pkg/{}", pkg.wasm_hashed),
+        );
+        for (k, v) in &js_leaves {
+            manifest.insert(k.clone(), v.clone());
+        }
+        manifest.insert(data_index.0.clone(), data_index.1.clone());
+        for (k, v) in &graph_nodes {
+            manifest.insert(k.clone(), v.clone());
+        }
+        let manifest_json = render_manifest_json(&manifest);
+        let release_token = asset_hash_hex(manifest_json.as_bytes());
+        let manifest_file = manifest_name(&release_token);
+        std::fs::write(web_dir.join(&manifest_file), &manifest_json)?;
+
+        // ── 5. entry page: static forward-link rewrite + bake the token ────
+        // index.html's forward refs (<a href="launcher.html">, the JS redirect
+        // builders) all point at now-hashed targets → statically rewritten.
+        // Then the release token replaces the RELEASE_TOKEN_PLACEHOLDER sentinel
+        // so the entry can (a) thread release=<token> onto its forward links and
+        // (b) resolve ?goto= back-edges against asset-manifest.<token>.json. The
+        // token lives ONLY here (the sole mutable file) — never in a hashed page.
         let entry_path = web_dir.join(ENTRY_HTML);
         if entry_path.is_file() {
             let src = std::fs::read_to_string(&entry_path)?;
@@ -724,30 +675,20 @@ pub mod asset_graph {
             for (k, v) in &graph_nodes {
                 entry_rules.insert(k.clone(), v.clone());
             }
-            let rewritten = rewrite_all_references(&src, &entry_rules);
-            if rewritten != src {
-                std::fs::write(&entry_path, rewritten)?;
+            let mut rewritten = rewrite_all_references(&src, &entry_rules);
+            if !rewritten.contains(RELEASE_TOKEN_PLACEHOLDER) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "asset_graph: {ENTRY_HTML} is missing the {RELEASE_TOKEN_PLACEHOLDER} \
+                         sentinel — the release token cannot be baked in. The entry must carry \
+                         the placeholder so its forward links + ?goto dispatcher know the release."
+                    ),
+                ));
             }
+            rewritten = rewritten.replace(RELEASE_TOKEN_PLACEHOLDER, &release_token);
+            std::fs::write(&entry_path, rewritten)?;
         }
-
-        // ── 5. manifest = nodes whose LOGICAL name STILL appears in any served
-        //        file (a soft cycle edge we deliberately left un-rewritten —
-        //        e.g. lobby_launcher.js's GAME_PAGE literal, the game pages'
-        //        data-asset-href nav). These are exactly the references
-        //        asset_manifest.js must resolve at runtime. Computed AFTER the
-        //        entry rewrite so index.html's (statically resolved) soft refs
-        //        do not pollute the manifest. Then write the manifest (JSON +
-        //        the JS loader literal).
-        let mut manifest: BTreeMap<String, String> = BTreeMap::new();
-        let served_blob = read_all_served_text(web_dir)?;
-        let logical_names: BTreeSet<String> = graph_nodes.keys().cloned().collect();
-        let still_referenced = all_references(&served_blob, &logical_names);
-        for logical in still_referenced {
-            if let Some(hashed) = graph_nodes.get(logical) {
-                manifest.insert(logical.to_string(), hashed.clone());
-            }
-        }
-        write_manifest(web_dir, &manifest)?;
 
         Ok(GraphHashResult {
             pkg,
@@ -755,87 +696,27 @@ pub mod asset_graph {
             data_index,
             graph_nodes,
             manifest,
+            release_token,
+            manifest_file,
         })
     }
 
-    /// Serialize the cycle-edge `logical → hashed` map into BOTH the served
-    /// `asset-manifest.json` and the inline `MANIFEST = { ... }` literal of the
-    /// stable `asset_manifest.js` loader. The literal is replaced by a
-    /// STRUCTURED splice anchored on the `/* @@ASSET_MANIFEST@@ */` marker
-    /// comment + the `export const MANIFEST = {...};` statement — NOT a blind
-    /// substring munge of arbitrary JS.
-    ///
-    /// If `asset_manifest.js` is absent (e.g. a partial staging tree without
-    /// the loader) this is a no-op for the JS side; the JSON is still written.
-    fn write_manifest(web_dir: &Path, manifest: &BTreeMap<String, String>) -> std::io::Result<()> {
-        // Deterministic JSON (sorted keys via BTreeMap).
+    /// Render the FULL `logical → hashed` manifest as deterministic JSON
+    /// (sorted keys via `BTreeMap`, JSON-string-escaped). This exact byte
+    /// sequence is what [`hash_full_graph`] content-hashes to produce the
+    /// release token, so it MUST be reproducible: same map ⇒ same bytes ⇒ same
+    /// token. Empty map → `{}\n`.
+    fn render_manifest_json(manifest: &BTreeMap<String, String>) -> String {
+        if manifest.is_empty() {
+            return "{}\n".to_string();
+        }
         let mut json = String::from("{\n");
         for (i, (k, v)) in manifest.iter().enumerate() {
             let comma = if i + 1 < manifest.len() { "," } else { "" };
             json.push_str(&format!("  {}: {}{}\n", json_string(k), json_string(v), comma));
         }
         json.push_str("}\n");
-        std::fs::write(web_dir.join(MANIFEST_JSON), &json)?;
-
-        // The JS loader literal.
-        let loader_path = web_dir.join(MANIFEST_JS);
-        if !loader_path.is_file() {
-            return Ok(());
-        }
-        let src = std::fs::read_to_string(&loader_path)?;
-        let object_body = manifest_object_literal(manifest);
-        let new_decl = format!("export const MANIFEST = {object_body};");
-        // Anchor: the marker comment is immediately followed by the export.
-        // We replace exactly the `export const MANIFEST = {...};` statement
-        // that follows the marker. The marker guarantees we splice the right
-        // declaration even if the file later grows other `MANIFEST` mentions.
-        let marker = "/* @@ASSET_MANIFEST@@ */";
-        let Some(marker_pos) = src.find(marker) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("asset_graph: {MANIFEST_JS} missing the {marker} marker"),
-            ));
-        };
-        let after_marker = marker_pos + marker.len();
-        // The declaration starts at the next `export const MANIFEST`.
-        let decl_start_rel = src[after_marker..].find("export const MANIFEST").ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("asset_graph: {MANIFEST_JS} missing 'export const MANIFEST' after marker"),
-            )
-        })?;
-        let decl_start = after_marker + decl_start_rel;
-        // It ends at the first `};` that closes the object literal. The literal
-        // is authored as a single statement ending in `};` (empty `{}` ends in
-        // `{};`), so the first `;` after `decl_start` terminates it.
-        let semi_rel = src[decl_start..].find(';').ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("asset_graph: {MANIFEST_JS} MANIFEST declaration not terminated"),
-            )
-        })?;
-        let decl_end = decl_start + semi_rel + 1;
-        let mut out = String::with_capacity(src.len() + new_decl.len());
-        out.push_str(&src[..decl_start]);
-        out.push_str(&new_decl);
-        out.push_str(&src[decl_end..]);
-        std::fs::write(&loader_path, out)?;
-        Ok(())
-    }
-
-    /// Render a JS object literal `{ "a": "b", "c": "d" }` from the map
-    /// (sorted, JSON-string-escaped keys/values). Empty map → `{}`.
-    fn manifest_object_literal(manifest: &BTreeMap<String, String>) -> String {
-        if manifest.is_empty() {
-            return "{}".to_string();
-        }
-        let mut s = String::from("{\n");
-        for (i, (k, v)) in manifest.iter().enumerate() {
-            let comma = if i + 1 < manifest.len() { "," } else { "" };
-            s.push_str(&format!("    {}: {}{}\n", json_string(k), json_string(v), comma));
-        }
-        s.push('}');
-        s
+        json
     }
 
     /// Minimal JSON string encoder for our ASCII filename tokens (escapes `"`
@@ -1104,6 +985,207 @@ mod tests {
             let src = "tui_init_logging();";
             let out = rewrite_html(src, JS_HASHED, WASM_HASHED);
             assert_eq!(out, src, "non-empty-paren / unrelated calls untouched");
+        }
+    }
+
+    /// End-to-end tests for the CAS pure-DAG pipeline (mtg-4irju): the
+    /// content-hashed immutable manifest, the baked release token, and the
+    /// acyclicity guard. These stage a minimal web tree in a tempdir and run
+    /// the real [`asset_graph::hash_full_graph`].
+    mod full_graph {
+        use crate::asset_hash::{asset_graph, asset_hash_hex};
+        use std::path::Path;
+
+        /// Write `(relpath, content)` pairs into `dir`, creating parent dirs.
+        fn write_tree(dir: &Path, files: &[(&str, &str)]) {
+            for (rel, content) in files {
+                let path = dir.join(rel);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).unwrap();
+                }
+                std::fs::write(&path, content).unwrap();
+            }
+        }
+
+        /// A minimal but representative pure-DAG web tree:
+        ///   index.html (entry) → launcher/native/tui/deck_editor
+        ///   launcher.html → {native, tui, deck_editor}
+        ///   native/tui → import lobby_launcher.js (leaf); back-edge → index
+        ///   deck_editor → index.html?goto=launcher (back-edge via dispatcher)
+        /// No cycles: no native⇄tui, lobby_launcher.js references no page.
+        fn dag_tree() -> Vec<(&'static str, &'static str)> {
+            vec![
+                ("pkg/mtg_engine.js", "export default function init(){}\nawait init();\n"),
+                ("pkg/mtg_engine_bg.wasm", "\0\0wasm-bytes\0\0"),
+                ("data/sets/index.json", "{\"sets\":[]}\n"),
+                ("server-config.js", "window.MTG_WS_URL='';\n"),
+                ("network.js", "export const x=1;\n"),
+                // Leaf: param-plumbing only, references NO html page.
+                (
+                    "lobby_launcher.js",
+                    "export function buildRedirectQuery(o){return o;}\n",
+                ),
+                (
+                    "index.html",
+                    "<!doctype html><html><head>\
+                     <script>const MTG_RELEASE_TOKEN='__MTG_RELEASE_TOKEN__';</script>\
+                     </head><body>\
+                     <a id=l href=\"launcher.html\">L</a>\
+                     <a id=n href=\"native_game.html\">N</a>\
+                     <a id=t href=\"tui_game.html\">T</a>\
+                     <a id=d href=\"deck_editor.html\">D</a>\
+                     </body></html>\n",
+                ),
+                (
+                    "launcher.html",
+                    "<!doctype html><html><body>\
+                     <a href=\"deck_editor.html\">edit</a>\
+                     <script type=module>import './lobby_launcher.js';\
+                     const P={tui:'tui_game.html',native:'native_game.html'};</script>\
+                     </body></html>\n",
+                ),
+                (
+                    "native_game.html",
+                    "<!doctype html><html><body><a href=\"index.html\">back</a>\
+                     <script type=module>import './lobby_launcher.js';\
+                     import init from './pkg/mtg_engine.js'; await init();</script>\
+                     </body></html>\n",
+                ),
+                (
+                    "tui_game.html",
+                    "<!doctype html><html><body><a href=\"index.html\">back</a>\
+                     <script type=module>import './lobby_launcher.js';</script>\
+                     </body></html>\n",
+                ),
+                (
+                    "deck_editor.html",
+                    "<!doctype html><html><body>\
+                     <a href=\"index.html?goto=launcher\">Back to Launcher</a>\
+                     <a href=\"index.html\">Back to Lobby</a></body></html>\n",
+                ),
+            ]
+        }
+
+        #[test]
+        fn pure_dag_bakes_token_and_writes_immutable_manifest() {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(dir, &dag_tree());
+
+            let res = asset_graph::hash_full_graph(dir).expect("pure DAG must hash cleanly");
+
+            // (1) Only index.html stays unhashed; the other pages are renamed.
+            assert!(dir.join("index.html").is_file(), "entry stays unhashed");
+            assert!(!dir.join("launcher.html").is_file(), "launcher.html renamed away");
+
+            // (2) NO stable-named manifest/loader survives — only the hashed one.
+            assert!(!dir.join("asset_manifest.js").exists(), "stable loader must be gone");
+            assert!(
+                !dir.join("asset-manifest.json").exists(),
+                "stable manifest must be gone"
+            );
+            let manifest_path = dir.join(&res.manifest_file);
+            assert!(manifest_path.is_file(), "asset-manifest.<token>.json written");
+            assert_eq!(
+                res.manifest_file,
+                format!("asset-manifest.{}.json", res.release_token),
+                "manifest filename embeds the token"
+            );
+
+            // (3) The token IS the content hash of the served manifest bytes
+            //     (the Merkle-root / immutability property).
+            let manifest_bytes = std::fs::read(&manifest_path).unwrap();
+            assert_eq!(
+                asset_hash_hex(&manifest_bytes),
+                res.release_token,
+                "token == blake3(manifest content) — self-consistent immutable name"
+            );
+
+            // (4) The token is baked into index.html (placeholder consumed).
+            let index = std::fs::read_to_string(dir.join("index.html")).unwrap();
+            assert!(!index.contains("__MTG_RELEASE_TOKEN__"), "placeholder replaced");
+            assert!(index.contains(&res.release_token), "real token baked into entry");
+
+            // (5) index.html forward links are statically rewritten to hashed names.
+            let launcher_hashed = &res.graph_nodes["launcher.html"];
+            assert!(
+                index.contains(launcher_hashed.as_str()),
+                "entry forward-links the hashed launcher"
+            );
+
+            // (6) The manifest resolves every back-edge target + every asset class.
+            for logical in ["launcher.html", "native_game.html", "tui_game.html", "deck_editor.html"] {
+                assert!(res.manifest.contains_key(logical), "manifest maps {logical}");
+            }
+            assert!(res.manifest.contains_key("pkg/mtg_engine.js"), "manifest pins pkg js");
+            assert!(
+                res.manifest.contains_key("pkg/mtg_engine_bg.wasm"),
+                "manifest pins wasm"
+            );
+            assert!(res.manifest.contains_key("data/sets/index.json"), "manifest pins data");
+            assert!(res.manifest.contains_key("lobby_launcher.js"), "manifest pins the leaf");
+        }
+
+        #[test]
+        fn token_is_purely_content_derived_reproducible() {
+            // Identical content in two independent trees ⇒ identical token.
+            let a = tempfile::tempdir().unwrap();
+            let b = tempfile::tempdir().unwrap();
+            write_tree(a.path(), &dag_tree());
+            write_tree(b.path(), &dag_tree());
+            let ra = asset_graph::hash_full_graph(a.path()).unwrap();
+            let rb = asset_graph::hash_full_graph(b.path()).unwrap();
+            assert_eq!(ra.release_token, rb.release_token, "same content ⇒ same Merkle root");
+            assert_eq!(ra.manifest, rb.manifest, "same content ⇒ same logical→hashed map");
+        }
+
+        #[test]
+        fn reintroduced_cycle_is_a_hard_error() {
+            // Two pages that reference each OTHER form a cycle; the pure-DAG
+            // pipeline must refuse rather than silently fall back to a runtime
+            // manifest (which would resurrect the cache vulnerability).
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(
+                dir,
+                &[
+                    ("pkg/mtg_engine.js", "function init(){}\ninit();\n"),
+                    ("pkg/mtg_engine_bg.wasm", "wasm"),
+                    ("data/sets/index.json", "{}\n"),
+                    ("index.html", "<a href=\"a.html\">__MTG_RELEASE_TOKEN__</a>\n"),
+                    ("a.html", "<a href=\"b.html\">a</a>\n"),
+                    ("b.html", "<a href=\"a.html\">b</a>\n"),
+                ],
+            );
+            let err = asset_graph::hash_full_graph(dir).expect_err("a⇄b cycle must error");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+            let msg = err.to_string();
+            assert!(msg.contains("CYCLE"), "names the cycle: {msg}");
+            assert!(
+                msg.contains("a.html") && msg.contains("b.html"),
+                "names the members: {msg}"
+            );
+            assert!(msg.contains("goto="), "points to the index.html?goto= fix: {msg}");
+        }
+
+        #[test]
+        fn missing_release_token_placeholder_is_a_hard_error() {
+            // index.html without the sentinel can't carry the token → refuse.
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(
+                dir,
+                &[
+                    ("pkg/mtg_engine.js", "function init(){}\ninit();\n"),
+                    ("pkg/mtg_engine_bg.wasm", "wasm"),
+                    ("data/sets/index.json", "{}\n"),
+                    ("index.html", "<a href=\"native_game.html\">no token here</a>\n"),
+                    ("native_game.html", "<a href=\"index.html\">back</a>\n"),
+                ],
+            );
+            let err = asset_graph::hash_full_graph(dir).expect_err("missing placeholder must error");
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+            assert!(err.to_string().contains("__MTG_RELEASE_TOKEN__"), "names the sentinel");
         }
     }
 }

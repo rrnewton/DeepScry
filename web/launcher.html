@@ -19,7 +19,7 @@
   The deck-collections UX is lifted from tui_game.html's built-in launcher
   (DECK_COLLECTIONS + the collection→deck dropdown wiring), generalized to ONE
   player and made renderer-agnostic. The redirect itself reuses the shared
-  buildRedirectUrl() in lobby_launcher.js so the role→lobby_create/lobby_join
+  buildRedirectQuery() in lobby_launcher.js so the role→lobby_create/lobby_join
   translation and param names live in exactly one place (DRY).
 
   This page is WASM-FREE: deck names come from data/sets/index.json's `deck_names`
@@ -258,7 +258,7 @@
 </div>
 
 <script type="module">
-import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from './lobby_launcher.js';
+import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forwardStickyParams } from './lobby_launcher.js';
 
 (function () {
     'use strict';
@@ -465,7 +465,10 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
     function launcherContextParams() {
         const ctx = new URLSearchParams();
         ctx.set('from', 'launcher');
-        for (const k of ['game', 'role', 'pass', 'name', 'ws', 'reconnect_token']) {
+        // `release` (CAS token, mtg-4irju) rides along so the editor's
+        // "Back to Launcher" (index.html?goto=launcher&release=…) returns to the
+        // SAME deployment this launcher belongs to.
+        for (const k of ['game', 'role', 'pass', 'name', 'ws', 'reconnect_token', 'release']) {
             const v = qs.get(k);
             if (v) ctx.set(k, v);
         }
@@ -695,10 +698,16 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
 
     // ==================== GAME-PAGE NAVIGATION ====================
     // Build the game-page redirect URL from the current picks + handoff params.
-    // Shared by the auto-start (WaitingRoomReady) path. Reuses buildRedirectUrl
+    // Shared by the auto-start (WaitingRoomReady) path. Reuses buildRedirectQuery
     // so the role→lobby_create/lobby_join translation + param names live in one
     // place (DRY); the game page then opens its OWN durable game WebSocket and
     // performs the real CreateGame/JoinGame that drives the game.
+    //
+    // mtg-4irju: THIS launcher owns the game-page FILENAME (a forward DAG edge
+    // the deploy hasher rewrites to the hashed name). lobby_launcher.js no longer
+    // names the pages (leaf-ification killed the pages⇄leaf cycle). We also relay
+    // the CAS release token + sticky params from this launcher's OWN URL onto the
+    // link, merged without clobbering the redirect params.
     /** Build the game-page redirect URL string WITHOUT navigating. Exposed for
      *  Playwright assertions of the forwarded per-game prefs (mtg-ttjt6/682). */
     function buildGamePageUrl() {
@@ -709,7 +718,8 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
         const gamePass = qs.get('pass') || '';
         const playerName = qs.get('name') || '';
         const wsUrl = qs.get('ws') || '';
-        const baseUrl = buildRedirectUrl({
+        const page = ui === 'native' ? 'native_game.html' : 'tui_game.html';
+        const qp = buildRedirectQuery({
             action: role,
             gameName,
             gamePass,
@@ -724,10 +734,14 @@ import { buildRedirectUrl, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor } from 
             imageSources: selectedImageSources(),
             debug: debugCb.checked,
         });
-        const url = new URL(baseUrl, window.location.href);
-        url.searchParams.set('game', gameName);
-        url.searchParams.set('role', role);
-        if (gamePass) url.searchParams.set('pass', gamePass);
+        qp.set('game', gameName);
+        qp.set('role', role);
+        if (gamePass) qp.set('pass', gamePass);
+        const url = new URL(page, window.location.href);
+        url.search = qp.toString();
+        // Relay the CAS release token (and any other sticky params) from this
+        // launcher's own URL — merged, never clobbering the redirect params.
+        forwardStickyParams(url, qs);
         return url.pathname.split('/').pop() + url.search;
     }
     window.__buildGamePageUrl = buildGamePageUrl;

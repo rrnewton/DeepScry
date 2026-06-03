@@ -1,10 +1,10 @@
 ---
 title: 'CAS cache-hardening: eliminate the runtime asset-manifest; forward-only immutable hash graph with index.html as sole entry'
-status: open
+status: in_progress
 priority: 3
 issue_type: task
 created_at: 2026-06-02T22:43:03.509560121+00:00
-updated_at: 2026-06-02T23:52:47.811178409+00:00
+updated_at: 2026-06-03T00:56:14.971077079+00:00
 ---
 
 # Description
@@ -47,3 +47,10 @@ Today the launcher->game nav resolves through a RUNTIME manifest (web/asset_mani
 - Cache headers: index.html no-cache; everything else (incl. asset-manifest.<hash>.json) immutable/long-TTL.
 
 Issue: this is mtg-4irju. Separate from netarch (web/asset_hash.rs + page nav). Branch off integration.
+
+== IMPLEMENTED 2026-06-02 on branch cas-immutable-graph (make validate GREEN; deploy-tree nav gate PASS) ==
+Pure-DAG rework landed:
+- asset_hash.rs: Tarjan ASSERTS acyclicity (multi-node SCC = hard error naming files + 'route via index.html?goto='). Deleted MANIFEST_JS loader rewrite / stable asset-manifest.json / cycle-member machinery. lobby_launcher.js -> HASHED_JS_LEAVES (pure leaf). Builds FULL logical->hashed manifest (incl pkg+wasm = Merkle root), content-hashes it -> asset-manifest.<token>.json, bakes token into index.html via __MTG_RELEASE_TOKEN__ sentinel. Token PURELY content-derived (no build SHA/time). +4 in-module e2e tests + rewrote tests/asset_graph_hash.rs.
+- Pages: leaf-ified lobby_launcher.js (buildRedirectUrl->buildRedirectQuery; 'release' in STICKY_PARAM_KEYS -> merges, never clobbers). launcher.html owns hashed game-page literals + relays release. Removed native<->tui switch links + asset_manifest imports. deck_editor back-edge -> index.html?goto=launcher (relays release), deleted resolveAssetName bridge. index.html: self-contained inline ?goto dispatcher (release-FIRST -> baked-latest -> identity; never hangs; short-circuits before lobby code for mtg-04ls8) + seeds release on forward links. Deleted asset_manifest.js.
+- deploy-cloud.sh post-probe + test_deploy_tree_nav.js rewritten (5 new invariants incl STALE-MANIFEST no-404). Cache headers already correct -> NO server change.
+DEFERRED items untouched. NEXT: team-lead diff-gate + merge + deploy + returning-user pre-cached check.
