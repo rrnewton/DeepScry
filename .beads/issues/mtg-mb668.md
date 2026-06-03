@@ -212,3 +212,42 @@ oracle catches+enumerates it; if it's purely WASM buffer plumbing
 (unwind_state_sync_to ordering), only the browser e2e catches it. NEXT: build that
 engine-level rewind+replay oracle, RED-first, reproducing the AC=950-class divergence.
 ========================================================================
+
+========================================================================
+CLASS-A SEED-2 FIELD ENUMERATION (slot03, 2026-06-03, commit cea709f1)
+========================================================================
+Built per-card desync enumeration tooling (DebugSyncInfo + battlefield_detail
+(id,tapped,ctrl) + graveyard_ids; shared DRY view_* helpers in state_hash.rs gated
+any(network,wasm-network); server log_state_differences per-card diff; WASM
+WASM_CARD_DETAIL log keyed by choice_seq; e2e capture to
+debug/netarch-undo-dumps/<stamp>_card_detail.log). Boxed GameToHandler::ChoiceRequest
+(clippy large_enum_variant after DebugSyncInfo grew).
+
+SEED-2 SIGNATURE (choice_seq=175), server (real, choice_request.debug_info) vs WASM
+shadow (real, WASM_CARD_DETAIL):
+- COARSE FIELDS ALL MATCH: turn 15 Main1 active=0, Life [16,13], Hands [7,7],
+  Libs [51,52], bf count 6, stack 0, gy sizes [1,0], Hand CardIds [4,16,23,32,42,51,56].
+- => mtg-725 R1 (count_cards_in_zone_matching opponent hand/lib count) is RULED OUT
+  for seed 2: every size + the hand ids match.
+- DIVERGING fields (the finer compute_view_hash fields):
+  (a) land TAP-STATUS: server bf=[(49,T,0),(50,T,0),(59,T,0),(117,T,1),(122,T,1),(123,T,1)];
+      shadow bf=[(49,F,0),(50,T,0),(59,F,0),(117,T,1),(122,T,1),(123,T,1)] — cards 49
+      (Library of Alexandria) & 59 (Volcanic Island) tapped on server, UNtapped on shadow.
+  (b) GRAVEYARD CONTENTS (dominant): server gy=[[55],[]] vs shadow
+      gy=[[60,56,52,53,54],[118,115,114,116,112]] — the shadow has 5+5 reserved-range
+      cards in BOTH graveyards that the server has elsewhere (library, post-shuffle),
+      and lacks server's card 55. A reserved-id ZONE-ROUTING divergence (sig-2c family /
+      R2-class: shadow routes opponent reserved cards to GRAVEYARD where the server
+      sends them to library/keeps them), NOT a hand-count (R1) one.
+
+OPEN ALIGNMENT PUZZLE: the server-REJECTED client hash (6a046cea) does NOT appear in
+the WASM submit log (WASM logged 0d60bb6a for seq 175; the fatal box's action_count
+"950" also disagrees with the ChoiceRequest's action_count 831 for seq 175). Either
+choice_seq↔hash bookkeeping is offset, or the submitted hash is computed on a 2nd
+uninstrumented path (local_controller.rs:290 damage/blocker submit, or a rewind/replay
+recompute). NEXT: instrument the submit/receive/rewind cycle (log seq+hash at
+client.submit_choice and at the server handler receive) to confirm the logged WASM
+state == the submitted state, then the graveyard-routing divergence is the confirmed
+class-A root for seed 2 → fix via the sig-2c/2d symmetric-reserved-id template on the
+graveyard-routing path.
+========================================================================
