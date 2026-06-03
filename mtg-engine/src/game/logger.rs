@@ -655,6 +655,52 @@ impl GameLogger {
         }
     }
 
+    /// Log at Normal level, marking the captured entry as containing hidden
+    /// information visible only to `owner`.
+    ///
+    /// This is the Normal-verbosity counterpart to [`Self::gamelog_private`]
+    /// (which is for tagged official game-action logs). Use it for
+    /// `normal()`-level lines whose text reveals a single player's hidden
+    /// state/decision — e.g. the card a player scried to the top/bottom of
+    /// their own library. UIs rendering from another player's perspective
+    /// substitute `public_message` for `message` via [`LogEntry::message_for`].
+    ///
+    /// stdout still receives the full `message` (the CLI/server log is the
+    /// canonical full-information replay log); masking happens only at the
+    /// structured-view boundary used by `web/native_game.html` /
+    /// `web/tui_game.html`. The entry is left UNtagged (no `[GAMELOG ...]`
+    /// prefix) so it does not alter tagged-gamelog network comparisons. See
+    /// mtg-412.
+    #[inline]
+    pub fn normal_private(&self, message: &str, owner: PlayerId, public_message: &str) {
+        if self.suppressed {
+            return;
+        }
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
+
+        // Early exit if message won't be used
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        if should_capture {
+            self.log_buffer.borrow_mut().push(LogEntry {
+                level: VerbosityLevel::Normal,
+                message: message.to_string(),
+                category: None,
+                private_to: Some(PrivateLogInfo {
+                    owner,
+                    public_message: public_message.to_string(),
+                }),
+            });
+        }
+
+        if should_output && VerbosityLevel::Normal <= self.verbosity {
+            self.log_to_stdout(VerbosityLevel::Normal, message);
+        }
+    }
+
     /// Log a turn separator line (e.g., ">>> Turn N - Player X (Player Y) <<<<")
     ///
     /// This is used for TUI navigation markers. The separator is:
@@ -1068,6 +1114,47 @@ mod tests {
         // clear_logs also bumps the epoch.
         logger.clear_logs();
         assert_ne!(logger.log_epoch(), e1, "clear_logs must bump epoch");
+    }
+
+    /// mtg-412: `normal_private` must mask hidden information for the
+    /// non-owner perspective (e.g. the card a player scried to the top of
+    /// their own library), while the owner and the canonical stdout log keep
+    /// the full text. Mirrors the per-card-draw `gamelog_private` contract for
+    /// Normal-level (untagged) log lines.
+    #[test]
+    fn test_normal_private_masks_card_name_for_opponent() {
+        use crate::core::PlayerId;
+
+        let mut logger = GameLogger::new();
+        logger.enable_capture();
+
+        let p1 = PlayerId::new(0);
+        let p2 = PlayerId::new(1);
+
+        logger.normal_private(
+            "P1 scries 1, keeps Lightning Bolt on top",
+            p1,
+            "P1 scries 1, keeps the card on top",
+        );
+
+        let logs = logger.logs();
+        assert_eq!(logs.len(), 1);
+        let entry = &logs[0];
+
+        // The scrying player sees the full line including the card identity.
+        assert_eq!(entry.message_for(p1), "P1 scries 1, keeps Lightning Bolt on top");
+        assert!(entry.message_for(p1).contains("Lightning Bolt"));
+
+        // The opponent sees the masked public form — NO card name leaked.
+        assert_eq!(entry.message_for(p2), "P1 scries 1, keeps the card on top");
+        assert!(
+            !entry.message_for(p2).contains("Lightning Bolt"),
+            "leak: opponent must not see the scried card name"
+        );
+
+        // Untagged (Normal-level) — must not carry a gamelog category so it
+        // does not alter tagged-gamelog network comparisons.
+        assert_eq!(entry.category, None);
     }
 
     #[test]

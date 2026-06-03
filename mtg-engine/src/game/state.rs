@@ -1648,15 +1648,25 @@ impl GameState {
 
         if revealed.len() == 1 {
             let name = card_name.as_ref().map(|n| n.as_str()).unwrap_or("Unknown");
+            // The scried card's identity is hidden information visible only to
+            // the scrying player (scry looks at the top of their OWN library;
+            // the card does not change zones to a public one). Mark the entry
+            // private so opponent-perspective WASM/web UIs mask the card name.
+            // The fact that a scry-1 occurred (and the top/bottom decision) is
+            // public; only the card name is not. See mtg-412.
+            let p = player_id.as_u32() + 1;
             if decision.bottom.is_empty() {
-                self.logger
-                    .normal(&format!("P{} scries 1, keeps {} on top", player_id.as_u32() + 1, name));
+                self.logger.normal_private(
+                    &format!("P{} scries 1, keeps {} on top", p, name),
+                    player_id,
+                    &format!("P{} scries 1, keeps the card on top", p),
+                );
             } else {
-                self.logger.normal(&format!(
-                    "P{} scries 1, puts {} on bottom",
-                    player_id.as_u32() + 1,
-                    name
-                ));
+                self.logger.normal_private(
+                    &format!("P{} scries 1, puts {} on bottom", p, name),
+                    player_id,
+                    &format!("P{} scries 1, puts the card on the bottom", p),
+                );
             }
         } else {
             self.logger.normal(&format!(
