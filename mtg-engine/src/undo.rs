@@ -549,6 +549,20 @@ pub enum GameAction {
         player_id: PlayerId,
         prev: Option<crate::core::ManaPool>,
     },
+
+    /// Snapshot of a player's regular `mana_pool` captured BEFORE a payment
+    /// (`pay_from_total_mana` / `ManaPool::pay_cost`) consumed it (mtg-t233k).
+    /// These spends mutate the pool with no other covering action. The pool
+    /// empties at every step boundary (CR 500.4), so a turn-start rewind always
+    /// lands on `mana_pool == 0` and was already safe; but a PARTIAL (per-action
+    /// MCTS / human / UndoTest) rewind stopping BETWEEN an `AddMana` and its
+    /// consuming payment would observe the wrong pool. `undo()` restores the
+    /// captured pool. `ManaPool` is `Copy`, so the snapshot is cheap. Mirrors
+    /// `SetCombatManaPool` (mtg-ba6uq #7).
+    SetManaPool {
+        player_id: PlayerId,
+        prev: crate::core::ManaPool,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -843,6 +857,9 @@ impl fmt::Display for GameAction {
                     player_id.as_u32(),
                     prev.len()
                 )
+            }
+            GameAction::SetManaPool { player_id, prev } => {
+                write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
             }
             GameAction::SetCombatManaPool { player_id, prev } => {
                 write!(
@@ -1583,6 +1600,12 @@ impl GameAction {
                 // #6).
                 if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
                     player.source_prevention_shields = prev.clone();
+                }
+            }
+            GameAction::SetManaPool { player_id, prev } => {
+                // Restore the captured regular mana pool (mtg-t233k).
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.mana_pool = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {

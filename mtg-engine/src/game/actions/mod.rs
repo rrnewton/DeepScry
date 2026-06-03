@@ -348,6 +348,8 @@ impl GameState {
         {
             self.log_combat_mana_pool(player_id);
         }
+        // Snapshot the regular mana pool for undo before the payment (mtg-t233k).
+        self.log_mana_pool(player_id);
         let player = self.get_player_mut(player_id)?;
         player
             .pay_from_total_mana(&mana_cost)
@@ -2162,6 +2164,8 @@ impl GameState {
         {
             self.log_combat_mana_pool(player_id);
         }
+        // Snapshot the regular mana pool for undo before the payment (mtg-t233k).
+        self.log_mana_pool(player_id);
         let player = self.get_player_mut(player_id)?;
         if let Err(e) = player.pay_from_total_mana(&mana_cost) {
             // If we can't pay, we need to unwind:
@@ -8299,6 +8303,21 @@ impl GameState {
         );
     }
 
+    /// Snapshot a player's REGULAR `mana_pool` for undo BEFORE a payment
+    /// consumes it (mtg-t233k). `pay_from_total_mana` / `ManaPool::pay_cost`
+    /// mutate the pool with no other covering action, so a per-action (MCTS /
+    /// human / UndoTest) partial rewind stopping between an `AddMana` and its
+    /// consuming payment would otherwise observe the wrong pool. Mirrors
+    /// `log_combat_mana_pool` (mtg-ba6uq #7). Cheap: `ManaPool` is `Copy`.
+    pub(crate) fn log_mana_pool(&mut self, player_id: PlayerId) {
+        let Some(prev) = self.get_player(player_id).ok().map(|p| p.mana_pool) else {
+            return;
+        };
+        let prior_log_size = self.logger.log_count();
+        self.undo_log
+            .log(crate::undo::GameAction::SetManaPool { player_id, prev }, prior_log_size);
+    }
+
     fn apply_source_prevention_shields(&mut self, target_id: PlayerId, source: Option<CardId>, amount: i32) -> i32 {
         let Some(source) = source else { return amount };
         if amount <= 0 {
@@ -9101,7 +9120,8 @@ impl GameState {
             }
 
             Cost::Mana(mana_cost) => {
-                // Pay mana from pool
+                // Pay mana from pool. Snapshot the pool for undo (mtg-t233k).
+                self.log_mana_pool(player_id);
                 let player = self.get_player_mut(player_id)?;
                 if !player.mana_pool.can_pay(mana_cost) {
                     return Err(MtgError::InvalidAction("Cannot pay mana cost".to_string()));
@@ -9126,7 +9146,8 @@ impl GameState {
                 // Check for Taps triggers (e.g., Gran-Gran: "Whenever ~ becomes tapped")
                 self.check_triggers(TriggerEvent::Taps, card_id)?;
 
-                // Then pay mana
+                // Then pay mana. Snapshot the pool for undo (mtg-t233k).
+                self.log_mana_pool(player_id);
                 let player = self.get_player_mut(player_id)?;
                 if !player.mana_pool.can_pay(mana_cost) {
                     // TODO: Should refund the tap here
@@ -9339,6 +9360,8 @@ impl GameState {
                 if remaining > 0 && floating_mana > 0 {
                     let use_from_pool = remaining.min(floating_mana);
                     let mana_cost = ManaCost::from_string(&use_from_pool.to_string());
+                    // Snapshot the pool for undo before spending floating mana (mtg-t233k).
+                    self.log_mana_pool(player_id);
                     let player = self.get_player_mut(player_id)?;
                     player.mana_pool.pay_cost(&mana_cost).map_err(MtgError::InvalidAction)?;
                     remaining -= use_from_pool;
