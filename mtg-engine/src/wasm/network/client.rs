@@ -1592,6 +1592,21 @@ impl WasmNetworkClient {
                 spell_ability: None, // WASM client doesn't track spell_ability yet
                 target_card_ids,
             };
+            // mtg-mb668 class-A snapshot verification: log the DEFINITIVE wire
+            // (seq, action_count, hash) at the actual submit point, so it can be
+            // cross-checked against (a) the controller's WASM_CARD_DETAIL hash for
+            // the same seq and (b) the server's rejected client_hash. If they all
+            // agree, the WASM_CARD_DETAIL graveyard IS the rejected state.
+            if self.network_debug {
+                log::warn!(
+                    "WASM_SUBMIT seq={} ac={} hash={}",
+                    choice_seq,
+                    action_count,
+                    state_hash
+                        .map(|h| format!("{h:016x}"))
+                        .unwrap_or_else(|| "none".to_string()),
+                );
+            }
             self.queue_outbound(msg);
             self.choice_acknowledged = false;
             self.last_submitted_choice_seq = Some(choice_seq);

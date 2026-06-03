@@ -2472,6 +2472,20 @@ async fn run_coordinator(
                                     "Coordinator: P1 ChoiceResponse seq={} indices={:?}",
                                     response.choice_seq, response.choice_indices
                                 );
+                                // mtg-mb668 class-A snapshot verification: ground-truth of what the
+                                // server RECEIVED for this P1 response vs what it expects, so the
+                                // WASM_SUBMIT (seq,ac,hash) can be aligned and choice_seq↔ac↔hash
+                                // misalignment detected. network_debug-gated (opt-in diagnostics).
+                                if network_debug {
+                                    log::warn!(
+                                        "SRV_P1_RECV seq={} client_ac={} expected_ac={} client_hash={} server_hash={:016x}",
+                                        response.choice_seq,
+                                        client_action_count,
+                                        action_count,
+                                        client_state_hash.map(|h| format!("{h:016x}")).unwrap_or_else(|| "none".to_string()),
+                                        server_state_hash,
+                                    );
+                                }
 
                                 // Validate action_count
                                 if client_action_count != action_count {

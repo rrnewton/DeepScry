@@ -392,7 +392,7 @@ async function runTest() {
             // block of the NETWORK SYNC MISMATCH box in stderr.
             const wasmCardDetail = browserLogs
                 .map(l => l.text)
-                .filter(t => t.includes('WASM_CARD_DETAIL'));
+                .filter(t => t.includes('WASM_CARD_DETAIL') || t.includes('WASM_SUBMIT'));
             const cardDetailPath = path.join(debugDumpDir, `${stamp}_card_detail.log`);
             const serverMismatchBox = (serverRawStderr.match(/NETWORK SYNC MISMATCH DETECTED[\s\S]*?DIFFERENCES:[\s\S]*?╚/g) || [])
                 .join('\n\n========\n\n');
