@@ -200,18 +200,11 @@ require a serialization point to assign without conflict. We use BOTH, with the
   hash based issues in the CODE COMMENTS.
   
 - **Timing (orchestrator):** you should always do the numeric compaction before committing
-  to integration.
-
-only renumber when **no in-flight feature branch is
-  touching `.beads`** (do it right after a wave of card/feature branches merges,
-  before dispatching the next wave). Renumbering while a branch has edits to a
-  hash-named issue file causes modify/delete rebase conflicts (integration
-  renamed `mtg-2b3951.md`→`mtg-393.md`; the branch still edits `mtg-2b3951.md`).
-
-- A hash ID cited in a commit message or code TODO before renumbering still
-  resolves via the renamed file's history; prefer citing issues by title when the
-  reference must survive a renumber.
-
+  to integration.  If other in-flight agents are active in worktrees, they may edit an issue
+  with a hash identifier concurrently with the move.  However, by observing the move in the
+  version control history (`mtg-2b3951.md`→`mtg-393.md`), and understanding the context for the
+  issue edits, I am confident that you can figure out these merge conflicts and resolve them when
+  we rebase the worktree branch to FF-merge onto integration.
 
 Workflow: Commits and Version Control
 ================================================================================
@@ -295,9 +288,9 @@ You may push after validation and can check CI status with github MCP. Don't for
 **MANDATORY: MTG rules review for bug fixes.** Every bug fix — regardless of where it originated (fuzz testing, user report, tournament discovery, differential testing against Forge-Java) — MUST pass an MTG Comprehensive Rules compliance review before merging into `integration` (and therefore before any promotion to `main`). The review is documented in `.claude/skills/mtg-rules-review/SKILL.md` and produces an explicit `PASS`/`CONCERN`/`FAIL` verdict block in the PR description / commit message. A `FAIL` verdict blocks the merge; a `CONCERN` verdict requires a linked beads follow-up issue. This is in addition to (not a replacement for) `make validate` and the fmt check.
 
 **IMPORTANT: The `main` branch is protected.** Do NOT merge directly to main. We use a three-tier branch structure:
-- **main**: Stable branch - only receives merges from `integration` after CI passes
+- **main**: Stable branch which is deployed - only receives merges from `integration` after CI passes and the pre-deploy check passes.
 - **integration**: Staging branch - receives merges from feature branches with green CI, or direct commits when working on integration branch.
-- **Feature branches**: Active development on specific features (e.g., `avatar4`, `network2`)
+- **Feature branches**: Active development on specific features (e.g., `fix-XYZ`, `optimize-ABC`)
 
 To get changes into main, use the `ci-integration-monitor` agent (see `.claude/agents/ci-integration-monitor.md`) which handles:
 1. Checking CI status on feature branches
