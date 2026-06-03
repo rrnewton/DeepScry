@@ -1470,12 +1470,29 @@ impl Card {
     /// pump effect, AND insert it into the live keyword set. Routing all
     /// "gains <keyword> until end of turn" grants through here lets the
     /// forward EOT cleanup and the rewind transient sweep remove exactly the
-    /// granted-until-EOT keywords by game position (mtg-610). No-op for a
-    /// keyword the card already had (so cleanup never strips a printed/other-
-    /// source keyword).
-    pub fn grant_keyword_until_eot(&mut self, keyword: Keyword) {
+    /// granted-until-EOT keywords by game position (mtg-610).
+    ///
+    /// CRITICAL: only the keywords this grant *newly* adds to the live set are
+    /// tracked in `temp_keywords_until_eot`. If the card ALREADY had the keyword
+    /// (a printed `K:Haste` like Screaming Nemesis, or another permanent source),
+    /// it is NOT tracked as temporary — so the forward cleanup / rewind sweep
+    /// (`clear_temp_keywords_until_eot`) and the per-action `PumpCreature` undo
+    /// never strip a printed/other-source keyword (mtg-w5sa2: a Rockface Village
+    /// "+1/+0 and gains haste" on a printed-haste creature was stripping the
+    /// printed Haste at EOT cleanup AND drifting the turn-start keyword set
+    /// across rewinds). Mirrors the `AnimateTypeline` granted-keyword tracking.
+    ///
+    /// Returns `true` iff the keyword was newly added to the live set, so the
+    /// caller can record exactly the reversible subset in the undo log.
+    pub fn grant_keyword_until_eot(&mut self, keyword: Keyword) -> bool {
+        if self.keywords.contains(keyword) {
+            // Already present (printed or another source) — granting it again
+            // until EOT must not make it removable.
+            return false;
+        }
         self.keywords.insert(keyword);
         self.temp_keywords_until_eot.insert(keyword);
+        true
     }
 
     /// Remove all until-end-of-turn granted keywords from the live keyword set
@@ -1604,6 +1621,39 @@ mod tests {
         assert_eq!(card.owner, owner);
         assert_eq!(card.controller, owner);
         assert!(!card.tapped);
+    }
+
+    #[test]
+    fn grant_keyword_until_eot_never_strips_printed_keyword() {
+        // Regression (mtg-w5sa2): a Rockface Village "+1/+0 and gains haste
+        // until EOT" on a creature with PRINTED Haste (Screaming Nemesis) was
+        // stripping the printed Haste at the forward EOT cleanup AND drifting
+        // the turn-start keyword set across rewinds, because the grant tracked
+        // the already-present keyword as temporary.
+        let owner = PlayerId::new(100);
+        let mut card = Card::new(CardId::new(1), "Screaming Nemesis", owner);
+        card.keywords.insert(Keyword::Haste); // printed K:Haste
+
+        // Granting an ALREADY-present keyword must NOT track it as temporary and
+        // must report it was not newly added.
+        assert!(!card.grant_keyword_until_eot(Keyword::Haste));
+        assert!(card.has_keyword(Keyword::Haste));
+        assert!(!card.temp_keywords_until_eot.contains(Keyword::Haste));
+
+        // Cleanup / rewind sweep must leave the printed Haste intact.
+        card.clear_temp_keywords_until_eot();
+        assert!(
+            card.has_keyword(Keyword::Haste),
+            "printed Haste must survive the until-EOT cleanup sweep"
+        );
+
+        // Granting a NEW keyword IS tracked and IS removed by the sweep.
+        assert!(card.grant_keyword_until_eot(Keyword::Trample));
+        assert!(card.has_keyword(Keyword::Trample));
+        assert!(card.temp_keywords_until_eot.contains(Keyword::Trample));
+        card.clear_temp_keywords_until_eot();
+        assert!(!card.has_keyword(Keyword::Trample));
+        assert!(card.has_keyword(Keyword::Haste)); // printed one still intact
     }
 
     #[test]

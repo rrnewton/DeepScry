@@ -3696,8 +3696,15 @@ impl GameState {
                 card.toughness_bonus += toughness_bonus;
                 // Grant keywords until end of turn (tracked so forward cleanup
                 // + rewind sweep can remove them deterministically; mtg-610).
+                // Record ONLY the keywords this pump *newly* added so the undo
+                // entry removes exactly those, never a printed/other-source
+                // keyword (mtg-w5sa2: Rockface Village pumping a printed-haste
+                // creature was stripping its Haste).
+                let mut newly_granted: smallvec::SmallVec<[crate::core::Keyword; 2]> = smallvec::SmallVec::new();
                 for keyword in keywords_granted.iter() {
-                    card.grant_keyword_until_eot(*keyword);
+                    if card.grant_keyword_until_eot(*keyword) {
+                        newly_granted.push(*keyword);
+                    }
                 }
 
                 // Log the pump effect
@@ -3706,7 +3713,7 @@ impl GameState {
                         card_id: *target,
                         power_delta: *power_bonus,
                         toughness_delta: *toughness_bonus,
-                        keywords_granted: keywords_granted.clone(),
+                        keywords_granted: newly_granted,
                     },
                     prior_log_size,
                 );
@@ -3747,8 +3754,13 @@ impl GameState {
                 let card = self.cards.get_mut(*target)?;
                 card.power_bonus += power_bonus;
                 card.toughness_bonus += toughness_bonus;
+                // Record ONLY newly-added keywords so undo never strips a
+                // printed/other-source keyword (mtg-w5sa2).
+                let mut newly_granted: smallvec::SmallVec<[crate::core::Keyword; 2]> = smallvec::SmallVec::new();
                 for keyword in keywords_granted.iter() {
-                    card.grant_keyword_until_eot(*keyword);
+                    if card.grant_keyword_until_eot(*keyword) {
+                        newly_granted.push(*keyword);
+                    }
                 }
 
                 // Log for undo
@@ -3757,7 +3769,7 @@ impl GameState {
                         card_id: *target,
                         power_delta: power_bonus,
                         toughness_delta: toughness_bonus,
-                        keywords_granted: keywords_granted.clone(),
+                        keywords_granted: newly_granted,
                     },
                     prior_log_size,
                 );
