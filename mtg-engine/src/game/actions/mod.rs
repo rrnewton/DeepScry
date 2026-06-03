@@ -9495,10 +9495,21 @@ impl GameState {
                         self.cards.get(card_id)?.name
                     )));
                 }
-                let card = self.cards.get_mut(card_id)?;
-                card.remove_counter(*counter_type, *amount);
-                let card_name = card.name.to_string();
-                let new_count = card.get_counter(*counter_type);
+                // Route through the LOGGED counter-removal so this cost is a
+                // faithful undo-log inverse (mtg-mb668 sig-2e). The previous
+                // direct `card.remove_counter(...)` mutated the card with NO
+                // GameAction::RemoveCounter entry, so a rewind+replay (network
+                // shadow / MCTS / undo) left the counters stale — the WASM
+                // replay verifier caught it as "turn-start state hash changed
+                // across rewinds" with a `cards[N].counters` field diff
+                // (Triskelion paying its SubCounter<1/P1P1> ping cost). The
+                // earlier `current < amount` guard already validated the cost,
+                // and `remove_counters` does NOT enforce the loyalty "0 -> die"
+                // rule, so Triskelion still happily lives at 1/1 with zero
+                // P1P1 counters.
+                let card_name = self.cards.get(card_id)?.name.to_string();
+                self.remove_counters(card_id, *counter_type, *amount)?;
+                let new_count = self.cards.get(card_id)?.get_counter(*counter_type);
                 self.logger.verbose(&format!(
                     "{} loses {} {:?} counter(s) (now {})",
                     card_name, amount, counter_type, new_count
