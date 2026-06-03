@@ -251,3 +251,29 @@ state == the submitted state, then the graveyard-routing divergence is the confi
 class-A root for seed 2 → fix via the sig-2c/2d symmetric-reserved-id template on the
 graveyard-routing path.
 ========================================================================
+
+========================================================================
+CLASS-A R1 FIXED NATIVELY (slot03, 2026-06-03, commit 2528a1bb)
+========================================================================
+Built the native engine-level oracle (GO from coordinator). R1
+(count_cards_matching_filter, actions/mod.rs:1624) RED-proven natively + FIXED via
+the sig-2c/2d symmetric-reserved-id template:
+- New own test file actions/tests/netarch_reserved_zone.rs: shadow with reserved
+  opponent Hand/Library ids; count_cards_matching_filter(p, "Card", zone) was 0 on
+  shadow vs 5 golden (RED) → 5==5 after fix. Scope guard: typed/OppOwn filters stay
+  0 (no over-count).
+- FIX: when try_get=None && is_shadow_game, count the reserved id iff wildcard type
+  ("" / "Card" / "Permanent") + zone-owner-relative qual (YouOwn/YouCtrl) + no color
+  qual. Gated on is_shadow_game → server + normal play byte-unchanged.
+- lib 1024/1024 green; fmt+clippy clean. mtg-rules-review N/A (determinism).
+
+NOTE: R1 is an audit-confirmed real bug but is NOT seed-2's divergence (seed-2 =
+graveyard zone-routing, R2/sig-2c class — see prior block: shadow gy has reserved
+[60,56,52,53,54] the server moved to library). R1 fix may help seeds with
+opponent-hidden-zone-count effects; seed-2 needs the graveyard-routing fix next.
+NEXT: R2 oracle (restricted ChangeZoneAll with Hand/Graveyard private-zone origin
+skips reserved on shadow, actions/mod.rs:4312 `None => {}`) — the closest match to
+seed-2's graveyard signature — then R4 (state.rs:3488 ReturnToBattlefield). Walk
+R2→R4→R5→R3→R6, re-running the browser acceptance sweep (robots 1,2,5,6,7,9,11,
+18-20 + fireball s1 + ur_burn s42 + white_weenie 1/7/42) as the bar.
+========================================================================
