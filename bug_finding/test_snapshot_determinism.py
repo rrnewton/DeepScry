@@ -34,8 +34,12 @@ def run_to_snapshot(deck: str, p1_type: str, p2_type: str, seed: int,
         '--p1', p1_type,
         '--p2', p2_type,
         '--seed', str(seed),
-        '--stop-every', f'p1:choice:{choice_count}',
-        '--snapshot-output', str(snapshot_path)
+        # Real engine flag is --stop-on-choice <NUM>[:p1|:p2]; bare NUM == both
+        # players. Snapshots are parsed as JSON below, so --json is required
+        # (the engine defaults to bincode without it).
+        '--stop-on-choice', f'{choice_count}:p1',
+        '--snapshot-output', str(snapshot_path),
+        '--json'
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -54,8 +58,9 @@ def resume_and_snapshot_immediately(snapshot_in: Path, snapshot_out: Path,
         '--start-from', str(snapshot_in),
         '--p1', p1_type,
         '--p2', p2_type,
-        '--stop-every', 'p1:choice:0',  # Stop immediately (0 new choices)
-        '--snapshot-output', str(snapshot_out)
+        '--stop-on-choice', '0:p1',  # Stop immediately (0 new p1 choices)
+        '--snapshot-output', str(snapshot_out),
+        '--json'
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -83,11 +88,20 @@ def strip_metadata(obj):
     if isinstance(obj, dict):
         result = {}
         for key, value in obj.items():
-            # Skip metadata fields
+            # Skip metadata fields. This MUST stay consistent with the engine's
+            # authoritative EXCLUDED_FIELDS in mtg-engine/src/game/state_hash.rs
+            # (Replay mode), which the engine uses to define gameplay-equal
+            # states. In particular `mana_state_version` is a ManaEngine cache-
+            # invalidation counter that `rewind_to_turn_start` bumps
+            # unconditionally; state_hash.rs excludes it (with a unit test
+            # asserting bumps don't change the Replay hash), so a snapshot taken
+            # after a rewind legitimately differs from one taken before by +1
+            # here. Excluding it makes this test agree with the engine's own
+            # determinism contract rather than flagging a benign cache bump.
             if key in ('choice_id', 'undo_log', 'intra_turn_choices',
                       'logger', 'show_choice_menu',
                       'output_mode', 'output_format', 'numeric_choices',
-                      'step_header_printed',
+                      'step_header_printed', 'mana_state_version',
                       'p1_controller_state', 'p2_controller_state',
                       'lands_played_this_turn'):
                 continue
