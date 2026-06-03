@@ -59,6 +59,66 @@ mod tests {
         assert!(card.tapped);
     }
 
+    /// mtg-t233k: a regular `mana_pool` payment must round-trip on a PARTIAL
+    /// (per-action) undo. Tapping two lands logs `AddMana` (pool = RR); a
+    /// payment then consumes part of it. The payment itself logs nothing, but
+    /// the `SetManaPool` snapshot taken BEFORE it must restore the pre-payment
+    /// pool when a partial rewind stops between the `AddMana` and the spend.
+    /// Before the fix this snapshot did not exist, so the spend was invisible to
+    /// undo and a per-action rewind observed a too-empty pool.
+    #[test]
+    fn mana_pool_payment_restores_on_partial_undo_t233k() {
+        use crate::core::ManaCost;
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // Two Mountains on the battlefield, tapped for RR (each logs AddMana).
+        for _ in 0..2 {
+            let card_id = game.next_entity_id();
+            let mut card = Card::new(card_id, "Mountain".to_string(), p1_id);
+            card.add_type(CardType::Land);
+            game.cards.insert(card_id, card);
+            game.battlefield.add(card_id);
+            assert!(game.tap_for_mana(p1_id, card_id).is_ok());
+        }
+        assert_eq!(
+            game.get_player(p1_id).unwrap().mana_pool.red,
+            2,
+            "pool should hold RR after taps"
+        );
+
+        // The point a per-action rewind could stop at: AFTER the AddMana(s),
+        // BEFORE the payment.
+        let baseline = game.undo_log.len();
+
+        // Pay R through the snapshot-then-spend path used by the production
+        // pay sites (mtg-t233k).
+        game.log_mana_pool(p1_id);
+        let cost = ManaCost::from_string("R");
+        game.get_player_mut(p1_id).unwrap().mana_pool.pay_cost(&cost).unwrap();
+        assert_eq!(
+            game.get_player(p1_id).unwrap().mana_pool.red,
+            1,
+            "pool should be R after paying R"
+        );
+
+        // Partial rewind of JUST the payment snapshot must restore RR — NOT the
+        // too-empty pool the un-logged spend would otherwise leave.
+        assert!(game.undo_log.len() > baseline);
+        game.undo().expect("undo ok").expect("popped the SetManaPool snapshot");
+        assert_eq!(
+            game.undo_log.len(),
+            baseline,
+            "exactly one action (SetManaPool) covered the payment"
+        );
+        assert_eq!(
+            game.get_player(p1_id).unwrap().mana_pool.red,
+            2,
+            "partial undo of the payment must restore the pre-payment pool (mtg-t233k)"
+        );
+    }
+
     /// mtg-mb668 sig-2b: a card entering the hidden library must lose its
     /// `revealed_to_mask`, so a later draw of it re-emits `RevealCard`. Without
     /// this, a previously-public card (e.g. shuffled in from the graveyard via
