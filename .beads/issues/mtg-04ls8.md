@@ -6,7 +6,7 @@ issue_type: task
 depends_on:
   mtg-4irju: blocks
 created_at: 2026-06-02T23:54:07.666054352+00:00
-updated_at: 2026-06-02T23:56:49.098412719+00:00
+updated_at: 2026-06-03T00:00:47.791037544+00:00
 ---
 
 # Description
@@ -15,7 +15,7 @@ User 2026-06-02 (BACKLOG / future, AFTER mtg-4irju). Two related HTML-DAG refact
 
 1. PURE-FORWARDER index.html. Make index.html a pure forwarder — NO login UI, no lobby, ZERO release-divergent logic. Its entire job: (1) determine release (release= param else baked latest-token), (2) resolve the entry child via the manifest, (3) location.replace() to it. Move BOTH login (enter name) AND lobby (list/create games) into HASHED child pages: login.<hash>.html -> lobby.<hash>.html -> launcher.<hash> -> game pages (all immutable, release-versioned).
    WHY: login form/validation/lobby-protocol/styling are release-divergent; keeping them in the mutable no-cache index.html means changing login = changing the mutable root. Hashed children make every release's index.html structurally IDENTICAL (same tiny forwarder, differing only in baked latest-token + manifest hash) -> deferred multi-release dispatch (mtg-4irju) becomes trivial (forwarder is release-agnostic, resolves ANY retained release's children); minimal cache-attack surface; login becomes a release=-pinnable immutable artifact (provenance).
-   TRADEOFF (accepted): one redirect hop on fresh visit deepscry.net/ -> login.<hash>.html. Mitigate with location.replace() (clean back-button) + minimal inline loading state (logo, never changes). Sub-100ms same-origin.
+   TRADEOFF (accepted): one redirect hop on fresh visit deepscry.net/ -> login.<hash>.html. Mitigate with location.replace() (clean back-button) + minimal inline loading state (logo, never changes) so there's NO jarring flash. Sub-100ms same-origin -> imperceptible for an app.
 
 2. PROPER SIGN IN / SIGN OUT (user follow-up). Replace the ad-hoc 'change name' button with a first-class identity model. login.<hash>.html IS the Sign In page (enter name). Provide an explicit Sign Out (clear the stored identity -> return to login) and a clear logged-in/logged-out state, rather than a 'change name' button buried in the lobby/launcher UI. Identity (the chosen name + any server-assigned token) becomes a first-class concept the lobby/launcher read, with Sign Out as the way to drop it. Pairs naturally with login.<hash>.html being its own page (sign-out = location to index/login; sign-in = the name-entry flow).
 
