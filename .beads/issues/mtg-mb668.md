@@ -303,3 +303,29 @@ graveyard-origin ChangeZoneAll skips reserved opponent cards on shadow,
 actions/mod.rs:4312 None=>{}) — the seed-2 graveyard signature — RED-prove + fix via
 sig-2c/2d template; then R4/R5/R3/R6; browser acceptance sweep as the bar.
 ========================================================================
+
+========================================================================
+R2 CHARACTERIZED — reveal-buffer/design class, NOT count-parity (slot03, 2026-06-03)
+========================================================================
+Native characterization (throwaway test, not committed): a RESTRICTED ChangeZoneAll
+from a HIDDEN zone (Hand) on a shadow with 5 reserved opponent ids SKIPS all 5 (stay
+in hand, 0 moved) — the `None => {}` arm at actions/mod.rs:4341 (move_reserved_in_shadow
+is false for a restricted move). KEY: this is NOT sig-2c count-parity-fixable — the
+shadow cannot know which of the 5 hidden reserved cards match the restriction
+(Creature/etc.), so it cannot reproduce the server's move COUNT without an
+authoritative reveal. R2 is therefore the REVEAL-BUFFER / hidden-info design class
+(coordinator note 2), and a restricted mass-move from a HIDDEN zone is likely
+UNREACHABLE by real cards (you can't deterministically mass-move opponent hidden
+cards by type). => R2 is NOT seed-2's cause; do NOT apply a count-parity hack here.
+
+REVISED PLAN: seed-2's graveyard divergence is a DIFFERENT site. The reliable
+diagnostic (the seq/hash/ac browser bookkeeping is misaligned per commit 54a246d4,
+but the undo-log CONTENT is ground-truth) = dump the SHADOW's undo-log unconditionally
+(network_debug) and DIFF it against the server's captured 354-block undo-log to find
+the ~89 actions the shadow SKIPS (MoveCard/RevealCard/etc.) — that names the exact
+branch-on-absence site. THEN native-oracle + fix that site. Skip R2 (design/unreachable).
+Likely next sites: R4 (state.rs:3488 DelayedEffect::ReturnToBattlefield, "pure sig-2c
+shape, VERIFIED" — graveyard/exile->battlefield return skipped on shadow leaves extra
+cards in shadow gy/exile, matching the seed-2 "shadow keeps cards server moved out"
+pattern) and the reserved-id draw/discard→graveyard routing. R1 already landed.
+========================================================================
