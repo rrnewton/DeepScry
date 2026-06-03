@@ -2595,10 +2595,12 @@ impl WasmFancyTuiState {
             .expect("net_our_controller must be initialised before run_network_ai_forward");
 
         let result = {
-            let sync_callback = Self::make_ai_sync_callback(network_client, our_id);
+            let sync_callback = Self::make_ai_sync_callback(network_client.clone(), our_id);
+            let searched_card_lookup = Self::make_ai_searched_card_lookup(network_client);
             let mut game_loop = GameLoop::new(&mut self.game)
                 .with_verbosity(VerbosityLevel::Normal)
                 .with_sync_callback(sync_callback)
+                .with_searched_card_lookup(searched_card_lookup)
                 .skip_opening_hands()
                 .with_deferred_game_end();
 
@@ -2672,10 +2674,12 @@ impl WasmFancyTuiState {
         let mut opponent_replay = ReplayController::new(opponent_id, Box::new(fresh_remote), opponent_choices);
 
         let result = {
-            let sync_callback = Self::make_ai_sync_callback(network_client, our_id);
+            let sync_callback = Self::make_ai_sync_callback(network_client.clone(), our_id);
+            let searched_card_lookup = Self::make_ai_searched_card_lookup(network_client);
             let mut game_loop = GameLoop::new(&mut self.game)
                 .with_verbosity(VerbosityLevel::Normal)
                 .with_sync_callback(sync_callback)
+                .with_searched_card_lookup(searched_card_lookup)
                 .skip_opening_hands()
                 .with_deferred_game_end();
 
@@ -2812,6 +2816,24 @@ impl WasmFancyTuiState {
                     game.action_count()
                 );
             }
+        }
+    }
+
+    /// Build the authoritative library-search-result lookup for the AI shadow
+    /// path (mtg-mb668). On an OPPONENT's library search the shadow's own
+    /// `valid_cards` is empty and the raced `OpponentChoice.library_search_result`
+    /// does not survive rewind, so the FIRST forward resolution would record
+    /// `LibrarySearch(None)` and replay it forever (fetch lost → library-count
+    /// divergence → `compute_view_hash` desync). This closure reads the
+    /// rewind-surviving, action_count-keyed reveal-history buffer for the
+    /// `Searched` reveal stamped at the search position, so the first resolution
+    /// records `Some(CardId)` and it re-derives identically on every replay.
+    #[cfg(feature = "wasm-network")]
+    fn make_ai_searched_card_lookup(
+        network_client: SharedNetworkClient,
+    ) -> impl Fn(&GameState, PlayerId) -> Option<crate::core::CardId> {
+        move |game: &GameState, searcher: PlayerId| {
+            network_client.borrow().searched_card_for(searcher, game.action_count())
         }
     }
 

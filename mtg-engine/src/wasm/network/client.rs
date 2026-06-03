@@ -1217,6 +1217,64 @@ impl WasmNetworkClient {
         self.state_sync_effective_ac.get(&synthetic_ac).copied()
     }
 
+    /// Authoritative library-search result for an OPPONENT `searcher` resolving
+    /// at game position `target_action` (mtg-mb668).
+    ///
+    /// On P_viewer's shadow, when the OPPONENT (`searcher`) tutors a card, the
+    /// server can't reveal WHICH card (hidden information), so it sends a single
+    /// **dummy `Searched` reveal**: empty `name`, but carrying the **authoritative
+    /// fetched `card_id`** (server.rs ~2933, `RevealReason::Searched`,
+    /// `owner = searcher`), stamped with the search choice's `action_count`. That
+    /// CardId is exactly what the shadow needs to record into the
+    /// `LibrarySearch(Some(id))` ChoicePoint so the `move_card(id, Library, Hand)`
+    /// decrements the opponent's library count — the identity stays hidden, only
+    /// the count/zone-move is tracked.
+    ///
+    /// This buffer is **rewind-surviving and action_count-keyed** (append-only),
+    /// unlike the raced `OpponentChoice.library_search_result` (absent at the
+    /// FIRST resolution → `None` recorded and replayed forever = mtg-mb668 sig-1).
+    /// We pick the dummy `Searched` reveal owned by `searcher` with the GREATEST
+    /// effective `action_count` that is `<= target_action`: the server stamps each
+    /// with the action_count of the search choice it precedes, and the shadow
+    /// resolves that search at the same position, so the closest `<= target_action`
+    /// reveal is THIS search's result. Repeated searches each carry a distinct
+    /// (strictly larger) effective_ac, so each resolution selects its own reveal —
+    /// and the selection is identical on the forward pass and on every replay.
+    ///
+    /// We match ONLY **empty-name** `Searched` reveals (the opponent-fetch dummy).
+    /// Our OWN search instead receives MULTIPLE *named* `Searched` reveals (the
+    /// candidate library, server.rs ~2830) which are NOT a single fetched result —
+    /// excluding them prevents the lookup misfiring on our own searches (which in
+    /// any case resolve from a non-empty `valid_cards`, so the lookup is not even
+    /// consulted for them).
+    ///
+    /// `None` when there is no such reveal — the search genuinely failed to find
+    /// (CR 701.19c, no `Searched` reveal sent), or the reveal is not yet bound to
+    /// a choice (still past the frontier).
+    pub fn searched_card_for(&self, searcher: PlayerId, target_action: u64) -> Option<crate::core::CardId> {
+        let mut best: Option<(u64, crate::core::CardId)> = None;
+        for (synthetic_ac, entry) in self.state_sync.iter() {
+            let StateSyncEntry::RevealCard { owner, card, reason } = entry else {
+                continue;
+            };
+            // Opponent-fetch dummy: empty name (identity hidden), authoritative
+            // card_id, owned by the searcher, reason == Searched.
+            if *owner != searcher || !matches!(reason, crate::network::RevealReason::Searched) || !card.name.is_empty()
+            {
+                continue;
+            }
+            match self.effective_ac_of(synthetic_ac) {
+                Some(eff) if eff <= target_action => {
+                    if best.is_none_or(|(best_eff, _)| eff >= best_eff) {
+                        best = Some((eff, card.card_id));
+                    }
+                }
+                _ => {}
+            }
+        }
+        best.map(|(_, card_id)| card_id)
+    }
+
     /// Apply every state-sync entry that has been received but not yet
     /// applied to `shadow`. **Non-destructive read** of `state_sync` —
     /// only the per-client cursor advances; the log itself is untouched.
