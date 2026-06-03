@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# new_worktree.sh — official entry point for creating a new mtg-forge-rs
+# new_worktree.sh — official entry point for creating a new deepscry
 #                   worktree. Consolidates the original
 #                   scripts/new_worktree.sh (parent) and the older
 #                   scripts/clone_worktree.sh (in-repo) into a single
@@ -13,7 +13,7 @@
 # What this script does:
 #
 #   1. Refresh the SOURCE checkout (default: the primary at
-#      <parent>/mtg-forge-rs/) — fetch origin, ensure it has a green
+#      <parent>/deepscry/) — fetch origin, ensure it has a green
 #      release build with --features network. The donor checkout is the
 #      source-of-truth target/ donor.
 #
@@ -81,7 +81,7 @@
 #   ./scripts/new_worktree.sh slot04 --source ./worktrees/slot02 --no-build
 #
 # Must be run from the PARENT directory (the directory that contains
-# mtg-forge-rs/ and worktrees/).
+# deepscry/ and worktrees/).
 
 set -euo pipefail
 
@@ -146,7 +146,7 @@ fi
 INVOKED_SCRIPT="$0"
 SCRIPT_DIR="$(cd "$(dirname "$INVOKED_SCRIPT")" && pwd)"
 PARENT_DIR="$(dirname "$SCRIPT_DIR")"
-PRIMARY="$PARENT_DIR/mtg-forge-rs"
+PRIMARY="$PARENT_DIR/deepscry"
 
 if [ -n "$SOURCE_OVERRIDE" ]; then
     if [ ! -d "$SOURCE_OVERRIDE" ]; then

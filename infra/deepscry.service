@@ -1,19 +1,30 @@
+# DeepScry systemd unit — REFERENCE / EXAMPLE ONLY.
+#
+# The AUTHORITATIVE unit is rendered at deploy time by
+# scripts/deploy-cloud.sh (render_systemd_unit), which fills in the
+# user, install dir, and port from .deepscry-deploy.env
+# (REMOTE_USER / REMOTE_DIR / REMOTE_PORT). This file is a
+# human-readable reference of the shape it produces: it hardcodes NO
+# username and uses systemd's %h (the service user's home), so it works
+# for any user. The install dir under $HOME defaults to "deepscry".
 [Unit]
-Description=DeepScry web + lobby (mtg-forge-rs unified axum server)
+Description=DeepScry — unified axum web + lobby server
 After=network.target
 
 [Service]
 Type=simple
-User=newton
-WorkingDirectory=/home/newton/mtg-forge-rs
-# Optional environment file with MTG_TLS_CERT / MTG_TLS_KEY (and any
-# other deploy-specific overrides). The leading `-` makes systemd ignore
+# User= is intentionally omitted. As a systemd --user unit it runs as
+# the invoking user; for a system unit, deploy-cloud.sh injects
+# User=<REMOTE_USER>. %h expands to that user's home in either mode.
+WorkingDirectory=%h/deepscry
+# Optional env file with MTG_TLS_CERT / MTG_TLS_KEY (and any other
+# deploy-specific overrides). The leading `-` makes systemd ignore
 # absence — plain HTTP is the default when no TLS env vars are set.
 EnvironmentFile=-/etc/default/deepscry
-ExecStart=/home/newton/mtg-forge-rs/bin/mtg server-web \
+ExecStart=%h/deepscry/bin/mtg server-web \
     --bind 0.0.0.0:8080 \
-    --static-dir /home/newton/mtg-forge-rs/web \
-    --cardsfolder /home/newton/mtg-forge-rs/cardsfolder
+    --static-dir %h/deepscry/web \
+    --cardsfolder %h/deepscry/cardsfolder
 Restart=on-failure
 RestartSec=3s
 LimitNOFILE=65536

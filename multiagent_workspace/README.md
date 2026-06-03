@@ -1,12 +1,12 @@
 # `multiagent_workspace/` — the in-repo dev harness kit
 
 This directory ships the **parent-workspace dev harness** alongside the
-`mtg-forge-rs` project source. It is the install-time content for the
+`deepscry` project source. It is the install-time content for the
 parent directory (the "dev harness root") that hosts the primary
 checkout plus any number of agent worktrees.
 
 Without this kit, the parent directory is just a plain folder
-containing a clone of mtg-forge-rs. With this kit installed, the parent
+containing a clone of deepscry. With this kit installed, the parent
 becomes a coordinated multi-agent workspace with:
 
 - A canonical workspace-discipline `CLAUDE.md` (registered worktrees,
@@ -19,7 +19,7 @@ becomes a coordinated multi-agent workspace with:
   agents) auto-loads when run from the parent dir.
 
 The kit is **versioned with the project source** so every clone of
-mtg-forge-rs carries the harness with it. To install on a new machine,
+deepscry carries the harness with it. To install on a new machine,
 run `install.sh` from the parent directory (see below).
 
 ## Layout of this kit
@@ -28,6 +28,7 @@ run `install.sh` from the parent directory (see below).
 multiagent_workspace/
 ├── README.md                     (this file)
 ├── CLAUDE.md                     (workspace-discipline guide; symlinked to parent)
+├── .gitignore                    (parent repo ignore rules; read via core.excludesFile)
 ├── install.sh                    (one-shot installer)
 ├── scripts/
 │   └── new_worktree.sh           (worktree creation; symlinked to parent)
@@ -39,19 +40,18 @@ multiagent_workspace/
 │           └── SKILL.md          (Claude Code skill: worktree workflow)
 └── templates/
     ├── ACTIVE.md                 (worktree registry; COPIED, not symlinked)
-    ├── ARCHIVED.md               (historical log;     COPIED, not symlinked)
-    └── parent.gitignore          (the parent repo's .gitignore;   COPIED)
+    └── ARCHIVED.md               (historical log;     COPIED, not symlinked)
 ```
 
 ## Install procedure
 
-From a fresh checkout of mtg-forge-rs:
+From a fresh checkout of deepscry:
 
 ```sh
 # 1. Set up the parent directory layout. If you cloned the project
-#    directly into ~/work/mtg/mtg-forge-rs/ , the parent is already
+#    directly into ~/work/mtg/deepscry/ , the parent is already
 #    where the installer expects it.
-cd ~/work/mtg/mtg-forge-rs        # the project checkout
+cd ~/work/mtg/deepscry        # the project checkout
 
 # 2. Run the installer. It works from inside the project checkout and
 #    operates on its parent directory.
@@ -59,25 +59,28 @@ cd ~/work/mtg/mtg-forge-rs        # the project checkout
 
 # 3. From now on, work from the PARENT:
 cd ..
-ls   # CLAUDE.md, .claude, scripts/, worktrees/, mtg-forge-rs/ ...
+ls   # CLAUDE.md, .claude, scripts/, worktrees/, deepscry/ ...
 ```
 
 What `install.sh` does:
 
-1. **Verifies layout.** Confirms `parent/mtg-forge-rs/` exists and is
+1. **Verifies layout.** Confirms `parent/deepscry/` exists and is
    a git checkout (the primary).
 2. **Symlinks** the following into the parent:
-   - `parent/CLAUDE.md` → `mtg-forge-rs/multiagent_workspace/CLAUDE.md`
-   - `parent/.claude` → `mtg-forge-rs/multiagent_workspace/.claude`
+   - `parent/CLAUDE.md` → `deepscry/multiagent_workspace/CLAUDE.md`
+   - `parent/.claude` → `deepscry/multiagent_workspace/.claude`
    - `parent/scripts/new_worktree.sh` →
-     `mtg-forge-rs/multiagent_workspace/scripts/new_worktree.sh`
-3. **Copies (does NOT symlink)** the contents of `templates/`:
+     `deepscry/multiagent_workspace/scripts/new_worktree.sh`
+3. **Copies (does NOT symlink)** the mutable registry templates:
    - `templates/ACTIVE.md` → `parent/worktrees/ACTIVE.md` (only if absent)
    - `templates/ARCHIVED.md` → `parent/worktrees/ARCHIVED.md` (only if absent)
-   - `templates/parent.gitignore` → `parent/.gitignore` (only if absent)
 4. **Creates `parent/worktrees/`** if it doesn't already exist.
 5. **Initialises a local-only git repo** in the parent (with
-   mtg-forge-rs registered as a submodule if not already so). Does
+   deepscry registered as a submodule if not already so), and points the
+   parent's `core.excludesFile` at `multiagent_workspace/.gitignore`.
+   (git won't follow a symlinked top-level `.gitignore`, so the parent's
+   ignore rules come from the in-repo file via excludesFile — single
+   source, no copy.) Does
    NOT add a remote — the parent repo is purely local audit history
    by default.
 
@@ -95,9 +98,9 @@ Symlinks vs. copies, in summary:
 ## Updating the kit
 
 When the harness evolves, edit files **in
-`mtg-forge-rs/multiagent_workspace/`** (the kit), not the parent
+`deepscry/multiagent_workspace/`** (the kit), not the parent
 symlinks. Commit and push as part of normal project work. Other
-machines pick up changes via the next `git pull` of mtg-forge-rs.
+machines pick up changes via the next `git pull` of deepscry.
 
 If you need to add a new templated file (per-machine state), drop it
 in `templates/` and extend `install.sh` to copy it on install.

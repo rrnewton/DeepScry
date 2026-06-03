@@ -1,6 +1,6 @@
 ---
 name: new-worktree
-description: Standard workflow for creating a new git worktree in the mtg-forge-rs project. ALWAYS use scripts/new_worktree.sh — never raw `git worktree add` — to get a refreshed primary checkout, a green release build, and a copy-on-write reflinked target/ that makes the new worktree's first incremental build minutes faster. Use whenever spinning up a new worktree for an agent, a feature branch, or any parallel investigation.
+description: Standard workflow for creating a new git worktree in the deepscry project. ALWAYS use scripts/new_worktree.sh — never raw `git worktree add` — to get a refreshed primary checkout, a green release build, and a copy-on-write reflinked target/ that makes the new worktree's first incremental build minutes faster. Use whenever spinning up a new worktree for an agent, a feature branch, or any parallel investigation.
 ---
 
 # new-worktree — official worktree creation workflow
@@ -30,7 +30,7 @@ a workspace move). If `--branch` is omitted it defaults to the slot
 name. The worktree appears at `./worktrees/<slot>`.
 
 > The script lives in `multiagent_workspace/scripts/new_worktree.sh`
-> inside the mtg-forge-rs project, and is symlinked into the parent at
+> inside the deepscry project, and is symlinked into the parent at
 > `<parent>/scripts/new_worktree.sh` by
 > `multiagent_workspace/install.sh`. Edit the in-repo copy; never the
 > symlink target.
@@ -45,9 +45,9 @@ name. The worktree appears at `./worktrees/<slot>`.
 
 2. **ALWAYS invoke `scripts/new_worktree.sh` from the parent
    directory** (`~/work/mtg/`), the directory that contains
-   `mtg-forge-rs/`, `worktrees/`, and the harness symlinks.
+   `deepscry/`, `worktrees/`, and the harness symlinks.
 
-3. **NEVER do code work in `./mtg-forge-rs/`.** That is the **primary
+3. **NEVER do code work in `./deepscry/`.** That is the **primary
    checkout** — the donor for the reflink clone. Treat it as a
    build-cache reservoir. Keep it on `integration` (or `main`) and
    clean.
@@ -86,7 +86,7 @@ would produce a degraded worktree:
 ### `--source` flag
 
 By default the source is the primary checkout
-(`<parent>/mtg-forge-rs/`). Pass `--source <path>` to clone `target/`
+(`<parent>/deepscry/`). Pass `--source <path>` to clone `target/`
 from a different worktree — useful when an existing feature worktree
 has already built artifacts that match the new branch's commit. The
 script still enforces the green-build precondition on the chosen
@@ -101,7 +101,7 @@ dependency from scratch — that's typically 5+ minutes of CPU.
 `cp -a --reflink=auto` on a CoW filesystem (btrfs, xfs, zfs, apfs)
 creates extent-shared copies in milliseconds. Cargo's freshness check
 then sees up-to-date artifacts for every dependency and skips them.
-Only the **workspace member crates** (`mtg-forge-rs`,
+Only the **workspace member crates** (`mtg-engine`,
 `mtg-benchmarks`) recompile, because cargo's fingerprints contain
 absolute source paths and the worktree's source path is necessarily
 different. That's a roughly 4-5x speedup on the first build, and
@@ -109,7 +109,7 @@ successive incremental builds are normal-fast.
 
 ## Primary checkout convention
 
-`./mtg-forge-rs/` is the **primary checkout**. It is the donor for
+`./deepscry/` is the **primary checkout**. It is the donor for
 every reflink clone. To preserve that role:
 
 - Keep it on `integration` (or `main`) — never on a feature branch.
@@ -118,26 +118,31 @@ every reflink clone. To preserve that role:
 - Don't edit code in it. All editing happens in feature-branch
   worktrees (`./worktrees/<branch>/`).
 - Sibling worktrees are short-lived: created → used → removed via
-  `git -C mtg-forge-rs worktree remove <path>` once the branch is
+  `git -C deepscry worktree remove <path>` once the branch is
   merged.
 
 ## Cleaning up worktrees
 
-When done with a feature branch:
+When done with a feature branch, use the **teardown script** — the
+counterpart to `new_worktree.sh`. It ENFORCES the registry move that is
+otherwise easy to forget: it refuses to remove the worktree while
+`ACTIVE.md` still lists the slot, and prints the ready-to-paste
+`ARCHIVED.md` row (path/branch/date/SHA pre-filled):
 
 ```sh
 cd ~/work/mtg
-
-# 1. Move the row from ACTIVE.md to ARCHIVED.md, commit if parent
-#    has a remote.
-$EDITOR worktrees/ACTIVE.md worktrees/ARCHIVED.md
-
-# 2. Remove the worktree (by its slot directory).
-git -C mtg-forge-rs worktree remove worktrees/slot<NN>
-
-# 3. Delete the local branch only if merged or explicitly approved.
-git -C mtg-forge-rs branch -D <branch>
+./scripts/archive_worktree.sh slot<NN>
+# • If ACTIVE.md still lists the slot → the script STOPS and prints the
+#   ARCHIVED.md row to paste (you add push-state + one-line purpose).
+#   Move it to the TOP of ARCHIVED.md, delete the ACTIVE.md row, re-run.
+# • Once ACTIVE.md no longer lists the slot → it runs
+#   `git worktree remove --force` (force = the worktree has submodules).
+# • The branch ref is LEFT INTACT. Delete it only if merged / approved:
+git -C deepscry branch -D <branch>
 ```
+
+The script also refuses if the worktree has uncommitted/untracked work,
+so you never silently discard it.
 
 Don't leave orphan worktrees lying around — they each hold gigabytes
 of `target/` data even with reflinking, and they confuse later agents
@@ -151,7 +156,7 @@ about which branch is canonical.
   (An existing branch that is NOT checked out anywhere is simply
   attached — that is the normal re-home flow, not an error.)
 - **"<path> already exists" error** — that slot is already in use.
-  Remove it with `git -C mtg-forge-rs worktree remove worktrees/slot<NN>`
+  Remove it with `git -C deepscry worktree remove worktrees/slot<NN>`
   first, or pick a different slot number.
 - **Source release build fails** — fix that *first*. The whole point
   of the script is that the donor must be green. Don't bypass with

@@ -1,14 +1,14 @@
-# Parent Workspace Agent Guide (mtg-forge-rs)
+# Parent Workspace Agent Guide (deepscry)
 
-This is the **dev harness** around the `mtg-forge-rs` project. It is NOT a
+This is the **dev harness** around the `deepscry` project. It is NOT a
 code project. It is the meta-workspace that contains the primary
 checkout, private agent worktrees, experiment captures, ai_docs, scratch
 output, and harness tooling. Keep the parent directory clean: every file
 must be tracked, committed, or `.gitignored` before handoff.
 
 The harness itself is versioned inside the project at
-`mtg-forge-rs/multiagent_workspace/`. This file (`CLAUDE.md`) is
-symlinked from the parent dir to `mtg-forge-rs/multiagent_workspace/CLAUDE.md`
+`deepscry/multiagent_workspace/`. This file (`CLAUDE.md`) is
+symlinked from the parent dir to `deepscry/multiagent_workspace/CLAUDE.md`
 by `multiagent_workspace/install.sh`. Edit the in-repo copy, not the
 symlink target — changes there flow back to every machine via `git pull`.
 
@@ -21,15 +21,15 @@ consistently.
   `~/working_copies/mtg/`; the two paths resolve to the same tree via
   the `~/work → ~/working_copies` symlink). When the user says
   "parent" they mean this dev harness, NOT any git "parent" commit and
-  NOT the mtg-forge-rs project repo.
-- **`primary checkout`** — `parent/mtg-forge-rs/`, the canonical
-  mtg-forge-rs clone. Acts as the **donor** for reflink-cloned
+  NOT the deepscry project repo.
+- **`primary checkout`** — `parent/deepscry/`, the canonical
+  deepscry clone. Acts as the **donor** for reflink-cloned
   `target/` trees in every new worktree. Treat it as a build-cache
   reservoir, not a development workspace.
-- **`worktree`** — an agent-private mtg-forge-rs checkout under
+- **`worktree`** — an agent-private deepscry checkout under
   `parent/worktrees/<branch>/`. All mutating work happens here, never
   in the primary checkout.
-- **`mtg-forge-rs`** — the GitHub project. Remote `origin` points at
+- **`deepscry`** — the GitHub project. Remote `origin` points at
   the OSS upstream. The three-tier branch structure is `feature
   branches` → `integration` → `main`; see `<RepoRoot>/CLAUDE.md` for
   the merge ceremony.
@@ -44,15 +44,15 @@ Top-level layout:
 
 ```
 parent/                       (= ~/work/mtg/)
-├── CLAUDE.md                 → mtg-forge-rs/multiagent_workspace/CLAUDE.md (symlink)
-├── .claude/                  → mtg-forge-rs/multiagent_workspace/.claude/ (symlink)
+├── CLAUDE.md                 → deepscry/multiagent_workspace/CLAUDE.md (symlink)
+├── .claude/                  → deepscry/multiagent_workspace/.claude/ (symlink)
 ├── scripts/
-│   └── new_worktree.sh       → mtg-forge-rs/multiagent_workspace/scripts/new_worktree.sh (symlink)
+│   └── new_worktree.sh       → deepscry/multiagent_workspace/scripts/new_worktree.sh (symlink)
 ├── worktrees/
 │   ├── ACTIVE.md             (registry of live agent worktrees)
 │   ├── ARCHIVED.md           (historical log)
 │   └── <branch-name>/        (each live worktree)
-├── mtg-forge-rs/             (primary checkout)
+├── deepscry/             (primary checkout)
 ├── ai_docs/                  (transient AI scratch notes; optional)
 ├── experiments/              (captured experiment data; optional)
 ├── scratch/                  (loose binaries, profiling output; optional)
@@ -61,7 +61,7 @@ parent/                       (= ~/work/mtg/)
 
 Project boundaries:
 
-- `mtg-forge-rs/` is the actual project. Durable feature work, tests,
+- `deepscry/` is the actual project. Durable feature work, tests,
   architecture docs, and **beads (`mb`) issues** live there. See
   `<RepoRoot>/CLAUDE.md` for project-internal rules — the coding
   conventions, DRY principles, no-clone/no-collect performance rules,
@@ -73,7 +73,7 @@ Project boundaries:
   a project checkout.
 
 Rule of thumb: if it is durable source or project documentation for a
-fresh clone, put it in `mtg-forge-rs/` (the project). If it is
+fresh clone, put it in `deepscry/` (the project). If it is
 investigation state, experiment data, or harness coordination, keep it
 in the parent workspace.
 
@@ -98,7 +98,7 @@ Worktree naming:
   the slot directories without git repair.
 - Pick the next available slot number; record it in `ACTIVE.md` before
   the agent's first commit.
-- The primary checkout (`mtg-forge-rs/`) is for integration work only:
+- The primary checkout (`deepscry/`) is for integration work only:
   the donor of cached `target/` artifacts, the staging ground for
   merging accepted work, and the launchpad for new worktrees. Agents
   do not directly modify it.
@@ -118,7 +118,7 @@ Push policy:
 
 - **Pushing is allowed without per-push user confirmation** in two
   cases:
-  1. From the primary checkout (`parent/mtg-forge-rs/`), push
+  1. From the primary checkout (`parent/deepscry/`), push
      `integration` (and `main`, when promoted) after a green
      `cargo build --release --features network` and `make validate`.
   2. From an agent worktree (`parent/worktrees/<branch>/`), push its
@@ -153,7 +153,7 @@ Concrete rules:
    it anyway" license).
 2. **No watered-down clippy**: `cargo clippy --features network --lib
    --bins` (no `-D warnings`, no `--all-targets`) is NOT a substitute.
-   CI runs `cargo clippy -p mtg-forge-rs --all-targets --all-features
+   CI runs `cargo clippy -p mtg-engine --all-targets --all-features
    --features network -- -D warnings`; the agent's local check must
    match (or just run `make clippy`).
 3. **Submodule init**: `new_worktree.sh` now initialises both
@@ -290,7 +290,7 @@ practice.
 
    ```bash
    diff \
-     <( git -C mtg-forge-rs worktree list --porcelain \
+     <( git -C deepscry worktree list --porcelain \
           | awk '/^worktree/{print $2}' \
           | grep -F "/worktrees/" \
           | sed -E 's|.*/worktrees/||' \
@@ -314,7 +314,7 @@ Clean-start gate:
 
 The `git status` clean check is a PRECONDITION for starting work in
 ANY checkout — the parent dev harness, the primary checkout
-(`mtg-forge-rs/`), AND every agent worktree (`worktrees/<branch>/`).
+(`deepscry/`), AND every agent worktree (`worktrees/<branch>/`).
 Reproducibility depends on it: if an agent determines that commit X
 yields result Y, that result must be reproducible by other agents and
 by the user from the same SHA without depending on untracked files
@@ -354,13 +354,19 @@ experiment captures, harness-script edits.
 
 Archive process:
 
+**Use `./scripts/archive_worktree.sh <slot>` — it mechanizes and ENFORCES
+steps 1–3 below** (refuses while the worktree is dirty, refuses while
+`ACTIVE.md` still lists the slot, prints the ready-to-paste `ARCHIVED.md`
+row, then runs `git worktree remove --force`). The manual steps remain
+the contract it enforces:
+
 1. Verify the worktree has no uncommitted changes and `git status` is
    clean, including no untracked files. If either check fails, surface
    it to the user or orchestrator. Never silently discard work.
 2. Move the entry from `worktrees/ACTIVE.md` to `worktrees/ARCHIVED.md`,
    keeping the description and adding the archive date and final SHA.
 3. Remove the git worktree:
-   `git -C mtg-forge-rs worktree remove --force worktrees/<branch>`.
+   `git -C deepscry worktree remove --force worktrees/<slot>`.
    The `--force` flag is REQUIRED because the worktree contains
    submodules; without it git refuses with "contains a .git directory".
 4. Delete the local branch only if it has merged into a tracked branch
@@ -385,7 +391,7 @@ Correct teardown sequence for a worktree:
 
 ```sh
 # From the primary checkout (or any other worktree):
-git -C mtg-forge-rs worktree remove --force worktrees/<branch>
+git -C deepscry worktree remove --force worktrees/<branch>
 # That's it. No deinit. git worktree remove handles per-worktree
 # submodule gitdirs under .git/worktrees/<branch>/modules/ (for
 # .claude_template) automatically, and leaves the SHARED
@@ -396,7 +402,7 @@ If you ever genuinely need to recover from a corrupted shared
 forge-java modules dir:
 
 ```sh
-cd mtg-forge-rs
+cd deepscry
 rm -rf forge-java
 git submodule update --init --force forge-java
 # Then re-point every worktree's forge-java/.git file:
@@ -410,7 +416,7 @@ done
 
 - Orchestrator CWD: parent workspace root (`~/work/mtg/`).
 - Mutating agent CWD: `worktrees/<branch>/`.
-- Read-only agent CWD: normally the primary checkout `mtg-forge-rs/`
+- Read-only agent CWD: normally the primary checkout `deepscry/`
   (treat as read-only) or a clearly marked read-only worktree.
 - Task instructions may direct outputs outside the agent CWD, such as
   `ai_docs/` or `experiments/`. Follow those destinations exactly.
@@ -450,7 +456,7 @@ sweeps, deck-pair tournaments), capture them under
 
 - Include `README.md` with hypothesis, methodology, and result summary.
 - Include `metadata.json` at experiment and capture level (commit SHA
-  of mtg-forge-rs under test, command line, seeds used, host info).
+  of deepscry under test, command line, seeds used, host info).
 - CSVs must have headers and consistent columns.
 - Reports must cite source files and commands for every number.
 - Do not hand-write data tables. Generate them from captured data with
@@ -523,7 +529,7 @@ section covers the dispatch / coordination layer.
      first source commit").
 - **Closeout every child.** When a child reports done:
   1. Verify the worktree is clean (zero modified, zero untracked).
-  2. **Diff-gate the branch before ff-merge.** Run `git -C mtg-forge-rs
+  2. **Diff-gate the branch before ff-merge.** Run `git -C deepscry
      diff --stat integration...<branch>` and scan the file list. REFUSE
      to merge (send back for fixing) if the branch adds **tracked image
      files** (`*.png/*.jpg/*.gif/*.webp/...`, outside `cardsfolder/`),
@@ -533,7 +539,7 @@ section covers the dispatch / coordination layer.
      in `<RepoRoot>/CLAUDE.md`. A green `make validate` does NOT excuse
      a polluting diff; the orchestrator owns this gate.
   3. Move the row from `ACTIVE.md` to `ARCHIVED.md`.
-  4. `git -C mtg-forge-rs worktree remove worktrees/<branch>`.
+  4. `git -C deepscry worktree remove worktrees/<branch>`.
   5. Leave the branch ref in place unless explicitly told otherwise.
 
 ### Orc orchestration (when applicable)
@@ -574,7 +580,7 @@ tool / `Agent` tool):
 
 ## Web Frontend Layout (landing page + lobby)
 
-The deployed web frontend at `parent/mtg-forge-rs/web/` is structured as:
+The deployed web frontend at `parent/deepscry/web/` is structured as:
 
 - `web/index.html` — public **landing page + lobby**. Explains the
   project, collects a username, connects to the native Rust `mtg
@@ -631,8 +637,8 @@ Typical first-time setup:
 
 ```sh
 # In the parent workspace:
-cp mtg-forge-rs/scripts/deepscry-deploy.env.example .deepscry-deploy.env
+cp deepscry/scripts/deepscry-deploy.env.example .deepscry-deploy.env
 $EDITOR .deepscry-deploy.env                     # fill in REMOTE_USER + REMOTE_HOST
-mtg-forge-rs/scripts/deploy-cloud.sh config      # bootstrap the VM (once)
-mtg-forge-rs/scripts/deploy-cloud.sh deploy      # ship the code (repeat as needed)
+deepscry/scripts/deploy-cloud.sh config      # bootstrap the VM (once)
+deepscry/scripts/deploy-cloud.sh deploy      # ship the code (repeat as needed)
 ```

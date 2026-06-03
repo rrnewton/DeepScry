@@ -7,7 +7,7 @@
 
 # --- worktrees: tracked at the registry level only -----------------------
 # ACTIVE.md / ARCHIVED.md ARE tracked. Per-worktree subdirs are not — each
-# worktree is a separate git checkout managed by mtg-forge-rs.
+# worktree is a separate git checkout managed by deepscry.
 worktrees/*/
 !worktrees/ACTIVE.md
 !worktrees/ARCHIVED.md
@@ -40,8 +40,8 @@ Thumbs.db
 
 # --- the project checkout itself is a submodule; never recurse into it ---
 # (git already won't, but be explicit so accidental globs don't tar it up)
-mtg-forge-rs/
+deepscry/
 
 # --- local deploy config (holds VM host/user; the TEMPLATE is tracked at --
-# mtg-forge-rs/scripts/deepscry-deploy.env.example) ----------------------
+# deepscry/scripts/deepscry-deploy.env.example) ----------------------
 .deepscry-deploy.env

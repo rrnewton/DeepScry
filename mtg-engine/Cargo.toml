@@ -3,7 +3,7 @@ name = "mtg-engine"
 version.workspace = true
 edition.workspace = true
 description = "A high-performance MTG engine inspired by Forge"
-repository = "https://github.com/rrnewton/mtg-forge-rs"
+repository = "https://github.com/rrnewton/DeepScry"
 license = "GPL-3.0"
 build = "build.rs"
 

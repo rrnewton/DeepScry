@@ -27,8 +27,7 @@ cd "$REPO_ROOT"
 if [ -z "${CARDSFOLDER:-}" ]; then
     for candidate in \
         "$REPO_ROOT/cardsfolder" \
-        "$REPO_ROOT/forge-java/forge-gui/res/cardsfolder" \
-        "/home/newton/working_copies/mtg/mtg-forge-rs/cardsfolder"; do
+        "$REPO_ROOT/forge-java/forge-gui/res/cardsfolder"; do
         if [ -d "$candidate/a" ]; then
             export CARDSFOLDER="$candidate"
             break

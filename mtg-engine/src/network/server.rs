@@ -4213,7 +4213,7 @@ mod tests {
     fn test_launch_claude_autofix_with_spawner_builds_expected_command() {
         let repo_root = PathBuf::from("/tmp/mtg-repo");
         let request = AutoFixLaunchRequest {
-            issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/123".to_string(),
+            issue_url: "https://github.com/rrnewton/DeepScry/issues/123".to_string(),
             prompt: "Fix the bug".to_string(),
         };
         let seen_args = Arc::new(StdMutex::new(Vec::<String>::new()));
@@ -4263,7 +4263,7 @@ mod tests {
             Arc::new(spawner),
             PathBuf::from("/tmp/mtg-repo"),
             AutoFixLaunchRequest {
-                issue_url: "https://github.com/rrnewton/mtg-forge-rs/issues/9".to_string(),
+                issue_url: "https://github.com/rrnewton/DeepScry/issues/9".to_string(),
                 prompt: "Prompt".to_string(),
             },
         );
@@ -4293,7 +4293,7 @@ mod tests {
                 report_dir: PathBuf::from("/tmp/report"),
                 trusted: false,
             },
-            Some("https://github.com/rrnewton/mtg-forge-rs/issues/1"),
+            Some("https://github.com/rrnewton/DeepScry/issues/1"),
         );
         maybe_schedule_claude_autofix(
             &report,

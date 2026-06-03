@@ -531,8 +531,6 @@ def _resolve_cards_folder() -> Path:
     candidates = [
         REPO_ROOT / "cardsfolder",
         REPO_ROOT / "forge-java" / "forge-gui" / "res" / "cardsfolder",
-        Path("/home/newton/work/dev-mtg/mtg-forge-rs/cardsfolder"),
-        Path("/home/newton/working_copies/mtg/mtg-forge-rs/cardsfolder"),
     ]
     for c in candidates:
         if c.exists() and (c / "a").is_dir():

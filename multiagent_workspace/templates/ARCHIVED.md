@@ -6,7 +6,7 @@ archive time so future agents can reason about stranded refs without
 re-cloning.
 
 **Lifecycle rule:** move rows here from `ACTIVE.md` at closeout time,
-BEFORE running `git -C mtg-forge-rs worktree remove`. Append the final
+BEFORE running `git -C deepscry worktree remove`. Append the final
 SHA and archive date. See `../CLAUDE.md` → "Archive process".
 
 ## Format
