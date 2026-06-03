@@ -121,8 +121,12 @@ pub fn image_version_from_url(image_uri: &str) -> Option<&str> {
 // identical key from the view model's token P/T + colors. The table ALSO indexes
 // a bare-name entry per token (a representative oldest art) so a composite miss
 // falls back to *some* correct-name art rather than 404 (build-time aliasing;
-// see the generator). The cascade itself is local→CDN only — NO api/gatherer
-// network fallback (task #7): a true table-miss degrades to a name placeholder.
+// see the generator).
+//
+// CASCADE (task #7, per user 2026-06-03): [local-if-allowed → CDN-from-table →
+// gatherer]. api.scryfall is KILLED entirely (no builder, no ref, no fallback).
+// Gatherer is RETAINED as the table-MISS safety net (kept rare by the coverage
+// aliasing above), so a miss falls through to gatherer rather than no-image.
 
 /// Field separator inside a composite token key. Unit Separator (0x1F): never
 /// appears in a card name, and is neither the record separator ('\n') nor the
