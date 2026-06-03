@@ -988,6 +988,25 @@
                 if (msg.includes('Extension context')) return;
                 window.onerror('Unhandled: ' + msg, null, null, null, e.reason);
             };
+            // mtg-436: surface a FATAL ENGINE/SESSION error (rewind/replay
+            // verifier + monotonicity-invariant failure) carried by the GUI view
+            // model's `error_message`. tui_game.html's terminal renderer draws
+            // this directly and halts; native_game.html had no path to show it,
+            // so the same fatal assertion passed silently here. Dedup so a
+            // per-frame view-model poll doesn't spam the banner.
+            let lastWasmError = null;
+            window.__showWasmEngineError = function(msg) {
+                if (!msg || msg === lastWasmError) return;
+                lastWasmError = msg;
+                count++;
+                banner.style.display = 'block';
+                const d = document.createElement('div');
+                d.style.cssText = 'border-bottom: 1px solid #f66; padding-bottom: 5px; margin-bottom: 5px;';
+                d.innerHTML = `<div><strong>#${count} ENGINE ERROR:</strong> ${esc(msg)}</div>`
+                    + `<div style="color:#faa;font-size:11px;">rewind/replay verifier or invariant failure (mtg-436); the game is halted.</div>`;
+                msgs.appendChild(d);
+                console.error('[WASM ENGINE ERROR]', msg);
+            };
         })();
     </script>
 
@@ -1024,7 +1043,11 @@
             tui_get_logs_json,
             tui_get_help_text,
             cleanup_tui_state,
-            set_log_level
+            set_log_level,
+            // mtg-436: enable the SAME proactive rewind/replay verifier that
+            // tui_game.html turns on in debug mode, so native_game.html performs
+            // the identical debugging assertions (it shares the WASM session).
+            tui_set_verify_rewind_replay
         } from './pkg/mtg_engine.js';
 
         // Shared bug-report dialog (mtg-587/596/597) — one implementation reused
@@ -1268,6 +1291,18 @@
             // bootConfig.debug is the local-boot &debug; gamePrefs.debug is the
             // launcher's Debug toggle forwarded on network boots (mtg-ttjt6).
             return !!bootConfig.debug || gamePrefs.debug;
+        }
+        // mtg-436: in Debug Mode, enable the proactive rewind/replay verifier on
+        // the shared WASM session — identical to tui_game.html (which does the
+        // same after launch). The verifier captures the pre-rewind state hash +
+        // log tail and compares them to the post-replay state, setting a fatal
+        // error_message on any divergence; native_game now surfaces that error
+        // (see updateUI + __showWasmEngineError). Off by default = zero overhead.
+        function maybeEnableReplayVerifier() {
+            if (isDebugMode() && typeof tui_set_verify_rewind_replay === 'function') {
+                tui_set_verify_rewind_replay(true);
+                console.log('[DEBUG] Rewind/replay verification enabled (mtg-436)');
+            }
         }
         function debugLog(...args) {
             if (isDebugMode()) console.log('[Debug]', ...args);
@@ -1656,6 +1691,7 @@
                             cardDb, ourDeck, bootConfig.p1Controller, controllerSeed
                         );
                         tuiLaunched = true;
+                        maybeEnableReplayVerifier();
                         tui_run_turn();
 
                         // Initial native render of the synced state.
@@ -1699,6 +1735,7 @@
                         p1Controller, p2Controller
                     );
                     tuiLaunched = true;
+                    maybeEnableReplayVerifier();
 
                     console.log(`Launched game: ${ourDeck} vs ${p2Deck} (seed: ${seed})`);
 
@@ -1912,6 +1949,15 @@
                 return;
             }
             _viewModel = state;
+
+            // mtg-436: surface a fatal session error (rewind/replay verifier +
+            // monotonicity-invariant failure) the SAME way tui_game.html's
+            // terminal renderer does. The shared WASM session sets this on the
+            // state; without surfacing it here, native_game silently continued
+            // past a fatal divergence that halts tui_game.
+            if (state.error_message) {
+                window.__showWasmEngineError(state.error_message);
+            }
 
             // Rebuild the card index from this snapshot. Includes hand,
             // every battlefield section across both players, graveyards,
