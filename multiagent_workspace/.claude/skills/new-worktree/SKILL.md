@@ -12,15 +12,22 @@ it.
 ## TL;DR
 
 ```sh
-cd ~/work/mtg                                                  # parent dev-harness root
-./scripts/new_worktree.sh <branch-name>                        # base off origin/integration (default)
-./scripts/new_worktree.sh <branch-name> --base origin/main     # explicit base
-./scripts/new_worktree.sh <branch-name> --source ./worktrees/other-branch
-./scripts/new_worktree.sh <branch-name> --no-build             # skip donor green-build (rare)
+cd ~/work/mtg                                                          # parent dev-harness root
+./scripts/new_worktree.sh slot01 --branch <branch>                    # fresh branch off origin/integration (default)
+./scripts/new_worktree.sh slot01 --branch <existing-branch>           # ATTACH an existing branch into the slot
+./scripts/new_worktree.sh slot01 --branch <branch> --base origin/main # explicit base (new branch only)
+./scripts/new_worktree.sh slot01 --branch <branch> --source ./worktrees/slot02
+./scripts/new_worktree.sh slot01 --branch <branch> --no-build         # skip donor green-build (rare)
 ```
 
-The new worktree appears at `./worktrees/<suffix>` where `<suffix>` is
-the branch name with `/` replaced by `-`.
+**Slot protocol:** the first positional arg is the **opaque slot
+directory** (`slot01`, `slot02`, …) created under `worktrees/`. Slot
+names are permanent identifiers for the physical directory; the branch
+inside can change freely. `--branch` names the branch — if it does not
+exist it is created off the base; if it **already exists** it is
+**attached** as-is (so a slot can re-home an existing branch, e.g. after
+a workspace move). If `--branch` is omitted it defaults to the slot
+name. The worktree appears at `./worktrees/<slot>`.
 
 > The script lives in `multiagent_workspace/scripts/new_worktree.sh`
 > inside the mtg-forge-rs project, and is symlinked into the parent at
@@ -66,9 +73,11 @@ would produce a degraded worktree:
    the donor `target/` lean by dropping artifacts older than 14 days
    and artifacts from uninstalled toolchains. Keeps every future
    reflink clone small.
-4. **`git worktree add <new-path> -b <branch> <base>`** — creates the
-   worktree and the branch in one shot. Refuses if the branch already
-   exists (so you don't accidentally overwrite work-in-progress).
+4. **`git worktree add <slot-path> -b <branch> <base>`** — creates the
+   worktree and the branch in one shot. If the branch **already
+   exists**, it is **attached** to the slot instead (`git worktree add
+   <slot-path> <branch>`); the script only aborts if that branch is
+   already checked out in another worktree (git forbids that).
 5. **`cp -a --reflink=auto source/target → new-worktree/target`** —
    on the btrfs/xfs/zfs/apfs filesystems we run on, this is a
    copy-on-write clone that finishes in seconds and consumes zero new
@@ -123,8 +132,8 @@ cd ~/work/mtg
 #    has a remote.
 $EDITOR worktrees/ACTIVE.md worktrees/ARCHIVED.md
 
-# 2. Remove the worktree.
-git -C mtg-forge-rs worktree remove worktrees/<branch>
+# 2. Remove the worktree (by its slot directory).
+git -C mtg-forge-rs worktree remove worktrees/slot<NN>
 
 # 3. Delete the local branch only if merged or explicitly approved.
 git -C mtg-forge-rs branch -D <branch>
@@ -136,12 +145,14 @@ about which branch is canonical.
 
 ## Troubleshooting
 
-- **"branch already exists" error** — pick a different branch name, or
-  attach the existing branch manually with
-  `git -C mtg-forge-rs worktree add <path> <branch>`.
-- **"<path> already exists" error** — the previous worktree wasn't
-  cleaned up. Remove it with
-  `git -C mtg-forge-rs worktree remove <path>` first.
+- **branch already checked out elsewhere** — git allows a branch in only
+  one worktree at a time. The script aborts and prints the worktree
+  list; remove the other worktree (or pick a different branch) first.
+  (An existing branch that is NOT checked out anywhere is simply
+  attached — that is the normal re-home flow, not an error.)
+- **"<path> already exists" error** — that slot is already in use.
+  Remove it with `git -C mtg-forge-rs worktree remove worktrees/slot<NN>`
+  first, or pick a different slot number.
 - **Source release build fails** — fix that *first*. The whole point
   of the script is that the donor must be green. Don't bypass with
   `git worktree add` directly; that just spreads the broken state.

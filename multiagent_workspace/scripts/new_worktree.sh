@@ -21,9 +21,9 @@
 #        - cargo sweep --time 14   (drop artifacts older than 14 days)
 #        - cargo sweep --installed (drop artifacts from uninstalled toolchains)
 #
-#   3. git worktree add a new worktree at <parent>/worktrees/<branch>/
-#      with the requested branch, based off the requested base
-#      (default origin/integration).
+#   3. git worktree add a new worktree at <parent>/worktrees/<slot>/
+#      with the requested branch (created off the base, or attached if
+#      it already exists), default base origin/integration.
 #
 #   4. cp -a --reflink=auto <source>/target → new-worktree/target. On
 #      reflink-capable filesystems (btrfs/xfs/zfs/apfs) this is a
@@ -48,17 +48,37 @@
 #          `git submodule update --init` (fast, per-worktree gitdir).
 #
 # Usage:
-#   ./scripts/new_worktree.sh <branch-name>
-#   ./scripts/new_worktree.sh <branch-name> --base origin/integration
-#   ./scripts/new_worktree.sh <branch-name> --base <ref>
-#   ./scripts/new_worktree.sh <branch-name> --source <other-worktree>
-#   ./scripts/new_worktree.sh <branch-name> --no-build      # skip donor green-build
-#   ./scripts/new_worktree.sh <branch-name> --no-sweep      # skip cargo sweep
+#   ./scripts/new_worktree.sh <slot> [--branch <branch>]
+#   ./scripts/new_worktree.sh <slot> --branch <branch> --base <ref>
+#   ./scripts/new_worktree.sh <slot> --branch <existing-branch>   # ATTACHES existing
+#   ./scripts/new_worktree.sh <slot> --source <other-worktree>
+#   ./scripts/new_worktree.sh <slot> --no-build      # skip donor green-build
+#   ./scripts/new_worktree.sh <slot> --no-sweep      # skip cargo sweep
+#
+# SLOT PROTOCOL:
+#   <slot> is the OPAQUE directory name created under worktrees/ (e.g.
+#   slot01). Slot names are permanent identifiers for the physical
+#   directory; the branch checked out inside can change freely. See the
+#   parent CLAUDE.md → "Workspace Discipline / Worktree naming" for why
+#   directories use opaque slots, not branch-derived names (mv-rename and
+#   partition-move safety).
+#
+#   --branch <branch> selects the branch to put in the slot. If omitted,
+#   the branch name defaults to <slot>. Behaviour by branch existence:
+#     • branch does NOT exist  → created with `-b <branch> <base>`
+#                                (default base origin/integration).
+#     • branch ALREADY exists  → ATTACHED to the new worktree as-is
+#                                (--base is ignored). This is how you
+#                                re-home an existing branch into a slot,
+#                                e.g. after a workspace move.
+#   git refuses to attach a branch already checked out in another
+#   worktree — the script detects this and aborts cleanly.
 #
 # Examples:
-#   ./scripts/new_worktree.sh fix-mana-burn
-#   ./scripts/new_worktree.sh feature/network-v3 --base origin/main
-#   ./scripts/new_worktree.sh quick-experiment --source ./worktrees/other-branch --no-build
+#   ./scripts/new_worktree.sh slot01 --branch netarch-undo-holes   # attach existing
+#   ./scripts/new_worktree.sh slot02 --branch fix-mana-burn        # fresh branch
+#   ./scripts/new_worktree.sh slot03 --branch feature/net-v3 --base origin/main
+#   ./scripts/new_worktree.sh slot04 --source ./worktrees/slot02 --no-build
 #
 # Must be run from the PARENT directory (the directory that contains
 # mtg-forge-rs/ and worktrees/).
@@ -69,6 +89,7 @@ set -euo pipefail
 # Argument parsing
 # ---------------------------------------------------------------------------
 
+SLOT=""
 BRANCH=""
 BASE="origin/integration"
 SOURCE_OVERRIDE=""
@@ -84,14 +105,16 @@ while [ $# -gt 0 ]; do
         -h|--help) usage; exit 0 ;;
         --base) BASE="$2"; shift 2 ;;
         --base=*) BASE="${1#--base=}"; shift ;;
+        --branch) BRANCH="$2"; shift 2 ;;
+        --branch=*) BRANCH="${1#--branch=}"; shift ;;
         --source) SOURCE_OVERRIDE="$2"; shift 2 ;;
         --source=*) SOURCE_OVERRIDE="${1#--source=}"; shift ;;
         --no-build) DO_BUILD=0; shift ;;
         --no-sweep) DO_SWEEP=0; shift ;;
         -*) echo "error: unknown flag: $1" >&2; usage; exit 2 ;;
         *)
-            if [ -z "$BRANCH" ]; then
-                BRANCH="$1"; shift
+            if [ -z "$SLOT" ]; then
+                SLOT="$1"; shift
             else
                 echo "error: unexpected positional arg: $1" >&2; usage; exit 2
             fi
@@ -99,10 +122,17 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -z "$BRANCH" ]; then
-    echo "error: branch name is required" >&2
+if [ -z "$SLOT" ]; then
+    echo "error: slot (worktree directory name, e.g. slot01) is required" >&2
     usage
     exit 2
+fi
+
+# Default the branch to the slot name when --branch is not given (keeps the
+# old single-argument ergonomics: `new_worktree.sh fix-foo` → slot fix-foo,
+# branch fix-foo).
+if [ -z "$BRANCH" ]; then
+    BRANCH="$SLOT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -136,10 +166,12 @@ fi
 
 # Strip refs/heads/ if user supplied a fully-qualified branch name
 SAFE_BRANCH="${BRANCH#refs/heads/}"
-# Replace slashes with dashes for the worktree directory name only.
-SUFFIX="$(echo "$SAFE_BRANCH" | tr '/' '-')"
+# The worktree DIRECTORY name is the slot (slugified for filesystem safety);
+# the BRANCH checked out inside is independent. Slashes → dashes so a
+# branch-derived default slot is still a valid single directory component.
+SLOT_DIR="$(echo "$SLOT" | tr '/' '-')"
 WORKTREES_DIR="$PARENT_DIR/worktrees"
-NEW_WORKTREE="$WORKTREES_DIR/$SUFFIX"
+NEW_WORKTREE="$WORKTREES_DIR/$SLOT_DIR"
 
 mkdir -p "$WORKTREES_DIR"
 
@@ -149,29 +181,34 @@ mkdir -p "$WORKTREES_DIR"
 
 if [ -e "$NEW_WORKTREE" ]; then
     echo "error: $NEW_WORKTREE already exists." >&2
-    echo "       Pick a different branch name, or remove the existing worktree:" >&2
+    echo "       Pick a different slot, or remove the existing worktree:" >&2
     echo "         git -C $SOURCE worktree remove $NEW_WORKTREE" >&2
     exit 1
 fi
 
-# If the branch already exists in the source's repo, refuse — the user
-# almost certainly meant to attach a fresh branch. Existing-branch
-# attach can be done manually with `git worktree add <path> <branch>`
-# once they're sure.
+# Decide whether to ATTACH an existing branch or CREATE a fresh one. Under
+# the slot protocol a slot can re-home an existing branch (e.g. after a
+# workspace move), so an existing branch is NOT an error.
+ATTACH=0
 if git -C "$SOURCE" rev-parse --verify --quiet "refs/heads/$SAFE_BRANCH" >/dev/null; then
-    echo "error: branch '$SAFE_BRANCH' already exists in $SOURCE." >&2
-    echo "       Either pick a different branch name, or attach it manually:" >&2
-    echo "         git -C $SOURCE worktree add $NEW_WORKTREE $SAFE_BRANCH" >&2
-    exit 1
+    ATTACH=1
+    # git forbids the same branch checked out in two worktrees at once.
+    if git -C "$SOURCE" worktree list --porcelain \
+         | grep -qx "branch refs/heads/$SAFE_BRANCH"; then
+        echo "error: branch '$SAFE_BRANCH' is already checked out in another worktree:" >&2
+        git -C "$SOURCE" worktree list >&2
+        echo "       Detach it there first, or pick a different branch." >&2
+        exit 1
+    fi
 fi
 
 echo "═════════════════════════════════════════════════════════════════════"
 echo "  new_worktree.sh"
 echo "═════════════════════════════════════════════════════════════════════"
 echo "  Source checkout : $SOURCE"
-echo "  New worktree    : $NEW_WORKTREE"
-echo "  New branch      : $SAFE_BRANCH"
-echo "  Base            : $BASE"
+echo "  New worktree    : $NEW_WORKTREE  (slot: $SLOT_DIR)"
+echo "  Branch          : $SAFE_BRANCH  $([ $ATTACH -eq 1 ] && echo '(attach existing)' || echo "(new, off $BASE)")"
+echo "  Base            : $([ $ATTACH -eq 1 ] && echo 'n/a (attaching existing branch)' || echo "$BASE")"
 echo "  Donor build     : $([ $DO_BUILD -eq 1 ] && echo enabled || echo SKIPPED)"
 echo "  Donor sweep     : $([ $DO_SWEEP -eq 1 ] && echo enabled || echo SKIPPED)"
 echo "═════════════════════════════════════════════════════════════════════"
@@ -185,7 +222,9 @@ echo "→ [1/6] git fetch origin (in source)"
 git -C "$SOURCE" fetch origin
 
 # Verify the requested base actually resolves now that we've fetched.
-if ! git -C "$SOURCE" rev-parse --verify --quiet "$BASE" >/dev/null; then
+# (Only relevant when CREATING a branch; an attached existing branch already
+# has a tip and ignores --base.)
+if [ $ATTACH -eq 0 ] && ! git -C "$SOURCE" rev-parse --verify --quiet "$BASE" >/dev/null; then
     echo "error: base '$BASE' did not resolve in $SOURCE after fetch." >&2
     exit 1
 fi
@@ -240,8 +279,13 @@ fi
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "→ [4/6] git worktree add $NEW_WORKTREE -b $SAFE_BRANCH $BASE"
-git -C "$SOURCE" worktree add "$NEW_WORKTREE" -b "$SAFE_BRANCH" "$BASE"
+if [ $ATTACH -eq 1 ]; then
+    echo "→ [4/6] git worktree add $NEW_WORKTREE $SAFE_BRANCH   (attaching existing branch)"
+    git -C "$SOURCE" worktree add "$NEW_WORKTREE" "$SAFE_BRANCH"
+else
+    echo "→ [4/6] git worktree add $NEW_WORKTREE -b $SAFE_BRANCH $BASE"
+    git -C "$SOURCE" worktree add "$NEW_WORKTREE" -b "$SAFE_BRANCH" "$BASE"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 5: CoW-clone target/
@@ -368,8 +412,8 @@ echo ""
 echo "═════════════════════════════════════════════════════════════════════"
 echo "  ✓ Worktree ready"
 echo "═════════════════════════════════════════════════════════════════════"
-echo "  Path        : $NEW_WORKTREE"
-echo "  Branch      : $SAFE_BRANCH (based on $BASE)"
+echo "  Path        : $NEW_WORKTREE  (slot: $SLOT_DIR)"
+echo "  Branch      : $SAFE_BRANCH $([ $ATTACH -eq 1 ] && echo '(attached existing)' || echo "(based on $BASE)")"
 echo "  target/ size: $TARGET_SIZE"
 echo "  reflink     : $REFLINK_STATUS"
 echo ""

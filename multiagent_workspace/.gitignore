@@ -1,0 +1,47 @@
+# Parent dev-harness .gitignore
+#
+# The parent directory is a local-only git repo (usually no remote)
+# whose tracked content is the harness symlinks + worktree registry +
+# experiment/ai_docs captures. Everything else is transient and lives
+# under one of the ignored paths below.
+
+# --- worktrees: tracked at the registry level only -----------------------
+# ACTIVE.md / ARCHIVED.md ARE tracked. Per-worktree subdirs are not — each
+# worktree is a separate git checkout managed by mtg-forge-rs.
+worktrees/*/
+!worktrees/ACTIVE.md
+!worktrees/ARCHIVED.md
+
+# --- transient capture / scratch / coverage output -----------------------
+scratch/
+ai_docs/**/*.tmp
+e2e-results/
+default.profraw
+*.profraw
+*.profdata
+*.gcov
+*.gcda
+*.gcno
+
+# --- coverage: only the text summaries are tracked -----------------------
+coverage/html/
+coverage/*.profdata
+
+# --- editor / OS noise ---------------------------------------------------
+*~
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- python venvs occasionally created by tooling ------------------------
+.venv/
+.perfetto_venv/
+.mypy_cache/
+
+# --- the project checkout itself is a submodule; never recurse into it ---
+# (git already won't, but be explicit so accidental globs don't tar it up)
+mtg-forge-rs/
+
+# --- local deploy config (holds VM host/user; the TEMPLATE is tracked at --
+# mtg-forge-rs/scripts/deepscry-deploy.env.example) ----------------------
+.deepscry-deploy.env

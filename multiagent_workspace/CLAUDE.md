@@ -220,11 +220,14 @@ Worktree registry:
 
 Worktree lifecycle:
 
-1. **Clean start.** Use `./scripts/new_worktree.sh <branch>` from the
-   parent directory. The script (a) fetches `origin` in the primary,
+1. **Clean start.** Use
+   `./scripts/new_worktree.sh slot<NN> --branch <branch>` from the
+   parent directory (the first positional is the OPAQUE slot directory;
+   `--branch` names the branch — created off the base, or ATTACHED if it
+   already exists). The script (a) fetches `origin` in the primary,
    (b) verifies the primary builds green, (c) cleans the donor
    `target/` via `cargo sweep`, (d) creates the worktree under
-   `worktrees/<branch>/`, (e) reflink-clones `target/` into it. Then
+   `worktrees/slot<NN>/`, (e) reflink-clones `target/` into it. Then
    register the new worktree in `worktrees/ACTIVE.md` BEFORE work
    begins. No exception for "small" tasks.
 2. **Clean finish.** A task is not done until the worktree is clean:
