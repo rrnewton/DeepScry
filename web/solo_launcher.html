@@ -67,10 +67,18 @@
             width: 100%;
             box-shadow: 0 4px 16px rgba(0,0,0,0.4);
         }
-        .titlebar { display: flex; align-items: center; gap: 12px; margin: 0 0 4px; }
-        .titlebar img.header-emblem { width: 34px; height: 34px; flex: none; }
+        .titlebar { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; }
+        /* Emblem spans BOTH lines (title + subtitle) at the left; the title
+           text column sits to its right, so the subtitle is naturally
+           indented past the emblem (mtg-719). Fully transparent: no
+           background/border, just the webp's own alpha. */
+        .titlebar img.header-emblem {
+            width: 52px; height: 52px; flex: none;
+            background: transparent; border: 0; align-self: center;
+        }
+        .titlebar .titletext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
         h1 { color: var(--gold); font-size: 24px; margin: 0; }
-        .subtitle { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
+        .subtitle { color: var(--muted); font-size: 13px; margin: 0; }
         .row2 { display: flex; gap: 16px; }
         .row2 > .field { flex: 1; min-width: 0; }
         .field { margin-bottom: 20px; }
@@ -123,10 +131,12 @@
 <body>
 <div class="box">
     <div class="titlebar">
-        <img class="header-emblem" src="emblem-64.webp" alt="" aria-hidden="true" width="34" height="34">
-        <h1>Solo Launcher</h1>
+        <img class="header-emblem" src="emblem-64.webp" alt="" aria-hidden="true" width="52" height="52">
+        <div class="titletext">
+            <h1>Solo Launcher</h1>
+            <p class="subtitle" id="subtitle">Set up a local game (you vs the AI) &mdash; no lobby, no network.</p>
+        </div>
     </div>
-    <p class="subtitle" id="subtitle">Set up a local game (you vs the AI) &mdash; no lobby, no network.</p>
 
     <!-- Your deck -->
     <div class="row2">
