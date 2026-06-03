@@ -344,7 +344,14 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@$(MAKE) build-network
 	@$(MAKE) wasm-network
 	@echo "=== Running Network E2E tests ==="
-	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+# mtg-cfnx2: chromium is provisioned ONCE by `make setup` (binary only, no
+# `--with-deps`/root). Do NOT fetch a browser at validate time — a runtime
+# download is the anti-pattern and validate must stay hermetic. Verify the
+# browser is present via the Playwright API (a structured check, not a string
+# grep) and FAIL FAST with an actionable message if it is missing, instead of
+# cascading into a confusing "Target page/context/browser has been closed".
+	@cd web && $(NPM) install --silent 2>/dev/null || true
+	@cd web && node -e "const fs=require('fs');let p;try{p=require('playwright').chromium.executablePath();}catch(e){console.error('\nERROR: playwright is not installed in web/node_modules.\nRun: make setup   (or: cd web && npm install && npx playwright install chromium)\n');process.exit(1);}if(!fs.existsSync(p)){console.error('\nERROR: Playwright chromium is not provisioned ('+p+').\nRun: make setup   (or: cd web && npx playwright install chromium)\n');process.exit(1);}"
 	@cd web && node test_network_gui_e2e.js
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
@@ -423,6 +430,16 @@ setup: install-hooks ensure-wasm-pack
 	@echo "=== Installing development tools ==="
 	rustup component add rustfmt clippy
 	rustup target add wasm32-unknown-unknown
+# mtg-cfnx2: provision the web e2e browser ONCE here so `make validate` never
+# downloads one at runtime (hermetic — validate must not depend on a network
+# fetch). Binary only (no `--with-deps`: that needs root and breaks non-root
+# sandboxes). Best-effort: skipped with a notice if npm is unavailable.
+	@if [ -n "$(NPM)" ] && [ -x "$$(command -v $(NPM) 2>/dev/null)" ]; then \
+		echo "=== Provisioning Playwright chromium for web e2e (binary only) ==="; \
+		( cd web && $(NPM) install --silent && npx playwright install chromium ); \
+	else \
+		echo "(setup) npm not found — skipping Playwright chromium provisioning; install npm + run 'cd web && npx playwright install chromium' before 'make validate'"; \
+	fi
 
 # Single, serialized wasm-pack install site (mtg-577).
 # Every wasm target depends on this instead of carrying its own inline
@@ -914,11 +931,11 @@ wasm-e2e-dev: wasm-dev
 # NOT part of 'make validate' - requires full network build
 wasm-e2e-network: build-network wasm-network
 	@echo "=== Running WASM Network GUI E2E test ==="
-	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js
 
 # Run WASM Network GUI E2E test (human controller with Playwright key presses)
 wasm-e2e-network-human: build-network wasm-network
 	@echo "=== Running WASM Network Human E2E test ==="
-	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null || true
+	@cd web && $(NPM) install --silent 2>/dev/null && npx playwright install chromium 2>/dev/null || true
 	@cd web && node test_network_gui_e2e.js --human
