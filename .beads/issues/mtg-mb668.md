@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T20:19:04.000278696+00:00
+updated_at: 2026-06-03T20:23:14.208260238+00:00
 ---
 
 # Description
@@ -72,3 +72,11 @@ CLASS MAP (mtg-725): the robots42 residual is a MULTI-class, multi-bug audit:
   - WITHIN-side rewind-fidelity (undo-log not a faithful inverse): sig-2e counters (FIXED), sig-2f damage (TODO), possibly more per-field holes. DETERMINISTIC + reproducible via the native rewind oracle — RECOMMENDED next tool: a whole_game_rewind_replay_e2e-style native test driving the ROBOTS deck (RandomController, fixed seed) with the per-turn rewind-fidelity check, which enumerates ALL within-side undo holes at once with NO networking/flakiness.
   - server<->shadow count/RNG lockstep (class A): sig-2c (reserved hand move, FIXED), sig-2d (reveal-mask conceal, FIXED); residual ACTION COUNT MISMATCH events remain (capture via --undo-dump, diff server vs wasm ShuffleLibrary counts / reveal counts). Needs the per-action lockstep harness to enumerate.
 STATUS: 6 fixes banked on netarch-undo-holes (sig-2/2b/2c/2d/2e + t233k), 1004/1004 lib green, tree clean. robots42 ~14-20/30 (high variance) — NOT green; multi-session work remains.
+
+------------------------------------------------------------------------
+INTERMITTENCY ROOT CAUSE (cheap-audit result — answers "same --seed, different outcome"): The engine RNG IS deterministic from --seed: `mtg server --seed N` -> ServerConfig.seed=Some(N) -> game_init seed_from_u64(N) (deck shuffle + initial RNG), and the server sends rng_state to the client. The NON-determinism is the CONTROLLER seed, NOT the engine: web/test_network_gui_e2e.js spawns the native AI as `connect --controller random` WITHOUT --seed-player, so main.rs:1625 falls back to `RandomController::with_seed(player, entropy_seed)` (entropy). => P2's CHOICES differ every run => different game trajectory => latent desyncs (the sig-2* class) trigger on a subset (~37%). NOT a non-seed-entropy bug in the engine seed-derivation, and NOT (for robots42) transport/H2.
+IMPLICATIONS:
+  - The fix bar is unchanged (the desyncs are real and must be fixed for true green), BUT
+  - a DETERMINISTIC gate is achievable: pass --seed-player to the native `connect` client AND pin the WASM controller_seed (fancy_tui controller_seed field) so the FULL game (deck + both controllers' choices) is reproducible. Then a given (engine-seed, p1-seed, p2-seed) tuple either always-passes or always-fails -> the failing path is reproducible -> fix the exact divergence; and once the class is fixed the gate is stably green instead of flaky.
+  - This is ALSO why ×30 sampling is noisy and why the native in-process lockstep harness must PIN BOTH controller seeds (RandomController::with_seed with fixed seeds for both players) to be deterministic.
+Actionable test-harness improvement (dovetails mtg-726): make test_network_gui_e2e.js pass --seed-player (derived from --seed) to the native client and set the WASM controller_seed deterministically, so robots42/All-Hallow's-Eve become deterministic gates.
