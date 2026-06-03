@@ -563,6 +563,18 @@ pub enum GameAction {
         player_id: PlayerId,
         prev: crate::core::ManaPool,
     },
+
+    /// Snapshot of a creature's marked `damage` captured BEFORE a `card.damage +=`
+    /// mutation (`deal_damage_to_creature` — e.g. Triskelion's ping — and
+    /// `Effect::DamageAll`) (mtg-mb668 sig-2f). Marked damage was applied with no
+    /// covering GameAction, so a turn-start cleanup (CR 514.2) clears it and any
+    /// blanket turn-start rewind blanket-clears it (safe), BUT a mid-turn
+    /// rewind+replay (network/WASM blocking; per-action MCTS/human undo) left the
+    /// marked damage STALE and replay DOUBLE-applied it — the robots42 within-side
+    /// "cards[N].damage changed across rewinds" REWIND/REPLAY FATAL. `undo()`
+    /// restores the captured value. `get_mut` tolerates a missing card (it may
+    /// have left the battlefield), matching the other card-field undos.
+    SetDamage { card_id: CardId, prev: i32 },
 }
 
 impl fmt::Display for GameAction {
@@ -857,6 +869,9 @@ impl fmt::Display for GameAction {
                     player_id.as_u32(),
                     prev.len()
                 )
+            }
+            GameAction::SetDamage { card_id, prev } => {
+                write!(f, "SetDamage(card={}, prev={})", card_id, prev)
             }
             GameAction::SetManaPool { player_id, prev } => {
                 write!(f, "SetManaPool(P{}, prev={})", player_id.as_u32(), prev.total())
@@ -1605,6 +1620,14 @@ impl GameAction {
                 // Restore the captured regular mana pool (mtg-t233k).
                 if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
                     player.mana_pool = *prev;
+                }
+            }
+            GameAction::SetDamage { card_id, prev } => {
+                // Restore the captured marked damage (mtg-mb668 sig-2f). get_mut
+                // tolerates a missing card (it may have left the battlefield),
+                // matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.damage = *prev;
                 }
             }
             GameAction::SetCombatManaPool { player_id, prev } => {

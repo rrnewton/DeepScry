@@ -653,6 +653,63 @@ fn per_action_undo_redo_declare_blocker_and_clear() {
     );
 }
 
+/// Hole sig-2f (mtg-mb668): marking damage on a creature is a reversible
+/// GameAction. Triskelion's ping (`deal_damage_to_creature`) and `DamageAll`
+/// both did `card.damage += ...` with NO logged GameAction, so a mid-turn
+/// rewind left the marked damage stale and a replay double-applied it — the
+/// robots42 within-side "cards[N].damage changed across rewinds" REWIND/REPLAY
+/// FATAL. This isolates the per-action inverse: deal damage, undo, assert the
+/// hash returns EXACTLY to the pre-damage value; then re-apply and assert the
+/// post-damage hash. RED before the fix (no log entry => undo_last pops the
+/// wrong/no action and damage stays marked), GREEN after.
+#[test]
+fn per_action_undo_redo_deal_damage_to_creature() {
+    let (mut game, ids, _players) = game_with_creatures(0, &[("Grizzly Bears", 2, 2)]);
+    let card_id = ids[0];
+
+    assert_eq!(game.cards.get(card_id).unwrap().damage, 0);
+    let hash_before = compute_state_hash(&game);
+    let log_before = game.undo_log.actions().len();
+
+    // Apply 1 non-lethal damage (the Triskelion ping path: deal_damage_to_creature).
+    game.deal_damage_to_creature(card_id, 1)
+        .expect("deal damage must succeed");
+    assert_eq!(game.cards.get(card_id).unwrap().damage, 1);
+
+    // The damage mutation MUST log a GameAction (sig-2f: `card.damage +=` had none).
+    let log_after = game.undo_log.actions().len();
+    assert!(
+        log_after > log_before,
+        "deal_damage_to_creature must log a GameAction so marked damage round-trips on undo \
+         (sig-2f: card.damage += had no undo entry)"
+    );
+    let hash_after = compute_state_hash(&game);
+    assert_ne!(hash_before, hash_after, "marking damage must change the state hash");
+
+    // Undo -> restores damage 0 and the EXACT pre-damage hash.
+    let action = undo_last(&mut game);
+    assert!(matches!(action, GameAction::SetDamage { .. }));
+    assert_eq!(
+        game.cards.get(card_id).unwrap().damage,
+        0,
+        "undo of SetDamage must clear the marked damage"
+    );
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_before,
+        "undo of SetDamage must restore the exact pre-damage state hash"
+    );
+
+    // Re-apply -> exactly the post-damage hash (faithful redo).
+    game.deal_damage_to_creature(card_id, 1)
+        .expect("re-deal damage must succeed");
+    assert_eq!(
+        compute_state_hash(&game),
+        hash_after,
+        "re-applying damage must reproduce the exact post-damage state hash"
+    );
+}
+
 /// Hole (c): a temp base P/T override (Animate / base-set) is a reversible
 /// GameAction, including the clear path.
 #[test]
