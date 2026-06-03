@@ -2382,27 +2382,50 @@ impl WasmFancyTuiState {
 
         // Handle based on our controller type
         match our_controller_type {
-            WasmControllerType::Human => {
-                // Human controller - use rewind/replay pattern (same as local Human mode)
-                self.run_network_mode_human_v2(
-                    our_player_id,
-                    opponent_id,
-                    we_are_p1,
-                    network_client,
-                    &mut remote_controller,
-                );
-            }
-            WasmControllerType::Random | WasmControllerType::Heuristic | WasmControllerType::Zero => {
-                // AI controllers — unified rewind+replay path (mtg-610).
+            WasmControllerType::Human
+            | WasmControllerType::Random
+            | WasmControllerType::Heuristic
+            | WasmControllerType::Zero => {
+                // UNIFIED rewind+replay path for EVERY local controller type,
+                // including Human (mtg-610 + mtg-679). THE PRINCIPLED DESIGN:
+                // lazily create the persistent inner controller ONCE (its RNG /
+                // state advances monotonically across all re-entries, mirroring
+                // the server's single persistent controller) and drive every
+                // re-entry through rewind+replay so already-applied
+                // begin-of-step / combat actions are undone before being
+                // replayed — instead of the old no-rewind path that re-ran them
+                // and relied on the 9 TurnStructure guards.
                 //
-                // THE PRINCIPLED DESIGN: lazily create the persistent inner
-                // controller ONCE (its RNG advances monotonically across all
-                // re-entries, mirroring the server's single persistent
-                // controller) and drive every re-entry through rewind+replay
-                // so already-applied begin-of-step / combat actions are undone
-                // before being replayed — instead of the old no-rewind path
-                // that re-ran them and relied on the 9 TurnStructure guards.
+                // The Human path used to have its OWN entrypoint
+                // (run_network_mode_human_v2) lacking this re-entry detection +
+                // turn-1 baseline, so a non-user re-entry re-ran forward from the
+                // already-advanced state and raced the server (mtg-679). Folding
+                // Human onto this exact machinery fixes that and collapses the two
+                // network entrypoints into one controller-agnostic path.
                 self.ensure_net_our_controller(our_controller_type, our_player_id, network_client.clone());
+
+                // For Human, transfer the UI-selected pending choice (set on
+                // `p1_human_controller` by the input handler) into the PERSISTENT
+                // boxed inner so the replay path delegates the new frontier choice
+                // to it. Reached via the `as_any_mut` downcast hook because
+                // `PendingChoice` is WASM-only and the box is type-erased.
+                if our_controller_type == WasmControllerType::Human {
+                    if let Some(pending) = self.p1_human_controller.as_mut().and_then(|h| h.pending_choice.take()) {
+                        if let Some(any) = self.net_our_controller.as_mut().and_then(|c| c.as_any_mut()) {
+                            if let Some(nlc) = any.downcast_mut::<WasmNetworkLocalController<WasmHumanController>>() {
+                                nlc.inner_mut().set_pending_choice(pending);
+                            } else {
+                                log::error!(
+                                    target: "wasm_tui",
+                                    "run_network_mode: net_our_controller is not a \
+                                     WasmNetworkLocalController<WasmHumanController> — cannot inject \
+                                     human pending choice"
+                                );
+                            }
+                        }
+                    }
+                }
+
                 self.run_network_mode_ai_v2(
                     our_player_id,
                     opponent_id,
@@ -2421,244 +2444,6 @@ impl WasmFancyTuiState {
                     "Unsupported controller type {:?} for network mode",
                     our_controller_type
                 ));
-                self.needs_redraw = true;
-            }
-        }
-    }
-
-    /// Run network mode with Human controller (uses rewind/replay pattern)
-    ///
-    /// # Arguments
-    /// * `our_id` - Our player ID
-    /// * `opponent_id` - Opponent's player ID (unused, for symmetry)
-    /// * `we_are_p1` - Whether we are player 1 (index 0) or player 2 (index 1)
-    /// * `network_client` - The shared network client
-    /// * `remote_controller` - The remote controller for opponent
-    #[cfg(feature = "wasm-network")]
-    #[allow(unused_variables)]
-    fn run_network_mode_human_v2(
-        &mut self,
-        our_id: PlayerId,
-        opponent_id: PlayerId,
-        we_are_p1: bool,
-        network_client: SharedNetworkClient,
-        remote_controller: &mut WasmRemoteController,
-    ) {
-        if self.needs_replay {
-            // User just made a choice - rewind and replay
-            self.needs_replay = false;
-
-            // Mark that we're in rewind/replay mode (suppresses monotonicity checks)
-            self.in_rewind_replay = true;
-
-            let turn_before = self.game.turn.turn_number;
-            let undo_len_before_rewind = self.game.undo_log.len();
-            log::debug!(target: "wasm_tui", "NETWORK REPLAY: Starting on turn {}, undo_log={}", turn_before, undo_len_before_rewind);
-
-            // Take the new pending choice from the stored human controller
-            // IMPORTANT: Don't add this to replay_choices! It needs to go through
-            // WasmNetworkLocalController so it gets submitted to the server.
-            let new_pending_choice = if let Some(ref mut human) = self.p1_human_controller {
-                human.pending_choice.take()
-            } else {
-                None
-            };
-
-            if let Some(ref choice) = new_pending_choice {
-                log::debug!(target: "wasm_tui", "NETWORK REPLAY: New pending choice = {:?}", choice);
-            }
-
-            // Rewind game state and get previous choices from this turn
-            // In network mode, we need BOTH players' choices: our choices for our
-            // ReplayController, and opponent choices for the opponent's ReplayController.
-            // Unlike local mode where the AI can re-compute its choices, the remote
-            // opponent's choices must be replayed from the saved log.
-            let (our_choices, opponent_choices) = self.rewind_to_turn_start(our_id);
-
-            // Clear spell_targets and other transient game loop state after rewind.
-            // These fields are not tracked in the undo log, so they'd be stale
-            // from the previous run and could cause incorrect behavior on replay.
-            self.game.spell_targets.clear();
-            self.game.pending_activation = None;
-            self.game.pending_activation_effect_idx = None;
-            self.game.pending_cycling_search = None;
-
-            log::debug!(
-                target: "wasm_tui",
-                "NETWORK REPLAY: After rewind - turn {}, undo_log={}, {} our choices + {} opponent choices to replay",
-                self.game.turn.turn_number, self.game.undo_log.len(), our_choices.len(), opponent_choices.len()
-            );
-
-            // NOTE: We do NOT add new_pending_choice to our_choices!
-            // The new choice must go through WasmNetworkLocalController to be
-            // submitted to the server. If we add it to replay, it bypasses the server.
-
-            // Create a fresh human controller and set the pending choice on it
-            let mut human_controller = WasmHumanController::new(our_id);
-            if let Some(pending) = new_pending_choice {
-                human_controller.set_pending_choice(pending);
-            }
-            let network_local = WasmNetworkLocalController::new(human_controller, network_client.clone());
-
-            // Create ReplayController for us: replays our saved choices, then delegates
-            // to the WasmNetworkLocalController (which submits new choices to the server)
-            let mut our_replay = ReplayController::new(our_id, Box::new(network_local), our_choices);
-
-            // Create ReplayController for opponent: replays their saved choices, then
-            // delegates to a fresh WasmRemoteController (which gets new choices from network).
-            // This is critical for network mode — unlike local AI, the remote opponent
-            // can't re-compute their choices, so we must replay them.
-            let fresh_remote = WasmRemoteController::new(opponent_id, network_client.clone());
-            let mut opponent_replay = ReplayController::new(opponent_id, Box::new(fresh_remote), opponent_choices);
-
-            // Run the game with both replay controllers
-            // Scope game_loop tightly so self can be accessed afterwards
-            let result = {
-                // Apply pending state-sync entries from the shadow log
-                // (Phase 2 step 1 — non-destructive ActionLog read).
-                let client_for_sync = network_client.clone();
-                let local_player = our_id;
-                let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                    let applied = client_for_sync
-                        .borrow_mut()
-                        .apply_state_sync_up_to_frontier(game, Some(local_player));
-                    if applied > 0 {
-                        log::debug!(
-                            "WASM sync_callback (replay): applied {} state-sync entries at action_count={}",
-                            applied,
-                            game.action_count()
-                        );
-                    }
-                };
-
-                let mut game_loop = GameLoop::new(&mut self.game)
-                    .with_verbosity(VerbosityLevel::Normal)
-                    .with_sync_callback(sync_callback)
-                    .skip_opening_hands() // Server handles opening hands via CardRevealed
-                    .with_deferred_game_end(); // Server is authoritative about game end
-
-                // Pass controllers in correct order based on which player we are
-                if we_are_p1 {
-                    game_loop.run_until_input(&mut our_replay, &mut opponent_replay)
-                } else {
-                    game_loop.run_until_input(&mut opponent_replay, &mut our_replay)
-                }
-            };
-
-            let turn_after_run = self.game.turn.turn_number;
-            log::debug!(
-                target: "wasm_tui",
-                "NETWORK REPLAY: Game loop returned on turn {}, undo_log={}, result={}",
-                turn_after_run,
-                self.game.undo_log.len(),
-                match &result {
-                    Ok(GameLoopState::Complete(_)) => "Complete",
-                    Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
-                    Err(_) => "Error",
-                }
-            );
-
-            // Replay complete - clear the rewind flag
-            self.in_rewind_replay = false;
-
-            // Reset high-water marks to post-replay values.
-            // After replay, the undo_log may be shorter than the pre-rewind high-water mark
-            // because normal runs between replays can process opponent choices that advance
-            // the game beyond the replay's NeedInput point. Those "extra" opponent choices are
-            // in the replay queue but not consumed because the game stops at OUR NeedInput
-            // (after the new choice is submitted) before reaching the opponent's choices.
-            // This is correct behavior - the hash check validates state correctness.
-            self.high_water_action_count = self.game.undo_log.len();
-            self.high_water_log_count = self.game.logger.log_count();
-
-            // Network-mode replay verification mirrors the local-mode check:
-            // any divergence between the captured pre-rewind snapshot and the
-            // post-replay state is fatal because shared GameState corruption
-            // will cascade into desync with the server.
-            if let Some(violation) = self.run_replay_verification() {
-                log::error!(target: "wasm_tui", "{}", violation);
-                self.error_message = Some(violation);
-                self.game_over = true;
-                self.needs_redraw = true;
-                return;
-            }
-
-            self.handle_game_result(result);
-            self.needs_redraw = true;
-        } else {
-            // Normal run - no replay needed
-            log::debug!(
-                target: "wasm_tui",
-                "NETWORK NORMAL: Running game loop, turn {}, we_are_p1={}, undo_log={}",
-                self.game.turn.turn_number,
-                we_are_p1,
-                self.game.undo_log.len()
-            );
-
-            if let Some(ref mut human) = self.p1_human_controller {
-                // Create network local controller wrapping the human controller
-                // Note: We need to take ownership for the game loop, but we clone the inner state
-                let inner_clone = human.clone();
-                let mut network_local = WasmNetworkLocalController::new(inner_clone, network_client.clone());
-
-                // Scope game_loop so borrow of self.game ends before accessing self
-                let result = {
-                    // Apply pending state-sync entries from the shadow log
-                    // (Phase 2 step 1 — non-destructive ActionLog read).
-                    let client_for_sync = network_client.clone();
-                    let local_player = our_id;
-                    let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                        let applied = client_for_sync
-                            .borrow_mut()
-                            .apply_state_sync_up_to_frontier(game, Some(local_player));
-                        if applied > 0 {
-                            log::debug!(
-                                "WASM sync_callback (normal): applied {} state-sync entries at action_count={}",
-                                applied,
-                                game.action_count()
-                            );
-                        }
-                    };
-
-                    let mut game_loop = GameLoop::new(&mut self.game)
-                        .with_verbosity(VerbosityLevel::Normal)
-                        .with_sync_callback(sync_callback)
-                        .skip_opening_hands() // Server handles opening hands via CardRevealed
-                        .with_deferred_game_end(); // Server is authoritative about game end
-
-                    // Pass controllers in correct order based on which player we are
-                    if we_are_p1 {
-                        game_loop.run_until_input(&mut network_local, remote_controller)
-                    } else {
-                        game_loop.run_until_input(remote_controller, &mut network_local)
-                    }
-                };
-
-                let turn_number = self.game.turn.turn_number;
-                log::debug!(
-                    target: "wasm_tui",
-                    "NETWORK NORMAL: Game loop returned on turn {}, undo_log={}, result={}",
-                    turn_number,
-                    self.game.undo_log.len(),
-                    match &result {
-                        Ok(GameLoopState::Complete(_)) => "Complete",
-                        Ok(GameLoopState::AwaitingInput(_)) => "AwaitingInput",
-                        Err(_) => "Error",
-                    }
-                );
-
-                // Check monotonicity invariants after normal network run
-                if let Some(violation_msg) = self.check_monotonicity_invariants() {
-                    self.error_message = Some(violation_msg);
-                    self.game_over = true;
-                    self.needs_redraw = true;
-                    return;
-                }
-
-                self.handle_game_result(result);
-                self.needs_redraw = true;
-            } else {
-                self.error_message = Some("Human controller not initialized for network mode".to_string());
                 self.needs_redraw = true;
             }
         }
@@ -2685,6 +2470,17 @@ impl WasmFancyTuiState {
         // are assigned (mtg-254). The persistent inner is wrapped in
         // `WasmNetworkLocalController` to coordinate submit/ack with the server.
         let boxed: Box<dyn PlayerController> = match controller_type {
+            // Human shares the SAME persistent rewind+replay machinery as the AI
+            // controllers (mtg-679 unification): the only difference is that the
+            // genuinely-new frontier choice comes from the human's UI-injected
+            // `pending_choice` (set on the inner via `as_any_mut` downcast in the
+            // dispatch) instead of being computed live. The inner returns
+            // `NeedInput` when it has options but no pending choice, so the
+            // forward run blocks for the user exactly where it should.
+            WasmControllerType::Human => Box::new(WasmNetworkLocalController::new(
+                WasmHumanController::new(our_id),
+                network_client,
+            )),
             WasmControllerType::Random => Box::new(WasmNetworkLocalController::new(
                 RandomController::with_seed(our_id, self.controller_seed),
                 network_client,

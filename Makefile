@@ -353,6 +353,14 @@ validate-network-e2e-step: validate-wasm-e2e-step
 	@cd web && $(NPM) install --silent 2>/dev/null || true
 	@cd web && node -e "const fs=require('fs');let p;try{p=require('playwright').chromium.executablePath();}catch(e){console.error('\nERROR: playwright is not installed in web/node_modules.\nRun: make setup   (or: cd web && npm install && npx playwright install chromium)\n');process.exit(1);}if(!fs.existsSync(p)){console.error('\nERROR: Playwright chromium is not provisioned ('+p+').\nRun: make setup   (or: cd web && npx playwright install chromium)\n');process.exit(1);}"
 	@cd web && node test_network_gui_e2e.js
+	@echo "=== Running Network HUMAN-controller sync gate (mtg-679 unification) ==="
+	@echo "    Human P2 (WASM browser) vs heuristic AI P1 over the real network"
+	@echo "    path. Before the AI/human unification this raced the server through"
+	@echo "    P2's turn-1 cleanup discard (FATAL hash mismatch at action ~45);"
+	@echo "    now the human controller flows through the SAME rewind+replay"
+	@echo "    machinery as the AI controllers, so it stays in lockstep. Gates the"
+	@echo "    collapsed single network path forever — desync is ALWAYS fatal."
+	@cd web && node test_network_human_input.js
 	@cd web && node test_network_multideck.js --quick
 	@cd web && node test_network_click.js
 	@cd web && node test_landing_page_ux.js

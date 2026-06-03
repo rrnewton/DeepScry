@@ -280,9 +280,16 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     }
 }
 
-impl<C: PlayerController> PlayerController for WasmNetworkLocalController<C> {
+impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalController<C> {
     fn player_id(&self) -> PlayerId {
         self.inner.player_id()
+    }
+
+    /// Expose ourselves for downcasting so the WASM network dispatch can reach
+    /// the inner controller (e.g. inject a human's pending choice into
+    /// `WasmNetworkLocalController<WasmHumanController>`; mtg-679 unification).
+    fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
+        Some(self)
     }
 
     fn choose_spell_ability_to_play(
