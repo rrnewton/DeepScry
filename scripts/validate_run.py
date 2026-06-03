@@ -38,11 +38,15 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# Per-step wall-clock cap. A step that exceeds it is SIGKILLed (process group)
-# and marked FAIL — so a hung test fails its shard instead of hanging CI for
-# hours. Generous because CI's 2-vCPU runners are slow (build.mtg-release +
-# the full network suite). Override per Step via `timeout=`.
-DEFAULT_STEP_TIMEOUT = int(os.environ.get("VALIDATE_STEP_TIMEOUT", "2400"))
+# Per-step wall-clock cap. A step that exceeds it is SIGKILLed and marked FAIL —
+# so a hung step fails its shard FAST + visibly instead of dragging CI for hours
+# (the 40-min default let a single stuck step eat a whole run). Default is tight
+# (TEST steps should finish in minutes even on a 2-vCPU runner); the COLD-build
+# steps (build.mtg-release, wasm.bundle, unit.nextest) get an explicit larger
+# `timeout=` in the registry so a slow cold compile on 2 vCPU isn't falsely
+# killed. Override globally via VALIDATE_STEP_TIMEOUT.
+DEFAULT_STEP_TIMEOUT = int(os.environ.get("VALIDATE_STEP_TIMEOUT", "600"))
+BUILD_STEP_TIMEOUT = int(os.environ.get("VALIDATE_BUILD_TIMEOUT", "2400"))
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 NODE = os.environ.get("NODE") or "node"
@@ -99,14 +103,15 @@ def build_registry():
     # --- build (once) ---
     add(Step("build", "mtg-release",
              "build release+network mtg ONCE (shared by all steps)",
-             "cargo build --release --bin mtg --features network"))
+             "cargo build --release --bin mtg --features network",
+             timeout=BUILD_STEP_TIMEOUT))
     # --- lint (self-contained; own check artifacts) ---
     add(Step("lint", "fmt", "cargo fmt --all --check", "make fmt-check"))
     add(Step("lint", "clippy", "clippy engine+benchmarks (-D warnings)", "make clippy"))
     add(Step("lint", "clippy-wasm", "clippy wasm32 target", "make clippy-wasm"))
     # --- unit (nextest test bins compile in debug; run reuses release mtg) ---
     add(Step("unit", "nextest", "cargo nextest run --features network",
-             "make test", deps=["build.mtg-release"], env=_REUSE))
+             "make test", deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
     # --- examples (own debug build) ---
     add(Step("examples", "run", "run all examples (parallel)", "make examples"))
     # --- agentplay (python; agent_game.py + mode-equivalence drive the release
@@ -131,7 +136,7 @@ def build_registry():
              "bash tests/snapshot_resume_e2e.sh", deps=["build.mtg-release"], env=_REUSE))
     # --- wasm: ONE bundle (wasm-network features) + browser e2e + equiv sweeps ---
     add(Step("wasm", "bundle", "wasm-pack dev build (wasm-network) + export-wasm data",
-             "make wasm-dev"))
+             "make wasm-dev", timeout=BUILD_STEP_TIMEOUT))
     add(Step("wasm", "npm-install", "web/ npm install (e2e deps)",
              f"cd web && {NPM} install --silent 2>/dev/null"))
     add(Step("wasm", "browser", "WASM browser e2e suite (11 playwright tests)",
@@ -155,29 +160,42 @@ def build_registry():
     ]:
         add(Step("wasm", job, desc, f"{EQUIV} {args}",
                  deps=["build.mtg-release", "wasm.bundle"], env=_EQUIV, resources=_BROWSER))
-    # --- network e2e (reuse the single wasm bundle + release mtg) ---
-    net = [
+    # --- network e2e ---
+    # BROWSER-net: spawn `mtg server` + a headless chromium client over the
+    # wasm-network bundle. Need build.mtg-release + the wasm bundle + npm;
+    # browser-resource-serialized. (CI sub-shards: network-gui, network-redo.)
+    net_browser = [
         ("playwright-check", "npm install + verify chromium provisioned",
-         f"cd web && {NPM} install --silent 2>/dev/null || true; {NODE} playwright_check.js", []),
-        ("gui", "networked GUI e2e (baseline)", "cd web && node test_network_gui_e2e.js", []),
-        ("multideck", "networked multi-deck e2e (--quick)", "cd web && node test_network_multideck.js --quick", []),
-        ("click", "networked click+log e2e", "cd web && node test_network_click.js", []),
-        ("landing", "landing-page UX e2e", "cd web && node test_landing_page_ux.js", []),
-        ("redo-reload", "lobby-redo multiturn + mid-game reload (mtg-682 4+5)", "cd web && node test_redo_multiturn_reload_e2e.js", []),
-        ("redo-lobby", "lobby-flow-fixes e2e (mtg-682 1-4)", "cd web && node test_redo_lobby_e2e.js", []),
-        ("smoke", "hermetic CAS web-asset smoke (mtg-571)", "cd web && node test_web_server_smoke.js", []),
-        ("deploy-nav", "hashed deploy-tree navigation gate (mtg-682)", "cd web && node test_deploy_tree_nav.js", []),
-        ("equiv-random", "network-vs-local gamelog identity: random (mtg-380)", "bash tests/network_vs_local_equivalence_e2e.sh 3 random", []),
-        ("equiv-zero", "network-vs-local gamelog identity: zero", "bash tests/network_vs_local_equivalence_e2e.sh 3 zero", []),
-        ("equiv-heuristic", "network-vs-local gamelog identity: heuristic (mtg-yulth)", "bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic", []),
-        ("robots42", "robots42 state-sync regression (mtg-559)", "bash tests/robots42_state_sync_e2e.sh", []),
-        ("fuzz", "bounded determinism + net-equiv fuzz", "bash tests/fuzz_determinism_netequiv_e2e.sh", [("MTG_REUSE_PREBUILT", "1")]),
+         f"cd web && {NPM} install --silent 2>/dev/null || true; {NODE} playwright_check.js"),
+        ("gui", "networked GUI e2e (baseline)", "cd web && node test_network_gui_e2e.js"),
+        ("multideck", "networked multi-deck e2e (--quick)", "cd web && node test_network_multideck.js --quick"),
+        ("click", "networked click+log e2e", "cd web && node test_network_click.js"),
+        ("landing", "landing-page UX e2e", "cd web && node test_landing_page_ux.js"),
+        ("redo-reload", "lobby-redo multiturn + mid-game reload (mtg-682 4+5)", "cd web && node test_redo_multiturn_reload_e2e.js"),
+        ("redo-lobby", "lobby-flow-fixes e2e (mtg-682 1-4)", "cd web && node test_redo_lobby_e2e.js"),
+        ("smoke", "hermetic CAS web-asset smoke (mtg-571)", "cd web && node test_web_server_smoke.js"),
+        ("deploy-nav", "hashed deploy-tree navigation gate (mtg-682)", "cd web && node test_deploy_tree_nav.js"),
     ]
-    for job, desc, cmd, extraenv in net:
-        env = dict(extraenv)
+    for job, desc, cmd in net_browser:
         add(Step("network", job, desc, cmd,
                  deps=["build.mtg-release", "wasm.bundle", "wasm.npm-install"],
-                 env=env, resources=_BROWSER, networkonly=True))
+                 resources=_BROWSER, networkonly=True))
+    # NATIVE-net: `mtg server` + `mtg connect` only — NO browser, NO wasm bundle
+    # (verified: these scripts never reference chromium/playwright/web/pkg). So
+    # they depend ONLY on build.mtg-release and use a "net" resource (serialized
+    # among themselves to keep the determinism comparisons load-stable, per the
+    # mtg-586/589 load-sensitivity note) — NOT the browser resource. (CI
+    # sub-shard: network-equiv, which needs neither node nor wasm-pack.)
+    net_native = [
+        ("equiv-random", "network-vs-local gamelog identity: random (mtg-380)", "bash tests/network_vs_local_equivalence_e2e.sh 3 random", {}),
+        ("equiv-zero", "network-vs-local gamelog identity: zero", "bash tests/network_vs_local_equivalence_e2e.sh 3 zero", {}),
+        ("equiv-heuristic", "network-vs-local gamelog identity: heuristic (mtg-yulth)", "bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic", {}),
+        ("robots42", "robots42 state-sync regression (mtg-559)", "bash tests/robots42_state_sync_e2e.sh", {}),
+        ("fuzz", "bounded determinism + net-equiv fuzz", "bash tests/fuzz_determinism_netequiv_e2e.sh", _REUSE),
+    ]
+    for job, desc, cmd, env in net_native:
+        add(Step("network", job, desc, cmd, deps=["build.mtg-release"],
+                 env=dict(env), resources={"net": 1}, networkonly=True))
     return s
 
 
@@ -426,6 +444,8 @@ def main():
     ap.add_argument("--no-network", action="store_true", help="skip the network jobGroup")
     ap.add_argument("--browser-capacity", type=int, default=1,
                     help="how many chromium-heavy steps may run at once (default 1)")
+    ap.add_argument("--net-capacity", type=int, default=1,
+                    help="how many native networked-game steps may run at once (default 1)")
     ap.add_argument("-q", "--quiet", action="store_true")
     ap.add_argument("-v", dest="v", action="count", default=0, help="-v stream framework, -vv stream all")
     ap.add_argument("--list", action="store_true", help="list steps and exit")
@@ -472,7 +492,7 @@ def main():
                          capture_output=True, text=True).stdout.strip() or "nosha"
     steps_dir = PROJECT_DIR / "validate_logs" / f"steps_{sha}"
     runner = Runner(steps, args.jobs, verbosity, steps_dir,
-                    resource_caps={"browser": args.browser_capacity})
+                    resource_caps={"browser": args.browser_capacity, "net": args.net_capacity})
     print(f"=== validate_run.py: {len(steps)} steps, -j{args.jobs}, "
           f"browser-capacity={args.browser_capacity}, detail -> {steps_dir} ===")
     ok = runner.run()
