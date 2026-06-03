@@ -4851,6 +4851,20 @@ impl GameState {
                             let token_name = token.name.to_string();
                             self.cards.insert(token_id, token);
 
+                            // Log the entity mint so a rewind can remove the
+                            // token AND roll `next_entity_id` back (mtg-ba6uq #3).
+                            // next_card_id() already advanced next_entity_id and
+                            // cards.insert added the instance — both unlogged
+                            // until now, so a rewind leaked the token and replay
+                            // minted a duplicate at a higher id. Logged BEFORE the
+                            // reveal/battlefield placement so the LIFO undo
+                            // reverses those first, then this clears the entity.
+                            let mint_log_size = self.logger.log_count();
+                            self.undo_log.log(
+                                crate::undo::GameAction::CreateEntity { card_id: token_id },
+                                mint_log_size,
+                            );
+
                             // NETWORK: Reveal token to all players so server sends
                             // CardRevealed(TokenCreated). Without this, clients don't
                             // know the token's identity (causes desync).
