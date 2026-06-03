@@ -236,6 +236,50 @@ function log(msg) {
                   `details changed (length ${beforeClick.length} → ${afterClick.length})`);
         }
 
+        // ── mtg-444: the G-key full-graveyard popup ──────────────────────────
+        // Press G → a big scrollable modal listing BOTH players' graveyards.
+        // Any key (or overlay click) dismisses it. Graveyards are non-empty by
+        // now (we drove ~50 plies above), so the popup must list real cards.
+        await page.keyboard.press('g');
+        await page.waitForTimeout(250);
+        const gyPopup = await page.evaluate(() => {
+            const dialog = document.getElementById('graveyard-dialog');
+            const overlay = document.getElementById('graveyard-dialog-overlay');
+            const content = document.getElementById('graveyard-dialog-content');
+            return {
+                dialogShown: !!dialog && dialog.classList.contains('show'),
+                overlayShown: !!overlay && overlay.classList.contains('show'),
+                sectionCount: content ? content.querySelectorAll('.gy-section').length : 0,
+                cardCount: content ? content.querySelectorAll('.gy-card').length : 0,
+                titleEntries: content
+                    ? Array.from(content.querySelectorAll('.gy-section-title')).map(e => e.textContent.trim())
+                    : [],
+            };
+        });
+        log(`G popup: shown=${gyPopup.dialogShown}, sections=${gyPopup.sectionCount}, cards=${gyPopup.cardCount}, titles=${JSON.stringify(gyPopup.titleEntries)}`);
+        check('G key opens the graveyard popup (dialog + overlay shown)',
+              gyPopup.dialogShown && gyPopup.overlayShown,
+              `dialog=${gyPopup.dialogShown}, overlay=${gyPopup.overlayShown}`);
+        check('graveyard popup has one section per player',
+              gyPopup.sectionCount >= 2,
+              `sections=${gyPopup.sectionCount}`);
+        check('graveyard popup lists real cards (non-empty graveyards)',
+              gyPopup.cardCount > 0,
+              `cards=${gyPopup.cardCount}`);
+
+        const gyPopupShot = path.join(debugDir, 'graveyard_g_popup.png');
+        await page.screenshot({ path: gyPopupShot, fullPage: false });
+        log(`SCREENSHOT (G popup): ${gyPopupShot}`);
+
+        // Any key dismisses it (capture-phase handler, same contract as ? help).
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
+        const gyClosed = await page.evaluate(() => {
+            const dialog = document.getElementById('graveyard-dialog');
+            return !dialog.classList.contains('show');
+        });
+        check('any key dismisses the graveyard popup', gyClosed, `closed=${gyClosed}`);
+
         const nonImage404Errors = browserErrors.filter(e =>
             !(e.includes('Failed to load resource') && e.includes('404'))
         );

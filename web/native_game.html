@@ -765,7 +765,9 @@
            keybinding list is readable without scrolling on a normal screen,
            while staying responsive on small viewports (it only scrolls if
            the content genuinely overflows the cap). */
-        #help-dialog {
+        /* The graveyard popup (mtg-444) shares the help-dialog chrome so the two
+           native modals can never drift in look/behaviour (DRY). */
+        #help-dialog, #graveyard-dialog {
             display: none;
             position: fixed;
             top: 50%;
@@ -782,15 +784,34 @@
             max-height: 80vh;
             overflow-y: auto;
         }
-        #help-dialog.show { display: block; }
-        #help-dialog-overlay {
+        #help-dialog.show, #graveyard-dialog.show { display: block; }
+        #help-dialog-overlay, #graveyard-dialog-overlay {
             display: none;
             position: fixed;
             inset: 0;
             background: rgba(0, 0, 0, 0.5);
             z-index: 999;
         }
-        #help-dialog-overlay.show { display: block; }
+        #help-dialog-overlay.show, #graveyard-dialog-overlay.show { display: block; }
+        /* Graveyard popup list (mtg-444). */
+        .gy-section { margin: 0 0 18px; }
+        .gy-section:last-child { margin-bottom: 0; }
+        .gy-section-title {
+            color: #4cc9f0;
+            font-size: 14px;
+            font-weight: bold;
+            border-bottom: 1px solid #2a3a6a;
+            padding-bottom: 4px;
+            margin-bottom: 8px;
+        }
+        .gy-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 4px 14px;
+        }
+        .gy-card { color: #eee; font-size: 13px; font-family: 'Courier New', monospace; }
+        .gy-card .gy-idx { color: #888; margin-right: 6px; }
+        .gy-empty { color: #888; font-style: italic; font-size: 13px; }
         .help-dialog-title {
             color: #ffd700;
             font-size: 22px;
@@ -911,7 +932,7 @@
         <div class="status-bar" id="status-bar">
             <span class="phase">Loading...</span>
             <span class="turn"></span>
-            <span>Space=turn A=auto ?=help Q=exit</span>
+            <span>Space=turn A=auto G=graveyard ?=help Q=exit</span>
         </div>
     </div>
 
@@ -946,7 +967,7 @@
             <div style="margin-top: 6px;">
                 <button id="btn-bug-report" style="background:#9c6644;">Report Bug</button>
             </div>
-            <div class="controls-hint">Space=turn A=auto Q=exit C=toggle ?=help</div>
+            <div class="controls-hint">Space=turn A=auto G=graveyard Q=exit C=toggle ?=help</div>
         </div>
     </div>
 
@@ -955,6 +976,16 @@
     <div id="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title">
         <div class="help-dialog-title" id="help-dialog-title">Keyboard Shortcuts</div>
         <div class="help-dialog-content" id="help-dialog-content"></div>
+        <div class="help-dialog-close">Press any key (or click) to close</div>
+    </div>
+
+    <!-- Graveyard popup (mtg-444): a big, scrollable view of BOTH players'
+         graveyards, opened with the G key — modeled on the help dialog so the
+         two native modals share chrome + dismiss behaviour. -->
+    <div id="graveyard-dialog-overlay"></div>
+    <div id="graveyard-dialog" role="dialog" aria-modal="true" aria-labelledby="graveyard-dialog-title">
+        <div class="help-dialog-title" id="graveyard-dialog-title">Graveyards</div>
+        <div class="help-dialog-content" id="graveyard-dialog-content"></div>
         <div class="help-dialog-close">Press any key (or click) to close</div>
     </div>
 
@@ -2535,6 +2566,12 @@
                     e.preventDefault();
                     window.showHelpDialog();
                     break;
+                case 'g':
+                case 'G':
+                    // mtg-444: full graveyard popup (both players), scrollable.
+                    e.preventDefault();
+                    showGraveyardDialog();
+                    break;
                 default:
                     // 1-9 quick select
                     if (e.key >= '1' && e.key <= '9') {
@@ -2546,6 +2583,74 @@
                     break;
             }
         });
+
+        // ==================== GRAVEYARD POPUP (mtg-444) ====================
+        // A big, scrollable modal listing BOTH players' graveyards, opened with
+        // the G key. Pure renderer concern: it reads the cached GUI view model
+        // (`_viewModel.players[*].graveyard`, already provided by Rust) — no
+        // engine/WASM/network call. Dismiss + chrome mirror the help dialog.
+        function hideGraveyardDialog() {
+            const dialog = document.getElementById('graveyard-dialog');
+            const overlay = document.getElementById('graveyard-dialog-overlay');
+            if (!dialog || !overlay) return;
+            dialog.classList.remove('show');
+            overlay.classList.remove('show');
+            if (dialog._gyKeyHandler) {
+                document.removeEventListener('keydown', dialog._gyKeyHandler, true);
+                dialog._gyKeyHandler = null;
+            }
+            overlay.onclick = null;
+            dialog.onclick = null;
+        }
+
+        function buildGraveyardSectionHtml(player, isUs) {
+            const gy = (player && player.graveyard) || [];
+            const who = player ? (player.label || player.name || (isUs ? 'You' : 'Opponent')) : '';
+            const head = `<div class="gy-section-title">${escapeHtml(who)}${isUs ? ' — You' : ''} (${gy.length})</div>`;
+            if (gy.length === 0) {
+                return `<div class="gy-section">${head}<div class="gy-empty">(empty)</div></div>`;
+            }
+            const items = gy.map((c, i) =>
+                `<div class="gy-card"><span class="gy-idx">${i + 1}.</span>${escapeHtml(c.name || '?')}</div>`
+            ).join('');
+            return `<div class="gy-section">${head}<div class="gy-cards">${items}</div></div>`;
+        }
+
+        function showGraveyardDialog() {
+            const dialog = document.getElementById('graveyard-dialog');
+            const overlay = document.getElementById('graveyard-dialog-overlay');
+            const content = document.getElementById('graveyard-dialog-content');
+            if (!dialog || !overlay || !content) return;
+
+            const vm = _viewModel;
+            if (!vm || !Array.isArray(vm.players) || vm.players.length === 0) {
+                content.innerHTML = '<div class="gy-empty">No game in progress.</div>';
+            } else {
+                // Local player first, then the opponent(s).
+                const ourIdx = vm.our_player_idx ?? 0;
+                const ordered = [];
+                if (vm.players[ourIdx]) ordered.push([vm.players[ourIdx], true]);
+                vm.players.forEach((p, i) => { if (i !== ourIdx) ordered.push([p, false]); });
+                content.innerHTML = ordered.map(([p, isUs]) => buildGraveyardSectionHtml(p, isUs)).join('');
+            }
+
+            dialog.classList.add('show');
+            overlay.classList.add('show');
+
+            // Close on any key (capture + stopPropagation so the dismiss key is
+            // not also read as a game command) — same contract as the help dialog.
+            const handleGyKey = function (e) {
+                hideGraveyardDialog();
+                e.preventDefault();
+                e.stopPropagation();
+            };
+            dialog._gyKeyHandler = handleGyKey;
+            document.addEventListener('keydown', handleGyKey, true);
+            overlay.onclick = hideGraveyardDialog;
+            dialog.onclick = hideGraveyardDialog;
+        }
+        // Exposed for e2e/console use, parity with window.showHelpDialog.
+        window.showGraveyardDialog = showGraveyardDialog;
 
         function startAutoRun() {
             if (!autoRunning || !tuiLaunched) return;
