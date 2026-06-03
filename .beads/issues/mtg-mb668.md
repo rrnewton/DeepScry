@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T18:18:53.109916678+00:00
+updated_at: 2026-06-03T19:04:20.795394141+00:00
 ---
 
 # Description
@@ -46,3 +46,9 @@ NEXT: fix sig-2c. Until then robots42 stays OUT of the make-validate gate (mirro
 
 ------------------------------------------------------------------------
 sig-2c FIX LANDED: Effect::ChangeZoneAll (actions/mod.rs) now moves the opponent's reserved (instance-less) hand/library CardIds into the destination on a SHADOW game when the restriction is UNRESTRICTED (new TargetRestriction::is_unrestricted()). So a Timetwister/Wheel/Windfall hand+graveyard->library mass-shuffle moves the opponent's hidden hand on the shadow exactly as the server does -> opponent library count matches -> Fisher-Yates consumes identical RNG -> server<->shadow stay in lockstep. Restricted ChangeZoneAll (typed bounce/exile) and the server (always real instances) are unchanged. Deterministic RED-first reproducer: shadow_mass_shuffle_moves_opponent_reserved_hand_to_library_mb668_sig2c (basic_actions.rs) — RED (lib 7 != 10) without the fix, GREEN with. Audited sibling effects: discard-hand (Wheel/Mind Twist) and mill collect raw CardIds (no try_get filter) so they were already count-safe; ChangeZoneAll was the unique offender. Full lib suite 1001/1001 green. Validating with robots42 x30 + a second seed/deck.
+
+------------------------------------------------------------------------
+sig-2d (REMAINING, identified — reveal-mask lockstep on library cycle): after sig-2c, robots42 x30 = 20/30. Remaining failures are around mass-draws (Timetwister/Wheel) as BOTH (i) equal-action-count content hash mismatches (RNG order already drifted) and (ii) action-count diff = +/-1.
+EVIDENCE (diff=-1, server=2122 local=2123, Timetwister): server SKIPS the RevealCard for P0's own drawn cards 4 and 56 (already revealed to P0 from an earlier draw — stale revealed_to_mask retained because sig-2b only conceals is_revealed_to_all() cards, NOT owner-only-revealed cards), while the shadow (reserved/late-binding) logs the reveal unconditionally -> reveal COUNT diverges by 1 -> RNG/order drift downstream.
+ROOT: maybe_reveal_to_player is CONDITIONAL (logs iff !is_revealed_to) when an instance exists, but UNCONDITIONAL on the reserved late-binding branch. The two only agree when the server's card is not-yet-revealed. A card that cycled library->hand->library->hand keeps its owner-bit on the server (skip) but is reserved on the shadow (log).
+FIX DIRECTION (mtg-725 class): make library reveal/conceal SYMMETRIC regardless of hidden mask — e.g. (a) force the Library->Hand reveal unconditional (both sides always log), or (b) conceal the FULL mask on library ENTRY for instances AND log a symmetric late-binding conceal for reserved opponent cards (which always came from hand = mask nonzero). Both are broad reveal-semantics changes; needs a native reveal-count-parity reproducer first and careful validation. Deferred pending coordinator steer (native lockstep harness vs continue e2e dump-diff).
