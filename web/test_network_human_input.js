@@ -10,15 +10,16 @@
 // 5. Verifies no MONOTONICITY VIOLATION, DESYNC, or other errors
 // 6. Plays through as many turns as possible
 //
-// NOT in make validate. KNOWN-FAILING on the pre-existing WASM Human-controller
-// network desync mtg-679 (P2 hash mismatch at choice_seq=1 / action_count=45 —
-// the WASM Human client runs ahead of the server through P2's draw into the
-// cleanup discard). That desync is DECK-INDEPENDENT and out of scope for the
-// lobby-redo cleanup (web/JS only). Per the project's inviolable rule "desync is
-// ALWAYS fatal", this test correctly REFUSES to pass on the mismatch rather than
-// papering over it — which is exactly why the redo's acceptance gate
-// (test_redo_multiturn_reload_e2e.js) uses AI controllers, which sidestep
-// mtg-679. This test will pass once mtg-679 is fixed.
+// WIRED INTO make validate (validate-network-e2e-step) as the human-path sync
+// gate. The mtg-679 unification routed the WASM Human controller through the
+// SAME rewind+replay machinery as the AI controllers, fixing the prior P2 hash
+// mismatch; this test now drives a full deterministic game (grizzly seed 42,
+// human P2 vs heuristic AI P1) to a real terminal result with no desync.
+//
+// PASS CRITERIA (hardened — a no-desync timeout is NOT a pass): the game must
+// reach a server-authoritative terminal result. Repeated no-progress while the
+// game is unfinished is treated as a STALL and fails. The choice UI is 1-BASED
+// (press '1' for the first listed option; '0' means the 10th).
 //
 // Requires:
 //   make build-network
@@ -38,7 +39,7 @@ const DECK_NAME = 'grizzly_bears.dck';
 
 // Test limits
 const MAX_CHOICES = 100;           // Maximum choices before declaring success
-const GAME_TIMEOUT_MS = 180000;    // 3 minute overall game timeout
+const GAME_TIMEOUT_MS = 180000;    // 3 minute overall game-end ceiling (exits early on completion)
 const CHOICE_TIMEOUT_MS = 20000;   // 20 second timeout per choice prompt
 const POST_CHOICE_WAIT_MS = 500;   // Wait after pressing key before checking
 
@@ -218,9 +219,9 @@ function decideKey(prompt) {
         }
 
         case 'discard': {
-            // Discard N card(s): [0] Card1, [1] Card2, ...
-            // Discard the first card
-            return { key: '0', reason: 'discard first card' };
+            // Discard N card(s). The WASM choice UI is 1-BASED: press '1' for
+            // the first listed card ('0' would mean the 10th). Discard the first.
+            return { key: '1', reason: 'discard first card' };
         }
 
         case 'targets': {
@@ -351,8 +352,19 @@ async function runTest() {
             stdio: ['ignore', 'pipe', 'pipe']
         });
         const serverErrors = [];
+        // Server-authoritative terminal-result detection (mtg-679 oracle gate):
+        // the server is the source of truth for game end. We assert the game
+        // reaches a real terminal result rather than passing on a timeout.
+        let gameCompleted = false;
+        const detectCompletion = text => {
+            if (text.includes('Completed, winner') || text.includes('has lost the game')
+                || text.includes('GameEnded') || /\bwins!/.test(text)) {
+                gameCompleted = true;
+            }
+        };
         server.stdout.on('data', data => {
             const text = data.toString().trim();
+            detectCompletion(text);
             log(`Server: ${text}`);
         });
         server.stderr.on('data', data => {
@@ -365,6 +377,7 @@ async function runTest() {
             } else {
                 log(`Server: ${text}`);
             }
+            detectCompletion(text);
             // Capture sync mismatch and error messages from server
             if (text.includes('SYNC MISMATCH') || text.includes('DESYNC') || text.includes('InvalidAction')) {
                 serverErrors.push(text);
@@ -512,10 +525,24 @@ async function runTest() {
         let lastTurnInfo = '';
         const choiceHistory = [];
         let lastTerminalText = null; // Track previous terminal text for change detection
+        // Stall guard (mtg-679): consecutive no-progress iterations. In a healthy
+        // game every choice advances the terminal, so this stays 0 during play;
+        // a hang (e.g. a required discard that never advances) makes it climb.
+        let noProgressCount = 0;
+        const STALL_LIMIT = 3;
 
         log('Starting game play loop...');
 
         for (let i = 0; i < MAX_CHOICES; i++) {
+            // Server-authoritative game end: success path. The server is the
+            // source of truth; once it reports a terminal result we stop cleanly
+            // instead of idling to the timeout (which used to FALSELY pass).
+            if (gameCompleted) {
+                log(`Game reached a terminal result (server-authoritative). Made ${choicesMade} choices.`);
+                gameEnded = true;
+                break;
+            }
+
             // Check overall game timeout
             if (Date.now() - gameStartTime > GAME_TIMEOUT_MS) {
                 log(`Game timeout reached (${GAME_TIMEOUT_MS / 1000}s). Made ${choicesMade} choices.`);
@@ -542,9 +569,9 @@ async function runTest() {
             const prompt = await waitForChoicePrompt(page, CHOICE_TIMEOUT_MS, lastTerminalText);
 
             if (!prompt) {
-                // No prompt - check if game ended
+                // No prompt - check if game ended (browser-side or server-side)
                 const text = await extractTerminalText(page);
-                if (text.includes('Game Over') || text.includes('wins')) {
+                if (gameCompleted || text.includes('Game Over') || text.includes('wins')) {
                     log(`Game ended (detected during wait)`);
                     gameEnded = true;
                     break;
@@ -555,10 +582,25 @@ async function runTest() {
                     log(`No initial choice prompt. Terminal: ${text.substring(0, 300)}`);
                     throw new Error('No choice prompt appeared within timeout');
                 }
-                log(`No prompt after choice ${choicesMade}, continuing...`);
+                // STALL GUARD (mtg-679): in a healthy game the terminal advances
+                // after every choice, so a no-progress wait is rare and isolated.
+                // Repeated no-progress with the game NOT completed is a hang (e.g.
+                // a required discard that the unified human path failed to apply,
+                // re-presenting the same prompt) — fail loudly instead of idling
+                // to a false-green timeout.
+                noProgressCount++;
+                log(`No prompt after choice ${choicesMade} (no-progress ${noProgressCount}/${STALL_LIMIT})...`);
+                if (noProgressCount >= STALL_LIMIT) {
+                    throw new Error(
+                        `STALL: ${noProgressCount} consecutive no-progress waits after choice ${choicesMade} ` +
+                        `without the game advancing or completing (last prompt re-presented). ` +
+                        `The human network path is hung — a required choice is not being applied.`);
+                }
                 lastTerminalText = null; // Reset change detection
                 continue;
             }
+            // Real prompt seen → game is progressing; reset the stall counter.
+            noProgressCount = 0;
 
             if (prompt.type === 'game_over') {
                 gameEnded = true;
@@ -613,6 +655,19 @@ async function runTest() {
         fatalError = checkForFatalErrors(browserLogs);
         if (fatalError) {
             throw new Error(`Fatal error at end of test: ${fatalError}`);
+        }
+
+        // PROGRESSION ASSERTION (mtg-679): a no-desync run is NOT enough — the
+        // unified human path must drive the game to a real terminal result. The
+        // old criteria (no-desync + >=1 choice + timeout) FALSELY passed while
+        // the game was stalled at a discard. Require the server-authoritative
+        // game end (this seed deterministically ends ~turn 10), so a hang or
+        // lack of progress is a hard failure, not a silent green.
+        if (!gameEnded && !gameCompleted) {
+            throw new Error(
+                `Game did not reach a terminal result within ${GAME_TIMEOUT_MS / 1000}s ` +
+                `(made ${choicesMade} choices). A no-desync timeout is NOT a pass — the human ` +
+                `network path must progress to game end.`);
         }
 
         await page.screenshot({ path: path.join(screenshotDir, 'net_human_final.png'), fullPage: true });
