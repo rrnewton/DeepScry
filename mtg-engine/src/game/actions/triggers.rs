@@ -213,6 +213,16 @@ pub fn resolve_effect_placeholder(effect: &Effect, ctx: &TriggerContext) -> Effe
             count: *count,
         },
 
+        // Defined$ TriggeredPlayer (Howling Mine: "At the beginning of EACH
+        // player's draw step, that player draws an additional card"). The extra
+        // draw goes to the player whose draw step fired the trigger — carried in
+        // `ctx.drawing_player` — not to the trigger source's controller. Falls
+        // back to the controller if no triggered player is known.
+        Effect::DrawCards { player, count } if player.is_triggered_player() => Effect::DrawCards {
+            player: ctx.drawing_player.unwrap_or(ctx.controller),
+            count: *count,
+        },
+
         Effect::DiscardCards {
             player,
             count,

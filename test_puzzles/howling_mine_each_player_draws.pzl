@@ -1,0 +1,24 @@
+[metadata]
+Name:Howling Mine Each-Player Extra Draw
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Howling Mine ("At the beginning of each player's draw step, if Howling Mine is untapped, that player draws an additional card"). P0 controls an untapped Howling Mine. On P1's draw step the extra card goes to P1 (the active player whose draw step it is — Defined$ TriggeredPlayer / CR 504.2), NOT to Howling Mine's controller P0. Before the fix the DrawCards converter emitted a controller-placeholder, so P0 wrongly drew the extra card on the opponent's draw step.
+
+[state]
+turn=2
+activeplayer=p1
+activephase=DRAW
+p0life=20
+p0hand=
+p0library=Plains; Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Howling Mine
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Island; Island; Island; Island; Island
+p1graveyard=
+p1battlefield=
+p1exile=

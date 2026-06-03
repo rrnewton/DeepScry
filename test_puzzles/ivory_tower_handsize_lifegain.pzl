@@ -1,0 +1,24 @@
+[metadata]
+Name:Ivory Tower Hand-Size Life Gain
+Goal:Win
+Turns:3
+Difficulty:Easy
+Description:Ivory Tower ("At the beginning of your upkeep, you gain X life, where X is the number of cards in your hand minus 4"). P0 controls an Ivory Tower and holds 6 cards. At the beginning of P0's upkeep the trigger gains 6 - 4 = 2 life (life: 20 -> 22). Before the fix the triggered GainLife converter hardcoded the amount to 1 (LifeAmount$ X failed to parse), so the player gained only 1 life. The amount reads only the public hand SIZE (CR 119; information-independent for network determinism) and is clamped to >= 0 (CR 119.4).
+
+[state]
+turn=1
+activeplayer=p0
+activephase=UPKEEP
+p0life=20
+p0hand=Plains; Plains; Plains; Plains; Plains; Plains
+p0library=Plains; Plains; Plains; Plains
+p0graveyard=
+p0battlefield=Ivory Tower
+p0exile=
+
+p1life=20
+p1hand=
+p1library=Plains; Plains; Plains; Plains
+p1graveyard=
+p1battlefield=
+p1exile=

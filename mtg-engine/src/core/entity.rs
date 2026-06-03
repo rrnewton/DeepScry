@@ -94,6 +94,14 @@ pub const TARGET_OPPONENT_ID: u32 = u32::MAX - 5;
 /// controller, not to the Swords caster.
 pub const TARGET_CONTROLLER_ID: u32 = u32::MAX - 6;
 
+/// Sentinel value indicating "the player the trigger event happened to / for"
+/// (Forge `Defined$ TriggeredPlayer`). Resolved at effect-resolution time to
+/// `TriggerContext::drawing_player` — e.g. Howling Mine's "At the beginning of
+/// EACH player's draw step, that player draws an additional card": the extra
+/// draw goes to the player whose draw step it is (the active player), NOT to
+/// Howling Mine's controller. Distinct from `PLACEHOLDER_ID` (= controller).
+pub const TRIGGERED_PLAYER_ID: u32 = u32::MAX - 7;
+
 /// Sentinel range for encoding a Player as a CardId inside the
 /// `valid_targets` slice returned to `Controller::choose_targets`. We do
 /// this so controllers can offer Players as targets for `ValidTgts$ Any`
@@ -223,6 +231,20 @@ impl<T> EntityId<T> {
     #[inline]
     pub fn target_controller() -> Self {
         EntityId::new(TARGET_CONTROLLER_ID)
+    }
+
+    /// Check if this ID is the "triggered player" sentinel
+    /// (Forge `Defined$ TriggeredPlayer`).
+    #[inline]
+    pub fn is_triggered_player(&self) -> bool {
+        self.id == TRIGGERED_PLAYER_ID
+    }
+
+    /// Create the "triggered player" sentinel (the player the trigger event
+    /// happened for — e.g. the active player whose draw step fired the trigger).
+    #[inline]
+    pub fn triggered_player() -> Self {
+        EntityId::new(TRIGGERED_PLAYER_ID)
     }
 }
 

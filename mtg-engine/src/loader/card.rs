@@ -1868,11 +1868,14 @@ impl CardDefinition {
         }
         let life_amount = params.get("LifeAmount")?;
         // A plain integer is the fixed-amount case — let params_to_effect handle it.
+        // Every other (non-Fixed) DynamicAmount — TargetPower / TargetManaValue /
+        // DamageDealt / Count(...) — routes through GainLifeDynamic.
         let amount = match DynamicAmount::parse(life_amount, &self.svars)? {
             DynamicAmount::Fixed(_) => return None,
-            dynamic @ (DynamicAmount::TargetPower | DynamicAmount::TargetManaValue | DynamicAmount::DamageDealt) => {
-                dynamic
-            }
+            dynamic @ (DynamicAmount::TargetPower
+            | DynamicAmount::TargetManaValue
+            | DynamicAmount::DamageDealt
+            | DynamicAmount::Count(_)) => dynamic,
         };
 
         // Resolve the recipient placeholder from the Defined$ selector. The
@@ -2356,18 +2359,27 @@ impl CardDefinition {
                             }
                             // DB$ GainLife effects
                             // Example: "DB$ GainLife | Defined$ You | LifeAmount$ 1"
+                            // A dynamic LifeAmount$ (X resolving to a Count$ / target
+                            // characteristic) routes through GainLifeDynamic — e.g.
+                            // Ivory Tower's "gain (hand size − 4) life" upkeep trigger
+                            // (SVar:X:Count$ValidHand Card.YouOwn/Minus.4). The fixed
+                            // path below stays for plain integer amounts.
                             if svar_params.api_type == ApiType::GainLife {
-                                let life_amount = svar_params
-                                    .get("LifeAmount")
-                                    .and_then(|s| s.parse::<i32>().ok())
-                                    .unwrap_or(1);
-                                let target_is_controller = svar_params.get("Defined") == Some("You");
+                                if let Some(effect) = self.gain_life_dynamic_from_params(svar_params) {
+                                    effects.push(effect);
+                                } else {
+                                    let life_amount = svar_params
+                                        .get("LifeAmount")
+                                        .and_then(|s| s.parse::<i32>().ok())
+                                        .unwrap_or(1);
+                                    let target_is_controller = svar_params.get("Defined") == Some("You");
 
-                                if target_is_controller {
-                                    effects.push(Effect::GainLife {
-                                        player: PlayerId::new(0),
-                                        amount: life_amount,
-                                    });
+                                    if target_is_controller {
+                                        effects.push(Effect::GainLife {
+                                            player: PlayerId::new(0),
+                                            amount: life_amount,
+                                        });
+                                    }
                                 }
                             }
                             // DB$ Draw effects on a draw-step (or other phase)
@@ -2385,8 +2397,20 @@ impl CardDefinition {
                                     .or_else(|| svar_params.get("Amount"))
                                     .and_then(|s| s.parse::<u8>().ok())
                                     .unwrap_or(1);
+                                // Defined$ TriggeredPlayer (Howling Mine: each
+                                // player's draw step → "that player draws") routes
+                                // the draw to the active player whose draw step
+                                // fired, not the trigger source's controller. A
+                                // bare/`Defined$ You` draw stays a placeholder (=
+                                // controller / active player on a controller-only
+                                // trigger like Sylvan Library).
+                                let player = if svar_params.get("Defined") == Some("TriggeredPlayer") {
+                                    PlayerId::triggered_player()
+                                } else {
+                                    PlayerId::placeholder()
+                                };
                                 effects.push(Effect::DrawCards {
-                                    player: PlayerId::placeholder(),
+                                    player,
                                     count: num_cards,
                                 });
                             }

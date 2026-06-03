@@ -168,6 +168,15 @@ pub enum DynamicAmount {
     /// resolution (read from the spell's damage bookkeeping). Used by Drain
     /// Life ("you gain life equal to the damage dealt").
     DamageDealt,
+
+    /// A [`CountExpression`] evaluated against the recipient player at
+    /// resolution time. Used for hand-size-driven life gain such as Ivory
+    /// Tower (`Count$ValidHand Card.YouOwn/Minus.4` — "gain life equal to the
+    /// number of cards in your hand minus 4"). The count reads only public
+    /// state (hand SIZE, permanent counts), so it is information-independent
+    /// (network determinism). The result is clamped to >= 0 by the resolver
+    /// (CR 119.4 — a player cannot gain negative life).
+    Count(CountExpression),
 }
 
 impl DynamicAmount {
@@ -198,6 +207,19 @@ impl DynamicAmount {
             // Spirit Link: SVar:X:TriggerCount$DamageAmount — the amount of
             // damage the trigger event just reported.
             ("TriggerCount", "DamageAmount") => Some(DynamicAmount::DamageDealt),
+            // Count$… bodies (hand size, permanent counts, …) drive a dynamic
+            // life amount evaluated against the recipient at resolution time.
+            // Ivory Tower: SVar:X:Count$ValidHand Card.YouOwn/Minus.4. Delegate
+            // to CountExpression::parse (DRY); a Fixed result means the body was
+            // unrecognized, so fall back to the caller's fixed-amount path.
+            ("Count", _) => {
+                let expr = CountExpression::parse(value, svars);
+                if matches!(expr, CountExpression::Fixed(_)) {
+                    None
+                } else {
+                    Some(DynamicAmount::Count(expr))
+                }
+            }
             _ => None,
         }
     }
@@ -3904,6 +3926,36 @@ mod tests {
             panic!("Wrong effect type: expected DestroyPermanent, got {destroy_effect:?}");
         };
         assert_eq!(target, card_id);
+    }
+
+    #[test]
+    fn test_dynamic_amount_parse_count_handsize() {
+        use std::collections::HashMap;
+        // Ivory Tower: SVar:X:Count$ValidHand Card.YouOwn/Minus.4
+        let mut svars = HashMap::new();
+        svars.insert("X".to_string(), "Count$ValidHand Card.YouOwn/Minus.4".to_string());
+        match DynamicAmount::parse("X", &svars) {
+            Some(DynamicAmount::Count(CountExpression::CardsInHand { selector, modifier })) => {
+                assert_eq!(selector, "Card.YouOwn");
+                assert_eq!(modifier, CountModifier::Minus(4));
+            }
+            other => panic!("expected Count(CardsInHand) for Ivory Tower, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dynamic_amount_parse_preserves_known_forms() {
+        use std::collections::HashMap;
+        let mut svars = HashMap::new();
+        svars.insert("X".to_string(), "Targeted$CardPower".to_string());
+        svars.insert("Y".to_string(), "TriggerCount$DamageAmount".to_string());
+        svars.insert("Z".to_string(), "Count$Bogus".to_string()); // unrecognized Count body
+        assert_eq!(DynamicAmount::parse("X", &svars), Some(DynamicAmount::TargetPower));
+        assert_eq!(DynamicAmount::parse("Y", &svars), Some(DynamicAmount::DamageDealt));
+        assert_eq!(DynamicAmount::parse("5", &svars), Some(DynamicAmount::Fixed(5)));
+        // An unrecognized Count$ body falls back to None so the caller's fixed
+        // path runs rather than silently gaining 0.
+        assert_eq!(DynamicAmount::parse("Z", &svars), None);
     }
 
     #[test]

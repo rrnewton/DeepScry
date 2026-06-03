@@ -5335,3 +5335,112 @@ async fn test_earthquake_dragon_graveyard_return() -> Result<()> {
 
     Ok(())
 }
+
+/// Regression (1994 World Championship compat — Dolan WUG Stasis runs an Ivory
+/// Tower): Ivory Tower's "At the beginning of your upkeep, you gain X life,
+/// where X is the number of cards in your hand minus 4" (`SVar:X:Count$ValidHand
+/// Card.YouOwn/Minus.4`). Before the fix the triggered `DB$ GainLife | LifeAmount$
+/// X` converter could not parse `X` (a `Count$` body) and hardcoded the amount to
+/// 1, so a 6-card hand wrongly gained 1 life instead of 6 - 4 = 2. The dynamic
+/// amount now routes through `Effect::GainLifeDynamic` /
+/// `DynamicAmount::Count(...)`, reading only the public hand SIZE (CR 119;
+/// information-independent) and clamped to >= 0 (CR 119.4).
+#[tokio::test]
+async fn test_ivory_tower_handsize_life_gain() -> Result<()> {
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/ivory_tower_handsize_lifegain.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id;
+    let p1_id = game.players[1].id;
+
+    // Sanity: P0 holds 6 cards and starts at 20 life.
+    let hand_size = game.get_player_zones(p0_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    assert_eq!(hand_size, 6, "P0 should hold 6 cards in the starting puzzle state");
+    assert_eq!(game.get_player(p0_id)?.life, 20, "P0 should start at 20 life");
+
+    // Run P0's upkeep step: the Ivory Tower trigger fires and resolves.
+    let mut c1 = ZeroController::new(p0_id);
+    let mut c2 = ZeroController::new(p1_id);
+    {
+        let mut game_loop = GameLoop::new(&mut game).with_verbosity(VerbosityLevel::Normal);
+        let res = game_loop.upkeep_step_for_test(&mut c1, &mut c2)?;
+        assert!(res.is_none(), "upkeep step should not end the game");
+    }
+
+    // 6 cards in hand - 4 = 2 life gained: 20 -> 22.
+    assert_eq!(
+        game.get_player(p0_id)?.life,
+        22,
+        "Ivory Tower must gain (hand size 6 - 4) = 2 life, not the hardcoded 1"
+    );
+
+    println!("✓ Ivory Tower gains (hand size − 4) life on upkeep (1994 champ compat)");
+    Ok(())
+}
+
+/// Regression (1994 World Championship compat): Howling Mine's "At the beginning
+/// of EACH player's draw step, if Howling Mine is untapped, that player draws an
+/// additional card" (`T:Mode$ Phase | Phase$ Draw | ValidPlayer$ Player` →
+/// `DB$ Draw | Defined$ TriggeredPlayer`). The extra card must go to the ACTIVE
+/// player whose draw step it is (CR 504.2), not to Howling Mine's controller.
+/// Before the fix the `DB$ Draw` converter emitted a controller-placeholder, so
+/// on the opponent's draw step Howling Mine's controller wrongly drew the card.
+/// Fixed via a `Defined$ TriggeredPlayer` sentinel resolved against the trigger
+/// context's `drawing_player` (the active player).
+#[tokio::test]
+async fn test_howling_mine_draws_for_active_player() -> Result<()> {
+    use mtg_engine::core::TriggerEvent;
+
+    let cardsfolder = require_cardsfolder();
+    let puzzle_path = PathBuf::from("../test_puzzles/howling_mine_each_player_draws.pzl");
+    let puzzle_contents = std::fs::read_to_string(&puzzle_path)?;
+    let puzzle = PuzzleFile::parse(&puzzle_contents)?;
+
+    let card_db = CardDatabase::new(cardsfolder);
+    let mut game = load_puzzle_into_game(&puzzle, &card_db).await?;
+    game.seed_rng(42);
+
+    let p0_id = game.players[0].id; // Howling Mine's controller
+    let p1_id = game.players[1].id; // active player (its draw step)
+
+    let howling_mine = game
+        .battlefield
+        .cards
+        .iter()
+        .copied()
+        .find(|&id| {
+            game.cards
+                .try_get(id)
+                .is_some_and(|c| c.name.as_str() == "Howling Mine")
+        })
+        .expect("Howling Mine should be on the battlefield");
+
+    let p0_hand_before = game.get_player_zones(p0_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    let p1_hand_before = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    assert_eq!(p0_hand_before, 0, "P0 starts with an empty hand");
+    assert_eq!(p1_hand_before, 0, "P1 starts with an empty hand");
+
+    // Fire Howling Mine's beginning-of-draw-step trigger for P1's draw step.
+    game.check_triggers_for_controller(TriggerEvent::BeginningOfDraw, howling_mine, p1_id)?;
+
+    let p0_hand_after = game.get_player_zones(p0_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+    let p1_hand_after = game.get_player_zones(p1_id).map(|z| z.hand.cards.len()).unwrap_or(0);
+
+    assert_eq!(
+        p1_hand_after, 1,
+        "P1 (active player) must draw the Howling Mine extra card on their own draw step"
+    );
+    assert_eq!(
+        p0_hand_after, 0,
+        "P0 (Howling Mine's controller) must NOT draw on the opponent's draw step"
+    );
+
+    println!("✓ Howling Mine extra draw goes to the active player, not the controller (1994 champ compat)");
+    Ok(())
+}
