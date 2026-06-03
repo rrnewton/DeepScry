@@ -2208,4 +2208,115 @@ mod tests {
             );
         }
     }
+
+    // ------------------------------------------------------------------
+    // mtg-mb668 sig-2: mass-draw / shuffle content divergence on replay.
+    // ------------------------------------------------------------------
+
+    /// Build a single-player-ish GameState with `n` distinct cards stacked in
+    /// player 0's library, RNG seeded deterministically. Returns the game and
+    /// player id.
+    fn build_library_game(n: u32) -> (GameState, PlayerId) {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        game.seed_rng(42);
+        let p0 = game.players[0].id;
+        for i in 0..n {
+            let id = game.next_card_id();
+            let card = crate::core::Card::new(id, format!("Lib Card {i}").as_str(), p0);
+            game.cards.insert(id, card);
+            game.get_player_zones_mut(p0).unwrap().library.add(id);
+        }
+        (game, p0)
+    }
+
+    fn library_order(game: &GameState, p: PlayerId) -> Vec<CardId> {
+        game.get_player_zones(p).expect("zones").library.cards.clone()
+    }
+
+    /// Pop undo-log actions until it is back to `baseline` length, exactly as a
+    /// partial (mid-turn) rewind does — NOT a rewind-to-turn-start (which would
+    /// restore the RNG via the ChangeTurn boundary and mask the gap).
+    fn rewind_to_log_len(game: &mut GameState, baseline: usize) {
+        while game.undo_log.len() > baseline {
+            game.undo()
+                .expect("undo should not error")
+                .expect("undo should pop an action while above baseline");
+        }
+    }
+
+    /// sig-2 ROOT CAUSE + FIX: a shuffle consumes RNG, so a partial rewind that
+    /// reverses the shuffle MUST restore the pre-shuffle RNG state — otherwise
+    /// replaying the shuffle draws from an advanced RNG and produces a DIFFERENT
+    /// library order, which diverges every downstream mass-draw (Timetwister /
+    /// Wheel of Fortune / Braingeyser) and ultimately the shadow's hand.
+    ///
+    /// Without `ShuffleLibrary { rng_state }` capture+restore this assertion is
+    /// RED (replay order != forward order); with it the partial-rewind replay
+    /// byte-reproduces the forward shuffle.
+    #[test]
+    fn shuffle_replay_byte_reproduces_after_partial_rewind() {
+        let (mut game, p0) = build_library_game(40);
+
+        let baseline = game.undo_log.len();
+
+        // FORWARD: shuffle, capture the authoritative resulting order.
+        game.shuffle_library(p0);
+        let forward_order = library_order(&game, p0);
+
+        // Partial rewind (mid-turn): pop only the ShuffleLibrary action(s),
+        // NOT all the way to a turn boundary.
+        rewind_to_log_len(&mut game, baseline);
+
+        // REPLAY: shuffle again from the rewound state. The resulting order MUST
+        // match the forward shuffle byte-for-byte across multiple cycles.
+        for cycle in 0..5 {
+            game.shuffle_library(p0);
+            let replay_order = library_order(&game, p0);
+            assert_eq!(
+                replay_order, forward_order,
+                "replay cycle {cycle}: partial-rewind shuffle must byte-reproduce \
+                 the forward order (mtg-mb668 sig-2 RNG-state undo capture)"
+            );
+            rewind_to_log_len(&mut game, baseline);
+        }
+    }
+
+    /// sig-2 end-to-end: a shuffle-then-draw-N (mass draw) must replay to the
+    /// SAME drawn cards after a partial rewind. This is the shape that diverged
+    /// the shadow hand (sig-3 "Local abilities N != server M") in robots42.
+    #[test]
+    fn mass_draw_replay_reproduces_drawn_cards_after_partial_rewind() {
+        let (mut game, p0) = build_library_game(40);
+        game.turn.turn_number = 2; // past turn 1 so draws are unrestricted
+
+        let baseline = game.undo_log.len();
+
+        let draw_seven = |g: &mut GameState| -> Vec<CardId> {
+            let mut drawn = Vec::new();
+            for _ in 0..7 {
+                let (card, _n) = g.draw_card(p0).expect("draw should succeed");
+                drawn.push(card.expect("library not empty"));
+            }
+            drawn
+        };
+
+        // FORWARD: shuffle then draw 7.
+        game.shuffle_library(p0);
+        let forward_drawn = draw_seven(&mut game);
+
+        // Partial rewind past the draws AND the shuffle.
+        rewind_to_log_len(&mut game, baseline);
+
+        // REPLAY: identical shuffle + draw must yield identical cards.
+        for cycle in 0..3 {
+            game.shuffle_library(p0);
+            let replay_drawn = draw_seven(&mut game);
+            assert_eq!(
+                replay_drawn, forward_drawn,
+                "replay cycle {cycle}: mass-draw must reproduce the same drawn \
+                 cards after a partial rewind (mtg-mb668 sig-2)"
+            );
+            rewind_to_log_len(&mut game, baseline);
+        }
+    }
 }

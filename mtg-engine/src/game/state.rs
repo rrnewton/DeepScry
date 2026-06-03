@@ -745,6 +745,13 @@ impl GameState {
     pub fn shuffle_library(&mut self, player_id: PlayerId) {
         use rand::seq::SliceRandom;
 
+        // Capture the RNG state BEFORE the shuffle consumes randomness
+        // (mtg-mb668 sig-2). Reversing the shuffle restores this, so a
+        // partial-rewind replay re-shuffles from the SAME RNG and
+        // byte-reproduces the forward order. Captured here (before the
+        // `player_zones` mutable borrow) to avoid a borrow conflict.
+        let rng_state = self.capture_rng_state();
+
         // Get the library and store previous order before shuffling
         if let Some(zones) = self
             .player_zones
@@ -796,6 +803,7 @@ impl GameState {
                 GameAction::ShuffleLibrary {
                     player: player_id,
                     previous_order,
+                    rng_state,
                 },
                 prior_log_size,
             );

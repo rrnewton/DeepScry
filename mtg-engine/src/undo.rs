@@ -317,6 +317,15 @@ pub enum GameAction {
         /// Previous order of CardIds (for undo)
         /// Stored as Vec since library size varies and SmallVec wouldn't help
         previous_order: Vec<CardId>,
+        /// RNG state captured BEFORE the shuffle consumed randomness (mtg-mb668
+        /// sig-2). A shuffle advances the ChaCha12Rng, so a partial (mid-turn)
+        /// rewind that reverses the shuffle MUST also restore the pre-shuffle
+        /// RNG — otherwise replaying the shuffle draws from an advanced RNG and
+        /// produces a DIFFERENT library order, diverging every downstream
+        /// mass-draw (Timetwister / Wheel of Fortune / Braingeyser) and the
+        /// shadow's hand. Mirrors `ChangeTurn`'s `rng_state`. `None` only on
+        /// legacy/deserialized logs that predate this field.
+        rng_state: Option<SmallVec<[u8; 64]>>,
     },
 
     /// Register a delayed trigger in the delayed-trigger store.
@@ -703,7 +712,9 @@ impl fmt::Display for GameAction {
                 old_value,
                 new_value
             ),
-            GameAction::ShuffleLibrary { player, previous_order } => {
+            GameAction::ShuffleLibrary {
+                player, previous_order, ..
+            } => {
                 write!(f, "ShuffleLibrary(P{} {} cards)", player.as_u32(), previous_order.len())
             }
             GameAction::SetLoyaltyActivated { card_id, new_value, .. } => {
@@ -1278,7 +1289,11 @@ impl GameAction {
                 }
             }
 
-            GameAction::ShuffleLibrary { player, previous_order } => {
+            GameAction::ShuffleLibrary {
+                player,
+                previous_order,
+                rng_state,
+            } => {
                 // Restore the library to its previous order
                 if let Some(zones) = game
                     .player_zones
@@ -1292,6 +1307,18 @@ impl GameAction {
                         "Player {} zones not found for ShuffleLibrary undo",
                         player.as_u32()
                     ));
+                }
+
+                // Restore the pre-shuffle RNG state (mtg-mb668 sig-2) so a
+                // partial-rewind replay re-runs the shuffle from the SAME RNG
+                // and byte-reproduces the forward library order. Mirrors the
+                // ChangeTurn arm above. `None` only for legacy logs.
+                if let Some(rng_bytes) = rng_state {
+                    if let Ok(rng) = bincode::deserialize::<rand_chacha::ChaCha12Rng>(rng_bytes) {
+                        *game.rng.borrow_mut() = rng;
+                    } else {
+                        return Err("Failed to deserialize ShuffleLibrary RNG state".to_string());
+                    }
                 }
             }
 
