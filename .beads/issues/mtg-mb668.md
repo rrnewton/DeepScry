@@ -128,3 +128,52 @@ Ran the e2e rewind oracle (web/test_network_gui_e2e.js, WASM replay verifier) on
 RESULT: ZERO within-side "REWIND/REPLAY FATAL: turn-start state hash changed across rewinds" on ANY new deck/seed. Every failure observed is CLASS-A (server↔shadow: "P1/P2 state hash mismatch ... at choice_seq=N action_count=M" or "ACTION COUNT MISMATCH server=X local=Y") — NOT a within-side undo-log hole.
 => The within-side rewind-fidelity undo-hole family (counters→damage→x_paid) is DURABLY CLOSED deck-broad across 4 diverse decks (robots-artifacts/pinger, fireball-X, ur-burn, white-weenie-combat). The "no known undo-log holes" half of the netarch Stop-goal is COMPLETE.
 REMAINING work for true-green = CLASS-A only (server↔shadow count/RNG lockstep), slot03's chunk (network_choice/wasm/reveal-region; per-action lockstep harness). Seeds exhibiting class-A across decks: robots 1,2,5,6,7,9,11,18,19,20; fireball 1; ur_burn 42; white_weenie 1,7,42.
+========================================================================
+CLASS-A RESUME (fresh slot03 — re-based off STABLE integration e1052f17, 2026-06-03)
+========================================================================
+CHUNK 2 = server<->shadow per-action COUNT/RNG lockstep (class-A). Distinct from
+slot01-2's class-B within-side rewind-fidelity; this is the reserved-ID/reveal
+count-lockstep residue beyond sig-2c/2d.
+
+FAILING DETERMINISTIC SEEDS: 2,5,6,9,11,18,19,20 (+ now-exposed 1,7) on
+decks/old_school/03_robots_jesseisbak.dck.
+REPRO: node web/test_network_gui_e2e.js --deck decks/old_school/03_robots_jesseisbak.dck --seed <N> [--undo-dump]
+  -> on desync, dumps debug/netarch-undo-dumps/{stamp}_{wasm,server}_undo.log + _mismatch.log;
+     signals: "ACTION COUNT MISMATCH" / "state hash mismatch" / "DESYNC"; exit 1 = desync.
+
+BASE: STABLE integration e1052f17 — contains class-B (controller-seed-pinning
+determinism gate + sig-2f + sig-2g, all rebased in; old throwaway-branch SHAs
+9c868364/3cffa304 are NOT ancestors after the rebase — confirm the gate
+BEHAVIORALLY via the seed-2 e2e repro showing a DETERMINISTIC class-A ACTION
+COUNT / state-hash divergence, not by SHA ancestry).
+
+ROOT-CAUSE CLASS (mtg-mb668 + mtg-725): the WASM shadow records None for opponent
+hidden-info events (library-search fetch, mass-draw/shuffle) because the
+authoritative reveal/move isn't available at first resolution on the shadow ->
+it BRANCHES ON ABSENCE (try_get -> None), the exact mtg-725 anti-pattern -> the
+shadow's Fisher-Yates draw COUNT / library decrement diverges from the server ->
+action-count + state-hash mismatch under rewind+replay.
+
+STEP 1 (tooling, RED-first): build a per-action server<->shadow lockstep harness
+that, per action_count, asserts parity of (action_count, RNG draw count/state,
+reveal-buffer application) between golden + shadow — ENUMERATE divergences instead
+of chasing browser runs one at a time. NEW module + NEW test file (do not touch
+basic_actions.rs). PROVEN FIX VEHICLE: the action_count-keyed REVEAL-HISTORY
+BUFFER (e27c6f97 — already solved counterspells/rogerbrand async-reveal
+nondeterminism); extend/mirror it so the authoritative search-result/move + draw
+reveals reach the shadow deterministically and SURVIVE rewind, so first replay
+reads Some (never None). Prefer total / identity-independent reserved-ID handling
+over None-driven control flow (mtg-725 principle).
+
+OWNED FILE SURFACE: game/game_loop/network_choice.rs ; wasm/network/* +
+wasm/fancy_tui.rs (shadow reserved-ID/reveal paths) ; the reveal + ChangeZoneAll
+reserved-ID region of game/actions/mod.rs (~4200/9100 — NOT the damage region
+~5309/8449, which is slot01-2's class-B). DISCIPLINE: undo.rs GameAction enum
+APPEND-ONLY; own test file; rebase onto origin/integration before merging
+(ff-only); mtg-rules-review N/A (determinism, not rules); full make validate +
+validate_<sha>.log before merge.
+
+STEP-1 CONCRETE: RED-prove seed 2 first (repro above), capture its signature
+(action_count at divergence, which side's hash diverges + field, the triggering
+reveal event, the count delta) — then build the harness from it.
+========================================================================
