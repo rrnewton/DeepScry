@@ -301,6 +301,12 @@ pub mod asset_graph {
     /// that loads card data.
     pub const DATA_INDEX_JSON: &str = "data/sets/index.json";
 
+    /// The card→Scryfall-CDN lookup table (SCDT; task #7 / mtg-722). Fetched
+    /// as `fetch('./data/card-lookup.bin')` by the client image cascade. It is
+    /// generated at DEPLOY time by `mtg build-card-lookup` and may be ABSENT in
+    /// dev / CI trees, so it is hashed only when present (like the webmanifest).
+    pub const CARD_LOOKUP_BIN: &str = "data/card-lookup.bin";
+
     /// File extensions of TOP-LEVEL `web/` image assets that are content-hashed
     /// as immutable leaves (mtg-706): the hero logo, emblem, and favicons
     /// (`deepscry_logo.webp`, `emblem-64.webp`, `favicon.ico`, … synced from the
@@ -339,6 +345,9 @@ pub mod asset_graph {
         /// `site.webmanifest` → `site.<hash>.webmanifest` (present iff the file
         /// exists). Hashed after the image leaves with its icon refs rewritten.
         pub webmanifest: Option<(String, String)>,
+        /// `data/card-lookup.bin` → `data/card-lookup.<hash>.bin` (present iff
+        /// the file exists — generated at deploy by `mtg build-card-lookup`).
+        pub card_lookup: Option<(String, String)>,
         /// Auto-discovered HTML pages (besides the entry): logical → hashed.
         pub graph_nodes: BTreeMap<String, String>,
         /// The FULL `logical → hashed` map for the whole release (pkg pair, JS
@@ -633,6 +642,19 @@ pub mod asset_graph {
             webmanifest = Some((k, v));
         }
 
+        // ── 2d. card-lookup.bin (task #7) — the SCDT card→CDN table. A pure
+        // leaf (references nothing); the client fetches it by its hashed name
+        // resolved through the manifest. OPTIONAL: only present on the deploy
+        // tree (built by `mtg build-card-lookup`), absent in dev/CI — so hash
+        // it iff present and fold into `leaf_rules` so any HTML page's
+        // `fetch('./data/card-lookup.bin')` is repointed at the hashed name.
+        let mut card_lookup: Option<(String, String)> = None;
+        if web_dir.join(CARD_LOOKUP_BIN).is_file() {
+            let (k, v) = hash_in_place(web_dir, CARD_LOOKUP_BIN)?;
+            leaf_rules.insert(k.clone(), v.clone());
+            card_lookup = Some((k, v));
+        }
+
         // ── 3. build the reference graph over the non-entry HTML pages ────
         // Graph nodes = every *.html except the stable entry. (After the
         // mtg-704 leaf-ification, NO served *.js references an HTML page, so
@@ -743,6 +765,9 @@ pub mod asset_graph {
         if let Some((k, v)) = &webmanifest {
             manifest.insert(k.clone(), v.clone());
         }
+        if let Some((k, v)) = &card_lookup {
+            manifest.insert(k.clone(), v.clone());
+        }
         for (k, v) in &graph_nodes {
             manifest.insert(k.clone(), v.clone());
         }
@@ -786,6 +811,7 @@ pub mod asset_graph {
             data_index,
             image_leaves,
             webmanifest,
+            card_lookup,
             graph_nodes,
             manifest,
             release_token,
@@ -1415,6 +1441,70 @@ mod tests {
                 index.contains("src=\"images/abc123.jpg\""),
                 "card-art <img> ref unchanged"
             );
+        }
+
+        #[test]
+        fn card_lookup_bin_is_hashed_and_referenced_when_present() {
+            // task #7: when data/card-lookup.bin exists (deploy tree), it is
+            // content-hashed like any leaf, the manifest pins it, and a page's
+            // fetch('./data/card-lookup.bin') is repointed at the hashed name.
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(dir, &dag_tree());
+            // Add the table + a page that fetches it (override native_game.html).
+            write_tree(
+                dir,
+                &[
+                    ("data/card-lookup.bin", "SCDT\x01\x00fake-table-bytes"),
+                    (
+                        "native_game.html",
+                        "<!doctype html><html><body><a href=\"index.html\">back</a>\
+                         <script type=module>import './lobby_launcher.js';\
+                         import init from './pkg/mtg_engine.js'; await init();\
+                         const t = await fetch('./data/card-lookup.bin');</script>\
+                         </body></html>\n",
+                    ),
+                ],
+            );
+
+            let res = asset_graph::hash_full_graph(dir).expect("hash with card-lookup");
+
+            // (1) card-lookup.bin renamed to a hashed name; fixed name gone.
+            let (logical, hashed) = res.card_lookup.as_ref().expect("card_lookup hashed");
+            assert_eq!(logical, "data/card-lookup.bin");
+            assert!(is_hashed_name(hashed), "{hashed} is content-addressed");
+            assert!(dir.join(hashed).is_file(), "{hashed} on disk");
+            assert!(!dir.join("data/card-lookup.bin").exists(), "fixed name renamed away");
+
+            // (2) manifest pins the logical → hashed mapping.
+            assert_eq!(
+                res.manifest.get("data/card-lookup.bin").map(String::as_str),
+                Some(hashed.as_str()),
+                "manifest pins data/card-lookup.bin",
+            );
+
+            // (3) the fetching page now references the HASHED name, not the fixed.
+            let native = res
+                .graph_nodes
+                .get("native_game.html")
+                .expect("native_game.html hashed");
+            let body = std::fs::read_to_string(dir.join(native)).unwrap();
+            assert!(body.contains(hashed), "fetch repointed to hashed card-lookup");
+            assert!(
+                !body.contains("'./data/card-lookup.bin'"),
+                "no fixed-name card-lookup fetch remains",
+            );
+        }
+
+        #[test]
+        fn card_lookup_absent_is_fine() {
+            // Dev/CI tree without the table: hashing succeeds, card_lookup=None.
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            write_tree(dir, &dag_tree());
+            let res = asset_graph::hash_full_graph(dir).expect("hash without card-lookup");
+            assert!(res.card_lookup.is_none(), "no card_lookup when absent");
+            assert!(!res.manifest.contains_key("data/card-lookup.bin"));
         }
     }
 }
