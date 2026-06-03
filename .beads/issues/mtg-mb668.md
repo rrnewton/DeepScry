@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T19:45:57.822843899+00:00
+updated_at: 2026-06-03T19:50:00.873866375+00:00
 ---
 
 # Description
@@ -57,7 +57,10 @@ FIX DIRECTION (mtg-725 class): make library reveal/conceal SYMMETRIC regardless 
 sig-2d FIX LANDED: maybe_conceal_in_library now conceals ANY card with a non-empty revealed_to_mask on library entry (not just is_revealed_to_all), AND on a shadow logs a count-parity SetRevealedToMask for reserved (instance-less) opponent cards entering the library (they came from the owner's revealed hand, so the server logs a real conceal). This makes the library-exit (draw) reveal UNCONDITIONAL and symmetric on both sides: every library card is revealed to nobody, so every draw re-reveals regardless of prior reveal history -> RevealCard count stays in lockstep -> no RNG drift. SetRevealedToMask undo made tolerant of a missing instance (no-op) for the reserved count-parity entry. RED-first reproducers (basic_actions.rs): owner_only_revealed_card_is_concealed_entering_library_mb668_sig2d (RED: owner-only mask survived under sig-2b, redraw skipped reveal) + shadow_reserved_card_entering_library_logs_conceal_parity_mb668_sig2d. Full lib suite 1003/1003. Validating robots42 x30.
 
 ------------------------------------------------------------------------
-sig-2e (IDENTIFIED, NOT fixed — WITHIN-side rewind-fidelity, distinct class): robots42 x30 with sig-2/2b/2c/2d + t233k = 19/30. The remaining failures are now confirmed to span MULTIPLE root classes:
+sig-2e FIXED (was IDENTIFIED — WITHIN-side rewind-fidelity, distinct class): robots42 x30 with sig-2/2b/2c/2d + t233k = 19/30. The remaining failures are now confirmed to span MULTIPLE root classes:
   (A) server<->shadow divergence: ACTION COUNT MISMATCH + equal-count state-hash mismatch + Local-abilities drift (more count/RNG-lockstep events beyond sig-2c, e.g. additional reserved-ID/reveal mismatches around Wheel/Timetwister).
   (B) WITHIN-side rewind-fidelity (NEW, ~2/30): "REWIND/REPLAY FATAL: turn-start state hash for turn N changed across rewinds" with VERIFIER FIELD DIFF on `cards[52].counters` (and `mana_state_version`, likely diagnostic noise since rewind_to_turn_start bumps it). A counter mutation on a card (robots deck => almost certainly TRISKELION's +1/+1 counter removal, possibly as an activated-ability cost) is NOT a faithful undo-log inverse: rewind leaves counters stale and/or replay double-applies. This is the same undo-hole family as mtg-ba6uq (#4 SetCardCounters) but a path that bypasses the logged counter op.
 sig-2e is DETERMINISTIC and within-side, so it is reproducible via the existing native rewind oracle (whole_game_rewind_replay_e2e / rewind_replay_oracle_e2e) driven over the robots deck — NO networking/flakiness needed. Next concrete target. CLASS (A) likely needs the per-action lockstep harness to enumerate the remaining count-divergence events.
+
+------------------------------------------------------------------------
+sig-2e FIX LANDED: Cost::SubCounter (Triskelion's "remove a +1/+1 counter: deal 1 damage" ping cost, actions/mod.rs pay_ability_cost) mutated the card via a direct `card.remove_counter(...)` with NO GameAction::RemoveCounter undo entry. Routed it through the LOGGED `self.remove_counters(card_id, counter_type, amount)` so the cost is a faithful undo-log inverse (remove_counters does NOT enforce the loyalty 0->die rule, so Triskelion still lives at 1/1 with zero counters). RED-first reproducer subcounter_cost_counter_removal_round_trips_on_undo_mb668_sig2e (basic_actions.rs): pays the cost, asserts the undo log GREW, then a partial undo restores the counter (3->2->3). RED before (no log entry, undo can't restore), GREEN after. Full lib suite 1004/1004.

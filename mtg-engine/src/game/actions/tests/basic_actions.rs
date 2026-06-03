@@ -336,6 +336,65 @@ mod tests {
         assert!(game.undo_log.actions().len() > before);
     }
 
+    /// mtg-mb668 sig-2e: paying a `Cost::SubCounter` (Triskelion's
+    /// "remove a +1/+1 counter: deal 1 damage" ping cost) must be a faithful
+    /// undo-log inverse. The cost previously mutated the card directly with NO
+    /// `GameAction::RemoveCounter` entry, so a rewind+replay (network shadow /
+    /// MCTS / undo) left the counters stale — the WASM replay verifier caught it
+    /// as "turn-start state hash changed across rewinds" with a
+    /// `cards[N].counters` field diff. RED before the fix: the removal logs
+    /// nothing, so the undo log doesn't grow and the counter is never restored.
+    #[test]
+    fn subcounter_cost_counter_removal_round_trips_on_undo_mb668_sig2e() {
+        use crate::core::{Cost, CounterType};
+
+        let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
+        let p1_id = game.players.first().unwrap().id;
+
+        // A Triskelion-like creature with three +1/+1 counters on the battlefield.
+        let card_id = game.next_entity_id();
+        let mut card = Card::new(card_id, "Triskelion".to_string(), p1_id);
+        card.add_type(CardType::Creature);
+        game.cards.insert(card_id, card);
+        game.battlefield.add(card_id);
+        game.add_counters(card_id, CounterType::P1P1, 3).unwrap();
+        assert_eq!(game.cards.get(card_id).unwrap().get_counter(CounterType::P1P1), 3);
+
+        let baseline = game.undo_log.len();
+
+        // Pay the "remove a +1/+1 counter" cost (Triskelion's ping).
+        game.pay_ability_cost(
+            p1_id,
+            card_id,
+            &Cost::SubCounter {
+                amount: 1,
+                counter_type: CounterType::P1P1,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            game.cards.get(card_id).unwrap().get_counter(CounterType::P1P1),
+            2,
+            "paying the cost removes one +1/+1 counter"
+        );
+
+        // The cost MUST be logged so a rewind restores it (mb668 sig-2e).
+        assert!(
+            game.undo_log.len() > baseline,
+            "the SubCounter counter removal must be recorded in the undo log"
+        );
+
+        // Partial rewind of just the cost must restore the counter.
+        while game.undo_log.len() > baseline {
+            game.undo().expect("undo ok");
+        }
+        assert_eq!(
+            game.cards.get(card_id).unwrap().get_counter(CounterType::P1P1),
+            3,
+            "undo of the SubCounter cost must restore the removed counter (mb668 sig-2e)"
+        );
+    }
+
     #[test]
     fn test_deal_damage_to_player() {
         let mut game = GameState::new_two_player("P1".to_string(), "P2".to_string(), 20);
