@@ -1,16 +1,14 @@
 ---
 title: Randomized stress tests with invariants for snapshot resume
-status: open
+status: closed
 priority: 0
 issue_type: task
 created_at: 2025-10-27T09:12:20+00:00
-updated_at: 2026-06-03T04:50:04.616059152+00:00
-closed_at: 2025-10-28T00:55:30+00:00
+updated_at: 2026-06-03T06:40:36.179445509+00:00
+closed_at: 2026-06-03T06:40:36.179445234+00:00
 ---
 
 # Description
-
-
 
 We have a partial implementation of the `--stop-every`/`--stop-from` suspend resume mechanism.
 You can use this to test the engine yourself and write e2e tests.
