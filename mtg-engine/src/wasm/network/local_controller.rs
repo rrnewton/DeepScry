@@ -238,6 +238,22 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 hash,
                 crate::game::state_hash::format_view_card_detail(view),
             );
+            // mtg-mb668 class-A: UNCONDITIONAL shadow undo-log tail (network_debug).
+            // The action-count-mismatch dump below NEVER fires because the WASM
+            // ECHOES the server action_count (action_count == local_action_count
+            // always), so the shadow undo-log was never captured. The shadow's
+            // action SEQUENCE is ground-truth (unlike the suspect seq↔hash mapping):
+            // diffing it against the server's SERVER_FULL_UNDO_DUMP names the actions
+            // the shadow SKIPS (the reserved-id branch-on-absence sites, mtg-mb668).
+            {
+                const SHADOW_DUMP_TAIL: usize = 60;
+                log::warn!(
+                    "WASM_FULL_UNDO_DUMP_BEGIN seq={} local_ac={}\n{}WASM_FULL_UNDO_DUMP_END",
+                    choice_seq,
+                    local_action_count,
+                    view.format_last_n_actions(SHADOW_DUMP_TAIL),
+                );
+            }
             // Always dump last actions in debug mode for comparison with server
             if action_count != local_action_count {
                 log::warn!(
