@@ -971,14 +971,26 @@ impl PlayerController for NetworkController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        log::warn!(
-                            "NetworkController: target_card_ids {:?} not in killable_blockers, falling back to index",
-                            card_ids
+                        // HARD ERROR (mtg-w5sa2): the remote submitted a
+                        // lethal-damage blocker CardId that is NOT in this
+                        // (authoritative) killable_blockers list — combat state
+                        // diverged between server and the remote shadow. The old
+                        // index fallback MASKED this by silently picking a
+                        // different, order-dependent blocker → later view-hash
+                        // desync. Desync is ALWAYS fatal: surface it here.
+                        let error_msg = format!(
+                            "FATAL DESYNC: remote lethal-damage blocker {:?} not in killable_blockers {:?} \
+                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                            card_ids,
+                            killable_blockers.iter().map(|(id, _)| id.as_u32()).collect::<Vec<_>>()
                         );
+                        log::error!("{}", error_msg);
+                        return ChoiceResult::Error(error_msg);
                     }
                 }
 
-                // Fall back to index-based lookup
+                // Index-based lookup ONLY when no CardId was provided (legacy
+                // peers). The CardId path above is authoritative for rewind+replay.
                 if let Some((blocker_id, _)) = killable_blockers.get(idx) {
                     ChoiceResult::Ok(*blocker_id)
                 } else {
@@ -1039,14 +1051,23 @@ impl PlayerController for NetworkController {
                             );
                             return ChoiceResult::Ok(blocker_id);
                         }
-                        log::warn!(
-                            "NetworkController: target_card_ids {:?} not in remaining_blockers, falling back to index",
-                            card_ids
+                        // HARD ERROR (mtg-w5sa2): submitted remaining-damage
+                        // blocker CardId not in this authoritative
+                        // remaining_blockers list → combat-state divergence.
+                        // Index fallback removed (it masked the desync). Fatal.
+                        let error_msg = format!(
+                            "FATAL DESYNC: remote remaining-damage blocker {:?} not in remaining_blockers {:?} \
+                             (combat-state divergence; index fallback removed — mtg-w5sa2)",
+                            card_ids,
+                            remaining_blockers.iter().map(|id| id.as_u32()).collect::<Vec<_>>()
                         );
+                        log::error!("{}", error_msg);
+                        return ChoiceResult::Error(error_msg);
                     }
                 }
 
-                // Fall back to index-based lookup
+                // Index-based lookup ONLY when no CardId was provided (legacy
+                // peers). The CardId path above is authoritative.
                 if let Some(&blocker_id) = remaining_blockers.get(idx) {
                     ChoiceResult::Ok(blocker_id)
                 } else {
