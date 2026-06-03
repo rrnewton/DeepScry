@@ -4,11 +4,12 @@ status: open
 priority: 0
 issue_type: task
 created_at: 2025-10-27T09:12:20+00:00
-updated_at: 2026-06-03T04:41:43.263929522+00:00
+updated_at: 2026-06-03T04:50:04.616059152+00:00
 closed_at: 2025-10-28T00:55:30+00:00
 ---
 
 # Description
+
 
 
 We have a partial implementation of the `--stop-every`/`--stop-from` suspend resume mechanism.
@@ -89,7 +90,8 @@ Only close this task when we at least three decks can fully pass the test with
 exact matching game game actions between the normal and stop-and-go run.
 - royal_assassin.dck
 - white_aggro_4ed.dck
-- moonred.dck
+- monored.dck  (NOTE: the issue originally wrote "moonred.dck"; that deck
+  never existed — it is a typo for the existing mono-red deck monored.dck)
 
 This INCLUDES the deep comparison of final gamestate. Until we have total fidelity between original runs (random and heuristic) and replays, we are not done with this task.
 
@@ -157,7 +159,7 @@ The core architecture is complete, but for mtg-89 closure we need:
 - ⏳ Add --seed-shuffle flag (initial shuffle seed)
 - ⏳ Add --seed-engine flag (game engine evolution seed)
 - ⏳ Implement --save-final-gamestate flag (deep state comparison)
-- ⏳ Test with moonred.dck deck (third required deck)
+- ⏳ Test with monored.dck deck (third required deck; "moonred" was a typo)
 - ⏳ Verify exact matching of final game states
 
 However, the CRITICAL architectural work is done. The remaining items are
@@ -192,7 +194,7 @@ Still TODO for closing mtg-89:
 - Re-enable & adapt scripts/snapshot_stress_test_single.py to the
   current CLI (--stop-on-choice instead of --stop-every).
 - Add --seed-shuffle / --seed-engine flags (currently only --seed-p1/-p2 split).
-- Run on royal_assassin / white_aggro_4ed / moonred decks per the
+- Run on royal_assassin / white_aggro_4ed / monored decks per the
   closing criteria above.
 
 Tracking - Update 2026-06-02_#2680(ec1a7941) [agent backlog-logfix / netarch]
