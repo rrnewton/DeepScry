@@ -718,6 +718,33 @@ impl TargetRestriction {
         self.types.iter().any(|t| t.matches(card))
     }
 
+    /// True when this restriction matches ANY card regardless of its identity
+    /// — i.e. every field is at its permissive default (no type / controller /
+    /// power / color / set / token / counter / artifact / remembered / other
+    /// constraint). This is the `ChangeType$ Card` / unqualified filter used by
+    /// mass shuffle-back effects (Timetwister, Wheel of Fortune, Windfall,
+    /// Mnemonic Nexus).
+    ///
+    /// Used by `Effect::ChangeZoneAll` on a SHADOW game: the opponent's hidden
+    /// hand cards are late-bound reserved CardIds with no instance, so their
+    /// identity cannot be inspected — but if the filter matches any card they
+    /// must still be moved (otherwise the opponent's library ends up short and
+    /// its subsequent shuffle consumes a different amount of RNG than the
+    /// server's, breaking deterministic-simulation lockstep — mtg-mb668 sig-2c).
+    pub fn is_unrestricted(&self) -> bool {
+        self.types.is_empty()
+            && self.controller == ControllerRestriction::Any
+            && self.power_ge.is_none()
+            && self.power_le.is_none()
+            && !self.requires_no_counters
+            && !self.requires_nontoken
+            && !self.requires_remembered
+            && !self.requires_nonartifact
+            && self.required_color.is_none()
+            && self.required_set.is_none()
+            && !self.requires_other
+    }
+
     /// Like [`TargetRestriction::matches`] but also honors the `Other`
     /// self-exclusion qualifier against a known effect source.
     ///

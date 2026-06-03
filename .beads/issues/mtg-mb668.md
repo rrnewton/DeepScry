@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T18:00:39.398263153+00:00
+updated_at: 2026-06-03T18:18:53.109916678+00:00
 ---
 
 # Description
@@ -31,7 +31,7 @@ mtg-t233k (mana_pool per-action undo gap) FIXED (see mtg-t233k): SetManaPool{pre
 GATE: robots42 seed=42 x10 went 3/10 -> ~7-9/10 with the three fixes (HIGH variance: same seed=42 gives different pass/fail run-to-run -> timing-dependent, 10-run samples are noisy). All native lib tests green.
 
 ------------------------------------------------------------------------
-sig-2c (RESIDUAL, NOT yet fixed — dominant remaining desync): the SHADOW does not shuffle the OPPONENT's hidden HAND into the library during hand-to-library effects (Timetwister; same class: Wheel/Windfall/Mind Twist).
+sig-2c FIXED (was the dominant remaining desync): the SHADOW does not shuffle the OPPONENT's hidden HAND into the library during hand-to-library effects (Timetwister; same class: Wheel/Windfall/Mind Twist).
 
 HARD EVIDENCE (robots42 --undo-dump, Timetwister turn ~10, action_count 718 server / 717 wasm, P2 state-hash mismatch):
 - SERVER actions 653-655: MoveCard(60/52/51 Hand -> Library owner=P0); then ShuffleLibrary(P0 57 cards).
@@ -43,3 +43,6 @@ FIX DIRECTION: for shadow games + unrestricted mass-shuffle, move reserved (inst
 
 NEXT: fix sig-2c. Until then robots42 stays OUT of the make-validate gate (mirror white_weenie seed=7 / mtg-nkd71). Land sig-2 + sig-2b + t233k as a validated milestone.
 ========================================================================
+
+------------------------------------------------------------------------
+sig-2c FIX LANDED: Effect::ChangeZoneAll (actions/mod.rs) now moves the opponent's reserved (instance-less) hand/library CardIds into the destination on a SHADOW game when the restriction is UNRESTRICTED (new TargetRestriction::is_unrestricted()). So a Timetwister/Wheel/Windfall hand+graveyard->library mass-shuffle moves the opponent's hidden hand on the shadow exactly as the server does -> opponent library count matches -> Fisher-Yates consumes identical RNG -> server<->shadow stay in lockstep. Restricted ChangeZoneAll (typed bounce/exile) and the server (always real instances) are unchanged. Deterministic RED-first reproducer: shadow_mass_shuffle_moves_opponent_reserved_hand_to_library_mb668_sig2c (basic_actions.rs) — RED (lib 7 != 10) without the fix, GREEN with. Audited sibling effects: discard-hand (Wheel/Mind Twist) and mill collect raw CardIds (no try_get filter) so they were already count-safe; ChangeZoneAll was the unique offender. Full lib suite 1001/1001 green. Validating with robots42 x30 + a second seed/deck.

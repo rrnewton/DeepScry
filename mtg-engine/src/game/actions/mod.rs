@@ -4268,6 +4268,18 @@ impl GameState {
                 // mass bounce/exile list one. Track (card, owner, source-zone)
                 // so each card moves from the zone it actually lives in.
                 let mut cards_to_move: Vec<(CardId, PlayerId, crate::zones::Zone)> = Vec::new();
+                // SHADOW determinism (mtg-mb668 sig-2c): the opponent's hidden
+                // hand/library cards are late-bound reserved CardIds with NO
+                // instance, so `try_get` returns None and `restriction.matches`
+                // can't be evaluated. For an UNRESTRICTED mass move (Timetwister
+                // / Wheel / Windfall shuffle-back — matches any card) those
+                // reserved cards MUST still move; otherwise the opponent's
+                // library ends up short on the shadow and its subsequent
+                // shuffle consumes a different amount of RNG than the server's,
+                // breaking server<->shadow RNG lockstep and desyncing every
+                // later shuffle/draw. Only reached in shadow games (the server
+                // and native clients always have real instances).
+                let move_reserved_in_shadow = self.is_shadow_game && restriction.is_unrestricted();
                 for &origin in origins {
                     match origin {
                         crate::zones::Zone::Battlefield => {
@@ -4297,10 +4309,18 @@ impl GameState {
                                     | crate::zones::Zone::Command => continue,
                                 };
                                 for &card_id in zone_cards {
-                                    if let Some(card) = self.cards.try_get(card_id) {
-                                        if restriction.matches(card) {
+                                    match self.cards.try_get(card_id) {
+                                        Some(card) => {
+                                            if restriction.matches(card) {
+                                                cards_to_move.push((card_id, *player_id, origin));
+                                            }
+                                        }
+                                        // Reserved (instance-less) shadow card under an
+                                        // unrestricted mass move (mtg-mb668 sig-2c).
+                                        None if move_reserved_in_shadow => {
                                             cards_to_move.push((card_id, *player_id, origin));
                                         }
+                                        None => {}
                                     }
                                 }
                             }
