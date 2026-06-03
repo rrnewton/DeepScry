@@ -1176,6 +1176,55 @@ impl GameState {
         }
     }
 
+    /// Conceal a card that is entering a hidden library (mtg-mb668 sig-2b).
+    ///
+    /// A card put into the library becomes hidden again (CR 401: the library is a
+    /// hidden zone; a card shuffled in is no longer revealed). If we leave a
+    /// stale `revealed_to_mask` on it, a later draw of that same card sees
+    /// `is_revealed_to(owner)` already true and SKIPS the `RevealCard` that
+    /// `maybe_reveal_to_player` would otherwise log. Because the server and a
+    /// viewer's shadow shuffle independently and draw DIFFERENT cards, one side
+    /// can draw a previously-public (e.g. graveyard-origin) card while the other
+    /// draws a fresh one — diverging the RevealCard COUNT and desyncing the view
+    /// hash (observed in robots42 Timetwister/Wheel/Braingeyser mass-draws).
+    /// Clearing the mask on entry makes every library card uniformly hidden, so
+    /// every draw re-reveals regardless of which card lands on top.
+    ///
+    /// Mirrors `maybe_reveal_to_player`: gated on `skip_reveals`, logs a
+    /// `SetRevealedToMask` (undoable) only when there is a real instance whose
+    /// mask is non-empty. No-op for late-binding reserved IDs (no instance) and
+    /// for already-hidden cards.
+    #[inline]
+    pub fn maybe_conceal_in_library(&mut self, card_id: CardId, prior_log_size: usize) {
+        if self.skip_reveals {
+            return;
+        }
+        if let Some(card) = self.cards.try_get_mut(card_id) {
+            // Only conceal PUBLIC (revealed-to-all) cards. Public cards live in
+            // public zones (graveyard / battlefield / stack / exile) and so have
+            // a real instance on BOTH the server and every viewer's shadow — the
+            // conceal is therefore logged symmetrically. A card revealed to only
+            // SOME players (e.g. an opponent's hand card, revealed to its owner
+            // only) is a hidden, late-bound reserved ID on other viewers' shadows
+            // with no instance to conceal; concealing it on the server but not on
+            // the shadow would itself diverge the action count. Such cards keep
+            // their partial mask and the existing draw-reveal path already
+            // round-trips them symmetrically.
+            if card.is_revealed_to_all() {
+                let old_value = card.revealed_to_mask;
+                card.clear_revealed_to_all();
+                self.undo_log.log(
+                    crate::undo::GameAction::SetRevealedToMask {
+                        card_id,
+                        old_value,
+                        new_value: 0,
+                    },
+                    prior_log_size,
+                );
+            }
+        }
+    }
+
     /// Move a card from one zone to another
     ///
     /// # Errors
@@ -1218,7 +1267,15 @@ impl GameState {
                 (Zone::Library, Zone::Hand) => {
                     self.maybe_reveal_to_player(card_id, owner, prior_log_size);
                 }
-                _ => {} // Public→Public, Public→Hidden: no reveal needed
+                // Anything → Library: the card becomes hidden again, so clear any
+                // stale revealed_to_mask (mtg-mb668 sig-2b). Without this, a
+                // previously-public card drawn back out skips its RevealCard and
+                // the server/shadow reveal counts diverge across independent
+                // shuffles.
+                (_, Zone::Library) => {
+                    self.maybe_conceal_in_library(card_id, prior_log_size);
+                }
+                _ => {} // Public→Public, Public→Hidden(Hand): no reveal needed
             }
         }
 
