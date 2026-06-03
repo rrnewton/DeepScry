@@ -259,6 +259,58 @@ pub fn tui_get_image_urls(card_name: &str, height_px: u32) -> String {
     serde_json::json!(urls).to_string()
 }
 
+thread_local! {
+    /// The loaded SCDT card→CDN lookup table (task #7 Prong A). Populated once
+    /// by [`tui_load_card_lookup_table`]; read by [`tui_card_cdn_url`].
+    static CARD_LOOKUP_TABLE: std::cell::RefCell<Option<crate::scryfall::CardLookupTable>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Load the card-lookup table (the hashed `card-lookup.<hash>.bin` the client
+/// fetched as an `ArrayBuffer`). Returns the number of indexed keys, or 0 on a
+/// decode failure (bad magic / unknown format). Idempotent — replaces any
+/// previously-loaded table. (task #7)
+#[wasm_bindgen]
+pub fn tui_load_card_lookup_table(bytes: &[u8]) -> usize {
+    match crate::scryfall::CardLookupTable::from_bytes(bytes) {
+        Some(table) => {
+            let n = table.len();
+            CARD_LOOKUP_TABLE.with(|t| *t.borrow_mut() = Some(table));
+            n
+        }
+        None => 0,
+    }
+}
+
+/// Resolve a card to its immutable cards.scryfall.io URL via the loaded table,
+/// or `""` on a table miss (the JS cascade treats empty as "fall through to
+/// gatherer"). This is the CDN rung of the client image cascade — the SINGLE
+/// Rust impl of decode+key+URL, so JS never re-implements it (task #7 steer #1).
+///
+/// `size` is "small" or "normal"; `colors_wubrg` must be the sorted-WUBRG color
+/// string the table builder used (the JS caller normalizes identically).
+#[wasm_bindgen]
+pub fn tui_card_cdn_url(
+    name: &str,
+    power: &str,
+    toughness: &str,
+    colors_wubrg: &str,
+    is_token: bool,
+    size: &str,
+) -> String {
+    let sz = if size == "small" {
+        crate::scryfall::CdnSize::Small
+    } else {
+        crate::scryfall::CdnSize::Normal
+    };
+    CARD_LOOKUP_TABLE.with(|t| {
+        t.borrow()
+            .as_ref()
+            .and_then(|table| table.cdn_url(name, power, toughness, colors_wubrg, is_token, sz))
+            .unwrap_or_default()
+    })
+}
+
 /// Compute per-battlefield card sizes for the native HTML GUI (`native_game.html`).
 ///
 /// Uses the shared backend-neutral [`battlefield_layout`] engine in pixel

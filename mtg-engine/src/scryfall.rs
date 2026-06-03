@@ -285,6 +285,73 @@ pub fn decode_card_lookup(bytes: &[u8]) -> Option<Vec<CardArtEntry>> {
     Some(out)
 }
 
+/// A decoded card-lookup table ready for O(1) name/identity → CDN-URL lookups.
+///
+/// This is the SINGLE source of truth for the client image cascade's CDN rung:
+/// the wasm binding wraps one of these in a thread-local and the JS cascade
+/// calls [`CardLookupTable::cdn_url`] — so decode, key normalization, and URL
+/// construction all live in ONE Rust impl (no JS reimplementation, no drift;
+/// task #7 steer #1). Native code (`mtg download`) uses the same type.
+#[derive(Debug, Clone, Default)]
+pub struct CardLookupTable {
+    /// key → (uuid bytes, version, dfc).
+    map: std::collections::HashMap<String, ([u8; 16], u32, bool)>,
+}
+
+impl CardLookupTable {
+    /// Decode an encoding-D (SCDT) blob into a lookup table. `None` on a bad
+    /// magic / unknown format / structural error (caller treats as a miss).
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let entries = decode_card_lookup(bytes)?;
+        let map = entries
+            .into_iter()
+            .map(|e| (e.key, (e.uuid, e.version, e.dfc)))
+            .collect();
+        Some(Self { map })
+    }
+
+    /// Number of indexed keys (incl. token composites + aliases).
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Whether the table has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Resolve a card to its immutable cards.scryfall.io URL at `size`, or
+    /// `None` on a table miss (the cascade then falls through to gatherer).
+    ///
+    /// Real cards look up by `name`. TOKENS try the composite
+    /// (name + P/T + colors) FIRST, then fall back to the bare `name` (a
+    /// representative oldest art) so a composite miss still yields correct-name
+    /// art rather than nothing. `power`/`toughness` are strings ("" if none,
+    /// "*" for variable); `colors_wubrg` is the sorted-WUBRG color string —
+    /// the caller MUST normalize identically to the table builder.
+    pub fn cdn_url(
+        &self,
+        name: &str,
+        power: &str,
+        toughness: &str,
+        colors_wubrg: &str,
+        is_token: bool,
+        size: CdnSize,
+    ) -> Option<String> {
+        let lookup = |key: &str| {
+            self.map
+                .get(key)
+                .map(|(uuid, ver, _dfc)| cdn_image_url(&uuid_to_string(uuid), &ver.to_string(), size))
+        };
+        if is_token {
+            let composite = token_lookup_key(name, power, toughness, colors_wubrg);
+            lookup(&composite).or_else(|| lookup(name))
+        } else {
+            lookup(name)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,5 +464,67 @@ mod tests {
         assert_eq!(decode_card_lookup(&wrong_fmt), None);
         assert_eq!(decode_card_lookup(&[1, 2]), None);
         assert_eq!(decode_card_lookup(&blob[..blob.len() - 3]), None);
+    }
+
+    #[test]
+    fn card_lookup_table_resolves_name_token_and_fallback() {
+        let clue = uuid_to_bytes("c321b9e4-ab7e-4e8a-988f-5463c776d685").unwrap();
+        let bolt = uuid_to_bytes("77c6fa74-5543-42ac-9ead-0e890b188e99").unwrap();
+        let goblin = uuid_to_bytes("11111111-2222-3333-4444-555555555555").unwrap();
+        // Table: normal card by name; Clue token by composite + bare-name alias;
+        // a "Goblin" bare name only (composite will miss → falls back to it).
+        let mut entries = vec![
+            CardArtEntry {
+                key: "Lightning Bolt".into(),
+                uuid: bolt,
+                version: 1706239968,
+                dfc: false,
+            },
+            CardArtEntry {
+                key: token_lookup_key("Clue", "", "", ""),
+                uuid: clue,
+                version: 1771590258,
+                dfc: false,
+            },
+            CardArtEntry {
+                key: "Clue".into(),
+                uuid: clue,
+                version: 1771590258,
+                dfc: false,
+            },
+            CardArtEntry {
+                key: "Goblin".into(),
+                uuid: goblin,
+                version: 42,
+                dfc: false,
+            },
+        ];
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
+        let table = CardLookupTable::from_bytes(&encode_card_lookup(&entries)).unwrap();
+
+        // Normal card by name.
+        assert_eq!(
+            table.cdn_url("Lightning Bolt", "", "", "", false, CdnSize::Small),
+            Some(
+                "https://cards.scryfall.io/small/front/7/7/77c6fa74-5543-42ac-9ead-0e890b188e99.jpg?1706239968".into()
+            ),
+        );
+        // Token by composite key (exact identity).
+        assert_eq!(
+            table.cdn_url("Clue", "", "", "", true, CdnSize::Normal),
+            Some(
+                "https://cards.scryfall.io/normal/front/c/3/c321b9e4-ab7e-4e8a-988f-5463c776d685.jpg?1771590258".into()
+            ),
+        );
+        // Token whose composite MISSES (Goblin 7/1 red not indexed) → bare-name fallback.
+        assert!(table
+            .cdn_url("Goblin", "7", "1", "R", true, CdnSize::Small)
+            .unwrap()
+            .contains("11111111"));
+        // Genuine miss → None (cascade falls through to gatherer).
+        assert_eq!(
+            table.cdn_url("Nonexistent Card", "", "", "", false, CdnSize::Small),
+            None
+        );
     }
 }
