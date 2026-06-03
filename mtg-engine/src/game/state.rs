@@ -655,19 +655,40 @@ impl GameState {
     ///
     /// Returns an error if the card doesn't exist.
     pub fn apply_regeneration_shield(&mut self, card_id: CardId) -> Result<()> {
-        let card_name = {
+        // Capture pre-state for the per-action undo (mtg-ba6uq #5): the shield
+        // decrement, damage clear, and combat removal below are otherwise
+        // unlogged (only the tap is logged, via tap_permanent). Snapshot the
+        // combat state BEFORE remove_from_combat.
+        let prev_combat = Box::new(self.combat.clone());
+        let (prev_shields, prev_damage, card_name) = {
             let card = self.cards.get_mut(card_id)?;
+            let prev_shields = card.regeneration_shields;
+            let prev_damage = card.damage;
             // Consume one shield
             card.regeneration_shields = card.regeneration_shields.saturating_sub(1);
             // Remove all damage
             card.damage = 0;
-            card.name.clone()
+            (prev_shields, prev_damage, card.name.clone())
         };
-        // Tap the creature (needs &mut self so can't hold card borrow)
+        // Tap the creature (needs &mut self so can't hold card borrow). This
+        // logs its own TapCard action, undone separately.
         self.tap_permanent(card_id)?;
 
         // Remove from combat if attacking or blocking (CR 701.15a)
         self.combat.remove_from_combat(card_id);
+
+        // Log the covering action (after the tap, so LIFO undo restores
+        // shields/damage/combat first, then untaps).
+        let prior_log_size = self.logger.log_count();
+        self.undo_log.log(
+            crate::undo::GameAction::RegenerateReplaceDestroy {
+                card_id,
+                prev_shields,
+                prev_damage,
+                prev_combat,
+            },
+            prior_log_size,
+        );
 
         self.logger.gamelog(&format!(
             "{} ({}) regenerates (shield consumed, tapped, damage removed)",

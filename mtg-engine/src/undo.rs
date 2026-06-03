@@ -500,6 +500,46 @@ pub enum GameAction {
         previous_order: Vec<CardId>,
         previous_graveyard: Option<Vec<CardId>>,
     },
+
+    /// Records a regeneration-shield application (CR 701.15a:
+    /// `GameState::apply_regeneration_shield`) so the per-action undo path can
+    /// reverse it. Applying a shield consumes one `regeneration_shields`, clears
+    /// the creature's `damage`, and removes it from combat — three mutations
+    /// that were NOT undo-logged (only the tap was, via `tap_permanent`). A
+    /// turn-start rewind is safe (it blanket-clears combat + damage + shields),
+    /// but the per-action UndoTest / human / MCTS undo desynced (mtg-ba6uq #5).
+    /// `undo()` restores all three; the tap is undone by its own `TapCard`.
+    /// `prev_combat` is boxed to keep `GameAction` small (mirrors `ClearCombat`).
+    RegenerateReplaceDestroy {
+        card_id: CardId,
+        prev_shields: u8,
+        prev_damage: i32,
+        prev_combat: Box<crate::game::combat::CombatState>,
+    },
+
+    /// Snapshot of a player's `source_prevention_shields` (Circle of Protection
+    /// style colored/source-filtered damage-prevention shields, CR 615) captured
+    /// BEFORE a mutation: installing a shield (`Effect::PreventDamageFromSource`)
+    /// or consuming/retiring spent shields (`apply_source_prevention_shields`).
+    /// Neither was undo-logged; a turn-start rewind blanket-clears the list
+    /// (safe), but the per-action UndoTest / human / MCTS undo desynced
+    /// (mtg-ba6uq #6). `undo()` restores the captured list.
+    SetSourcePreventionShields {
+        player_id: PlayerId,
+        prev: Vec<crate::core::DamagePreventionShield>,
+    },
+
+    /// Snapshot of a player's `combat_mana_pool` (Avatar Firebending combat-only
+    /// mana, CR 701.65) captured BEFORE a mutation: adding combat mana, spending
+    /// it via `pay_from_total_mana`, or emptying it at end of combat. None of
+    /// these were undo-logged; a turn-start rewind now blanket-clears it (it is a
+    /// per-combat transient, None at any turn boundary), but the per-action
+    /// UndoTest / human / MCTS undo desynced (mtg-ba6uq #7). `undo()` restores
+    /// the captured pool. `ManaPool` is `Copy`, so the snapshot is cheap.
+    SetCombatManaPool {
+        player_id: PlayerId,
+        prev: Option<crate::core::ManaPool>,
+    },
 }
 
 impl fmt::Display for GameAction {
@@ -769,6 +809,36 @@ impl fmt::Display for GameAction {
                         Some(g) => format!(", gy={}", g.len()),
                         None => String::new(),
                     }
+                )
+            }
+            GameAction::RegenerateReplaceDestroy {
+                card_id,
+                prev_shields,
+                prev_damage,
+                ..
+            } => {
+                write!(
+                    f,
+                    "RegenerateReplaceDestroy(card={}, shields={}, dmg={})",
+                    card_id.as_u32(),
+                    prev_shields,
+                    prev_damage
+                )
+            }
+            GameAction::SetSourcePreventionShields { player_id, prev } => {
+                write!(
+                    f,
+                    "SetSourcePreventionShields(P{}, prev={})",
+                    player_id.as_u32(),
+                    prev.len()
+                )
+            }
+            GameAction::SetCombatManaPool { player_id, prev } => {
+                write!(
+                    f,
+                    "SetCombatManaPool(P{}, prev={})",
+                    player_id.as_u32(),
+                    if prev.is_some() { "Some" } else { "None" }
                 )
             }
         }
@@ -1274,6 +1344,22 @@ impl GameAction {
                     if *old_damage == 0 {
                         player.commander_damage_taken.retain(|(pid, _)| *pid != *from_player);
                     }
+                    // Re-derive the has_lost flag (mtg-ba6uq #8). The forward
+                    // SetCommanderDamage sets `has_lost = true` when a single
+                    // commander reaches 21 (CR 903.10a), but that derived flag is
+                    // NOT separately undo-logged — so undoing the lethal damage
+                    // left a stale `has_lost = true`, diverging the (hashed) state
+                    // across a rewind. Mirrors ModifyLife.undo's life-based
+                    // re-derivation: clear `has_lost` only when NO loss condition
+                    // we can evaluate here still holds (life > 0 AND no single
+                    // commander still at 21+). Other loss conditions
+                    // (empty-library draw, etc.) are recorded by their own logged
+                    // actions and replayed forward; 2-player commander ends the
+                    // game so no further rewind, so this matters for 3+ player.
+                    let still_lost_by_commander = player.commander_damage_taken.iter().any(|(_, d)| *d >= 21);
+                    if player.life > 0 && !still_lost_by_commander {
+                        player.has_lost = false;
+                    }
                 } else {
                     return Err(format!(
                         "Player {} not found for SetCommanderDamage undo",
@@ -1447,6 +1533,35 @@ impl GameAction {
                     if let Some(prev_gy) = previous_graveyard {
                         zones.graveyard.cards = prev_gy.clone();
                     }
+                }
+            }
+            GameAction::RegenerateReplaceDestroy {
+                card_id,
+                prev_shields,
+                prev_damage,
+                prev_combat,
+            } => {
+                // Restore the regeneration-shield count and the damage that the
+                // shield cleared, and the full combat state it left (mtg-ba6uq
+                // #5). The tap is reversed by its own logged TapCard. get_mut
+                // tolerates a missing card, matching the other card-field undos.
+                if let Ok(card) = game.cards.get_mut(*card_id) {
+                    card.regeneration_shields = *prev_shields;
+                    card.damage = *prev_damage;
+                }
+                game.combat = (**prev_combat).clone();
+            }
+            GameAction::SetSourcePreventionShields { player_id, prev } => {
+                // Restore the captured source-prevention-shield list (mtg-ba6uq
+                // #6).
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.source_prevention_shields = prev.clone();
+                }
+            }
+            GameAction::SetCombatManaPool { player_id, prev } => {
+                // Restore the captured combat mana pool (mtg-ba6uq #7).
+                if let Some(player) = game.players.iter_mut().find(|p| p.id == *player_id) {
+                    player.combat_mana_pool = *prev;
                 }
             }
         }
@@ -1773,6 +1888,11 @@ impl UndoLog {
         for player in &mut game.players {
             player.damage_prevention = 0;
             player.source_prevention_shields.clear();
+            // Firebending combat mana (CR 701.65) is a per-combat transient that
+            // empties at end of combat; it is always None at a turn boundary, so
+            // clear it on rewind for explicit correctness (mtg-ba6uq #7). A
+            // forward replay re-adds any combat mana produced this turn.
+            player.combat_mana_pool = None;
         }
 
         // SHADOW-ONLY: clear card instances that leaked into a hidden library

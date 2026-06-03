@@ -568,12 +568,17 @@ impl<'a> GameLoop<'a> {
         );
 
         // Clear combat mana pools (mana from Firebending, etc. lasts until end of combat)
-        // Fast path: has_combat_mana() is a single well-predicted branch (usually false)
-        for player in &mut self.game.players {
-            if player.has_combat_mana() {
+        // Fast path: has_combat_mana() is a single well-predicted branch (usually false).
+        // Index-iterate so we can log the undo snapshot (mtg-ba6uq #7) without
+        // holding a &mut players borrow across the helper call.
+        for i in 0..self.game.players.len() {
+            if self.game.players[i].has_combat_mana() {
+                let pid = self.game.players[i].id;
                 log::debug!(target: "mana", "Clearing combat mana for {}: {:?}",
-                    player.name, player.combat_mana_pool);
-                player.empty_combat_mana_pool();
+                    self.game.players[i].name, self.game.players[i].combat_mana_pool);
+                // Snapshot the combat mana pool for undo BEFORE emptying.
+                self.game.log_combat_mana_pool(pid);
+                self.game.players[i].empty_combat_mana_pool();
             }
         }
 
