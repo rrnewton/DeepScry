@@ -202,19 +202,29 @@ async function main() {
     // Hashed pkg pair (rewritten by web_pkg).
     const jsMatch = indexHtml.match(/(?:\.\/)?pkg\/(mtg_engine\.[0-9a-f]{16}\.js)/);
     const wasmMatch = indexHtml.match(/(?:\.\/)?pkg\/(mtg_engine_bg\.[0-9a-f]{16}\.wasm)/);
-    // For pages that don't actually use the pkg (index.html may or may not
-    // import it) try the game pages too.
+    // After the solo-launcher rework the game pages are NO LONGER linked
+    // directly from index.html: the solo path is index → solo_launcher → game
+    // pages (mtg-4irju forward DAG). Discover the hashed game-page names from the
+    // hashed solo_launcher page that index references — exactly the resolution
+    // path a browser performs when clicking a Solo Launcher link.
     let tuiHashedName = null;
-    const tuiMatch = indexHtml.match(/(tui_game\.[0-9a-f]{16}\.html)/);
-    if (tuiMatch) tuiHashedName = tuiMatch[1];
     let nativeHashedName = null;
-    const nativeMatch = indexHtml.match(/(native_game\.[0-9a-f]{16}\.html)/);
-    if (nativeMatch) nativeHashedName = nativeMatch[1];
+    const soloMatch = indexHtml.match(/(solo_launcher\.[0-9a-f]{16}\.html)/);
+    check(!!soloMatch, 'index.html references hashed solo_launcher.<h>.html');
+    if (soloMatch) {
+        const soloPath = path.join(stage, soloMatch[1]);
+        check(fs.existsSync(soloPath), `hashed ${soloMatch[1]} present on disk`);
+        const soloHtml = fs.readFileSync(soloPath, 'utf8');
+        const tm = soloHtml.match(/(tui_game\.[0-9a-f]{16}\.html)/);
+        if (tm) tuiHashedName = tm[1];
+        const nm = soloHtml.match(/(native_game\.[0-9a-f]{16}\.html)/);
+        if (nm) nativeHashedName = nm[1];
+    }
     let serverCfgHashed = null;
     const cfgMatch = indexHtml.match(/(server-config\.[0-9a-f]{16}\.js)/);
     if (cfgMatch) serverCfgHashed = cfgMatch[1];
-    check(!!tuiHashedName, 'index.html references hashed tui_game.<h>.html');
-    check(!!nativeHashedName, 'index.html references hashed native_game.<h>.html');
+    check(!!tuiHashedName, 'solo_launcher references hashed tui_game.<h>.html');
+    check(!!nativeHashedName, 'solo_launcher references hashed native_game.<h>.html');
     check(!!serverCfgHashed, 'index.html references hashed server-config.<h>.js');
 
     // From the hashed tui_game.html, discover the wasm + data-index + JS-leaf hashed names.

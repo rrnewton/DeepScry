@@ -337,12 +337,27 @@ if [ -d "$SOURCE/forge-java" ] && [ -e "$SOURCE/forge-java/.git" ]; then
     fi
 fi
 
-# Confirm submodule status is clean (no +/-/U prefixes).
-if ! ( cd "$NEW_WORKTREE" && git submodule status | grep -q '^[+-U]' ); then
+# Confirm submodule status is clean (no +/-/U prefixes), EXCLUDING submodules
+# configured `update = none` in .gitmodules. An inactive (update=none) submodule
+# (e.g. the optional `assets` design-asset repo) is intentionally left
+# un-checked-out and legitimately shows a '-' prefix — that is NOT dirty. A real
+# uninitialised REQUIRED submodule (e.g. forge-java) still flags. This mirrors
+# scripts/validate.sh's submodule_dirty_lines so validate won't bail later.
+submodule_dirty_lines() {
+    local inactive
+    inactive=$(git config -f .gitmodules --get-regexp '\.update$' 2>/dev/null \
+        | awk '$2 == "none" { name = $1; sub(/^submodule\./, "", name); sub(/\.update$/, "", name); print name }' \
+        | while read -r n; do git config -f .gitmodules --get "submodule.$n.path" 2>/dev/null; done)
+    git submodule status 2>/dev/null | awk -v inactive="$inactive" '
+        BEGIN { n = split(inactive, a, /[ \t\n]+/); for (i = 1; i <= n; i++) if (a[i] != "") skip[a[i]] = 1 }
+        /^[+\-U]/ { if (!($2 in skip)) print }
+    '
+}
+if [ -z "$( cd "$NEW_WORKTREE" && submodule_dirty_lines )" ]; then
     echo "       submodule status clean — make validate will not bail on submodules"
 else
     echo "       WARNING: submodule status still shows changes:"
-    ( cd "$NEW_WORKTREE" && git submodule status | grep '^[+-U]' || true )
+    ( cd "$NEW_WORKTREE" && submodule_dirty_lines || true )
 fi
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,7 @@ package-lock.json
 *.jpeg
 *.gif
 *.webp
+*.ico
 # QA / Playwright screenshot captures are NEVER committed (see CLAUDE.md
 # "NEVER commit images"). Belt-and-suspenders dir ignore on top of *.png.
 web/screenshots/
