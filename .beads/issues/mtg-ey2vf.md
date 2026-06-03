@@ -1,22 +1,12 @@
 ---
 title: 'Refactor: two parallel undo implementations (GameAction::undo + GameState::undo) — DRY footgun'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-03T05:14:53.160703042+00:00
-updated_at: 2026-06-03T05:14:53.160703042+00:00
+updated_at: 2026-06-03T06:50:09.556327707+00:00
 ---
 
 # Description
 
-DRY debt found while fixing mtg-ba6uq #1 (ETB choice-field undo holes).
-
-There are TWO parallel reversal implementations for GameActions:
-1. undo.rs `impl GameAction { fn undo(&self, game: &mut GameState) }` (the canonical reversal, used by rewind_to_turn_start's catch-all `_ => action.undo(game)`).
-2. state.rs `GameState::undo(&mut self)` — a SECOND exhaustive `match action { ... }` that REIMPLEMENTS the reversal per-variant inline (per-action undo path: human undo / MCTS).
-
-FOOTGUN: a new GameAction variant (or a fix to an existing one) must be handled in BOTH, or the two undo paths diverge silently. E.g. mtg-ba6uq #1 had to add SetChosenColor/SetChosenPlayer arms to undo.rs:691, state.rs:3283 (GameState::undo), AND the Display arm at undo.rs:449 — three sites for one logical reversal. The compiler catches MISSING variants (exhaustive match) but NOT a SUBTLY-DIFFERENT reversal between the two impls.
-
-FIX: make GameState::undo delegate to GameAction::undo (single source of truth), or extract a shared reversal so there is exactly ONE per-variant reversal. Audit for any existing divergence between the two impls while consolidating (some arms may already differ — e.g. ModifyLife has_lost re-derivation, mana_version handling). Add a test that asserts the two paths produce byte-identical state for a representative action sequence.
-
-Relates mtg-ba6uq (undo-log completeness), mtg-610 (netarch).
+DONE (netarch-undo-holes @ 8939daed + proof tests 0c220d4c). Consolidated the THREE parallel undo reversal impls into ONE source of truth: GameState::undo AND the nested undo_to_previous_choice_point now DELEGATE to canonical GameAction::undo (undo.rs). -735 lines. The compiler's exhaustive match now guarantees coverage; no second impl can silently diverge. Surfaced+fixed two real pre-existing divergences the duplication hid: (1) ChangeTurn::undo spuriously rewrote active_player_idx (forward next_turn never updates it) — caught by test_aggressive_undo_snapshots once delegation kicked in; (2) AddCounter/RemoveCounter::undo called the LOGGING game.add/remove_counters → would corrupt the live undo log post-delegation → switched to direct card mutators. The nested path's silent _ => {} (skipped ShuffleLibrary/DeclareAttacker/ClearCombat/CloneCard/AnimateTypeline/SetCommanderDamage/PushExtraTurn/...) was a LATENT per-action-undo hole now closed for free — NEGATIVE-TEST-PROVEN by undo_choice_point_latent_holes_e2e.rs (undo across ShuffleLibrary + DeclareAttacker fail pre-consolidation, pass after). Log-integrity guard counter_tests::undo_counter_does_not_corrupt_log pins each undo() shrinks the log by exactly one. This consolidation made mtg-ba6uq holes #2-#8 single-site each. Behavior-preserving: 994 lib + undo/rewind e2e identical green before/after.
