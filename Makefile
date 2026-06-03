@@ -29,6 +29,19 @@ CONTROLLER ?= heuristic
 # .claude/skills/validate-hygiene/SKILL.md.
 VSTEP := scripts/validate_step.sh
 
+# VALIDATE_JOBS: top-level `make -j` width for parallel validation (mtg-717).
+# Defaults to all cores. The case-study run was hardcoded `-j4`, which (a)
+# under-used a 16-core box and (b) — because the long wasm->network browser
+# chain head was listed 9th — kept that chain queued behind CPU steps so it
+# only started after clippy finished (~294s in), then trailed as the long pole.
+# Lighting all cores lets the chain head (wasm-dev) start at t=0 (it is now
+# listed FIRST in validate-parallel-steps) so its single-threaded browser/
+# network tail overlaps the CPU-bound Rust compiles/tests instead of trailing
+# them. (Native cargo invocations still serialize on the shared target/ build
+# lock, so a high -j does not over-subscribe the compile phase; it just lets the
+# non-cargo browser/network/python work run concurrently with it.)
+VALIDATE_JOBS ?= $(shell nproc 2>/dev/null || echo 4)
+
 # Default target - show available commands
 help:
 	@echo "MTG Forge Rust - Available Commands:"
@@ -150,7 +163,7 @@ validate:
 validate-impl:
 	@echo "=== Starting parallel validation ==="
 	@echo ""
-	@$(MAKE) -j4 validate-parallel-steps
+	@$(MAKE) -j$(VALIDATE_JOBS) validate-parallel-steps
 	@echo ""
 	@echo "=== All validation steps completed ==="
 	@echo ""
@@ -190,7 +203,7 @@ validate-impl-sequential:
 validate-impl-no-network:
 	@echo "=== Starting parallel validation (no network) ==="
 	@echo ""
-	@$(MAKE) -j4 validate-parallel-steps-no-network
+	@$(MAKE) -j$(VALIDATE_JOBS) validate-parallel-steps-no-network
 	@echo ""
 	@echo "=== All validation steps completed ==="
 	@echo ""
@@ -223,9 +236,17 @@ validate-impl-sequential-no-network:
 
 # Parallel validation steps - these will run concurrently when invoked with -j
 # WASM build has separate dependencies so it runs in parallel with other steps
-.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step
-validate-parallel-steps: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step deck_list
-validate-parallel-steps-no-network: validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-wasm-step validate-wasm-e2e-step deck_list
+.PHONY: validate-parallel-steps validate-parallel-steps-no-network validate-impl-sequential validate-impl-sequential-no-network validate-prebuild-step validate-fmt-step validate-clippy-step validate-clippy-wasm-step validate-test-step validate-examples-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step
+# Prerequisite ORDER matters under `make -j`: make starts prerequisites in the
+# order listed (subject to their own deps), so the long-pole wasm->network
+# browser chain is listed FIRST — its head (validate-wasm-step, the wasm-dev
+# build) and the shared validate-prebuild-step thus start at t=0 and the
+# single-threaded browser/network tail overlaps the CPU-bound Rust steps that
+# fill the remaining cores. (validate-wasm-e2e-step waits on wasm-step+prebuild;
+# validate-network-e2e-step waits on wasm-e2e+prebuild — the serial chain edges
+# are preserved by their target prerequisites, not by list position.)
+validate-parallel-steps: validate-prebuild-step validate-wasm-step validate-wasm-e2e-step validate-network-e2e-step validate-clippy-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-fmt-step validate-clippy-wasm-step deck_list
+validate-parallel-steps-no-network: validate-prebuild-step validate-wasm-step validate-wasm-e2e-step validate-clippy-step validate-test-step validate-examples-step validate-agentplay-step validate-commander-step validate-snapshot-resume-step validate-fmt-step validate-clippy-wasm-step deck_list
 
 # Formatting check - matches the CI `fmt` job in .github/workflows/ci.yml.
 # This must be wired into validate so that formatting drift is caught locally
