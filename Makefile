@@ -19,6 +19,16 @@ SERVER_PORT ?= 17771
 # CONTROLLER: AI controller for play-web (random, heuristic, zero)
 CONTROLLER ?= heuristic
 
+# VSTEP: terse, tagged, self-contained step runner for `make validate`
+# (mtg-717). Each validation step routes through it so the validate log shows
+# only a tagged `[jobGroup.jobId]` START + PASS/FAIL+duration line per step;
+# detailed output streams to a per-step file and is dumped INTO the log only on
+# failure. Set VALIDATE_VERBOSE=1 to also stream tagged detail live, and
+# VALIDATE_VERBOSE_DIR=<dir> to persist every step's detail log (named
+# <group>.<job>.log). See scripts/validate_step.sh and
+# .claude/skills/validate-hygiene/SKILL.md.
+VSTEP := scripts/validate_step.sh
+
 # Default target - show available commands
 help:
 	@echo "MTG Forge Rust - Available Commands:"
@@ -222,16 +232,13 @@ validate-parallel-steps-no-network: validate-fmt-step validate-clippy-step valid
 # instead of turning CI red. CI uses nightly rustfmt; we invoke the default
 # toolchain here, which has historically agreed with nightly for this repo.
 validate-fmt-step:
-	@$(MAKE) fmt-check
-	@echo "✓ fmt-check completed"
+	@$(VSTEP) lint fmt "cargo fmt --all --check" -- $(MAKE) fmt-check
 
 validate-clippy-step:
-	@$(MAKE) clippy
-	@echo "✓ clippy completed"
+	@$(VSTEP) lint clippy "clippy engine+benchmarks (-D warnings)" -- $(MAKE) clippy
 
 validate-clippy-wasm-step:
-	@$(MAKE) clippy-wasm
-	@echo "✓ clippy-wasm completed"
+	@$(VSTEP) lint clippy-wasm "clippy wasm32 target" -- $(MAKE) clippy-wasm
 
 # Build the release `mtg` binary ONCE, then run the unit/integration test suite
 # reusing it. The determinism_e2e tests (one full game x2 per .dck) invoke the
@@ -240,92 +247,61 @@ validate-clippy-wasm-step:
 # tells mtg-engine/tests/determinism_e2e.rs (and tests/lib/test_helpers.sh) to use
 # target/release/mtg directly instead of rebuilding per invocation.
 validate-test-step:
-	@echo "=== Building release binary for test reuse ==="
-	@cargo build --release --bin mtg --features network
-	@MTG_REUSE_PREBUILT=1 $(MAKE) test
-	@echo "✓ test completed"
+	@$(VSTEP) unit build-mtg "build release mtg (network) for test reuse" -- cargo build --release --bin mtg --features network
+	@$(VSTEP) unit nextest "cargo nextest run --features network" -- env MTG_REUSE_PREBUILT=1 $(MAKE) test
 
 validate-examples-step:
-	@$(MAKE) examples
-	@echo "✓ examples completed"
+	@$(VSTEP) examples run "run all examples (parallel)" -- $(MAKE) examples
 
 validate-agentplay-step:
-	@echo "=== Running agentplay tests ==="
-	@python3 -m pytest agentplay/ -v
-	@python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; \
-		rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi
-	@echo "=== Running mode-equivalence orchestrator ==="
-	@./scripts/test_mode_equivalence.sh
-	@echo "✓ agentplay tests completed"
+	@$(VSTEP) agentplay pytest "pytest agentplay/" -- python3 -m pytest agentplay/ -v
+	@$(VSTEP) agentplay mock-game "agent_game.py mock self-play (seed 42)" -- \
+		bash -c 'python3 agentplay/agent_game.py --mock --seed 42 --max-turns 5 -- decks/simple_bolt.dck decks/simple_bolt.dck; rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 2 ]; then exit $$rc; fi'
+	@$(VSTEP) agentplay mode-equiv "native/WASM mode-equivalence orchestrator" -- ./scripts/test_mode_equivalence.sh
 
 validate-commander-step:
-	@echo "=== Running commander E2E test ==="
-	@bash tests/commander_e2e.sh
-	@echo "✓ commander E2E completed"
+	@$(VSTEP) determ commander "commander format E2E (full-game determinism)" -- bash tests/commander_e2e.sh
 
 # Snapshot/resume determinism + smoke test for `mtg resume` subcommand.
 # See tests/snapshot_resume_e2e.sh for what is covered.
 validate-snapshot-resume-step:
-	@echo "=== Running snapshot/resume E2E test ==="
-	@bash tests/snapshot_resume_e2e.sh
-	@echo "✓ snapshot/resume E2E completed"
+	@$(VSTEP) determ snapshot-resume "snapshot/resume E2E (mtg resume subcommand)" -- bash tests/snapshot_resume_e2e.sh
 
 validate-wasm-step:
-	@$(MAKE) wasm-dev
-	@echo "✓ wasm-dev build completed"
+	@$(VSTEP) wasm build-dev "wasm-pack dev build + export-wasm data" -- $(MAKE) wasm-dev
 
 # WASM e2e tests run after wasm-dev build completes
 # This step depends on validate-wasm-step finishing first
+# jobGroup `wasm`: dev WASM bundle (built by validate-wasm-step) + the browser
+# e2e suite + the STRICT native-vs-WASM determinism equivalence legs. Each leg
+# below is wrapped by $(VSTEP) so the validate log stays terse; the detailed
+# per-game/per-deck output streams to a per-step file and is only dumped on
+# failure. The long-form rationale for each equivalence leg (formerly emitted
+# as @echo spam) is preserved here as comments:
+#   equiv-base    : STRICT byte-identical random game across all old_school2
+#                   decks, --max-turns 8. Any divergence is a cross-compile
+#                   determinism bug. (mtg-ofl2i flipped STRICT; mtg-8scpx fix.)
+#   equiv-fireball: seed=15 fireball_multitarget, --max-turns 25 — reaches a
+#                   multi-target Fireball (DivideEvenly, per-target cost). (mtg-tyvcn)
+#   equiv-blackvise: seed=3 black_vise_punisher, --max-turns 10 — ETB ChoosePlayer
+#                   + chosen-player-upkeep Count$$ValidHand-4 damage. (mtg-cuf0e)
+#   equiv-spiritlink: seed=26 spirit_link_pinger, --max-turns 16 — Spirit Link
+#                   lifelink on NON-combat (pinger) damage, CR 119.3. (mtg-r9po1)
+# MTG_EQUIV_REQUIRE_WASM=1 => absent browser/toolchain is a HARD FAIL (never a
+# silent green-skip); MTG_EQUIV_NO_BUILD=1 reuses the bundle + binary built here.
 validate-wasm-e2e-step: validate-wasm-step
-	@echo "=== Running WASM e2e tests ==="
-	@cd web && $(NPM) install --silent 2>/dev/null
-	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_bug_report.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js && $(NODE) test_cdn_image_table.js && $(NODE) test_image_flicker_memo.js && $(NODE) test_aura_render.js && $(NODE) test_render_skip.js
-	@echo "=== Running bounded native-vs-WASM equivalence sweep (STRICT) ==="
-	@cargo build --release --bin mtg --features network
-	@echo "    Hermetic: local WASM bundle (built by validate-wasm-step) + headless"
-	@echo "    Chromium. MTG_EQUIV_REQUIRE_WASM=1 => absent browser/toolchain is a"
-	@echo "    HARD FAIL here (never a silent green-skip). STRICT: asserts the native"
-	@echo "    binary and the WASM module play a BYTE-IDENTICAL random-vs-random game"
-	@echo "    for the same seed. Any divergence is a cross-compile-target determinism"
-	@echo "    bug (fails the sweep). The previous --expect-divergence tripwire for"
-	@echo "    beads mtg-ofl2i was flipped to STRICT once the third root cause"
-	@echo "    (mtg-8scpx: WASM load_set dropped parsed_svars => SVar-backed triggers"
-	@echo "    parsed to zero effects) was fixed; old_school2 now passes 36/36."
-	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
-		--seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
-	@echo "=== Native-vs-WASM equivalence: MULTI-TARGET Fireball (STRICT, mtg-tyvcn) ==="
-	@echo "    The default --max-turns 8 leg above does not run long enough to reach a"
-	@echo "    Fireball cast that hits 2+ targets (DivideEvenly). This dedicated leg pins"
-	@echo "    seed=15 on decks/old_school2/fireball_multitarget.dck with a turn cap past"
-	@echo "    the multi-target cast at Turn11: random-vs-random play casts Fireball at"
-	@echo "    TWO distinct Ironclaw Orcs, X=2 divided evenly => '1 damage' to each. This"
-	@echo "    proves the variable-target-count + DivideEvenly + per-target-cost path"
-	@echo "    (mtg-tyvcn) replays BYTE-IDENTICALLY on native and WASM. 0 diverged."
-	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
-		--seeds 1 --seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25
-	@echo "=== Native-vs-WASM equivalence: Black Vise ETB ChoosePlayer + upkeep damage (STRICT, mtg-cuf0e) ==="
-	@echo "    Pins seed=3 on decks/old_school2/black_vise_punisher.dck. Random-vs-random"
-	@echo "    play casts Black Vise; its ETB ChoosePlayer replacement picks the opponent"
-	@echo "    (deterministic public-state pick), and at the chosen player's upkeep it deals"
-	@echo "    max(0, handsize - 4) damage (Count\$$ValidHand-4). This proves the NEW"
-	@echo "    choose-player ETB path + the ValidPlayer\$$ Player.Chosen trigger gate +"
-	@echo "    Count\$$ValidHand-4 damage all replay BYTE-IDENTICALLY on native and WASM."
-	@echo "    The chosen player + the count are pure functions of PUBLIC state, so no"
-	@echo "    hidden information leaks across the engine boundary. 0 diverged."
-	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
-		--seeds 1 --seed-base 3 --decks 'decks/old_school2/black_vise_punisher.dck' --max-turns 10
-	@echo "=== Native-vs-WASM equivalence: Spirit Link NON-COMBAT lifelink (STRICT, mtg-r9po1) ==="
-	@echo "    Pins seed=26 on decks/old_school2/spirit_link_pinger.dck. Random-vs-random"
-	@echo "    play enchants a Prodigal Sorcerer (the {T}: deal 1 pinger) with Spirit Link,"
-	@echo "    then activates the pinger. The NON-combat damage fires Spirit Link's"
-	@echo "    'whenever enchanted creature deals damage, you gain that much life' trigger"
-	@echo "    (CR 119.3) via the general deal_damage path (mtg-r9po1). At Turn15 the pinger"
-	@echo "    deals 1 non-combat damage and the controller gains 1 life per attached Spirit"
-	@echo "    Link. The lifegain is a pure function of the PUBLIC damage event, so it must"
-	@echo "    replay BYTE-IDENTICALLY on native and WASM. 0 diverged."
-	@MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh \
-		--seeds 1 --seed-base 26 --decks 'decks/old_school2/spirit_link_pinger.dck' --max-turns 16
-	@echo "✓ wasm-e2e tests completed"
+	@$(VSTEP) wasm npm-install "web/ npm install (e2e deps)" -- bash -c 'cd web && $(NPM) install --silent 2>/dev/null'
+	@$(VSTEP) wasm browser "WASM browser e2e suite (11 playwright tests)" -- \
+		bash -c 'cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js'
+	@$(VSTEP) wasm build-mtg "build release mtg (network) for equiv sweep" -- cargo build --release --bin mtg --features network
+	@$(VSTEP) wasm equiv-base "native-vs-WASM STRICT sweep: old_school2/* (8 turns)" -- \
+		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8
+	@$(VSTEP) wasm equiv-fireball "native-vs-WASM STRICT: multi-target Fireball (mtg-tyvcn)" -- \
+		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25
+	@$(VSTEP) wasm equiv-blackvise "native-vs-WASM STRICT: Black Vise ETB punisher (mtg-cuf0e)" -- \
+		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 3 --decks 'decks/old_school2/black_vise_punisher.dck' --max-turns 10
+	@$(VSTEP) wasm equiv-spiritlink "native-vs-WASM STRICT: Spirit Link non-combat lifelink (mtg-r9po1)" -- \
+		env MTG_EQUIV_REQUIRE_WASM=1 MTG_EQUIV_NO_BUILD=1 ./bug_finding/native_wasm_equiv_sweep.sh --seeds 1 --seed-base 26 --decks 'decks/old_school2/spirit_link_pinger.dck' --max-turns 16
 
 # Network E2E test: builds native server + WASM client, runs networked games
 # Depends on build-network and wasm-network targets
@@ -339,74 +315,45 @@ validate-wasm-e2e-step: validate-wasm-step
 # steps also removes the web/pkg copy race and makes the build order obvious.
 # Other parallel steps (fmt/clippy/test/examples/agentplay/...) still run
 # concurrently, preserving most of the -j4 speedup.
+# jobGroup `network`: native server + WASM client build, then the networked
+# browser e2e + network-vs-local determinism legs. Each job is wrapped by
+# $(VSTEP); the long-form rationale for each leg (formerly @echo spam) is kept
+# here as comments:
+#   gui/multideck/click/landing : core networked play-path browser tests.
+#   redo-reload  : two browser AI clients advance >=3 turns in sync then RELOAD
+#                  one mid-game — survivor never silently freezes; reloaded
+#                  client lands well-defined (mtg-682 items 4+5, both renderers).
+#   redo-lobby   : no waiting room; Create->launcher-direct; game stays listed
+#                  for a 2nd browser; split New/Edit Deck buttons (mtg-682 1-4).
+#   smoke        : hermetic CAS web-asset smoke — index.json no-cache, hashed
+#                  bin/wasm/js immutable, fixed pkg no-cache (mtg-571).
+#   deploy-nav   : full lobby->launcher->game/editor nav on the HASHED deploy
+#                  tree resolves to 200s incl. runtime asset-manifest (mtg-682).
+#   equiv-*      : network-vs-local deterministic gamelog identity, random/zero/
+#                  heuristic controllers (mtg-380, mtg-yulth info-independence).
+#   robots42     : ActionLog<StateSyncEntry> reveal/reorder regression (mtg-559).
+#   fuzz         : bounded seeds x old-school deck-pair native determinism +
+#                  local-vs-network identity (mtg-578 reuse of prebuilt binary).
+# mtg-716: chromium is provisioned ONCE by `make setup`; playwright-check
+# FAILS FAST (no runtime browser fetch — validate stays hermetic).
 validate-network-e2e-step: validate-wasm-e2e-step
-	@echo "=== Building network components ==="
-	@$(MAKE) build-network
-	@$(MAKE) wasm-network
-	@echo "=== Running Network E2E tests ==="
-# mtg-716: chromium is provisioned ONCE by `make setup` (binary only, no
-# `--with-deps`/root). Do NOT fetch a browser at validate time — a runtime
-# download is the anti-pattern and validate must stay hermetic. Verify the
-# browser is present via the Playwright API (a structured check, not a string
-# grep) and FAIL FAST with an actionable message if it is missing, instead of
-# cascading into a confusing "Target page/context/browser has been closed".
-	@cd web && $(NPM) install --silent 2>/dev/null || true
-	@cd web && node -e "const fs=require('fs');let p;try{p=require('playwright').chromium.executablePath();}catch(e){console.error('\nERROR: playwright is not installed in web/node_modules.\nRun: make setup   (or: cd web && npm install && npx playwright install chromium)\n');process.exit(1);}if(!fs.existsSync(p)){console.error('\nERROR: Playwright chromium is not provisioned ('+p+').\nRun: make setup   (or: cd web && npx playwright install chromium)\n');process.exit(1);}"
-	@cd web && node test_network_gui_e2e.js
-	@echo "=== Running Network HUMAN-controller sync gate (mtg-679 unification) ==="
-	@echo "    Human P2 (WASM browser) vs heuristic AI P1 over the real network"
-	@echo "    path. Before the AI/human unification this raced the server through"
-	@echo "    P2's turn-1 cleanup discard (FATAL hash mismatch at action ~45);"
-	@echo "    now the human controller flows through the SAME rewind+replay"
-	@echo "    machinery as the AI controllers, so it stays in lockstep. Gates the"
-	@echo "    collapsed single network path forever — desync is ALWAYS fatal."
-	@cd web && node test_network_human_input.js
-	@cd web && node test_network_multideck.js --quick
-	@cd web && node test_network_click.js
-	@cd web && node test_landing_page_ux.js
-	@echo "=== Running lobby-redo multiturn + reload acceptance e2e (mtg-682 items 4+5) ==="
-	@echo "    Two browser AI clients (create+join) over the networked web path:"
-	@echo "    advance >=3 full turns in sync (no desync), then RELOAD one client"
-	@echo "    mid-game — asserts the survivor never silently freezes (advances OR"
-	@echo "    gets a CLEAN connection-lost notice) and the reloaded client lands in"
-	@echo "    a well-defined state, never silent corruption. Covers BOTH renderers"
-	@echo "    (native_game default + tui_game). The redo play-path gate."
-	@cd web && node test_redo_multiturn_reload_e2e.js
-	@echo "=== Running lobby-flow-fixes e2e (mtg-682 items 1-4): no waiting room, ==="
-	@echo "    Create straight-to-launcher, game stays listed for a second browser"
-	@echo "    after the creator left the lobby page, Join redirects only the joiner,"
-	@echo "    and the launcher's split New Deck / Edit Deck buttons."
-	@cd web && node test_redo_lobby_e2e.js
-	@echo "=== Running hermetic content-addressed web-asset smoke test (mtg-571) ==="
-	@echo "    Local-only: launches 'mtg server-web' on a temp port; asserts"
-	@echo "    index.json no-cache, hashed bin/wasm/js immutable, fixed pkg no-cache."
-	@cd web && node test_web_server_smoke.js
-	@echo "=== Running deploy-tree navigation gate on the HASHED tree (mtg-682) ==="
-	@echo "    Local-only: stages web/ via 'mtg hash-web-assets' (the deploy code"
-	@echo "    path), serves it, and asserts the full lobby->launcher->game/editor"
-	@echo "    nav RESOLVES to hashed 200s — incl. the cycle edges routed through"
-	@echo "    the runtime asset-manifest. Guards the lobby-redo CAS deploy break."
-	@cd web && node test_deploy_tree_nav.js
-	@echo "=== Running network-vs-local equivalence E2E (deterministic gamelog identity) ==="
-	@echo "    Guards the network-determinism class fixed in fix-network-desync"
-	@echo "    (mana-cache staleness + server-authoritative winner). See mtg-380."
-	@bash tests/network_vs_local_equivalence_e2e.sh 3 random
-	@bash tests/network_vs_local_equivalence_e2e.sh 3 zero
-	@echo "    + heuristic leg (mtg-yulth): the heuristic controller's name-based"
-	@echo "    library search (e.g. Demonic Tutor) must be info-independent, so"
-	@echo "    local and network gamelogs stay byte-identical. Single pinned seed"
-	@echo "    on the avatar draft decks (deterministic, not a load-flaky sweep)."
-	@bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic
-	@echo "=== Running robots42 state-sync regression (Phase 2 step 1 / mtg-559) ==="
-	@echo "    Locks in the ActionLog<StateSyncEntry> reveal/reorder path"
-	@echo "    that replaces WasmNetworkClient's destructive drain_* helpers."
-	@bash tests/robots42_state_sync_e2e.sh
-	@echo "=== Running bounded randomized determinism + equivalence fuzz ==="
-	@echo "    Sweeps seeds x old-school deck pairs for native determinism AND"
-	@echo "    local-vs-network gamelog identity. Heavy mode:"
-	@echo "    bug_finding/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all"
-	@MTG_REUSE_PREBUILT=1 bash tests/fuzz_determinism_netequiv_e2e.sh
-	@echo "✓ network-e2e tests completed"
+	@$(VSTEP) network build-native "build release server (network) + wasm-network client" -- \
+		bash -c '$(MAKE) build-network && $(MAKE) wasm-network'
+	@$(VSTEP) network playwright-check "npm install + verify chromium provisioned" -- \
+		bash -c 'cd web && $(NPM) install --silent 2>/dev/null || true; $(NODE) playwright_check.js'
+	@$(VSTEP) network gui "networked GUI e2e (baseline)" -- bash -c 'cd web && node test_network_gui_e2e.js'
+	@$(VSTEP) network multideck "networked multi-deck e2e (--quick)" -- bash -c 'cd web && node test_network_multideck.js --quick'
+	@$(VSTEP) network click "networked click+log e2e" -- bash -c 'cd web && node test_network_click.js'
+	@$(VSTEP) network landing "landing-page UX e2e" -- bash -c 'cd web && node test_landing_page_ux.js'
+	@$(VSTEP) network redo-reload "lobby-redo multiturn + mid-game reload (mtg-682 4+5)" -- bash -c 'cd web && node test_redo_multiturn_reload_e2e.js'
+	@$(VSTEP) network redo-lobby "lobby-flow-fixes e2e (mtg-682 1-4)" -- bash -c 'cd web && node test_redo_lobby_e2e.js'
+	@$(VSTEP) network smoke "hermetic CAS web-asset smoke (mtg-571)" -- bash -c 'cd web && node test_web_server_smoke.js'
+	@$(VSTEP) network deploy-nav "hashed deploy-tree navigation gate (mtg-682)" -- bash -c 'cd web && node test_deploy_tree_nav.js'
+	@$(VSTEP) network equiv-random "network-vs-local gamelog identity: random (mtg-380)" -- bash tests/network_vs_local_equivalence_e2e.sh 3 random
+	@$(VSTEP) network equiv-zero "network-vs-local gamelog identity: zero" -- bash tests/network_vs_local_equivalence_e2e.sh 3 zero
+	@$(VSTEP) network equiv-heuristic "network-vs-local gamelog identity: heuristic (mtg-yulth)" -- bash tests/network_vs_local_equivalence_e2e.sh 3 heuristic
+	@$(VSTEP) network robots42 "robots42 state-sync regression (mtg-559)" -- bash tests/robots42_state_sync_e2e.sh
+	@$(VSTEP) network fuzz "bounded determinism + net-equiv fuzz" -- env MTG_REUSE_PREBUILT=1 bash tests/fuzz_determinism_netequiv_e2e.sh
 
 # Generate documentation and open in browser
 doc:
