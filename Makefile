@@ -85,9 +85,20 @@ build-network:
 
 # Run unit tests (including network tests)
 # Note: human_input_e2e tests for WASM pattern don't require wasm feature
+# mtg-717 build-once: if NEXTEST_ARCHIVE is set (CI `--use-prebuilt` shard), run
+# the PREBUILT test binaries from the archive (built once by the
+# build-nextest-arch job) instead of recompiling — --workspace-remap . points
+# the archive's source-relative paths at this checkout (the archive omits
+# source; submodules must be checked out). The archive was built with the SAME
+# `--release --features network` so features can't drift.
 test:
 	@echo "=== Running unit tests ==="
-	cargo nextest run --features network
+	@if [ -n "$(NEXTEST_ARCHIVE)" ]; then \
+		echo "=== Reusing prebuilt nextest archive: $(NEXTEST_ARCHIVE) ==="; \
+		cargo nextest run --archive-file "$(NEXTEST_ARCHIVE)" --workspace-remap .; \
+	else \
+		cargo nextest run --features network; \
+	fi
 
 # Fast compilation check (no codegen)
 check:

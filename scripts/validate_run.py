@@ -97,37 +97,30 @@ _BROWSER = {"browser": 1}
 EQUIV = "./bug_finding/native_wasm_equiv_sweep.sh"
 
 
-def build_registry(prebuilt=False, nextest_archive=None):
-    """Build the step list.
-
-    prebuilt=True (CI build-once mode): the heavy COMPILE steps become
-    VERIFY-ONLY against artifacts a gating `build` job already produced + a test
-    shard downloaded — so a shard does ZERO compilation (the cold-build cost is
-    paid ONCE in the build job, not per-shard). build.mtg-release verifies the
-    downloaded release binary; wasm.bundle verifies the downloaded web/pkg; and
-    unit.nextest runs from a prebuilt nextest archive instead of `make test`
-    (which would recompile the test binaries).
-    """
+def build_registry():
+    """Build the step list. The producer steps build.mtg-release + wasm.bundle
+    compile the shared artifacts; in CI build-once mode (`--use-prebuilt`) they
+    are DROPPED from the DAG (main()) because a gating CI job already produced
+    the artifacts and the shard downloaded them — so a shard does ZERO
+    compilation."""
     s = []
     add = s.append
-    # --- build (once): real compile, OR verify the downloaded artifact ---
-    mtg_cmd = ("test -x target/release/mtg || { echo 'PREBUILT: target/release/mtg missing' >&2; exit 1; }"
-               if prebuilt else "cargo build --release --bin mtg --features network")
+    # --- build (once): the shared release+network mtg binary ---
     add(Step("build", "mtg-release",
-             "verify prebuilt release mtg" if prebuilt else "build release+network mtg ONCE (shared by all steps)",
-             mtg_cmd, timeout=BUILD_STEP_TIMEOUT))
+             "build release+network mtg ONCE (shared by all steps)",
+             "cargo build --release --bin mtg --features network",
+             timeout=BUILD_STEP_TIMEOUT))
     # --- lint (self-contained; own check artifacts) ---
     add(Step("lint", "fmt", "cargo fmt --all --check", "make fmt-check"))
     add(Step("lint", "clippy", "clippy engine+benchmarks (-D warnings)", "make clippy"))
     add(Step("lint", "clippy-wasm", "clippy wasm32 target", "make clippy-wasm"))
-    # --- unit: run nextest. prebuilt -> run from the downloaded archive (no
-    #     recompile); otherwise the normal `make test` (compiles + runs). Either
-    #     way the determinism/shell tests shell out to target/release/mtg via
-    #     MTG_REUSE_PREBUILT (build.mtg-release dep guarantees it's present).
-    nextest_cmd = (f"cargo nextest run --archive-file {nextest_archive} --workspace-remap ."
-                   if (prebuilt and nextest_archive) else "make test")
-    add(Step("unit", "nextest", "cargo nextest run (prebuilt archive)" if prebuilt else "cargo nextest run --features network",
-             nextest_cmd, deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
+    # --- unit: `make test` (= cargo nextest run --features network). Under
+    #     --use-prebuilt, CI sets NEXTEST_ARCHIVE and `make test` runs the
+    #     prebuilt archive (--archive-file --workspace-remap .) instead of
+    #     recompiling. The determinism/shell tests shell out to
+    #     target/release/mtg via MTG_REUSE_PREBUILT (downloaded artifact).
+    add(Step("unit", "nextest", "cargo nextest run --features network",
+             "make test", deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
     # --- examples (own debug build) ---
     add(Step("examples", "run", "run all examples (parallel)", "make examples"))
     # --- agentplay (python; agent_game.py + mode-equivalence drive the release
@@ -151,10 +144,8 @@ def build_registry(prebuilt=False, nextest_archive=None):
     add(Step("determ", "snapshot-resume", "snapshot/resume E2E (mtg resume subcommand)",
              "bash tests/snapshot_resume_e2e.sh", deps=["build.mtg-release"], env=_REUSE))
     # --- wasm: ONE bundle (wasm-network features) + browser e2e + equiv sweeps ---
-    bundle_cmd = ("test -d web/pkg && test -d web/data || { echo 'PREBUILT: web/pkg or web/data missing' >&2; exit 1; }"
-                  if prebuilt else "make wasm-dev")
-    add(Step("wasm", "bundle", "verify prebuilt wasm bundle" if prebuilt else "wasm-pack dev build (wasm-network) + export-wasm data",
-             bundle_cmd, timeout=BUILD_STEP_TIMEOUT))
+    add(Step("wasm", "bundle", "wasm-pack dev build (wasm-network) + export-wasm data",
+             "make wasm-dev", timeout=BUILD_STEP_TIMEOUT))
     add(Step("wasm", "npm-install", "web/ npm install (e2e deps)",
              f"cd web && {NPM} install --silent 2>/dev/null"))
     add(Step("wasm", "browser", "WASM browser e2e suite (11 playwright tests)",
@@ -465,19 +456,20 @@ def main():
                     help="how many chromium-heavy steps may run at once (default 1)")
     ap.add_argument("--net-capacity", type=int, default=1,
                     help="how many native networked-game steps may run at once (default 1)")
-    ap.add_argument("--prebuilt", action="store_true",
-                    help="CI build-once mode: VERIFY downloaded build artifacts instead of "
-                         "recompiling (build.mtg-release/wasm.bundle become checks; unit.nextest "
-                         "runs from --nextest-archive). The build job paid the compile cost once.")
-    ap.add_argument("--nextest-archive", default=os.environ.get("MTG_NEXTEST_ARCHIVE"),
-                    help="path to a `cargo nextest archive` file; with --prebuilt, unit.nextest "
-                         "runs from it (no test-binary recompile).")
+    ap.add_argument("--use-prebuilt", action="store_true",
+                    help="CI build-once mode: a gating job already compiled the shared artifacts "
+                         "(release mtg, wasm bundle, nextest archive) and this shard downloaded "
+                         "them. DROP the build.mtg-release + wasm.bundle compile steps from the DAG "
+                         "(and strip them from every step's deps) so the shard does ZERO "
+                         "compilation. Tests reuse the downloaded artifacts via MTG_REUSE_PREBUILT "
+                         "/ MTG_EQUIV_NO_BUILD / NEXTEST_ARCHIVE (set by CI). HARD-FAILS if an "
+                         "expected artifact is missing — never silently cold-rebuilds.")
     ap.add_argument("-q", "--quiet", action="store_true")
     ap.add_argument("-v", dest="v", action="count", default=0, help="-v stream framework, -vv stream all")
     ap.add_argument("--list", action="store_true", help="list steps and exit")
     args = ap.parse_args()
 
-    steps = build_registry(prebuilt=args.prebuilt, nextest_archive=args.nextest_archive)
+    steps = build_registry()
     if args.no_network:
         steps = [s for s in steps if not s.networkonly]
 
@@ -505,6 +497,43 @@ def main():
         selected = with_deps([t for t, s in by_tag.items() if s.job in jobs])
     if selected is not None:
         steps = [s for s in steps if s.tag in selected]
+
+    if args.use_prebuilt:
+        # Build-once: a gating CI job produced the shared artifacts and this
+        # shard downloaded them. DROP the compile producers and STRIP them from
+        # every remaining step's deps (with_deps auto-pulled them in, which is
+        # what otherwise forces a cold rebuild into each shard).
+        PREBUILT = {"build.mtg-release", "wasm.bundle"}
+        steps = [s for s in steps if s.tag not in PREBUILT]
+        for s in steps:
+            s.deps = [d for d in s.deps if d not in PREBUILT]
+        # HARD-FAIL on a missing artifact — never fall through to a silent cold
+        # cargo build inside a shard (project rule: a broken prereq handoff is
+        # fatal, never papered over). Only check what THIS shard actually uses.
+        if not args.list:
+            tags = {s.tag for s in steps}
+            missing = []
+            needs_bin = any(t in tags for t in (
+                "unit.nextest", "determ.commander", "determ.snapshot-resume",
+                "agentplay.pytest", "agentplay.mock-game", "agentplay.mode-equiv")) \
+                or any(t.startswith(("wasm.equiv", "network.")) for t in tags)
+            needs_wasm = any(t in ("wasm.browser",) or t.startswith("wasm.equiv")
+                             or (t.startswith("network.") and t not in (
+                                 "network.equiv-random", "network.equiv-zero",
+                                 "network.equiv-heuristic", "network.robots42", "network.fuzz"))
+                             for t in tags)
+            if needs_bin and not (os.access(PROJECT_DIR / "target/release/mtg", os.X_OK)):
+                missing.append("target/release/mtg (mtg-bin artifact / MTG_REUSE_PREBUILT)")
+            if needs_wasm and not (PROJECT_DIR / "web/pkg").is_dir():
+                missing.append("web/pkg (wasm-pkg artifact)")
+            if "unit.nextest" in tags and not os.environ.get("NEXTEST_ARCHIVE"):
+                missing.append("NEXTEST_ARCHIVE env (nextest-archive artifact)")
+            if missing:
+                sys.stderr.write("[validate_run] --use-prebuilt: required prebuilt artifact(s) "
+                                 "MISSING — refusing to silently cold-rebuild:\n")
+                for m in missing:
+                    sys.stderr.write(f"    - {m}\n")
+                return 1
 
     if args.list:
         for s in steps:

@@ -59,6 +59,19 @@ ensure_mtg_binary() {
         return 0
     fi
 
+    # mtg-717 build-once: MTG_REUSE_PREBUILT=1 PROMISES a prebuilt binary (CI's
+    # build-once `--use-prebuilt` shards set it after downloading the mtg-bin
+    # artifact; local `make validate` builds it once up front via the runner's
+    # build.mtg-release step and also sets it). If the flag is set but the binary
+    # is ABSENT, the artifact handoff is broken — HARD-FAIL rather than silently
+    # resurrecting the ~1h cold `cargo build` inside the shard (that would defeat
+    # build-once and violate the project's fatal-on-missing-prereq rule).
+    if [ "${MTG_REUSE_PREBUILT:-}" = "1" ]; then
+        echo "ERROR: MTG_REUSE_PREBUILT=1 but prebuilt binary is missing/not executable: $MTG_BIN" >&2
+        echo "       Refusing to silently cold-rebuild. The mtg-bin artifact handoff is broken." >&2
+        exit 1
+    fi
+
     # Always build release binary at start of each test
     # This ensures tests use latest code and provides consistent timing
     # Include network feature for client/server functionality
