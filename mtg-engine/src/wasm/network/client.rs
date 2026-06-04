@@ -180,7 +180,7 @@ pub struct WasmNetworkClient {
     /// GameLoop draws) and re-apply on every rewind (the undo rewind restores
     /// public state but not the hidden library order). Mid-game reorders
     /// (`action_count > 0`) go into the ac-keyed `state_sync` log instead.
-    initial_library_orders: std::collections::BTreeMap<PlayerId, Vec<CardId>>,
+    initial_library_orders: std::collections::BTreeMap<PlayerId, Vec<crate::core::CardId>>,
 
     /// One-shot guard: have the [`initial_library_orders`] been written to the
     /// shadow yet? Applied exactly once, at the first sync point before the
