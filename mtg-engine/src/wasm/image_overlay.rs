@@ -48,54 +48,10 @@ pub fn gatherer_url(card_name: &str) -> String {
     )
 }
 
-/// Build Scryfall image URL for a card by set code and collector number (fallback)
-///
-/// # Arguments
-/// * `set_code` - Three-letter set code (e.g. "LEA", "ARN")
-/// * `collector_number` - Collector number as string
-/// * `version` - Image size/type
-///
-/// # Returns
-/// Full URL to Scryfall image API
-pub fn scryfall_url(set_code: &str, collector_number: &str, version: ImageVersion) -> String {
-    let version_str = match version {
-        ImageVersion::Small => "small",
-        ImageVersion::Normal => "normal",
-        ImageVersion::ArtCrop => "art_crop",
-    };
-
-    format!(
-        "https://api.scryfall.com/cards/{}/{}?format=image&version={}",
-        set_code.to_lowercase(),
-        collector_number,
-        version_str
-    )
-}
-
-/// Build Scryfall image URL for a card by name
-///
-/// Uses Scryfall's named card API endpoint which looks up by exact name.
-///
-/// # Arguments
-/// * `card_name` - Card name (e.g. "Lightning Bolt")
-/// * `version` - Image size/type
-///
-/// # Returns
-/// Full URL to Scryfall named card image API
-pub fn scryfall_url_by_name(card_name: &str, version: ImageVersion) -> String {
-    let version_str = match version {
-        ImageVersion::Small => "small",
-        ImageVersion::Normal => "normal",
-        ImageVersion::ArtCrop => "art_crop",
-    };
-
-    // URL-encode the card name
-    let encoded_name = url_encode(card_name);
-    format!(
-        "https://api.scryfall.com/cards/named?exact={}&format=image&version={}",
-        encoded_name, version_str
-    )
-}
+// (scryfall_url / scryfall_url_by_name — the api.scryfall.com per-image URL
+// builders — were REMOVED in task #7 / mtg-722. All Scryfall art now loads from
+// the immutable cards.scryfall.io CDN, resolved client-side from the card-lookup
+// table; gatherer remains the table-miss fallback.)
 
 /// Build local image URL for a card (from images/ directory)
 ///
@@ -132,31 +88,21 @@ pub fn local_image_url(card_name: &str, version: ImageVersion, base_url: &str) -
     format!("{}/{}/{}/{}.jpg", base_url, version_str, first_letter, safe_name)
 }
 
-/// Build the ordered image-URL fallback list for a card, in priority order
-/// (local → scryfall → gatherer). This is the single source of truth for the
-/// `<img onerror>` cascade that `native_game.html` walks.
+/// Build the name-only image-URL fallback list for a card: `[local, gatherer]`
+/// (+ a stripped-name `gatherer` fallback for `"<X> Token"` names). This is the
+/// base list the client image cascade starts from; the client SPLICES the
+/// Scryfall-CDN URL (resolved from the card-lookup table via `tui_card_cdn_url`,
+/// which also has the token's P/T+colors) between `local` and `gatherer`, so
+/// the full cascade is `[local → CDN → gatherer]`.
 ///
-/// ## Token art fallback (mtg-722)
-///
-/// Predefined artifact-style tokens are named `"<X> Token"` in our engine
-/// (e.g. `"Clue Token"`, `"Food Token"`, `"Treasure Token"`), but Scryfall and
-/// Gatherer index the art under the BARE name (`"Clue"`, not `"Clue Token"`).
-/// So the primary by-name lookups 404 and the token shows no art. For names
-/// carrying the `" Token"` suffix we therefore APPEND stripped-name fallbacks
-/// (`scryfall("Clue")`, `gatherer("Clue")`) so the cascade can still resolve the
-/// real token art. Creature tokens (`"Goblin"`, `"Soldier"`, …) carry no suffix
-/// and already resolve via the primary URLs, so they get no extra entries.
-///
-/// (Verified against the live Scryfall API: `cards/named?exact=Clue%20Token`
-/// → 404, `cards/named?exact=Clue` → the Clue token card.)
+/// api.scryfall.com is GONE (task #7 / mtg-722): the per-image API endpoint was
+/// rate-limited and 404'd on engine token names; the immutable CDN replaces it.
+/// Gatherer is RETAINED as the table-miss safety net (kept rare by the table's
+/// coverage aliasing). For `"<X> Token"` names we still append a bare-name
+/// `gatherer` fallback (Scryfall/Gatherer index tokens under the bare name).
 pub fn card_image_url_cascade(card_name: &str, version: ImageVersion, base_url: &str) -> Vec<String> {
-    let mut urls = vec![
-        local_image_url(card_name, version, base_url),
-        scryfall_url_by_name(card_name, version),
-        gatherer_url(card_name),
-    ];
+    let mut urls = vec![local_image_url(card_name, version, base_url), gatherer_url(card_name)];
     if let Some(base) = card_name.strip_suffix(" Token") {
-        urls.push(scryfall_url_by_name(base, version));
         urls.push(gatherer_url(base));
     }
     urls
@@ -172,24 +118,6 @@ fn first_letter_subdir(card_name: &str) -> String {
     } else {
         "_".to_string()
     }
-}
-
-/// URL-encode a string for use in URLs
-fn url_encode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() * 3);
-    for byte in s.bytes() {
-        match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                result.push(byte as char);
-            }
-            b' ' => result.push_str("%20"),
-            _ => {
-                result.push('%');
-                result.push_str(&format!("{:02X}", byte));
-            }
-        }
-    }
-    result
 }
 
 /// Image size dimensions (in pixels)
@@ -519,53 +447,33 @@ mod tests {
     }
 
     #[test]
-    fn test_scryfall_url() {
-        let url = scryfall_url("LEA", "231", ImageVersion::Small);
-        assert_eq!(url, "https://api.scryfall.com/cards/lea/231?format=image&version=small");
-
-        let url = scryfall_url("ARN", "1", ImageVersion::Normal);
-        assert_eq!(url, "https://api.scryfall.com/cards/arn/1?format=image&version=normal");
-    }
-
-    #[test]
-    fn test_scryfall_url_by_name() {
-        let url = scryfall_url_by_name("Lightning Bolt", ImageVersion::Normal);
-        assert_eq!(
-            url,
-            "https://api.scryfall.com/cards/named?exact=Lightning%20Bolt&format=image&version=normal"
-        );
-
-        let url = scryfall_url_by_name("Jace, the Mind Sculptor", ImageVersion::Small);
-        assert_eq!(
-            url,
-            "https://api.scryfall.com/cards/named?exact=Jace%2C%20the%20Mind%20Sculptor&format=image&version=small"
-        );
-    }
-
-    #[test]
     fn test_card_image_url_cascade_normal_card() {
-        // A non-token card gets exactly the three primary sources, in order.
+        // task #7: no api.scryfall rung — base list is [local, gatherer]; the
+        // client splices the CDN url between them.
         let urls = card_image_url_cascade("Lightning Bolt", ImageVersion::Small, "/images");
-        assert_eq!(urls.len(), 3, "non-token card has no extra fallbacks: {urls:?}");
+        assert_eq!(urls.len(), 2, "non-token base list is [local, gatherer]: {urls:?}");
         assert_eq!(urls[0], "/images/small/l/Lightning Bolt.jpg");
-        assert!(urls[1].contains("api.scryfall.com") && urls[1].contains("exact=Lightning%20Bolt"));
-        assert!(urls[2].contains("gatherer.wizards.com"));
+        assert!(urls[1].contains("gatherer.wizards.com"));
+        assert!(
+            urls.iter().all(|u| !u.contains("api.scryfall.com")),
+            "no api.scryfall: {urls:?}"
+        );
     }
 
     #[test]
-    fn test_card_image_url_cascade_token_stripped_fallback() {
-        // mtg-722: "Clue Token" is indexed by Scryfall/Gatherer as the BARE name
-        // "Clue", so the primary by-name lookups 404. The cascade must APPEND
-        // stripped-name fallbacks so the real token art still resolves.
+    fn test_card_image_url_cascade_token_gatherer_fallback() {
+        // task #7: a "<X> Token" name still appends a bare-name GATHERER fallback
+        // (Scryfall/Gatherer index tokens under the bare name). No api.scryfall.
         let urls = card_image_url_cascade("Clue Token", ImageVersion::Small, "/images");
-        assert_eq!(urls.len(), 5, "token gets 2 stripped-name fallbacks: {urls:?}");
-        // Primary entries use the full "Clue Token" name (these 404 for tokens).
-        assert!(urls[1].contains("exact=Clue%20Token"));
-        // The fix: stripped-name Scryfall + Gatherer fallbacks for bare "Clue".
+        assert_eq!(
+            urls.len(),
+            3,
+            "token base: [local, gatherer(full), gatherer(bare)]: {urls:?}"
+        );
+        assert!(urls[0].starts_with("/images/"));
         assert!(
-            urls.iter()
-                .any(|u| u.contains("api.scryfall.com") && u.contains("exact=Clue&") && !u.contains("Clue%20Token")),
-            "expected a stripped-name scryfall fallback for bare 'Clue': {urls:?}",
+            urls.iter().all(|u| !u.contains("api.scryfall.com")),
+            "no api.scryfall: {urls:?}"
         );
         assert!(
             urls.iter()
