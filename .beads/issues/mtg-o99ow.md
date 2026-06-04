@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T21:32:15.403393110+00:00
+updated_at: 2026-06-04T21:36:48.725488550+00:00
 ---
 
 # Description
@@ -148,3 +148,6 @@ B2 (apply-frontier STALL, the load-bearing one): after B1, expect multideck to a
 BLOCKER A (native, independent of B): equiv-zero seed3 turn-11/12, SEARCHER's own shadow has valid_cards=0 + never instantiates the fetched candidate (card 46) → off-by-one hand → fatal hash. team-lead: real shadow-replay correctness bug, fix regardless. NOT subsumed by Piece 2 per team-lead. Native eager path (client.rs ignores server action_count for CardRevealed, synthetic-keyed). My searcher fix is a NET IMPROVEMENT here (parent fails turn5 → fix advances to turn12), proven by building parent.
 
 SEQUENCE (team-lead): reconcile[DONE] → verify RED baseline[DONE] → B1 → B2 (multideck GREEN, fresh binaries) → A → native buffer shim (Piece 2) → WASM cycling coverage → merge gate (full validate green incl 4 cycling + multideck + gui). mtime-discipline on EVERY network test. HARD STOP if family won't converge.
+
+## B1 DONE 2026-06-04 (slot01-phase2) @9414e68e — double-push fixed + VERIFIED; B2 stall reproduced exactly
+record_opponent_choice dedup-by-choice_seq landed (push, not insert_sorted; debug_assert on choice_indices; keep-first verified content-equivalent). Fresh mtime-verified wasm+server: the choice_seq=1 double-push panic is GONE. multideck still 0/4, now blocked solely by B2 apply-frontier stall: WASM_HASH_DEBUG ACTION COUNT MISMATCH server=55 local=50 (diff=5) at choice_seq=2 ac=55 (monored s13) — EXACTLY the predicted case (shadow stops at last reveal @50, 5 short of choice @55). B2 = the deep replay-driver fix (L4 block-on-miss; advance shadow forward-replay past the reveal frontier to the CR ac). Recommended for fresh context from @9414e68e.
