@@ -12,10 +12,74 @@ This script kills:
 
 import os
 import sys
+import shutil
 import subprocess
 import signal
 import time
 from pathlib import Path
+
+
+def _scope_cgroup_path(unit):
+    """Filesystem cgroup path for a --user transient scope, via systemctl."""
+    try:
+        r = subprocess.run(
+            ["systemctl", "--user", "show", unit, "--property=ControlGroup", "--value"],
+            capture_output=True, text=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    cg = r.stdout.strip()
+    return (Path("/sys/fs/cgroup") / cg.lstrip("/")) if cg else None
+
+
+def stop_my_validate_scopes(current_dir):
+    """mtg-ibj22: atomically reap LEFTOVER transient validate-*.scope cgroups
+    belonging to THIS worktree (from a SIGKILLed scoped `make validate`) —
+    `systemctl --user stop` kills the whole cgroup including setsid escapees the
+    per-PID scan misses. CROSS-SLOT SAFE: only stops a scope if one of its
+    processes has /proc/<pid>/cwd within current_dir; a concurrent slot03/slot04
+    validate scope (cwd elsewhere) is left untouched. The scoped validate uses a
+    RELATIVE script path, so cmd-substring can't identify ownership — we MUST go
+    through cwd."""
+    if not shutil.which("systemctl"):
+        return 0
+    try:
+        r = subprocess.run(
+            ["systemctl", "--user", "list-units", "--type=scope", "--no-legend",
+             "--plain", "validate-*.scope"],
+            capture_output=True, text=True, timeout=8)
+    except (subprocess.TimeoutExpired, OSError):
+        return 0
+    stopped = 0
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if not parts or not parts[0].endswith(".scope"):
+            continue
+        unit = parts[0]
+        cg = _scope_cgroup_path(unit)
+        procs = cg / "cgroup.procs" if cg else None
+        if not procs or not procs.exists():
+            continue
+        mine = False
+        try:
+            for pid in procs.read_text().split():
+                try:
+                    if os.readlink(f"/proc/{pid}/cwd").startswith(current_dir):
+                        mine = True
+                        break
+                except OSError:
+                    pass
+        except OSError:
+            continue
+        if not mine:
+            continue  # cross-slot (or empty) scope — DO NOT touch
+        try:
+            subprocess.run(["systemctl", "--user", "stop", unit],
+                           capture_output=True, timeout=8)
+            print(f"  Stopped leftover validate scope (this worktree): {unit}")
+            stopped += 1
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    return stopped
 
 
 def get_current_dir():
@@ -166,6 +230,11 @@ def main():
                 failed_count += 1
     else:
         print("No zombie processes found.")
+
+    # Reap leftover transient validate scopes for THIS worktree (cross-slot safe).
+    scopes_stopped = stop_my_validate_scopes(current_dir)
+    if scopes_stopped:
+        print(f"Stopped {scopes_stopped} leftover validate scope(s).")
 
     # Remove lock file
     print()
