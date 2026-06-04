@@ -335,10 +335,26 @@ struct StateSyncBuffer {
     /// reveal application with game position (the WASM model) and removes the
     /// multi-message arrival race that caused the equiv-zero desync.
     log: ActionLog<StateSyncEntry>,
-    /// Cursor: highest `action_count` whose entry has been applied to the
-    /// shadow `GameState`. `apply_state_sync_up_to_frontier` walks entries
-    /// with `last_applied_ac < ac <= bound` and bumps this.
-    last_applied_ac: u64,
+    /// Cursor for **LibraryReorder** entries — POSITIONAL: a reorder at game ac
+    /// K is applied only once the shadow's own `action_count` has reached K
+    /// (bounded by `target_action`). This is load-bearing: a library reorder is
+    /// a SHUFFLE result that must NOT overwrite the shadow's library before the
+    /// shadow has replayed the actions at earlier acs (e.g. an opponent's
+    /// cycling search that fetches a card OUT of the pre-shuffle library — apply
+    /// the post-shuffle order early and the fetched card vanishes from the
+    /// shadow's library, so the search finds nothing → desync). Mirrors the
+    /// "reorder before any draw" contract but keyed to game position.
+    last_applied_reorder_ac: u64,
+    /// Cursor for **RevealCard / SearchCandidates** entries — EAGER: applied up
+    /// to the reveal-history-complete watermark, ahead of the shadow's own
+    /// `action_count`. The native shadow replays the OPPONENT's actions (via
+    /// RemoteController) at acs beyond its own position, and those plays need
+    /// their card identities revealed BEFORE the shadow can replay them (else
+    /// "Entity not found"). Reveals are identity injections (library-order
+    /// independent), so applying them early is safe — and the in-order buffer
+    /// makes it race-free (the bug that target-bounding would otherwise fix is
+    /// gone because the buffer delivers the window atomically).
+    last_applied_reveal_ac: u64,
     /// Pre-game (game-start) library orders, held OUTSIDE the ac-keyed `log`
     /// (mirrors the WASM `initial_library_orders` BTreeMap). Both players'
     /// initial orders land at game ac 0, which would collide in the
@@ -654,14 +670,20 @@ impl SharedNetworkState {
             // Benign idempotent dual-emit re-send; already logged. Drop it.
             return;
         }
+        // A NEW delta must not arrive behind the cursor of its OWN apply class
+        // (reorders and reveals advance independently — see the two cursors).
+        let class_cursor = match entry {
+            StateSyncEntry::LibraryReorder { .. } => buf.last_applied_reorder_ac,
+            StateSyncEntry::RevealCard { .. } | StateSyncEntry::SearchCandidates { .. } => buf.last_applied_reveal_ac,
+        };
         assert!(
-            action_count >= buf.last_applied_ac,
+            action_count >= class_cursor,
             "push_state_sync_at: a NEW state-sync delta arrived at ac={} but the apply \
-             cursor has already advanced past it (last_applied={}) and no prior copy \
-             was logged — a delta needed at its game position never arrived in time \
+             cursor for its class has already advanced past it (cursor={}) and no prior \
+             copy was logged — a delta needed at its game position never arrived in time \
              = lost delta = desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
             action_count,
-            buf.last_applied_ac,
+            class_cursor,
         );
         buf.log.insert_sorted(action_count, entry);
         drop(buf);
@@ -693,7 +715,21 @@ impl SharedNetworkState {
     /// This is the single routing point that replaces the eager
     /// `CardRevealed` / `LibraryReordered` / `SearchCandidates` / `OpponentChoice`
     /// reader arms (ignored once `buffer_is_authoritative`).
+    ///
+    /// **ORDERING IS LOAD-BEARING (mtg-o99ow native race fix).** All reveal-class
+    /// facts (Reveal/LibraryReorder/SearchCandidates) are pushed into the
+    /// state-sync log BEFORE any `Choice` fact is pushed into the opponent-choice
+    /// log. Pushing a `Choice` fires `opponent_choices_notify`, which immediately
+    /// wakes the blocking `RemoteController` on the game thread; it then replays
+    /// that opponent action and `sync_to_action`s its reveals. If a later reveal
+    /// in the SAME buffer had not yet been pushed, the shadow would replay an
+    /// opponent play whose card is not yet revealed → "Entity not found" →
+    /// timing-dependent desync. The caller (reader) ALSO bumps the
+    /// `max_received_choice_ac` watermark to this choice's ac BEFORE calling this,
+    /// so the eager reveal apply is correctly bounded when the controller wakes.
     pub fn apply_choice_buffer(&self, buffer: Vec<(u64, BufferedFact)>) {
+        // Partition (by MOVE, no clone) so reveals are pushed before any choice.
+        let mut choices: Vec<(u64, BufferedFact)> = Vec::new();
         for (ac, fact) in buffer {
             match fact {
                 BufferedFact::Reveal { owner, card, reason } => {
@@ -721,28 +757,34 @@ impl SharedNetworkState {
                     // re-expand into N synthetic reveals (that defeats true-ac keying).
                     self.push_state_sync_at(ac, StateSyncEntry::SearchCandidates { searcher, cards });
                 }
-                BufferedFact::Choice {
+                choice @ BufferedFact::Choice { .. } => choices.push((ac, choice)),
+            }
+        }
+        // Pass 2: opponent choices (each push may wake the RemoteController, which
+        // now sees a fully-populated reveal log for this choice window).
+        for (ac, fact) in choices {
+            if let BufferedFact::Choice {
+                choice_seq,
+                choice_indices,
+                description,
+                spell_ability,
+                library_search_result,
+                target_card_ids,
+                .. // choice_type is wire-envelope only; the controller re-derives it
+            } = fact
+            {
+                // Keyed by choice_seq (strictly unique/monotonic per choice),
+                // NOT ac. push_opponent_choice dedups against an eager copy that
+                // may have arrived before the buffer became authoritative.
+                self.push_opponent_choice(ChoiceEntry {
                     choice_seq,
+                    action_count: ac,
                     choice_indices,
                     description,
                     spell_ability,
                     library_search_result,
                     target_card_ids,
-                    .. // choice_type is wire-envelope only; the controller re-derives it
-                } => {
-                    // Keyed by choice_seq (strictly unique/monotonic per choice),
-                    // NOT ac. record_opponent_choice dedups against an eager copy
-                    // that may have arrived before the buffer became authoritative.
-                    self.push_opponent_choice(ChoiceEntry {
-                        choice_seq,
-                        action_count: ac,
-                        choice_indices,
-                        description,
-                        spell_ability,
-                        library_search_result,
-                        target_card_ids,
-                    });
-                }
+                });
             }
         }
     }
@@ -798,20 +840,23 @@ impl SharedNetworkState {
     /// on the forward pass and on every replay. The apply window is bounded by
     /// `target_action.min(frontier).min(max_received_choice_ac)`:
     /// - `target_action` = the shadow's current `action_count` (passed by the
-    ///   GameLoop): never apply a reveal for a game position the shadow has not
-    ///   reached.
+    ///   GameLoop). REORDERS are bounded by it (positional); REVEALS are NOT (they
+    ///   apply ahead, see below).
     /// - `frontier` = highest ARRIVED entry.
-    /// - `max_received_choice_ac` = the reveal-history-complete watermark (L4
-    ///   block-on-miss): bounding by the raw frontier is unsafe because the server
-    ///   emits a choice window's deltas via two uncoordinated paths, so a reorder
-    ///   at a LARGER ac can arrive before a reveal at a SMALLER ac; advancing the
-    ///   cursor past the frontier would lose the later-arriving reveal. The
-    ///   watermark guarantees every delta with ac ≤ it is present.
+    /// - `max_received_choice_ac` = the reveal-history-complete watermark — the
+    ///   eager bound for REVEALS. By wire ordering the server sends all of a
+    ///   choice's bundled facts before the choice itself, so once a choice at ac A
+    ///   has arrived every reveal with ac ≤ A is present and safe to inject.
     ///
-    /// CRITICAL ORDERING (mtg-589): within each apply batch `LibraryReorder`
-    /// entries are applied BEFORE the reveal-like entries (the server guarantees
-    /// library order before any draw). Two-pass over the same cursor window keeps
-    /// re-runs after a rewind bit-identical.
+    /// TWO INDEPENDENT CURSORS (the native B2 replay-driver, mtg-o99ow):
+    /// - REORDERS apply only up to `target_action` (the shadow's position) — a
+    ///   shuffle's order must not overwrite the library before the shadow replays
+    ///   earlier-ac actions that read it (e.g. a cycling fetch out of the
+    ///   pre-shuffle library).
+    /// - REVEALS apply up to the watermark, AHEAD of the shadow, so opponent plays
+    ///   the shadow is about to replay have their cards instantiated first.
+    ///
+    /// Reveals are library-order independent, so the two passes do not interfere.
     ///
     /// Returns the number of entries applied (diagnostics).
     pub fn apply_state_sync_up_to_frontier(
@@ -838,29 +883,56 @@ impl SharedNetworkState {
             Some(f) => f,
             None => return 0,
         };
-        // Bound by game position reached (target) AND reveal-history completeness.
-        let bound = target_action.min(frontier).min(self.max_received_choice_ac());
-        if bound <= buf.last_applied_ac {
-            return 0;
-        }
+        let watermark = self.max_received_choice_ac();
 
-        // Snapshot the cursor window once (apply-by-index would still need a
-        // clone to release the lock before touching `game`; the window is tiny).
-        let last_applied = buf.last_applied_ac;
-        let to_apply: Vec<(u64, StateSyncEntry)> = buf
+        // Two independently-bounded passes (see the cursor field docs):
+        //
+        // Pass 1 — REORDERS, POSITIONAL: bound by target_action (the shadow's own
+        //   action_count) ∧ frontier. A shuffle's new library order must NOT be
+        //   adopted before the shadow has replayed the actions at earlier acs
+        //   (e.g. an opponent's cycling fetch that pulls a card OUT of the
+        //   pre-shuffle library). Applying it early makes the fetched card vanish
+        //   from the shadow's library → the search finds nothing → desync.
+        // Pass 2 — REVEALS, EAGER: bound by the reveal-history-complete watermark
+        //   (latest received choice ac) ∧ frontier — applied AHEAD of the shadow's
+        //   position so the shadow can replay opponent plays whose cards must be
+        //   instantiated first (else "Entity not found"). Reveals are identity
+        //   injections (library-order independent), so applying them early is safe,
+        //   and the in-order buffer makes it race-free.
+        let reorder_bound = target_action.min(frontier);
+        let reveal_bound = watermark.min(frontier);
+
+        // Snapshot each pass's window (clone to release the lock before mutating
+        // `game`; the WS reader must stay able to append while we apply).
+        let reorder_cursor = buf.last_applied_reorder_ac;
+        let reveal_cursor = buf.last_applied_reveal_ac;
+        let reorders: Vec<(u64, StateSyncEntry)> = buf
             .log
             .iter()
-            .filter(|(ac, _)| *ac > last_applied && *ac <= bound)
+            .filter(|(ac, e)| {
+                *ac > reorder_cursor && *ac <= reorder_bound && matches!(e, StateSyncEntry::LibraryReorder { .. })
+            })
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
-        // Advance the cursor and release the lock before mutating `game`
-        // (the WS reader must stay able to append while we apply).
-        buf.last_applied_ac = bound;
+        let reveals: Vec<(u64, StateSyncEntry)> = buf
+            .log
+            .iter()
+            .filter(|(ac, e)| {
+                *ac > reveal_cursor && *ac <= reveal_bound && !matches!(e, StateSyncEntry::LibraryReorder { .. })
+            })
+            .map(|(ac, entry)| (ac, entry.clone()))
+            .collect();
+        if reorders.is_empty() && reveals.is_empty() {
+            return 0;
+        }
+        buf.last_applied_reorder_ac = buf.last_applied_reorder_ac.max(reorder_bound);
+        buf.last_applied_reveal_ac = buf.last_applied_reveal_ac.max(reveal_bound);
         drop(buf);
 
-        // Pass 1: library reorders. Protocol sends top-to-bottom; the shadow
-        // library Vec is bottom-to-top (draw pops the last element).
-        for (ac, entry) in &to_apply {
+        // Pass 1: library reorders (positional). Protocol sends top-to-bottom;
+        // the shadow library Vec is bottom-to-top (draw pops the last element).
+        let mut applied = 0;
+        for (ac, entry) in &reorders {
             if let StateSyncEntry::LibraryReorder { player, new_order } = entry {
                 log::debug!(
                     "apply_state_sync: library reorder ac={} player={:?} ({} cards)",
@@ -872,12 +944,11 @@ impl SharedNetworkState {
                     zones.library.cards = new_order.iter().rev().copied().collect();
                 }
             }
+            applied += 1;
         }
 
         // Pass 2: reveal-like entries (single reveals + search-candidate bundles).
-        // Library order is now server-authoritative.
-        let mut applied = 0;
-        for (ac, entry) in to_apply {
+        for (ac, entry) in reveals {
             match entry {
                 StateSyncEntry::RevealCard { owner, card, reason } => {
                     log::debug!(
@@ -915,7 +986,8 @@ impl SharedNetworkState {
     /// replay. The log itself stays intact (non-destructive reads).
     pub fn reset_state_sync_cursor(&self) {
         let mut buf = self.state_sync.lock().unwrap();
-        buf.last_applied_ac = 0;
+        buf.last_applied_reorder_ac = 0;
+        buf.last_applied_reveal_ac = 0;
         // The initial library orders must be re-applied on the forward replay too.
         buf.initial_library_applied = false;
     }
@@ -2413,10 +2485,13 @@ async fn run_ws_reader_shared(
                                 // of mid-game facts; the still-sent eager copies are
                                 // ignored (see buffer_is_authoritative).
                                 shared_state.set_buffer_authoritative();
-                                shared_state.apply_choice_buffer(buffer);
-                                // Reveal-history-complete watermark: every delta with
-                                // ac ≤ action_count has arrived in this buffer.
+                                // Bump the reveal-history-complete watermark to this
+                                // choice's ac BEFORE applying the buffer: a Choice fact
+                                // in the buffer wakes the RemoteController on the game
+                                // thread, which immediately syncs its reveals — the
+                                // watermark must already cover them (mtg-o99ow race fix).
                                 shared_state.note_received_choice_ac(action_count);
+                                shared_state.apply_choice_buffer(buffer);
                                 // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 shared_state.update_server_action_count(action_count);
