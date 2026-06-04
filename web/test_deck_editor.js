@@ -207,6 +207,61 @@ function check(cond, msg) {
         });
         check(addBtnDisabled, '5th copy: add button is disabled (4-of limit enforced)');
 
+        // ── 4b. Card Details panel (TUI parity) ────────────────────────
+        log('\n=== 4b. Card Details panel ===');
+        // Pick a creature with a cost + oracle so we can assert ALL detail rows
+        // (name, cost, type, P/T, oracle). Fall back to the first card otherwise.
+        const detailCard = catalogCards.find((c) =>
+            c.power !== null && c.power !== undefined &&
+            c.toughness !== null && c.toughness !== undefined &&
+            c.mana_cost && c.oracle) || catalogCards[0];
+        if (detailCard) {
+            await page.fill('#search-input', detailCard.name);
+            await page.waitForTimeout(300);
+            // Click the matching catalog row (not the Add button) to show details.
+            await page.evaluate((nm) => {
+                const rows = [...document.querySelectorAll('#card-list li')];
+                const li = rows.find((r) => r.querySelector('.card-name') &&
+                    r.querySelector('.card-name').textContent === nm);
+                if (li) li.click();
+            }, detailCard.name);
+            await page.waitForTimeout(100);
+            const details = await page.evaluate(() => {
+                const el = document.getElementById('card-details');
+                return {
+                    name: el.querySelector('.cd-name') ? el.querySelector('.cd-name').textContent : null,
+                    rows: [...el.querySelectorAll('.cd-row')].map((r) => r.textContent),
+                    hasCost: !!(el.querySelector('.cd-row') && el.innerHTML.includes('Cost:')),
+                    hasMana: !!el.querySelector('.cd-row .ms'),
+                    hasType: el.innerHTML.includes('Type:'),
+                    pt: el.querySelector('.cd-pt') ? el.querySelector('.cd-pt').textContent : null,
+                    oracle: el.querySelector('.cd-oracle') ? el.querySelector('.cd-oracle').textContent : null,
+                    empty: !!el.querySelector('.cd-empty'),
+                };
+            });
+            check(!details.empty, 'card-details no longer shows the empty hint after a click');
+            check(details.name === detailCard.name,
+                'card-details shows the clicked card name: "' + details.name + '"');
+            check(details.hasType, 'card-details shows a Type line');
+            if (detailCard.mana_cost) {
+                check(details.hasCost && details.hasMana,
+                    'card-details shows the mana Cost (rendered symbols)');
+            }
+            if (detailCard.power !== null && detailCard.power !== undefined) {
+                check(details.pt && details.pt.includes(String(detailCard.power) + '/' + String(detailCard.toughness)),
+                    'card-details shows P/T for the creature: "' + details.pt + '"');
+            }
+            if (detailCard.oracle) {
+                check(!!details.oracle && details.oracle.length > 0,
+                    'card-details shows the oracle text');
+            }
+            // Clear the search so later sections see the full list again.
+            await page.fill('#search-input', '');
+            await page.waitForTimeout(250);
+        } else {
+            check(false, 'catalog had no card to exercise the details panel');
+        }
+
         // ── 5. Save deck / saved chips ──────────────────────────────────
         log('\n=== 5. Save deck ===');
         // Set deck name.
@@ -274,28 +329,61 @@ function check(cond, msg) {
         const afterImportMain = await page.textContent('#stat-main');
         check(parseInt(afterImportMain) >= 1, 'deck has cards after import round-trip (main=' + afterImportMain + ')');
 
-        // ── 8. Use in Lobby ────────────────────────────────────────────
-        log('\n=== 8. Use in Lobby preselect ===');
-        // Click "Use in Lobby" — this saves + sets localStorage + navigates.
-        // We intercept navigation to avoid leaving the test page.
-        let navTarget = null;
-        page.on('framenavigated', (frame) => {
-            if (frame === page.mainFrame()) navTarget = frame.url();
+        // ── 8. "Use in Lobby" removed + context-sensitive SAVE ─────────
+        log('\n=== 8. Use-in-Lobby removed + context-sensitive SAVE ===');
+        // The no-op "Use in Lobby" button is gone.
+        const useBtnGone = await page.evaluate(() => !document.getElementById('btn-use-in-lobby'));
+        check(useBtnGone, '#btn-use-in-lobby is removed from the deck editor');
+        // Opened from the LOBBY (no ?from=launcher): SAVE just saves + stays.
+        const saveLabelLobby = await page.evaluate(() => {
+            const b = document.getElementById('btn-save');
+            return b ? b.textContent.trim() : null;
         });
+        check(saveLabelLobby === 'Save',
+            'SAVE button reads "Save" when not from launcher (got "' + saveLabelLobby + '")');
 
-        // Evaluate the localStorage write without triggering full navigation.
-        // Directly trigger the click handler logic: save + set preselect key.
-        // eslint-disable-next-line no-unused-vars
-        const preBeforeClick = await page.evaluate(() => localStorage.getItem('mtg_lobby_deck_preselect'));
-        await page.evaluate(() => {
-            // Simulate: save deck and write preselect key, but intercept the navigation.
-            const nameEl = document.getElementById('deck-name');
-            const name = nameEl ? nameEl.value.trim() || 'Unnamed Deck' : 'Unnamed Deck';
-            // Write preselect key directly (the button handler also calls saveDeck).
-            localStorage.setItem('mtg_lobby_deck_preselect', name);
+        // Opened FROM the launcher (?from=launcher&...): SAVE becomes "Save and use"
+        // and navigates back to the launcher (index.html?goto=launcher&...&deck=).
+        const launcherCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+        const lp = await launcherCtx.newPage();
+        lp.on('pageerror', (e) => check(false, 'from-launcher page JS error: ' + e.message));
+        const fromLauncherUrl = BASE + '/deck_editor.html?from=launcher&game=ed-game&name=ed-user&ws=ws://x';
+        await lp.goto(fromLauncherUrl, { timeout: 20000 });
+        await lp.waitForLoadState('domcontentloaded');
+        await lp.waitForFunction(
+            () => { const el = document.getElementById('card-list'); return el && el.children.length > 0; },
+            { timeout: 15000 },
+        ).catch(() => {});
+        const saveLabelLauncher = await lp.evaluate(() => {
+            const b = document.getElementById('btn-save');
+            return b ? b.textContent.trim() : null;
         });
-        const preAfterSet = await page.evaluate(() => localStorage.getItem('mtg_lobby_deck_preselect'));
-        check(preAfterSet === 'TestDeck', '"Use in Lobby" sets lobby_preselect to "' + preAfterSet + '"');
+        check(saveLabelLauncher === 'Save and use',
+            'SAVE button reads "Save and use" when from launcher (got "' + saveLabelLauncher + '")');
+
+        // Add a card + name the deck, then click "Save and use". It first
+        // navigates to index.html?goto=launcher&…&deck=LauncherDeck (the
+        // launcherReturnUrl), whose dispatcher then forwards to launcher.html.
+        // Asserting the SETTLED url is racy (the dispatcher redirect is near-
+        // instant), so we record the whole nav chain and assert the
+        // index.html?goto=launcher hop was emitted — with a backstop that we end
+        // up back at the launcher with the deck preselected.
+        const navs = [];
+        lp.on('framenavigated', (fr) => { if (fr === lp.mainFrame()) navs.push(fr.url()); });
+        await lp.evaluate(() => {
+            const btn = document.querySelector('#card-list li .add-btn');
+            if (btn && !btn.disabled) btn.click();
+        });
+        await lp.fill('#deck-name', 'LauncherDeck');
+        await lp.click('#btn-save');
+        await lp.waitForTimeout(1000); // let the dispatcher redirect settle
+        const sawReturnHop = navs.some((u) =>
+            /index\.html\?/.test(u) && /goto=launcher/.test(u) && /deck=LauncherDeck/.test(u));
+        const settledAtLauncher = /launcher\.html/.test(lp.url()) && /deck=LauncherDeck/.test(lp.url());
+        check(sawReturnHop || settledAtLauncher,
+            '"Save and use" navigates back to the launcher with the deck preselected ' +
+            '(index.html?goto=launcher&…&deck=LauncherDeck → launcher.html); navs=' + JSON.stringify(navs));
+        await launcherCtx.close();
 
         // ── 9. Edit a PREMADE saves a COPY (mtg-682) ───────────────────
         log('\n=== 9. Edit premade → save-as-copy (premade never mutated) ===');

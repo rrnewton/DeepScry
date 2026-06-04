@@ -82,7 +82,7 @@
             font-family: inherit;
         }
         .catalog-toolbar input[type=text]:focus, .catalog-toolbar select:focus { outline: none; border-color: var(--accent); }
-        .search-field { flex: 1 1 160px; min-width: 120px; }
+        .search-field { flex: 1 1 160px; min-width: 120px; max-width: 260px; }
         .catalog-toolbar .filter-group { display: flex; flex-direction: column; }
 
         .catalog-count { font-size: 11px; color: var(--muted); padding: 4px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
@@ -95,7 +95,7 @@
             padding: 4px 12px;
             gap: 8px;
             border-bottom: 1px solid rgba(26,42,80,0.5);
-            cursor: default;
+            cursor: pointer;
             font-size: 13px;
         }
         .card-list li:hover { background: rgba(67,97,238,0.15); }
@@ -173,10 +173,31 @@
             border-bottom: 1px solid var(--border);
         }
         .curve-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px; }
-        .curve-bars { display: flex; align-items: flex-end; gap: 3px; height: 36px; }
-        .curve-col { display: flex; flex-direction: column; align-items: center; gap: 1px; }
-        .curve-bar { width: 18px; background: var(--accent-3); border-radius: 2px 2px 0 0; transition: height 0.15s; }
-        .curve-cmc { font-size: 9px; color: var(--muted); }
+        /* The bar track (fixed height) and the CMC label get SEPARATE rows so a
+           full-height bar can never overlap the number label below it. The track
+           caps the bar; the label row reserves its own space. */
+        .curve-bars { display: flex; align-items: stretch; gap: 3px; height: 52px; }
+        .curve-col { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; }
+        .curve-bar-track { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+        .curve-bar { width: 18px; max-width: 100%; background: var(--accent-3); border-radius: 2px 2px 0 0; transition: height 0.15s; }
+        .curve-cmc { font-size: 9px; color: var(--muted); height: 12px; line-height: 12px; margin-top: 2px; }
+
+        /* ── Card Details panel (TUI parity, deck_builder/ui.rs) ─────────── */
+        .card-details {
+            padding: 8px 14px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(0,0,0,0.18);
+            font-size: 12px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .card-details .cd-empty { color: var(--muted); font-style: italic; }
+        .card-details .cd-name { font-size: 14px; font-weight: 700; color: var(--accent-2); margin-bottom: 4px; }
+        .card-details .cd-row { margin: 2px 0; color: var(--muted); }
+        .card-details .cd-row .cd-val { color: var(--text); }
+        .card-details .cd-row.cd-pt .cd-val { color: var(--ok); }
+        .card-details .cd-oracle { margin-top: 6px; color: var(--text); white-space: pre-wrap; line-height: 1.4; }
+        .card-details .ms { vertical-align: middle; }
 
         .deck-list-wrap { flex: 1; overflow-y: auto; }
         .deck-list { list-style: none; margin: 0; padding: 4px 0; }
@@ -311,7 +332,7 @@
     <!-- Left: card catalog -->
     <div class="pane-catalog">
         <div class="catalog-toolbar">
-            <div class="filter-group" style="flex:1 1 180px; min-width:140px;">
+            <div class="filter-group" style="flex:0 1 260px; min-width:140px;">
                 <label for="search-input">Search cards</label>
                 <input type="text" id="search-input" class="search-field" placeholder="Name, text, type…" autocomplete="off">
             </div>
@@ -384,6 +405,12 @@
             <div class="curve-bars" id="curve-bars"></div>
         </div>
 
+        <!-- Card Details: populated on click of a catalog row or a deck-list row
+             (renderCardDetails). Text-only for now (images later). -->
+        <div class="card-details" id="card-details">
+            <div class="cd-empty">Click a card to see its details.</div>
+        </div>
+
         <div class="deck-list-wrap">
             <ul class="deck-list" id="deck-list">
                 <li style="color: var(--muted); font-style:italic; padding: 12px;">
@@ -400,8 +427,7 @@
         </div>
 
         <div class="deck-actions">
-            <button id="btn-save">Save Deck</button>
-            <button id="btn-use-in-lobby" class="success" title="Save and switch to lobby with this deck selected">Use in Lobby</button>
+            <button id="btn-save" class="success">Save</button>
             <button id="btn-export" class="ghost" title="Export as .dck text">Export .dck</button>
             <button id="btn-import" class="ghost" title="Import from .dck text">Import .dck</button>
             <button id="btn-clear" class="danger" title="Clear the current deck">Clear</button>
@@ -443,9 +469,6 @@
  * nothing else could read).
  */
 const CUSTOM_DECKS_KEY = 'mtg-forge-custom-decks';
-
-/** localStorage key for lobby preselect: written when user clicks "Use in Lobby" */
-const LOBBY_PRESELECT_KEY = 'mtg_lobby_deck_preselect';
 
 /**
  * Launcher-context handoff (mtg-695). When the editor is reached FROM the
@@ -627,6 +650,52 @@ function primaryType(types) {
     return types[0];
 }
 
+/** Escape HTML special chars for safe innerHTML interpolation of card text. */
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+
+/**
+ * Render the Card Details panel (TUI parity, deck_builder/ui.rs draw_card_details):
+ * name, mana cost (reusing renderMana), type line (types — subtypes), P/T (only
+ * when both non-null, i.e. creatures), and oracle text. Pass a falsy entry to
+ * reset the panel to its empty hint. Text-only for now (images later).
+ */
+function renderCardDetails(entry) {
+    const el = document.getElementById('card-details');
+    if (!el) return;
+    if (!entry) {
+        el.innerHTML = '<div class="cd-empty">Click a card to see its details.</div>';
+        return;
+    }
+    const parts = [];
+    parts.push(`<div class="cd-name">${escapeHtml(entry.name)}</div>`);
+    if (entry.mana_cost) {
+        parts.push(`<div class="cd-row">Cost: <span class="cd-val">${renderMana(entry.mana_cost)}</span></div>`);
+    }
+    // Type line: "Creature — Goblin Warrior" (types joined, then subtypes).
+    // `subtypes` is a space-joined string from the Rust catalog export; `types`
+    // is an array. (See `mtg export-wasm` CatalogEntry in main.rs.)
+    const typeNames = (entry.types || []).join(' ');
+    const subs = (entry.subtypes || '').trim();
+    const typeLine = subs ? `${typeNames} — ${subs}` : typeNames;
+    if (typeLine) {
+        parts.push(`<div class="cd-row">Type: <span class="cd-val">${escapeHtml(typeLine)}</span></div>`);
+    }
+    // P/T only for creatures (both power and toughness present / non-null).
+    if (entry.power !== null && entry.power !== undefined &&
+        entry.toughness !== null && entry.toughness !== undefined) {
+        parts.push(`<div class="cd-row cd-pt">P/T: <span class="cd-val">` +
+            `${escapeHtml(String(entry.power))}/${escapeHtml(String(entry.toughness))}</span></div>`);
+    }
+    if (entry.oracle) {
+        parts.push(`<div class="cd-oracle">${escapeHtml(entry.oracle)}</div>`);
+    }
+    el.innerHTML = parts.join('');
+}
+
 // ── Filtering ──────────────────────────────────────────────────────────────
 
 function passesFilters(entry) {
@@ -694,6 +763,9 @@ function renderCatalog() {
 
         const li = document.createElement('li');
         if (inDeck) li.classList.add('in-deck');
+        // Clicking the row (anywhere but the Add/SB buttons, which still work and
+        // also show details via bubbling) reveals this card's details (TUI parity).
+        li.addEventListener('click', () => renderCardDetails(entry));
 
         const nameSpan = document.createElement('span');
         nameSpan.className = 'card-name';
@@ -829,6 +901,10 @@ function renderDeck() {
 function makeDeckRow(name, count, zone) {
     const li = document.createElement('li');
     const entry = catalogByName.get(name);
+    li.style.cursor = 'pointer';
+    // Clicking a deck row reveals that card's details (TUI parity). The qty
+    // buttons keep working; their clicks bubble here and also refresh details.
+    li.addEventListener('click', () => renderCardDetails(entry || null));
 
     const qtySpan = document.createElement('span');
     qtySpan.className = 'dl-qty';
@@ -1094,11 +1170,17 @@ function pairsToMap(pairs) {
  */
 let editContext = { source: null, originalName: null };
 
+/**
+ * Persist the current deck to localStorage. Returns the saved deck NAME (which
+ * may differ from the typed name when a premade is saved as a "(copy)"), or
+ * null if nothing was saved (empty deck). Callers like "Save and use" use the
+ * return value to decide whether to navigate.
+ */
 function saveDeck() {
     let name = deckNameInput.value.trim() || 'Unnamed Deck';
     if (deck.main.size === 0 && deck.sideboard.size === 0) {
         showStatus('Deck is empty — add some cards first.', 'err');
-        return;
+        return null;
     }
     const all = readCustomDecks();
     // Editing a PREMADE always saves a copy: if the name still matches the
@@ -1117,6 +1199,7 @@ function saveDeck() {
     // custom-deck edit on that copy.
     editContext = { source: 'custom', originalName: name };
     renderSavedList();
+    return name;
 }
 
 /** Find a custom-deck name not already taken (appends " 2", " 3", … if needed). */
@@ -1257,24 +1340,29 @@ filterColor.addEventListener('change', renderCatalog);
 filterType.addEventListener('change', renderCatalog);
 filterCmc.addEventListener('change', renderCatalog);
 
-// Deck actions.
-document.getElementById('btn-save').addEventListener('click', saveDeck);
-
-const useBtn = document.getElementById('btn-use-in-lobby');
-useBtn.addEventListener('click', () => {
-    saveDeck();
-    const name = deckNameInput.value.trim() || 'Unnamed Deck';
-    // When the editor was opened FROM the launcher, "Use" returns to the
-    // LAUNCHER (the pre-game flow it came from) with this deck preselected,
-    // preserving the launcher context (mtg-695). Otherwise it goes to the
-    // lobby and leaves a preselect hint (legacy behaviour).
+// Deck actions. The single SAVE button is context-sensitive (mtg-718 batch):
+//   - reached FROM the launcher (?from=launcher) → "Save and use": save then
+//     return to the launcher with this deck preselected (launcherReturnUrl).
+//   - otherwise (from the lobby, no active game) → "Save": save and STAY.
+// The plain "Back to Launcher" / "Back to Lobby" links remain the cancel/back
+// action (they intentionally do NOT preselect the edited deck).
+(function setupSaveButton() {
+    const saveBtn = document.getElementById('btn-save');
+    if (!saveBtn) return;
     if (FROM_LAUNCHER) {
-        window.location.href = launcherReturnUrl(name);
-        return;
+        saveBtn.textContent = 'Save and use';
+        saveBtn.title = 'Save this deck and return to the launcher with it selected';
+        saveBtn.addEventListener('click', () => {
+            const savedName = saveDeck();
+            if (!savedName) return; // empty deck — saveDeck already surfaced the error
+            window.location.href = launcherReturnUrl(savedName);
+        });
+    } else {
+        saveBtn.textContent = 'Save';
+        saveBtn.title = 'Save this deck';
+        saveBtn.addEventListener('click', saveDeck);
     }
-    localStorage.setItem(LOBBY_PRESELECT_KEY, name);
-    window.location.href = 'index.html';
-});
+})();
 
 // Keep the "Back to Lobby" link carrying the session's sticky params
 // (allow_local_img_load/name/ws) so the gate + identity survive the hop.
