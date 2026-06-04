@@ -920,6 +920,9 @@
             tui_get_battlefield_cards,
             tui_get_logs_json,
             tui_get_help_text,
+            // task #7 (mtg-722): CDN card-lookup table — load once, resolve URLs.
+            tui_load_card_lookup_table,
+            tui_card_cdn_url,
             set_p1_fixed_script,
             clear_p1_fixed_script,
             cleanup_tui_state,
@@ -1145,6 +1148,22 @@
                 // Initialize WASM
                 progress.textContent = 'Initializing WASM module...';
                 await init();
+
+                // task #7 (mtg-722): load the compact CDN card-lookup table so
+                // card images resolve to cards.scryfall.io URLs computed locally
+                // (no Scryfall API round-trip). Table-misses fall back to Gatherer.
+                try {
+                    const resp = await fetch('./data/card-lookup.bin');
+                    if (resp.ok) {
+                        const buf = new Uint8Array(await resp.arrayBuffer());
+                        const n = tui_load_card_lookup_table(buf);
+                        console.log(`Loaded CDN card-lookup table: ${n} entries`);
+                    } else {
+                        console.warn('CDN card-lookup table not found; using Gatherer fallback');
+                    }
+                } catch (e) {
+                    console.warn('Failed to load CDN card-lookup table:', e);
+                }
 
                 status.textContent = `WASM v${version()} - ${is_ready() ? 'Ready' : 'Error'}`;
 
@@ -1657,17 +1676,22 @@
                 },
 
                 /**
-                 * Scryfall - Community card database with high-quality scans
-                 * Pros: Multiple sizes, high quality, modern cards
-                 * Cons: API rate limits, may be blocked
+                 * Scryfall CDN - high-quality scans served straight from the
+                 * cards.scryfall.io CDN. The URL is COMPUTED locally from the
+                 * compact card-lookup table (task #7 / mtg-722): no
+                 * Scryfall API round-trip, no rate limits. Returns null on a
+                 * table-miss so the fallback walker skips to Gatherer.
                  */
                 scryfall: {
-                    name: 'Scryfall',
+                    name: 'Scryfall CDN',
                     getUrl(cardName, heightPx) {
-                        // Map height to Scryfall version
-                        // small: 146x204, normal: 488x680, large: 672x936
-                        const version = heightPx <= 204 ? 'small' : (heightPx <= 680 ? 'normal' : 'large');
-                        return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${version}`;
+                        if (typeof tui_card_cdn_url !== 'function') return null;
+                        // Map height to CDN size variant (small: 146x204,
+                        // normal: 488x680). Name-based lookup (no P/T/colors
+                        // context here); tokens resolve via bare-name alias.
+                        const size = heightPx <= 204 ? 'small' : 'normal';
+                        const url = tui_card_cdn_url(cardName, '', '', '', false, size);
+                        return url || null;
                     }
                 },
 
@@ -1765,11 +1789,6 @@
                     this.enable();
                 }
                 return this.enabled;
-            },
-
-            // Build Scryfall API URL for a card
-            scryfallUrl(setCode, collectorNumber, size = 'small') {
-                return `https://api.scryfall.com/cards/${setCode.toLowerCase()}/${collectorNumber}?format=image&version=${size}`;
             },
 
             /**
@@ -1993,11 +2012,6 @@
                 }
 
                 this.currentCardIds = newSet;
-            },
-
-            // Build Scryfall named card URL (doesn't require set/collector number)
-            scryfallNamedUrl(cardName, size = 'small') {
-                return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName)}&format=image&version=${size}`;
             },
 
             // Display all battlefield cards using actual TUI positions
@@ -2273,16 +2287,6 @@
                 if (this.cardDetailsBackdrop) {
                     this.cardDetailsBackdrop.style.display = 'none';
                 }
-            },
-
-            // Demo: show a test card image
-            showTestCard() {
-                if (!this.enabled) return;
-                // Test: Show a Lightning Bolt at position (10, 5) with size (15, 20) cells
-                // This is just a proof-of-concept - we'll integrate with real game state later
-                const boltUrl = this.scryfallUrl('LEA', '163', 'small');
-                this.setCardImage('test-bolt', 10, 5, 15, 20, boltUrl);
-                console.log('Showing test card image (Lightning Bolt)');
             }
         };
 

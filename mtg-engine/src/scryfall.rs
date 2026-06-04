@@ -8,7 +8,7 @@
 //!
 //! ## Why the CDN, not the API
 //!
-//! `api.scryfall.com/cards/named?...&format=image` is rate-limited, returns
+//! The Scryfall `cards/named?...&format=image` API is rate-limited, returns
 //! `Cache-Control: max-age=172800` (2 days), and 404s on engine token names
 //! like "Clue Token". The direct CDN object
 //! `cards.scryfall.io/<size>/front/<a>/<b>/<id>.jpg?<version>` is served
@@ -124,7 +124,8 @@ pub fn image_version_from_url(image_uri: &str) -> Option<&str> {
 // see the generator).
 //
 // CASCADE (task #7, per user 2026-06-03): [local-if-allowed → CDN-from-table →
-// gatherer]. api.scryfall is KILLED entirely (no builder, no ref, no fallback).
+// gatherer]. The per-card Scryfall API is KILLED entirely (no builder, no ref,
+// no fallback).
 // Gatherer is RETAINED as the table-MISS safety net (kept rare by the coverage
 // aliasing above), so a miss falls through to gatherer rather than no-image.
 
@@ -364,7 +365,7 @@ mod tests {
             "https://cards.scryfall.io/small/front/7/7/77c6fa74-5543-42ac-9ead-0e890b188e99.jpg?1706239968",
         );
         // The Clue TOKEN resolves on the CDN identically (the whole point of
-        // task #7 — api.scryfall named?exact=Clue Token 404s, this does not).
+        // task #7 — the Scryfall named?exact=Clue Token API 404s, this does not).
         assert_eq!(
             cdn_image_url("c321b9e4-ab7e-4e8a-988f-5463c776d685", "1771590258", CdnSize::Normal),
             "https://cards.scryfall.io/normal/front/c/3/c321b9e4-ab7e-4e8a-988f-5463c776d685.jpg?1771590258",

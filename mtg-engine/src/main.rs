@@ -4498,7 +4498,8 @@ async fn run_download(
     };
 
     // task #7 (mtg-722): load the card→CDN lookup table — `mtg download` resolves
-    // image URLs from it (no api.scryfall). Build it first with `mtg build-card-lookup`.
+    // image URLs from it (no per-card Scryfall API). Build it first with
+    // `mtg build-card-lookup`.
     let table_path = std::path::Path::new("web/data/card-lookup.bin");
     let table = match std::fs::read(table_path) {
         Ok(bytes) => mtg_engine::scryfall::CardLookupTable::from_bytes(&bytes).ok_or_else(|| {
@@ -4510,7 +4511,7 @@ async fn run_download(
         Err(_) => {
             return Err(mtg_engine::MtgError::InvalidAction(format!(
                 "download: card-lookup table {} not found — run `mtg build-card-lookup` first \
-                 (image URLs are resolved from it; api.scryfall is no longer used)",
+                 (image URLs are resolved from it; the per-card Scryfall API is no longer used)",
                 table_path.display()
             )));
         }
@@ -4537,8 +4538,14 @@ async fn run_download(
 }
 
 /// `mtg build-card-lookup` — fetch Scryfall `unique_artwork.json` (cached),
-/// build the encoding-D card→CDN lookup table, and write it. The only
-/// scryfall.com request in the whole image pipeline (task #7 / mtg-722).
+/// build the encoding-D card→CDN lookup table, and write it.
+///
+/// This OFFLINE build/deploy command is the SOLE sanctioned `api.scryfall.com`
+/// caller (task #7 / mtg-722): it hits the `bulk-data` manifest once to discover
+/// the current `unique_artwork.json` download URL (there is no stable direct
+/// URL — the filename carries a rotating date+hash). Neither `mtg download` nor
+/// the live website touches `api.scryfall.com`; every runtime image URL is
+/// computed from the table this command produces.
 async fn run_build_card_lookup(output: PathBuf, bulk_cache: PathBuf, refresh: bool) -> Result<()> {
     use mtg_engine::scryfall::{encode_card_lookup, CdnSize};
     use mtg_engine::scryfall_table::{build_card_lookup, ScryfallRecord};
@@ -4558,6 +4565,21 @@ async fn run_build_card_lookup(output: PathBuf, bulk_cache: PathBuf, refresh: bo
             .build()
             .map_err(|e| neterr("client build", e))?;
         log::info!("Fetching Scryfall bulk-data metadata…");
+        // ── THE ONE APPROVED api.scryfall.com FETCH ──────────────────────────
+        // This is the SOLE sanctioned api.scryfall.com request in the entire
+        // codebase (task #7 / mtg-722, confirmed by the user). It hits the
+        // `bulk-data` LIST endpoint once, purely to discover the CURRENT,
+        // daily-ROTATING download_uri of `unique_artwork.json` — the only file
+        // we download from Scryfall. There is no stable direct URL for it, and
+        // the list endpoint exists only on api.scryfall.com. This is an OFFLINE
+        // build/deploy step (`mtg build-card-lookup`); it is NOT reachable from
+        // `mtg download`, the web server, or any runtime image-loading path.
+        // A format-drift guard downstream (build_card_lookup → check_url_drift)
+        // HARD-ERRORS if the bulk-data schema or resulting CDN URL shape changes,
+        // keeping the last-good table rather than shipping a corrupt one.
+        // Do NOT add any other api.scryfall.com caller — runtime image URLs are
+        // computed locally from the table this command produces.
+        // ─────────────────────────────────────────────────────────────────────
         let meta_bytes = client
             .get("https://api.scryfall.com/bulk-data")
             .send()

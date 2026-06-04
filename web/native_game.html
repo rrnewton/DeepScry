@@ -1239,18 +1239,17 @@
         }
 
         // Build the image cascade for a card: [local-if-allowed → CDN-from-table
-        // → gatherer]. api.scryfall.com is DROPPED entirely (task #7): the
-        // per-image API endpoint was rate-limited + 404s on token names; the CDN
+        // → gatherer]. The per-card Scryfall API is DROPPED entirely (task #7):
+        // that endpoint was rate-limited + 404s on token names; the CDN
         // (immutable, 1-yr cached) replaces it as the primary external source,
         // with gatherer as the table-MISS fallback.
         function cardImageCascade(card, heightPx) {
             const name = (card && card.name) || '';
             if (typeof tui_get_image_urls !== 'function') return [];
+            // tui_get_image_urls returns the name-only base list [local, gatherer]
+            // (no Scryfall API — task #7); splice the CDN url between them.
             let base = [];
             try { base = JSON.parse(tui_get_image_urls(name, heightPx)); } catch (e) { base = []; }
-            // Drop the api.scryfall.com rung (cards.scryfall.io CDN is kept — it
-            // is NOT scryfall.com, so this filter leaves it untouched).
-            base = base.filter((u) => !u.includes('api.scryfall.com'));
             const local = base.filter(isLocalImageUrl);
             const gatherer = base.filter((u) => !isLocalImageUrl(u));
             const cdn = cardCdnUrl(card, heightPx);

@@ -20,9 +20,9 @@
 //!
 //! Images are fetched from the immutable Scryfall CDN
 //! (`cards.scryfall.io/<size>/front/…`), with each URL resolved from the
-//! card-lookup table (`mtg build-card-lookup`). The old per-card
-//! `api.scryfall.com/cards/named` endpoint is GONE (rate-limited, 404'd on
-//! token names); a card with no table entry is skipped (no api fallback).
+//! card-lookup table (`mtg build-card-lookup`). The old per-card Scryfall
+//! `cards/named` API endpoint is GONE (rate-limited, 404'd on token names);
+//! a card with no table entry is skipped (no API fallback).
 
 use crate::{MtgError, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -115,7 +115,7 @@ pub struct ImageDownloader {
     config: DownloadConfig,
     client: reqwest::Client,
     /// The card→Scryfall-CDN lookup table (task #7 / mtg-722). `mtg download`
-    /// resolves every image URL from this table — the api.scryfall.com per-card
+    /// resolves every image URL from this table — the per-card Scryfall API
     /// endpoint is GONE. Built by `mtg build-card-lookup`.
     table: crate::scryfall::CardLookupTable,
 }
@@ -137,7 +137,7 @@ impl ImageDownloader {
 
     /// Resolve a card's immutable cards.scryfall.io CDN URL from the lookup
     /// table, or `None` if the name is not in the table (skipped — there is NO
-    /// api.scryfall fallback, task #7). Real cards look up by name.
+    /// per-card API fallback, task #7). Real cards look up by name.
     fn cdn_url(&self, card_name: &str, size: ImageSize) -> Option<String> {
         let cdn_size = match size {
             ImageSize::Small => crate::scryfall::CdnSize::Small,
@@ -209,7 +209,7 @@ impl ImageDownloader {
 
         // Build download tasks list. Each carries its pre-resolved cards.scryfall.io
         // CDN URL (task #7). A card not in the lookup table is SKIPPED — there is
-        // no api.scryfall fallback.
+        // no per-card API fallback.
         log::info!("Checking for existing images...");
         let mut tasks: Vec<(String, ImageSize, String)> = Vec::new();
         let mut not_in_table = 0usize;
@@ -546,15 +546,15 @@ pub async fn load_card_names_from_deck(deck_path: &Path) -> Result<Vec<String>> 
 }
 
 // (the `urlencoding` helper module was removed in task #7 along with the
-// api.scryfall.com URL builder it served — `mtg download` now resolves CDN
-// URLs from the card-lookup table.)
+// per-card Scryfall API URL builder it served — `mtg download` now resolves
+// CDN URLs from the card-lookup table.)
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // (test_build_url + test_url_encoding removed in task #7: the
-    // api.scryfall.com per-card URL builder + its urlencoding helper are gone —
+    // (test_build_url + test_url_encoding removed in task #7: the per-card
+    // Scryfall API URL builder + its urlencoding helper are gone —
     // `mtg download` resolves CDN URLs from the lookup table, whose URL
     // construction is covered by scryfall::tests CardLookupTable.)
 

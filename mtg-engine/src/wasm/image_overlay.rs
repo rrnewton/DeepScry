@@ -48,10 +48,10 @@ pub fn gatherer_url(card_name: &str) -> String {
     )
 }
 
-// (scryfall_url / scryfall_url_by_name — the api.scryfall.com per-image URL
-// builders — were REMOVED in task #7 / mtg-722. All Scryfall art now loads from
-// the immutable cards.scryfall.io CDN, resolved client-side from the card-lookup
-// table; gatherer remains the table-miss fallback.)
+// (The old per-card Scryfall API URL builders were REMOVED in task #7 /
+// mtg-722. All Scryfall art now loads from the immutable cards.scryfall.io CDN,
+// resolved client-side from the card-lookup table; gatherer remains the
+// table-miss fallback.)
 
 /// Build local image URL for a card (from images/ directory)
 ///
@@ -95,7 +95,7 @@ pub fn local_image_url(card_name: &str, version: ImageVersion, base_url: &str) -
 /// which also has the token's P/T+colors) between `local` and `gatherer`, so
 /// the full cascade is `[local → CDN → gatherer]`.
 ///
-/// api.scryfall.com is GONE (task #7 / mtg-722): the per-image API endpoint was
+/// The per-card Scryfall API endpoint is GONE (task #7 / mtg-722): it was
 /// rate-limited and 404'd on engine token names; the immutable CDN replaces it.
 /// Gatherer is RETAINED as the table-miss safety net (kept rare by the table's
 /// coverage aliasing). For `"<X> Token"` names we still append a bare-name
@@ -242,35 +242,37 @@ impl ImageOverlayManager {
             img.set_id(&img_id);
             img.set_class_name("card-overlay-image");
 
-            // Set primary source (Gatherer)
+            // Set primary source (the caller's first-choice URL).
             img.set_src(&primary_url);
 
-            // Add error handler that falls back to Scryfall
+            // Add an error handler that swaps to the provided fallback URL once.
             let fallback = fallback_url.map(|s| s.to_string());
             let primary_url_clone = primary_url;
+            // Loop-guard: swap to the fallback at most once, so an also-failing
+            // fallback cannot trigger an infinite onerror→set_src→onerror loop.
+            let tried_fallback = std::cell::Cell::new(false);
             let error_callback = Closure::wrap(Box::new(move |event: web_sys::Event| {
                 if let Some(ref fallback_src) = fallback {
                     // Try fallback URL
                     if let Some(target) = event.target() {
                         if let Ok(img_elem) = target.dyn_into::<HtmlImageElement>() {
-                            // Only fallback if we haven't already (check current src)
-                            let current_src = img_elem.src();
-                            if !current_src.contains("api.scryfall.com") {
+                            if tried_fallback.get() {
+                                web_sys::console::warn_1(&JsValue::from_str(
+                                    "Both primary and fallback image sources failed",
+                                ));
+                            } else {
+                                tried_fallback.set(true);
                                 web_sys::console::log_1(&JsValue::from_str(&format!(
-                                    "Gatherer failed for {}, trying Scryfall fallback",
+                                    "Primary image failed for {}, trying fallback",
                                     primary_url_clone
                                 )));
                                 img_elem.set_src(fallback_src);
-                            } else {
-                                web_sys::console::warn_1(&JsValue::from_str(
-                                    "Both Gatherer and Scryfall failed for image",
-                                ));
                             }
                         }
                     }
                 } else {
                     web_sys::console::warn_1(&JsValue::from_str(&format!(
-                        "Failed to load card image from Gatherer: {}",
+                        "Failed to load card image (no fallback): {}",
                         primary_url_clone
                     )));
                 }
@@ -448,22 +450,25 @@ mod tests {
 
     #[test]
     fn test_card_image_url_cascade_normal_card() {
-        // task #7: no api.scryfall rung — base list is [local, gatherer]; the
+        // task #7: no per-card API rung — base list is [local, gatherer]; the
         // client splices the CDN url between them.
         let urls = card_image_url_cascade("Lightning Bolt", ImageVersion::Small, "/images");
         assert_eq!(urls.len(), 2, "non-token base list is [local, gatherer]: {urls:?}");
         assert_eq!(urls[0], "/images/small/l/Lightning Bolt.jpg");
         assert!(urls[1].contains("gatherer.wizards.com"));
+        // Every base rung is either a local image or a Gatherer URL — never a
+        // per-card image API endpoint.
         assert!(
-            urls.iter().all(|u| !u.contains("api.scryfall.com")),
-            "no api.scryfall: {urls:?}"
+            urls.iter()
+                .all(|u| u.starts_with("/images/") || u.contains("gatherer.wizards.com")),
+            "base rungs are local or gatherer only: {urls:?}"
         );
     }
 
     #[test]
     fn test_card_image_url_cascade_token_gatherer_fallback() {
         // task #7: a "<X> Token" name still appends a bare-name GATHERER fallback
-        // (Scryfall/Gatherer index tokens under the bare name). No api.scryfall.
+        // (Scryfall/Gatherer index tokens under the bare name). No per-card API.
         let urls = card_image_url_cascade("Clue Token", ImageVersion::Small, "/images");
         assert_eq!(
             urls.len(),
@@ -472,8 +477,9 @@ mod tests {
         );
         assert!(urls[0].starts_with("/images/"));
         assert!(
-            urls.iter().all(|u| !u.contains("api.scryfall.com")),
-            "no api.scryfall: {urls:?}"
+            urls.iter()
+                .all(|u| u.starts_with("/images/") || u.contains("gatherer.wizards.com")),
+            "base rungs are local or gatherer only: {urls:?}"
         );
         assert!(
             urls.iter()
