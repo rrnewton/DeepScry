@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T05:37:35.969775803+00:00
+updated_at: 2026-06-04T05:39:51.224846603+00:00
 ---
 
 # Description
@@ -50,6 +50,16 @@ Then steps 5 (collapse late-binding), 6 (reorder emission in shuffle_library + L
 Step 3 PUSHED + CLEAN GREEN after rebase onto integration 93aedcac: branch @1813a025, artifact validate_logs/validate_1813a0259dea1d77d16b2264460d98cfe651962e.log (All validation checks passed; DIVERGED:0 all mirrors incl All Hallow's Eve seed=3; Rust Failed:0; snapshot/resume 7/7). Awaiting orchestrator ff-merge to integration. step-3 is additive-only (no validate-on-receipt/FATAL).
 
 CO-DESIGN CHECKPOINT (HOLDING): wrote ai_docs/SEARCHED_REVEAL_SUBSUMPTION_CODESIGN_20260603.md — how Searched/reorder reveals stamped by game ac subsume class-A residual #1 (CONFIRMED: shuffle_library state.rs:745 logs ShuffleLibrary but does NOT emit LibraryReordered → shadow can't reproduce post-shuffle library → mtg-yexvc seed-2 turn-16 card-105-missing). 5 decisions to LOCK with orchestrator before 4a-client: (1) canonical-ac-per-delta table; (2) Searched dummy STAYS at search-resolution ac (re-stamping earlier would break searched_card_for's "greatest eff_ac<=target" selection → reintroduce mtg-mb668 desync); (3) LibraryReordered gains action_count:u64 + shuffle_library emits at ShuffleLibrary ac (residual-#1 fix folded into 4a); (4) strict-monotonicity collision audit (two deltas at same ac would panic ActionLog::push) → likely give each its own undo-action ac; (5) sequencing vs mtg-mb668 (4a IS the class-A fix; robots42 un-excluded-green = acceptance gate). DO NOT start 4a-client until these are agreed.
+
+## 4a EXECUTION PLAN — LOCKED (orchestrator rulings 2026-06-03). Build as ONE coherent unit (server+client-WASM); merge whole AFTER step-3; commit incrementally on-branch. 4b native block stays gated on mtg-677.
+Locked decisions: (1) canonical-ac table = alignment contract; (2) Searched dummy STAYS at search-resolution ac (RED test pins it); (3) LibraryReordered+=action_count, shuffle_library emits it, TARGETED, validate-on-receipt FATAL; (4) distinct-ac (single deltas = distinct undo actions); (5) SearchCandidates RULING (a): StateSyncEntry::SearchCandidates{cards: Vec<CardReveal>} at the single search-resolution ac (one atomic delta = one ac; only option consistent with "aligned modulo reveal-name visibility" — searcher gets real names, others get dummies/targeted, same shape+ac); opening-hand per-draw real-ac stamping APPROVED (false atomic-multi).
+LAYERS (incremental commits, full-canary validate before declaring green):
+- L1 protocol (additive-ish): LibraryReordered += action_count:u64 (serde default); NEW ServerMessage::SearchCandidates{searcher, cards:Vec<CardReveal>, action_count} (replaces the N-CardRevealed library_search_cards loop, server.rs ~2884); client StateSyncEntry gains SearchCandidates{cards}.
+- L2 server stamping: thread reorder ac through pending_library_reorders (Vec<PlayerId>→carry ac) + controller drain + ChoiceRequest; stamp scry/surveil reorders at ReorderLibrary ac; shuffle_library emits LibraryReordered at ShuffleLibrary ac (TARGETED); opening-hand reveals stamped at real per-draw ac (not Some(0), server.rs:2117-2169); emit SearchCandidates at search-resolution ac.
+- L3 client keying (4a-client CORE): key StateSyncEntry ActionLog DIRECTLY by game ac; DELETE state_sync_effective_ac map + next_state_sync_ac + state_sync_unstamped + push_state_sync_stamped/stamp_pending_state_sync; effective_ac_of→identity; searched_card_for + rebuild-to-R read key directly; apply_state_sync_up_to_frontier → apply_state_sync_at(target_action) keyed + block-on-miss; validate-on-receipt FATAL (received_ac mismatch). NOTE coupling: client currently DEFERS reorders to next-choice (client.rs:934 push_state_sync(None)) — L3 keys them at their own ac so reorder applies BEFORE post-shuffle draws (fixes residual-#1).
+- L4 block-on-miss WASM: draw site (steps.rs:415) + priority site yield NeedsInput on miss via existing trampoline.
+- RED test: pin Searched-dummy resolution-ac selection so a future "stamp all uniformly" refactor can't regress it.
+GATE: full canary set un-excluded (Hallows seed3 + native-vs-WASM DIVERGED:0 + robots42 + mtg-yexvc seeds 2/5/1/6). 4b (native wait_for_state_sync_frontier into draw site) SEPARATE + gated on mtg-677. Exclusion-revert = closing commit, only when full set green un-excluded; if native block REQUIRED + wiring incomplete → STOP, exclusion stays.
 
 ## mtg-677 VERIFICATION (slot01 2026-06-03) — native draw-step rewind is NOT the gap; 4b gate refined
 Evidence-based (not assumed from 26c5a460):
