@@ -3864,6 +3864,33 @@ async fn run_export_wasm(output: PathBuf, deck_globs: Vec<String>) -> Result<()>
         )))
     })?;
 
+    // Emit an EMPTY card-lookup table placeholder (hermetic-determinism fix for
+    // the mtg-722 image pipeline). native_game.html unconditionally does
+    // `fetch('./data/card-lookup.bin')` at boot; the REAL table is gitignored
+    // and only built at deploy time (`mtg build-card-lookup`, deploy-cloud.sh
+    // §2b), so on a hermetic checkout (validate / fresh dev) the fetch 404'd →
+    // browser console.error → the no-console-errors browser tests failed
+    // (test_decouple_step3). It "passed" locally only when a stale untracked
+    // real table lingered — the untracked-file determinism trap. Writing a valid
+    // EMPTY SCDT table here (0 entries) makes the fetch 200 and every lookup
+    // cascade to Gatherer — deterministic, no network, no reliance on any
+    // untracked file. We ALWAYS (over)write it so a lingering real table can't
+    // make validate non-deterministic. Deploy runs `make wasm-export` BEFORE
+    // §2b, so §2b then overwrites this placeholder with the real table; this
+    // only ever provides the hermetic default.
+    let card_lookup_path = output.join("card-lookup.bin");
+    fs::write(&card_lookup_path, mtg_engine::scryfall::encode_card_lookup(&[])).map_err(|e| {
+        mtg_engine::MtgError::IoError(std::io::Error::other(format!(
+            "Failed to write empty card-lookup placeholder {}: {}",
+            card_lookup_path.display(),
+            e
+        )))
+    })?;
+    println!(
+        "Wrote empty card-lookup.bin placeholder ({} bytes; deploy §2b overwrites with the real table)",
+        std::fs::metadata(&card_lookup_path).map(|m| m.len()).unwrap_or(0)
+    );
+
     // Find cardsfolder
     let cardsfolder = find_cardsfolder();
     println!("Loading card definitions from {}...", cardsfolder.display());
