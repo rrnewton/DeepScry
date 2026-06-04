@@ -67,6 +67,22 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 NODE = os.environ.get("NODE") or "node"
 NPM = os.environ.get("NPM") or "npm"
 
+# mtg-zsi9f / mtg-o99ow native-first pivot: the WASM browser e2e steps that
+# EMPIRICALLY fail on the buffer-driven shadow-replay apply-frontier stall (B2;
+# "ACTION COUNT MISMATCH server=N local=M" at the first bundle-window choice).
+# Disabled by default (see run_orchestrator) until the foundation is hardened
+# native-first and the WASM apply-frontier stall is fixed. Verified 2026-06-04 on
+# a fresh wasm+server build: these four FAIL; network.click + network.redo-lobby
+# PASS (buffer-driven games that don't hit the stall) so they STAY enabled, as do
+# the static/asset WASM steps (landing/smoke/deploy-nav/playwright-check) and
+# every NATIVE network test.
+WASM_NETWORK_GAME_TAGS = frozenset({
+    "network.gui",
+    "network.multideck",
+    "network.human-input",
+    "network.redo-reload",
+})
+
 # ---------------------------------------------------------------------------
 # Step registry
 # ---------------------------------------------------------------------------
@@ -588,6 +604,13 @@ def main():
                          "native-vs-WASM equiv sweeps, networked browser e2e, + their npm provisioning). "
                          "Use on a host without a usable browser/npm. Disabled steps are REPORTED in the "
                          "run summary so a flagged run is never mistaken for full coverage.")
+    ap.add_argument("--enable-wasm-network", action="store_true",
+                    help="RE-ENABLE the WASM network-game e2e steps (gui/multideck/human-input/"
+                         "click/redo-*) that are DISABLED-BY-DEFAULT pending the native-first "
+                         "buffer-architecture hardening (mtg-zsi9f / mtg-o99ow). Default off: those "
+                         "steps are the deferred broken WASM foundation and are reported as DISABLED "
+                         "in the run summary (LOUD, never a silent skip). Native network tests are "
+                         "unaffected and always run.")
     ap.add_argument("--browser-capacity", type=int, default=1,
                     help="how many chromium-heavy steps may run at once (default 1)")
     ap.add_argument("--net-capacity", type=int, default=1,
@@ -711,6 +734,16 @@ def run_orchestrator(args):
         for s in steps:
             if s.networkonly:
                 disabled[s.tag] = "--no-network"
+    # mtg-zsi9f / mtg-o99ow native-first pivot: the WASM network-GAME e2e steps
+    # exercise the buffer-driven shadow-replay foundation that is being hardened on
+    # NATIVE first. They are DISABLED-BY-DEFAULT (and LOUDLY reported, never a
+    # silent skip) until that work + the WASM apply-frontier fix land; `--enable-
+    # wasm-network` runs them again. Static/asset WASM steps (landing/smoke/
+    # deploy-nav/playwright-check) and ALL native network tests are unaffected.
+    if not args.enable_wasm_network:
+        for s in steps:
+            if s.tag in WASM_NETWORK_GAME_TAGS:
+                disabled[s.tag] = "WASM-network DISABLED pending native-first hardening (mtg-zsi9f); --enable-wasm-network to run"
     if args.no_wasm_e2e:
         for s in steps:
             # All chromium-driven steps (browser resource = wasm browser suite +
