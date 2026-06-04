@@ -195,15 +195,16 @@ echo "  Local PID: $LOCAL_PID"
 # ============================================================================
 echo -e "${BLUE}Starting NETWORK game...${NC}"
 
-# Use random port in range 17800-27800 to allow concurrent test runs
-# Each test instance gets a unique port to avoid collisions
-PORT=$((17800 + RANDOM % 10000))
-
+# Bind a kernel-assigned EPHEMERAL port (--port 0) instead of a random fixed
+# port. RANDOM % 10000 collided across concurrent test runs / leftover servers
+# (mtg-ibj22 / mtg-726 port-collision false-positives); --port 0 is atomic with
+# NO TOCTOU — the OS picks a free port at bind time and the server logs the
+# ACTUAL bound port ("listening on HOST:PORT"), which we parse below.
 # Start server with --network-debug for strict reveal validation
 # Use verbosity=normal to capture GAMELOG entries (minimal suppresses them)
 # Use --no-color-logs to avoid ANSI codes in output
 "$MTG_BIN" server \
-    --port "$PORT" \
+    --port 0 \
     --seed "$SEED" \
     --tag-gamelogs \
     --network-debug \
@@ -211,16 +212,30 @@ PORT=$((17800 + RANDOM % 10000))
     --no-color-logs \
     > "$NETWORK_OUTPUT/server.log" 2>&1 &
 SERVER_PID=$!
-echo "  Server PID: $SERVER_PID (port $PORT)"
 
-# Wait for server to start
-sleep 2
-
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo -e "${RED}Error: Server failed to start${NC}"
+# Wait for the server to announce its bound port, then parse it (replaces a
+# fixed `sleep 2` — both more robust AND how we learn the ephemeral port).
+PORT=""
+for _ in $(seq 1 50); do
+    if ! kill -0 $SERVER_PID 2>/dev/null; then
+        echo -e "${RED}Error: Server failed to start${NC}"
+        cat "$NETWORK_OUTPUT/server.log"
+        exit 1
+    fi
+    # `|| true`: under `set -euo pipefail` (line 38) a no-match grep (empty log on
+    # early iterations) or a head-induced SIGPIPE would otherwise abort the whole
+    # script at this assignment before we can retry.
+    PORT=$(grep -oE 'listening on [0-9.]+:[0-9]+' "$NETWORK_OUTPUT/server.log" 2>/dev/null \
+           | grep -oE '[0-9]+$' | tail -1 || true)
+    [ -n "$PORT" ] && break
+    sleep 0.2
+done
+if [ -z "$PORT" ]; then
+    echo -e "${RED}Error: could not detect server's bound port${NC}"
     cat "$NETWORK_OUTPUT/server.log"
     exit 1
 fi
+echo "  Server PID: $SERVER_PID (port $PORT, OS-assigned)"
 
 # Start client 1
 "$MTG_BIN" connect \

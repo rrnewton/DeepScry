@@ -610,7 +610,17 @@ impl GameServer {
         // Start listening
         let addr = format!("{}:{}", self.config.bind_host, self.config.port);
         let listener = TcpListener::bind(&addr).await?;
-        log::info!("MTG Server listening on {}", addr);
+        // Log the ACTUAL bound address (listener.local_addr()), not the requested
+        // `addr` — with `--port 0` the OS assigns an ephemeral port, so the
+        // requested string would read ":0". Reporting the real port lets callers
+        // (e.g. the network-equiv e2e harness, mtg-ibj22) bind :0 atomically and
+        // then discover the chosen port from this line — eliminating the
+        // RANDOM-port-collision false-positive class with no TOCTOU.
+        let bound = listener
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| addr.clone());
+        log::info!("MTG Server listening on {}", bound);
         log::info!("Password required: {}", !self.config.password.is_empty());
         log::info!(
             "Lobby memory ceiling: {}% (0 = unlimited)",
