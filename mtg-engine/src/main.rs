@@ -4497,7 +4497,27 @@ async fn run_download(
         rate_limit_ms: rate_limit,
     };
 
-    let downloader = ImageDownloader::new(config);
+    // task #7 (mtg-722): load the card→CDN lookup table — `mtg download` resolves
+    // image URLs from it (no api.scryfall). Build it first with `mtg build-card-lookup`.
+    let table_path = std::path::Path::new("web/data/card-lookup.bin");
+    let table = match std::fs::read(table_path) {
+        Ok(bytes) => mtg_engine::scryfall::CardLookupTable::from_bytes(&bytes).ok_or_else(|| {
+            mtg_engine::MtgError::InvalidAction(format!(
+                "download: {} is not a valid card-lookup table (rebuild with `mtg build-card-lookup`)",
+                table_path.display()
+            ))
+        })?,
+        Err(_) => {
+            return Err(mtg_engine::MtgError::InvalidAction(format!(
+                "download: card-lookup table {} not found — run `mtg build-card-lookup` first \
+                 (image URLs are resolved from it; api.scryfall is no longer used)",
+                table_path.display()
+            )));
+        }
+    };
+    log::info!("Loaded card-lookup table: {} keys", table.len());
+
+    let downloader = ImageDownloader::new(config, table);
 
     // Run downloads
     let stats = downloader.download_all().await?;

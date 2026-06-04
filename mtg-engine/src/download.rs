@@ -16,12 +16,13 @@
 //! mtg download --deck decks/burn.dck
 //! ```
 //!
-//! ## Scryfall API
+//! ## Image source (task #7 / mtg-722)
 //!
-//! Images are fetched using the Scryfall named card API:
-//! `https://api.scryfall.com/cards/named?exact=<name>&format=image&version=<size>`
-//!
-//! Available versions: small (146x204), normal (488x680), large, png, art_crop, border_crop
+//! Images are fetched from the immutable Scryfall CDN
+//! (`cards.scryfall.io/<size>/front/…`), with each URL resolved from the
+//! card-lookup table (`mtg build-card-lookup`). The old per-card
+//! `api.scryfall.com/cards/named` endpoint is GONE (rate-limited, 404'd on
+//! token names); a card with no table entry is skipped (no api fallback).
 
 use crate::{MtgError, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -113,32 +114,36 @@ impl Default for DownloadConfig {
 pub struct ImageDownloader {
     config: DownloadConfig,
     client: reqwest::Client,
+    /// The card→Scryfall-CDN lookup table (task #7 / mtg-722). `mtg download`
+    /// resolves every image URL from this table — the api.scryfall.com per-card
+    /// endpoint is GONE. Built by `mtg build-card-lookup`.
+    table: crate::scryfall::CardLookupTable,
 }
 
 impl ImageDownloader {
-    /// Create a new downloader with the given configuration
+    /// Create a new downloader with the given configuration + card-lookup table.
     ///
     /// # Panics
     ///
     /// Panics if the HTTP client cannot be created (should never happen in practice).
-    pub fn new(config: DownloadConfig) -> Self {
+    pub fn new(config: DownloadConfig, table: crate::scryfall::CardLookupTable) -> Self {
         let client = reqwest::Client::builder()
-            .user_agent("mtg-forge-rs/0.1 (https://github.com/your-repo)")
+            .user_agent("mtg-forge-rs/0.1 (https://deepscry.net)")
             .build()
             .expect("Failed to create HTTP client");
 
-        Self { config, client }
+        Self { config, client, table }
     }
 
-    /// Build Scryfall URL for a card name and size
-    fn build_url(card_name: &str, size: ImageSize) -> String {
-        // URL-encode the card name
-        let encoded_name = urlencoding::encode(card_name);
-        format!(
-            "https://api.scryfall.com/cards/named?exact={}&format=image&version={}",
-            encoded_name,
-            size.api_version()
-        )
+    /// Resolve a card's immutable cards.scryfall.io CDN URL from the lookup
+    /// table, or `None` if the name is not in the table (skipped — there is NO
+    /// api.scryfall fallback, task #7). Real cards look up by name.
+    fn cdn_url(&self, card_name: &str, size: ImageSize) -> Option<String> {
+        let cdn_size = match size {
+            ImageSize::Small => crate::scryfall::CdnSize::Small,
+            ImageSize::Normal => crate::scryfall::CdnSize::Normal,
+        };
+        self.table.cdn_url(card_name, "", "", "", false, cdn_size)
     }
 
     /// Get the local file path for a card image
@@ -202,9 +207,12 @@ impl ImageDownloader {
             })?;
         }
 
-        // Build download tasks list
+        // Build download tasks list. Each carries its pre-resolved cards.scryfall.io
+        // CDN URL (task #7). A card not in the lookup table is SKIPPED — there is
+        // no api.scryfall fallback.
         log::info!("Checking for existing images...");
-        let mut tasks: Vec<(String, ImageSize)> = Vec::new();
+        let mut tasks: Vec<(String, ImageSize, String)> = Vec::new();
+        let mut not_in_table = 0usize;
         for card_name in &self.config.card_names {
             for size in &self.config.sizes {
                 if self.config.skip_existing && self.image_exists(card_name, *size).await {
@@ -212,8 +220,17 @@ impl ImageDownloader {
                     log::trace!("Skipping existing: {} ({:?})", card_name, size);
                     continue;
                 }
-                tasks.push((card_name.clone(), *size));
+                match self.cdn_url(card_name, *size) {
+                    Some(url) => tasks.push((card_name.clone(), *size, url)),
+                    None => {
+                        not_in_table += 1;
+                        log::debug!("'{}' not in card-lookup table; skipping", card_name);
+                    }
+                }
             }
+        }
+        if not_in_table > 0 {
+            log::warn!("{not_in_table} (card,size) entries had no card-lookup match (skipped, no api fallback)");
         }
 
         let total = tasks.len();
@@ -244,7 +261,7 @@ impl ImageDownloader {
         // Process downloads with bounded concurrency
         // Rate limit is applied between spawning tasks, not within them
         let mut handles = Vec::new();
-        for (card_name, size) in tasks {
+        for (card_name, size, url) in tasks {
             // Rate limiting: sleep between spawning tasks to spread out requests
             tokio::time::sleep(tokio::time::Duration::from_millis(rate_limit_ms)).await;
 
@@ -254,7 +271,6 @@ impl ImageDownloader {
             let pb = progress_bar.clone();
 
             let handle = tokio::spawn(async move {
-                let url = Self::build_url(&card_name, size);
                 let path = {
                     let safe_name: String = card_name
                         .chars()
@@ -529,47 +545,18 @@ pub async fn load_card_names_from_deck(deck_path: &Path) -> Result<Vec<String>> 
     Ok(result)
 }
 
-// We need urlencoding for the card names
-mod urlencoding {
-    pub fn encode(s: &str) -> String {
-        let mut result = String::with_capacity(s.len() * 3);
-        for byte in s.bytes() {
-            match byte {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    result.push(byte as char);
-                }
-                b' ' => result.push_str("%20"),
-                _ => {
-                    result.push('%');
-                    result.push_str(&format!("{:02X}", byte));
-                }
-            }
-        }
-        result
-    }
-}
+// (the `urlencoding` helper module was removed in task #7 along with the
+// api.scryfall.com URL builder it served — `mtg download` now resolves CDN
+// URLs from the card-lookup table.)
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_build_url() {
-        let url = ImageDownloader::build_url("Lightning Bolt", ImageSize::Normal);
-        assert_eq!(
-            url,
-            "https://api.scryfall.com/cards/named?exact=Lightning%20Bolt&format=image&version=normal"
-        );
-    }
-
-    #[test]
-    fn test_url_encoding() {
-        assert_eq!(urlencoding::encode("Lightning Bolt"), "Lightning%20Bolt");
-        assert_eq!(
-            urlencoding::encode("Jace, the Mind Sculptor"),
-            "Jace%2C%20the%20Mind%20Sculptor"
-        );
-    }
+    // (test_build_url + test_url_encoding removed in task #7: the
+    // api.scryfall.com per-card URL builder + its urlencoding helper are gone —
+    // `mtg download` resolves CDN URLs from the lookup table, whose URL
+    // construction is covered by scryfall::tests CardLookupTable.)
 
     #[test]
     fn test_image_size_from_str() {

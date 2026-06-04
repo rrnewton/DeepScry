@@ -44,7 +44,7 @@
       "notes": "Single size only, ~223x310 pixels"
     },
     "scryfall": {
-      "url_pattern": "https://api.scryfall.com/cards/{set}/{num}?format=image&version={version}",
+      "url_pattern": "https://cards.scryfall.io/{version}/front/{id0}/{id1}/{uuid}.jpg?{ver}",
       "versions": {
         "small": {"typical_height": 204, "bucket": "small"},
         "normal": {"typical_height": 680, "bucket": "medium"},
