@@ -101,6 +101,45 @@ out naturally — must verify.
    mtg-yexvc seed-2/seed-5 directly, with robots42 un-excluded-green as the
    acceptance gate? (Orchestrator owns this since slot03 archived.)
 
+## 5b. PRE-4a COLLISION AUDIT RESULT (decision #4) — GENUINE atomic-multi-delta FOUND, SURFACING
+Single reveals/reorders are safe: ShuffleLibrary (state.rs:803), ReorderLibrary
+(:836), and each draw RevealCard (:1114/1126/1156/1168) are SEPARATE
+`undo_log.log()` calls → distinct positions → distinct acs. Decision #4 (a)
+holds for those.
+
+BUT two BULK sites stamp MANY reveals at ONE ac — these would panic
+`ActionLog::push` once 4a-client keys the state_sync log directly by game ac:
+- **Opening-hand reveals** — server.rs:2123/2139/2157/2167: all four loops
+  (own/dummy × 2 players, ~14 reveals) stamped `action_count: Some(0)`.
+- **Library-search candidate reveals (mtg-253)** — server.rs ~2884: `for &card_id
+  in library_cards { … CardRevealed{ action_count: Some(choice_request.action_count) } }`
+  emits N named `Searched` candidate reveals all at ONE search-choice ac.
+- Client routes EVERY `CardRevealed` into the ac-keyed log
+  (push_state_sync_stamped, wasm client.rs:799). No exemption today; distinct
+  SYNTHETIC keys are the ONLY reason these don't collide now — which is exactly
+  the synthetic key 4a-client deletes.
+
+Resolution (per HARD RULE: surface, do NOT silently composite-key):
+- **Opening hand = FIXABLE within the contract, NOT a true atomic-multi.** Those
+  cards are drawn by the GameLoop via `draw_card`, each a DISTINCT RevealCard
+  undo action at positions 0,1,2,… The `Some(0)` is an mtg-610 SIMPLIFICATION,
+  not a constraint. Stamp each opening-hand reveal at its real draw-action ac →
+  distinct acs, same treatment as step-3 draws. Recommend this.
+- **Library-search candidates = GENUINE atomic-multi-delta.** N identities
+  revealed by ONE search action (so the client can filter LibrarySearchByName by
+  name); they do NOT map to N undo actions. Options:
+  (a) ONE StateSyncEntry variant carrying `Vec<CardReveal>` (e.g.
+      `SearchCandidates { cards }`) at the single search ac — one atomic delta =
+      one ac; cleanest contract fit. RECOMMENDED.
+  (b) composite key (ac, sub-idx) — orchestrator said don't silently adopt.
+  (c) route candidate reveals OUTSIDE the ac-keyed log (consumed synchronously
+      to build the search options) — but they DO mutate shadow library identities
+      via process_card_reveal_wasm, so reframing needed.
+  RECOMMEND (a). This is the surfaced decision; 4a-client keying HOLDS on the
+  orchestrator's pick. 4a-SERVER additive bits (LibraryReordered.action_count +
+  shuffle emission + opening-hand real-ac stamping) are independent and can
+  proceed once step-3 merges.
+
 ## 6. mtg-677 prerequisite (unchanged)
 The draw-step BLOCK/rewind keying (4b/4c wiring the draw site to yield
 NeedsInput / native `wait_for_state_sync_frontier`) still depends on draw-step
