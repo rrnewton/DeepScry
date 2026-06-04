@@ -1,0 +1,20 @@
+---
+title: 'Footgun: backticks/$() in git commit -m run via shell command substitution'
+status: open
+priority: 3
+issue_type: task
+labels:
+- human-process
+created_at: 2026-06-04T13:30:04.604806299+00:00
+updated_at: 2026-06-04T13:30:04.604806299+00:00
+---
+
+# Description
+
+RECURRING FOOTGUN (hit 3x in the mtg-717 session). A git commit -m "..." message that contains backtick-quoted code spans (e.g. a literal make validate in backticks, or $(...)) is a DOUBLE-QUOTED bash string, so bash performs COMMAND SUBSTITUTION on it BEFORE git sees the message. Worst case observed: backtick-make-validate in a commit message actually RAN make validate, which (dirty tree) created a stray 'wip' commit and launched a full background build. Lesser cases just emit 'command not found' noise and silently drop the backticked text from the message.
+
+RULE: for ANY commit message containing code spans, backticks, $(), or shell metachars, write the message to a file and use 'git commit -F <file>' (or -F - with a heredoc). NEVER inline -m with backticks. The agent harness's Bash tool wraps commands in double quotes, so this applies to every -m.
+
+Recovery if it fires: kill the accidental process tree + reap orphaned cargo/build children (python3 scripts/kill_zombie_processes.py), 'git reset --soft HEAD~1' to drop the stray wip commit (restores changes staged), rm -f .validate.lock + validate_logs/*.wip, then re-commit via -F.
+
+Recorded as a user memory too (commit -F for code-span messages).
