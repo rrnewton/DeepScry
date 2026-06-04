@@ -202,7 +202,12 @@ jobs:
       - name: Download prebuilt wasm bundle
         if: ${{ matrix.wasm }}
         uses: actions/download-artifact@v4
-        with: { name: wasm-pkg, path: . }
+        # upload-artifact@v4 roots the artifact at the LCA of the uploaded paths
+        # (web/pkg + web/data -> LCA `web`), so the artifact contains `pkg/` +
+        # `data/`. Download into `web/` to restore web/pkg + web/data (NOT `.`,
+        # which would land them at ./pkg + ./data and trip the --use-prebuilt
+        # missing-web/pkg hard-fail — exactly what failed run 26924314832).
+        with: { name: wasm-pkg, path: web }
       - name: Download nextest archive
         if: ${{ matrix.arch }}
         uses: actions/download-artifact@v4
