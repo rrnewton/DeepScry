@@ -956,32 +956,22 @@ impl WasmNetworkClient {
                 // mtg-o99ow L3: see ChoiceRequest — reveals are self-keyed by
                 // game ac now; just advance the reveal-history watermark.
                 self.note_received_choice_ac(action_count);
-                // Phase 2 step 2: append to the per-controller choice
-                // buffer keyed by the server-reported `choice_seq`.
-                //
-                // `choice_seq` (NOT `action_count`) is the log key: the server
-                // bumps it exactly once per ChoiceRequest, so it is strictly
-                // unique and monotonic per choice and directly satisfies
-                // `ActionLog::push`'s strict-monotonicity invariant
-                // (docs/NETWORK_ACTION_LOG.md § 8 invariant #2). `action_count`
-                // (= undo_log.len()) is NOT unique: multi-step combat damage
-                // assignment emits two choices at the same action_count
-                // (mtg-sfihb), which made keying by action_count panic on the
-                // second push. If the server ever sends a stale or out-of-order
-                // choice_seq, the push will panic — the correct response per
-                // NETWORK_ARCHITECTURE.md § "Desync is ALWAYS a Fatal Error".
-                self.opponent_choices.push(
-                    u64::from(choice_seq),
-                    ChoiceEntry {
-                        choice_seq,
-                        action_count,
-                        choice_indices,
-                        description,
-                        spell_ability,
-                        library_search_result,
-                        target_card_ids,
-                    },
-                );
+                // Phase 1-2 dual-emit: record into the per-controller choice
+                // buffer keyed by `choice_seq`, deduping the eager-vs-buffer
+                // duplicate (see `record_opponent_choice`). `choice_seq` (NOT
+                // `action_count`) is the log key: the server bumps it once per
+                // ChoiceRequest, so it is unique/monotonic per choice, whereas
+                // `action_count` is NOT unique (multi-step combat damage emits
+                // two choices at one action_count, mtg-sfihb).
+                self.record_opponent_choice(ChoiceEntry {
+                    choice_seq,
+                    action_count,
+                    choice_indices,
+                    description,
+                    spell_ability,
+                    library_search_result,
+                    target_card_ids,
+                });
             }
 
             ServerMessage::ChoiceAccepted { choice_seq, .. } => {
@@ -1386,21 +1376,65 @@ impl WasmNetworkClient {
                     // Keyed by choice_seq (strictly unique/monotonic per choice),
                     // NOT ac — same-ac combat-damage choices (mtg-sfihb) share an
                     // ac but have distinct choice_seq. See ChoiceEntry doc.
-                    self.opponent_choices.push(
-                        u64::from(choice_seq),
-                        ChoiceEntry {
-                            choice_seq,
-                            action_count: ac,
-                            choice_indices,
-                            description,
-                            spell_ability,
-                            library_search_result,
-                            target_card_ids,
-                        },
-                    );
+                    // record_opponent_choice dedups against an eager copy that may
+                    // have arrived before the buffer became authoritative.
+                    self.record_opponent_choice(ChoiceEntry {
+                        choice_seq,
+                        action_count: ac,
+                        choice_indices,
+                        description,
+                        spell_ability,
+                        library_search_result,
+                        target_card_ids,
+                    });
                 }
             }
         }
+    }
+
+    /// Record an opponent choice into the `choice_seq`-keyed `opponent_choices`
+    /// log, deduping the Phase 1-2 dual-emit duplicate.
+    ///
+    /// During the additive-buffer window the SAME opponent choice can arrive
+    /// BOTH eagerly (`ServerMessage::OpponentChoice`, processed only while the
+    /// buffer is not yet authoritative) AND in our next `ChoiceRequest` buffer
+    /// (`BufferedFact::Choice`). Which lands first varies by timing: the
+    /// opponent's first choice can precede our first `ChoiceRequest` (eager
+    /// first) — that race is exactly the `choice_seq=1` double-push that panicked
+    /// `ActionLog::push`'s strict-monotonic key. We dedup by `choice_seq`, the
+    /// same idempotent-resend discipline `push_state_sync` applies to reveals
+    /// keyed by `action_count`.
+    ///
+    /// Keep-FIRST is safe because both copies derive from the coordinator's
+    /// single `OpponentChoiceInfo`, so the decision payload is content-identical
+    /// (verified: choice_indices / description / spell_ability /
+    /// library_search_result / target_card_ids / action_count all flow from the
+    /// same source). A `debug_assert` on `choice_indices` turns any genuine
+    /// divergence into a fatal desync rather than a silent drop.
+    ///
+    /// Uses `push` (NOT `insert_sorted`): `opponent_choices` is the
+    /// per-controller choice buffer (owner #1), which `action_log.rs` requires
+    /// to stay strictly append-ordered. Opponent `choice_seq`s arrive
+    /// monotonically; the only out-of-order arrival is the dual-emit duplicate,
+    /// which we drop here before it reaches `push`.
+    ///
+    /// TRANSITIONAL: in Phase 3 (eager `OpponentChoice` deleted) only the buffer
+    /// feeds this, the dedup becomes a no-op, and this helper collapses back to a
+    /// bare `push`.
+    fn record_opponent_choice(&mut self, entry: ChoiceEntry) {
+        let key = u64::from(entry.choice_seq);
+        if let Some(existing) = self.opponent_choices.get(key) {
+            debug_assert_eq!(
+                existing.choice_indices, entry.choice_indices,
+                "record_opponent_choice: two DIFFERENT choices share choice_seq={} \
+                 (existing indices={:?}, new={:?}) — protocol desync \
+                 (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                key, existing.choice_indices, entry.choice_indices,
+            );
+            // Idempotent dual-emit duplicate — already logged. Drop it.
+            return;
+        }
+        self.opponent_choices.push(key, entry);
     }
 
     fn push_state_sync(&mut self, action_count: u64, entry: StateSyncEntry) {
