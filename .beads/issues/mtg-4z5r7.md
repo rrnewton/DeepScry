@@ -1,0 +1,32 @@
+---
+title: 'Audit test-suite MERIT: coverage re-run + hierarchical parallel quality audit (redundant + low-quality tests)'
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-06-04T00:49:00.314309071+00:00
+updated_at: 2026-06-04T00:49:00.314309071+00:00
+---
+
+# Description
+
+USER-REQUESTED 2026-06-03. GATED: starts only AFTER the validate speed overhaul (mtg-717 build-once + shard speedup) lands — it needs the faster validate to produce accurate per-test runtime numbers, and a stable sharded structure to attribute cost.
+
+GOAL: We've spent effort making tests run FASTER. Now audit how much VALUE they actually add. Every test must PAY FOR ITSELF: its regression-protection potential must justify its (testing + compile) runtime cost. Longer/slower tests need proportionally MORE justification. Tests are also a large share of our LOC and a substantial share of compile time, so dead weight here is expensive twice (runtime + build).
+
+TWO PARTS:
+
+1. CODE-COVERAGE RE-RUN. We haven't run coverage in a while — regenerate it (the project's coverage flow; commit only the text summaries per <RepoRoot>/CLAUDE.md File Conventions: txt/lcov/json, NOT the generated HTML or .profdata/.profraw). Use it as one input to the merit audit (a test that adds zero unique covered lines over its siblings is a redundancy candidate; a hot uncovered region is a gap, the opposite signal).
+
+2. HIERARCHICAL + PARALLEL TEST-QUALITY AUDIT (coordinator-run Workflow, parallel agents). Audit the quality of ALL tests, hierarchically: fan out per crate/module -> per test-file -> per-test verdict, then aggregate. Focus the audit on TWO categories:
+   - REDUNDANT tests: clusters where e.g. 3 tests cover essentially the same behavior — recommend keeping the single best and removing the rest. Use coverage overlap + assertion-shape similarity to cluster.
+   - LOW-QUALITY tests: remove regardless of redundancy. The canonical smell is the tautology (`let x = 1; assert(x == 1)`), tests that assert on a mock they just set up, tests with no meaningful assertion, tests that can never fail, snapshot tests of trivial constants, etc.
+   For each flagged test record: path::test_name, category (redundant|low-quality), its runtime cost, its (estimated) unique coverage contribution, and a one-line rationale. Redundant clusters list the keep-1 recommendation.
+
+METHOD (per the user's "use parallel agents to hierarchically and in parallel audit"): a Workflow that (a) enumerates test files by crate/module, (b) fans out a reader per file/module to classify each test (tautology / redundant-with-sibling / genuine regression guard) with cost + coverage signal, (c) a cross-file dedup pass to find redundant CLUSTERS across files, (d) an adversarial verify pass on each DELETE recommendation (a second agent must confirm the test truly guards nothing unique before it's marked for removal — do not delete a test that's the sole guard of a real regression), (e) synthesize a ranked removal/consolidation report. Then execute the agreed removals on a feature branch with full `make validate` green.
+
+ACCEPTANCE / GUARDRAILS:
+- No test deleted without the adversarial-verify pass confirming it guards nothing unique (regression-protection is the whole point; do not trade real coverage for speed).
+- Report must quantify: tests removed, LOC removed, compile-time saved, test-runtime saved, and coverage delta (must be ~0 unique-line loss for removals; any intentional coverage drop called out explicitly).
+- Land as a reviewed feature branch -> integration via the normal ceremony.
+
+RELATED: mtg-717 (validate speed — predecessor), mtg-726 (network-test perf), mtg-ibj22 (cgroup validate isolation). This audit is the "merit" complement to those "speed/robustness" efforts.
