@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T21:13:49.757737420+00:00
+updated_at: 2026-06-04T21:22:22.669890523+00:00
 ---
 
 # Description
@@ -130,3 +130,9 @@ BLOCKER A (native, search-family, NOT the dual-stamp): equiv-zero seed3 now adva
 BLOCKER B (WASM foundation, INHERITED from Phase 1 — bigger): Phase-1 "buffer drives WASM (multideck 4/4)" was a FALSE POSITIVE (ran vs a STALE pre-buffer server binary — confirmed slot01-2's retraction). FRESH build (server@4db6e056 + wasm@a23354b7): multideck 0/4, deterministic RefCell "already borrowed" PANIC at wasm/network/exports.rs:30 (with_client borrow_mut) + fancy_tui.rs:129. Re-entrancy: on_message() holds the client borrow_mut (exports.rs:221) then drives the shadow replay / apply_choice_buffer which re-borrows the same client. multideck + gui are in `make validate`, so this blocks the merge gate independent of cycling.
 
 NEXT (team-lead deciding allocation): (1) Blocker B = real WASM buffer-foundation work (re-entrancy + likely the apply-frontier stall slot01-2 flagged); (2) Blocker A = searcher-shadow candidate materialization; (3) then native buffer shim + WASM cycling coverage; (4) merge gate.
+
+## REFINEMENT 2026-06-04 (slot01-phase2) — net-improvement CONFIRMED; Blocker B root = duplicate-ac push (RefCell panic is cascade); A likely subsumed by Piece 2
+- NET-IMPROVEMENT PROVEN: built PARENT a23354b7 (pre-fix) → equiv-zero seed3 fails at TURN 5 (Mountaincycle ac=253). My fix @4db6e056 → advances to TURN 12 (ac=739). So the fix is correct and beneficial; turn-12 is a facet it EXPOSED, not caused.
+- BLOCKER B TRUE ROOT (corrected): multideck monored s13 first panic = `ActionLog::push: action_count must be strictly increasing (last=1,new=1)` (action_log.rs:102) — the buffer-driven WASM pushes TWO state-sync deltas at the SAME ac=1 (game-start). The exports.rs:30 with_client "already borrowed" + fancy_tui:129 panics are CASCADE (first panic poisons the borrow). So B is the SAME dual-stamp class as cycling, at game-start. Fix = find/eliminate the duplicate-ac source in assemble_choice_buffer's early-game facts (+ the runtime assertion the brief wants IS effectively ActionLog::push).
+- BLOCKER A likely SUBSUMED BY PIECE 2: A lives in the native SYNTHETIC-keyed reveal path (client.rs ignores server action_count for CardRevealed, re-keys via a monotonic counter). Piece 2 (native buffer shim) makes native consume the game-ac buffer, retiring the synthetic path → A resolved as a consequence. Dependency order: fix buffer foundation (B) → native buffer shim (Piece 2) → A resolved. Patching the synthetic path in isolation is likely throwaway.
+- RECOMMENDED SEQUENCE: (1) Blocker B duplicate-ac in buffer (game-start) + any other same-ac reveal sources; (2) verify multideck buffer-driven GREEN; (3) Piece 2 native buffer shim; (4) re-verify all native cycling (incl equiv-zero turn-12 = A) GREEN; (5) WASM cycling coverage; (6) merge gate.
