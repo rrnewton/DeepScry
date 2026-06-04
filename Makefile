@@ -1,7 +1,7 @@
 # MTG Forge Rust - Development Makefile
 #
 # Quick reference for common development tasks
-.PHONY: help build test validate clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
+.PHONY: help build test validate validate-desync-canary clean run check fmt fmt-check clippy clippy-wasm doc docs examples full-benchmark bench-snapshot bench-logging coverage coverage-full validate-coverage-step profile callgrindprofile perfprofile heapprofile dhatprofile count setup-claude claude-github claude-beads happy code-dups bench wasm wasm-export wasm-serve wasm-dev play-web-local-dev wasm-test wasm-test-fancy wasm-test-fancy-dev wasm-test-human wasm-test-game-gui-rebuild wasm-test-game-gui-playtest wasm-e2e wasm-e2e-dev wasm-e2e-network wasm-e2e-network-human play-web play-web-pvp play-web-local build-network
 
 # Configuration variables
 # NODE: Node.js binary (Playwright requires Node 18+)
@@ -163,6 +163,20 @@ examples:
 #                          python3 scripts/validate.py --list
 validate:
 	@python3 scripts/validate.py $(ARGS)
+
+# Opt-in HEAVY desync regression canary (NOT part of `make validate`).
+# A broad network-vs-local gamelog-equivalence sweep over the historically
+# dangerous mechanics (cycling/search/shuffle, burn/combat-damage,
+# counter/stack-interaction) x {heuristic,random,zero} x broad seed ranges.
+# It is the comprehensive net the default validate equiv legs (one deck pair,
+# one pinned seed) are deliberately not. See bug_finding/desync_canary.sh header.
+# It lives in bug_finding/ (NOT tests/) so the tests/*.sh nextest auto-discovery
+# never pulls this heavy sweep into the default `make validate`.
+# Run under per-run cgroup isolation when the host is shared:
+#   systemd-run --user --scope -- make validate-desync-canary
+# Pass ARGS for flags, e.g.:  make validate-desync-canary ARGS=--quick
+validate-desync-canary: build-network
+	@bash bug_finding/desync_canary.sh $(ARGS)
 
 # Generate documentation and open in browser
 doc:
