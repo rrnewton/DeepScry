@@ -9,12 +9,18 @@
 //    "not connected" banner + disabled Submit shown up front on dialog open
 //    when there is no active server WebSocket.
 // 5. Verifies cancel/reset behavior
-// 6. Mocks bug_report_result responses for success and failure flows
+// 6. Mocks the two-phase bug_report_stored + bug_report_issue_result responses
+//    (mtg-5ejgo) and asserts the two-checkbox flow: box 1 checks on the disk
+//    confirmation, box 2 checks + links on the issue result, the GitHub-failed
+//    case shows a failure (never a spinner) yet still finalizes the button, the
+//    client-side backstop finalizes if the second message never arrives, and a
+//    disk-write failure surfaces on box 1 and stays retryable.
 
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { firstBuiltinDeck, localGameUrl } = require('./game_boot_params');
 
 const HTTP_PORT = 8768;
 
@@ -29,30 +35,11 @@ function ensureDir(dir) {
     }
 }
 
+// mtg-35z3s page 3: tui_game.html is a pure renderer with no built-in launcher
+// form — the game is booted from URL params before this runs. Here we just wait
+// for the controls, expand them, and run a few turns so the bug-report capture
+// has real game logs.
 async function launchLocalFancyTui(page, testResults) {
-    const deckCount = await page.evaluate(() => {
-        return document.getElementById('p1-deck')?.options.length || 0;
-    });
-    if (deckCount === 0) {
-        throw new Error('No decks loaded! Make sure to run "mtg export-wasm" first.');
-    }
-
-    // Select same deck for both players to avoid missing-card errors
-    await page.evaluate(() => {
-        const sel = document.getElementById('p1-deck');
-        const firstDeck = sel?.options[0]?.value || '';
-        if (firstDeck) {
-            sel.value = firstDeck;
-            document.getElementById('p2-deck').value = firstDeck;
-        }
-    });
-
-    // Set both controllers to heuristic AI so turns auto-advance
-    await page.selectOption('#p1-controller', 'heuristic');
-    await page.selectOption('#p2-controller', 'heuristic');
-
-    await page.click('#btn-launch');
-    await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 10000 });
     await page.waitForSelector('#game-controls', { state: 'visible', timeout: 10000 });
     await page.waitForTimeout(500);
     await page.click('#btn-toggle-controls');
@@ -140,14 +127,19 @@ async function runTest() {
             log(`Page ERROR: ${err.message}`);
         });
 
-        log('Loading fancy TUI page...');
-        await page.goto(`http://localhost:${HTTP_PORT}/tui_game.html`, {
-            waitUntil: 'networkidle',
-            timeout: 60000
-        });
+        // mtg-35z3s page 3: boot a local heuristic-vs-heuristic game directly
+        // from URL params (the launcher form was deleted; tui_game.html is now a
+        // pure renderer). Same boot path as test_fancy_tui.js.
+        log('Loading fancy TUI page (local boot via params)...');
+        const base = `http://localhost:${HTTP_PORT}`;
+        const firstDeck = await firstBuiltinDeck(base);
+        log(`Selected deck for both players: ${firstDeck}`);
+        await page.goto(localGameUrl(base, 'tui_game.html', {
+            deck: firstDeck, p1: 'heuristic', p2: 'heuristic',
+        }), { waitUntil: 'networkidle', timeout: 60000 });
 
-        log('Waiting for WASM to load...');
-        await page.waitForSelector('#launcher.show', { state: 'visible', timeout: 30000 });
+        log('Waiting for WASM to load + game to render...');
+        await page.waitForSelector('#ratzilla-terminal', { state: 'visible', timeout: 30000 });
         testResults.steps.push({ name: 'wasm_init', timestamp: new Date().toISOString() });
 
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_01_setup.png'), fullPage: true });
@@ -236,7 +228,11 @@ async function runTest() {
         }, { timeout: 5000 });
         testResults.steps.push({ name: 'validation_error', timestamp: new Date().toISOString() });
 
-        log('Submitting successful bug report and checking issue URL...');
+        // ── HAPPY PATH (mtg-5ejgo): two checkboxes, phase 1 then phase 2 ──────
+        // Box 1 ("saved to disk") checks on the immediate stored-confirmation;
+        // box 2 ("filed on GitHub") checks + shows a link on the issue result;
+        // then Submit finalizes to a disabled "Already submitted".
+        log('Two-phase happy path: stored-confirm checks box 1, issue-result checks box 2 + link...');
         await page.fill('#bug-report-description', 'Successful bug report should show issue link.');
         await page.click('#btn-bug-report-submit');
         await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 5000 });
@@ -253,28 +249,65 @@ async function runTest() {
         if ('trusted_password' in sentSuccessMessage) {
             throw new Error('trusted_password should be omitted when password field is left blank');
         }
+        // Both checkboxes should be present and pending before any server reply.
+        await page.waitForFunction(() => {
+            const disk = document.getElementById('bug-report-check-disk');
+            const github = document.getElementById('bug-report-check-github');
+            return disk && github && disk.dataset.state === 'pending' && github.dataset.state === 'pending';
+        }, { timeout: 5000 });
+
+        // Phase 1: stored confirmation → box 1 checks, box 2 still pending,
+        // Submit still disabled (not yet finalized).
         await page.evaluate(() => {
-            window.__bugReportTestTransport.onBugReportResult({
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
                 success: true,
+                report_dir: 'bug_reports/1780537595823',
+                error: null
+            });
+        });
+        await page.waitForFunction(() => {
+            const disk = document.getElementById('bug-report-check-disk');
+            const github = document.getElementById('bug-report-check-github');
+            const submit = document.getElementById('btn-bug-report-submit');
+            return disk && disk.dataset.state === 'ok'
+                && github && github.dataset.state === 'pending'
+                && submit && submit.disabled && submit.textContent !== 'Already submitted';
+        }, { timeout: 5000 });
+
+        // Phase 2: issue result with a URL → box 2 checks + link, Submit finalizes.
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportIssueResult({
+                type: 'bug_report_issue_result',
                 issue_url: 'https://github.com/example/repo/issues/123',
                 error: null
             });
         });
         await page.waitForFunction(() => {
-            const link = document.querySelector('#bug-report-status a');
-            return !!(link && link.href.includes('/issues/123'));
+            const github = document.getElementById('bug-report-check-github');
+            const link = document.querySelector('#bug-report-check-github a');
+            const submit = document.getElementById('btn-bug-report-submit');
+            return github && github.dataset.state === 'ok'
+                && link && link.href.includes('/issues/123')
+                && submit && submit.disabled && submit.textContent === 'Already submitted';
         }, { timeout: 5000 });
         const successState = await readBugReportForm(page);
-        if (successState.description !== '' || successState.password !== '') {
-            throw new Error('Bug report form did not reset after successful submission');
-        }
         if (!successState.issueUrl || !successState.issueUrl.includes('/issues/123')) {
             throw new Error('Successful bug report did not render the issue URL');
         }
-        testResults.steps.push({ name: 'success_result', timestamp: new Date().toISOString() });
+        testResults.steps.push({ name: 'success_two_phase', timestamp: new Date().toISOString() });
+        await closeBugReportModal(page);
 
-        log('Submitting failing bug report and checking error display...');
-        await page.fill('#bug-report-description', 'Failed bug report should show the server error.');
+        // ── GITHUB-FAILED PATH (mtg-5ejgo): no spinner, button still finalizes ─
+        // Box 1 checks, box 2 shows a clear failure ("report saved"), and the
+        // Submit button STILL finalizes because the report IS saved.
+        log('GitHub-failed path: box 2 shows failure (no spinner), button still finalizes...');
+        await openBugReportModal(page);
+        await page.waitForFunction(() => {
+            const submit = document.getElementById('btn-bug-report-submit');
+            return submit && !submit.disabled;
+        }, { timeout: 5000 });
+        await page.fill('#bug-report-description', 'GitHub down should not spin forever.');
         await page.fill('#bug-report-password', 'wrong-password');
         await page.click('#btn-bug-report-submit');
         await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 2, { timeout: 5000 });
@@ -283,17 +316,95 @@ async function runTest() {
             throw new Error('Bug report error case did not serialize trusted_password');
         }
         await page.evaluate(() => {
-            window.__bugReportTestTransport.onBugReportResult({
-                success: false,
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
+                success: true,
+                report_dir: 'bug_reports/1780537595999',
+                error: null
+            });
+        });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportIssueResult({
+                type: 'bug_report_issue_result',
                 issue_url: null,
-                error: 'Trusted bug-report password was rejected'
+                error: 'GitHub issue creation failed: gh not found'
             });
         });
         await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            return status.includes('Trusted bug-report password was rejected');
+            const disk = document.getElementById('bug-report-check-disk');
+            const github = document.getElementById('bug-report-check-github');
+            const submit = document.getElementById('btn-bug-report-submit');
+            const githubText = github?.textContent || '';
+            return disk && disk.dataset.state === 'ok'
+                && github && github.dataset.state === 'fail'
+                && githubText.includes('report saved')
+                && submit && submit.disabled && submit.textContent === 'Already submitted';
         }, { timeout: 5000 });
-        testResults.steps.push({ name: 'error_result', timestamp: new Date().toISOString() });
+        testResults.steps.push({ name: 'github_failed_no_spinner', timestamp: new Date().toISOString() });
+        await closeBugReportModal(page);
+
+        // ── CLIENT-SIDE TIMEOUT BACKSTOP (mtg-5ejgo) ──────────────────────────
+        // If the phase-2 message never arrives, the client itself must resolve
+        // box 2 to "status unknown — report saved" and finalize the button. Use a
+        // short backstop so the test does not wait the production 18s.
+        log('Client-side backstop: missing issue-result still finalizes (no spinner)...');
+        await page.evaluate(() => { window.__bugReportBackstopMs = 800; });
+        await openBugReportModal(page);
+        await page.waitForFunction(() => {
+            const submit = document.getElementById('btn-bug-report-submit');
+            return submit && !submit.disabled;
+        }, { timeout: 5000 });
+        await page.fill('#bug-report-description', 'Server drops the second message entirely.');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 3, { timeout: 5000 });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
+                success: true,
+                report_dir: 'bug_reports/1780537596111',
+                error: null
+            });
+        });
+        // Deliberately send NO issue result; the backstop must fire.
+        await page.waitForFunction(() => {
+            const github = document.getElementById('bug-report-check-github');
+            const submit = document.getElementById('btn-bug-report-submit');
+            const githubText = github?.textContent || '';
+            return github && github.dataset.state === 'unknown'
+                && githubText.includes('report saved')
+                && submit && submit.disabled && submit.textContent === 'Already submitted';
+        }, { timeout: 5000 });
+        testResults.steps.push({ name: 'client_backstop', timestamp: new Date().toISOString() });
+        await closeBugReportModal(page);
+        await page.evaluate(() => { delete window.__bugReportBackstopMs; });
+
+        // ── DISK-WRITE FAILURE (mtg-5ejgo): box 1 shows ✗, user may retry ─────
+        log('Disk-write failure: box 1 shows error, Submit re-enabled (not finalized)...');
+        await openBugReportModal(page);
+        await page.waitForFunction(() => {
+            const submit = document.getElementById('btn-bug-report-submit');
+            return submit && !submit.disabled;
+        }, { timeout: 5000 });
+        await page.fill('#bug-report-description', 'Disk is full on the server.');
+        await page.click('#btn-bug-report-submit');
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 4, { timeout: 5000 });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
+                success: false,
+                report_dir: null,
+                error: 'No space left on device'
+            });
+        });
+        await page.waitForFunction(() => {
+            const disk = document.getElementById('bug-report-check-disk');
+            const submit = document.getElementById('btn-bug-report-submit');
+            const diskText = disk?.textContent || '';
+            return disk && disk.dataset.state === 'fail'
+                && diskText.includes('No space left on device')
+                && submit && !submit.disabled && submit.textContent === 'Submit';
+        }, { timeout: 5000 });
+        testResults.steps.push({ name: 'disk_failure_retryable', timestamp: new Date().toISOString() });
 
         await closeBugReportModal(page);
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_04_complete.png'), fullPage: true });

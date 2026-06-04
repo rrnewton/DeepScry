@@ -189,7 +189,8 @@ impl NetworkMessage {
             // expected here.
             ServerMessage::AuthResult { .. }
             | ServerMessage::RegisterResult { .. }
-            | ServerMessage::BugReportResult { .. }
+            | ServerMessage::BugReportStored { .. }
+            | ServerMessage::BugReportIssueResult { .. }
             | ServerMessage::WaitingForOpponent
             | ServerMessage::WaitingRoomUpdate { .. }
             | ServerMessage::WaitingRoomReady { .. }

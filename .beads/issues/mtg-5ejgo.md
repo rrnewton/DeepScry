@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-04T01:58:06.296710873+00:00
-updated_at: 2026-06-04T01:58:06.296710873+00:00
+updated_at: 2026-06-04T02:46:07.742911529+00:00
 ---
 
 # Description
@@ -12,17 +12,25 @@ updated_at: 2026-06-04T01:58:06.296710873+00:00
 USER-REPORTED 2026-06-04 (live deepscry.net game). The bug-report widget HUNG on submit (spinning ball, Chrome/Windows). Investigated the VM logs.
 
 ROOT CAUSE (confirmed from server journal @01:46:35):
-- store_bug_report SUCCEEDED: "Stored bug report from Some(0) in bug_reports/1780537595823". Disk write works.
-- GitHub step FAILED INSTANTLY (not a hang): `gh auth status preflight failed ... No such file or directory (os error 2)` + same for labels fetch + gist upload + issue create. => the `gh` CLI is NOT INSTALLED on the VM, so Command::new("gh") returns ENOENT immediately.
-- Server returned ServerMessage::BugReportResult { success:true, issue_url:None, error:Some("...gh not found...") } (submit_bug_report, server.rs:3838). So the SERVER responded fine and fast.
-- => The HANG is CLIENT-SIDE: web/bug_report.js doesn't handle the "stored, but github failed / issue_url:None" case and leaves the spinner running (likely waits for an issue_url).
+- store_bug_report SUCCEEDED. Disk write works.
+- GitHub step FAILED INSTANTLY: gh CLI not installed on the VM (ENOENT).
+- Server returned the single BugReportResult only AFTER github completed.
+- The HANG was CLIENT-SIDE: web/bug_report.js waited for an issue_url and left the spinner running on the github-failed/issue_url:None case.
 
-THREE FIXES (user's desired architecture: confirm disk-write IMMEDIATELY, THEN dicier github with a TIMEOUT, never a forever-spinner):
+ARCHITECTURE FIX (user's desired design: confirm disk-write IMMEDIATELY, THEN dicier github with a TIMEOUT, never a forever-spinner).
 
-1. CLIENT (web/bug_report.js) — PRIMARY user-facing fix: on the server's stored-confirmation, STOP the spinner immediately and show "✓ Bug report saved to server". Handle github outcomes gracefully: issue_url present → show the link; github failed/absent/timed-out → show "saved ✓ (GitHub issue not filed: <reason>)", NOT a spinner. Add a CLIENT-SIDE timeout backstop (e.g. 15s) so a missing/late response can never leave a forever-spinner.
+IMPLEMENTED on branch fix-mtg-5ejgo:
 
-2. SERVER (server.rs submit_bug_report + protocol.rs) — two-phase + timeout: send an immediate BugReportStored confirmation right after store_bug_report succeeds (so the widget confirms disk-write WITHOUT waiting on github), THEN attempt github wrapped in a tokio::time::timeout (e.g. 10-15s) so a real network hang in some env can't block; send a follow-up BugReportIssueResult (issue_url | failed | timed-out). Requires a small protocol addition (a stored-ack message and/or a status field). Currently the single BugReportResult is sent only AFTER github completes (the design flaw the user called out, even though here github failed fast).
+1. PROTOCOL (protocol.rs): replaced single ServerMessage::BugReportResult with two strong-typed phases — BugReportStored { success, report_dir, error } (phase 1, disk write) and BugReportIssueResult { issue_url, error } (phase 2, github). Added test_bug_report_two_phase_message_serialization; updated test_all_server_message_variants.
 
-3. VM CONFIG (infra) — so issues actually file: install + `gh auth login` on the VM, OR (cleaner, removes the gh-binary dependency + gives a native timeout) switch create_github_issue to the GitHub REST API via reqwest with a GITHUB_TOKEN env + a request timeout. Either way, fold gh-install (or the token env) into scripts/deploy-cloud.sh `config` so a fresh VM provisions it. Recommend the reqwest+token route — no gh binary, native timeout, no spawn_blocking.
+2. SERVER (server.rs): split submit_bug_report into store_bug_report (already existed) + bug_report_stored_message (phase 1, sent immediately) + file_bug_report_issue (phase 2). The github call is wrapped in tokio::time::timeout(GITHUB_ISSUE_TIMEOUT=15s) over spawn_blocking; flatten_github_outcome maps timeout/join/gh-failure to a non-fatal BugReportIssueResult. Both WS call sites (lobby ~945 + in-game coordinator ~3164) send phase 1 then (on disk Ok) phase 2. Runner+timeout are injectable (file_bug_report_issue_with_runner_and_timeout) for tests. Added server tests: github-failure (fast ENOENT) and slow-gh TIMEOUT both resolve to issue_url:None + reason; disk-failure stored message reports success:false.
 
-ACCEPTANCE: (a) widget shows "saved ✓" within ~1s of submit even with github down, never a forever-spinner; (b) a github hang is bounded by the timeout; (c) a real bug report files a GitHub issue from the VM (after gh-install or token). make validate green (test_bug_report.js extended for the stored-then-github two-phase + the github-failed-no-spinner case + a server timeout test). Repro context: the live submit that hung is bug_reports/1780537595823 on the VM.
+3. CLIENT (web/bug_report.js + network.js): two-checkbox UX. Box 1 'saved to disk' checks on BugReportStored; box 2 'filed on GitHub' checks + shows a clickable link on BugReportIssueResult, or shows 'GitHub filing failed — report saved' (NO spinner) on failure/timeout. Submit then finalizes to a disabled 'Already submitted' (resubmit guard). CLIENT-SIDE BACKSTOP (~18s, overridable) resolves a never-arriving phase-2 msg to 'status unknown — report saved' and finalizes — a dropped response can never spin. Disk-write failure shows box-1 error and stays retryable (not finalized). network.js dispatches bug_report_stored / bug_report_issue_result to onBugReportStored / onBugReportIssueResult. Rust clients (wasm + native) updated for the two new variants.
+
+4. TESTS wired into make validate + CI: web/test_bug_report.js (was a STALE orphan targeting the deleted #launcher form — modernized to boot via game_boot_params like test_fancy_tui, and ADDED to validate-wasm-e2e-step in Makefile + .github/workflows/ci.yml) asserts all four flows: happy two-phase, github-failed-no-spinner, client-timeout-backstop, disk-failure-retryable. test_fancy_tui.js updated to the two-phase mocks. All green locally.
+
+VM CONFIG (fix #3): gh is already installed + authed on the VM by the orchestrator (/usr/bin/gh, rrnewton), so the happy path files a real issue. FOLLOW-UP (optional, separate issue worthy): fold gh-install (or the cleaner reqwest+GITHUB_TOKEN REST route with a native timeout, removing the gh-binary + spawn_blocking dependency) into scripts/deploy-cloud.sh config so a fresh VM provisions it.
+
+Non-gameplay infra/UX fix — MTG rules review N/A.
+
+Repro context: the live submit that hung is bug_reports/1780537595823 on the VM.

@@ -271,17 +271,35 @@ async function runTest() {
             throw new Error('Bug report send payload did not include serialized logs');
         }
 
+        // Two-phase flow (mtg-5ejgo): phase 1 (stored) checks box 1; phase 2
+        // (issue result with URL) checks box 2 + renders the link and finalizes
+        // the Submit button to a disabled "Already submitted".
         await page.evaluate(() => {
-            window.__bugReportTestTransport.onBugReportResult({
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
                 success: true,
+                report_dir: 'bug_reports/1780537595823',
+                error: null
+            });
+        });
+        await page.waitForFunction(() => {
+            const disk = document.getElementById('bug-report-check-disk');
+            return disk && disk.dataset.state === 'ok';
+        }, { timeout: 5000 });
+        await page.evaluate(() => {
+            window.__bugReportTestTransport.onBugReportIssueResult({
+                type: 'bug_report_issue_result',
                 issue_url: 'https://github.com/example/issues/123',
                 error: null
             });
         });
         await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status');
-            const link = status?.querySelector('a');
-            return link && link.href.includes('/issues/123');
+            const github = document.getElementById('bug-report-check-github');
+            const link = document.querySelector('#bug-report-check-github a');
+            const submit = document.getElementById('btn-bug-report-submit');
+            return github && github.dataset.state === 'ok'
+                && link && link.href.includes('/issues/123')
+                && submit && submit.disabled && submit.textContent === 'Already submitted';
         }, { timeout: 5000 });
         const clearedAfterSuccess = await page.evaluate(() => ({
             description: document.getElementById('bug-report-description')?.value || '',
@@ -290,35 +308,39 @@ async function runTest() {
         if (clearedAfterSuccess.description !== '' || clearedAfterSuccess.password !== '') {
             throw new Error('Bug report form did not reset after successful submission');
         }
+        await page.click('#btn-bug-report-cancel');
+        await page.waitForSelector('#bug-report-modal', { state: 'hidden', timeout: 5000 });
 
-        await page.fill('#bug-report-description', 'Expected local-save success without issue URL.');
+        // GitHub-failed path: box 2 shows a failure ("report saved"), never a
+        // spinner, and the Submit button still finalizes (the report IS saved).
+        await page.click('#btn-bug-report');
+        await page.waitForSelector('#bug-report-modal', { state: 'visible', timeout: 5000 });
+        await page.waitForFunction(() => {
+            const submit = document.getElementById('btn-bug-report-submit');
+            return submit && !submit.disabled;
+        }, { timeout: 5000 });
+        await page.fill('#bug-report-description', 'GitHub down should still finalize.');
         await page.click('#btn-bug-report-submit');
         await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 2, { timeout: 5000 });
         await page.evaluate(() => {
-            window.__bugReportTestTransport.onBugReportResult({
+            window.__bugReportTestTransport.onBugReportStored({
+                type: 'bug_report_stored',
                 success: true,
-                issue_url: null,
+                report_dir: 'bug_reports/1780537595999',
                 error: null
             });
-        });
-        await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            return status.includes('Bug report saved locally');
-        }, { timeout: 5000 });
-
-        await page.fill('#bug-report-description', 'Expected server-side validation error.');
-        await page.click('#btn-bug-report-submit');
-        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 3, { timeout: 5000 });
-        await page.evaluate(() => {
-            window.__bugReportTestTransport.onBugReportResult({
-                success: false,
+            window.__bugReportTestTransport.onBugReportIssueResult({
+                type: 'bug_report_issue_result',
                 issue_url: null,
-                error: 'Trusted bug-report password was rejected'
+                error: 'GitHub issue creation failed: gh not found'
             });
         });
         await page.waitForFunction(() => {
-            const status = document.getElementById('bug-report-status')?.textContent || '';
-            return status.includes('Trusted bug-report password was rejected');
+            const github = document.getElementById('bug-report-check-github');
+            const submit = document.getElementById('btn-bug-report-submit');
+            return github && github.dataset.state === 'fail'
+                && (github.textContent || '').includes('report saved')
+                && submit && submit.disabled && submit.textContent === 'Already submitted';
         }, { timeout: 5000 });
 
         await page.click('#btn-bug-report-cancel');

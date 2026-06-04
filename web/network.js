@@ -23,7 +23,10 @@ export class MTGNetworkClient {
         this.onError = null;  // Callback for error display
         this.onGameReady = null;  // Callback when game starts
         this.onMessageProcessed = null;  // Callback after each message (for triggering game loop)
-        this.onBugReportResult = null;  // Callback for bug report submission results
+        // Two-phase bug report callbacks (mtg-5ejgo). Phase 1 confirms the
+        // server-side disk write; phase 2 reports the GitHub issue outcome.
+        this.onBugReportStored = null;
+        this.onBugReportIssueResult = null;
         this.gameReadyFired = false;  // Track if onGameReady was already called
     }
 
@@ -101,9 +104,17 @@ export class MTGNetworkClient {
                 // Non-JSON messages still flow into WASM for normal handling/error reporting
             }
 
-            if (msg?.type === 'bug_report_result') {
-                if (this.onBugReportResult) {
-                    this.onBugReportResult(msg);
+            // Two-phase bug report (mtg-5ejgo): phase 1 = disk-write
+            // confirmation (immediate), phase 2 = GitHub issue outcome.
+            if (msg?.type === 'bug_report_stored') {
+                if (this.onBugReportStored) {
+                    this.onBugReportStored(msg);
+                }
+                return;
+            }
+            if (msg?.type === 'bug_report_issue_result') {
+                if (this.onBugReportIssueResult) {
+                    this.onBugReportIssueResult(msg);
                 }
                 return;
             }

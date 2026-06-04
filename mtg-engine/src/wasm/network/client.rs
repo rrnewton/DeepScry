@@ -689,12 +689,17 @@ impl WasmNetworkClient {
                 }
             }
 
-            ServerMessage::BugReportResult { success, error, .. } => {
+            ServerMessage::BugReportStored { success, error, .. } => {
                 if !success {
-                    log::error!("WasmNetworkClient: Bug report submission failed: {:?}", error);
+                    log::error!("WasmNetworkClient: Bug report disk write failed: {:?}", error);
                     self.last_error = error;
                 }
             }
+
+            // Phase-2 GitHub issue result is surfaced to the user entirely in the
+            // JS bug-report widget (web/bug_report.js); the WASM client has no
+            // game-state stake in it, so there is nothing to record here.
+            ServerMessage::BugReportIssueResult { .. } => {}
 
             ServerMessage::WaitingForOpponent => {
                 log::info!("WasmNetworkClient: Waiting for opponent");

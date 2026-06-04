@@ -309,6 +309,7 @@ jobs:
         run: |
           cd web
           node test_fancy_tui.js
+          node test_bug_report.js
           node test_human_input.js
           node test_click_and_log.js
           node test_font_size_layout.js

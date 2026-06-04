@@ -942,18 +942,24 @@ async fn run_lobby_dispatch(
                 console_logs,
                 trusted_password,
             } => {
-                let response = submit_bug_report(
-                    config,
-                    BugReportRequest {
-                        description,
-                        game_logs,
-                        console_logs,
-                        trusted_password,
-                    },
-                    None,
-                )
-                .await;
-                send_message(&mut ws_stream, &response).await?;
+                // Two-phase bug report (mtg-5ejgo): flush the disk-write
+                // confirmation IMMEDIATELY, then attempt the (timeout-bounded)
+                // GitHub filing and send its result. The two sends are inlined
+                // rather than wrapped in a single helper because phase 1 must
+                // reach the client BEFORE the phase-2 GitHub await begins — that
+                // ordering is the whole point of the fix.
+                let report = BugReportRequest {
+                    description,
+                    game_logs,
+                    console_logs,
+                    trusted_password,
+                };
+                let stored = store_bug_report(config, &report, None).await;
+                send_message(&mut ws_stream, &bug_report_stored_message(&stored, None)).await?;
+                if let Ok(stored_report) = &stored {
+                    let issue_msg = file_bug_report_issue(&report, stored_report, None).await;
+                    send_message(&mut ws_stream, &issue_msg).await?;
+                }
                 return Ok(());
             }
 
@@ -3161,18 +3167,23 @@ async fn handle_player_websocket(
                                 console_logs,
                                 trusted_password,
                             }) => {
-                                let response = submit_bug_report(
-                                    &server_config,
-                                    BugReportRequest {
-                                        description,
-                                        game_logs,
-                                        console_logs,
-                                        trusted_password,
-                                    },
-                                    Some(conn.player_id),
-                                )
-                                .await;
-                                conn.send(&response).await?;
+                                // Two-phase bug report (mtg-5ejgo): see the lobby
+                                // call site above for why the phase-1 disk
+                                // confirmation and phase-2 GitHub result are sent
+                                // as two separate messages.
+                                let report = BugReportRequest {
+                                    description,
+                                    game_logs,
+                                    console_logs,
+                                    trusted_password,
+                                };
+                                let reporter = Some(conn.player_id);
+                                let stored = store_bug_report(&server_config, &report, reporter).await;
+                                conn.send(&bug_report_stored_message(&stored, reporter)).await?;
+                                if let Ok(stored_report) = &stored {
+                                    let issue_msg = file_bug_report_issue(&report, stored_report, reporter).await;
+                                    conn.send(&issue_msg).await?;
+                                }
                             }
 
                             Ok(ClientMessage::Disconnect) => {
@@ -3789,25 +3800,130 @@ fn create_github_issue_with_runner(
     })
 }
 
-fn bug_report_result_from_github_result(github_result: Result<GitHubIssueOutcome>) -> ServerMessage {
+/// Maximum time the GitHub issue-filing step (phase 2) may run before we give
+/// up and report it as failed. The bug report is already persisted to disk by
+/// this point, so a slow or hung `gh` invocation must NEVER block the user — we
+/// time out and report the GitHub step as failed while the disk copy stays safe
+/// (mtg-5ejgo).
+const GITHUB_ISSUE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Build the phase-1 (`BugReportStored`) message from the disk-write result.
+///
+/// Logging lives here so both WebSocket call sites (lobby + in-game) stay DRY:
+/// each only has to send the returned message.
+fn bug_report_stored_message(stored: &Result<StoredBugReport>, reporter_player_id: Option<PlayerId>) -> ServerMessage {
+    match stored {
+        Ok(stored_report) => {
+            log::info!(
+                "Stored bug report from {:?} in {}",
+                reporter_player_id,
+                stored_report.report_dir.display()
+            );
+            ServerMessage::BugReportStored {
+                success: true,
+                report_dir: Some(stored_report.report_dir.display().to_string()),
+                error: None,
+            }
+        }
+        Err(error) => {
+            log::error!("Bug report disk write failed: {}", error);
+            ServerMessage::BugReportStored {
+                success: false,
+                report_dir: None,
+                error: Some(error.to_string()),
+            }
+        }
+    }
+}
+
+/// Collapse the nested `timeout(spawn_blocking(github))` result into a single
+/// `Result<GitHubIssueOutcome>`, mapping the timeout and task-join failure modes
+/// to descriptive errors.
+fn flatten_github_outcome(
+    outcome: std::result::Result<
+        std::result::Result<Result<GitHubIssueOutcome>, tokio::task::JoinError>,
+        tokio::time::error::Elapsed,
+    >,
+) -> Result<GitHubIssueOutcome> {
+    match outcome {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_error)) => Err(anyhow!("GitHub issue task failed: {join_error}")),
+        Err(_elapsed) => Err(anyhow!(
+            "GitHub issue filing timed out after {} seconds",
+            GITHUB_ISSUE_TIMEOUT.as_secs()
+        )),
+    }
+}
+
+/// Build the phase-2 (`BugReportIssueResult`) message from the GitHub outcome.
+fn bug_report_issue_message(github_result: Result<GitHubIssueOutcome>) -> ServerMessage {
     match github_result {
-        Ok(issue) => ServerMessage::BugReportResult {
-            success: true,
+        Ok(issue) => ServerMessage::BugReportIssueResult {
             issue_url: Some(issue.issue_url),
             error: issue.warning,
         },
         Err(error) => {
             log::warn!("Bug report stored locally, but GitHub issue creation failed: {}", error);
-            ServerMessage::BugReportResult {
-                success: true,
+            ServerMessage::BugReportIssueResult {
                 issue_url: None,
-                error: Some(format!(
-                    "Bug report stored locally, but GitHub issue creation failed: {}",
-                    error
-                )),
+                error: Some(format!("GitHub issue creation failed: {}", error)),
             }
         }
     }
+}
+
+/// Phase 2 of a bug report submission: attempt to file the GitHub issue, bounded
+/// by [`GITHUB_ISSUE_TIMEOUT`], and return the resulting `BugReportIssueResult`
+/// message. The report is already persisted by the caller, so every failure mode
+/// (gh missing, network hang, timeout) resolves to a non-fatal message rather
+/// than blocking. Parameterized over the command `runner` and `timeout` so tests
+/// can simulate a slow or failing `gh` without invoking the real binary.
+async fn file_bug_report_issue_with_runner_and_timeout<R>(
+    runner: R,
+    timeout: std::time::Duration,
+    report: &BugReportRequest,
+    stored_report: &StoredBugReport,
+    reporter_player_id: Option<PlayerId>,
+) -> ServerMessage
+where
+    R: Fn(&[String], &Path) -> std::io::Result<CommandOutput> + Send + 'static,
+{
+    let report_clone = report.clone();
+    let report_dir_clone = stored_report.report_dir.clone();
+    let outcome = tokio::time::timeout(
+        timeout,
+        tokio::task::spawn_blocking(move || {
+            create_github_issue_with_runner(&runner, &report_clone, &report_dir_clone, reporter_player_id)
+        }),
+    )
+    .await;
+
+    let github_result = flatten_github_outcome(outcome);
+    let issue_url = github_result.as_ref().ok().map(|issue| issue.issue_url.clone());
+    maybe_schedule_claude_autofix(
+        report,
+        &stored_report.report_dir,
+        reporter_player_id,
+        stored_report,
+        issue_url.as_deref(),
+    );
+    bug_report_issue_message(github_result)
+}
+
+/// Phase 2 with the production command runner and timeout.
+async fn file_bug_report_issue(
+    report: &BugReportRequest,
+    stored_report: &StoredBugReport,
+    reporter_player_id: Option<PlayerId>,
+) -> ServerMessage {
+    file_bug_report_issue_with_runner_and_timeout(
+        run_command,
+        GITHUB_ISSUE_TIMEOUT,
+        report,
+        stored_report,
+        reporter_player_id,
+    )
+    .await
 }
 
 async fn store_bug_report(
@@ -3833,64 +3949,6 @@ async fn store_bug_report(
     fs::write(report_dir.join("metadata.json"), serde_json::to_vec_pretty(&metadata)?).await?;
 
     Ok(StoredBugReport { report_dir, trusted })
-}
-
-async fn submit_bug_report(
-    config: &ServerConfig,
-    report: BugReportRequest,
-    reporter_player_id: Option<PlayerId>,
-) -> ServerMessage {
-    match store_bug_report(config, &report, reporter_player_id).await {
-        Ok(stored_report) => {
-            log::info!(
-                "Stored bug report from {:?} in {}",
-                reporter_player_id,
-                stored_report.report_dir.display()
-            );
-            let report_clone = report.clone();
-            let report_dir_clone = stored_report.report_dir.clone();
-            let github_result = tokio::task::spawn_blocking(move || {
-                create_github_issue_with_runner(&run_command, &report_clone, &report_dir_clone, reporter_player_id)
-            })
-            .await;
-
-            match github_result {
-                Ok(result) => {
-                    let issue_url = result.as_ref().ok().map(|issue| issue.issue_url.as_str());
-                    maybe_schedule_claude_autofix(
-                        &report,
-                        &stored_report.report_dir,
-                        reporter_player_id,
-                        &stored_report,
-                        issue_url,
-                    );
-                    bug_report_result_from_github_result(result)
-                }
-                Err(error) => {
-                    log::warn!(
-                        "Bug report stored locally, but GitHub integration task failed: {}",
-                        error
-                    );
-                    ServerMessage::BugReportResult {
-                        success: true,
-                        issue_url: None,
-                        error: Some(format!(
-                            "Bug report stored locally, but GitHub integration task failed: {}",
-                            error
-                        )),
-                    }
-                }
-            }
-        }
-        Err(error) => {
-            log::error!("Bug report submission failed: {}", error);
-            ServerMessage::BugReportResult {
-                success: false,
-                issue_url: None,
-                error: Some(error.to_string()),
-            }
-        }
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4261,17 +4319,118 @@ mod tests {
 
     #[test]
     #[allow(clippy::wildcard_enum_match_arm)]
-    fn test_bug_report_result_from_github_error_preserves_local_success() {
-        let response = bug_report_result_from_github_result(Err(anyhow!("gh not found")));
+    fn test_bug_report_issue_message_reports_failure_without_url() {
+        let response = bug_report_issue_message(Err(anyhow!("gh not found")));
         match response {
-            ServerMessage::BugReportResult {
+            ServerMessage::BugReportIssueResult { issue_url, error } => {
+                assert_eq!(issue_url, None);
+                assert!(error.expect("error message").contains("GitHub issue creation failed"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    /// The genuinely-bad case: a failed disk write must report `success: false`
+    /// with the error, so the client's "saved to disk" box shows a failure and
+    /// the user can retry (mtg-5ejgo).
+    #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn test_bug_report_stored_message_reports_disk_failure() {
+        let response = bug_report_stored_message(&Err(anyhow!("disk full")), Some(PlayerId::new(2)));
+        match response {
+            ServerMessage::BugReportStored {
                 success,
-                issue_url,
+                report_dir,
                 error,
             } => {
-                assert!(success);
+                assert!(!success);
+                assert_eq!(report_dir, None);
+                assert!(error.expect("error message").contains("disk full"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    /// A `gh` invocation that returns ENOENT instantly must resolve phase 2 to a
+    /// failure message (no URL) WITHOUT hitting the timeout (mtg-5ejgo).
+    #[tokio::test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    async fn test_file_bug_report_issue_reports_github_failure() {
+        let temp = tempdir().expect("tempdir");
+        let report_dir = temp.path().join("bug_report");
+        stdfs::create_dir_all(&report_dir).expect("report dir");
+        let report = BugReportRequest {
+            description: "Desync after combat".to_string(),
+            game_logs: "game log".to_string(),
+            console_logs: "console log".to_string(),
+            trusted_password: None,
+        };
+        let stored = StoredBugReport {
+            report_dir: report_dir.clone(),
+            trusted: false,
+        };
+        let failing_runner = |_args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            Err(std::io::Error::new(ErrorKind::NotFound, "gh not found"))
+        };
+
+        let response = file_bug_report_issue_with_runner_and_timeout(
+            failing_runner,
+            Duration::from_secs(15),
+            &report,
+            &stored,
+            None,
+        )
+        .await;
+        match response {
+            ServerMessage::BugReportIssueResult { issue_url, error } => {
                 assert_eq!(issue_url, None);
-                assert!(error.expect("error message").contains("stored locally"));
+                assert!(error.expect("error").contains("GitHub issue creation failed"));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    /// A hung `gh` invocation must be bounded by the timeout: phase 2 resolves to
+    /// a "timed out" failure message rather than blocking the user forever
+    /// (mtg-5ejgo). Uses a short timeout + a runner that sleeps past it.
+    #[tokio::test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    async fn test_file_bug_report_issue_times_out_on_slow_gh() {
+        let temp = tempdir().expect("tempdir");
+        let report_dir = temp.path().join("bug_report");
+        stdfs::create_dir_all(&report_dir).expect("report dir");
+        let report = BugReportRequest {
+            description: "Hang repro".to_string(),
+            game_logs: "game log".to_string(),
+            console_logs: "console log".to_string(),
+            trusted_password: None,
+        };
+        let stored = StoredBugReport {
+            report_dir: report_dir.clone(),
+            trusted: false,
+        };
+        // Runner blocks well past the (tiny) timeout to simulate a hung gh.
+        let slow_runner = |_args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
+            std::thread::sleep(Duration::from_millis(400));
+            Ok(CommandOutput {
+                success: true,
+                stdout: "https://github.com/example/repo/issues/1\n".to_string(),
+                stderr: String::new(),
+            })
+        };
+
+        let response = file_bug_report_issue_with_runner_and_timeout(
+            slow_runner,
+            Duration::from_millis(50),
+            &report,
+            &stored,
+            None,
+        )
+        .await;
+        match response {
+            ServerMessage::BugReportIssueResult { issue_url, error } => {
+                assert_eq!(issue_url, None);
+                assert!(error.expect("error").contains("timed out"));
             }
             other => panic!("unexpected response: {other:?}"),
         }

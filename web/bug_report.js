@@ -23,8 +23,10 @@
  *     getMode?: () => string,
  *   }
  *
- * The network client is expected to expose `isConnected()`, `send(json)`, and a
- * settable `onBugReportResult` callback (see web/network.js).
+ * The network client is expected to expose `isConnected()`, `send(json)`, and
+ * the two settable two-phase callbacks `onBugReportStored` (phase 1: disk-write
+ * confirmation) and `onBugReportIssueResult` (phase 2: GitHub issue outcome) —
+ * see web/network.js and mtg-5ejgo.
  */
 
 const MAX_CONSOLE_LINES = 500;
@@ -147,6 +149,17 @@ const BUG_REPORT_CSS = `
             background: none; margin: 8px 0 14px; padding: 0; text-align: left; color: #ff8f8f;
         }
         #bug-report-status a { color: #4cc9f0; text-decoration: underline; }
+        #bug-report-progress { display: flex; flex-direction: column; gap: 8px; }
+        .bug-report-check-row {
+            display: flex; align-items: baseline; gap: 8px;
+            color: #dfe7f5; font-size: 13px; line-height: 1.4; flex-wrap: wrap;
+        }
+        .bug-report-check-icon { font-size: 15px; min-width: 18px; }
+        .bug-report-check-row[data-state="pending"] { color: #9fb3d1; }
+        .bug-report-check-row[data-state="ok"] .bug-report-check-icon { color: #4ade80; }
+        .bug-report-check-row[data-state="fail"] { color: #ff8f8f; }
+        .bug-report-check-row[data-state="unknown"] { color: #f4c453; }
+        .bug-report-check-detail { width: 100%; color: #9fb3d1; font-size: 12px; margin-left: 26px; }
         #bug-report-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
         .bug-report-button {
             border: none; border-radius: 8px; padding: 10px 16px; cursor: pointer;
@@ -234,6 +247,25 @@ export function initBugReport(config) {
     // by tests that inject a mock transport, and by pages whose client variable
     // the module cannot reassign). Falls back to the page-provided getter.
     let activeClient = null;
+
+    // Two-phase submission state (mtg-5ejgo). The widget shows two checkboxes —
+    // "saved to disk" (phase 1) and "filed on GitHub" (phase 2) — and is
+    // "finalized" once the flow reaches a terminal state, after which Submit is
+    // permanently disabled ("Already submitted") so the user cannot double-file.
+    let bugReportFinalized = false;
+    let backstopHandle = null;
+    // Each phase is one of: 'pending' | 'ok' | 'fail' | 'unknown'.
+    let progressState = { disk: 'pending', diskError: null, github: 'pending', githubUrl: null, githubError: null };
+
+    // Client-side timeout backstop: if the server's phase-2 message (or any
+    // message) never arrives, the client resolves the pending box(es) to an
+    // "unknown — report saved" state and finalizes the button, so a dropped or
+    // late response can NEVER leave a forever-spinner. Overridable for tests.
+    const DEFAULT_BACKSTOP_MS = 18000;
+    function backstopMs() {
+        const override = Number(window.__bugReportBackstopMs);
+        return Number.isFinite(override) && override > 0 ? override : DEFAULT_BACKSTOP_MS;
+    }
 
     function currentClient() {
         return activeClient || (typeof getNetworkClient === 'function' ? getNetworkClient() : null);
@@ -326,7 +358,10 @@ export function initBugReport(config) {
     // mtg-596: reflect the live WS state on the open dialog — disable Submit and
     // show a persistent inline banner up front when there is no connection.
     function applyConnectionState() {
-        if (bugReportSubmitting) {
+        // While a submission is in flight (or finalized) the connection poll must
+        // not touch the Submit button or status area — the progress checkboxes
+        // and finalize logic own them (mtg-5ejgo).
+        if (bugReportSubmitting || bugReportFinalized) {
             return;
         }
         const submitButton = document.getElementById('btn-bug-report-submit');
@@ -362,6 +397,9 @@ export function initBugReport(config) {
 
     function openModal() {
         refreshCaptureCounts();
+        // Every open starts a fresh report: clear any finalized/progress state
+        // from a previous submission so the two checkboxes reset (mtg-5ejgo).
+        resetSubmissionState();
         setStatus('');
         setSubmitting(false);
         document.getElementById('bug-report-overlay').classList.add('show');
@@ -378,7 +416,10 @@ export function initBugReport(config) {
     }
 
     function closeModal({ resetStatus = true } = {}) {
-        if (bugReportSubmitting) {
+        // A submission in flight (phase 1 sent, awaiting phase 2 or the backstop)
+        // keeps the modal open so the user sees the outcome. Once finalized the
+        // modal is freely closable (mtg-5ejgo).
+        if (bugReportSubmitting && !bugReportFinalized) {
             return;
         }
         stopConnectionPolling();
@@ -441,32 +482,210 @@ export function initBugReport(config) {
         }
 
         try {
-            setStatus('Submitting bug report to server...');
             client.send(JSON.stringify(message));
+            // Two-phase UX (mtg-5ejgo): the report is now in flight. Show the two
+            // checkboxes and arm the client-side backstop. The Submit button stays
+            // disabled until the flow finalizes.
+            startSubmissionProgress();
         } catch (error) {
             setSubmitting(false);
             setStatus(`Failed to send bug report: ${error.message}`, { isError: true });
         }
     }
 
-    function handleResult(result) {
-        window.lastBugReportResult = result;
-        setSubmitting(false);
+    // ---- Two-phase progress state machine (mtg-5ejgo) ------------------------
 
-        if (!result?.success) {
-            setStatus(result?.error || 'Bug report submission failed.', { isError: true });
+    const CHECK_GLYPHS = { pending: '☐', ok: '☑', fail: '✗', unknown: '⚠' };
+
+    function clearBackstop() {
+        if (backstopHandle) {
+            clearTimeout(backstopHandle);
+            backstopHandle = null;
+        }
+    }
+
+    function resetSubmissionState() {
+        clearBackstop();
+        bugReportFinalized = false;
+        bugReportSubmitting = false;
+        progressState = { disk: 'pending', diskError: null, github: 'pending', githubUrl: null, githubError: null };
+        const submitButton = document.getElementById('btn-bug-report-submit');
+        const cancelButton = document.getElementById('btn-bug-report-cancel');
+        if (submitButton) {
+            submitButton.textContent = 'Submit';
+        }
+        if (cancelButton) {
+            cancelButton.textContent = 'Cancel';
+            cancelButton.disabled = false;
+        }
+    }
+
+    function buildCheckRow(id, state, label) {
+        const row = document.createElement('div');
+        row.id = id;
+        row.className = 'bug-report-check-row';
+        row.dataset.state = state;
+        const icon = document.createElement('span');
+        icon.className = 'bug-report-check-icon';
+        icon.textContent = CHECK_GLYPHS[state] || CHECK_GLYPHS.pending;
+        row.appendChild(icon);
+        row.appendChild(document.createTextNode(` ${label}`));
+        return row;
+    }
+
+    function renderProgress() {
+        const status = document.getElementById('bug-report-status');
+        if (!status) {
             return;
         }
+        delete status.dataset.precheckBanner;
+        status.classList.remove('error');
+        status.innerHTML = '';
 
-        document.getElementById('bug-report-description').value = '';
-        document.getElementById('bug-report-password').value = '';
-        refreshCaptureCounts();
+        const container = document.createElement('div');
+        container.id = 'bug-report-progress';
 
-        if (result.issue_url) {
-            setStatus('Bug report filed:', { issueUrl: result.issue_url });
-        } else {
-            setStatus('Bug report saved locally');
+        const diskLabels = {
+            pending: 'Saving bug report to disk…',
+            ok: 'Bug report saved to disk',
+            fail: `Save to disk failed: ${progressState.diskError || 'unknown error'}`,
+            unknown: 'Save-to-disk status unknown',
+        };
+        container.appendChild(buildCheckRow('bug-report-check-disk', progressState.disk, diskLabels[progressState.disk]));
+
+        const githubLabels = {
+            pending: 'Filing bug report on GitHub…',
+            ok: 'Bug report filed on GitHub:',
+            fail: 'GitHub filing failed — report saved',
+            unknown: 'GitHub filing status unknown — report saved',
+        };
+        const githubRow = buildCheckRow('bug-report-check-github', progressState.github, githubLabels[progressState.github]);
+        if (progressState.github === 'ok' && progressState.githubUrl) {
+            githubRow.appendChild(document.createTextNode(' '));
+            const link = document.createElement('a');
+            link.href = progressState.githubUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = progressState.githubUrl;
+            githubRow.appendChild(link);
         }
+        if (progressState.github === 'fail' && progressState.githubError) {
+            const detail = document.createElement('div');
+            detail.className = 'bug-report-check-detail';
+            detail.textContent = progressState.githubError;
+            githubRow.appendChild(detail);
+        }
+        container.appendChild(githubRow);
+        status.appendChild(container);
+    }
+
+    function startSubmissionProgress() {
+        bugReportSubmitting = true;
+        bugReportFinalized = false;
+        progressState = { disk: 'pending', diskError: null, github: 'pending', githubUrl: null, githubError: null };
+        const submitButton = document.getElementById('btn-bug-report-submit');
+        const cancelButton = document.getElementById('btn-bug-report-cancel');
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.textContent = 'Submitting…';
+        }
+        // Allow the user to close the window while waiting; the backstop still
+        // resolves the boxes in the background.
+        if (cancelButton) {
+            cancelButton.disabled = false;
+        }
+        renderProgress();
+        clearBackstop();
+        backstopHandle = setTimeout(() => {
+            if (bugReportFinalized) {
+                return;
+            }
+            if (progressState.disk === 'pending') {
+                progressState.disk = 'unknown';
+            }
+            if (progressState.github === 'pending') {
+                progressState.github = 'unknown';
+            }
+            renderProgress();
+            finalizeSubmission();
+        }, backstopMs());
+    }
+
+    function restoreEditableControls() {
+        bugReportSubmitting = false;
+        const submitButton = document.getElementById('btn-bug-report-submit');
+        const cancelButton = document.getElementById('btn-bug-report-cancel');
+        if (submitButton) {
+            submitButton.textContent = 'Submit';
+            submitButton.disabled = !isConnectionReady();
+        }
+        if (cancelButton) {
+            cancelButton.disabled = false;
+        }
+    }
+
+    function finalizeSubmission() {
+        clearBackstop();
+        bugReportFinalized = true;
+        bugReportSubmitting = false;
+        stopConnectionPolling();
+        const submitButton = document.getElementById('btn-bug-report-submit');
+        const cancelButton = document.getElementById('btn-bug-report-cancel');
+        if (submitButton) {
+            submitButton.disabled = true;
+            submitButton.textContent = 'Already submitted';
+        }
+        if (cancelButton) {
+            cancelButton.disabled = false;
+            cancelButton.textContent = 'Close';
+        }
+        // The report is saved (or the user has been told its status); clear the
+        // draft fields so a reopen starts fresh.
+        const descriptionEl = document.getElementById('bug-report-description');
+        const passwordEl = document.getElementById('bug-report-password');
+        if (descriptionEl) {
+            descriptionEl.value = '';
+        }
+        if (passwordEl) {
+            passwordEl.value = '';
+        }
+        refreshCaptureCounts();
+    }
+
+    // Phase 1: the server confirms (or reports failure of) the disk write.
+    function handleStored(message) {
+        window.lastBugReportStored = message;
+        if (message?.success) {
+            progressState.disk = 'ok';
+            renderProgress();
+            return;
+        }
+        // Disk write failed — the genuinely-bad case. Show the error on box 1 and
+        // let the user retry: stop the backstop and re-enable Submit. We do NOT
+        // finalize, because the report was NOT saved.
+        progressState.disk = 'fail';
+        progressState.diskError = message?.error || 'The server failed to save the bug report.';
+        clearBackstop();
+        renderProgress();
+        restoreEditableControls();
+    }
+
+    // Phase 2: the server reports the GitHub issue outcome (link, failure, or
+    // timeout). Either way the report is already saved, so we finalize.
+    function handleIssueResult(message) {
+        window.lastBugReportIssueResult = message;
+        if (bugReportFinalized) {
+            return;
+        }
+        if (message?.issue_url) {
+            progressState.github = 'ok';
+            progressState.githubUrl = message.issue_url;
+        } else {
+            progressState.github = 'fail';
+            progressState.githubError = message?.error || null;
+        }
+        renderProgress();
+        finalizeSubmission();
     }
 
     // Wire the network client's result callback (re-wire whenever the page
@@ -474,7 +693,8 @@ export function initBugReport(config) {
     function wireNetworkClient(client) {
         activeClient = client || null;
         if (client) {
-            client.onBugReportResult = handleResult;
+            client.onBugReportStored = handleStored;
+            client.onBugReportIssueResult = handleIssueResult;
         }
         return client;
     }
@@ -495,13 +715,15 @@ export function initBugReport(config) {
         openModal,
         closeModal,
         submitDraft,
-        handleResult,
+        handleStored,
+        handleIssueResult,
         wireNetworkClient,
         refreshCaptureCounts,
         applyConnectionState,
         setStatus,
         setSubmitting,
         isSubmitting: () => bugReportSubmitting,
+        isFinalized: () => bugReportFinalized,
     };
     window.__bugReportTestHelpers = {
         setNetworkClient(client) {
@@ -509,8 +731,11 @@ export function initBugReport(config) {
             window.__bugReportTestTransport = wired;
             return wired;
         },
-        handleResult(result) {
-            handleResult(result);
+        handleStored(message) {
+            handleStored(message);
+        },
+        handleIssueResult(message) {
+            handleIssueResult(message);
         },
     };
     return api;

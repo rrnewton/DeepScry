@@ -279,7 +279,7 @@ validate-wasm-step:
 validate-wasm-e2e-step: validate-wasm-step
 	@echo "=== Running WASM e2e tests ==="
 	@cd web && $(NPM) install --silent 2>/dev/null
-	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js && $(NODE) test_cdn_image_table.js && $(NODE) test_image_flicker_memo.js && $(NODE) test_aura_render.js
+	@cd web && $(NODE) test_fancy_tui.js && $(NODE) test_bug_report.js && $(NODE) test_human_input.js && $(NODE) test_click_and_log.js && $(NODE) test_font_size_layout.js && $(NODE) test_decouple_step3_launch_game_session.js && $(NODE) test_card_size_stability.js && $(NODE) test_battlefield_layout.js && $(NODE) test_decouple_step6_valid_choices.js && $(NODE) test_tapped_rotation.js && $(NODE) test_graveyard_overlay.js && $(NODE) test_deck_editor.js && $(NODE) test_cdn_image_table.js && $(NODE) test_image_flicker_memo.js && $(NODE) test_aura_render.js
 	@echo "=== Running bounded native-vs-WASM equivalence sweep (STRICT) ==="
 	@cargo build --release --bin mtg --features network
 	@echo "    Hermetic: local WASM bundle (built by validate-wasm-step) + headless"

@@ -428,13 +428,29 @@ pub enum ServerMessage {
         your_name: Option<String>,
     },
 
-    /// Result of a bug report submission
-    BugReportResult {
-        /// Whether the report was accepted and stored
+    /// Phase-1 result of a bug report submission: the outcome of the server-side
+    /// disk write, sent IMMEDIATELY after persistence is attempted and BEFORE any
+    /// GitHub issue filing. This lets the client confirm the report is safely
+    /// stored without waiting on a slow or unreachable GitHub (mtg-5ejgo).
+    BugReportStored {
+        /// Whether the report was successfully written to the server's disk.
         success: bool,
-        /// Future-facing issue URL if the report was escalated automatically
+        /// Server-side directory the report was stored in (informational), when
+        /// the write succeeded.
+        report_dir: Option<String>,
+        /// Error message if the disk write failed (the genuinely-bad case).
+        error: Option<String>,
+    },
+
+    /// Phase-2 result of a bug report submission: the outcome of the GitHub
+    /// issue-filing step, sent AFTER the (timeout-bounded) GitHub attempt
+    /// completes. The report is already persisted by this point, so any failure
+    /// here is non-fatal — the client surfaces it without ever spinning forever
+    /// (mtg-5ejgo).
+    BugReportIssueResult {
+        /// URL of the filed GitHub issue, when filing succeeded.
         issue_url: Option<String>,
-        /// Error message if submission failed
+        /// Error / timeout message when filing did not produce an issue URL.
         error: Option<String>,
     },
 
@@ -1634,6 +1650,49 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::wildcard_enum_match_arm)]
+    fn test_bug_report_two_phase_message_serialization() {
+        // Phase 1: disk-write confirmation.
+        let stored = ServerMessage::BugReportStored {
+            success: true,
+            report_dir: Some("bug_reports/1780537595823".to_string()),
+            error: None,
+        };
+        let json = serde_json::to_string(&stored).expect("serialize stored");
+        assert!(json.contains("bug_report_stored"), "tag should be snake_case: {json}");
+        match serde_json::from_str::<ServerMessage>(&json).expect("deserialize stored") {
+            ServerMessage::BugReportStored {
+                success,
+                report_dir,
+                error,
+            } => {
+                assert!(success);
+                assert_eq!(report_dir.as_deref(), Some("bug_reports/1780537595823"));
+                assert_eq!(error, None);
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+
+        // Phase 2: GitHub issue result (failure case keeps a reason without a URL).
+        let issue = ServerMessage::BugReportIssueResult {
+            issue_url: None,
+            error: Some("GitHub issue filing timed out after 15 seconds".to_string()),
+        };
+        let json = serde_json::to_string(&issue).expect("serialize issue");
+        assert!(
+            json.contains("bug_report_issue_result"),
+            "tag should be snake_case: {json}"
+        );
+        match serde_json::from_str::<ServerMessage>(&json).expect("deserialize issue") {
+            ServerMessage::BugReportIssueResult { issue_url, error } => {
+                assert_eq!(issue_url, None);
+                assert!(error.expect("error message").contains("timed out"));
+            }
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    #[test]
     #[allow(clippy::wildcard_enum_match_arm)] // Test panic branch
     fn test_server_message_serialization() {
         let msg = ServerMessage::ChoiceRequest {
@@ -1745,9 +1804,13 @@ mod tests {
                 your_player_id: None,
                 your_name: None,
             },
-            ServerMessage::BugReportResult {
+            ServerMessage::BugReportStored {
                 success: true,
-                issue_url: None,
+                report_dir: Some("bug_reports/1700000000000".to_string()),
+                error: None,
+            },
+            ServerMessage::BugReportIssueResult {
+                issue_url: Some("https://github.com/example/repo/issues/7".to_string()),
                 error: None,
             },
             ServerMessage::WaitingForOpponent,

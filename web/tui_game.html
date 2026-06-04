@@ -2300,8 +2300,9 @@
             if (bugReportController) {
                 return bugReportController.wireNetworkClient(client);
             }
-            // Controller not yet initialized; result callback gets wired when
-            // initBugReport runs (it sets onBugReportResult via wireNetworkClient).
+            // Controller not yet initialized; result callbacks get wired when
+            // initBugReport runs (it sets onBugReportStored/onBugReportIssueResult
+            // via wireNetworkClient).
             return client;
         }
 
@@ -2622,13 +2623,15 @@
         function openBugReportModal() { bugReportController?.openModal(); }
         function closeBugReportModal(opts) { bugReportController?.closeModal(opts); }
         function submitBugReportDraft() { bugReportController?.submitDraft(); }
-        function handleBugReportResult(result) { bugReportController?.handleResult(result); }
+        function handleBugReportStored(message) { bugReportController?.handleStored(message); }
+        function handleBugReportIssueResult(message) { bugReportController?.handleIssueResult(message); }
         function setBugReportStatus(message, opts) { bugReportController?.setStatus(message, opts); }
         function setBugReportSubmitting(isSubmitting) { bugReportController?.setSubmitting(isSubmitting); }
         function resetBugReportUi() {
             bugReportController?.closeModal();
             delete window.lastBugReportDraft;
-            delete window.lastBugReportResult;
+            delete window.lastBugReportStored;
+            delete window.lastBugReportIssueResult;
             delete window.lastBugReportSubmissionMessage;
             bugReportController?.refreshCaptureCounts();
         }
