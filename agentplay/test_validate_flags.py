@@ -72,6 +72,33 @@ def test_no_wasm_e2e_disables_all_browser_and_wasm_build():
             assert d not in disabled, f"{s.tag} depends on disabled {d}"
 
 
+def test_start_utilization_does_not_hang():
+    """Regression: _start_utilization runs the prehook, which backgrounds a
+    disowned infinite sampler. If that sampler inherits a PIPE (capture_output),
+    the pipe never EOFs and the call hangs for the whole validate run. Must
+    return PROMPTLY (temp-file capture + sampler fds -> /dev/null), and the
+    sampler must be reapable. Pins the bug that hung `make validate` ~25 min."""
+    import os
+    import threading
+    if not (Path(__file__).resolve().parent.parent / "scripts" / "utilization_prehook.sh").exists():
+        return  # hooks optional
+    result = {}
+
+    def go():
+        result["mon"] = validate._start_utilization()
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    t.join(timeout=15)
+    assert not t.is_alive(), "HANG: _start_utilization did not return within 15s"
+    mon = result.get("mon")
+    try:
+        assert mon and mon.get("pid") and mon.get("stats"), "missing pid/stats"
+        os.kill(int(mon["pid"]), 0)  # sampler alive
+    finally:
+        if mon:
+            validate._stop_utilization(mon)  # always reap, even on assert failure
+
+
 def test_no_network_disables_only_network_group():
     steps, disabled = _disabled_for(no_network=True)
     for s in steps:

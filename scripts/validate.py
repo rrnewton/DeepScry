@@ -810,15 +810,37 @@ def _release_lock():
 
 
 def _start_utilization():
-    """Run the prehook (executed, not sourced) — it backgrounds a disowned
-    sampler that survives the subprocess — and parse its PID + stats file."""
+    """Run the prehook (executed, not sourced) — it backgrounds a DISOWNED,
+    long-lived sampler subshell — and parse its PID + stats file.
+
+    CRITICAL: do NOT use capture_output/PIPE here. The sampler subshell is an
+    infinite loop that INHERITS the prehook's stdout/stderr; if those are PIPEs,
+    the pipe never EOFs (the sampler holds the write-end forever) and
+    subprocess.run() HANGS for the whole validate run. We capture the prehook's
+    short banner to a TEMP FILE instead (a file fd can't block the parent) and
+    send stderr to DEVNULL. (The prehook ALSO redirects the sampler's own fds to
+    /dev/null as defense-in-depth.) The prehook parent exits promptly; the
+    disowned sampler keeps running with only harmless file/null fds."""
     pre = SCRIPTS_DIR / "utilization_prehook.sh"
     if not pre.exists():
         return None
-    r = subprocess.run(["bash", str(pre)], cwd=PROJECT_DIR, capture_output=True, text=True)
-    sys.stdout.write(r.stdout)
+    import tempfile
+    fd, banner_path = tempfile.mkstemp(prefix="util_prehook_", suffix=".out")
+    try:
+        with os.fdopen(fd, "w") as outf:
+            # stdout -> file (not PIPE), stderr -> DEVNULL: subprocess.run waits
+            # only for the prehook PARENT to exit, never for a pipe the sampler holds.
+            subprocess.run(["bash", str(pre)], cwd=PROJECT_DIR,
+                           stdout=outf, stderr=subprocess.DEVNULL)
+        banner = open(banner_path).read()
+    finally:
+        try:
+            os.unlink(banner_path)
+        except OSError:
+            pass
+    sys.stdout.write(banner)
     pid = stats = None
-    for line in r.stdout.splitlines():
+    for line in banner.splitlines():
         if "PID:" in line:
             pid = line.split("PID:")[1].strip().rstrip(")").strip()
         elif line.startswith("Stats file:"):

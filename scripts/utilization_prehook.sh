@@ -75,7 +75,12 @@ export UTIL_START_TIME
             sleep "$SAMPLE_INTERVAL"
         done
     fi
-) &
+# mtg-717: redirect the sampler subshell's OWN std fds to /dev/null. It is a
+# long-lived disowned loop; if it inherited the caller's stdout/stderr (e.g. a
+# PIPE when validate.py runs this via subprocess) it would hold that pipe open
+# forever and hang the caller. The sampler only ever writes to $UTIL_STATS_FILE,
+# never to stdout/stderr, so /dev/null loses nothing.
+) >/dev/null 2>&1 </dev/null &
 
 UTIL_MONITOR_PID=$!
 export UTIL_MONITOR_PID
