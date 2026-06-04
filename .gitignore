@@ -106,6 +106,10 @@ web/*_test_results.json
 # See CLAUDE.md section "Debugging Scripts and Temporary Files"
 debug/
 
+# Scratch directory for loose binaries, profiler data, and transient
+# investigation captures (e.g. flake-repro logs). Local-only, never tracked.
+scratch/
+
 # Downloaded card images (large, local-only)
 # Downloaded by `mtg download` command
 images/
