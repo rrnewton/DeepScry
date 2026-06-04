@@ -827,14 +827,20 @@ async function startSelfManagedServers() {
     }
     const httpPort = await pickPort();
     const mtgPort = await pickPort();
+    // mtg-717: http.server logs EVERY request (and every 404) to stderr. If we
+    // leave its stdout/stderr as undrained 'pipe's, the 64KB OS pipe buffer
+    // fills after a few hundred requests, the server BLOCKS on its next log
+    // write, and stops serving — a later scenario's `GET /` then never responds
+    // and page.goto hangs until timeout (this was the network-redo scenario-13
+    // hang in CI: deterministic past ~800 requests, masked locally only because
+    // the suite finishes just before the buffer fills). We don't read these
+    // streams, so 'ignore' (route to /dev/null) removes the deadlock entirely.
     const httpProc = spawn('python3', ['-m', 'http.server', String(httpPort)], {
-        cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: __dirname, stdio: 'ignore',
     });
     const mtgProc = spawn(mtgBinary, ['server', '--port', String(mtgPort)], {
-        cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: projectRoot, stdio: 'ignore',
     });
-    // Surface server stderr in case of crash; quiet on normal info logs.
-    mtgProc.stderr.on('data', (d) => { /* swallow info */ });
     const httpOk = await waitForTcp(httpPort, '127.0.0.1', 10000);
     const mtgOk = await waitForTcp(mtgPort, '127.0.0.1', 10000);
     if (!httpOk) throw new Error('http.server failed to start on port ' + httpPort);
