@@ -3144,30 +3144,28 @@ async fn handle_player_websocket(
                             conn.player_id, choice_seq
                         );
 
-                        // If this was a library search, reveal the chosen card BEFORE ChoiceAccepted
-                        // The player searched their OWN library, so send real reveal with name
-                        if let Some(card_id) = library_search_result {
-                            let game_guard = game.lock().await;
-                            if let Some(card) = game_guard.cards.try_get(card_id) {
-                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
-                                let card_reveal = CardReveal {
-                                    card_id,
-                                    name: card.name.to_string(),
-                                    card_def,
-                                };
-                                log::debug!(
-                                    "Handler P{}: Sending CardRevealed for library search result {} ({})",
-                                    conn.player_id, card_id, card_reveal.name
-                                );
-                                conn.send(&ServerMessage::CardRevealed {
-                                    owner: conn.player_id,
-                                    card: card_reveal,
-                                    reason: RevealReason::Searched,
-                                    // mtg-610: bundled with this ChoiceAccepted.
-                                    action_count: Some(action_count),
-                                }).await?;
-                            }
-                        }
+                        // mtg-o99ow Phase 2: do NOT eagerly re-reveal the found card here.
+                        //
+                        // The own-library search found card is ALREADY delivered to the
+                        // recipient by `collect_reveals_since_last_choice` at its TRUE
+                        // resolution `action_count` (the undo-log position of the
+                        // RevealCard logged when `move_card` lifts it Library->hand),
+                        // via the generic reveals flush above (server.rs ~2933) for the
+                        // eager native path and via `assemble_choice_buffer` path (1) for
+                        // the buffer path. Re-emitting it HERE stamped it at the
+                        // search-CHOICE `action_count` instead — the SAME ac as the
+                        // `SearchCandidates` delta — which is a two-distinct-deltas-at-one-ac
+                        // protocol desync (WASM strict log panics; native synthetic log
+                        // mis-applies -> found card never reaches hand -> off-by-one).
+                        //
+                        // Re-stamping it at the resolution ac HERE is impossible: at
+                        // ChoiceAccepted-forward time the move has not executed yet, so the
+                        // RevealCard does not exist in the undo log (the layer-4 re-stamp
+                        // impossibility, proven for the opponent path; identical here).
+                        // The CardId the searcher needs to move the right instance still
+                        // travels in ChoiceAccepted.library_search_result (below); the card
+                        // DATA is already known to the searcher via SearchCandidates.
+                        let _ = library_search_result;
 
                         conn.send(&ServerMessage::ChoiceAccepted {
                             choice_seq,
@@ -3596,6 +3594,7 @@ fn assemble_choice_buffer(
 
     // Stable sort: same-ac Choice facts keep their choice_seq emission order.
     buffer.sort_by_key(|(ac, _)| *ac);
+
     buffer
 }
 
