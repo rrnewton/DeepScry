@@ -20,6 +20,7 @@
 //!
 //! RED-first: before the fix `shadow_count == 0` while `golden_count == n`.
 
+use crate::core::effects::{Effect, TargetRestriction};
 use crate::core::{Card, CardId, PlayerId};
 use crate::game::GameState;
 use crate::zones::Zone;
@@ -88,6 +89,168 @@ fn shadow_counts_reserved_opponent_hand_matches_golden_mb668_r1() {
 #[test]
 fn shadow_counts_reserved_opponent_library_matches_golden_mb668_r1() {
     assert_shadow_matches_golden(Zone::Library);
+}
+
+// ===========================================================================
+// mtg-mb668 CLASS-A seed-2 (TIMETWISTER): full mass-shuffle + draw lockstep.
+//
+// Timetwister (card 55) resolves as
+//   `Effect::ChangeZoneAll { origins: [Hand, Graveyard], destination: Library,
+//    shuffle: true }`  followed by each player drawing 7.
+//
+// On a SHADOW game the OPPONENT's hidden Hand + Library cards are reserved
+// (instance-less) CardIds. For byte-for-byte server<->shadow lockstep the shadow
+// resolution MUST, for EVERY player including the opponent:
+//   (a) move the reserved Hand + Graveyard cards into the Library so the library
+//       COUNT matches the server (no branch-on-absence dropping reserved ids),
+//   (b) consume the SAME shuffle RNG (count-based; depends on (a) being exact),
+//   (c) draw the SAME number of cards, leaving the SAME residual library counts.
+//
+// If any reserved card is silently skipped, the shadow library is short, the
+// shuffle advances the ChaCha12 RNG by a different amount, and every later
+// shuffle / draw on the shadow desyncs from the server (mtg-725 anti-pattern).
+//
+// GOLDEN = the SERVER's view: every card in every zone is a real instance.
+// SHADOW = a viewer's client: P0 (the viewer) is fully real, P1 (the opponent)
+// has its Hand + Graveyard + Library as reserved instance-less ids.
+// ===========================================================================
+
+/// Per-player zone population used to build both the golden and shadow games
+/// identically (same ids, same counts) so any divergence is purely the
+/// shadow's reserved-id handling.
+struct Setup {
+    hand: u32,
+    graveyard: u32,
+    library: u32,
+}
+
+const VIEWER_BASE: u32 = 4000;
+const OPP_BASE: u32 = 5000;
+
+fn populate_player(game: &mut GameState, player: PlayerId, base: u32, s: &Setup, real: bool) {
+    let mut next = base;
+    let add = |game: &mut GameState, zone: Zone, count: u32, next: &mut u32| {
+        for _ in 0..count {
+            let id = CardId::new(*next);
+            *next += 1;
+            if real {
+                let card = Card::new(id, "Forest".to_string(), player);
+                game.cards.insert(id, card);
+            }
+            add_to_zone(game, player, zone, id);
+        }
+    };
+    add(game, Zone::Hand, s.hand, &mut next);
+    add(game, Zone::Graveyard, s.graveyard, &mut next);
+    add(game, Zone::Library, s.library, &mut next);
+}
+
+/// Build a two-player game. `opp_reserved` controls whether the opponent (P1)
+/// gets real instances (golden / server) or reserved instance-less ids (shadow).
+fn build_timetwister_game(viewer: &Setup, opponent: &Setup, opp_reserved: bool) -> (GameState, PlayerId, PlayerId) {
+    let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+    if opp_reserved {
+        game.set_shadow_game(true);
+    }
+    let p0 = game.players.first().unwrap().id;
+    let p1 = game.players.get(1).unwrap().id;
+    // Viewer (P0) is always real — even on the shadow the viewer sees its own
+    // cards as concrete instances.
+    populate_player(&mut game, p0, VIEWER_BASE, viewer, true);
+    // Opponent (P1) is real on the golden, reserved on the shadow.
+    populate_player(&mut game, p1, OPP_BASE, opponent, !opp_reserved);
+    (game, p0, p1)
+}
+
+fn library_len(game: &GameState, player: PlayerId) -> usize {
+    game.get_player_zones(player)
+        .map(|z| z.library.cards.len())
+        .unwrap_or(0)
+}
+
+/// Execute the Timetwister effect + draw 7 each, returning the post-resolution
+/// observables that MUST match server<->shadow:
+///   (per-player library len after move, viewer's drawn ids, rng state after).
+fn resolve_timetwister(
+    game: &mut GameState,
+    p0: PlayerId,
+    p1: PlayerId,
+) -> (usize, usize, Vec<CardId>, Option<smallvec::SmallVec<[u8; 64]>>) {
+    let effect = Effect::ChangeZoneAll {
+        restriction: TargetRestriction::any(),
+        origins: smallvec::smallvec![Zone::Hand, Zone::Graveyard],
+        destination: Zone::Library,
+        shuffle: true,
+    };
+    game.execute_effect(&effect).expect("ChangeZoneAll resolves");
+
+    let lib0_after_move = library_len(game, p0);
+    let lib1_after_move = library_len(game, p1);
+
+    // Each player draws 7 (Timetwister's tail). The viewer's draws are real
+    // ids whose identity must match the server byte-for-byte.
+    let mut viewer_drawn = Vec::new();
+    for _ in 0..7 {
+        if let (Some(c), _) = game.draw_card(p0).expect("p0 draw") {
+            viewer_drawn.push(c);
+        }
+    }
+    for _ in 0..7 {
+        let _ = game.draw_card(p1).expect("p1 draw");
+    }
+
+    let _ = (lib0_after_move, lib1_after_move);
+    let rng_after = game.capture_rng_state();
+    (lib0_after_move, lib1_after_move, viewer_drawn, rng_after)
+}
+
+/// The lockstep oracle: golden (server) and shadow (client) resolve the SAME
+/// Timetwister and MUST agree on every server-observable lockstep quantity.
+/// RED before the reserved-id mass-move fix; GREEN after.
+#[test]
+fn shadow_timetwister_mass_shuffle_draw_matches_golden_mb668_seed2() {
+    // Mirror seed-2's pre-Timetwister shape (P0 lib 58 / P1 lib 59 after move,
+    // then -7 each from the draws). Exact numbers don't matter for lockstep —
+    // only that golden and shadow agree.
+    let viewer = Setup {
+        hand: 5,
+        graveyard: 5,
+        library: 48,
+    };
+    let opponent = Setup {
+        hand: 6,
+        graveyard: 5,
+        library: 48,
+    };
+
+    let (mut golden, gp0, gp1) = build_timetwister_game(&viewer, &opponent, false);
+    let (g_lib0, g_lib1, g_drawn, g_rng) = resolve_timetwister(&mut golden, gp0, gp1);
+
+    let (mut shadow, sp0, sp1) = build_timetwister_game(&viewer, &opponent, true);
+    let (s_lib0, s_lib1, s_drawn, s_rng) = resolve_timetwister(&mut shadow, sp0, sp1);
+
+    assert_eq!(
+        s_lib0, g_lib0,
+        "mtg-mb668 seed-2: VIEWER library count after Timetwister mass-move must \
+         match the server (viewer is real on both, sanity check)"
+    );
+    assert_eq!(
+        s_lib1, g_lib1,
+        "mtg-mb668 seed-2: OPPONENT library count after Timetwister mass-move must \
+         match the server — the reserved opponent Hand+Graveyard cards MUST move \
+         into the library; branch-on-absence (try_get=None) must NOT drop them"
+    );
+    assert_eq!(
+        s_drawn, g_drawn,
+        "mtg-mb668 seed-2: the VIEWER's drawn cards must byte-match the server — a \
+         short opponent library desyncs the shuffle RNG and changes the draw order"
+    );
+    assert_eq!(
+        s_rng, g_rng,
+        "mtg-mb668 seed-2: the RNG state after the mass shuffle+draw must match the \
+         server byte-for-byte (count-based shuffle consumes identical randomness \
+         only if the reserved opponent cards all moved)"
+    );
 }
 
 /// Guard the fix's SCOPE: a reserved card must count ONLY for a wildcard filter.

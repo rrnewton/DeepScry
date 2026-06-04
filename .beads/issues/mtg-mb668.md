@@ -4,12 +4,56 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-03T22:31:44.381893694+00:00
+updated_at: 2026-06-04T00:21:37.241179570+00:00
 ---
 
 # Description
 
 robots42 seed=42 intermittent WASM rewind+replay desync (netarch STEP-3).
+
+========================================================================
+>>> SLOT03 CHECKPOINT 2026-06-03 — SEED-2 ROOT CAUSE CORRECTED AGAIN <<<
+========================================================================
+The prior "Timetwister reserved-id mass-shuffle RESIDUAL (graveyard->library /
+draw lockstep)" theory is DISPROVEN at the effect-primitive level. The true
+seed-2 blocker is mtg-yexvc (network-layer hash-validation pairing / shadow
+fast-forward), NOT a reserved-id / branch-on-absence effect bug.
+
+BUILT: native Timetwister oracle
+  shadow_timetwister_mass_shuffle_draw_matches_golden_mb668_seed2
+  (mtg-engine/src/game/actions/tests/netarch_reserved_zone.rs). Runs
+  ChangeZoneAll{origins:[Hand,Graveyard]->Library, shuffle:true} + draw 7 on a
+  GOLDEN (all real) vs SHADOW (reserved opponent Hand+Graveyard+Library);
+  asserts per-player library counts, post-shuffle RNG state, AND viewer drawn ids
+  all match golden. RESULT: GREEN. The ChangeZoneAll `None if
+  move_reserved_in_shadow` arm (actions/mod.rs ~4338) ALREADY moves reserved Hand
+  AND Graveyard cards; sig-2 RNG capture + mass-draw lockstep are correct. So the
+  effect primitive is NOT seed-2's bug.
+
+GROUND-TRUTH (seed 2, fresh run MTG_NET_FULL_UNDO_DUMP=1):
+ * Controller-level (choice_seq->action_count) is BYTE-PERFECT lockstep between
+   the server player=1 dump and the WASM shadow dump: seq 172..179 ->
+   821,824,828,831,834,842,848,861 IDENTICAL both sides. No skip/drift. The
+   "shadow skips ~89 actions / ac-gap=89" reading was a SNAPSHOT artifact; the
+   real ac-gap at each true corresponding choice is 0.
+ * All pre-resolution P1 hashes MATCH (SRV_P1_RECV seq 172/173/174).
+ * The fatal "P1 seq=175 ac=950" maps to the ONLY seq=175/ac=950 dump = the
+   player=0 (NativeAI) POST-resolution request. The P1 controller has NO request
+   at ac=950 (max seq=179@861, Timetwister cast + ON STACK, UNRESOLVED). So P1's
+   stale hash@861 is validated against the server hash@950 (resolved).
+   compute_view_hash hashes action_count+zone sizes+stack, so 861 vs 950 differ
+   -> fatal. Between P1#179(861) and P0#175(950) the server resolves Timetwister
+   entirely server-side, no intervening P1 network choice.
+
+CONCLUSION: seed-2 == mtg-yexvc (UPGRADED there to confirmed real+blocking, with
+full pairing analysis). Fix is NETWORK-layer: either the server coordinator's P1
+hash<->request pairing (network/server.rs ~2469-2519) OR the WASM shadow's
+fast-forward-replay through an opponent mass-resolution (wasm/network/*). NOT
+reserved-id effects. robots {5,6,9,11,18,19,20} likely the same
+mass-resolution-between-choices family. R1 (commit 2528a1bb) + the new oracle
+remain GREEN regression guards; R2 ruled out (mtg-zfq7x). Escalated to coordinator
+to assign the network-layer fix (overlaps slot02/slot04 wasm/network ownership).
+========================================================================
 
 ========================================================================
 STATUS 2026-06-03 (slot01): sig-1 + sig-2(RNG) + sig-2b(reveal-mask) + t233k FIXED on netarch-undo-holes; sig-2c (opponent-hand shuffle) is the dominant REMAINING residual.

@@ -4,18 +4,59 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-03T23:48:25.882492954+00:00
-updated_at: 2026-06-03T23:48:25.882492954+00:00
+updated_at: 2026-06-04T00:20:18.484081488+00:00
 ---
 
 # Description
 
+Network desync detection: choice_seq<->action_count<->hash misalignment between WASM shadow and server.
+
 Found during mtg-mb668 class-A snapshot verification (commit 54a246d4). The browser desync-DETECTION bookkeeping is misaligned between the WASM shadow and the server: the per-choice (seq, action_count, hash) the server reports in its mismatch box does NOT correspond to the WASM's submission for that seq.
 
-EVIDENCE (robots seed 2; P1=WASM since NativeAI=player 0):
-- Server-rejected P1 seq=175 client_hash=6a046cea @ ac=950. WASM's OWN submit (WASM_SUBMIT, logged at the ClientMessage::SubmitChoice build site) for seq=175 = hash=0d60bb6a @ ac=831. 6a046cea is NEVER produced by the WASM on any path.
-- seq 173/174 hashes differ: WASM_SUBMIT a078a280/7179b30c vs SRV_P1_RECV 72e7d101/55c125fa.
-- WASM per-request action_count (831 for seq 175) != server expected (950); WASM shadow ac maxes 861 vs server 950.
+ORIGINAL EVIDENCE (robots seed 2; P1=WASM since NativeAI=player 0):
+- Server-rejected P1 seq=175 client_hash=6a046cea @ ac=950. seq 173/174 hashes differ WASM_SUBMIT vs SRV_P1_RECV. WASM shadow ac maxes 861 vs server 950.
 
-The ~89 action_count GAP itself is REAL+trustworthy (shadow skips ~89 reserved-id actions = the class-A branch-on-absence = mtg-mb668 fix target). It is the seq<->hash CORRELATION the detection uses that is suspect.
+=========================================================================
+UPGRADE 2026-06-03 (slot03): CONFIRMED REAL + BLOCKING (not benign). This is the
+class-A seed-2 residual. The prior "shadow skips ~89 reserved-id actions
+(branch-on-absence)" framing is WRONG — see below.
 
-RESOLUTION PROTOCOL: resolves itself once class-A action-skips are fixed. Post-fix, re-run the browser sweep: shadow ac == server ac AND seed flips GREEN => bookkeeping was benign. Matching action_counts + matching state but STILL desync => this misalignment is real+blocking, fix before trusting green. Do NOT chase now; let the post-fix sweep decide. Diagnostics in tree (network_debug-gated): WASM_SUBMIT (wasm/network/client.rs), SRV_P1_RECV (network/server.rs), WASM_CARD_DETAIL (wasm/network/local_controller.rs). Related: mtg-mb668.
+DECISIVE EVIDENCE (robots seed 2, fresh run w/ MTG_NET_FULL_UNDO_DUMP=1):
+1. CONTROLLER-level lockstep is BYTE-PERFECT. The server's player=1 NetworkController
+   SERVER_FULL_UNDO_DUMP and the WASM shadow's WASM_FULL_UNDO_DUMP align EXACTLY on
+   (choice_seq -> action_count): seq 172->821, 173->824, 174->828, 175->831, 176->834,
+   177->842, 178->848, 179->861 on BOTH sides. No drift, no skip. The shadow is NOT
+   behind at the controller level.
+2. All pre-resolution P1 hashes MATCH (SRV_P1_RECV seq 172/173/174 = 16728ac4 /
+   72e7d101 / 55c125fa, client==server).
+3. The Timetwister reserved-id EFFECT PRIMITIVE is correct: new native oracle
+   shadow_timetwister_mass_shuffle_draw_matches_golden_mb668_seed2 (in
+   actions/tests/netarch_reserved_zone.rs) runs ChangeZoneAll [Hand,Graveyard]->Library
+   shuffle=true + draw7 on golden vs reserved-opponent shadow and is GREEN (library
+   counts, RNG state, drawn ids all match). So sig-2c already moves reserved Hand AND
+   Graveyard cards; the move/shuffle/draw lockstep is NOT the bug.
+4. THE PAIRING IS CROSSED. The fatal "P1 seq=175 action_count=950" maps to the ONLY
+   seq=175/ac=950 dump in the whole game, which is the player=0 (P0/NativeAI)
+   controller's POST-resolution request. The P1 controller has NO request at ac=950
+   (its max is seq=179 @ ac=861). So P1's stale hash (computed @ its local ac=861,
+   Timetwister cast+on-stack, UNRESOLVED) is validated against the server's hash @
+   ac=950 (Timetwister RESOLVED). compute_view_hash includes action_count + zone sizes
+   + stack, so 861-state vs 950-state necessarily differ -> fatal.
+
+INTERPRETATION: between P1's seq=179 pass (ac=861) and P0's seq=175 priority (ac=950)
+the SERVER resolves Timetwister entirely server-side (~89 actions, no intervening
+network choice). The WASM shadow, being the OPPONENT's client, is NOT asked for a
+choice across that span, so its last submitted hash is the pre-resolution one @861. The
+server's validation compares that stale P1 hash against its post-resolution @950 hash.
+Either (a) the coordinator pairs P1's response with the wrong (P0/post-resolution)
+server_state_hash, or (b) the WASM shadow must fast-forward-replay through the
+opponent's mass resolution (861->950) before its hash is validated and currently does
+not. Both are NETWORK-LAYER (server coordinator validation OR wasm/network replay), NOT
+reserved-id effect bugs.
+
+SCOPE: this is the dominant seed-2 blocker. robots seeds {5,6,9,11,18,19,20} are very
+likely the same Timetwister/Wheel mass-resolution-between-choices family. mtg-mb668
+class-A CANNOT go green until this is fixed. Diagnostics in tree (network_debug-gated):
+SERVER_FULL_UNDO_DUMP (network/controller.rs, gate MTG_NET_FULL_UNDO_DUMP=1),
+WASM_FULL_UNDO_DUMP (wasm/network/local_controller.rs), SRV_P1_RECV (network/server.rs
+~2481). Related: mtg-mb668, mtg-725.
