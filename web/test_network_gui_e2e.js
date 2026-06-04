@@ -296,6 +296,29 @@ async function runTest() {
             throw new Error(`Fatal error before gameplay: ${fatalError}`);
         }
 
+        // --- Regression guard (player-name leak): the LOCAL player's slot must
+        // render the USERNAME, NOT the deck name. The historical bug
+        // (fancy_tui.rs launch_network_game) set the local player's display name
+        // to the deck name, so a player who joined as "WebRandom" with deck
+        // "Simple Bolt Test Deck" saw their OWN slot labelled with the deck name.
+        // The TUI info bar renders "<name>: <N> life", so we assert (a) the
+        // username appears and (b) the deck name is NOT used as a player label.
+        const expectedUserName = `Web${HUMAN_MODE ? 'Human' : 'Random'}`;
+        const initialTermText = await extractTerminalText(page);
+        const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const deckAsPlayerLabel = new RegExp(escapeRe(browserDeckName) + '\\s*:\\s*\\d+\\s*life', 'i');
+        if (!initialTermText.includes(expectedUserName)) {
+            throw new Error(
+                `Player-name leak regression: local player slot did not render username ` +
+                `"${expectedUserName}". Terminal (truncated): ${initialTermText.slice(0, 500)}`);
+        }
+        if (deckAsPlayerLabel.test(initialTermText)) {
+            throw new Error(
+                `Player-name leak regression: the DECK name "${browserDeckName}" is rendered ` +
+                `as a player label (should be the username "${expectedUserName}").`);
+        }
+        log(`Player-name check OK: local slot shows username "${expectedUserName}", not deck name "${browserDeckName}"`);
+
         // Track process state
         let serverExited = false;
         let nativeClientExited = false;

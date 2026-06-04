@@ -4202,7 +4202,10 @@ fn create_and_install_network_session(
     let starting_life = client_ref.starting_life();
     let our_player_id = client_ref.our_player_id();
     let opponent_name = client_ref.opponent_name().unwrap_or("Opponent").to_string();
-    let our_name = deck_name.to_string(); // Use deck name as our name for now
+    // Use the authenticated username for the local player's display name; fall
+    // back to the deck name only if the username is genuinely absent (mtg bug:
+    // player slot was showing the deck name instead of the username).
+    let our_name = client_ref.our_name().unwrap_or(deck_name).to_string();
 
     // CRITICAL: Get late-binding architecture data (mtg-254)
     let deck_card_ids = client_ref.deck_card_ids().cloned();
