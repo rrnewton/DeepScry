@@ -48,6 +48,18 @@ jobs:
         with:
           submodules: recursive
 
+      # Free runner disk FIRST — before any cargo-cache restore or large
+      # toolchain install. The old monolithic CI job died with "No space left on
+      # device" while RESTORING the cargo build cache, because the free-disk step
+      # ran AFTER the cache restore (run 26917254158). On the ~14 GB ephemeral
+      # runner the cache+build can blow the budget; freeing ~30 GB of unused
+      # toolchains up front keeps every shard under the wall as the cache grows.
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -98,12 +110,6 @@ jobs:
         with:
           path: target
           key: ${{ runner.os }}-${{ matrix.name }}-target-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Free runner disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
-          df -h
 
       # The shard. `--group`/`--only` runs the selected steps + their deps
       # (build-once mtg / wasm bundle) self-contained. -j defaults to nproc.
