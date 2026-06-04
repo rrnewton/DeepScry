@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T05:39:51.224846603+00:00
+updated_at: 2026-06-04T05:42:04.753556059+00:00
 ---
 
 # Description
@@ -59,6 +59,7 @@ LAYERS (incremental commits, full-canary validate before declaring green):
 - L3 client keying (4a-client CORE): key StateSyncEntry ActionLog DIRECTLY by game ac; DELETE state_sync_effective_ac map + next_state_sync_ac + state_sync_unstamped + push_state_sync_stamped/stamp_pending_state_sync; effective_ac_of→identity; searched_card_for + rebuild-to-R read key directly; apply_state_sync_up_to_frontier → apply_state_sync_at(target_action) keyed + block-on-miss; validate-on-receipt FATAL (received_ac mismatch). NOTE coupling: client currently DEFERS reorders to next-choice (client.rs:934 push_state_sync(None)) — L3 keys them at their own ac so reorder applies BEFORE post-shuffle draws (fixes residual-#1).
 - L4 block-on-miss WASM: draw site (steps.rs:415) + priority site yield NeedsInput on miss via existing trampoline.
 - RED test: pin Searched-dummy resolution-ac selection so a future "stamp all uniformly" refactor can't regress it.
+CONFIRMED TOUCH-POINTS (for the executor): LibraryReordered.action_count ripples ~12 sites — protocol.rs ServerMessage::LibraryReordered (~457 in server.rs mirror / protocol.rs:658) + GameToHandler::LibraryReordered (server.rs:457) + NetworkMessage::LibraryReordered (client.rs:108,182,1667,2144) + wasm handler (client.rs:923) + server emit sites (server.rs:2079-2097 opening, 2443/2447/2648/2652 GameToHandler, 3062/3067 forward). Reorder-ac threading: pending_library_reorders Vec<PlayerId> (state.rs:330) → carry ac; push sites scry state.rs:2066 + surveil :2152 (each calls log_library_reorder at :2036/:2125 — capture that ReorderLibrary action's ac) + NEW shuffle_library:745 push; take_pending_library_reorders (controller.rs:988, returns Vec<(PlayerId,Vec<CardId>)> → add u64); ChoiceRequest.library_reorders (controller.rs:101). SearchCandidates: replace the N-CardRevealed loop at server.rs ~2884 (library_search_cards) with one ServerMessage::SearchCandidates{searcher,cards,action_count}; client maps to StateSyncEntry::SearchCandidates{cards} (state_sync.rs:33). Client keying core: wasm client.rs ~1168-1355 (push_state_sync*/effective_ac/apply_state_sync_up_to_frontier ~1286/rebuild-to-R ~1369-1528/searched_card_for ~1254).
 GATE: full canary set un-excluded (Hallows seed3 + native-vs-WASM DIVERGED:0 + robots42 + mtg-yexvc seeds 2/5/1/6). 4b (native wait_for_state_sync_frontier into draw site) SEPARATE + gated on mtg-677. Exclusion-revert = closing commit, only when full set green un-excluded; if native block REQUIRED + wiring incomplete → STOP, exclusion stays.
 
 ## mtg-677 VERIFICATION (slot01 2026-06-03) — native draw-step rewind is NOT the gap; 4b gate refined
