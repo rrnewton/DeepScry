@@ -189,7 +189,7 @@ Concrete rules:
    `new_worktree.sh` starts with `git submodule status` clean. If you
    create a worktree by other means, run
    `git submodule update --init --recursive` yourself — otherwise
-   `scripts/validate.sh` bails with "Submodule changes detected".
+   `scripts/validate.py` bails with "Submodule changes detected".
 4. **Orchestrator verification**: before ff-merging a feature branch,
    check `validate_logs/validate_<last-commit-sha>.log` exists on the
    branch (or in the agent's worktree, copied to the parent in the

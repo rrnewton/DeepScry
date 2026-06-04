@@ -13,7 +13,7 @@ each other. The fix scopes the cargo check by the process's REAL working
 directory (`/proc/<pid>/cwd`), only flagging cargo running WITHIN this worktree,
 with a fail-safe to the original scoped `current_dir in cmd` check when the cwd
 is unavailable (process exited mid-scan, or no /proc on macOS). These tests pin
-that behavior AND prove the OTHER protections (MTG binary, validate.sh,
+that behavior AND prove the OTHER protections (MTG binary, validate.py,
 chromium/playwright, python-mtg) are unchanged.
 """
 
@@ -109,10 +109,10 @@ def test_dirty_mtg_binary_in_worktree_still_flagged(monkeypatch):
     assert ok
 
 
-def test_validate_sh_for_this_worktree_still_flagged(monkeypatch):
+def test_validate_py_for_this_worktree_still_flagged(monkeypatch):
     with_cwd(monkeypatch, {})
     ok, _ = cce.is_conflicting_process(
-        ps_line(2002, f"/bin/bash {CWD}/scripts/validate.sh"), CWD)
+        ps_line(2002, f"python3 {CWD}/scripts/validate.py"), CWD)
     assert ok
 
 

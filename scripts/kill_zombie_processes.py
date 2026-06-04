@@ -4,7 +4,7 @@ Kill zombie processes that might interfere with validation.
 
 This script kills:
 - MTG binary processes running from subdirectories of current directory
-- validate.sh processes for the current directory
+- validate.py (the make-validate entry point) processes for the current directory
 - cargo test/build processes for the current directory
 - chromium/playwright processes (E2E test remnants)
 - Removes stale lock files
@@ -73,9 +73,10 @@ def should_kill_process(proc_line, current_dir):
         if "target/release/mtg" in cmd or "target/debug/mtg" in cmd:
             return True, pid, f"MTG binary: {cmd[:80]}"
 
-    # Check for validate.sh for current directory
-    if "validate.sh" in cmd and current_dir in cmd:
-        return True, pid, f"validate.sh: {cmd[:80]}"
+    # Check for validate.py (the make-validate entry point, formerly validate.sh)
+    # for current directory
+    if "validate.py" in cmd and current_dir in cmd:
+        return True, pid, f"validate.py: {cmd[:80]}"
 
     # Check for cargo commands for current directory
     if "cargo" in cmd and ("test" in cmd or "nextest" in cmd):

@@ -320,7 +320,7 @@ fi
 # ---------------------------------------------------------------------------
 #
 # Without this, `make validate` aborts immediately with "Submodule
-# changes detected" because validate.sh treats uninitialised submodules
+# changes detected" because validate.py treats uninitialised submodules
 # as a dirty working copy.
 
 echo ""
@@ -386,7 +386,7 @@ fi
 # (e.g. the optional `assets` design-asset repo) is intentionally left
 # un-checked-out and legitimately shows a '-' prefix — that is NOT dirty. A real
 # uninitialised REQUIRED submodule (e.g. forge-java) still flags. This mirrors
-# scripts/validate.sh's submodule_dirty_lines so validate won't bail later.
+# scripts/validate.py's _submodule_dirty so validate won't bail later.
 submodule_dirty_lines() {
     local inactive
     inactive=$(git config -f .gitmodules --get-regexp '\.update$' 2>/dev/null \

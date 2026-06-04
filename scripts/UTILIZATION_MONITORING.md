@@ -9,14 +9,16 @@ The monitoring system consists of two scripts that work together:
 1. **utilization_prehook.sh** - Starts background CPU monitoring
 2. **utilization_posthook.sh** - Stops monitoring and generates a detailed report
 
-These scripts are automatically invoked by `validate.sh` to provide insights into how efficiently the validation process uses available CPU cores.
+These scripts are automatically invoked by `scripts/validate.py` (a full `make validate`) to provide insights into how efficiently the validation process uses available CPU cores.
 
-## Integration with validate.sh
+## Integration with validate.py
 
-The `validate.sh` script automatically sources these hooks:
+`scripts/validate.py`'s outer harness invokes these hooks as SUBPROCESSES (not `source`d — the harness is Python now):
 
-- **Before validation**: Sources `utilization_prehook.sh` to start monitoring
-- **After validation**: Sources `utilization_posthook.sh` to stop monitoring and display the report
+- **Before validation**: runs `utilization_prehook.sh`, which backgrounds a disowned sampler and prints its PID + stats-file path (the harness parses these).
+- **After validation**: runs `utilization_posthook.sh` with `UTIL_MONITOR_PID` / `UTIL_STATS_FILE` / `UTIL_START_TIME` passed explicitly in the environment, to stop the sampler and print the report.
+
+Disable with `python3 scripts/validate.py --no-monitor-utilization`.
 
 The monitoring runs regardless of whether validation succeeds or fails.
 
@@ -78,7 +80,7 @@ Samples are collected every 1 second and stored in a temporary file.
 
 ## Using Standalone
 
-While these scripts are designed to be sourced by `validate.sh`, they can also be used standalone:
+While `validate.py` invokes these as subprocesses, they can also be sourced/used standalone:
 
 ```bash
 # Start monitoring

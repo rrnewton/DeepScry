@@ -6,7 +6,7 @@ Returns 0 if environment is clean, non-zero if conflicting processes found.
 
 This script checks for:
 - MTG binary processes running from subdirectories of current directory
-- validate.sh processes for the current directory
+- validate.py (the make-validate entry point) processes for the current directory
 - cargo test/build processes for the current directory
 - chromium/playwright processes (E2E test remnants)
 """
@@ -109,9 +109,10 @@ def is_conflicting_process(proc_line, current_dir):
         if "target/release/mtg" in cmd or "target/debug/mtg" in cmd:
             return True, f"MTG binary (PID {pid}): {cmd[:100]}"
 
-    # Check for validate.sh for current directory
-    if "validate.sh" in cmd and current_dir in cmd:
-        return True, f"validate.sh (PID {pid}): {cmd[:100]}"
+    # Check for validate.py (the make-validate entry point, formerly validate.sh)
+    # for current directory
+    if "validate.py" in cmd and current_dir in cmd:
+        return True, f"validate.py (PID {pid}): {cmd[:100]}"
 
     # Check for cargo commands operating WITHIN this worktree. Scoped by the
     # process's real cwd (/proc/<pid>/cwd) rather than a global `-p mtg`
