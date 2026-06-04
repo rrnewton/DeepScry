@@ -160,3 +160,18 @@ network-game spew, machine at ~22% of one core).
    start-long-pole-early / shrink the longest step) → build-once → log hygiene →
    CI parity. Each fix must keep `make validate` green; cite the resulting
    `validate_logs/validate_<sha>.log`.
+
+## Commit-message gotcha (commit -F, never inline -m with backticks)
+
+When committing validate/infra changes, the commit message almost always
+contains code spans — `` `make validate` ``, `` `validate.py` ``, `$(...)`. In
+an agent shell the `git commit -m "…"` argument is a DOUBLE-QUOTED bash string,
+so backticks / `$()` trigger **command substitution before git sees the
+message**. This has bitten this workstream repeatedly — once a backticked
+`` `make validate` `` in a commit message actually RAN `make validate`, created
+a stray `wip` commit, and launched a background build. **Always write the
+message to a file and `git commit -F <file>`** (or use single-quoted `-m`).
+Recovery if it fires: kill the accidental tree + `kill_zombie_processes.py`,
+`git reset --soft HEAD~1` (drops the stray wip, keeps changes staged),
+`rm -f .validate.lock validate_logs/*.wip`, re-commit via `-F`. (See beads
+mtg-1ij9i.)
