@@ -3483,6 +3483,15 @@ fn command_proxy_prefix() -> Vec<String> {
     proxy_prefix_from(std::env::var("MTG_GH_PROXY").ok().as_deref())
 }
 
+/// Resolve `path` to an absolute path against `base` (the server's working
+/// directory). An already-absolute `path` is returned unchanged — `Path::join`
+/// replaces the base when its argument is absolute. Used so the `gh` file-path
+/// args (`--body-file`, gist files) are absolute and therefore independent of
+/// `gh`'s own working directory (mtg-zvlpk).
+fn absolutize_under(path: &Path, base: &Path) -> PathBuf {
+    base.join(path)
+}
+
 fn bug_report_issue_title(report: &BugReportRequest) -> String {
     let summary = report
         .description
@@ -3765,13 +3774,23 @@ fn create_github_issue_with_runner(
     report_dir: &Path,
     reporter_player_id: Option<PlayerId>,
 ) -> Result<GitHubIssueOutcome> {
-    // Working directory for the spawned `gh` commands. It MUST be a directory
-    // that exists at runtime: `gh` is scoped to the target repo with an explicit
-    // `-R OWNER/REPO` (with_configured_gh_repo), so the cwd is irrelevant to
-    // correctness — it only has to exist, or `Command::spawn` fails with ENOENT.
-    // We use the runtime bug-report dir (always created before this runs). The
-    // old code used `bug_report_repo_root()` = the COMPILE-TIME crate path, which
-    // does not exist on the deploy VM → every `gh` call ENOENT'd (mtg-zvlpk).
+    // `report_dir` (and thus the issue-body + gist file-path ARGS derived from
+    // it) may be RELATIVE to the server's working directory — the default
+    // `bug_reports_dir` is relative ("bug_reports/<ts>"). `gh` resolves any
+    // relative file-path arg (and its own cwd) against ITS OWN working dir, so
+    // mixing a relative cwd with relative `--body-file` paths is a footgun:
+    //   - old code: cwd = bug_report_repo_root() = COMPILE-TIME crate path,
+    //     absent on the deploy VM → Command::spawn ENOENT (mtg-zvlpk);
+    //   - first fix: cwd = report_dir (relative) → gh resolved the relative
+    //     `--body-file bug_reports/<ts>/…` UNDER report_dir → "no such file".
+    // Make the whole class impossible: ABSOLUTIZE report_dir against the server's
+    // current working dir up front, then derive every file arg (and the gh cwd)
+    // from the absolute path. Absolute args make gh's cwd irrelevant to file
+    // resolution, and an absolute existing cwd can never ENOENT.
+    let report_dir_abs = std::env::current_dir()
+        .map(|cwd| absolutize_under(report_dir, &cwd))
+        .unwrap_or_else(|_| report_dir.to_path_buf());
+    let report_dir = report_dir_abs.as_path();
     let gh_cwd = report_dir;
 
     // Preflight: a clear, early signal if the VM's `gh` is not authenticated.
@@ -4291,19 +4310,26 @@ mod tests {
         // 1: label list -- repo-scoped via explicit -R
         assert_eq!(calls[1][1], "label");
         assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
-        // 2: gist create -- NOT repo-scoped (gists are user-scoped)
+        // 2: gist create -- NOT repo-scoped (gists are user-scoped). File-path
+        // args MUST be ABSOLUTE so gh can open them regardless of its cwd
+        // (mtg-zvlpk: a relative path resolved under the wrong cwd → "no such file").
         assert_eq!(calls[2][1], "gist");
-        assert!(calls[2].iter().any(|arg| arg.ends_with("game_logs.txt")));
-        assert!(calls[2].iter().any(|arg| arg.ends_with("console_logs.txt")));
+        assert!(calls[2]
+            .iter()
+            .any(|arg| arg.ends_with("game_logs.txt") && Path::new(arg).is_absolute()));
+        assert!(calls[2]
+            .iter()
+            .any(|arg| arg.ends_with("console_logs.txt") && Path::new(arg).is_absolute()));
         assert!(!calls[2].iter().any(|arg| arg == "-R"));
         // 3: issue create -- repo-scoped via explicit -R
         assert_eq!(calls[3][1], "issue");
         assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
-        assert!(calls[3]
-            .windows(2)
-            .any(|w| w[0] == "--body-file" && w[1].ends_with("github_issue_body.md")));
+        // --body-file MUST be an ABSOLUTE path (mtg-zvlpk).
+        assert!(calls[3].windows(2).any(|w| w[0] == "--body-file"
+            && w[1].ends_with("github_issue_body.md")
+            && Path::new(&w[1]).is_absolute()));
 
         let issue_body = stdfs::read_to_string(report_dir.join("github_issue_body.md")).expect("issue body");
         assert!(issue_body.contains("Priority pass caused a client hang."));
@@ -4336,6 +4362,22 @@ mod tests {
         };
         let error = check_gh_auth_with_runner(&fail_runner, Path::new("/tmp")).expect_err("unauthenticated");
         assert!(error.to_string().contains("not logged into"));
+    }
+
+    #[test]
+    fn test_absolutize_under() {
+        // A relative path is resolved against the base (server working dir) →
+        // absolute. This is what makes the gh `--body-file` arg independent of
+        // gh's own cwd (mtg-zvlpk: a relative arg + relative cwd double-nested).
+        assert_eq!(
+            absolutize_under(Path::new("bug_reports/123/github_issue_body.md"), Path::new("/srv/app")),
+            PathBuf::from("/srv/app/bug_reports/123/github_issue_body.md")
+        );
+        // An already-absolute path is returned unchanged (base is ignored).
+        assert_eq!(
+            absolutize_under(Path::new("/var/reports/123/x.md"), Path::new("/srv/app")),
+            PathBuf::from("/var/reports/123/x.md")
+        );
     }
 
     #[test]

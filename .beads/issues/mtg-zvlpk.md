@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-04T06:01:06.393506310+00:00
-updated_at: 2026-06-04T06:01:06.393506310+00:00
+updated_at: 2026-06-04T07:14:57.196345358+00:00
 ---
 
 # Description
@@ -25,3 +25,7 @@ C. deploy-cloud.sh config: no proxy on prod VM (default); set MTG_GH_PROXY only 
 ALTERNATIVE (deferred, heavier): REST API via reqwest + GITHUB_TOKEN + native timeout, dropping gh-binary/spawn_blocking. Needs a user-provisioned GITHUB_TOKEN secret — flag for user, do NOT auto-provision.
 
 VERIFY: after A+B, redeploy + confirm a real submit files an issue (throwaway/closeable, no junk).
+
+
+=== FOLLOW-UP (fix-bugreport-gh-cwd, 2026-06-04) ===
+Live throwaway verify of the merged fix (@46ed4ddf) showed both ENOENTs FIXED (gh runs direct: `/usr/bin/gh issue create ...`, no with-proxy, no cwd-ENOENT), but issues STILL did not file. VM journal: `stderr: open bug_reports/<ts>/github_issue_body.md: no such file or directory`. Root cause: report_dir is RELATIVE (default bug_reports_dir is relative), and the merged fix set gh cwd = report_dir, so gh resolved the RELATIVE `--body-file bug_reports/<ts>/...` UNDER report_dir → double-nested → not found (the file exists; gh just looked in the wrong place). FIX (fix-bugreport-gh-cwd): ABSOLUTIZE report_dir against std::env::current_dir() up front (helper absolutize_under), derive every gh file arg (--body-file, gist files) + the gh cwd from the absolute path → gh file resolution is now cwd-independent; both the absent-build-path and the relative-double-nest failure modes are impossible. Added test_absolutize_under + strengthened the command-builder test to assert --body-file and gist paths are ABSOLUTE. gh auth + direct egress + label fetch already VM-verified working, so absolute paths are the last missing piece. Re-verify live after redeploy.
