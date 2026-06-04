@@ -105,3 +105,23 @@ To modify the WASM bindings, edit:
 - `web/index.html` - Demo web interface
 
 After changes, rebuild with `wasm-pack build ...` as shown above.
+
+## Browser e2e tests + locked-down / offline hosts
+
+The Playwright browser e2e tests (`web/test_*.js`, run by `make validate`) need
+Node **≥18** (see `engines` in `package.json` + `.nvmrc`) and a provisioned
+chromium. `make validate` HARD-FAILS (never silently skips) if they're missing;
+`ensure_node_deps.js` prints how to fix it.
+
+On a host where `npm install` is forbidden (locked-down corp box), provision
+**offline** by copying two dirs from a host where
+`npm install && npx playwright install chromium` succeeded:
+
+- `web/node_modules` — the npm deps (incl. playwright)
+- `~/.cache/ms-playwright` — the chromium browser binary (or set
+  `PLAYWRIGHT_BROWSERS_PATH`)
+
+Then `make validate` runs the full e2e suite with no network. Alternatively,
+disable just the browser e2e explicitly with `make validate ARGS=--no-wasm-e2e`
+(reported in the run summary as `DISABLED … NOT full coverage` — never a silent
+skip).

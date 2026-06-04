@@ -75,8 +75,11 @@ if (!haveJs) {
 lines.push('');
 lines.push('  Pick ONE (no auto-skip path exists):');
 lines.push('   (A) Provision OFFLINE (preferred — tests RUN, full coverage):');
-lines.push('         pre-stage web/node_modules + the playwright chromium cache on this host');
-lines.push('         (copy from a machine where `cd web && npm install && npx playwright install chromium` succeeded).');
+lines.push('         copy these TWO dirs from a host where provisioning succeeded:');
+lines.push('           - web/node_modules            (the npm deps incl. playwright)');
+lines.push('           - ~/.cache/ms-playwright      (the chromium browser binary;');
+lines.push('                                          or set $PLAYWRIGHT_BROWSERS_PATH)');
+lines.push('         then `make validate` runs the full browser e2e offline (no npm install).');
 lines.push('   (B) Provision ONLINE:  cd web && npm install && npx playwright install chromium   (or: make setup)');
 lines.push('   (C) Deliberately DISABLE the browser e2e (explicit + reported in the run summary):');
 lines.push('         scripts/validate_run.py --no-wasm-e2e      (and/or --no-network for the networked browser suite).');

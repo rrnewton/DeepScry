@@ -175,3 +175,25 @@ Recovery if it fires: kill the accidental tree + `kill_zombie_processes.py`,
 `git reset --soft HEAD~1` (drops the stray wip, keeps changes staged),
 `rm -f .validate.lock validate_logs/*.wip`, re-commit via `-F`. (See beads
 mtg-1ij9i.)
+
+## Locked-down / offline hosts (no npm install allowed)
+
+`make validate` runs the browser e2e by default and HARD-FAILS (never silently
+skips) if playwright/chromium are missing — `web/ensure_node_deps.js` prints an
+actionable message. Two honest options on a host where `npm install` is
+forbidden (e.g. a locked-down corp box):
+
+- **Provision OFFLINE (preferred — tests RUN, full coverage).** Copy two dirs
+  from a host where `cd web && npm install && npx playwright install chromium`
+  succeeded:
+  - `web/node_modules` (npm deps incl. playwright)
+  - `~/.cache/ms-playwright` (the chromium binary; or set
+    `$PLAYWRIGHT_BROWSERS_PATH`)
+  Then `ensure_node_deps.js` takes its offline path (no `npm install`) and the
+  full e2e runs. Node ≥18 required (see `web/package.json` engines + `.nvmrc`).
+- **Deliberately DISABLE the browser e2e** (explicit, reported, never silent):
+  `make validate ARGS=--no-wasm-e2e` (or `--no-network` for just the networked
+  browser suite). The run summary prints `DISABLED via <flag> … NOT full
+  coverage`, so a flagged run is never mistaken for a complete one. `make
+  validate ARGS=…` forwards straight to `scripts/validate.py`'s argparse, so any
+  orchestrator flag is reachable from the standard entry point.

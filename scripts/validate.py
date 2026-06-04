@@ -616,8 +616,13 @@ def run_orchestrator(args):
                 disabled[s.tag] = "--no-network"
     if args.no_wasm_e2e:
         for s in steps:
-            # all chromium-driven steps (browser resource) + their npm provisioning
-            if ("browser" in s.resources) or s.tag == "wasm.npm-install":
+            # All chromium-driven steps (browser resource = wasm browser suite +
+            # native-vs-WASM equiv sweeps + networked browser e2e), PLUS their
+            # provisioning: the npm deps (wasm.npm-install) AND the wasm bundle
+            # build (wasm.bundle). wasm.bundle's ONLY consumers are those browser
+            # steps, so with them disabled it's orphaned — and dropping it also
+            # spares a locked-down host the wasm-pack/wasm32 build it may not have.
+            if ("browser" in s.resources) or s.tag in ("wasm.npm-install", "wasm.bundle"):
                 disabled[s.tag] = "--no-wasm-e2e"
     if disabled:
         steps = [s for s in steps if s.tag not in disabled]
@@ -961,9 +966,20 @@ def _smart_cache_hit(sha, log_file):
         except OSError:
             return False
         print(f"\n[validate] ✓ smart cache hit (docs-only changes since {prev[:12]}): "
-              f"{', '.join(changed)}")
+              f"{_fmt_files(changed)}")
         return True
+    if changed:
+        # Code changed -> cache miss, will re-run. Show WHY, but CAP the list so a
+        # big diff doesn't flood the log (user request).
+        print(f"\n[validate] code changed since {prev[:12]} — re-validating: {_fmt_files(changed)}")
     return False
+
+
+def _fmt_files(files, cap=20):
+    """Join a file list, capped: first `cap` then '... and N more (M total)'."""
+    if len(files) <= cap:
+        return ", ".join(files)
+    return ", ".join(files[:cap]) + f", … and {len(files) - cap} more ({len(files)} total)"
 
 
 if __name__ == "__main__":
