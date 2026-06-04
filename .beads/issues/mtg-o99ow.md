@@ -4,10 +4,13 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T11:46:29.689698576+00:00
+updated_at: 2026-06-04T13:35:54.352867800+00:00
 ---
 
 # Description
+
+## LAYER-4 RE-DECISION 2026-06-04 (slot01) — re-stamp IMPOSSIBLE (proven), need iii/iv/v
+User picked re-stamp the eager OpponentChoice reveal at the reveal own-ac. IMPLEMENTED+tested+REVERTED=no-op. PROOF (DIAG_OPPREVEAL seed13): every opponent reveal found_revealcard=false — at OpponentChoice-forward time the move has NOT executed, the RevealCard (canonical own position) is NOT in the undo log yet, so the eager path can only use the CHOICE ac. Cannot label an event with a position that does not exist yet. Ex: Mountain card59 eager@choice_ac375 (found=false); real RevealCard@376; collect_reveals re-sends@376 bundled with recipient next request (after seq77@380) → behind cursor=380 → lost-delta fatal. Dual-stamp is REAL (375 eager vs 376 collect); fix is the OTHER direction: (iii) collect_reveals SKIPS cards already sent eagerly via OpponentChoice [server, share already-sent state]; (iv) send post-exec reveals eagerly at own-ac [bigger transmission-timing restructure]; (v) CLIENT drop late reveal for an already-revealed card by identity not ac [smallest, no native/server touch, weakens strict guard]. Reverted to clean 0e905f8e (probe+server changes out), exclusion untouched, 3 client fixes intact. AWAITING user re-decision before further code.
 
 ## STATUS 2026-06-04 (slot01 finisher) — WASM bug#2 has 4 layers; 3 client layers DONE+pushed @bd788773; layer-4 = HARD STOP (server-side design Q)
 
