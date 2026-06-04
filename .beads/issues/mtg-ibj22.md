@@ -7,7 +7,7 @@ labels:
 - validate-infra
 - networking
 created_at: 2026-06-03T21:58:50.567668623+00:00
-updated_at: 2026-06-03T21:58:50.567668623+00:00
+updated_at: 2026-06-04T10:28:31.401390278+00:00
 ---
 
 # Description
@@ -32,3 +32,24 @@ CI CAVEAT: GitHub runners may lack user-systemd -> use cgroup v2 cgroup.kill on 
 SUPERSEDES the cwd-scoped /proc-reaper idea (was folded into mtg-726): cgroup-scoping is strictly more robust (captures setsid escapees + atomic kill, no /proc race). Likely CLOSES mtg-r1osh + the All-Hallow's-Eve H2 port-collision class outright. Also subsumes slot03's Playwright-screenshot-flake mitigation context (the contention these zombies cause).
 
 OWNER: validate-infra -> slot02 (validate-overhaul / mtg-726). Coordinate so it doesn't bolt onto the merge-critical mtg-717 hang-fix; this is the follow-up that makes validates reliably zombie-free.
+
+
+== CI PROOF 2026-06-04 (build-once run 26942309916, network-redo shard) ==
+The "CI CAVEAT: keep per-step setsid + proc.wait(timeout) + SIGKILL (adequate
+on the ephemeral runner)" assumption is DISPROVEN. Observed: `network.landing`
+(a playwright browser step) FAILED, then the shard sat SILENT for 56 minutes
+(09:27:53 -> 10:23:07) until cancelled; GH runner cleanup then reported
+"Terminate orphan process: pid (3499) (python3)" = the validate_run.py runner
+itself, alive but wedged. ROOT CAUSE: the failed browser step left a
+setsid/double-forked orphan (chromium/node) holding the inherited stdout pipe
+fd -> no EOF -> the runner's daemon-reader / next-step proc.wait never returns
+-> the ENTIRE shard hangs (the 600s DEFAULT_STEP_TIMEOUT never fires because
+the block is in pipe-read/reader-join, not in the waited child). proc.wait
+timeout + per-PID SIGKILL is therefore NOT sufficient even in CI: it cannot
+reap setsid escapees and does not break a reader blocked on an orphan-held pipe.
+=> The cgroup.kill per-step reaper (cgroup v2 on a runner-created cgroup, per
+this issue's CI alternative) is REQUIRED, not optional, for CI too. This is the
+merge gate for mtg-717 build-once: network-redo cannot merge until a failed/hung
+step is guaranteed reaped so it can't wedge the shard. Pair with the
+network.landing waitUntil:'domcontentloaded' robustness fix (see mtg-717
+CHECKPOINT 2026-06-04). Priority stays P2; now also on the mtg-717 critical path.
