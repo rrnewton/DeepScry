@@ -2216,20 +2216,32 @@ async fn run_game(
 
     log::info!("Game {}: Sent opening hand CardRevealed messages", game_id);
 
-    // Calculate baseline reveal index to skip the opening hand draws
-    // The undo_log will have p1_hand.len() + p2_hand.len() MoveCard entries
-    // after GameLoop draws the opening hands. We've already sent these reveals.
+    // Calculate baseline reveal index to skip the opening hand draws.
+    //
+    // `shared_reveal_index` is an UNDO-LOG ACTION index (collect_reveals_since_last_choice
+    // does `actions.iter().skip(idx)` and `forward_idx < idx => break`), NOT a card count.
+    // Each opening-hand draw logs EXACTLY `OPENING_DRAW_UNDO_ACTIONS` undo actions
+    // (RevealCard, MoveCard, SetCardsDrawnThisTurn — same empirical pin as the L2c
+    // reveal-ac stamping), so the GameLoop's skip_opening_hands draws occupy undo
+    // positions 0..(total_cards * OPENING_DRAW_UNDO_ACTIONS). We pre-sent ALL opening-hand
+    // reveals above at their real per-draw acs, so the controller MUST skip that entire
+    // action span — otherwise it re-collects each player's own opening-hand draws at the
+    // SAME forward_idx the pre-send already used, which under the game-`action_count`-keyed
+    // shadow log (mtg-o99ow L3) is a duplicate/out-of-order `ActionLog::push` => FATAL
+    // (last>new). The prior `opening_hand_count` (CARD count) value under-skipped by 2x and
+    // only survived because the legacy synthetic key tolerated the re-collected duplicates.
     let opening_hand_count = p1_hand.len() + p2_hand.len();
+    let opening_hand_action_count = opening_hand_count * OPENING_DRAW_UNDO_ACTIONS as usize;
     log::debug!(
-        "Game {}: Opening hand reveal count = {} (will skip in first ChoiceRequest)",
+        "Game {}: Opening hand = {} cards / {} undo actions (skip in first ChoiceRequest)",
         game_id,
-        opening_hand_count
+        opening_hand_count,
+        opening_hand_action_count
     );
 
-    // Create shared reveal indices for NetworkControllers
-    // Initialize to opening_hand_count to skip opening hand reveals (already sent)
-    let p1_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
-    let p2_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_count));
+    // Create shared reveal indices for NetworkControllers (undo-ACTION index).
+    let p1_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_action_count));
+    let p2_reveal_index = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(opening_hand_action_count));
 
     // Create NetworkControllers with shared reveal indices
     let mut p1_controller = NetworkController::new(p1_id, p1_request_tx, p1_response_rx, Arc::clone(&p1_reveal_index));
