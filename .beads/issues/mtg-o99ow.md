@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T21:36:48.725488550+00:00
+updated_at: 2026-06-04T21:50:45.553624779+00:00
 ---
 
 # Description
@@ -151,3 +151,11 @@ SEQUENCE (team-lead): reconcile[DONE] → verify RED baseline[DONE] → B1 → B
 
 ## B1 DONE 2026-06-04 (slot01-phase2) @9414e68e — double-push fixed + VERIFIED; B2 stall reproduced exactly
 record_opponent_choice dedup-by-choice_seq landed (push, not insert_sorted; debug_assert on choice_indices; keep-first verified content-equivalent). Fresh mtime-verified wasm+server: the choice_seq=1 double-push panic is GONE. multideck still 0/4, now blocked solely by B2 apply-frontier stall: WASM_HASH_DEBUG ACTION COUNT MISMATCH server=55 local=50 (diff=5) at choice_seq=2 ac=55 (monored s13) — EXACTLY the predicted case (shadow stops at last reveal @50, 5 short of choice @55). B2 = the deep replay-driver fix (L4 block-on-miss; advance shadow forward-replay past the reveal frontier to the CR ac). Recommended for fresh context from @9414e68e.
+
+## REFRAME 2026-06-04 (slot01-phase2) — "Blocker A" is NONDETERMINISM, not a cycling desync
+Native-first pivot landed the WASM-disable (@b67d8428, mtg-zsi9f). Characterizing the native baseline revealed "Blocker A" (equiv-zero seed3) is NOT a deterministic cycling/buffer desync:
+- equiv-zero seed3, 5x ISOLATED (systemd-run scope), LOW load (0.85), ZERO concurrent mtg procs: 2/5 PASS, 3/5 FAIL with VARYING diff (147/100/94 lines) → genuinely NONDETERMINISTIC, not contention.
+- Failing runs have ZERO network hash-mismatches (no server↔client desync). The LOCAL game is STABLE (24 turns every run); the NETWORK SERVER game ends early + nondeterministically (6/11/12/24 turns). So the nondeterminism is in the NETWORK-SERVER game path, exposed by the ZERO controller (picks index 0 of what is likely a nondeterministically-ORDERED options/abilities list → mtg-725 try_get(None)/HashMap-ordering class).
+- equiv-random seed3: 3/3 deterministic GREEN. equiv-heuristic: GREEN. robots42: 4/4 GREEN. cycle315: 3/3 GREEN (my searcher fix). So the CYCLING/buffer work is sound where deterministic; the only native red is the zero-controller network nondeterminism.
+- My earlier single-run "Blocker A = searcher-shadow valid_cards=0 / found card not materialized" was a SYMPTOM of this nondeterminism (different library order → different/empty search), NOT a deterministic bug.
+OPEN QUESTION (needs an integration build to settle): is this network-server nondeterminism PRE-EXISTING (mtg-725, orthogonal to the branch) or BRANCH-INTRODUCED? The branch changed what's TRANSMITTED (reveals/buffer), not the server's game-choice logic, so PRE-EXISTING is most likely — but unverified. The native-first "rock solid" gate cannot be green while equiv-zero is nondeterministic; that's a separate nondeterminism root-cause (mtg-725 class), not buffer work.
