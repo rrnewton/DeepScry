@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-03T23:48:25.882492954+00:00
-updated_at: 2026-06-04T00:20:18.484081488+00:00
+updated_at: 2026-06-04T00:25:38.488941204+00:00
 ---
 
 # Description
@@ -60,3 +60,44 @@ class-A CANNOT go green until this is fixed. Diagnostics in tree (network_debug-
 SERVER_FULL_UNDO_DUMP (network/controller.rs, gate MTG_NET_FULL_UNDO_DUMP=1),
 WASM_FULL_UNDO_DUMP (wasm/network/local_controller.rs), SRV_P1_RECV (network/server.rs
 ~2481). Related: mtg-mb668, mtg-725.
+
+=========================================================================
+NEXT-STEP LOCALIZATION 2026-06-03 (slot03) — for whoever takes the fix:
+
+The WASM shadow runs its OWN GameLoop::run_until_input (wasm/network/ai_harness.rs)
+with a WasmRemoteController for the opponent + the local controller for itself.
+Per local_controller.rs:178-180 the client ECHOES the server's action_count
+("local WASM game state doesn't actually execute server actions, so
+view.action_count() would be wrong"). BUT compute_view_hash (state_hash.rs:415)
+hashes view.action_count() — the LOCAL one — plus zone sizes + stack. So the
+echo masks a local_ac != server_ac gap that the hash then catches.
+
+MECHANISM (seed 2): the shadow's game loop blocks at local_ac=861 (P1 priority,
+Timetwister cast + ON STACK, unresolved) and submits hash@861. The server, for the
+corresponding P1 validation, has already resolved Timetwister server-side
+(ac=950) — the ~89-action resolution happens between two choice points with no
+intervening P1 NETWORK choice. The shadow's single current_choice_request slot
+(client.rs:260) / frontier gate (has_opponent_choice / is_choice_actionable,
+client.rs:1058-1069, "K > frontier => NeedsInput") lets the local P1 controller
+answer while the game-loop replay frontier is still at 861, so it submits a
+hash@861 that the server validates against its @950 state.
+
+TWO CANDIDATE FIXES (pick after a trace):
+ (A) WASM side (wasm/network/* — slot03 territory): do NOT let the local
+     controller submit until the replay frontier has advanced through the
+     opponent's mass-resolution to the request's action_count (gate the local
+     submit on request.action_count <= local frontier, mirroring the
+     opponent-choice "K > frontier => NeedsInput" rule). I.e. the shadow must
+     fast-forward-replay 861->950 BEFORE answering.
+ (B) hash side (state_hash.rs — shared): action_count is the one field the shadow
+     legitimately can't match during opponent-only resolutions; but removing it
+     alone does NOT fix this seed (stack/hand/lib SIZES also differ at 861 vs
+     950), so (A) is the real fix; (B) is at most a defense-in-depth simplification.
+
+CONCRETE NEXT STEP: add a targeted trace (network_debug) logging, at the local
+controller submit, BOTH the request.action_count AND the replay frontier AND
+whether has_opponent_choice() is true — confirm the submit fires while frontier <
+request.action_count, then gate it. Repro: node web/test_network_gui_e2e.js --deck
+decks/old_school/03_robots_jesseisbak.dck --seed 2 (with MTG_NET_FULL_UNDO_DUMP=1
+for the server tail). Diagnostics already in tree. Owner TBD (overlaps slot02/04
+network coordinator); escalated to team-lead.
