@@ -224,11 +224,18 @@ pub struct CardView {
     pub is_selected: bool,
 }
 
-/// A minimal reference to an attached card (for badges / stacks).
+/// A minimal reference to an attached card (for badges / stacks). Carries
+/// enough to render the attachment as a labelled tile/badge on its host —
+/// equipment on a creature, an aura on a land, etc. (mtg-zhu4p).
 #[derive(Debug, Clone, Serialize)]
 pub struct AttachmentView {
     pub card_id: u32,
     pub name: String,
+    /// Machine-readable category (Enchantment / Artifact / …) so the GUI can
+    /// label/style the badge (e.g. an aura vs equipment).
+    pub category: SerializedCardCategory,
+    /// Pre-computed CSS classes for the attached card (same set as `CardView`).
+    pub css_classes: Vec<&'static str>,
 }
 
 /// A card on the stack.
@@ -413,26 +420,29 @@ fn build_card_view(
         None
     };
 
-    // Find equipment attached TO this card (creatures only).
-    let attachments: Vec<AttachmentView> = if card.is_creature() {
-        game.battlefield
-            .cards
-            .iter()
-            .filter_map(|&eid| {
-                let eq = game.cards.try_get(eid)?;
-                if eq.is_equipment() && eq.attached_to == Some(card_id) {
-                    Some(AttachmentView {
-                        card_id: eid.as_u32(),
-                        name: eq.name.to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    // Find ANY card attached TO this card — equipment on a creature, an aura on
+    // a land/creature, a fortification on a land, etc. — regardless of THIS
+    // card's type. Previously gated to `is_creature()` hosts and `is_equipment()`
+    // attachments, so an aura on a LAND (e.g. Friendly Neighborhood enchanting a
+    // land) never surfaced its attachment (mtg-zhu4p).
+    let attachments: Vec<AttachmentView> = game
+        .battlefield
+        .cards
+        .iter()
+        .filter_map(|&aid| {
+            let att = game.cards.try_get(aid)?;
+            if att.is_attached() && att.attached_to == Some(card_id) {
+                Some(AttachmentView {
+                    card_id: aid.as_u32(),
+                    name: att.name.to_string(),
+                    category: SerializedCardCategory::from(categorize_card(att)),
+                    css_classes: build_css_classes(att),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let summoning_sick = card.is_creature() && card.turn_entered_battlefield == Some(game.turn.turn_number);
 
@@ -1047,6 +1057,94 @@ mod tests {
         // No error by default; the field is present (null) so the JS can read it.
         assert!(model.error_message.is_none());
         assert!(json.contains("\"error_message\":null"));
+    }
+
+    /// mtg-zhu4p: an AURA attached to a LAND must (1) still appear as its own
+    /// card in the battlefield (the Enchantment section) AND (2) be surfaced as
+    /// an attachment on its host land, so the GUI can render the relationship.
+    /// Before the fix, `attachments` was computed only for `is_creature()` hosts
+    /// and only for `is_equipment()` attachments, so an enchanted LAND reported
+    /// NO attachment — the native GUI then showed an empty "Enchantments"
+    /// section + no note on the land (Friendly Neighborhood enchant-land repro).
+    #[test]
+    fn aura_on_land_is_surfaced_as_attachment() {
+        use crate::core::{Card, CardId, CardType, Subtype};
+        use crate::game::state::GameState;
+
+        let mut game = GameState::new_two_player("Player1".to_string(), "Player2".to_string(), 20);
+        let player_id = game.players[0].id;
+
+        // A land on the battlefield.
+        let land_id = CardId::new(200);
+        let mut land = Card::new(land_id, "Forest", player_id);
+        land.add_type(CardType::Land);
+
+        // An aura enchanting the LAND (mirrors Friendly Neighborhood enchant-land).
+        let aura_id = CardId::new(201);
+        let mut aura = Card::new(aura_id, "Friendly Neighborhood", player_id);
+        aura.add_type(CardType::Enchantment);
+        aura.subtypes.push(Subtype::new("Aura"));
+        aura.attached_to = Some(land_id);
+
+        game.cards.insert(land_id, land);
+        game.cards.insert(aura_id, aura);
+        game.battlefield.add(land_id);
+        game.battlefield.add(aura_id);
+
+        let inputs = ViewModelInputs {
+            perspective_player_id: player_id,
+            selected_card_id: None,
+            valid_choices: &[],
+            current_prompt: None,
+            choices: &[],
+            selected_choice_idx: 0,
+            choice_context: "None",
+            game_over: false,
+            error_message: None,
+            log_tail_size: 100,
+        };
+        let model = build_view_model(&game, inputs);
+
+        let our = model.players.iter().find(|p| p.is_us).expect("our player view");
+        let all_cards: Vec<&CardView> = our.battlefield_sections.iter().flat_map(|s| s.cards.iter()).collect();
+
+        // (a2) The host LAND surfaces the aura as an attachment with render fields.
+        let land_view = all_cards
+            .iter()
+            .find(|c| c.card_id == land_id.as_u32())
+            .expect("land present on battlefield");
+        assert_eq!(
+            land_view.attachments.len(),
+            1,
+            "enchanted land must report its aura as an attachment (got {:?})",
+            land_view.attachments
+        );
+        let att = &land_view.attachments[0];
+        assert_eq!(att.card_id, aura_id.as_u32());
+        assert_eq!(att.name, "Friendly Neighborhood");
+        assert!(
+            matches!(att.category, SerializedCardCategory::Enchantment),
+            "attachment category should be Enchantment, got {:?}",
+            att.category
+        );
+
+        // (data for a1) The aura is ALSO present as its own card, grouped under
+        // the Enchantment section (so the JS renderer can draw it there).
+        let aura_section = our
+            .battlefield_sections
+            .iter()
+            .find(|s| s.cards.iter().any(|c| c.card_id == aura_id.as_u32()))
+            .expect("aura must appear as a card in some battlefield section");
+        assert!(
+            matches!(aura_section.category, SerializedCardCategory::Enchantment),
+            "aura should be in the Enchantment section, got {:?}",
+            aura_section.category
+        );
+
+        // JSON round-trips with the new attachment fields present.
+        let json = serde_json::to_string(&model).expect("serialize view model");
+        assert!(json.contains("\"attachments\""));
+        assert!(json.contains("Friendly Neighborhood"));
     }
 
     /// mtg-436: the rewind/replay verifier + monotonicity-invariant failure

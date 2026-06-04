@@ -1472,6 +1472,11 @@
                     recordImgResolved: window.__recordImgResolved,
                     clearImageMemo: () => __imageResolveMemo.clear(),
                     imageMemoSize: () => __imageResolveMemo.size,
+                    // mtg-zhu4p: expose renderBattlefield so the aura-render
+                    // regression test can drive it deterministically with a
+                    // synthetic player (aura attached to a land) and assert the
+                    // aura tile renders + the host shows the attachment badge.
+                    renderBattlefield,
                 };
 
                 cardDb = new WasmCardDatabase();
@@ -2215,17 +2220,25 @@
                 const grid = document.createElement('div');
                 grid.className = 'bf-section-cards';
                 for (const card of section.cards) {
-                    // Skip equipment attached to a creature — the creature
-                    // already shows an equipment badge for it, mirroring
-                    // the TUI's stacked rendering.
-                    if (card.attached_to != null) continue;
+                    // Skip EQUIPMENT attached to its host — the host already
+                    // shows it as a badge (mirroring the TUI's stacked
+                    // rendering). Auras / other attached enchantments are NOT
+                    // skipped: they still render as their own card in the
+                    // Enchantments section. (mtg-zhu4p: commit b2b38afa
+                    // over-broadened this to `attached_to != null`, which also
+                    // swallowed attached auras → an empty "Enchantments"
+                    // section when e.g. Friendly Neighborhood enchanted a land.)
+                    if ((card.css_classes || []).includes('equipment') && card.attached_to != null) continue;
                     const el = createCardElement(card, false, imgHeightPx);
                     if (card.attachments && card.attachments.length > 0) {
-                        const equipNames = card.attachments.map(a => a.name).join(', ');
+                        // Badge lists every attached card (equipment AND auras)
+                        // on the host so the relationship is visible even
+                        // without true visual stacking (tracked in mtg-i9bux).
+                        const attachNames = card.attachments.map(a => a.name).join(', ');
                         const badge = document.createElement('div');
                         badge.className = 'card-equip-badge';
-                        badge.textContent = equipNames;
-                        badge.title = equipNames;
+                        badge.textContent = attachNames;
+                        badge.title = attachNames;
                         el.appendChild(badge);
                         el.classList.add('equipped');
                     }
