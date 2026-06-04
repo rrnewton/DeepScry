@@ -98,11 +98,15 @@ async function startServers() {
     }
     const httpPort = await pickPort();
     const mtgPort = await pickPort();
+    // mtg-717: stdio 'ignore' (not undrained 'pipe') — an undrained stdout/stderr
+    // pipe fills the 64KB OS buffer after a few hundred http.server request logs,
+    // blocking the server on its next write so it stops serving (the network-redo
+    // landing-test scenario-13 deadlock). These streams are never read here.
     const httpProc = spawn('python3', ['-m', 'http.server', String(httpPort)], {
-        cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: __dirname, stdio: 'ignore',
     });
     const mtgProc = spawn(mtgBinary, ['server', '--port', String(mtgPort)], {
-        cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: projectRoot, stdio: 'ignore',
     });
     const httpOk = await waitForTcp(httpPort, '127.0.0.1', 10000);
     const mtgOk = await waitForTcp(mtgPort, '127.0.0.1', 10000);

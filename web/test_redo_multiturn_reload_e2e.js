@@ -357,7 +357,11 @@ async function main() {
     let server = null;
     const legResults = [];
     try {
-        httpServer = spawn('python3', ['-m', 'http.server', String(httpPort)], { cwd: __dirname, stdio: ['ignore', 'pipe', 'pipe'] });
+        // mtg-717: stdio 'ignore' — an undrained http.server stdout/stderr pipe
+        // fills the 64KB OS buffer after a few hundred request logs and deadlocks
+        // the server (the landing scenario-13 hang). This stream is never read;
+        // the mtg `server` below stays piped because scanServer consumes it.
+        httpServer = spawn('python3', ['-m', 'http.server', String(httpPort)], { cwd: __dirname, stdio: 'ignore' });
         if (!await waitForHttp(httpPort, 'tui_game.html')) throw new Error('HTTP server failed to start');
         log('HTTP server ready');
 
