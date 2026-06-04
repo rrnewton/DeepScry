@@ -206,13 +206,14 @@ async function runTest() {
         });
         await page.click('#btn-bug-report');
         await page.waitForSelector('#bug-report-modal', { state: 'visible', timeout: 5000 });
-        // mtg-596: in this local (non-network) game there is no server WS, so the
-        // precheck must show a persistent "not connected" banner up front AND
-        // disable Submit — before the user types anything.
+        // mtg-5ejgo: in this local (solo) game there is no live game WS, but the
+        // widget connects on demand to the lobby endpoint — so Submit is ENABLED
+        // with no "not connected" banner (the old mtg-596 dead-end is gone). The
+        // detailed two-phase flows below drive an injected live client.
         await page.waitForFunction(() => {
             const status = document.getElementById('bug-report-status')?.textContent || '';
             const submit = document.getElementById('btn-bug-report-submit');
-            return status.includes('Not connected') && submit && submit.disabled;
+            return submit && !submit.disabled && !status.includes('Not connected');
         }, { timeout: 5000 });
 
         // Install a connected mock transport so the precheck enables Submit and

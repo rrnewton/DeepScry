@@ -86,6 +86,92 @@ export function installConsoleCapture() {
     window.__originalConsole = originalConsole;
 }
 
+// ---- Connect-on-demand transient lobby WS (mtg-5ejgo) -----------------------
+// A bug report is a single "commitment" message that the server's lobby handler
+// accepts on a bare connection (network/server.rs, same path as ListGames /
+// CreateGame). So when there is no live game WebSocket (e.g. a SOLO/local WASM
+// game), we lazily open a short-lived WS straight to the lobby endpoint, file
+// the report over it, run the two-phase flow, and close it. This is far lighter
+// than network.js's WASM-coupled connect() (which negotiates the full game
+// protocol) — we only need send + the two bug-report replies.
+
+// Resolve the lobby WS URL the same way web/server-config.js does: an explicit
+// window.MTG_WS_URL override wins, else derive `<ws|wss>://<host>/lobby` from
+// the current location (the unified-axum deploy serves the lobby same-origin).
+export function resolveLobbyWsUrl() {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+    if (window.MTG_WS_URL) {
+        return window.MTG_WS_URL;
+    }
+    const loc = window.location;
+    if (!loc || !loc.host) {
+        return null;
+    }
+    const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${loc.host}/lobby`;
+}
+
+// Default factory: open a real WebSocket and adapt it to the minimal transport
+// interface the widget uses (isConnected / send / close + the two bug-report
+// callbacks). Resolves once the socket is OPEN; rejects on early error/close.
+// Tests override this via `window.__bugReportTransientFactory`.
+function defaultCreateTransientConnection(url) {
+    return new Promise((resolve, reject) => {
+        let ws;
+        try {
+            ws = new WebSocket(url);
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        let settled = false;
+        const conn = {
+            isConnected: () => ws.readyState === WebSocket.OPEN,
+            send: (json) => ws.send(json),
+            close: () => {
+                try {
+                    ws.close();
+                } catch (_error) {
+                    // best-effort
+                }
+            },
+            onBugReportStored: null,
+            onBugReportIssueResult: null,
+        };
+        ws.onmessage = (event) => {
+            let msg = null;
+            try {
+                msg = JSON.parse(event.data);
+            } catch (_error) {
+                return;
+            }
+            if (msg?.type === 'bug_report_stored' && conn.onBugReportStored) {
+                conn.onBugReportStored(msg);
+            } else if (msg?.type === 'bug_report_issue_result' && conn.onBugReportIssueResult) {
+                conn.onBugReportIssueResult(msg);
+            }
+        };
+        ws.onopen = () => {
+            settled = true;
+            resolve(conn);
+        };
+        ws.onerror = () => {
+            if (!settled) {
+                settled = true;
+                reject(new Error('Could not reach the bug-report server.'));
+            }
+        };
+        ws.onclose = () => {
+            if (!settled) {
+                settled = true;
+                reject(new Error('The bug-report connection closed before it opened.'));
+            }
+        };
+    });
+}
+
 // ---- Dialog CSS + DOM injection ---------------------------------------------
 const BUG_REPORT_CSS = `
         #bug-report-overlay {
@@ -236,6 +322,11 @@ export function initBugReport(config) {
         getConsoleLogs = () => (typeof window.getRecentConsoleLogs === 'function' ? window.getRecentConsoleLogs() : []),
         getTurnInfo = () => document.getElementById('turn-info')?.textContent || '',
         getMode = () => document.getElementById('game-mode')?.value || 'unknown',
+        // Connect-on-demand hooks (mtg-5ejgo). `getWsUrl` resolves the lobby
+        // endpoint; `createTransientConnection` opens a transient transport when
+        // there is no live game WS. Both are overridable for tests.
+        getWsUrl = resolveLobbyWsUrl,
+        createTransientConnection = defaultCreateTransientConnection,
     } = config;
 
     installConsoleCapture();
@@ -254,6 +345,9 @@ export function initBugReport(config) {
     // permanently disabled ("Already submitted") so the user cannot double-file.
     let bugReportFinalized = false;
     let backstopHandle = null;
+    // The transient lobby connection opened for a connect-on-demand submission
+    // (solo/local game). Null when reusing a live game WS. Closed on finalize.
+    let activeTransient = null;
     // Each phase is one of: 'pending' | 'ok' | 'fail' | 'unknown'.
     let progressState = { disk: 'pending', diskError: null, github: 'pending', githubUrl: null, githubError: null };
 
@@ -345,8 +439,8 @@ export function initBugReport(config) {
         }
     }
 
-    // mtg-596: bug reports are filed by the native server over the active
-    // WebSocket; there's no point letting the user write one with no connection.
+    // True iff a live game WebSocket is connected and usable for sending. When
+    // present we reuse it; otherwise we connect on demand (mtg-5ejgo).
     function isConnectionReady() {
         const client = currentClient();
         return !!(client
@@ -355,8 +449,18 @@ export function initBugReport(config) {
             && typeof client.send === 'function');
     }
 
-    // mtg-596: reflect the live WS state on the open dialog — disable Submit and
-    // show a persistent inline banner up front when there is no connection.
+    // mtg-5ejgo: a report can be filed from ANY context — reuse the live game WS
+    // if connected, else connect on demand to the lobby endpoint. So the only
+    // hard blocker is having no lobby URL to connect to at all (e.g. the page was
+    // opened with no server origin).
+    function canFileReport() {
+        return isConnectionReady() || !!getWsUrl();
+    }
+
+    // mtg-5ejgo: reflect filing readiness on the open dialog. The old mtg-596
+    // "Not connected — start or join a network game" banner is gone: a solo
+    // player connects on demand. Only when there is no server origin at all do we
+    // disable Submit and explain why.
     function applyConnectionState() {
         // While a submission is in flight (or finalized) the connection poll must
         // not touch the Submit button or status area — the progress checkboxes
@@ -365,14 +469,14 @@ export function initBugReport(config) {
             return;
         }
         const submitButton = document.getElementById('btn-bug-report-submit');
-        const connected = isConnectionReady();
+        const canFile = canFileReport();
         if (submitButton) {
-            submitButton.disabled = !connected;
+            submitButton.disabled = !canFile;
         }
         const status = document.getElementById('bug-report-status');
-        if (!connected) {
+        if (!canFile) {
             setStatus(
-                'Not connected — bug reports need an active server connection. Start or join a network game to file a report.',
+                'No server is configured to receive bug reports from this page.',
                 { isError: true }
             );
             if (status) {
@@ -382,6 +486,31 @@ export function initBugReport(config) {
             delete status.dataset.precheckBanner;
             setStatus('');
         }
+    }
+
+    function closeTransient() {
+        if (activeTransient) {
+            try {
+                if (typeof activeTransient.close === 'function') {
+                    activeTransient.close();
+                }
+            } catch (_error) {
+                // best-effort teardown
+            }
+            activeTransient = null;
+        }
+    }
+
+    // Open a transient lobby connection for connect-on-demand filing, routing its
+    // two bug-report replies into the same two-phase handlers. Tests override the
+    // factory via window.__bugReportTransientFactory.
+    async function openTransientConnection(url) {
+        const factory = (typeof window !== 'undefined' && window.__bugReportTransientFactory)
+            || createTransientConnection;
+        const conn = await factory(url);
+        conn.onBugReportStored = handleStored;
+        conn.onBugReportIssueResult = handleIssueResult;
+        return conn;
     }
 
     function startConnectionPolling() {
@@ -474,21 +603,40 @@ export function initBugReport(config) {
             turnInfo: payload.turnInfo,
         });
 
-        const client = currentClient();
-        if (!isConnectionReady()) {
-            setSubmitting(false);
-            setStatus('Bug report submission requires an active network WebSocket connection.', { isError: true });
-            return;
+        // Resolve a transport (mtg-5ejgo): reuse the live game WS if connected,
+        // otherwise connect on demand to the lobby endpoint (solo/local game).
+        closeTransient();
+        let transport;
+        if (isConnectionReady()) {
+            transport = currentClient();
+        } else {
+            const url = getWsUrl();
+            if (!url) {
+                setSubmitting(false);
+                setStatus('No server is configured to receive bug reports from this page.', { isError: true });
+                return;
+            }
+            try {
+                setStatus('Connecting to the server to file your report…');
+                activeTransient = await openTransientConnection(url);
+                transport = activeTransient;
+            } catch (error) {
+                setSubmitting(false);
+                closeTransient();
+                setStatus(`Could not connect to the server to file the report: ${error.message}`, { isError: true });
+                return;
+            }
         }
 
         try {
-            client.send(JSON.stringify(message));
+            transport.send(JSON.stringify(message));
             // Two-phase UX (mtg-5ejgo): the report is now in flight. Show the two
             // checkboxes and arm the client-side backstop. The Submit button stays
             // disabled until the flow finalizes.
             startSubmissionProgress();
         } catch (error) {
             setSubmitting(false);
+            closeTransient();
             setStatus(`Failed to send bug report: ${error.message}`, { isError: true });
         }
     }
@@ -506,6 +654,7 @@ export function initBugReport(config) {
 
     function resetSubmissionState() {
         clearBackstop();
+        closeTransient();
         bugReportFinalized = false;
         bugReportSubmitting = false;
         progressState = { disk: 'pending', diskError: null, github: 'pending', githubUrl: null, githubError: null };
@@ -650,6 +799,8 @@ export function initBugReport(config) {
             passwordEl.value = '';
         }
         refreshCaptureCounts();
+        // The two-phase flow is over; tear down any transient lobby connection.
+        closeTransient();
     }
 
     // Phase 1: the server confirms (or reports failure of) the disk write.
@@ -666,6 +817,8 @@ export function initBugReport(config) {
         progressState.disk = 'fail';
         progressState.diskError = message?.error || 'The server failed to save the bug report.';
         clearBackstop();
+        // A retry will resolve a fresh transport; drop the current one.
+        closeTransient();
         renderProgress();
         restoreEditableControls();
     }

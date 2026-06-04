@@ -5,9 +5,10 @@
 // 1. Loads the fancy TUI page
 // 2. Launches a local game to expose the floating controls widget
 // 3. Verifies the bug report modal UI and validation
-// 4. Verifies the WS-connection precheck (mtg-596): a persistent
-//    "not connected" banner + disabled Submit shown up front on dialog open
-//    when there is no active server WebSocket.
+// 4. Verifies connect-on-demand (mtg-5ejgo): in a SOLO/local game with no live
+//    game WebSocket, Submit is enabled (no "not connected" dead-end) and the
+//    widget lazily opens a transient lobby connection to file the report,
+//    runs the two-phase flow over it, and closes it.
 // 5. Verifies cancel/reset behavior
 // 6. Mocks the two-phase bug_report_stored + bug_report_issue_result responses
 //    (mtg-5ejgo) and asserts the two-checkbox flow: box 1 checks on the disk
@@ -165,22 +166,19 @@ async function runTest() {
         await page.screenshot({ path: path.join(screenshotDir, 'bug_report_03_modal.png'), fullPage: true });
         testResults.steps.push({ name: 'modal_open', timestamp: new Date().toISOString() });
 
-        // mtg-596: in a local (non-network) game there is no server WS, so the
-        // precheck must show a persistent "not connected" banner AND disable
-        // Submit up front — before the user types anything.
-        log('Checking WS-connection precheck (disconnected) shows banner + disables Submit...');
+        // mtg-5ejgo: in a SOLO/local game there is no live game WS, but the
+        // widget connects on demand to the lobby endpoint — so Submit must be
+        // ENABLED with NO "Not connected — start a network game" banner (that old
+        // mtg-596 dead-end is replaced by connect-on-demand).
+        log('Checking SOLO game: connect-on-demand enables Submit, no "not connected" banner...');
         await page.waitForFunction(() => {
             const status = document.getElementById('bug-report-status')?.textContent || '';
             const submit = document.getElementById('btn-bug-report-submit');
-            return status.includes('Not connected') && status.includes('active server connection') && submit && submit.disabled;
+            return submit && !submit.disabled && !status.includes('Not connected');
         }, { timeout: 5000 });
-        const prevDescBeforeTyping = await page.evaluate(() => document.getElementById('bug-report-description')?.value || '');
-        if (prevDescBeforeTyping !== '') {
-            throw new Error('Precheck banner should appear before the user types anything');
-        }
-        testResults.steps.push({ name: 'precheck_disconnected', timestamp: new Date().toISOString() });
+        testResults.steps.push({ name: 'solo_connect_on_demand_enabled', timestamp: new Date().toISOString() });
 
-        log('Checking cancel closes modal and reopen re-shows precheck banner while disconnected...');
+        log('Checking cancel resets fields and reopen keeps Submit enabled (solo)...');
         await page.fill('#bug-report-description', 'This text should be cleared when the modal closes.');
         await page.fill('#bug-report-password', 'reset-me');
         await closeBugReportModal(page);
@@ -189,12 +187,73 @@ async function runTest() {
         if (resetAfterClose.description !== '' || resetAfterClose.password !== '') {
             throw new Error('Bug report form fields did not reset after closing the modal');
         }
-        // Status is expected to be the precheck banner (still disconnected), not blank.
-        if (!resetAfterClose.statusText.includes('Not connected')) {
-            throw new Error('Reopened dialog did not re-show the not-connected precheck banner');
+        if (resetAfterClose.statusText.includes('Not connected')) {
+            throw new Error('Reopened solo dialog should NOT show a not-connected banner');
         }
         testResults.steps.push({ name: 'close_reset', timestamp: new Date().toISOString() });
+
+        // ── SOLO SUBMIT (mtg-5ejgo): connect-on-demand transient WS ───────────
+        // With NO live game client, the widget must lazily open a transient lobby
+        // connection, send the report (incl. local game logs for repro), run the
+        // two-checkbox flow over it, and close the connection when finalized. We
+        // stub the transient factory so no real server is needed in the test.
+        log('SOLO submit: opens transient lobby connection, runs two-phase flow, then closes it...');
+        await page.evaluate(() => {
+            window.__bugReportTransientLog = [];
+            window.__bugReportTransientFactory = (url) => {
+                const conn = {
+                    url,
+                    sent: [],
+                    closed: false,
+                    onBugReportStored: null,
+                    onBugReportIssueResult: null,
+                    isConnected() { return !this.closed; },
+                    send(json) { this.sent.push(JSON.parse(json)); },
+                    close() { this.closed = true; },
+                };
+                window.__bugReportTransientLog.push(conn);
+                window.__bugReportLastTransient = conn;
+                return Promise.resolve(conn);
+            };
+        });
+        await page.fill('#bug-report-description', 'Solo game bug: this should still file a report.');
+        await page.click('#btn-bug-report-submit');
+        // The transient connection opened and the report was sent over it.
+        await page.waitForFunction(() => {
+            const conn = window.__bugReportLastTransient;
+            return conn && conn.sent.length === 1 && conn.sent[0].type === 'bug_report'
+                && typeof conn.url === 'string' && conn.url.includes('/lobby');
+        }, { timeout: 5000 });
+        const soloSent = await page.evaluate(() => window.__bugReportLastTransient.sent[0]);
+        if (!soloSent.description.includes('Solo game bug')) {
+            throw new Error('Solo submission sent the wrong description');
+        }
+        if (!soloSent.game_logs) {
+            throw new Error('Solo submission omitted local game logs (needed for repro)');
+        }
+        // Drive both phases over the transient connection.
+        await page.evaluate(() => {
+            window.__bugReportLastTransient.onBugReportStored({
+                type: 'bug_report_stored', success: true, report_dir: 'bug_reports/solo1', error: null
+            });
+            window.__bugReportLastTransient.onBugReportIssueResult({
+                type: 'bug_report_issue_result', issue_url: 'https://github.com/example/repo/issues/777', error: null
+            });
+        });
+        await page.waitForFunction(() => {
+            const disk = document.getElementById('bug-report-check-disk');
+            const github = document.getElementById('bug-report-check-github');
+            const submit = document.getElementById('btn-bug-report-submit');
+            const conn = window.__bugReportLastTransient;
+            return disk && disk.dataset.state === 'ok'
+                && github && github.dataset.state === 'ok'
+                && submit && submit.disabled && submit.textContent === 'Already submitted'
+                && conn && conn.closed === true;
+        }, { timeout: 5000 });
+        testResults.steps.push({ name: 'solo_submit_two_phase', timestamp: new Date().toISOString() });
         await closeBugReportModal(page);
+        // Remove the stub so the remaining cases use the injected live client.
+        await page.evaluate(() => { delete window.__bugReportTransientFactory; delete window.__bugReportLastTransient; });
 
         log('Installing mock CONNECTED network transport...');
         await page.evaluate(() => {
