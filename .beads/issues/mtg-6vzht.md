@@ -1,10 +1,11 @@
 ---
 title: renderBattlefield full innerHTML rebuild on every network message — only re-render on actual battlefield change (debounce/diff)
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-04T02:45:24.423604266+00:00
-updated_at: 2026-06-04T05:39:38.539553703+00:00
+updated_at: 2026-06-04T08:46:50.725935436+00:00
+closed_at: 2026-06-04T08:46:50.725935097+00:00
 ---
 
 # Description
