@@ -106,6 +106,14 @@ pub enum NetworkMessage {
     Error { message: String, fatal: bool },
     /// Library was reordered (informational)
     LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
+    /// Library-search candidates revealed to the searcher (mtg-o99ow L2d).
+    /// The server now sends the N candidate identities as ONE
+    /// `ServerMessage::SearchCandidates` (a single atomic-multi-delta at one
+    /// game ac, required by the WASM shadow's ac-keyed log). The native client
+    /// keys reveals by a synthetic counter, so it expands this back into N
+    /// individual `Searched` reveals on receipt — behaviour-identical to the
+    /// prior N-`CardRevealed` form.
+    SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
 }
 
 impl NetworkMessage {
@@ -179,9 +187,12 @@ impl NetworkMessage {
                 winner, action_count, ..
             } => Some(NetworkMessage::GameEnded { winner, action_count }),
             ServerMessage::Error { message, fatal } => Some(NetworkMessage::Error { message, fatal }),
-            ServerMessage::LibraryReordered {
-                player, new_order, ..
-            } => Some(NetworkMessage::LibraryReordered { player, new_order }),
+            ServerMessage::LibraryReordered { player, new_order, .. } => {
+                Some(NetworkMessage::LibraryReordered { player, new_order })
+            }
+            ServerMessage::SearchCandidates { searcher, cards, .. } => {
+                Some(NetworkMessage::SearchCandidates { searcher, cards })
+            }
             // Ignore connection/setup messages - handled during connection setup, not gameplay.
             // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed/WaitingRoomUpdate/
             // RegisterResult/ReconnectResult) are also pre-gameplay: the lobby flow consumes
@@ -201,10 +212,6 @@ impl NetworkMessage {
             | ServerMessage::ServerFull { .. }
             | ServerMessage::JoinFailed { .. }
             | ServerMessage::SyncError { .. }
-            // L1 (mtg-o99ow): SearchCandidates is not emitted yet (library-search
-            // candidates still arrive as N CardRevealed). When L2 emits it, the
-            // native shadow will need to consume it like the WASM client does.
-            | ServerMessage::SearchCandidates { .. }
             | ServerMessage::Pong { .. } => None,
             // DebugStateDump only exists in debug builds
             #[cfg(debug_assertions)]
@@ -2039,6 +2046,13 @@ async fn run_ws_reader_shared(
                                 );
                                 shared_state.push_reveal(owner, card, reason);
                             }
+                            NetworkMessage::SearchCandidates { searcher, cards } => {
+                                // mtg-o99ow L2d: expand the bundled candidates into N
+                                // individual Searched reveals (native synthetic keying).
+                                for card in cards {
+                                    shared_state.push_reveal(searcher, card, RevealReason::Searched);
+                                }
+                            }
                             NetworkMessage::ChoiceRequest {
                                 action_count,
                                 choice_seq,
@@ -2210,6 +2224,19 @@ async fn run_ws_reader(
                                     owner
                                 );
                                 reveals.push(BufferedReveal { owner, card, reason });
+                            } else {
+                                log::error!("WsReader: failed to lock pending_reveals");
+                            }
+                        } else if let NetworkMessage::SearchCandidates { searcher, cards } = network_msg {
+                            // mtg-o99ow L2d: expand bundled candidates → N Searched reveals.
+                            if let Ok(mut reveals) = pending_reveals.lock() {
+                                for card in cards {
+                                    reveals.push(BufferedReveal {
+                                        owner: searcher,
+                                        card,
+                                        reason: RevealReason::Searched,
+                                    });
+                                }
                             } else {
                                 log::error!("WsReader: failed to lock pending_reveals");
                             }

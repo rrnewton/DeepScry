@@ -59,8 +59,9 @@ pub enum StateSyncEntry {
     /// `action_count` (the search-resolution ac); carrying `Vec<CardReveal>`
     /// avoids the strict-monotonicity collision that N separate reveals at one
     /// ac would cause in the game-ac-keyed `ActionLog`. Applied by replaying
-    /// `process_card_reveal_wasm` over each candidate.
-    SearchCandidates { cards: Vec<CardReveal> },
+    /// `process_card_reveal_wasm` over each candidate (with `searcher` as the
+    /// card owner, `RevealReason::Searched`).
+    SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
 }
 
 #[cfg(test)]

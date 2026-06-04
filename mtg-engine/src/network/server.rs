@@ -2142,18 +2142,34 @@ async fn run_game(
     // - Own cards: real reveal with name (player can see their hand)
     // - Opponent cards: dummy reveal with empty name (keeps count synced, reveals nothing)
 
+    // mtg-o99ow L2c: stamp each opening-hand reveal at its REAL per-draw game
+    // `action_count` (the undo-log position of that draw's `RevealCard`), NOT a
+    // bundled `Some(0)`. The shadow runs the SAME `skip_opening_hands` GameLoop
+    // and draws P1's 7 then P2's 7 via `draw_card_silent`, each draw logging
+    // EXACTLY three undo actions in this order: `RevealCard`, `MoveCard`,
+    // `SetCardsDrawnThisTurn` (empirically pinned — see `peek_opening_hand` draw
+    // order is top-of-library-first, matching the GameLoop's draw order). So the
+    // k-th globally-drawn card's `RevealCard` lands at undo position
+    // `OPENING_DRAW_UNDO_ACTIONS * k`, where P1's cards are k = 0..p1_hand.len()
+    // and P2's are k = p1_hand.len()..(p1+p2). Distinct per-draw acs are REQUIRED
+    // by the game-ac-keyed shadow log (L3): the prior `Some(0)` would collide N
+    // reveals at one ac and panic `ActionLog::push`.
+    const OPENING_DRAW_UNDO_ACTIONS: u64 = 3;
+    let p1_count = p1_hand.len() as u64;
+    let opening_reveal_ac = |global_draw_idx: u64| Some(global_draw_idx * OPENING_DRAW_UNDO_ACTIONS);
+
     // P1 receives: own hand (real reveals) + P2's hand (dummy reveals)
-    for card in &p1_hand {
+    for (i, card) in p1_hand.iter().enumerate() {
         p1_conn
             .send(&ServerMessage::CardRevealed {
                 owner: p1_id,
                 card: card.clone(), // Real reveal - P1 sees own cards
                 reason: RevealReason::Draw,
-                action_count: Some(0), // mtg-610: opening hand = game-start position
+                action_count: opening_reveal_ac(i as u64),
             })
             .await?;
     }
-    for card in &p2_hand {
+    for (j, card) in p2_hand.iter().enumerate() {
         // Dummy reveal: strip name so P1 can't see P2's hand
         let dummy_reveal = CardReveal {
             card_id: card.card_id,
@@ -2165,13 +2181,13 @@ async fn run_game(
                 owner: p2_id,
                 card: dummy_reveal,
                 reason: RevealReason::Draw,
-                action_count: Some(0), // mtg-610: opening hand = game-start position
+                action_count: opening_reveal_ac(p1_count + j as u64),
             })
             .await?;
     }
 
     // P2 receives: P1's hand (dummy reveals) + own hand (real reveals)
-    for card in &p1_hand {
+    for (i, card) in p1_hand.iter().enumerate() {
         // Dummy reveal: strip name so P2 can't see P1's hand
         let dummy_reveal = CardReveal {
             card_id: card.card_id,
@@ -2183,17 +2199,17 @@ async fn run_game(
                 owner: p1_id,
                 card: dummy_reveal,
                 reason: RevealReason::Draw,
-                action_count: Some(0), // mtg-610: opening hand = game-start position
+                action_count: opening_reveal_ac(i as u64),
             })
             .await?;
     }
-    for card in &p2_hand {
+    for (j, card) in p2_hand.iter().enumerate() {
         p2_conn
             .send(&ServerMessage::CardRevealed {
                 owner: p2_id,
                 card: card.clone(), // Real reveal - P2 sees own cards
                 reason: RevealReason::Draw,
-                action_count: Some(0), // mtg-610: opening hand = game-start position
+                action_count: opening_reveal_ac(p1_count + j as u64),
             })
             .await?;
     }
@@ -2914,28 +2930,40 @@ async fn handle_player_websocket(
                         }
 
                         // For LibrarySearchByName choices, reveal all searchable library cards
-                        // BEFORE sending ChoiceRequest so client can filter them (mtg-253 fix)
+                        // BEFORE sending ChoiceRequest so client can filter them (mtg-253 fix).
+                        //
+                        // mtg-o99ow L2d: emit ONE `SearchCandidates` message carrying the full
+                        // `Vec<CardReveal>` at the single search-choice ac, NOT N separate
+                        // `CardRevealed` messages all stamped at that one ac. Under the
+                        // game-`action_count`-keyed shadow log (L3) the N-at-one-ac form would
+                        // collide on `ActionLog::push` (strict-monotonicity). One atomic
+                        // multi-delta = one log entry = one ac is the only form consistent with
+                        // "logs aligned modulo reveal-name visibility": the searcher sees real
+                        // names here; the opponent's view stays masked via the dummy `Searched`
+                        // reveal at the resolution ac (below).
                         if let Some(ref library_cards) = choice_request.library_search_cards {
                             let game_guard = game.lock().await;
                             log::debug!(
-                                "Handler P{}: Sending {} CardRevealed for library search (mtg-253)",
+                                "Handler P{}: Sending SearchCandidates ({} cards) for library search (mtg-253/mtg-o99ow)",
                                 conn.player_id, library_cards.len()
                             );
-                            for &card_id in library_cards {
-                                if let Some(card) = game_guard.cards.try_get(card_id) {
-                                    let card_def = game_guard.card_definitions.get(&card.name).cloned();
-                                    let card_reveal = CardReveal {
+                            let cards: Vec<CardReveal> = library_cards
+                                .iter()
+                                .filter_map(|&card_id| {
+                                    game_guard.cards.try_get(card_id).map(|card| CardReveal {
                                         card_id,
                                         name: card.name.to_string(),
-                                        card_def,
-                                    };
-                                    conn.send(&ServerMessage::CardRevealed {
-                                        owner: conn.player_id, // Player searching their own library
-                                        card: card_reveal,
-                                        reason: RevealReason::Searched,
-                                        action_count: Some(choice_request.action_count),
-                                    }).await?;
-                                }
+                                        card_def: game_guard.card_definitions.get(&card.name).cloned(),
+                                    })
+                                })
+                                .collect();
+                            drop(game_guard);
+                            if !cards.is_empty() {
+                                conn.send(&ServerMessage::SearchCandidates {
+                                    searcher: conn.player_id, // Player searching their own library
+                                    cards,
+                                    action_count: choice_request.action_count,
+                                }).await?;
                             }
                         }
 

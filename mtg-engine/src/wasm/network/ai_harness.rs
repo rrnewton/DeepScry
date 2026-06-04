@@ -205,10 +205,12 @@ fn step_harness(harness: &mut WasmAiHarness, client: SharedNetworkClient) -> Str
     // WASM equivalent of the native client's blocking sync mechanism, but
     // non-destructive — see docs/NETWORK_ACTION_LOG.md § 3.2.
     let client_for_sync = client.clone();
-    let sync_callback = move |game: &mut GameState, _target_action: u64| {
+    let sync_callback = move |game: &mut GameState, target_action: u64| {
+        // mtg-o99ow L3: apply deltas keyed by game ac, bounded by the position the
+        // GameLoop is syncing to (no longer a greedy up-to-frontier drain).
         let applied = client_for_sync
             .borrow_mut()
-            .apply_state_sync_up_to_frontier(game, Some(our_id));
+            .apply_state_sync_at(game, Some(our_id), target_action);
         if applied > 0 {
             log::debug!("ai_harness sync_callback: applied {} state-sync entries", applied);
         }

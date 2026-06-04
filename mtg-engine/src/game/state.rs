@@ -814,6 +814,27 @@ impl GameState {
                 },
                 prior_log_size,
             );
+
+            // NETWORK SYNC (mtg-o99ow L2b, residual-#1 fix): emit a
+            // `LibraryReordered` for this shuffle so the shadow can reproduce the
+            // owner's post-shuffle library order. Previously ONLY scry/surveil
+            // (`log_library_reorder` callers) enqueued reorders — a bare
+            // `shuffle_library` (Timetwister, Wheel, tutor-then-shuffle) logged
+            // `ShuffleLibrary` for undo but emitted NO `LibraryReordered`, so the
+            // shadow's library order went stale after any shuffle and subsequent
+            // draws popped the wrong CardIds (mtg-yexvc seed-2 turn-16: P1's hand
+            // missing card 105 after a Timetwister). Stamp at the `ShuffleLibrary`
+            // action's own ac (undo-log length right after the log above), so the
+            // shadow adopts the new order at the SAME game position on the forward
+            // pass and on every rewind/replay. Server network mode only
+            // (`!skip_reveals && !is_shadow_game`); the game-start shuffle runs
+            // under `skip_reveals` and is synced via the explicit ac-0
+            // `LibraryReordered` messages instead. The reserved CardIds carry no
+            // identity, so broadcasting the order to the opponent leaks nothing.
+            if !self.skip_reveals && !self.is_shadow_game {
+                let reorder_ac = self.undo_log.len() as u64;
+                self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
+            }
         }
     }
 
