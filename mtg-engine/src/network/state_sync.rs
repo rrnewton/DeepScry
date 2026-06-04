@@ -64,6 +64,61 @@ pub enum StateSyncEntry {
     SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
 }
 
+/// True iff two `StateSyncEntry` values describe the SAME logical delta
+/// (same variant, same identity payload, ignoring the non-identifying
+/// `reason` tag on reveals).
+///
+/// Used by BOTH the native (`network::client`) and WASM
+/// (`wasm::network::client`) shadow state-sync logs to decide whether a
+/// duplicate-`action_count` arrival is a benign idempotent re-send (DROP) or
+/// a genuine protocol desync (FATAL). Because `action_count == undo_log.len()`
+/// is globally unique per logged action, two entries sharing an `ac` can only
+/// be the same logical delta re-sent — this predicate verifies that and lets
+/// the caller crash on a mismatch (NETWORK_ARCHITECTURE.md: Desync is ALWAYS
+/// Fatal). Shared here (one primitive, native + WASM) per the DRY rule.
+#[must_use]
+pub fn state_sync_entries_equivalent(a: &StateSyncEntry, b: &StateSyncEntry) -> bool {
+    use StateSyncEntry::*;
+    match (a, b) {
+        (
+            RevealCard {
+                owner: oa, card: ca, ..
+            },
+            RevealCard {
+                owner: ob, card: cb, ..
+            },
+        ) => oa == ob && ca.card_id == cb.card_id && ca.name == cb.name,
+        (
+            LibraryReorder {
+                player: pa,
+                new_order: na,
+            },
+            LibraryReorder {
+                player: pb,
+                new_order: nb,
+            },
+        ) => pa == pb && na == nb,
+        (
+            SearchCandidates {
+                searcher: sa,
+                cards: ca,
+            },
+            SearchCandidates {
+                searcher: sb,
+                cards: cb,
+            },
+        ) => {
+            sa == sb
+                && ca.len() == cb.len()
+                && ca
+                    .iter()
+                    .zip(cb.iter())
+                    .all(|(x, y)| x.card_id == y.card_id && x.name == y.name)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

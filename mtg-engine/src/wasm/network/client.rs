@@ -6,65 +6,12 @@
 
 use crate::core::{PlayerId, SpellAbility};
 use crate::network::{
-    ActionLog, BufferedFact, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission, ServerMessage, StateSyncEntry,
+    state_sync_entries_equivalent, ActionLog, BufferedFact, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission,
+    ServerMessage, StateSyncEntry,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-
-/// Two `StateSyncEntry` values describe the SAME logical delta?
-///
-/// Used by [`WasmNetworkClient::push_state_sync`] to recognise an idempotent
-/// re-send (the server's `shared_reveal_index` immediate-pusher and
-/// `collect_reveals_since_last_choice` both emit a window's reveals) when a
-/// second copy arrives at a game `action_count` already occupied. We compare the
-/// **stable identity** of the delta — owner/searcher + card id(s) + library
-/// order — and deliberately ignore `card_def` (derived from the name) and the
-/// `RevealReason` (the two emit paths can derive the advisory reason from
-/// different zone context, and the undo-position ac already pins the identity).
-/// `StateSyncEntry` cannot simply `#[derive(PartialEq)]` because `CardReveal`
-/// embeds a `CardDefinition`, which is not `PartialEq`.
-fn state_sync_entries_equivalent(a: &StateSyncEntry, b: &StateSyncEntry) -> bool {
-    use StateSyncEntry::*;
-    match (a, b) {
-        (
-            RevealCard {
-                owner: oa, card: ca, ..
-            },
-            RevealCard {
-                owner: ob, card: cb, ..
-            },
-        ) => oa == ob && ca.card_id == cb.card_id && ca.name == cb.name,
-        (
-            LibraryReorder {
-                player: pa,
-                new_order: na,
-            },
-            LibraryReorder {
-                player: pb,
-                new_order: nb,
-            },
-        ) => pa == pb && na == nb,
-        (
-            SearchCandidates {
-                searcher: sa,
-                cards: ca,
-            },
-            SearchCandidates {
-                searcher: sb,
-                cards: cb,
-            },
-        ) => {
-            sa == sb
-                && ca.len() == cb.len()
-                && ca
-                    .iter()
-                    .zip(cb.iter())
-                    .all(|(x, y)| x.card_id == y.card_id && x.name == y.name)
-        }
-        _ => false,
-    }
-}
 
 /// Connection state for the WASM network client
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -22,12 +22,14 @@
 use crate::core::{CardId, PlayerId};
 use crate::game::{GameState, PlayerController, VerbosityLevel};
 use crate::loader::{AsyncCardDatabase, CardDefinition, DeckList};
-use crate::network::protocol::{CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage};
-use crate::network::{ActionLog, ChoiceEntry, StateSyncEntry};
+use crate::network::protocol::{
+    BufferedFact, CardReveal, ChoiceType, ClientMessage, DeckSubmission, RevealReason, ServerMessage,
+};
+use crate::network::{state_sync_entries_equivalent, ActionLog, ChoiceEntry, StateSyncEntry};
 use anyhow::{anyhow, Result};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -63,6 +65,10 @@ pub enum NetworkMessage {
         owner: PlayerId,
         card: CardReveal,
         reason: RevealReason,
+        /// True game `action_count` the server stamped this reveal at (mtg-o99ow).
+        /// `None` for reveals outside a choice context (opening-hand), which the
+        /// native reader never sees (those are consumed in `wait_for_game_start`).
+        action_count: Option<u64>,
     },
     /// Server is requesting a choice from us
     ChoiceRequest {
@@ -75,6 +81,13 @@ pub enum NetworkMessage {
         library_search_names: Option<Vec<String>>,
         /// Count of cards for each unique name (enables random instance selection)
         library_search_counts: Option<Vec<usize>>,
+        /// **Minimal lazy protocol buffer (mtg-o99ow).** The single ascending-`ac`
+        /// catch-up payload carrying every reveal-class + opponent-choice fact
+        /// since this client's last choice, each at its TRUE game `action_count`.
+        /// The buffer-aware native reader routes these into the state-sync +
+        /// opponent-choice logs and ignores the (Phase-1 dual-emit) eager copies
+        /// once it has gone authoritative. Empty for legacy servers.
+        buffer: Vec<(u64, BufferedFact)>,
     },
     /// Server acknowledged our previous choice
     ChoiceAccepted {
@@ -105,7 +118,13 @@ pub enum NetworkMessage {
     /// Server reported an error (fatal = should exit)
     Error { message: String, fatal: bool },
     /// Library was reordered (informational)
-    LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
+    LibraryReordered {
+        player: PlayerId,
+        new_order: Vec<CardId>,
+        /// Game `action_count` at which this reorder takes effect (mtg-o99ow).
+        /// 0 for game-start initial orders.
+        action_count: u64,
+    },
     /// Library-search candidates revealed to the searcher (mtg-o99ow L2d).
     /// The server now sends the N candidate identities as ONE
     /// `ServerMessage::SearchCandidates` (a single atomic-multi-delta at one
@@ -113,7 +132,12 @@ pub enum NetworkMessage {
     /// keys reveals by a synthetic counter, so it expands this back into N
     /// individual `Searched` reveals on receipt — behaviour-identical to the
     /// prior N-`CardRevealed` form.
-    SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
+    SearchCandidates {
+        searcher: PlayerId,
+        cards: Vec<CardReveal>,
+        /// Game `action_count` of the search-resolution choice (mtg-o99ow).
+        action_count: u64,
+    },
 }
 
 impl NetworkMessage {
@@ -124,17 +148,23 @@ impl NetworkMessage {
                 owner,
                 card,
                 reason,
-                // mtg-610: the effective-action_count stamp is consumed only by
-                // the WASM shadow's reveal-history rewind path. The native client
-                // uses a blocking-thread model with no client-side rewind, so it
-                // ignores the stamp (eager frontier consume is unchanged).
-                action_count: _,
-            } => Some(NetworkMessage::CardRevealed { owner, card, reason }),
+                // mtg-o99ow native buffer shim: the native shadow now keys reveals
+                // by the TRUE server `action_count` (like WASM), so capture the
+                // stamp instead of dropping it. Pre-authoritative eager reveals use
+                // it directly; post-authoritative eager reveals are ignored.
+                action_count,
+            } => Some(NetworkMessage::CardRevealed {
+                owner,
+                card,
+                reason,
+                action_count,
+            }),
             ServerMessage::ChoiceRequest {
                 action_count,
                 choice_seq,
                 abilities,
                 choice_type,
+                buffer,
                 ..
             } => {
                 // Extract library_search_names and counts from LibrarySearchByName choice type
@@ -153,6 +183,7 @@ impl NetworkMessage {
                     abilities,
                     library_search_names,
                     library_search_counts,
+                    buffer,
                 })
             }
             ServerMessage::ChoiceAccepted {
@@ -187,12 +218,24 @@ impl NetworkMessage {
                 winner, action_count, ..
             } => Some(NetworkMessage::GameEnded { winner, action_count }),
             ServerMessage::Error { message, fatal } => Some(NetworkMessage::Error { message, fatal }),
-            ServerMessage::LibraryReordered { player, new_order, .. } => {
-                Some(NetworkMessage::LibraryReordered { player, new_order })
-            }
-            ServerMessage::SearchCandidates { searcher, cards, .. } => {
-                Some(NetworkMessage::SearchCandidates { searcher, cards })
-            }
+            ServerMessage::LibraryReordered {
+                player,
+                new_order,
+                action_count,
+            } => Some(NetworkMessage::LibraryReordered {
+                player,
+                new_order,
+                action_count,
+            }),
+            ServerMessage::SearchCandidates {
+                searcher,
+                cards,
+                action_count,
+            } => Some(NetworkMessage::SearchCandidates {
+                searcher,
+                cards,
+                action_count,
+            }),
             // Ignore connection/setup messages - handled during connection setup, not gameplay.
             // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed/WaitingRoomUpdate/
             // RegisterResult/ReconnectResult) are also pre-gameplay: the lobby flow consumes
@@ -281,19 +324,32 @@ pub struct PendingLibraryReorder {
 /// docs/NETWORK_ACTION_LOG.md § 3.3).
 #[derive(Default)]
 struct StateSyncBuffer {
-    /// Append-only, `action_count`-indexed shadow state-sync log. Shared
-    /// primitive (`crate::network::ActionLog<StateSyncEntry>`), identical
-    /// to the WASM client's `state_sync` field.
+    /// Append-only, **server-`action_count`-indexed** shadow state-sync log.
+    /// Shared primitive (`crate::network::ActionLog<StateSyncEntry>`),
+    /// identical to the WASM client's `state_sync` field.
+    ///
+    /// mtg-o99ow native buffer shim: entries are now keyed by the TRUE game
+    /// `action_count` the server stamped (carried in the `ChoiceRequest`
+    /// buffer), inserted out-of-order-tolerant via `insert_sorted` — NOT the
+    /// old synthetic monotonic counter. This is what aligns the native shadow
+    /// reveal application with game position (the WASM model) and removes the
+    /// multi-message arrival race that caused the equiv-zero desync.
     log: ActionLog<StateSyncEntry>,
-    /// Synthetic `action_count` allocator for pushes. The wire messages
-    /// (`CardRevealed` / `LibraryReordered`) do not currently carry a
-    /// server `action_count`, so the appender bumps this counter to keep
-    /// the log strictly monotonic. Mirrors the WASM `next_state_sync_ac`.
-    next_ac: u64,
     /// Cursor: highest `action_count` whose entry has been applied to the
-    /// shadow `GameState`. `apply_up_to_frontier` walks entries with
-    /// `last_applied_ac < ac <= frontier()` and bumps this.
+    /// shadow `GameState`. `apply_state_sync_up_to_frontier` walks entries
+    /// with `last_applied_ac < ac <= bound` and bumps this.
     last_applied_ac: u64,
+    /// Pre-game (game-start) library orders, held OUTSIDE the ac-keyed `log`
+    /// (mirrors the WASM `initial_library_orders` BTreeMap). Both players'
+    /// initial orders land at game ac 0, which would collide in the
+    /// strictly-keyed `log`; they are applied once, before the first draw, by
+    /// `apply_initial_library_orders`. Populated from the reorders captured
+    /// during `wait_for_game_start` and any eager `LibraryReordered` received
+    /// before the buffer becomes authoritative.
+    initial_library_orders: BTreeMap<PlayerId, Vec<CardId>>,
+    /// One-shot guard: have `initial_library_orders` been written to the
+    /// shadow yet? (Mirrors the WASM `initial_library_applied`.)
+    initial_library_applied: bool,
 }
 
 /// Opponent-choice buffer + FIFO read cursor (Phase 2 step 3b).
@@ -420,6 +476,28 @@ pub struct SharedNetworkState {
     /// Used as sync target to ensure client processes all reveals before choices
     server_action_count: std::sync::atomic::AtomicU64,
 
+    /// **Minimal lazy protocol authority flag (mtg-o99ow native buffer shim).**
+    /// Set `true` on the first `ChoiceRequest` the reader processes. Once set,
+    /// the eager `CardRevealed` / `LibraryReordered` / `SearchCandidates` /
+    /// `OpponentChoice` reader arms become no-ops: the single ascending-`ac`
+    /// `ChoiceRequest` buffer is the SOLE mid-game source of these facts, so
+    /// they arrive in canonical game-position order and the multi-message
+    /// arrival race that caused the equiv-zero desync is impossible by
+    /// construction. Opening-hand reveals and the initial library orders
+    /// precede the first `ChoiceRequest`, so they still flow before this flips.
+    /// Mirrors the WASM `buffer_is_authoritative`.
+    buffer_is_authoritative: std::sync::atomic::AtomicBool,
+
+    /// **Reveal-history-complete watermark (mtg-o99ow native buffer shim).**
+    /// Highest game `action_count` of any choice (ChoiceRequest / OpponentChoice)
+    /// the reader has received. By wire ordering the server sends all of a
+    /// choice's bundled facts BEFORE the choice itself, so once a choice at ac A
+    /// has arrived every delta with ac ≤ A is present. `apply_state_sync` bounds
+    /// its apply window by this value so the cursor never advances past an
+    /// in-flight reveal (the L4 block-on-miss, keyed by game ac). Mirrors the
+    /// WASM `max_received_choice_ac`.
+    max_received_choice_ac: std::sync::atomic::AtomicU64,
+
     /// Terminal flag: set once a `GameEnded`/fatal `Error`/socket close has
     /// been observed by the WS reader. Releases the no-timeout Condvar waits
     /// (state-sync frontier, opponent-choice, choice-accepted) so they
@@ -466,6 +544,8 @@ impl SharedNetworkState {
             choice_accepted: std::sync::Mutex::new(ChoiceAcceptedBuffer::default()),
             choice_accepted_notify: std::sync::Condvar::new(),
             server_action_count: std::sync::atomic::AtomicU64::new(0),
+            buffer_is_authoritative: std::sync::atomic::AtomicBool::new(false),
+            max_received_choice_ac: std::sync::atomic::AtomicU64::new(0),
             terminal: std::sync::atomic::AtomicBool::new(false),
             server_winner: std::sync::Mutex::new(None),
             game_ended_notify: tokio::sync::Notify::new(),
@@ -534,50 +614,204 @@ impl SharedNetworkState {
     // STATE-SYNC LOG (Phase 2 step 3a — reveal/reorder via ActionLog<StateSyncEntry>)
     // ─────────────────────────────────────────────────────────────────────
 
-    /// Append a `StateSyncEntry` to the shadow state-sync log at the next
-    /// synthetic `action_count`, then notify the frontier-wait Condvar.
+    /// Append a `StateSyncEntry` to the shadow state-sync log keyed by its
+    /// TRUE game `action_count` (out-of-order-tolerant `insert_sorted`), then
+    /// notify the frontier-wait Condvar. The native mirror of the WASM
+    /// `push_state_sync` (mtg-o99ow native buffer shim).
     ///
-    /// Sole appenders: the WS reader (`run_ws_reader_shared`) for live
-    /// reveals/reorders, and `run_game` for the initial reorders captured
-    /// during `wait_for_game_start`. Append-only / strictly monotonic by
-    /// construction (invariant #2 of docs/NETWORK_ACTION_LOG.md § 8).
-    fn push_state_sync(&self, entry: StateSyncEntry) {
+    /// Two wire realities make this more than a plain append:
+    /// 1. **Idempotent re-send.** During the Phase-1 dual-emit window the SAME
+    ///    delta can arrive both eagerly (pre-authoritative) and in the next
+    ///    `ChoiceRequest` buffer. A game `ac` is `undo_log.len()`, globally
+    ///    unique per logged action, so two deltas sharing an `ac` can ONLY be
+    ///    the same logical delta — we verify via `state_sync_entries_equivalent`
+    ///    and DROP the re-send; a DIFFERING delta at one `ac` is a fatal desync.
+    /// 2. **Out-of-order arrival.** `insert_sorted` restores canonical
+    ///    game-position order regardless of wire arrival order; the log is
+    ///    consumed by `ac`, so arrival order is a wire artifact.
+    ///
+    /// A brand-new delta arriving at `ac < last_applied_ac` (no prior copy)
+    /// means a delta needed at its game position never arrived in time and the
+    /// cursor has already passed it — a lost delta = desync, fatal
+    /// (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal). The bound is `>=`:
+    /// the first opening-hand-class reveal is legitimately at game ac 0.
+    ///
+    /// Sole callers: the WS reader (pre-authoritative eager arms) and
+    /// `apply_choice_buffer` (the authoritative buffer route).
+    fn push_state_sync_at(&self, action_count: u64, entry: StateSyncEntry) {
         let mut buf = self.state_sync.lock().unwrap();
-        buf.next_ac += 1;
-        let ac = buf.next_ac;
-        buf.log.push(ac, entry);
+        if let Some(existing) = buf.log.get(action_count) {
+            assert!(
+                state_sync_entries_equivalent(existing, &entry),
+                "push_state_sync_at: two DIFFERENT state-sync deltas share game ac={} \
+                 (existing={:?}, new={:?}). A game ac is the unique undo-log position \
+                 of one action, so distinct deltas cannot share it — this is a \
+                 protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                action_count,
+                existing,
+                entry,
+            );
+            // Benign idempotent dual-emit re-send; already logged. Drop it.
+            return;
+        }
+        assert!(
+            action_count >= buf.last_applied_ac,
+            "push_state_sync_at: a NEW state-sync delta arrived at ac={} but the apply \
+             cursor has already advanced past it (last_applied={}) and no prior copy \
+             was logged — a delta needed at its game position never arrived in time \
+             = lost delta = desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+            action_count,
+            buf.last_applied_ac,
+        );
+        buf.log.insert_sorted(action_count, entry);
         drop(buf);
         self.state_sync_notify.notify_all();
     }
 
-    /// Append a `CardRevealed` to the shadow state-sync log (WS reader).
-    pub fn push_reveal(&self, owner: PlayerId, card: CardReveal, reason: RevealReason) {
-        self.push_state_sync(StateSyncEntry::RevealCard {
-            owner,
-            card: Box::new(card),
-            reason,
-        });
+    /// Record a pre-game (game-start) library order for `player`, held OUTSIDE
+    /// the ac-keyed log (both players' initial orders are at game ac 0 and would
+    /// collide there). Applied once, before the first draw, by
+    /// `apply_initial_library_orders`. Mirrors the WASM `initial_library_orders`
+    /// insert. Sole callers: `run_game` seeding + the pre-authoritative eager
+    /// `LibraryReordered` arm with `ac == 0`.
+    pub fn add_initial_library_order(&self, player: PlayerId, new_order: Vec<CardId>) {
+        self.state_sync
+            .lock()
+            .unwrap()
+            .initial_library_orders
+            .insert(player, new_order);
     }
 
-    /// Append a `LibraryReordered` to the shadow state-sync log (WS reader
-    /// for in-game shuffles, and `run_game` for initial reorders).
-    pub fn push_library_reorder(&self, player: PlayerId, new_order: Vec<CardId>) {
-        self.push_state_sync(StateSyncEntry::LibraryReorder { player, new_order });
-    }
-
-    /// Apply every state-sync entry received but not yet applied to the
-    /// shadow `game`, up to the current frontier. **Non-destructive read**
-    /// of the log — only the per-consumer cursor advances; the log itself is
-    /// untouched, so a rewind/replay can re-apply from `reset_state_sync_cursor`.
+    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow) into the
+    /// shadow's existing consumer logs — the native mirror of the WASM
+    /// `apply_choice_buffer`. The buffer is ascending-`ac` and carries every
+    /// reveal-class + opponent-choice fact since this client's last choice:
+    /// reveal-class facts go into the game-`ac`-keyed state-sync log (applied
+    /// lazily by `apply_state_sync_up_to_frontier`), and `Choice` facts go into
+    /// the `choice_seq`-keyed opponent-choice log consumed by `RemoteController`.
     ///
-    /// CRITICAL ORDERING (mtg-589): within each apply batch, `LibraryReorder`
-    /// entries are applied BEFORE `RevealCard` entries (even when a reveal
-    /// arrived earlier on the wire), because the server guarantees the
-    /// library order before any draw. The legacy two-step
-    /// `drain_all_library_reorders → drain_all_reveals` preserved this; the
-    /// log preserves it via a two-pass apply over the same cursor window.
-    /// The cursor advances over BOTH passes' entries so re-runs after a
-    /// rewind replay them in the same per-pass order (bit-identical shadow).
+    /// This is the single routing point that replaces the eager
+    /// `CardRevealed` / `LibraryReordered` / `SearchCandidates` / `OpponentChoice`
+    /// reader arms (ignored once `buffer_is_authoritative`).
+    pub fn apply_choice_buffer(&self, buffer: Vec<(u64, BufferedFact)>) {
+        for (ac, fact) in buffer {
+            match fact {
+                BufferedFact::Reveal { owner, card, reason } => {
+                    self.push_state_sync_at(
+                        ac,
+                        StateSyncEntry::RevealCard {
+                            owner,
+                            card: Box::new(card),
+                            reason,
+                        },
+                    );
+                }
+                BufferedFact::LibraryReorder { player, new_order } => {
+                    // ac==0 is a pre-game initial order (held separately to avoid
+                    // colliding at ac 0); the buffer only ever carries mid-game
+                    // reorders, but mirror the eager arm defensively.
+                    if ac == 0 {
+                        self.add_initial_library_order(player, new_order);
+                    } else {
+                        self.push_state_sync_at(ac, StateSyncEntry::LibraryReorder { player, new_order });
+                    }
+                }
+                BufferedFact::SearchCandidates { searcher, cards } => {
+                    // ONE atomic-multi entry at the search-resolution ac — do NOT
+                    // re-expand into N synthetic reveals (that defeats true-ac keying).
+                    self.push_state_sync_at(ac, StateSyncEntry::SearchCandidates { searcher, cards });
+                }
+                BufferedFact::Choice {
+                    choice_seq,
+                    choice_indices,
+                    description,
+                    spell_ability,
+                    library_search_result,
+                    target_card_ids,
+                    .. // choice_type is wire-envelope only; the controller re-derives it
+                } => {
+                    // Keyed by choice_seq (strictly unique/monotonic per choice),
+                    // NOT ac. record_opponent_choice dedups against an eager copy
+                    // that may have arrived before the buffer became authoritative.
+                    self.push_opponent_choice(ChoiceEntry {
+                        choice_seq,
+                        action_count: ac,
+                        choice_indices,
+                        description,
+                        spell_ability,
+                        library_search_result,
+                        target_card_ids,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Has the `ChoiceRequest` buffer become the authoritative mid-game source?
+    /// (Set on the first `ChoiceRequest`; gates the eager reader arms.)
+    pub fn buffer_is_authoritative(&self) -> bool {
+        self.buffer_is_authoritative.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Mark the buffer authoritative (first `ChoiceRequest`). Idempotent.
+    pub fn set_buffer_authoritative(&self) {
+        self.buffer_is_authoritative
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Advance the reveal-history-complete watermark to a received choice's game
+    /// `action_count` (mtg-o99ow). By wire ordering the server sends all of a
+    /// choice's bundled facts BEFORE the choice itself, so once a choice at ac A
+    /// has arrived every delta with ac ≤ A is present. `apply_state_sync` bounds
+    /// its window by this to never advance the cursor past an in-flight reveal.
+    pub fn note_received_choice_ac(&self, action_count: u64) {
+        // Monotonic max via a CAS loop (the value only ever increases).
+        let mut cur = self.max_received_choice_ac.load(std::sync::atomic::Ordering::Acquire);
+        while action_count > cur {
+            match self.max_received_choice_ac.compare_exchange_weak(
+                cur,
+                action_count,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => break,
+                Err(observed) => cur = observed,
+            }
+        }
+    }
+
+    /// Highest game `action_count` of any choice received (the reveal-history
+    /// completeness watermark; see `note_received_choice_ac`).
+    pub fn max_received_choice_ac(&self) -> u64 {
+        self.max_received_choice_ac.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Apply state-sync entries whose game `action_count` the shadow has reached
+    /// AND whose reveal-history is complete, up to `target_action`, to the shadow
+    /// `game` (mtg-o99ow native buffer shim — the native mirror of the WASM
+    /// `apply_state_sync_at`). **Non-destructive read** of the log — only the
+    /// per-consumer cursor advances; the log is untouched, so a rewind/replay can
+    /// re-apply from `reset_state_sync_cursor`.
+    ///
+    /// Consumption is keyed by GAME POSITION: a delta stamped at game ac K is
+    /// applied exactly when the shadow's own `action_count` reaches K, identically
+    /// on the forward pass and on every replay. The apply window is bounded by
+    /// `target_action.min(frontier).min(max_received_choice_ac)`:
+    /// - `target_action` = the shadow's current `action_count` (passed by the
+    ///   GameLoop): never apply a reveal for a game position the shadow has not
+    ///   reached.
+    /// - `frontier` = highest ARRIVED entry.
+    /// - `max_received_choice_ac` = the reveal-history-complete watermark (L4
+    ///   block-on-miss): bounding by the raw frontier is unsafe because the server
+    ///   emits a choice window's deltas via two uncoordinated paths, so a reorder
+    ///   at a LARGER ac can arrive before a reveal at a SMALLER ac; advancing the
+    ///   cursor past the frontier would lose the later-arriving reveal. The
+    ///   watermark guarantees every delta with ac ≤ it is present.
+    ///
+    /// CRITICAL ORDERING (mtg-589): within each apply batch `LibraryReorder`
+    /// entries are applied BEFORE the reveal-like entries (the server guarantees
+    /// library order before any draw). Two-pass over the same cursor window keeps
+    /// re-runs after a rewind bit-identical.
     ///
     /// Returns the number of entries applied (diagnostics).
     pub fn apply_state_sync_up_to_frontier(
@@ -585,29 +819,43 @@ impl SharedNetworkState {
         game: &mut GameState,
         card_db: &AsyncCardDatabase,
         local_player: PlayerId,
+        target_action: u64,
     ) -> usize {
         let mut buf = self.state_sync.lock().unwrap();
+
+        // Game-start library orders precede every in-game delta; establish them
+        // before the first draw (and they are NOT in the ac-keyed log).
+        if !buf.initial_library_applied {
+            for (player, new_order) in &buf.initial_library_orders {
+                if let Some(zones) = game.get_player_zones_mut(*player) {
+                    zones.library.cards = new_order.iter().rev().copied().collect();
+                }
+            }
+            buf.initial_library_applied = true;
+        }
+
         let frontier = match buf.log.frontier() {
             Some(f) => f,
             None => return 0,
         };
-        if frontier <= buf.last_applied_ac {
+        // Bound by game position reached (target) AND reveal-history completeness.
+        let bound = target_action.min(frontier).min(self.max_received_choice_ac());
+        if bound <= buf.last_applied_ac {
             return 0;
         }
 
         // Snapshot the cursor window once (apply-by-index would still need a
-        // clone to release the lock before touching `game`; the window is
-        // tiny — one reveal/reorder per sync point).
+        // clone to release the lock before touching `game`; the window is tiny).
         let last_applied = buf.last_applied_ac;
         let to_apply: Vec<(u64, StateSyncEntry)> = buf
             .log
             .iter()
-            .filter(|(ac, _)| *ac > last_applied && *ac <= frontier)
+            .filter(|(ac, _)| *ac > last_applied && *ac <= bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         // Advance the cursor and release the lock before mutating `game`
         // (the WS reader must stay able to append while we apply).
-        buf.last_applied_ac = frontier;
+        buf.last_applied_ac = bound;
         drop(buf);
 
         // Pass 1: library reorders. Protocol sends top-to-bottom; the shadow
@@ -626,17 +874,34 @@ impl SharedNetworkState {
             }
         }
 
-        // Pass 2: card reveals (library order is now server-authoritative).
+        // Pass 2: reveal-like entries (single reveals + search-candidate bundles).
+        // Library order is now server-authoritative.
         let mut applied = 0;
         for (ac, entry) in to_apply {
-            if let StateSyncEntry::RevealCard { owner, card, reason } = entry {
-                log::debug!(
-                    "apply_state_sync: reveal ac={} owner={:?} card={}",
-                    ac,
-                    owner,
-                    card.name
-                );
-                process_card_reveal(game, card_db, owner, *card, reason, local_player);
+            match entry {
+                StateSyncEntry::RevealCard { owner, card, reason } => {
+                    log::debug!(
+                        "apply_state_sync: reveal ac={} owner={:?} card={}",
+                        ac,
+                        owner,
+                        card.name
+                    );
+                    process_card_reveal(game, card_db, owner, *card, reason, local_player);
+                }
+                StateSyncEntry::SearchCandidates { searcher, cards } => {
+                    log::debug!(
+                        "apply_state_sync: search candidates ac={} searcher={:?} ({} cards)",
+                        ac,
+                        searcher,
+                        cards.len()
+                    );
+                    // ONE atomic-multi entry → replay each candidate as a Searched
+                    // reveal owned by the searcher (do NOT re-expand on the wire).
+                    for card in cards {
+                        process_card_reveal(game, card_db, searcher, card, RevealReason::Searched, local_player);
+                    }
+                }
+                StateSyncEntry::LibraryReorder { .. } => {}
             }
             applied += 1;
         }
@@ -649,7 +914,10 @@ impl SharedNetworkState {
     /// shadow mutations rewind too and must be re-applied on the forward
     /// replay. The log itself stays intact (non-destructive reads).
     pub fn reset_state_sync_cursor(&self) {
-        self.state_sync.lock().unwrap().last_applied_ac = 0;
+        let mut buf = self.state_sync.lock().unwrap();
+        buf.last_applied_ac = 0;
+        // The initial library orders must be re-applied on the forward replay too.
+        buf.initial_library_applied = false;
     }
 
     /// Block (NO timeout) until the state-sync frontier reaches at least
@@ -703,13 +971,34 @@ impl SharedNetworkState {
     /// by the server `choice_seq` (strictly unique/monotonic per choice;
     /// `action_count` is NOT unique — mtg-sfihb). Notifies the Condvar.
     ///
-    /// Sole appender: the WS reader. Append-only / strictly monotonic; a
-    /// stale or out-of-order `choice_seq` makes `ActionLog::push` panic,
-    /// which is the correct fatal response (NETWORK_ARCHITECTURE.md
-    /// § "Desync is ALWAYS a Fatal Error").
+    /// **Dedups the Phase-1 dual-emit duplicate (mtg-o99ow native buffer shim).**
+    /// During the additive-buffer window the SAME opponent choice can arrive
+    /// BOTH eagerly (`OpponentChoice`, processed only while the buffer is not yet
+    /// authoritative) AND in our next `ChoiceRequest` buffer
+    /// (`BufferedFact::Choice`). Whichever lands first wins; the duplicate is
+    /// dropped here before it reaches `ActionLog::push` (whose strict-monotonic
+    /// key would otherwise panic on the re-pushed `choice_seq`). Keep-first is
+    /// safe because both copies derive from the coordinator's single
+    /// `OpponentChoiceInfo`, so the payload is content-identical; a
+    /// `debug_assert` on `choice_indices` turns any genuine divergence into a
+    /// fatal desync rather than a silent drop (mirrors the WASM
+    /// `record_opponent_choice`). Sole appenders: the WS reader (pre-auth eager
+    /// arm) and `apply_choice_buffer`.
     pub fn push_opponent_choice(&self, entry: ChoiceEntry) {
+        let key = u64::from(entry.choice_seq);
         let mut buf = self.opponent_choices.lock().unwrap();
-        buf.log.push(u64::from(entry.choice_seq), entry);
+        if let Some(existing) = buf.log.get(key) {
+            debug_assert_eq!(
+                existing.choice_indices, entry.choice_indices,
+                "push_opponent_choice: two DIFFERENT choices share choice_seq={} \
+                 (existing indices={:?}, new={:?}) — protocol desync \
+                 (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                key, existing.choice_indices, entry.choice_indices,
+            );
+            // Idempotent dual-emit duplicate — already logged. Drop it.
+            return;
+        }
+        buf.log.push(key, entry);
         drop(buf);
         self.opponent_choices_notify.notify_all();
     }
@@ -1893,15 +2182,16 @@ impl NetworkClient {
             // - Server sends CardRevealed BEFORE ChoiceRequest
             // - Client shadow game runs deterministically, reaching the same game states
             // - Reveals only arrive when they're actually needed
-            let sync_callback = move |game: &mut GameState, _target_action: u64| {
-                // Phase 2 step 3a: non-destructively apply every unapplied
-                // state-sync entry (reorders BEFORE reveals, mtg-589) up to
-                // the current frontier. Replaces the legacy
-                // drain_all_library_reorders + drain_all_reveals two-step;
-                // the log is keyed by action_count so arrival races no longer
-                // hand the wrong subset to a given sync point, and reads are
-                // non-destructive (enabling rewind/replay).
-                let applied = sync_state.apply_state_sync_up_to_frontier(game, &card_db_for_sync, our_player_id);
+            let sync_callback = move |game: &mut GameState, target_action: u64| {
+                // mtg-o99ow native buffer shim: non-destructively apply every
+                // unapplied state-sync entry (reorders BEFORE reveals, mtg-589)
+                // bounded by target.min(frontier).min(max_received_choice_ac). We
+                // PASS target_action through (the shadow's own action_count) so a
+                // reveal stamped at game ac K is applied exactly when the shadow
+                // reaches K — the WASM model — rather than greedily draining to
+                // the frontier (which raced and dropped the fetched card).
+                let applied =
+                    sync_state.apply_state_sync_up_to_frontier(game, &card_db_for_sync, our_player_id, target_action);
                 if applied > 0 {
                     log::debug!(
                         "sync_callback: applied {} state-sync entries (game_action={})",
@@ -1919,16 +2209,19 @@ impl NetworkClient {
             // log (no separate pre-loop application).
             if !pending_library_reorders.is_empty() {
                 log::info!(
-                    "run_game: seeding {} initial library reorders into state-sync log BEFORE GameLoop starts",
+                    "run_game: seeding {} initial library orders BEFORE GameLoop starts",
                     pending_library_reorders.len()
                 );
                 for reorder in pending_library_reorders {
                     log::debug!(
-                        "run_game: seeding library reorder for {:?}, {} cards",
+                        "run_game: seeding initial library order for {:?}, {} cards",
                         reorder.player,
                         reorder.new_order.len()
                     );
-                    seed_state.push_library_reorder(reorder.player, reorder.new_order);
+                    // mtg-o99ow native buffer shim: game-start orders are held
+                    // OUTSIDE the ac-keyed log (they'd collide at ac 0) and applied
+                    // before the first draw by apply_state_sync_up_to_frontier.
+                    seed_state.add_initial_library_order(reorder.player, reorder.new_order);
                 }
             } else {
                 log::warn!("run_game: no pending library reorders - library order may be wrong!");
@@ -2036,22 +2329,75 @@ async fn run_ws_reader_shared(
                 Ok(server_msg) => {
                     if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
                         match network_msg {
-                            NetworkMessage::CardRevealed { owner, card, reason } => {
-                                // Append to the shadow state-sync log (Phase 2 step 3a).
-                                log::debug!(
-                                    "WsReaderShared: buffering reveal {} (id={}) for {:?}",
-                                    card.name,
-                                    card.card_id.as_u32(),
-                                    owner
-                                );
-                                shared_state.push_reveal(owner, card, reason);
-                            }
-                            NetworkMessage::SearchCandidates { searcher, cards } => {
-                                // mtg-o99ow L2d: expand the bundled candidates into N
-                                // individual Searched reveals (native synthetic keying).
-                                for card in cards {
-                                    shared_state.push_reveal(searcher, card, RevealReason::Searched);
+                            NetworkMessage::CardRevealed {
+                                owner,
+                                card,
+                                reason,
+                                action_count,
+                            } => {
+                                // mtg-o99ow native buffer shim: once the buffer is
+                                // authoritative, mid-game reveals arrive via the
+                                // ChoiceRequest buffer at their TRUE ac — ignore the
+                                // eager (dual-emit) copy (FALSE-POSITIVE GUARD: the
+                                // buffer is the sole mid-game source).
+                                if shared_state.buffer_is_authoritative() {
+                                    debug_assert!(
+                                        false,
+                                        "WsReaderShared: eager CardRevealed for {:?} ({}) after buffer authoritative \
+                                         — the buffer must be the SOLE mid-game reveal source (mtg-o99ow false-positive guard)",
+                                        owner, card.name,
+                                    );
+                                    continue;
                                 }
+                                // Pre-authoritative: key by the TRUE server ac (the
+                                // buffer re-adds it deduped once authoritative).
+                                match action_count {
+                                    Some(ac) => {
+                                        log::debug!(
+                                            "WsReaderShared: eager reveal {} (id={}) for {:?} @ac={}",
+                                            card.name,
+                                            card.card_id.as_u32(),
+                                            owner,
+                                            ac
+                                        );
+                                        shared_state.push_state_sync_at(
+                                            ac,
+                                            StateSyncEntry::RevealCard {
+                                                owner,
+                                                card: Box::new(card),
+                                                reason,
+                                            },
+                                        );
+                                    }
+                                    None => {
+                                        log::warn!(
+                                            "WsReaderShared: eager CardRevealed for {:?} ({}) carried no action_count \
+                                             pre-authoritative — skipping (opening hand is consumed in wait_for_game_start)",
+                                            owner, card.name,
+                                        );
+                                    }
+                                }
+                            }
+                            NetworkMessage::SearchCandidates {
+                                searcher,
+                                cards,
+                                action_count,
+                            } => {
+                                if shared_state.buffer_is_authoritative() {
+                                    debug_assert!(
+                                        false,
+                                        "WsReaderShared: eager SearchCandidates for {:?} after buffer authoritative \
+                                         (mtg-o99ow false-positive guard)",
+                                        searcher,
+                                    );
+                                    continue;
+                                }
+                                // ONE atomic-multi entry at the search-resolution ac —
+                                // do NOT re-expand into N synthetic reveals.
+                                shared_state.push_state_sync_at(
+                                    action_count,
+                                    StateSyncEntry::SearchCandidates { searcher, cards },
+                                );
                             }
                             NetworkMessage::ChoiceRequest {
                                 action_count,
@@ -2059,7 +2405,18 @@ async fn run_ws_reader_shared(
                                 abilities,
                                 library_search_names,
                                 library_search_counts,
+                                buffer,
                             } => {
+                                // mtg-o99ow native buffer shim: route the single
+                                // catch-up buffer into the state-sync + opponent-choice
+                                // logs. From here the buffer is the AUTHORITATIVE source
+                                // of mid-game facts; the still-sent eager copies are
+                                // ignored (see buffer_is_authoritative).
+                                shared_state.set_buffer_authoritative();
+                                shared_state.apply_choice_buffer(buffer);
+                                // Reveal-history-complete watermark: every delta with
+                                // ac ≤ action_count has arrived in this buffer.
+                                shared_state.note_received_choice_ac(action_count);
                                 // Update tracked action count (for sync targeting)
                                 current_action_count.store(action_count, std::sync::atomic::Ordering::Relaxed);
                                 shared_state.update_server_action_count(action_count);
@@ -2105,8 +2462,23 @@ async fn run_ws_reader_shared(
                                 library_search_result,
                                 target_card_ids,
                             } => {
-                                // Update tracked action count (for sync targeting)
+                                // mtg-o99ow native buffer shim: once authoritative,
+                                // the opponent's decision rides in our next
+                                // ChoiceRequest buffer as BufferedFact::Choice — ignore
+                                // the eager (dual-emit) copy.
+                                if shared_state.buffer_is_authoritative() {
+                                    debug_assert!(
+                                        false,
+                                        "WsReaderShared: eager OpponentChoice seq={} after buffer authoritative \
+                                         (mtg-o99ow false-positive guard)",
+                                        choice_seq,
+                                    );
+                                    continue;
+                                }
+                                // Update tracked action count (for sync targeting) +
+                                // reveal-history watermark.
                                 shared_state.update_server_action_count(action_count);
+                                shared_state.note_received_choice_ac(action_count);
                                 // Append to the per-controller opponent-choice
                                 // buffer (Phase 2 step 3b), keyed by choice_seq.
                                 log::debug!(
@@ -2160,14 +2532,36 @@ async fn run_ws_reader_shared(
                                 }
                                 log::warn!("WsReaderShared: Non-fatal error: {}", message);
                             }
-                            NetworkMessage::LibraryReordered { player, new_order } => {
+                            NetworkMessage::LibraryReordered {
+                                player,
+                                new_order,
+                                action_count,
+                            } => {
+                                if shared_state.buffer_is_authoritative() {
+                                    debug_assert!(
+                                        false,
+                                        "WsReaderShared: eager LibraryReordered for {:?} after buffer authoritative \
+                                         (mtg-o99ow false-positive guard)",
+                                        player,
+                                    );
+                                    continue;
+                                }
                                 log::debug!(
-                                    "WsReaderShared: Library reordered for {:?}, {} cards",
+                                    "WsReaderShared: Library reordered for {:?}, {} cards @ac={}",
                                     player,
-                                    new_order.len()
+                                    new_order.len(),
+                                    action_count
                                 );
-                                // Queue for sync_callback to apply
-                                shared_state.push_library_reorder(player, new_order);
+                                // Pre-authoritative: ac==0 = game-start initial order
+                                // (held outside the ac-keyed log); else key by real ac.
+                                if action_count == 0 {
+                                    shared_state.add_initial_library_order(player, new_order);
+                                } else {
+                                    shared_state.push_state_sync_at(
+                                        action_count,
+                                        StateSyncEntry::LibraryReorder { player, new_order },
+                                    );
+                                }
                             }
                         }
                     }
@@ -2215,7 +2609,10 @@ async fn run_ws_reader(
                     if let Some(network_msg) = NetworkMessage::from_server_message(server_msg) {
                         // CardRevealed goes DIRECTLY to pending_reveals buffer
                         // This ensures reveals are processed before GameLoop validation
-                        if let NetworkMessage::CardRevealed { owner, card, reason } = network_msg {
+                        if let NetworkMessage::CardRevealed {
+                            owner, card, reason, ..
+                        } = network_msg
+                        {
                             if let Ok(mut reveals) = pending_reveals.lock() {
                                 log::debug!(
                                     "WsReader: buffering reveal {} (id={}) for {:?}",
@@ -2227,7 +2624,7 @@ async fn run_ws_reader(
                             } else {
                                 log::error!("WsReader: failed to lock pending_reveals");
                             }
-                        } else if let NetworkMessage::SearchCandidates { searcher, cards } = network_msg {
+                        } else if let NetworkMessage::SearchCandidates { searcher, cards, .. } = network_msg {
                             // mtg-o99ow L2d: expand bundled candidates → N Searched reveals.
                             if let Ok(mut reveals) = pending_reveals.lock() {
                                 for card in cards {
