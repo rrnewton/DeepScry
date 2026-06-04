@@ -31,7 +31,9 @@ fn add_to_zone(game: &mut GameState, player: PlayerId, zone: Zone, id: CardId) {
         Zone::Hand => z.hand.add(id),
         Zone::Library => z.library.add(id),
         Zone::Graveyard => z.graveyard.add(id),
-        other => panic!("add_to_zone unsupported zone {other:?}"),
+        Zone::Battlefield | Zone::Exile | Zone::Stack | Zone::Command => {
+            panic!("add_to_zone unsupported zone {zone:?}")
+        }
     }
 }
 
