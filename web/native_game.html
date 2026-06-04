@@ -1418,6 +1418,10 @@
                         try { return JSON.parse(tui_get_gui_view_model_json()); }
                         catch (e) { return { error: e.message }; }
                     },
+                    // task #7 (mtg-722): expose the CDN table load + lookup so the
+                    // hermetic web test can verify table→cards.scryfall.io resolution.
+                    tui_load_card_lookup_table,
+                    tui_card_cdn_url,
                 };
 
                 cardDb = new WasmCardDatabase();
