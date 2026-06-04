@@ -154,7 +154,7 @@ jobs:
           - { name: unit,          args: "--group unit",      nextest: true, bin: true, arch: true }
           - { name: agentplay,     args: "--group agentplay", python: true, bin: true }
           - { name: determ,        args: "--group determ",    bin: true }
-          - { name: wasm,          args: "--group wasm",      browser: true, bin: true, wasm: true }
+          - { name: wasm,          args: "--group wasm",      browser: true, bin: true, wasm: true, pyequiv: true }
           - { name: network-gui,   args: "--only network.playwright-check,network.gui,network.human-input,network.multideck", browser: true, bin: true, wasm: true }
           - { name: network-redo,  args: "--only network.click,network.landing,network.redo-reload,network.redo-lobby,network.smoke,network.deploy-nav", browser: true, bin: true, wasm: true }
           - { name: network-equiv, args: "--only network.equiv-random,network.equiv-zero,network.equiv-heuristic,network.robots42,network.fuzz", bin: true }
@@ -174,12 +174,19 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Set up Python
-        if: ${{ matrix.python }}
+        if: ${{ matrix.python || matrix.pyequiv }}
         uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - name: Install pytest
         if: ${{ matrix.python }}
         run: pip install pytest
+      # The wasm shard's native-vs-WASM equiv sweeps drive headless chromium via
+      # the PYTHON playwright package (MTG_EQUIV_REQUIRE_WASM=1 hard-fails without
+      # it). The old CI never ran the equiv sweeps (local-validate-only), so this
+      # is build-once-new. (node playwright below is for the browser e2e tests.)
+      - name: Install python playwright + chromium (equiv sweeps)
+        if: ${{ matrix.pyequiv }}
+        run: pip install playwright && python3 -m playwright install chromium
 
       # Browser shards need node + chromium to RUN the downloaded wasm bundle —
       # but NOT wasm-pack (no wasm compilation here; the bundle is an artifact).

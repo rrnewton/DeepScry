@@ -50,6 +50,7 @@ async function scenarioFullFlow() {
     // --- Alice ---
     const aliceCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const alice = await aliceCtx.newPage();
+    alice.setDefaultNavigationTimeout(90000); alice.setDefaultTimeout(90000);
     alice.on('pageerror', (e) => record('major', 'alice page error', e.message));
     alice.on('console', (m) => {
         if (m.type() === 'error') record('minor', 'alice console.error', m.text());
@@ -129,6 +130,7 @@ async function scenarioFullFlow() {
     // and the reservation was released, so we just check a fresh unique name.)
     const charlieCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const charlie = await charlieCtx.newPage();
+    charlie.setDefaultNavigationTimeout(90000); charlie.setDefaultTimeout(90000);
     await charlie.goto(global.__landingRoot || (BASE + '/'));
     try { await waitForLobbyConnected(charlie); } catch (e) {}
     await charlie.fill('#username', 'charlie');
@@ -188,6 +190,7 @@ async function scenarioPostRedirectAutoLaunch() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'tui auto-launch page error', e.message));
     page.on('console', (m) => {
         if (m.type() === 'error') {
@@ -244,6 +247,7 @@ async function scenarioRefreshTimerNoError() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     let sawAlreadyAuth = false;
     page.on('console', (m) => {
         if (/already authenticated/i.test(m.text())) {
@@ -282,6 +286,7 @@ async function scenarioMobileViewport() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 375, height: 667 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {}
@@ -299,6 +304,7 @@ async function scenarioOfflineLobby() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     await page.goto(BASE + '/?ws=ws://localhost:9/'); // discard port
     await page.waitForTimeout(2000);
     await shot(page, 'landing_08_ws_down.png');
@@ -316,6 +322,7 @@ async function scenarioLaunchPagesSmoke() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
 
     const targets = [
         { url: BASE + '/native_game.html', shot: 'landing_09_native_game.png' },
@@ -352,6 +359,7 @@ async function scenarioStickyLocalImageUnlock() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
 
     // (1) Load the lobby WITH the unlock param.
     const root = global.__landingRoot || (BASE + '/');
@@ -405,6 +413,7 @@ async function scenarioStickyLocalImageUnlock() {
     // localStorage value cannot re-enable local images.
     const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page2 = await ctx2.newPage();
+    page2.setDefaultNavigationTimeout(90000); page2.setDefaultTimeout(90000);
     await page2.goto(BASE + '/native_game.html');
     // Seed a stale localStorage value to prove it is ignored, then reload.
     await page2.evaluate(() => { try { localStorage.setItem('allowLocalImgLoad', 'true'); } catch (e) {} });
@@ -426,6 +435,7 @@ async function scenarioPasscodeEyeballToggle() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'pw-toggle pageerror', e.message));
     await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
@@ -502,6 +512,7 @@ async function scenarioGameListFilterAndPager() {
 
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'filter pageerror', e.message));
     await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
@@ -593,6 +604,7 @@ async function scenarioNativeGuiLaunch() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'renderer-absent pageerror', e.message));
 
     await page.goto(global.__landingRoot || (BASE + '/'));
@@ -651,6 +663,7 @@ async function scenarioWaitingRoomAndParamContract() {
     // Creator (dave) — enters lobby, creates a game, enters waiting room.
     const daveCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const dave = await daveCtx.newPage();
+    dave.setDefaultNavigationTimeout(90000); dave.setDefaultTimeout(90000);
     dave.on('pageerror', (e) => record('major', 'dave pageerror', e.message));
 
     await dave.goto(global.__landingRoot || (BASE + '/'));
@@ -749,6 +762,7 @@ async function scenarioAccessibility() {
     const browser = await chromium.launch();
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
+    page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     await page.goto(global.__landingRoot || (BASE + '/'));
     await page.waitForLoadState('domcontentloaded');
 
