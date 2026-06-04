@@ -40,6 +40,7 @@ bug_finding/                       # expeditions (NOT in validate / CI)
 ├── network_test_lib.py            # SHARED Python helpers (see below)
 ├── network_fuzz_test.py           # randomized network-game fuzzer
 ├── fuzz_determinism_netequiv.sh   # determinism + local-vs-network sweep
+├── desync_canary.sh               # opt-in heavy desync canary (make validate-desync-canary)
 ├── native_wasm_equiv_sweep.sh     # native-vs-WASM sweep (wrapper)
 ├── native_wasm_equiv_sweep.py     #   ...comparator
 ├── snapshot_stress_test_single.py # snapshot/resume stress
@@ -74,6 +75,7 @@ mtg-engine/tests/proptest_invariants.rs  # fixed-seed proptest (validate)
 | `native_wasm_equiv_sweep` (validate leg) | native==WASM (STRICT, byte-identical); incl. **multi-target Fireball DivideEvenly** guard (mtg-tyvcn) | regression (validate) | Makefile → `bug_finding/native_wasm_equiv_sweep.sh` | `--seeds 1 --decks 'decks/old_school2/*.dck' --max-turns 8` + `--seed-base 15 --decks 'decks/old_school2/fireball_multitarget.dck' --max-turns 25` |
 | `network_vs_local_equivalence_e2e.sh` | local==network gamelog identity | regression (validate) | `tests/` | `bash tests/network_vs_local_equivalence_e2e.sh 3 random` |
 | `snapshot_resume_e2e.sh` | snapshot resume == uninterrupted run | regression (validate) | `tests/` | `bash tests/snapshot_resume_e2e.sh` (seed 42, stops 3/8/25) |
+| `desync_canary.sh` | local==network across the dangerous-mechanic corpus (broad seeds × 3 controllers) | **opt-in heavy canary** (NOT in validate) | `bug_finding/` | `make validate-desync-canary` (green gate + known-red XFAIL report) |
 | `fuzz_determinism_netequiv.sh` | native determinism + local==network | **expedition** | `bug_finding/` | `bash bug_finding/fuzz_determinism_netequiv.sh --seeds 40 --pair-mode all` |
 | `native_wasm_equiv_sweep.sh`/`.py` | native==WASM | **expedition** | `bug_finding/` | `bash bug_finding/native_wasm_equiv_sweep.sh --seeds 50` |
 | `network_fuzz_test.py` | local==network across random seeds/decks/controllers | **expedition** | `bug_finding/` | `python3 bug_finding/network_fuzz_test.py --configs 100` |
@@ -117,6 +119,36 @@ deterministically green). So:
 - the random×old-school-pair **equivalence sweep** stays a `bug_finding/`
   expedition until the mtg-586 / mtg-589 intermittent desyncs are root-caused
   (desync is always fatal; the fix must eliminate the race, not paper it over).
+
+### The opt-in desync regression CANARY (`make validate-desync-canary`)
+
+`bug_finding/desync_canary.sh` is a third category between the cheap validate legs and
+the open-ended expeditions: an **opt-in heavy regression canary**. It is a thin
+DRY wrapper over `fuzz_determinism_netequiv.sh --invariant equivalence` that
+sweeps the historically-dangerous mechanics BROADLY — cycling/search/shuffle
+(avatar pair, the mtg-420 class a partial oracle once missed), burn/combat-damage
+(monored mirror, the seed=13 case), and counter/stack-interaction (counterspells
+mirror, the seed=5 case) — across all three controllers and broad seed ranges.
+
+It exists because the default validate equiv legs are deliberately NARROW (one
+deck pair, one pinned seed): broad enough coverage to TRUST a new network
+architecture (the netarch prototype) before it lands, but too heavy (~tens of
+minutes) for every-commit validate. Run it on demand:
+
+```
+systemd-run --user --scope -- make validate-desync-canary          # full
+systemd-run --user --scope -- make validate-desync-canary ARGS=--quick
+```
+
+Honest green/red split (no faked green): the **GREEN corpus** (avatar / monored /
+counterspells) is restricted to deterministically-green combos and DRIVES the
+exit code. The **KNOWN-RED tier** (rogerbrand mirror) is run, captured, and
+reported every time as XFAIL but does NOT gate — these are pre-existing tracked
+desyncs (mtg-586 / mtg-589 / mtg-609, plus the native deterministic heuristic
+path mtg-u3dwj this canary pinned). If a known-red leg ever PASSES, the canary
+says so (promote it into the green corpus + update the baseline). The netarch
+prototype's Phase-4 gate consumes this canary: it must keep the GREEN corpus
+green; it is not required to fix the known-red legs.
 
 ### Why `flakiness_stress.py` lives in `bug_finding/`
 
