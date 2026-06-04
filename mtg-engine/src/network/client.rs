@@ -2409,15 +2409,19 @@ async fn run_ws_reader_shared(
                             } => {
                                 // mtg-o99ow native buffer shim: once the buffer is
                                 // authoritative, mid-game reveals arrive via the
-                                // ChoiceRequest buffer at their TRUE ac — ignore the
-                                // eager (dual-emit) copy (FALSE-POSITIVE GUARD: the
-                                // buffer is the sole mid-game source).
+                                // ChoiceRequest buffer at their TRUE ac. The server
+                                // STILL dual-emits the eager copy during the additive
+                                // phase, so we IGNORE it here (it is NOT a no-op site —
+                                // the arm IS reached). FALSE-POSITIVE GUARD: TASK 2
+                                // deletes the eager send entirely; the buffer-driven
+                                // gate then runs with ZERO eager copies, proving the
+                                // buffer is the sole source (a behavioural proof, not a
+                                // debug_assert — the eager copy legitimately arrives).
                                 if shared_state.buffer_is_authoritative() {
-                                    debug_assert!(
-                                        false,
-                                        "WsReaderShared: eager CardRevealed for {:?} ({}) after buffer authoritative \
-                                         — the buffer must be the SOLE mid-game reveal source (mtg-o99ow false-positive guard)",
-                                        owner, card.name,
+                                    log::trace!(
+                                        "WsReaderShared: ignoring eager CardRevealed for {:?} ({}) — buffer authoritative",
+                                        owner,
+                                        card.name,
                                     );
                                     continue;
                                 }
@@ -2456,10 +2460,8 @@ async fn run_ws_reader_shared(
                                 action_count,
                             } => {
                                 if shared_state.buffer_is_authoritative() {
-                                    debug_assert!(
-                                        false,
-                                        "WsReaderShared: eager SearchCandidates for {:?} after buffer authoritative \
-                                         (mtg-o99ow false-positive guard)",
+                                    log::trace!(
+                                        "WsReaderShared: ignoring eager SearchCandidates for {:?} — buffer authoritative",
                                         searcher,
                                     );
                                     continue;
@@ -2542,10 +2544,8 @@ async fn run_ws_reader_shared(
                                 // ChoiceRequest buffer as BufferedFact::Choice — ignore
                                 // the eager (dual-emit) copy.
                                 if shared_state.buffer_is_authoritative() {
-                                    debug_assert!(
-                                        false,
-                                        "WsReaderShared: eager OpponentChoice seq={} after buffer authoritative \
-                                         (mtg-o99ow false-positive guard)",
+                                    log::trace!(
+                                        "WsReaderShared: ignoring eager OpponentChoice seq={} — buffer authoritative",
                                         choice_seq,
                                     );
                                     continue;
@@ -2613,10 +2613,8 @@ async fn run_ws_reader_shared(
                                 action_count,
                             } => {
                                 if shared_state.buffer_is_authoritative() {
-                                    debug_assert!(
-                                        false,
-                                        "WsReaderShared: eager LibraryReordered for {:?} after buffer authoritative \
-                                         (mtg-o99ow false-positive guard)",
+                                    log::trace!(
+                                        "WsReaderShared: ignoring eager LibraryReordered for {:?} — buffer authoritative",
                                         player,
                                     );
                                     continue;
