@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T03:34:51.720714901+00:00
+updated_at: 2026-06-04T05:25:10.287183732+00:00
 ---
 
 # Description
@@ -46,8 +46,12 @@ KEY FINDING from reading wasm/network/client.rs: apply_state_sync_up_to_frontier
 - **4c (native block):** wire wait_for_state_sync_frontier (client.rs:656, dead infra) into the native draw path — blocks (no timeout) until frontier reaches the needed game ac.
 Then steps 5 (collapse late-binding), 6 (reorder emission in shuffle_library + LibraryReordered.action_count), 7 (revert exclusion, closing).
 
-## STATUS 2026-06-03 (slot01)
-Step 3 GREEN-MODULO-INHERITED @72b8607e. Full `make validate` = exactly 1 failure (`=== FAILURES (1) ===`): web/test_decouple_step3_launch_game_session.js intolerant of the EXPECTED /data/card-lookup.bin 404 — INHERITED from integration tip d6897f05 (task #7/mtg-722 CDN migration), NOT this work. Rust suite Failed:0; desync canary "No REWIND/REPLAY FATAL or DESYNC" PASS; native-vs-WASM mirror PASS. slot04 is fixing the card-lookup 404 forward (hermetic placeholder). DO NOT generate card-lookup.bin locally — gitignored, would be a false/contaminated green. PLAN: await slot04 fix on integration → rebase netarch-reveal-actionlog-unify onto new tip → clean `make validate` → push step 3 (orchestrator diff-gates + ff-merges). THEN step 4.
+## STATUS 2026-06-03 (slot01) — UPDATED
+Step 3 PUSHED + CLEAN GREEN after rebase onto integration 93aedcac: branch @1813a025, artifact validate_logs/validate_1813a0259dea1d77d16b2264460d98cfe651962e.log (All validation checks passed; DIVERGED:0 all mirrors incl All Hallow's Eve seed=3; Rust Failed:0; snapshot/resume 7/7). Awaiting orchestrator ff-merge to integration. step-3 is additive-only (no validate-on-receipt/FATAL).
+
+CO-DESIGN CHECKPOINT (HOLDING): wrote ai_docs/SEARCHED_REVEAL_SUBSUMPTION_CODESIGN_20260603.md — how Searched/reorder reveals stamped by game ac subsume class-A residual #1 (CONFIRMED: shuffle_library state.rs:745 logs ShuffleLibrary but does NOT emit LibraryReordered → shadow can't reproduce post-shuffle library → mtg-yexvc seed-2 turn-16 card-105-missing). 5 decisions to LOCK with orchestrator before 4a-client: (1) canonical-ac-per-delta table; (2) Searched dummy STAYS at search-resolution ac (re-stamping earlier would break searched_card_for's "greatest eff_ac<=target" selection → reintroduce mtg-mb668 desync); (3) LibraryReordered gains action_count:u64 + shuffle_library emits at ShuffleLibrary ac (residual-#1 fix folded into 4a); (4) strict-monotonicity collision audit (two deltas at same ac would panic ActionLog::push) → likely give each its own undo-action ac; (5) sequencing vs mtg-mb668 (4a IS the class-A fix; robots42 un-excluded-green = acceptance gate). DO NOT start 4a-client until these are agreed.
+
+## HISTORICAL: Step 3 GREEN-MODULO-INHERITED @72b8607e. Full `make validate` = exactly 1 failure (`=== FAILURES (1) ===`): web/test_decouple_step3_launch_game_session.js intolerant of the EXPECTED /data/card-lookup.bin 404 — INHERITED from integration tip d6897f05 (task #7/mtg-722 CDN migration), NOT this work. Rust suite Failed:0; desync canary "No REWIND/REPLAY FATAL or DESYNC" PASS; native-vs-WASM mirror PASS. slot04 is fixing the card-lookup 404 forward (hermetic placeholder). DO NOT generate card-lookup.bin locally — gitignored, would be a false/contaminated green. PLAN: await slot04 fix on integration → rebase netarch-reveal-actionlog-unify onto new tip → clean `make validate` → push step 3 (orchestrator diff-gates + ff-merges). THEN step 4.
 
 ## NEXT STEP (resume here)
 Step 3 DONE + committed @72b8607e (CardRevealInfo.action_count = forward_idx; server.rs choice_request.reveals loop stamps reveal_info.action_count; OpponentChoice/ChoiceAccepted/library-search reveals left at choice ac — verified isolated from mtg-mb668 searched_card_for, which only matches empty-name Searched reveals). Full `make validate` running (bg) for the validate_<sha>.log proof + canaries. IF GREEN: push branch (orchestrator diff-gates + ff-merges), then proceed to step 4 — draw-ac keying is UNBLOCKED for the draw step: delete effective-ac map (wasm/network/client.rs:194 + push_state_sync_stamped / stamp_pending_state_sync / effective_ac_of family), key apply on target_action instead of greedy up_to_frontier (apply_state_sync_up_to_frontier ~1286), wire native wait_for_state_sync_frontier (client.rs:656) into the draw path (steps.rs:415) + priority path. Stage so in-stack-resolution cases align as you go; robots42 is the canary. IF VALIDATE RED: stash the 2-file change to attribute (integration is orchestrator-maintained green → a regression is mine), fix forward, do NOT push half-done.
