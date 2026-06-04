@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T20:26:19.946835224+00:00
+updated_at: 2026-06-04T21:13:49.757737420+00:00
 ---
 
 # Description
@@ -119,3 +119,14 @@ DISCIPLINE: NOT merged (rails: integration stays green; first merge only at Phas
 checkpoint committed + pushed (force-with-lease, post-rebase, authorized). NEXT = Phase 2: native shim unpacks
 buffer into MVar/sync_to_action (+ reorders, reveals-before-choice ordering) AND correct buffer acs (SearchCandidates
 vs Searched-resolution distinct ac) → cycling GREEN = full validate green = merge gate.
+
+## STATUS 2026-06-04 (slot01-phase2) — searcher-side dual-stamp FIXED @4db6e056; 2 bigger blockers found
+WORKTREE CONFLICT RESOLVED: slot01-2 was a runaway (still editing this worktree after handoff); team-lead killed it. slot01-2's client.rs "dedup-by-choice_seq band-aid" was DISCARDED (inferior client-only strategy). I own slot01 exclusively now.
+
+COMMITTED @4db6e056 (searcher-side fix, PROVEN): dropped the redundant eager ChoiceAccepted found-card reveal (server.rs ~3147). It re-stamped the found card at the search-CHOICE ac = same ac as SearchCandidates = the dual-stamp. The found card is ALREADY delivered at its TRUE resolution ac by collect_reveals_since_last_choice (generic flush server.rs ~2933). Re-stamping "via ChoiceAccepted" is IMPOSSIBLE (move not executed at forward time — same wall as layer-4). So DROP (option iii), not re-stamp. PROOF: cycle_ability_network_sync_e2e seed315 GREEN 3/3 isolated (was RED); network.equiv-random GREEN; equiv-heuristic GREEN.
+
+BLOCKER A (native, search-family, NOT the dual-stamp): equiv-zero seed3 now advances past the old turn-5 failure to a turn-11/12 cycling desync. ROOT: the SEARCHER's own shadow has valid_cards.len=0 at choose_from_library (client2/Gabriel Plainscycle turn12, found card 46 NEVER instantiated in shadow) → fetched card can't reach hand → hand off-by-one → fatal hash mismatch. This is a DIFFERENT facet: the searcher's shadow library doesn't materialize the fetched candidate. cycle315 (random, P0 searcher) does NOT hit it, so it's path/seed-specific (P1 mirror and/or zero-controller and/or candidate-instantiation). Needs its own fix.
+
+BLOCKER B (WASM foundation, INHERITED from Phase 1 — bigger): Phase-1 "buffer drives WASM (multideck 4/4)" was a FALSE POSITIVE (ran vs a STALE pre-buffer server binary — confirmed slot01-2's retraction). FRESH build (server@4db6e056 + wasm@a23354b7): multideck 0/4, deterministic RefCell "already borrowed" PANIC at wasm/network/exports.rs:30 (with_client borrow_mut) + fancy_tui.rs:129. Re-entrancy: on_message() holds the client borrow_mut (exports.rs:221) then drives the shadow replay / apply_choice_buffer which re-borrows the same client. multideck + gui are in `make validate`, so this blocks the merge gate independent of cycling.
+
+NEXT (team-lead deciding allocation): (1) Blocker B = real WASM buffer-foundation work (re-entrancy + likely the apply-frontier stall slot01-2 flagged); (2) Blocker A = searcher-shadow candidate materialization; (3) then native buffer shim + WASM cycling coverage; (4) merge gate.
