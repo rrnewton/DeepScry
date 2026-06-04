@@ -269,8 +269,16 @@ def summarize(step, detail_path):
 # Runner
 # ---------------------------------------------------------------------------
 class Runner:
-    def __init__(self, steps, jobs, verbosity, steps_dir, resource_caps, disabled=None):
+    def __init__(self, steps, jobs, verbosity, steps_dir, resource_caps, disabled=None,
+                 keep_going=False):
         self.disabled = dict(disabled or {})  # tag -> flag reason (explicit opt-out)
+        # EAGER-EXIT (default): on the FIRST step failure, kill the steps still
+        # running in parallel (via their process groups) and stop immediately,
+        # instead of letting the in-flight wave finish. --keep-going flips this
+        # to "run everything, report all failures in one pass".
+        self.keep_going = keep_going
+        self.running_pgids = {}  # tag -> pgid of an in-flight step (for eager kill)
+        self.aborted = set()     # tags killed by eager-exit (labelled, not FAIL)
         self.steps = {s.tag: s for s in steps}
         self.order = [s.tag for s in steps]
         self.jobs = jobs
@@ -424,6 +432,10 @@ class Runner:
             step_pgid = os.getpgid(proc.pid)
         except (ProcessLookupError, OSError):
             step_pgid = proc.pid
+        # Register the pgid so a sibling that FAILS can eager-kill this in-flight
+        # step (see the failure branch below).
+        with self.lock:
+            self.running_pgids[step.tag] = step_pgid
 
         def _pump():
             try:
@@ -475,12 +487,24 @@ class Runner:
         summary = summarize(step, detail)
         with self.lock:
             self.running.discard(step.tag)
-            self.done[step.tag] = (ok, dur, summary)
+            self.running_pgids.pop(step.tag, None)
             self._release(step)
-            if not ok:
+            was_aborted = step.tag in self.aborted
+            self.done[step.tag] = (False if was_aborted else ok, dur, summary)
+            if not was_aborted and not ok:
+                # A REAL failure. Mark failed + stop scheduling new steps. EAGER-EXIT
+                # (default): also kill every step still running in parallel NOW, so a
+                # fast failure doesn't wait for a slow in-flight build to finish.
+                # --keep-going leaves them running (collect all failures in one pass).
                 self.failed = True
                 self.stop = True
-        if ok:
+                if not self.keep_going:
+                    for other, pgid in list(self.running_pgids.items()):
+                        self.aborted.add(other)   # so its thread labels itself ABORTED, not FAIL
+                        self._reap(pgid)           # SIGKILL its process group -> its proc.wait returns
+        if was_aborted:
+            self._emit(f"[{step.tag}] ⊘ ABORT  {step.desc} ({dur}s — eager-exit after another step failed; --keep-going to run all)")
+        elif ok:
             extra = f"  [{summary}]" if (summary and self.verbosity >= 1) else ""
             self._emit(f"[{step.tag}] ✓ PASS   {step.desc} ({dur}s){extra}")
         else:
@@ -522,6 +546,9 @@ class Runner:
             print(f"      {dur:5.0f}s  {tag}")
         if skipped:
             print(f"  SKIPPED (dep failed): {', '.join(skipped)}")
+        aborted = sorted(t for t in self.aborted if t in self.done)
+        if aborted:
+            print(f"  ABORTED (eager-exit, not run to completion): {', '.join(aborted)}")
         # Explicitly-disabled steps (opt-out flags) are REPORTED, never hidden —
         # a flagged run must not be mistaken for full coverage.
         if self.disabled:
@@ -530,11 +557,13 @@ class Runner:
                 by_reason.setdefault(reason, []).append(tag)
             for reason, tags in sorted(by_reason.items()):
                 print(f"  DISABLED via {reason} ({len(tags)}): {', '.join(tags)}")
-        npass = sum(1 for _, ok, _, _ in results if ok)
-        nfail = sum(1 for _, ok, _, _ in results if not ok)
+        npass = sum(1 for tag, ok, _, _ in results if ok)
+        naborted = sum(1 for tag, ok, _, _ in results if (not ok) and tag in self.aborted)
+        nfail = sum(1 for tag, ok, _, _ in results if (not ok) and tag not in self.aborted)
         ndis = len(self.disabled)
         dis_note = f", {ndis} DISABLED (explicit flag — NOT full coverage)" if ndis else ""
-        print(f"  result: {npass} passed, {nfail} failed, {len(skipped)} skipped{dis_note}")
+        ab_note = f", {naborted} aborted (eager-exit)" if naborted else ""
+        print(f"  result: {npass} passed, {nfail} failed, {len(skipped)} skipped{ab_note}{dis_note}")
         print("=" * 60)
 
 
@@ -589,6 +618,10 @@ def main():
     ap.add_argument("--no-harness", action="store_true",
                     help="run the orchestrator directly with NO outer harness (no cache/lock/"
                          "WIP/log-artifact) — what CI shards effectively do")
+    ap.add_argument("--keep-going", action="store_true",
+                    help="on a step failure, KEEP RUNNING the rest (collect every failure in one "
+                         "pass) instead of the default EAGER-EXIT (kill in-flight steps + stop at "
+                         "the first failure for fast feedback)")
     args = ap.parse_args()
 
     if args.sequential:
@@ -702,7 +735,7 @@ def run_orchestrator(args):
     steps_dir = PROJECT_DIR / "validate_logs" / f"steps_{sha}"
     runner = Runner(steps, args.jobs, verbosity, steps_dir,
                     resource_caps={"browser": args.browser_capacity, "net": args.net_capacity},
-                    disabled=disabled)
+                    disabled=disabled, keep_going=args.keep_going)
     print(f"=== validate.py: {len(steps)} steps, -j{args.jobs}, "
           f"browser-capacity={args.browser_capacity}, detail -> {steps_dir} ===")
     if disabled:

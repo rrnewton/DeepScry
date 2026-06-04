@@ -99,6 +99,58 @@ def test_start_utilization_does_not_hang():
             validate._stop_utilization(mon)  # always reap, even on assert failure
 
 
+def test_eager_exit_kills_inflight_on_failure():
+    """Default eager-exit: when a fast step FAILS while a slow step is running in
+    parallel, the slow step must be KILLED and the run must exit promptly — NOT
+    wait for the slow step's full duration. Pins the user-reported "it keeps
+    going" behavior (the scheduler used to stop launching NEW steps but let the
+    in-flight wave finish)."""
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path as _P
+    S = validate.Step
+    steps = [
+        S("g", "fail", "fast failure", "sleep 1; exit 1"),
+        S("g", "slow", "slow step (must be killed)", "sleep 60"),
+    ]
+    d = _P(tempfile.mkdtemp())
+    r = validate.Runner(steps, jobs=4, verbosity=0, steps_dir=d, resource_caps={},
+                        keep_going=False)
+    res = {}
+    t0 = time.time()
+    th = threading.Thread(target=lambda: res.update(ret=r.run()), daemon=True)
+    th.start()
+    th.join(timeout=25)
+    dt = time.time() - t0
+    assert not th.is_alive(), "run() did not return — eager-exit failed to kill the slow step"
+    assert dt < 20, f"eager-exit too slow ({dt:.1f}s) — slow step not killed promptly"
+    assert r.failed is True
+    assert "g.slow" in r.aborted, "slow step should be marked aborted (eager-killed)"
+
+
+def test_keep_going_runs_all_despite_failure():
+    """--keep-going: a failure does NOT kill in-flight steps; everything runs to
+    completion (nothing aborted)."""
+    import tempfile
+    import threading
+    from pathlib import Path as _P
+    S = validate.Step
+    steps = [
+        S("g", "fail", "fast failure", "exit 1"),
+        S("g", "ok", "quick ok", "true"),
+    ]
+    d = _P(tempfile.mkdtemp())
+    r = validate.Runner(steps, jobs=4, verbosity=0, steps_dir=d, resource_caps={},
+                        keep_going=True)
+    th = threading.Thread(target=r.run, daemon=True)
+    th.start()
+    th.join(timeout=20)
+    assert not th.is_alive()
+    assert r.failed is True
+    assert not r.aborted, "keep_going must not abort any step"
+
+
 def test_no_network_disables_only_network_group():
     steps, disabled = _disabled_for(no_network=True)
     for s in steps:
