@@ -7,7 +7,7 @@ labels:
 - validate-infra
 - networking
 created_at: 2026-06-03T21:58:50.567668623+00:00
-updated_at: 2026-06-04T11:02:36.800418792+00:00
+updated_at: 2026-06-04T11:16:04.090191174+00:00
 ---
 
 # Description
@@ -110,3 +110,45 @@ C) NETWORK NAMESPACE port-isolation (the bigger payoff): run each validate (or
 SCOPING: A (per-step reaper) + the landing domcontentloaded fix are on the
 build-once 12/12 critical path and DONE @ 0d90b46c. B (self-reexec scope) and C
 (netns) are the mtg-ibj22 follow-on design — do NOT balloon the 12/12 path.
+
+
+== ISOLATION SEQUENCING + PORT/NETNS DESIGN (user-directed 2026-06-04, follow-on; does NOT gate build-once 12/12) ==
+
+Ordered plan (do in this order; each independently valuable):
+1. NESTED CGROUP robustness FIRST.
+   - DONE: per-step killpg reaper (start_new_session + scoped killpg on
+     completion/timeout) @ 0d90b46c.
+   - NEXT: (a) whole-run SELF-REEXEC scope — top of validate_run.py re-execs under
+     `systemd-run --user --scope --setenv=MTG_VALIDATE_IN_SCOPE=1` unless the
+     sentinel is set (anti-recursion) / $CI|$GITHUB_ACTIONS (CI runs direct) /
+     --no-scope / systemd unavailable (graceful skip); (b) cgroup.kill successor
+     to killpg for setsid escapees. Nesting: per-step cgroup inside the whole-run
+     scope.
+2. EPHEMERAL-PORT GUARD (closes the collision gap the reaper only cleans up after).
+   - Replace the unguarded `PORT=$((17800 + RANDOM % 10000))` in
+     bug_finding/network_vs_local_equivalence_e2e.sh (and any sibling that picks a
+     random fixed port up front) with `:0` TRUE-EPHEMERAL binding — kernel-atomic
+     assignment, NO TOCTOU. PREFERRED (least fragile). If a port must be known
+     before launch, use bind-probe-retry instead. This is independent of cgroup
+     and worth doing regardless of netns.
+3. NETWORK NAMESPACE — CONDITIONAL EXTRA-INSURANCE ONLY (user explicitly wary of
+   fragility; high bar to enable):
+   - Add ONLY after cgroup isolation is robust.
+   - Gate on an END-TO-END availability probe, NOT just `unshare -rn` exit 0:
+     `unshare -rn` → `ip link set lo up` → bind a listener on 127.0.0.1:0 →
+     CONNECT to it → full round-trip success, ALL under a short timeout (~5s).
+     Only a complete round-trip enables netns. Probe ONCE and cache the verdict.
+   - Clean fallback to cgroup-only on ANY failure/timeout. Failure mode MUST be
+     "we don't use netns," NEVER "we broke validate."
+   - ALL-OR-NOTHING per network-e2e step: server + AI + web-server + chromium all
+     in the SAME namespace, or none — never half a step namespaced.
+   - With netns active, ports can return to a fixed DEFAULT_PORT (each ns has its
+     own port space → no cross-run collision possible). This is the payoff that
+     also enables SAFE PARALLEL validates (kills the cross-slot contention that
+     forced serialized validates tonight).
+   - CI: verify CAP_NET_ADMIN / unprivileged user-ns availability per runner
+     BEFORE enabling there (self-hosted likely ok; GitHub-hosted may lack it) —
+     the same probe handles this (fails → cgroup-only).
+
+cgroup (process containment) ⟂ netns (port-space isolation) ⟂ :0 ephemeral
+(collision-free binding) — orthogonal layers; ship 1→2→3 in confidence order.
