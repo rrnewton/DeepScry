@@ -4,10 +4,22 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T21:50:45.553624779+00:00
+updated_at: 2026-06-04T22:16:33.167174255+00:00
 ---
 
 # Description
+
+## TASK 0 SETTLED 2026-06-04 (slot02) — equiv-zero seed3 is BRANCH-INTRODUCED, NOT pre-existing mtg-725. The REFRAME above is WRONG.
+Built clean INTEGRATION (primary checkout @b886d9b3, fresh release+network binary) and the BRANCH (@e0188273). Ran network_vs_local_equivalence_e2e.sh seed3 zero zero, each isolated under systemd-run --user --scope:
+- INTEGRATION: 5/5 DETERMINISTIC GREEN — network game always 24 turns, 0 diverged, gamelogs IDENTICAL.
+- BRANCH @e0188273: NONDETERMINISTIC — ~50% desync (10-run sweep: ~5 green at 24 turns, rest FATAL network-sync-mismatch aborting at turn 5-6 or 11). Local game ALWAYS 24 turns (deterministic) in both.
+=> The predecessor REFRAME (equiv-zero = pre-existing zero-controller network nondeterminism, mtg-725 class, exclude-it) is FALSIFIED. It is a real BRANCH-INTRODUCED desync and must NOT be excluded.
+
+LOCALIZED: the SERVER is fully deterministic — across passing and failing runs the server gamelog is byte-identical up to the Turn-5 Mountaincycling, and the cycle shuffle is identical (SHUFFLE-DEBUG before/after rng_hash + first_5_cards match exactly every run). The nondeterminism is ENTIRELY in the CLIENT (native) SHADOW: on the library-search/cycling reveal path the shadow nondeterministically ends up missing the fetched card (server P0 hand=5 vs client shadow=4; "Hand sizes DIFFER" at choice_seq=45 ac=252).
+
+ROOT CAUSE PINNED (single-variable diagnostic): the trigger is THIS branch's new shuffle->LibraryReordered emission (state.rs ~818-837, mtg-o99ow L2b residual-#1, added for mtg-yexvc Timetwister stale-shadow-library). Disabling JUST that emit (if false && ...) and rebuilding -> equiv-zero seed3 8/8 GREEN. Mechanism: a cycling cycle does search-reveal-found-card THEN shuffle; the branch now sends an EXTRA async LibraryReordered (post-shuffle order) that races / arrives out of ac-order vs the found-card reveal over the websocket, and the native EAGER (synthetic-keyed, order-sensitive) apply path drops/misapplies the found-card reveal ~50% of the time. Integration never sent this message on shuffle, so its client stayed deterministic on the same game.
+
+THE DIAGNOSTIC REVERT IS NOT THE FIX (removing the emit reintroduces mtg-yexvc). The principled fix is exactly the user's NATIVE-FIRST + DELETE-EAGER plan: TASK 1 (native buffer shim) makes native consume the SINGLE ascending-ac ordered buffer carried in the ChoiceRequest (reveals + reorders + opponent choices together), eliminating the multi-message async race; TASK 2 deletes the racy eager path. This CONFIRMS the predecessor's "Blocker A subsumed by Piece 2" intuition. equiv-zero is therefore a GATING item for the native-first gate (TASK 4), not an exclusion. Proceeding to TASK 1.
 
 ## LAYER-4 RE-DECISION 2026-06-04 (slot01) — re-stamp IMPOSSIBLE (proven), need iii/iv/v
 User picked re-stamp the eager OpponentChoice reveal at the reveal own-ac. IMPLEMENTED+tested+REVERTED=no-op. PROOF (DIAG_OPPREVEAL seed13): every opponent reveal found_revealcard=false — at OpponentChoice-forward time the move has NOT executed, the RevealCard (canonical own position) is NOT in the undo log yet, so the eager path can only use the CHOICE ac. Cannot label an event with a position that does not exist yet. Ex: Mountain card59 eager@choice_ac375 (found=false); real RevealCard@376; collect_reveals re-sends@376 bundled with recipient next request (after seq77@380) → behind cursor=380 → lost-delta fatal. Dual-stamp is REAL (375 eager vs 376 collect); fix is the OTHER direction: (iii) collect_reveals SKIPS cards already sent eagerly via OpponentChoice [server, share already-sent state]; (iv) send post-exec reveals eagerly at own-ac [bigger transmission-timing restructure]; (v) CLIENT drop late reveal for an already-revealed card by identity not ac [smallest, no native/server touch, weakens strict guard]. Reverted to clean 0e905f8e (probe+server changes out), exclusion untouched, 3 client fixes intact. AWAITING user re-decision before further code.
