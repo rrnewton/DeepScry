@@ -147,8 +147,14 @@ def build_registry():
     # --- wasm: ONE bundle (wasm-network features) + browser e2e + equiv sweeps ---
     add(Step("wasm", "bundle", "wasm-pack dev build (wasm-network) + export-wasm data",
              "make wasm-dev", timeout=BUILD_STEP_TIMEOUT))
-    add(Step("wasm", "npm-install", "web/ npm install (e2e deps)",
-             f"cd web && {NPM} install --silent 2>/dev/null"))
+    # OFFLINE-FIRST + NO-SILENT-SKIP provisioning (mtg-717 follow-on): use
+    # vendored web/node_modules as-is if present (locked-down hosts), else
+    # `npm install` with output SURFACED, else HARD-FAIL with a provisioning
+    # message. ensure_node_deps.js never swallows errors and never auto-skips —
+    # to run validate without the browser e2e, pass --no-wasm-e2e (reported in
+    # the summary). (NPM is exported into the env so the script honors it.)
+    add(Step("wasm", "npm-install", "web/ node deps (offline-first, hard-fail if absent)",
+             f"cd web && NPM={NPM} {NODE} ensure_node_deps.js"))
     add(Step("wasm", "browser", "WASM browser e2e suite (16 playwright tests)",
              "cd web && " + " && ".join(
                  f"{NODE} {t}" for t in [
@@ -178,8 +184,12 @@ def build_registry():
     # wasm-network bundle. Need build.mtg-release + the wasm bundle + npm;
     # browser-resource-serialized. (CI sub-shards: network-gui, network-redo.)
     net_browser = [
-        ("playwright-check", "npm install + verify chromium provisioned",
-         f"cd web && {NPM} install --silent 2>/dev/null || true; {NODE} playwright_check.js"),
+        # Deps are provisioned by wasm.npm-install (a dep of every net_browser
+        # step, below) — this step just VERIFIES chromium is present and
+        # hard-fails with an actionable message if not. No more swallowing
+        # `npm install ... 2>/dev/null || true` (which hid the real reason).
+        ("playwright-check", "verify playwright chromium provisioned",
+         f"cd web && {NODE} playwright_check.js"),
         ("gui", "networked GUI e2e (baseline)", "cd web && node test_network_gui_e2e.js"),
         ("human-input", "networked HUMAN-controller sync gate (mtg-679)", "cd web && node test_network_human_input.js"),
         ("multideck", "networked multi-deck e2e (--quick)", "cd web && node test_network_multideck.js --quick"),
@@ -246,7 +256,8 @@ def summarize(step, detail_path):
 # Runner
 # ---------------------------------------------------------------------------
 class Runner:
-    def __init__(self, steps, jobs, verbosity, steps_dir, resource_caps):
+    def __init__(self, steps, jobs, verbosity, steps_dir, resource_caps, disabled=None):
+        self.disabled = dict(disabled or {})  # tag -> flag reason (explicit opt-out)
         self.steps = {s.tag: s for s in steps}
         self.order = [s.tag for s in steps]
         self.jobs = jobs
@@ -498,9 +509,19 @@ class Runner:
             print(f"      {dur:5.0f}s  {tag}")
         if skipped:
             print(f"  SKIPPED (dep failed): {', '.join(skipped)}")
+        # Explicitly-disabled steps (opt-out flags) are REPORTED, never hidden —
+        # a flagged run must not be mistaken for full coverage.
+        if self.disabled:
+            by_reason = {}
+            for tag, reason in sorted(self.disabled.items()):
+                by_reason.setdefault(reason, []).append(tag)
+            for reason, tags in sorted(by_reason.items()):
+                print(f"  DISABLED via {reason} ({len(tags)}): {', '.join(tags)}")
         npass = sum(1 for _, ok, _, _ in results if ok)
         nfail = sum(1 for _, ok, _, _ in results if not ok)
-        print(f"  result: {npass} passed, {nfail} failed, {len(skipped)} skipped")
+        ndis = len(self.disabled)
+        dis_note = f", {ndis} DISABLED (explicit flag — NOT full coverage)" if ndis else ""
+        print(f"  result: {npass} passed, {nfail} failed, {len(skipped)} skipped{dis_note}")
         print("=" * 60)
 
 
@@ -510,7 +531,14 @@ def main():
     ap.add_argument("--group", help="comma-separated jobGroups to run (CI shard)")
     ap.add_argument("--only", help="comma-separated group.job to run (+their deps)")
     ap.add_argument("--job", help="comma-separated jobIds to run (any group)")
-    ap.add_argument("--no-network", action="store_true", help="skip the network jobGroup")
+    ap.add_argument("--no-network", action="store_true",
+                    help="DELIBERATELY disable the network jobGroup (reported in the run summary; "
+                         "never a silent skip)")
+    ap.add_argument("--no-wasm-e2e", "--no-browser", dest="no_wasm_e2e", action="store_true",
+                    help="DELIBERATELY disable all browser/chromium e2e steps (wasm browser suite, "
+                         "native-vs-WASM equiv sweeps, networked browser e2e, + their npm provisioning). "
+                         "Use on a host without a usable browser/npm. Disabled steps are REPORTED in the "
+                         "run summary so a flagged run is never mistaken for full coverage.")
     ap.add_argument("--browser-capacity", type=int, default=1,
                     help="how many chromium-heavy steps may run at once (default 1)")
     ap.add_argument("--net-capacity", type=int, default=1,
@@ -529,8 +557,22 @@ def main():
     args = ap.parse_args()
 
     steps = build_registry()
+    # Explicit opt-out flags DISABLE steps — but we RECORD what was disabled (tag
+    # -> reason) and report it in the run summary, so a flagged run is never
+    # silently mistaken for full coverage (the never-skip principle: a disabled
+    # step must be visible, not vanish).
+    disabled = {}
     if args.no_network:
-        steps = [s for s in steps if not s.networkonly]
+        for s in steps:
+            if s.networkonly:
+                disabled[s.tag] = "--no-network"
+    if args.no_wasm_e2e:
+        for s in steps:
+            # all chromium-driven steps (browser resource) + their npm provisioning
+            if ("browser" in s.resources) or s.tag == "wasm.npm-install":
+                disabled[s.tag] = "--no-wasm-e2e"
+    if disabled:
+        steps = [s for s in steps if s.tag not in disabled]
 
     # subset selection (carry deps along)
     by_tag = {s.tag: s for s in steps}
@@ -606,9 +648,17 @@ def main():
                          capture_output=True, text=True).stdout.strip() or "nosha"
     steps_dir = PROJECT_DIR / "validate_logs" / f"steps_{sha}"
     runner = Runner(steps, args.jobs, verbosity, steps_dir,
-                    resource_caps={"browser": args.browser_capacity, "net": args.net_capacity})
+                    resource_caps={"browser": args.browser_capacity, "net": args.net_capacity},
+                    disabled=disabled)
     print(f"=== validate_run.py: {len(steps)} steps, -j{args.jobs}, "
           f"browser-capacity={args.browser_capacity}, detail -> {steps_dir} ===")
+    if disabled:
+        by_reason = {}
+        for tag, reason in sorted(disabled.items()):
+            by_reason.setdefault(reason, []).append(tag)
+        for reason, tags in sorted(by_reason.items()):
+            print(f"=== DISABLED via {reason}: {len(tags)} step(s) — {', '.join(tags)} "
+                  f"(explicit opt-out; NOT full coverage) ===")
     ok = runner.run()
     runner.print_stats()
     return 0 if ok else 1

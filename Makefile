@@ -199,12 +199,18 @@ setup: install-hooks ensure-wasm-pack
 # mtg-716: provision the web e2e browser ONCE here so `make validate` never
 # downloads one at runtime (hermetic — validate must not depend on a network
 # fetch). Binary only (no `--with-deps`: that needs root and breaks non-root
-# sandboxes). Best-effort: skipped with a notice if npm is unavailable.
+# sandboxes). HARD-FAIL (not a silent skip) if npm is unavailable: a setup that
+# "succeeds" while quietly omitting the browser leaves a broken validate later
+# (the browser e2e would hard-fail). Surface it now with the offline option.
 	@if [ -n "$(NPM)" ] && [ -x "$$(command -v $(NPM) 2>/dev/null)" ]; then \
 		echo "=== Provisioning Playwright chromium for web e2e (binary only) ==="; \
 		( cd web && $(NPM) install --silent && npx playwright install chromium ); \
 	else \
-		echo "(setup) npm not found — skipping Playwright chromium provisioning; install npm + run 'cd web && npx playwright install chromium' before 'make validate'"; \
+		echo "ERROR: (setup) npm not found — cannot provision the Playwright chromium for the web e2e suite." >&2; \
+		echo "  Install node/npm and re-run 'make setup', OR provision web/node_modules + the chromium cache OFFLINE" >&2; \
+		echo "  (copy from a host where 'cd web && npm install && npx playwright install chromium' succeeded)." >&2; \
+		echo "  To run validate WITHOUT the browser e2e, pass: scripts/validate_run.py --no-wasm-e2e (reported in the summary)." >&2; \
+		exit 1; \
 	fi
 
 # Single, serialized wasm-pack install site (mtg-577).
