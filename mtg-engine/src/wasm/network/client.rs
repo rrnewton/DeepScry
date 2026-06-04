@@ -925,18 +925,38 @@ impl WasmNetworkClient {
                 // Keepalive response, ignore
             }
 
-            ServerMessage::LibraryReordered { player, new_order } => {
+            ServerMessage::LibraryReordered {
+                player,
+                new_order,
+                action_count,
+            } => {
                 // mtg-589 / Phase 2 step 1: Queue the authoritative library
                 // order in the shadow state-sync log so the shadow GameState
                 // can adopt it at the next sync point (BEFORE reveals/draws).
                 // Without this, the shadow's library order drifts from the
                 // server after any shuffle -> FATAL P2 state-hash mismatch.
+                //
+                // L1 (mtg-o99ow): `action_count` is carried on the wire but the
+                // client still keys state_sync by the synthetic counter and
+                // stamps the reorder at the next choice (push_state_sync below).
+                // L3 will key directly by this game `action_count`.
                 log::debug!(
-                    "WasmNetworkClient: Library reordered for {:?} ({} cards) - logged",
+                    "WasmNetworkClient: Library reordered for {:?} ({} cards) ac={} - logged",
                     player,
-                    new_order.len()
+                    new_order.len(),
+                    action_count
                 );
+                let _ = action_count;
                 self.push_state_sync(StateSyncEntry::LibraryReorder { player, new_order });
+            }
+
+            ServerMessage::SearchCandidates { .. } => {
+                // L1 (mtg-o99ow): the server does not emit SearchCandidates yet
+                // (library-search candidates are still sent as N CardRevealed
+                // messages). The variant exists for L2/L3 where the client keys
+                // state_sync by game ac and the N-at-one-ac collision forces a
+                // single Vec-carrying entry. Inert until then.
+                log::debug!("WasmNetworkClient: SearchCandidates received (L1 no-op)");
             }
 
             #[cfg(debug_assertions)]

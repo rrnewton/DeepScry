@@ -53,6 +53,14 @@ pub enum StateSyncEntry {
     /// stored **bottom-to-top** (so `pop` is "draw top"). Consumers must
     /// reverse on application.
     LibraryReorder { player: PlayerId, new_order: Vec<CardId> },
+    /// `ServerMessage::SearchCandidates` payload — the N candidate identities a
+    /// searching player sees when resolving a `LibrarySearchByName` choice
+    /// (mtg-o99ow / mtg-253). A single atomic-multi-delta keyed at ONE game
+    /// `action_count` (the search-resolution ac); carrying `Vec<CardReveal>`
+    /// avoids the strict-monotonicity collision that N separate reveals at one
+    /// ac would cause in the game-ac-keyed `ActionLog`. Applied by replaying
+    /// `process_card_reveal_wasm` over each candidate.
+    SearchCandidates { cards: Vec<CardReveal> },
 }
 
 #[cfg(test)]

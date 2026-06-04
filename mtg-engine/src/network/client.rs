@@ -179,9 +179,9 @@ impl NetworkMessage {
                 winner, action_count, ..
             } => Some(NetworkMessage::GameEnded { winner, action_count }),
             ServerMessage::Error { message, fatal } => Some(NetworkMessage::Error { message, fatal }),
-            ServerMessage::LibraryReordered { player, new_order } => {
-                Some(NetworkMessage::LibraryReordered { player, new_order })
-            }
+            ServerMessage::LibraryReordered {
+                player, new_order, ..
+            } => Some(NetworkMessage::LibraryReordered { player, new_order }),
             // Ignore connection/setup messages - handled during connection setup, not gameplay.
             // Lobby messages (GameList/GameCreated/ServerFull/JoinFailed/WaitingRoomUpdate/
             // RegisterResult/ReconnectResult) are also pre-gameplay: the lobby flow consumes
@@ -201,6 +201,10 @@ impl NetworkMessage {
             | ServerMessage::ServerFull { .. }
             | ServerMessage::JoinFailed { .. }
             | ServerMessage::SyncError { .. }
+            // L1 (mtg-o99ow): SearchCandidates is not emitted yet (library-search
+            // candidates still arrive as N CardRevealed). When L2 emits it, the
+            // native shadow will need to consume it like the WASM client does.
+            | ServerMessage::SearchCandidates { .. }
             | ServerMessage::Pong { .. } => None,
             // DebugStateDump only exists in debug builds
             #[cfg(debug_assertions)]
@@ -1665,7 +1669,7 @@ impl NetworkClient {
                     }
                     log::warn!("Server warning: {}", message);
                 }
-                ServerMessage::LibraryReordered { player, new_order } => {
+                ServerMessage::LibraryReordered { player, new_order, .. } => {
                     // CRITICAL: Server sends LibraryReordered during opening hands phase.
                     // We must capture these and apply them in run_game before GameLoop starts.
                     // Without this, the client has wrong library order and draws wrong cards.

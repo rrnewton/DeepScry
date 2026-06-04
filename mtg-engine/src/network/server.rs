@@ -2091,28 +2091,36 @@ async fn run_game(
         .unwrap_or_default();
 
     // Both clients receive both library orders for symmetry
+    // Game-start library sync: no undo actions have been logged yet, so the
+    // alignment ac is 0 (mtg-o99ow). The shadow adopts this order before any
+    // draw. Real reorder acs (shuffle / scry / surveil mid-game) are stamped at
+    // their own undo-log position by the reorder-emission paths below.
     p1_conn
         .send(&ServerMessage::LibraryReordered {
             player: p1_id,
             new_order: p1_lib_order.clone(),
+            action_count: 0,
         })
         .await?;
     p1_conn
         .send(&ServerMessage::LibraryReordered {
             player: p2_id,
             new_order: p2_lib_order.clone(),
+            action_count: 0,
         })
         .await?;
     p2_conn
         .send(&ServerMessage::LibraryReordered {
             player: p1_id,
             new_order: p1_lib_order,
+            action_count: 0,
         })
         .await?;
     p2_conn
         .send(&ServerMessage::LibraryReordered {
             player: p2_id,
             new_order: p2_lib_order,
+            action_count: 0,
         })
         .await?;
 
@@ -3083,6 +3091,11 @@ async fn handle_player_websocket(
                         conn.send(&ServerMessage::LibraryReordered {
                             player,
                             new_order,
+                            // L1: placeholder; L2 threads the real reorder ac
+                            // (the ShuffleLibrary/ReorderLibrary undo position)
+                            // through pending_library_reorders. Client ignores
+                            // the field until L3 keys state_sync by game ac.
+                            action_count: 0,
                         }).await?;
                     }
 

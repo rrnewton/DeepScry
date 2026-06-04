@@ -677,6 +677,37 @@ pub enum ServerMessage {
         /// New order of CardIds in the library (top to bottom)
         /// Identities remain unknown until individually revealed
         new_order: Vec<CardId>,
+        /// **Game `action_count` at which this reorder takes effect (mtg-o99ow).**
+        /// The undo-log position of the reorder's own action (`ShuffleLibrary`
+        /// for a shuffle, `ReorderLibrary` for scry/surveil). The shadow keys
+        /// this entry in its game-`action_count`-indexed state-sync log so the
+        /// new order is adopted at the SAME game position on the forward pass
+        /// and on every rewind/replay — the reveal-as-choice alignment contract.
+        /// `#[serde(default)]` → 0 for legacy/game-start sync (no prior actions).
+        #[serde(default)]
+        action_count: u64,
+    },
+
+    /// **Library-search candidate reveals (mtg-o99ow / mtg-253).**
+    ///
+    /// A single atomic-multi-delta: the N candidate identities a searching
+    /// player sees when resolving a `LibrarySearchByName` choice. Replaces the
+    /// prior loop of N `CardRevealed` messages all stamped at one search ac —
+    /// which would collide in the shadow's game-`action_count`-keyed state-sync
+    /// log (`ActionLog::push` requires strictly-increasing keys). One message =
+    /// one log entry carrying `Vec<CardReveal>` at the single search-resolution
+    /// `action_count`, consistent with "logs aligned modulo reveal-name
+    /// visibility": the searcher gets real names; targeting keeps others' views
+    /// dummy/masked as before.
+    SearchCandidates {
+        /// The player searching their own library (sees the real names).
+        searcher: PlayerId,
+        /// The candidate cards revealed by this search, in library order.
+        cards: Vec<CardReveal>,
+        /// Game `action_count` of the search-resolution choice these candidates
+        /// belong to (the single ac all N share).
+        #[serde(default)]
+        action_count: u64,
     },
 
     /// Request a choice from this client
