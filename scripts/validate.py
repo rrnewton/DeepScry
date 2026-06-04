@@ -43,6 +43,7 @@ Exit status: 0 if all selected steps pass, 1 otherwise.
 
 import argparse
 import os
+import shutil
 import re
 import signal
 import subprocess
@@ -633,6 +634,10 @@ def main():
                     help="on a step failure, KEEP RUNNING the rest (collect every failure in one "
                          "pass) instead of the default EAGER-EXIT (kill in-flight steps + stop at "
                          "the first failure for fast feedback)")
+    ap.add_argument("--no-scope", action="store_true",
+                    help="do NOT re-exec a full local validate inside a transient systemd --user "
+                         "scope (the default self-isolation that reaps ALL descendants — incl. "
+                         "setsid escapees — on exit). Use if systemd-run misbehaves.")
     args = ap.parse_args()
 
     if args.sequential:
@@ -962,7 +967,69 @@ def _stop_utilization(mon):
         sys.stdout.write(r.stderr)
 
 
+_SCOPE_PROBE = None
+
+
+def _systemd_scope_available():
+    """True iff `systemd-run --user --scope` actually works here (cached). The
+    user verified this on the dev box (systemd 255, cgroup v2, user-delegated)."""
+    global _SCOPE_PROBE
+    if _SCOPE_PROBE is None:
+        if not shutil.which("systemd-run"):
+            _SCOPE_PROBE = False
+        else:
+            try:
+                r = subprocess.run(
+                    ["systemd-run", "--user", "--scope", "--quiet",
+                     f"--unit=validate-probe-{os.getpid()}", "true"],
+                    capture_output=True, timeout=8)
+                _SCOPE_PROBE = (r.returncode == 0)
+            except (subprocess.TimeoutExpired, OSError):
+                _SCOPE_PROBE = False
+    return _SCOPE_PROBE
+
+
+def _maybe_reexec_in_scope(args):
+    """mtg-ibj22: re-exec a FULL local validate inside a transient systemd
+    --user SCOPE (a cgroup), so EVERY descendant — incl. setsid/double-forked
+    escapees the per-step killpg reaper can't catch (orphan mtg server /
+    http.server / chromium / util sampler) — is contained and reaped atomically
+    when the run ends or via `systemctl --user stop validate-*.scope` (see
+    kill_zombie_processes.py). This is what makes concurrent cross-slot validates
+    safe by default + kills the stale-lock / port-collision false-positive class.
+
+    SUPPRESSED (runs directly, never breaks validate) when: already inside the
+    scope (anti-recursion sentinel) / in CI / --no-scope / systemd-run
+    unavailable. Re-exec uses the RELATIVE script path (sys.argv[0]) so the
+    scoped process's cmdline does NOT contain the worktree path — otherwise
+    check_clean_environment.py would flag the scoped validate as a conflicting
+    process (the mtg-463 self-detection footgun)."""
+    if os.environ.get("MTG_VALIDATE_IN_SCOPE") == "1":
+        return  # already re-exec'd into the scope (anti-recursion)
+    if args.no_scope or os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        return
+    if not _systemd_scope_available():
+        print("[validate] systemd --user scope unavailable — running unscoped "
+              "(per-step reaper only; pass --no-scope to silence).")
+        return
+    unit = f"validate-{os.getpid()}"
+    cmd = ["systemd-run", "--user", "--scope", "--collect", "--quiet",
+           f"--unit={unit}", "--setenv=MTG_VALIDATE_IN_SCOPE=1",
+           "--", sys.executable, sys.argv[0], *sys.argv[1:]]
+    print(f"[validate] re-exec inside transient systemd scope {unit}.scope "
+          f"(full-descendant cleanup on exit)…")
+    sys.stdout.flush()
+    try:
+        os.execvp("systemd-run", cmd)  # replaces this process
+    except OSError as e:
+        print(f"[validate] systemd-run exec failed ({e}) — continuing unscoped.")
+
+
 def run_with_harness(args):
+    # 0. self-isolate: re-exec inside a transient systemd --user scope so the
+    #    whole descendant tree is reaped atomically on exit (mtg-ibj22). No-op
+    #    when already scoped / CI / --no-scope / systemd unavailable.
+    _maybe_reexec_in_scope(args)
     # 1. clean-environment gate
     envcheck = SCRIPTS_DIR / "check_clean_environment.py"
     if envcheck.exists():
