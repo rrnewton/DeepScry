@@ -2870,10 +2870,17 @@ async fn handle_player_websocket(
                                         owner: reveal_info.owner,
                                         card: card_reveal,
                                         reason,
-                                        // mtg-610: stamp with the bundling choice's
-                                        // action_count so the shadow keys this reveal
-                                        // by game position, not message arrival.
-                                        action_count: Some(choice_request.action_count),
+                                        // mtg-o99ow: stamp with the reveal's OWN
+                                        // game action_count (the undo-log position
+                                        // of its RevealCard action), not the
+                                        // bundling choice's action_count (prior
+                                        // mtg-610 effective-ac behaviour). The
+                                        // reveal occurred strictly before this
+                                        // choice, so the shadow applies the
+                                        // monotone info at the draw rather than the
+                                        // later choice, and rewind retains it at
+                                        // its true position.
+                                        action_count: Some(reveal_info.action_count),
                                     }).await?;
                                 }
                             }

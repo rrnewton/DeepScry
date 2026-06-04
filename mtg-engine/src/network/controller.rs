@@ -34,6 +34,18 @@ pub struct CardRevealInfo {
     pub from_zone: Zone,
     /// Zone the card moved to
     pub to_zone: Zone,
+    /// **The reveal's OWN game `action_count`** — the undo-log position of
+    /// the `RevealCard` action that produced this reveal (mtg-o99ow,
+    /// reveal-as-choice unification). The server stamps each
+    /// `ServerMessage::CardRevealed` with this value instead of bundling all
+    /// reveals at the *following* `ChoiceRequest`'s `action_count` (the prior
+    /// mtg-610 effective-ac behaviour). Because reveals collected since the
+    /// last choice happened strictly before that choice, this key is `<` the
+    /// bundling choice's `action_count`, so the shadow applies the monotone
+    /// reveal info ASAP (at the draw, not at the later choice) — and rewind
+    /// retains it at its true position. See
+    /// ai_docs/REVEAL_ACTIONLOG_UNIFICATION_DESIGN_20260603.md step 3.
+    pub action_count: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -558,6 +570,11 @@ impl NetworkController {
                             owner: card_owner,
                             from_zone: Zone::Library, // Still a placeholder, but less critical
                             to_zone,
+                            // mtg-o99ow: stamp with the reveal's OWN undo-log
+                            // position (this RevealCard action), not the
+                            // bundling choice's action_count. forward_idx is
+                            // the action_count at which this reveal occurred.
+                            action_count: forward_idx as u64,
                         });
                     }
                 }
