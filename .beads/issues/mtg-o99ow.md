@@ -4,10 +4,25 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T11:10:51.940783023+00:00
+updated_at: 2026-06-04T11:46:29.689698576+00:00
 ---
 
 # Description
+
+## STATUS 2026-06-04 (slot01 finisher) — WASM bug#2 has 4 layers; 3 client layers DONE+pushed @bd788773; layer-4 = HARD STOP (server-side design Q)
+
+Committed+pushed bd788773: arrival-order-independent state-sync log (client-only).
+SAME-AC AUDIT = PASS/distinct (ac==undo_log.len() unique per action; dup-ac ⇒ same delta re-sent).
+LAYERS FIXED (client + ActionLog primitive):
+ 1 OUT-OF-ORDER ARRIVAL → ActionLog::insert_sorted (re-sort by ac).
+ 2 CURSOR PASSES UN-ARRIVED GAP → apply bounded by max_received_choice_ac (completeness watermark = principled L4 block-on-miss, client-only).
+ 3 IDEMPOTENT RE-SEND (shared_reveal_index immediate-pusher + collect_reveals) → push_state_sync dedups dup-ac via state_sync_entries_equivalent (drop same delta; DIFFERENT delta @same ac = fatal; new delta behind cursor = lost = fatal; cmp >= since opening_reveal_ac(0)==0).
+
+HARD STOP — LAYER 4 (server-side dual-ac-stamp): the SAME opponent-cast reveal is stamped at TWO acs by two server paths. P1 casts Obliterating Bolt (seq77@380): reaches P2 via (A) OpponentChoice path server.rs ~3040 (mtg-610 "bundled") @ choice ac 380, reason Played (INSTANTIATION for remote_controller replay) AND (B) collect_reveals_since_last_choice @ its OWN ac 376. Two distinct acs for one reveal ⇒ second is lost-delta fatal (dedup-by-ac can't catch two acs). Clean fix is SERVER-side (one ac per reveal): (i) stamp OpponentChoice reveal at own ac (path lacks it), (ii) drop OpponentChoice reveal + rely on collect@376 (timing risk: card must be instantiated before remote_controller replays the cast), or (iii) collect_reveals skips reveals already sent by OpponentChoice. ALL touch LOCKED mtg-610 + SHARED native/server code (native GREEN, must not regress). Blanket client "apply-ASAP" unsafe (late draw-reveal after intervening reorder desyncs). DEFERRED to team-lead/user.
+
+EXCLUSION LEFT IN (state_hash.rs untouched, probe reverted). NOT the closing commit.
+E2E: monored seed13 now reaches deep turn-4 with client_hash==server_hash everywhere (layers 1+2 cleared); counterspells seed5 PASSES e2e. Repro: cd web && node test_network_multideck.js --quick.
+NEXT: pick server dual-stamp fix (i/ii/iii) → re-run un-excluded full canary (native sweep + WASM multideck + 4 DIVERGED + cycle + make validate) → exclusion-revert closing commit.
 
 NETARCH reveal-as-choice unification (branch netarch-reveal-actionlog-unify). Principled successor to the action_count exclusion (state_hash.rs); CLOSING commit reverts that exclusion + restores action_count as a cross-replica invariant. Design: ai_docs/REVEAL_ACTIONLOG_UNIFICATION_DESIGN_20260603.md + SEARCHED_REVEAL_SUBSUMPTION_CODESIGN_20260603.md. Detailed live recipe: worktree debug/4a_impl_plan.md (slot01).
 
