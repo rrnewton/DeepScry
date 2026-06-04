@@ -57,6 +57,11 @@ async function runTest() {
             args: ['--no-sandbox', '--enable-unsafe-swiftshader']
         });
         const page = await browser.newPage();
+        // mtg-717 flake-hardening (slot01 finding): the bug-report waits below
+        // use tight timeouts that starve under CI 2-vCPU CPU saturation. Set a
+        // generous default + widen the explicit 5s waits so a wait that's fine
+        // at 1x load doesn't false-fail at full-core saturation.
+        page.setDefaultTimeout(60000);
 
         // Collect console messages and errors with timestamps
         page.on('console', msg => {
@@ -214,7 +219,7 @@ async function runTest() {
             const status = document.getElementById('bug-report-status')?.textContent || '';
             const submit = document.getElementById('btn-bug-report-submit');
             return submit && !submit.disabled && !status.includes('Not connected');
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
 
         // Install a connected mock transport so the precheck enables Submit and
         // the report can actually be assembled + sent (mtg-587/596).
@@ -232,12 +237,12 @@ async function runTest() {
         await page.waitForFunction(() => {
             const submit = document.getElementById('btn-bug-report-submit');
             return submit && !submit.disabled;
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
 
         await page.fill('#bug-report-description', 'Expected remote submission success.');
         await page.fill('#bug-report-password', 'trusted-secret');
         await page.click('#btn-bug-report-submit');
-        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 5000 });
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 1, { timeout: 30000 });
         // Draft payload capture (description, password, console + game logs).
         const bugReportDraft = await page.evaluate(() => window.lastBugReportDraft || null);
         if (!bugReportDraft) {
@@ -286,7 +291,7 @@ async function runTest() {
         await page.waitForFunction(() => {
             const disk = document.getElementById('bug-report-check-disk');
             return disk && disk.dataset.state === 'ok';
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
         await page.evaluate(() => {
             window.__bugReportTestTransport.onBugReportIssueResult({
                 type: 'bug_report_issue_result',
@@ -301,7 +306,7 @@ async function runTest() {
             return github && github.dataset.state === 'ok'
                 && link && link.href.includes('/issues/123')
                 && submit && submit.disabled && submit.textContent === 'Already submitted';
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
         const clearedAfterSuccess = await page.evaluate(() => ({
             description: document.getElementById('bug-report-description')?.value || '',
             password: document.getElementById('bug-report-password')?.value || ''
@@ -319,10 +324,10 @@ async function runTest() {
         await page.waitForFunction(() => {
             const submit = document.getElementById('btn-bug-report-submit');
             return submit && !submit.disabled;
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
         await page.fill('#bug-report-description', 'GitHub down should still finalize.');
         await page.click('#btn-bug-report-submit');
-        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 2, { timeout: 5000 });
+        await page.waitForFunction(() => (window.__bugReportSentMessages || []).length === 2, { timeout: 30000 });
         await page.evaluate(() => {
             window.__bugReportTestTransport.onBugReportStored({
                 type: 'bug_report_stored',
@@ -342,7 +347,7 @@ async function runTest() {
             return github && github.dataset.state === 'fail'
                 && (github.textContent || '').includes('report saved')
                 && submit && submit.disabled && submit.textContent === 'Already submitted';
-        }, { timeout: 5000 });
+        }, { timeout: 30000 });
 
         await page.click('#btn-bug-report-cancel');
         await page.waitForSelector('#bug-report-modal', { state: 'hidden', timeout: 5000 });
