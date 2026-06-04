@@ -2588,7 +2588,7 @@ mod tests {
         // Simulate a scry/surveil having queued a library-reorder broadcast for
         // P1 (as `scry_apply_decision` does on the golden state). This is the
         // stale-side-queue entry that a rewind must not leave behind.
-        game.pending_library_reorders.borrow_mut().push(p1);
+        game.pending_library_reorders.borrow_mut().push((p1, 0));
         assert_eq!(
             game.pending_library_reorders.borrow().len(),
             1,

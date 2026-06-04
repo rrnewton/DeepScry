@@ -326,8 +326,15 @@ pub struct GameState {
     /// `RefCell` is required because `NetworkController` only sees an immutable
     /// `GameStateView`, but must drain the queue to assemble each `ChoiceRequest`.
     /// (Same pattern as `rng`.)
+    ///
+    /// Each entry is `(player, action_count)` where `action_count` is the
+    /// undo-log position of the reorder's own action (`ReorderLibrary` for
+    /// scry/surveil, `ShuffleLibrary` for a shuffle) — the game position at
+    /// which the post-reorder order is in effect (mtg-o99ow). The
+    /// `NetworkController` carries this ac onto the `ServerMessage::LibraryReordered`
+    /// so the shadow can key the new order in its game-ac-indexed state-sync log.
     #[serde(skip)]
-    pub pending_library_reorders: std::cell::RefCell<Vec<PlayerId>>,
+    pub pending_library_reorders: std::cell::RefCell<Vec<(PlayerId, u64)>>,
 }
 
 impl GameState {
@@ -2063,7 +2070,11 @@ impl GameState {
         // when assembling the next `ChoiceRequest`. Local games and pure
         // client-side runs leave the queue alone.
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
-            self.pending_library_reorders.borrow_mut().push(player_id);
+            // ac = undo-log length right after `log_library_reorder` logged the
+            // `ReorderLibrary` action (the raw reorder ops below log nothing), i.e.
+            // the position at which the post-reorder order is in effect (mtg-o99ow).
+            let reorder_ac = self.undo_log.len() as u64;
+            self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
         }
 
         Ok(())
@@ -2149,7 +2160,9 @@ impl GameState {
 
         // NETWORK SYNC: see scry_apply_decision for rationale (mtg-420).
         if library_actually_changed && !self.skip_reveals && !self.is_shadow_game {
-            self.pending_library_reorders.borrow_mut().push(player_id);
+            // ac = undo-log length after `log_library_reorder` (mtg-o99ow).
+            let reorder_ac = self.undo_log.len() as u64;
+            self.pending_library_reorders.borrow_mut().push((player_id, reorder_ac));
         }
 
         Ok(())
@@ -4177,12 +4190,11 @@ mod tests {
         assert_eq!(lib[0], top_land, "the Mountain should have moved to the bottom");
 
         // And the server must have queued a LibraryReordered for P1.
-        let queued: Vec<PlayerId> = game.pending_library_reorders.borrow().clone();
+        let queued: Vec<(PlayerId, u64)> = game.pending_library_reorders.borrow().clone();
+        assert_eq!(queued.len(), 1, "exactly one pending LibraryReorder (mtg-420)");
         assert_eq!(
-            queued,
-            vec![p1_id],
-            "server scry must enqueue exactly one pending LibraryReorder for the scrying player \
-             (mtg-420)"
+            queued[0].0, p1_id,
+            "server scry must enqueue a pending LibraryReorder for the scrying player (mtg-420)"
         );
     }
 

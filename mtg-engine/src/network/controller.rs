@@ -98,7 +98,7 @@ pub struct ChoiceRequest {
     ///
     /// Always empty for non-network controllers and for client-built
     /// requests. See mtg-420 (Cycle/Mountaincycling FATAL DESYNC).
-    pub library_reorders: Vec<(PlayerId, Vec<CardId>)>,
+    pub library_reorders: Vec<(PlayerId, Vec<CardId>, u64)>,
 }
 
 /// Response received from the network handler

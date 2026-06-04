@@ -454,7 +454,12 @@ enum GameToHandler {
     /// the engine ran a hidden-info-dependent scry/surveil heuristic on the
     /// authoritative game state). Handler forwards as
     /// `ServerMessage::LibraryReordered`. See mtg-420.
-    LibraryReordered { player: PlayerId, new_order: Vec<CardId> },
+    LibraryReordered {
+        player: PlayerId,
+        new_order: Vec<CardId>,
+        /// Game `action_count` of the reorder's own undo action (mtg-o99ow).
+        action_count: u64,
+    },
     /// Game has ended normally.
     /// Handler should forward to client and exit.
     GameEnded(GameEndInfo),
@@ -2463,14 +2468,16 @@ async fn run_coordinator(
                                 "Coordinator: Broadcasting {} library reorder(s) before P1 ChoiceRequest",
                                 choice_request.library_reorders.len()
                             );
-                            for (player, new_order) in &choice_request.library_reorders {
+                            for (player, new_order, action_count) in &choice_request.library_reorders {
                                 let msg_p1 = GameToHandler::LibraryReordered {
                                     player: *player,
                                     new_order: new_order.clone(),
+                                    action_count: *action_count,
                                 };
                                 let msg_p2 = GameToHandler::LibraryReordered {
                                     player: *player,
                                     new_order: new_order.clone(),
+                                    action_count: *action_count,
                                 };
                                 if p1_to_handler_tx.send(msg_p1).await.is_err() {
                                     log::error!("Coordinator: Failed to send LibraryReordered to P1");
@@ -2668,14 +2675,16 @@ async fn run_coordinator(
                                 "Coordinator: Broadcasting {} library reorder(s) before P2 ChoiceRequest",
                                 choice_request.library_reorders.len()
                             );
-                            for (player, new_order) in &choice_request.library_reorders {
+                            for (player, new_order, action_count) in &choice_request.library_reorders {
                                 let msg_p1 = GameToHandler::LibraryReordered {
                                     player: *player,
                                     new_order: new_order.clone(),
+                                    action_count: *action_count,
                                 };
                                 let msg_p2 = GameToHandler::LibraryReordered {
                                     player: *player,
                                     new_order: new_order.clone(),
+                                    action_count: *action_count,
                                 };
                                 if p1_to_handler_tx.send(msg_p1).await.is_err() {
                                     log::error!("Coordinator: Failed to send LibraryReordered to P1");
@@ -3083,19 +3092,18 @@ async fn handle_player_websocket(
                         }).await?;
                     }
 
-                    Some(GameToHandler::LibraryReordered { player, new_order }) => {
+                    Some(GameToHandler::LibraryReordered { player, new_order, action_count }) => {
                         log::debug!(
-                            "Handler P{}: Forwarding LibraryReordered for {:?} ({} cards)",
-                            conn.player_id, player, new_order.len()
+                            "Handler P{}: Forwarding LibraryReordered for {:?} ({} cards) ac={}",
+                            conn.player_id, player, new_order.len(), action_count
                         );
                         conn.send(&ServerMessage::LibraryReordered {
                             player,
                             new_order,
-                            // L1: placeholder; L2 threads the real reorder ac
-                            // (the ShuffleLibrary/ReorderLibrary undo position)
-                            // through pending_library_reorders. Client ignores
-                            // the field until L3 keys state_sync by game ac.
-                            action_count: 0,
+                            // mtg-o99ow L2: the reorder's own undo-log position
+                            // (ReorderLibrary for scry/surveil), threaded from
+                            // pending_library_reorders. Client keys on it in L3.
+                            action_count,
                         }).await?;
                     }
 
