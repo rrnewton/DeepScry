@@ -4,10 +4,46 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-03T23:48:25.882492954+00:00
-updated_at: 2026-06-04T00:25:38.488941204+00:00
+updated_at: 2026-06-04T01:04:20.319505272+00:00
 ---
 
 # Description
+
+=========================================================================
+RESOLVED (CORE) 2026-06-03 (slot03, commit 3a6e40d9): the ROOT CAUSE was simpler
+than the earlier "submit-gate / hash@861-vs-request@950" theory below. It was a
+FALSE-POSITIVE: compute_view_hash hashed view.action_count() (= undo_log.len()),
+which is INTERNAL per-machine bookkeeping that legitimately drifts between server
+and client in the deterministic-replica model (the client applies state-sync
+deltas + resolves reserved opponent cards, so it logs a different NUMBER of undo
+actions even when every OBSERVABLE field is byte-identical). Seed-2: client logged
+947 vs server 950, with the server's own mismatch box reporting an EMPTY
+"DIFFERENCES" section. FIX: exclude action_count from compute_view_hash
+(state_hash.rs), mirroring the mana_state_version exclusion from the Replay hash.
+RED-prove: view_hash_invariant_under_action_count_mb668_yexvc. The earlier
+"shadow stuck at 861" reading was WRONG — both clients DO reach ac=950 (NativeAI
+client_ac=950); only the count FIELD diverged.
+
+POST-FIX SWEEP (browser e2e): seed-2 now PASSES the Timetwister resolution
+(turn15->turn16); robots seed 7 PASSES. Remaining failures are SEPARATE, GENUINE
+observable divergences (verified, NOT residual false-positives):
+ * seed-2 turn 16: "Local abilities 2 != server 3" — shadow missing CastSpell for
+   card 105 (a card P1 drew AFTER the Timetwister shuffle; post-mass-draw reveal
+   bug — shadow can't reproduce P1's post-shuffle library order / missing reveal).
+ * seed-5 (turn 13, seq=148): shadow battlefield MISSING card 46 (server bf=8
+   incl (46,F,0); shadow bf=7). A real missing-permanent divergence.
+ * seeds 1/6: P2 state hash mismatch at later points (signatures TBD).
+These are the NEXT targets (likely a small number of distinct real bugs). The
+action_count exclusion was necessary (killed the false alarm) but not sufficient.
+
+NEXT-STEP: (1) seed-2 turn-16 post-mass-draw reveal: trace why the shadow's P1
+hand lacks card 105 after the Timetwister shuffle+draw (does the reveal stream
+carry P1's drawn-card identities? does the shadow reproduce the post-shuffle
+library order, or must draws be server-authoritative like mtg-589 SearchLibrary?).
+(2) seed-5 missing-bf-46: trace what put 46 on the server battlefield but not the
+shadow. Repro: node web/test_network_gui_e2e.js --deck
+decks/old_school/03_robots_jesseisbak.dck --seed {2,5}.
+=========================================================================
 
 Network desync detection: choice_seq<->action_count<->hash misalignment between WASM shadow and server.
 
@@ -101,3 +137,33 @@ request.action_count, then gate it. Repro: node web/test_network_gui_e2e.js --de
 decks/old_school/03_robots_jesseisbak.dck --seed 2 (with MTG_NET_FULL_UNDO_DUMP=1
 for the server tail). Diagnostics already in tree. Owner TBD (overlaps slot02/04
 network coordinator); escalated to team-lead.
+
+-------------------------------------------------------------------------
+REFINED LOCALIZATION 2026-06-03 (slot03) — residual #1 (seed-2 turn-16):
+Card 105 = Mox Sapphire, drawn by WebRandom (P1 = the WASM client ITSELF) AFTER
+the Timetwister shuffle. The shadow doesn't offer to cast its OWN Mox Sapphire =>
+the shadow's P1 hand holds DIFFERENT cards than the server's (size matches,
+contents differ — invisible to the size-only view hash, surfaces only in ability
+enumeration). ROOT: the shadow's post-Timetwister shuffle of P1's OWN library
+produced a different order than the server's, so P1 drew different cards.
+
+CONCRETE LEAD: GameState::shuffle_library (state.rs:745) does NOT push
+pending_library_reorders (verified) — UNLIKE scry/surveil (state.rs:2066/2152),
+which DO. So a shuffle is NOT synced to clients via LibraryReordered; clients are
+expected to reproduce it via deterministic RNG lockstep. For the Timetwister mass
+shuffle that lockstep evidently breaks for the shadow (likely: the shadow's RNG
+diverges from the server's by the shuffle point, OR the shadow can't reproduce the
+opponent P0-library shuffle of reserved ids and that desyncs the shared RNG before
+P1's shuffle). NEXT: (a) instrument RNG state (capture_rng_state) on server vs
+shadow right BEFORE each Timetwister shuffle to confirm divergence; (b) if RNG
+diverges, find the action whose RNG consumption differs server-vs-shadow (reserved
+P0 library shuffle is the prime suspect); (c) candidate fix — have the server emit
+an authoritative LibraryReordered for shuffles too (push pending_library_reorders
+in shuffle_library) so the client adopts the server order instead of reproducing
+it, OR ensure the reserved-id shuffle consumes identical RNG. NOTE (team-lead): if
+the shadow fundamentally cannot reproduce the opponent's hidden-library shuffle,
+the authoritative-LibraryReordered-on-shuffle route is the protocol-correct fix.
+Repro: node web/test_network_gui_e2e.js --deck
+decks/old_school/03_robots_jesseisbak.dck --seed 2 (fails turn 16, "Local
+abilities 2 != server 3", missing CastSpell 105).
+-------------------------------------------------------------------------
