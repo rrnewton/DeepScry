@@ -1,10 +1,11 @@
 ---
 title: 'Bug-report widget hangs on submit: confirm disk-write first, timeout-bound github, install gh on VM'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-06-04T01:58:06.296710873+00:00
-updated_at: 2026-06-04T02:46:07.742911529+00:00
+updated_at: 2026-06-04T07:46:36.263566158+00:00
+closed_at: 2026-06-04T07:46:36.263566082+00:00
 ---
 
 # Description

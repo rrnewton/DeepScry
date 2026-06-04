@@ -1,10 +1,11 @@
 ---
 title: 'Bug-report gh filing fails on VM: hardcoded /usr/bin/with-proxy + baked build cwd both ENOENT'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-06-04T06:01:06.393506310+00:00
-updated_at: 2026-06-04T07:14:57.196345358+00:00
+updated_at: 2026-06-04T07:46:26.895242568+00:00
+closed_at: 2026-06-04T07:46:26.895242122+00:00
 ---
 
 # Description
