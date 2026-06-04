@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T05:25:10.287183732+00:00
+updated_at: 2026-06-04T05:37:35.969775803+00:00
 ---
 
 # Description
@@ -50,6 +50,12 @@ Then steps 5 (collapse late-binding), 6 (reorder emission in shuffle_library + L
 Step 3 PUSHED + CLEAN GREEN after rebase onto integration 93aedcac: branch @1813a025, artifact validate_logs/validate_1813a0259dea1d77d16b2264460d98cfe651962e.log (All validation checks passed; DIVERGED:0 all mirrors incl All Hallow's Eve seed=3; Rust Failed:0; snapshot/resume 7/7). Awaiting orchestrator ff-merge to integration. step-3 is additive-only (no validate-on-receipt/FATAL).
 
 CO-DESIGN CHECKPOINT (HOLDING): wrote ai_docs/SEARCHED_REVEAL_SUBSUMPTION_CODESIGN_20260603.md — how Searched/reorder reveals stamped by game ac subsume class-A residual #1 (CONFIRMED: shuffle_library state.rs:745 logs ShuffleLibrary but does NOT emit LibraryReordered → shadow can't reproduce post-shuffle library → mtg-yexvc seed-2 turn-16 card-105-missing). 5 decisions to LOCK with orchestrator before 4a-client: (1) canonical-ac-per-delta table; (2) Searched dummy STAYS at search-resolution ac (re-stamping earlier would break searched_card_for's "greatest eff_ac<=target" selection → reintroduce mtg-mb668 desync); (3) LibraryReordered gains action_count:u64 + shuffle_library emits at ShuffleLibrary ac (residual-#1 fix folded into 4a); (4) strict-monotonicity collision audit (two deltas at same ac would panic ActionLog::push) → likely give each its own undo-action ac; (5) sequencing vs mtg-mb668 (4a IS the class-A fix; robots42 un-excluded-green = acceptance gate). DO NOT start 4a-client until these are agreed.
+
+## mtg-677 VERIFICATION (slot01 2026-06-03) — native draw-step rewind is NOT the gap; 4b gate refined
+Evidence-based (not assumed from 26c5a460):
+- Native rewind MACHINERY complete+tested for draw+shuffle: test shuffle_replay_byte_reproduces_after_partial_rewind (game_loop/mod.rs:2257) does 5-cycle multi-rewind ACROSS a shuffle → byte-identical order (mtg-mb668 sig-2 RNG capture/restore). GREEN in step-3 validate. snapshot/resume e2e 7/7 + native-vs-WASM DIVERGED:0 (×4 mirrors) exercise draw-step rewind on post-26c5a460 code, GREEN.
+- wait_for_state_sync_frontier (client.rs:656) has NO non-test caller — the native BLOCK-at-draw is genuinely unwired; 4b adds it.
+CONCLUSION: there is NO native draw-step rewind INCOMPLETENESS blocking 4b on principle — the machinery supports block-then-rewind-replay-once. The 4b gate is therefore "VALIDATE the new block-wiring runs the draw exactly once," NOT "first fix a missing rewind." The remaining desync class (mtg-yexvc in-stack/post-shuffle reveal) is a REVEAL-ALIGNMENT gap (4a fixes), not a rewind-machinery gap. The block-at-draw PATH itself stays unexercised until 4b wires it → validate then.
 
 ## HISTORICAL: Step 3 GREEN-MODULO-INHERITED @72b8607e. Full `make validate` = exactly 1 failure (`=== FAILURES (1) ===`): web/test_decouple_step3_launch_game_session.js intolerant of the EXPECTED /data/card-lookup.bin 404 — INHERITED from integration tip d6897f05 (task #7/mtg-722 CDN migration), NOT this work. Rust suite Failed:0; desync canary "No REWIND/REPLAY FATAL or DESYNC" PASS; native-vs-WASM mirror PASS. slot04 is fixing the card-lookup 404 forward (hermetic placeholder). DO NOT generate card-lookup.bin locally — gitignored, would be a false/contaminated green. PLAN: await slot04 fix on integration → rebase netarch-reveal-actionlog-unify onto new tip → clean `make validate` → push step 3 (orchestrator diff-gates + ff-merges). THEN step 4.
 
