@@ -34,6 +34,17 @@ out of their own project. Counter it actively:
 - **Orchestrator translates.** When relaying an agent's report to the
   user, translate its shorthand first — never pass a wall of internal
   codenames straight through.
+- **Mark the plain-language gloss with a literal `PLAIN-LANGUAGE:`
+  prefix.** When you give the plain-language summary or translation of a
+  jargon/ID-heavy report — to the user, or when an agent reports up to
+  the orchestrator — lead that passage with a literal `PLAIN-LANGUAGE:`
+  marker. It does double duty: it is **searchable** (the user can grep a
+  session for every place you deliberately translated), and it is a
+  **visible signal that this no-jargon-drift rule is live in your
+  context** — the user can see at a glance that you *remembered* to
+  translate, not merely that you happened to be clear. Put it on the
+  deliberate translation passage that accompanies a technical/ID-heavy
+  report, not on every sentence of ordinary plain prose.
 
 This is load-bearing for trust: the user cannot steer what they cannot
 read. A report the user has to ask you to decode is a failed report.
