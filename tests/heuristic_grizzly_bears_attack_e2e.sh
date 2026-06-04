@@ -88,21 +88,32 @@ if run_mtg_with_timeout 30 tui \
 
     # Check output for attack patterns
     # Look for "Grizzly Bears" and "attack" or "attacking" or "Declare Attackers"
-    if grep -i "grizzly bears" /tmp/heuristic_attack_test.txt | grep -qi "attack"; then
+    #
+    # mtg-717 SIGPIPE hardening: under `set -o pipefail` (line 12), a `grep …|
+    # grep -qi …` or `grep …| head` pipe makes the early-exiting consumer (grep
+    # -q / head close the pipe on first match / Nth line) deliver SIGPIPE to the
+    # still-writing upstream grep → the pipe reports 141 → pipefail+`set -e`
+    # killed the whole test intermittently (exit 141). Capture the filtered text
+    # into vars first (the `grep|grep` there reads ALL input, no early exit), and
+    # guard the cosmetic `| head` display pipes with `|| true`. Behaviour is
+    # identical; the flake is gone.
+    attack_lines=$(grep -i "grizzly bears" /tmp/heuristic_attack_test.txt | grep -i "attack" || true)
+    declare_lines=$(grep -i "declare.*attacker" /tmp/heuristic_attack_test.txt || true)
+    bears_lines=$(grep -i "grizzly bears" /tmp/heuristic_attack_test.txt || true)
+    if [ -n "$attack_lines" ]; then
         echo -e "${GREEN}✓ SUCCESS: Grizzly Bears attacked as expected${NC}"
         echo
         echo "Evidence from game log:"
-        grep -i "grizzly bears" /tmp/heuristic_attack_test.txt | grep -i "attack" | head -5
+        printf '%s\n' "$attack_lines" | head -5 || true
         EXIT_CODE=0
-    elif grep -qi "declare.*attacker" /tmp/heuristic_attack_test.txt && \
-         grep -qi "grizzly bears" /tmp/heuristic_attack_test.txt; then
+    elif [ -n "$declare_lines" ] && [ -n "$bears_lines" ]; then
         echo -e "${GREEN}✓ SUCCESS: Attack phase occurred with Grizzly Bears on battlefield${NC}"
         echo
         echo "Evidence from game log:"
         echo "Attack declarations:"
-        grep -i "declare.*attacker" /tmp/heuristic_attack_test.txt | head -3
+        printf '%s\n' "$declare_lines" | head -3 || true
         echo "Grizzly Bears mentions:"
-        grep -i "grizzly bears" /tmp/heuristic_attack_test.txt | head -3
+        printf '%s\n' "$bears_lines" | head -3 || true
         EXIT_CODE=0
     else
         echo -e "${RED}✗ FAILURE: No evidence of Grizzly Bears attacking${NC}"
