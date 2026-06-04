@@ -1,13 +1,24 @@
 #!/usr/bin/env python3
-"""validate_run.py — the `make validate` orchestrator (mtg-717).
+"""validate.py — the `make validate` entry point (mtg-717 + follow-on).
 
 This is the SINGLE SOURCE OF TRUTH for what `make validate` runs and how. It
-replaces the Makefile's `validate-*-step` / `validate-parallel-steps` /
-`validate-impl` apparatus and `scripts/validate_step.sh`. The Makefile keeps
-only thin build-primitive targets (build, wasm-dev, clippy, …) that this runner
-invokes; CI shards call THIS with `--group <X>` so CI can never drift from local.
+replaced the Makefile's `validate-*-step` / `validate-parallel-steps` /
+`validate-impl` apparatus and `scripts/validate_step.sh` (the orchestrator), and
+then ABSORBED the former `scripts/validate.sh` outer harness too — so there is
+now ONE file, not bash-wrapping-python. The Makefile keeps only thin
+build-primitive targets (build, wasm-dev, clippy, …) that this runner invokes;
+CI shards call THIS with `--group <X>` so CI can never drift from local.
 
-It owns:
+Two layers in one file:
+  * the OUTER HARNESS (run_with_harness) — commit-hash cache + docs-only smart
+    hit, `.validate.lock`, dirty-tree→temporary WIP-commit, clean-environment
+    gate, CPU-utilization report, atomic validate_logs/validate_<sha>.log
+    artifact + latest symlink. Runs ONLY for a full local `make validate`.
+  * the ORCHESTRATOR (run_orchestrator) — everything below. A subset run
+    (--group/--only/--job), --list, or --use-prebuilt skips the harness and runs
+    this directly, so CI shards stay hermetic (no cache/lock/WIP).
+
+The orchestrator owns:
   * the STEP REGISTRY: (jobGroup, jobId) -> command, deps, resources, profile;
   * a dependency- AND resource-aware PARALLEL SCHEDULER (build-once falls out of
     deps; a capacity-limited "browser" resource serializes chromium-heavy steps
@@ -22,8 +33,10 @@ It owns:
     per-group breakdown, slowest steps (critical path).
 
 Usage:
-  validate_run.py [--jobs N] [--group G[,G2]] [--only G.J[,…]] [--job J[,…]]
-                  [-q|-v|-vv] [--list] [--no-network] [--browser-capacity N]
+  validate.py [--jobs N] [--group G[,G2]] [--only G.J[,…]] [--job J[,…]]
+              [-q|-v|-vv] [--list] [--no-network] [--no-wasm-e2e]
+              [--browser-capacity N] [--use-prebuilt]
+              [--force] [--sequential] [--no-wip-commit] [--no-harness]
 
 Exit status: 0 if all selected steps pass, 1 otherwise.
 """
@@ -554,8 +567,43 @@ def main():
     ap.add_argument("-q", "--quiet", action="store_true")
     ap.add_argument("-v", dest="v", action="count", default=0, help="-v stream framework, -vv stream all")
     ap.add_argument("--list", action="store_true", help="list steps and exit")
+    # --- outer harness flags (folded in from the former scripts/validate.sh) ---
+    # The harness (commit-hash cache, .validate.lock, dirty->WIP-commit, clean-env
+    # gate, CPU-utilization report, atomic validate_logs/validate_<sha>.log
+    # artifact + latest symlink) runs ONLY for a FULL local `make validate`. Any
+    # subset run (--group/--only/--job — i.e. every CI shard + focused local runs),
+    # --list, or --use-prebuilt skips the harness and runs the orchestrator
+    # directly, preserving CI's hermetic behaviour (no cache/lock/WIP in CI).
+    ap.add_argument("--force", action="store_true",
+                    help="harness: bypass the commit-hash cache and always run")
+    ap.add_argument("--sequential", action="store_true",
+                    help="harness: run sequentially (-j1) for easier debugging")
+    ap.add_argument("--no-wip-commit", action="store_true",
+                    help="harness: don't create a temporary WIP commit if the tree is dirty "
+                         "(runs anyway; caching disabled for the run)")
+    ap.add_argument("--force-wip-commit", action="store_true",
+                    help="harness: include submodule changes in the WIP commit (else dirty "
+                         "submodules abort)")
+    ap.add_argument("--no-monitor-utilization", action="store_true",
+                    help="harness: disable the background CPU-utilization sampler/report")
+    ap.add_argument("--no-harness", action="store_true",
+                    help="run the orchestrator directly with NO outer harness (no cache/lock/"
+                         "WIP/log-artifact) — what CI shards effectively do")
     args = ap.parse_args()
 
+    if args.sequential:
+        args.jobs = 1
+    subset = bool(args.group or args.only or args.job)
+    use_harness = (not subset) and (not args.list) and (not args.no_harness) \
+        and (not args.use_prebuilt)
+    if use_harness:
+        return run_with_harness(args)
+    return run_orchestrator(args)
+
+
+def run_orchestrator(args):
+    """Build the step DAG (honoring filters/flags) and run it. No outer harness
+    (cache/lock/WIP/log-artifact) — that lives in run_with_harness()."""
     steps = build_registry()
     # Explicit opt-out flags DISABLE steps — but we RECORD what was disabled (tag
     # -> reason) and report it in the run summary, so a flagged run is never
@@ -630,7 +678,7 @@ def main():
             if "unit.nextest" in tags and not os.environ.get("NEXTEST_ARCHIVE"):
                 missing.append("NEXTEST_ARCHIVE env (nextest-archive artifact)")
             if missing:
-                sys.stderr.write("[validate_run] --use-prebuilt: required prebuilt artifact(s) "
+                sys.stderr.write("[validate] --use-prebuilt: required prebuilt artifact(s) "
                                  "MISSING — refusing to silently cold-rebuild:\n")
                 for m in missing:
                     sys.stderr.write(f"    - {m}\n")
@@ -650,7 +698,7 @@ def main():
     runner = Runner(steps, args.jobs, verbosity, steps_dir,
                     resource_caps={"browser": args.browser_capacity, "net": args.net_capacity},
                     disabled=disabled)
-    print(f"=== validate_run.py: {len(steps)} steps, -j{args.jobs}, "
+    print(f"=== validate.py: {len(steps)} steps, -j{args.jobs}, "
           f"browser-capacity={args.browser_capacity}, detail -> {steps_dir} ===")
     if disabled:
         by_reason = {}
@@ -662,6 +710,260 @@ def main():
     ok = runner.run()
     runner.print_stats()
     return 0 if ok else 1
+
+
+# ===========================================================================
+# Outer harness (folded in from the former scripts/validate.sh, mtg-717
+# follow-on): commit-hash cache (exact + docs-only smart hit), .validate.lock,
+# dirty-tree -> temporary WIP commit, clean-environment gate, CPU-utilization
+# report, and the atomic validate_logs/validate_<sha>.log artifact + latest
+# symlink. Runs ONLY for a full local `make validate`; subset/CI runs go
+# straight through run_orchestrator() (see main()).
+# ===========================================================================
+SCRIPTS_DIR = PROJECT_DIR / "scripts"
+LOG_DIR = PROJECT_DIR / "validate_logs"
+LATEST_SYMLINK = LOG_DIR / "validate_latest.log"
+LOCK_FILE = PROJECT_DIR / ".validate.lock"
+
+
+class _Tee:
+    """Write to several streams at once (mirrors validate.sh's `| tee`)."""
+    def __init__(self, *streams):
+        self.streams = streams
+        self._lock = threading.Lock()
+
+    def write(self, s):
+        with self._lock:
+            for st in self.streams:
+                try:
+                    st.write(s)
+                except Exception:
+                    pass
+
+    def flush(self):
+        for st in self.streams:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
+def _git(*args, check=False):
+    return subprocess.run(["git", *args], cwd=PROJECT_DIR,
+                          capture_output=True, text=True, check=check)
+
+
+def _submodule_dirty():
+    """True if any ACTIVE submodule is dirty. Excludes `update = none` (inactive)
+    submodules, which legitimately show a '-' prefix (mirrors validate.sh)."""
+    cfg = _git("config", "-f", ".gitmodules", "--get-regexp", r"\.update$").stdout
+    inactive_paths = set()
+    for line in cfg.splitlines():
+        if line.endswith(" none"):
+            key = line.split()[0]  # submodule.<name>.update
+            name = key[len("submodule."):-len(".update")]
+            p = _git("config", "-f", ".gitmodules", "--get", f"submodule.{name}.path").stdout.strip()
+            if p:
+                inactive_paths.add(p)
+    for line in _git("submodule", "status").stdout.splitlines():
+        if line[:1] in "+-U":
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] not in inactive_paths:
+                return True
+    return False
+
+
+def _acquire_lock():
+    if LOCK_FILE.exists():
+        try:
+            pid = int(LOCK_FILE.read_text().strip())
+        except (ValueError, OSError):
+            pid = None
+        alive = False
+        if pid:
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except (OSError, ProcessLookupError):
+                alive = False
+        if alive:
+            sys.stderr.write(
+                f"\n[validate] Another validation is already running (lock {LOCK_FILE}, PID {pid}).\n"
+                f"  If stale: rm {LOCK_FILE}  (or: python3 scripts/kill_zombie_processes.py)\n")
+            return False
+        LOCK_FILE.unlink(missing_ok=True)  # stale
+    LOCK_FILE.write_text(str(os.getpid()))
+    return True
+
+
+def _release_lock():
+    try:
+        if LOCK_FILE.exists() and LOCK_FILE.read_text().strip() == str(os.getpid()):
+            LOCK_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _start_utilization():
+    """Run the prehook (executed, not sourced) — it backgrounds a disowned
+    sampler that survives the subprocess — and parse its PID + stats file."""
+    pre = SCRIPTS_DIR / "utilization_prehook.sh"
+    if not pre.exists():
+        return None
+    r = subprocess.run(["bash", str(pre)], cwd=PROJECT_DIR, capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    pid = stats = None
+    for line in r.stdout.splitlines():
+        if "PID:" in line:
+            pid = line.split("PID:")[1].strip().rstrip(")").strip()
+        elif line.startswith("Stats file:"):
+            stats = line.split(":", 1)[1].strip()
+    if pid and stats:
+        return {"pid": pid, "stats": stats, "start": str(int(time.time()))}
+    return None
+
+
+def _stop_utilization(mon):
+    """Run the posthook with the prehook's vars in the env; tee its report."""
+    if not mon:
+        return
+    post = SCRIPTS_DIR / "utilization_posthook.sh"
+    if not post.exists():
+        return
+    env = dict(os.environ, UTIL_MONITOR_PID=mon["pid"], UTIL_STATS_FILE=mon["stats"],
+               UTIL_START_TIME=mon["start"])
+    r = subprocess.run(["bash", str(post)], cwd=PROJECT_DIR, env=env,
+                       capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    if r.stderr:
+        sys.stdout.write(r.stderr)
+
+
+def run_with_harness(args):
+    # 1. clean-environment gate
+    envcheck = SCRIPTS_DIR / "check_clean_environment.py"
+    if envcheck.exists():
+        if subprocess.run(["python3", str(envcheck)], cwd=PROJECT_DIR).returncode != 0:
+            sys.stderr.write("\n[validate] Environment not clean — conflicting processes detected.\n"
+                             "  Clean up with: python3 scripts/kill_zombie_processes.py\n")
+            return 1
+
+    # 2. lock
+    if not _acquire_lock():
+        return 1
+
+    created_wip = False
+    disable_cache = False
+    try:
+        # 3. dirty-tree -> WIP commit (or run dirty with caching off)
+        _git("update-index", "--refresh", "-q")
+        has_regular = _git("diff-index", "--quiet", "HEAD", "--").returncode != 0
+        has_submod = _submodule_dirty()
+        if has_regular or has_submod:
+            print("\n[validate] Working copy dirty — running `cargo fmt --all` first…")
+            subprocess.run(["cargo", "fmt", "--all"], cwd=PROJECT_DIR)
+            if args.no_wip_commit:
+                print("[validate] --no-wip-commit: running WITHOUT a WIP commit; caching disabled.")
+                disable_cache = True
+            elif has_submod and not args.force_wip_commit:
+                sys.stderr.write(
+                    "\n[validate] Submodule changes detected — refusing to bury them in a WIP commit.\n"
+                    "  Commit/stash the submodule change, or pass --force-wip-commit / --no-wip-commit.\n")
+                return 1
+            else:
+                _git("add", "-A")
+                _git("commit", "-m", "wip", "--no-verify")
+                created_wip = True
+                print("[validate] Created temporary WIP commit (auto-reverted on exit).")
+
+        # 4. resolve log path
+        sha = _git("rev-parse", "HEAD").stdout.strip() or "nosha"
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = "_dirty" if created_wip else ""
+        log_file = LOG_DIR / f"validate_{sha}{suffix}.log"
+        if args.force and log_file.exists():
+            n = 2
+            while (LOG_DIR / f"validate_{sha}{suffix}_{n}.log").exists():
+                n += 1
+            log_file = LOG_DIR / f"validate_{sha}{suffix}_{n}.log"
+
+        # 5. cache (skipped under --force / dirty-no-wip)
+        if not args.force and not disable_cache:
+            if log_file.exists():
+                print(f"\n[validate] ✓ cache hit for {sha} — already passed ({log_file}).")
+                return 0
+            hit = _smart_cache_hit(sha, log_file)
+            if hit:
+                return 0
+
+        # 6. run, tee stdout/stderr to a .wip log
+        wip = log_file.with_suffix(".log.wip")
+        print("=" * 60)
+        print(f"[validate] running — commit {sha}{' (dirty)' if created_wip else ''} -> {log_file}")
+        print("=" * 60)
+        mon = None if args.no_monitor_utilization else _start_utilization()
+        rc = 1
+        old_out, old_err = sys.stdout, sys.stderr
+        with open(wip, "w") as logf:
+            tee = _Tee(old_out, logf)
+            sys.stdout = sys.stderr = tee
+            try:
+                rc = run_orchestrator(args)
+            finally:
+                _stop_utilization(mon)
+                sys.stdout, sys.stderr = old_out, old_err
+
+        # 7. artifact (only cache successes)
+        if rc == 0:
+            os.replace(wip, log_file)
+            LATEST_SYMLINK.unlink(missing_ok=True)
+            try:
+                LATEST_SYMLINK.symlink_to(log_file.name)
+            except OSError:
+                pass
+            print(f"\n[validate] ✓ PASS — cached to {log_file}")
+        else:
+            try:
+                os.replace(wip, log_file.with_suffix(".log.failed"))
+            except OSError:
+                pass
+            print("\n[validate] ✗ FAIL — see the dumped step detail above.")
+        return rc
+    finally:
+        if created_wip:
+            _git("reset", "--soft", "HEAD~1")
+        _release_lock()
+
+
+def _smart_cache_hit(sha, log_file):
+    """Docs-only smart hit: if the only diff from the last validated commit is
+    *.md, reuse its log (symlink) instead of re-running. Mirrors validate.sh."""
+    if not LATEST_SYMLINK.is_symlink():
+        return False
+    target = os.readlink(LATEST_SYMLINK)
+    m = re.match(r"validate_([0-9a-f]+)(_dirty)?\.log", os.path.basename(target))
+    if not m:
+        return False
+    prev = m.group(1)
+    if len(prev) != 40 or prev == sha:
+        return False
+    if _git("cat-file", "-e", prev).returncode != 0 or _git("cat-file", "-e", sha).returncode != 0:
+        return False
+    diff = _git("diff", "--name-only", prev, sha)
+    if diff.returncode != 0:
+        return False
+    changed = [f for f in diff.stdout.splitlines() if f.strip()]
+    if changed and all(f.endswith(".md") for f in changed):
+        try:
+            log_file.symlink_to(os.path.basename(target))
+            LATEST_SYMLINK.unlink(missing_ok=True)
+            LATEST_SYMLINK.symlink_to(log_file.name)
+        except OSError:
+            return False
+        print(f"\n[validate] ✓ smart cache hit (docs-only changes since {prev[:12]}): "
+              f"{', '.join(changed)}")
+        return True
+    return False
 
 
 if __name__ == "__main__":

@@ -148,23 +148,21 @@ examples:
 	@echo ""
 	@./scripts/run_examples.sh
 
-# Comprehensive pre-commit validation with caching
-# Runs all tests, examples, and checks
-# Caches results based on commit hash to avoid redundant validation
-# Use: make validate ARGS=--force to skip cache
-# Use: make validate ARGS=--sequential to run sequentially (fail on first error)
-# Use: make validate ARGS="--force --sequential" to combine options
-# See scripts/validate.sh for implementation details
+# Comprehensive pre-commit validation with caching.
+# scripts/validate.py is the SINGLE entry point (mtg-717 + follow-on): it is both
+# the orchestrator (step registry, parallel scheduler, build-once, tagging/
+# verbosity/stats, subset filtering, CI-shard entry) AND the outer harness
+# (commit-hash cache, .validate.lock, dirty->WIP-commit, clean-env gate,
+# CPU-util report, atomic validate_logs/validate_<sha>.log artifact). A full
+# `make validate` gets the harness; a subset run (--group/--only/--job, every CI
+# shard) runs the orchestrator directly.
+# Use: make validate ARGS=--force        to bypass the cache
+# Use: make validate ARGS=--sequential   to run sequentially (-j1, fail-first)
+# Run a subset directly:   python3 scripts/validate.py --group lint
+#                          python3 scripts/validate.py --only unit.nextest -v
+#                          python3 scripts/validate.py --list
 validate:
-	@./scripts/validate.sh $(ARGS)
-
-# All validate ORCHESTRATION (step registry, parallel scheduler, build-once,
-# tagging/verbosity/stats, subset filtering, CI-shard entry) lives in
-# scripts/validate_run.py (mtg-717). validate.sh is the outer harness
-# (caching/lock/WIP-commit/clean-env/log artifact) and invokes the runner.
-# Run a subset directly:   python3 scripts/validate_run.py --group lint
-#                          python3 scripts/validate_run.py --only unit.nextest -v
-#                          python3 scripts/validate_run.py --list
+	@python3 scripts/validate.py $(ARGS)
 
 # Generate documentation and open in browser
 doc:
@@ -209,14 +207,14 @@ setup: install-hooks ensure-wasm-pack
 		echo "ERROR: (setup) npm not found — cannot provision the Playwright chromium for the web e2e suite." >&2; \
 		echo "  Install node/npm and re-run 'make setup', OR provision web/node_modules + the chromium cache OFFLINE" >&2; \
 		echo "  (copy from a host where 'cd web && npm install && npx playwright install chromium' succeeded)." >&2; \
-		echo "  To run validate WITHOUT the browser e2e, pass: scripts/validate_run.py --no-wasm-e2e (reported in the summary)." >&2; \
+		echo "  To run validate WITHOUT the browser e2e, pass: scripts/validate.py --no-wasm-e2e (reported in the summary)." >&2; \
 		exit 1; \
 	fi
 
 # Single, serialized wasm-pack install site (mtg-577).
 # Every wasm target depends on this instead of carrying its own inline
 # `cargo install wasm-pack` block. `make validate` runs the wasm builds from
-# SEPARATE recursive sub-make processes (the validate_run.py wasm.bundle step
+# SEPARATE recursive sub-make processes (the validate.py wasm.bundle step
 # -> $(MAKE) wasm-dev and the network build -> $(MAKE) wasm-network), so a plain shared
 # prerequisite in one make graph is NOT sufficient — make's "build once" only
 # applies within a single process. We therefore guard the install with flock so

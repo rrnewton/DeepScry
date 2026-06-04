@@ -20,16 +20,27 @@ network-game spew, machine at ~22% of one core).
 
 ## The architecture (know this first)
 
-- `make validate` → `scripts/validate.sh` (caching, lock, WIP-commit, CPU
-  monitor) → `make validate-impl` → `make -j<N> validate-parallel-steps`.
-- `validate-parallel-steps` lists every `validate-<X>-step` as a prerequisite;
-  `make -j` runs them concurrently EXCEPT where a step declares another step as
-  a prerequisite (that forces a serial edge).
-- Each `validate-<X>-step` body routes its commands through
-  **`scripts/validate_step.sh`** (the `$(VSTEP)` make variable).
-- CI (`.github/workflows/ci.yml`) must run the SAME work, sharded one GitHub
-  job per **jobGroup** (see below), calling the same make targets — never a
-  hand-re-derived copy that drifts.
+- `make validate` → `python3 scripts/validate.py` — the SINGLE entry point. It
+  is both the **orchestrator** (a `build_registry()` step DAG + a dependency &
+  resource-aware parallel scheduler, terse `[jobGroup.jobId]` tagging, per-step
+  detail-to-/tmp + dump-on-fail, `--use-prebuilt` build-once, subset filtering)
+  AND the **outer harness** (commit-hash cache + docs-only smart hit,
+  `.validate.lock`, dirty-tree→temporary WIP-commit, clean-environment gate,
+  CPU-utilization report, atomic `validate_logs/validate_<sha>.log` artifact +
+  `validate_latest.log` symlink).
+- The harness runs ONLY for a FULL `make validate`. Any subset run
+  (`--group`/`--only`/`--job`), `--list`, `--use-prebuilt`, or `--no-harness`
+  goes straight to the orchestrator (no cache/lock/WIP) — this is exactly what
+  every CI shard does, so CI stays hermetic.
+- Parallelism + serial edges come from each `Step`'s `deps` (dependency edges)
+  and `resources` (e.g. a cap-1 `browser` resource serializes chromium-heavy
+  steps with no explicit dep edge). The registry is the single source of truth.
+- CI (`.github/workflows/ci.yml`) runs the SAME work, sharded one GitHub job per
+  **jobGroup**, by calling `python3 scripts/validate.py --group <g>` /
+  `--only <…>` — the SAME registry, never a hand-re-derived copy that drifts.
+  (There is no longer a `make validate-impl` / `validate-<X>-step` /
+  `validate_step.sh` layer — that bash/make sprawl was replaced by the Python
+  orchestrator in mtg-717 and fully consolidated into `validate.py`.)
 
 ## Principles
 

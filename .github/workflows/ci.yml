@@ -15,13 +15,13 @@ env:
 
 # mtg-717: CI is BUILD-ONCE + sharded. Three producer jobs compile the shared
 # artifacts EXACTLY ONCE; the consumer matrix downloads them and runs tests with
-# ZERO compilation (validate_run.py --use-prebuilt drops the build.mtg-release +
+# ZERO compilation (validate.py --use-prebuilt drops the build.mtg-release +
 # wasm.bundle steps from the DAG). Root cause fixed: the old per-shard cache key
 # (`...-${{matrix.name}}-target-...`) put every shard in a disjoint namespace, so
 # all 9 shards cold-built the release binary (~1h each on 2-vCPU). Now: build
 # native mtg + wasm bundle + nextest archive once, fan out as artifacts.
 # `quick` (lint/examples) is UNGATED (no artifact to consume) so it starts at t=0.
-# Each shard runs validate_run.py with --group/--only EXACTLY as local
+# Each shard runs validate.py with --group/--only EXACTLY as local
 # `make validate` does — CI == local by construction (the registry is the single
 # source of truth).
 
@@ -140,7 +140,7 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/integration' || github.ref == 'refs/heads/main' }}
       - name: Run validate (${{ matrix.name }})
-        run: python3 scripts/validate_run.py ${{ matrix.args }}
+        run: python3 scripts/validate.py ${{ matrix.args }}
 
   # ---------------- artifact-consuming shards (ZERO compilation) ----------------
   validate:
@@ -230,7 +230,7 @@ jobs:
           MTG_REUSE_PREBUILT: ${{ matrix.bin && '1' || '' }}
           MTG_EQUIV_NO_BUILD: ${{ matrix.wasm && '1' || '' }}
           NEXTEST_ARCHIVE: ${{ matrix.arch && 'nextest.tar.zst' || '' }}
-        run: python3 scripts/validate_run.py ${{ matrix.args }} --use-prebuilt
+        run: python3 scripts/validate.py ${{ matrix.args }} --use-prebuilt
 
       - name: Upload step logs on failure
         if: failure()
