@@ -148,7 +148,7 @@ def build_registry():
              "make wasm-dev", timeout=BUILD_STEP_TIMEOUT))
     add(Step("wasm", "npm-install", "web/ npm install (e2e deps)",
              f"cd web && {NPM} install --silent 2>/dev/null"))
-    add(Step("wasm", "browser", "WASM browser e2e suite (15 playwright tests)",
+    add(Step("wasm", "browser", "WASM browser e2e suite (16 playwright tests)",
              "cd web && " + " && ".join(
                  f"{NODE} {t}" for t in [
                      "test_fancy_tui.js", "test_bug_report.js", "test_human_input.js",
@@ -158,7 +158,7 @@ def build_registry():
                      "test_decouple_step6_valid_choices.js", "test_tapped_rotation.js",
                      "test_graveyard_overlay.js", "test_deck_editor.js",
                      "test_cdn_image_table.js", "test_image_flicker_memo.js",
-                     "test_aura_render.js"]),
+                     "test_aura_render.js", "test_render_skip.js"]),
              deps=["wasm.bundle", "wasm.npm-install"], resources=_BROWSER))
     for job, desc, args in [
         ("equiv-base", "native-vs-WASM STRICT sweep: old_school2/* (8 turns)",
