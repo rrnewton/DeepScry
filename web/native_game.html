@@ -1278,6 +1278,36 @@
         // are the single source of truth for the cascade so the two paths
         // can never drift again.
         //
+        // ── Image-resolution memo (mtg-j1ka3: opponent-card FLICKER) ────────
+        // renderBattlefield rebuilds `container.innerHTML` on EVERY processed
+        // network message (updateUI is scheduled per-message, 30ms-debounced),
+        // destroying + recreating each card <img> with src = urls[0] (the LOCAL
+        // path). For a card with no local image — most OPPONENT cards — that
+        // first URL 404s, so the cascade walks local→CDN→gatherer on every
+        // rebuild and the image never settles → visible flicker. This memo
+        // remembers the URL that actually LOADED for each card-image key and
+        // serves it FIRST on later renders, so the recreated <img> paints from
+        // the browser cache immediately (no 404 round-trip, no re-cascade, no
+        // flicker). Same root-cause class as the Card-Details fix (mtg-m9znz);
+        // this closes it for the battlefield innerHTML path too. The memo key is
+        // the ORIGINAL first-choice URL (deterministic per card name + size), so
+        // it stays stable no matter how the list is later reordered.
+        const __imageResolveMemo = new Map();
+        window.__recordImgResolved = function (key, src) {
+            if (key && src) __imageResolveMemo.set(key, src);
+        };
+        // Reorder a cascade so a previously-resolved URL is tried FIRST, keeping
+        // every other source as an ordered fallback. Returns {urls, key} where
+        // `key` is the stable memo key for this card image. No-op (original
+        // order) when nothing is memoized yet.
+        function applyImageMemo(urls) {
+            if (!Array.isArray(urls) || urls.length === 0) return { urls: urls || [], key: '' };
+            const key = urls[0];
+            const good = __imageResolveMemo.get(key);
+            if (!good || good === urls[0]) return { urls, key };
+            return { urls: [good, ...urls.filter((u) => u !== good)], key };
+        }
+
         // attachImageCascade: wire `src` + cascading `onerror` onto a live
         // <img> element (Card Details pane path).
         function attachImageCascade(img, urls) {
@@ -1285,8 +1315,15 @@
                 img.style.display = 'none';
                 return;
             }
+            const memo = applyImageMemo(urls);
+            const ordered = memo.urls;
+            const key = memo.key;
             // Remaining sources to try after the current one fails.
-            const fallbacks = urls.slice(1);
+            const fallbacks = ordered.slice(1);
+            // Record the URL that actually loaded so later renders start there.
+            img.onload = function () {
+                window.__recordImgResolved(key, img.getAttribute('src'));
+            };
             img.onerror = function() {
                 if (fallbacks.length > 0) {
                     img.style.display = '';
@@ -1298,7 +1335,7 @@
                     img.style.display = 'none';
                 }
             };
-            img.src = urls[0];
+            img.src = ordered[0];
         }
 
         // cardImageHtml: build an <img> HTML string with a cascading inline
@@ -1307,11 +1344,19 @@
         // exactly like attachImageCascade walks its array.
         function cardImageHtml(urls, className, alt) {
             if (!Array.isArray(urls) || urls.length === 0) return '';
-            const fallbacks = urls.slice(1).map(u => escapeAttr(u)).join(',');
+            // Start from the memoized known-good URL (if any) so a re-render of
+            // this card paints from cache instead of restarting the cascade.
+            const memo = applyImageMemo(urls);
+            const ordered = memo.urls;
+            const fallbacks = ordered.slice(1).map(u => escapeAttr(u)).join(',');
             const onerr = "var f=this.dataset.fallbacks;"
                 + "if(f){var a=f.split(',');this.style.display='';this.src=a[0];this.dataset.fallbacks=a.slice(1).join(',')}"
                 + "else{this.onerror=null;this.style.display='none'}";
-            return `<img class="${escapeAttr(className)}" src="${escapeAttr(urls[0])}" alt="${escapeAttr(alt)}" loading="lazy" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}">`;
+            // On a successful load, memoize the URL that worked (keyed by the
+            // stable original first-choice URL in data-memokey) so subsequent
+            // renders skip straight to it — settles the image to ONE state.
+            const onload = "if(window.__recordImgResolved)window.__recordImgResolved(this.dataset.memokey,this.getAttribute('src'))";
+            return `<img class="${escapeAttr(className)}" src="${escapeAttr(ordered[0])}" alt="${escapeAttr(alt)}" loading="lazy" data-memokey="${escapeAttr(memo.key)}" data-fallbacks="${fallbacks}" onerror="${escapeAttr(onerr)}" onload="${escapeAttr(onload)}">`;
         }
 
         // ==================== STATE ====================
@@ -1421,6 +1466,12 @@
                     // hermetic web test can verify table→cards.scryfall.io resolution.
                     tui_load_card_lookup_table,
                     tui_card_cdn_url,
+                    // mtg-j1ka3: expose the image-resolution memo so the flicker
+                    // regression test can assert the reorder logic deterministically.
+                    applyImageMemo,
+                    recordImgResolved: window.__recordImgResolved,
+                    clearImageMemo: () => __imageResolveMemo.clear(),
+                    imageMemoSize: () => __imageResolveMemo.size,
                 };
 
                 cardDb = new WasmCardDatabase();
