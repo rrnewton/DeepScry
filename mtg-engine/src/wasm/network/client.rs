@@ -12,6 +12,60 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
+/// Two `StateSyncEntry` values describe the SAME logical delta?
+///
+/// Used by [`WasmNetworkClient::push_state_sync`] to recognise an idempotent
+/// re-send (the server's `shared_reveal_index` immediate-pusher and
+/// `collect_reveals_since_last_choice` both emit a window's reveals) when a
+/// second copy arrives at a game `action_count` already occupied. We compare the
+/// **stable identity** of the delta — owner/searcher + card id(s) + library
+/// order — and deliberately ignore `card_def` (derived from the name) and the
+/// `RevealReason` (the two emit paths can derive the advisory reason from
+/// different zone context, and the undo-position ac already pins the identity).
+/// `StateSyncEntry` cannot simply `#[derive(PartialEq)]` because `CardReveal`
+/// embeds a `CardDefinition`, which is not `PartialEq`.
+fn state_sync_entries_equivalent(a: &StateSyncEntry, b: &StateSyncEntry) -> bool {
+    use StateSyncEntry::*;
+    match (a, b) {
+        (
+            RevealCard {
+                owner: oa, card: ca, ..
+            },
+            RevealCard {
+                owner: ob, card: cb, ..
+            },
+        ) => oa == ob && ca.card_id == cb.card_id && ca.name == cb.name,
+        (
+            LibraryReorder {
+                player: pa,
+                new_order: na,
+            },
+            LibraryReorder {
+                player: pb,
+                new_order: nb,
+            },
+        ) => pa == pb && na == nb,
+        (
+            SearchCandidates {
+                searcher: sa,
+                cards: ca,
+            },
+            SearchCandidates {
+                searcher: sb,
+                cards: cb,
+            },
+        ) => {
+            sa == sb
+                && ca.len() == cb.len()
+                && ca
+                    .iter()
+                    .zip(cb.iter())
+                    .all(|(x, y)| x.card_id == y.card_id && x.name == y.name)
+        }
+        _ => false,
+    }
+}
+
 /// Connection state for the WASM network client
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkState {
@@ -1199,13 +1253,65 @@ impl WasmNetworkClient {
     // `pending_reveals` / `pending_library_reorders` VecDeques are gone.
 
     /// Append a `StateSyncEntry` to the shadow state-sync log at its server-
-    /// stamped game `action_count` (mtg-o99ow L3).
+    /// stamped game `action_count` (mtg-o99ow L3), keyed and consumed by game ac.
     ///
-    /// Sole appender: the WS receive handler (`on_message`). `ActionLog::push`
-    /// enforces strictly-increasing keys; a duplicate/decreasing ac is a server
-    /// desync and the panic is the correct fatal response.
+    /// Sole appender: the WS receive handler (`on_message`). Two wire realities
+    /// make this more than a plain append (mtg-o99ow WASM bug #2):
+    ///
+    /// 1. **Out-of-order arrival.** The server emits a choice window's deltas via
+    ///    two uncoordinated paths — the coordinator's `LibraryReordered` broadcast
+    ///    (at the reorder's own, often LARGER, ac) precedes the handler's
+    ///    `choice.reveals` loop (at each reveal's SMALLER ac) — so deltas ARRIVE
+    ///    out of game-ac order. We use [`ActionLog::insert_sorted`] to restore
+    ///    canonical game-position order; arrival order is a wire artifact because
+    ///    the log is consumed by ac.
+    ///
+    /// 2. **Idempotent re-sends.** The server's immediate reveal pusher AND
+    ///    `collect_reveals_since_last_choice` can both emit the same reveal
+    ///    (intentional double-send the client dedups; see `controller.rs`
+    ///    `shared_reveal_index`). Because `action_count == undo_log.len()` is
+    ///    globally unique per logged action, two deltas sharing an ac can ONLY be
+    ///    the SAME logical delta re-sent (the same-ac collision audit proved
+    ///    distinct deltas never share an ac). So a duplicate-ac arrival — whether
+    ///    the prior copy is still ahead of the cursor or was already applied
+    ///    (the log is non-destructive, so it remains) — is benign: we VERIFY it
+    ///    is the same delta via [`state_sync_entries_equivalent`] and DROP the
+    ///    re-send. A *different* delta at the same ac would be a genuine desync
+    ///    and is fatal.
+    ///
+    /// Only when no entry yet occupies this ac do we insert. At that point a
+    /// brand-new delta arriving at `ac < last_applied_state_sync_ac` means a delta
+    /// needed at its game position never arrived in time and the cursor has moved
+    /// on — a lost delta = desync, fatal (NETWORK_ARCHITECTURE.md: Desync is
+    /// ALWAYS Fatal). The bound is `>=` (not `>`): the cursor starts at 0 and the
+    /// first opening-hand reveal is legitimately stamped at game ac 0
+    /// (`opening_reveal_ac(0) == 0`).
     fn push_state_sync(&mut self, action_count: u64, entry: StateSyncEntry) {
-        self.state_sync.push(action_count, entry);
+        if let Some(existing) = self.state_sync.get(action_count) {
+            assert!(
+                state_sync_entries_equivalent(existing, &entry),
+                "push_state_sync: two DIFFERENT state-sync deltas share game ac={} \
+                 (existing={:?}, new={:?}). A game ac is the unique undo-log position \
+                 of one action, so distinct deltas cannot share it — this is a \
+                 protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                action_count,
+                existing,
+                entry,
+            );
+            // Benign idempotent re-send (shared_reveal_index double-send); the
+            // monotone info is already logged at this ac. Drop it.
+            return;
+        }
+        assert!(
+            action_count >= self.last_applied_state_sync_ac,
+            "push_state_sync: a NEW state-sync delta arrived at ac={} but the apply \
+             cursor has already advanced past it (last_applied={}) and no prior copy \
+             was logged — a delta needed at its game position never arrived in time \
+             = lost delta = desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+            action_count,
+            self.last_applied_state_sync_ac,
+        );
+        self.state_sync.insert_sorted(action_count, entry);
     }
 
     /// Advance the reveal-history-complete watermark to a received choice's game
@@ -1324,12 +1430,25 @@ impl WasmNetworkClient {
             Some(f) => f,
             None => return 0,
         };
-        // Apply only entries that have ARRIVED (≤ frontier) AND whose game
-        // position the shadow has reached (≤ target_action). A needed entry with
-        // ac ≤ target but ac > frontier has not arrived yet → it is simply not
-        // applied this call; L4 wires the draw/priority sites to yield NeedsInput
-        // on such a miss so the loop re-enters after the next server message.
-        let bound = target_action.min(frontier);
+        // Apply only entries whose game position the shadow has reached
+        // (≤ target_action) AND for which the reveal-history is COMPLETE — i.e.
+        // ≤ `max_received_choice_ac`, the highest game ac of any choice received.
+        //
+        // mtg-o99ow WASM bug #2 (block-on-miss via the completeness watermark):
+        // bounding by the raw `frontier` (highest ARRIVED entry) is unsafe,
+        // because the server emits a choice window's deltas via two uncoordinated
+        // paths — the coordinator's `LibraryReordered` broadcast (at the reorder's
+        // LARGER ac) reaches the client BEFORE the handler's `choice.reveals` loop
+        // (at each reveal's SMALLER ac). So a reorder at ac 380 can be the frontier
+        // while a reveal at ac 376 has not yet arrived; applying up to the frontier
+        // would advance the cursor past 376, and the later-arriving reveal would be
+        // lost (or trip the behind-cursor desync assert). The `max_received_choice_ac`
+        // watermark is the server's per-choice completeness signal: by wire ordering
+        // (NETWORK_ARCHITECTURE.md) the server sends ALL deltas with ac ≤ A before
+        // the choice at ac A, so once that choice has arrived every delta with ac ≤ A
+        // is present. Bounding apply by it guarantees no entry below the cursor is
+        // still in flight — the principled L4 block-on-miss, keyed by game ac.
+        let bound = target_action.min(frontier).min(self.max_received_choice_ac);
         if bound <= self.last_applied_state_sync_ac {
             return 0;
         }
@@ -1838,6 +1957,63 @@ mod tests {
         let acs: Vec<u64> = c.state_sync.iter().map(|(ac, _)| ac).collect();
         assert_eq!(acs, vec![5, 8, 13]);
         assert_eq!(c.state_sync.frontier(), Some(13));
+    }
+
+    #[test]
+    fn push_state_sync_tolerates_out_of_order_arrival() {
+        // mtg-o99ow WASM bug #2: the server emits a choice window's deltas via
+        // two uncoordinated paths (coordinator LibraryReordered broadcast at the
+        // reorder's larger ac, BEFORE the handler's choice.reveals loop at each
+        // reveal's smaller ac), so a delta at ac 380 can arrive ahead of one at
+        // 376. The log is keyed+consumed by game ac, so insert-sorted restores
+        // canonical game-position order regardless of wire arrival order — no
+        // strict-monotonic-arrival panic (the old ActionLog::push behaviour).
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(380, mk_reorder(0)); // larger ac arrives FIRST
+        c.push_state_sync(376, mk_reveal("late")); // smaller ac arrives SECOND
+        let acs: Vec<u64> = c.state_sync.iter().map(|(ac, _)| ac).collect();
+        assert_eq!(acs, vec![376, 380], "log must be re-sorted by game ac");
+        // Both entries are still findable by their game ac (binary search).
+        assert!(c.state_sync.get(376).is_some());
+        assert!(c.state_sync.get(380).is_some());
+    }
+
+    #[test]
+    fn push_state_sync_drops_idempotent_resend() {
+        // mtg-o99ow WASM bug #2: the server's shared_reveal_index immediate-pusher
+        // and collect_reveals_since_last_choice both emit the same reveal, so an
+        // IDENTICAL delta can arrive twice at the same game ac. Since distinct
+        // deltas never share an ac, this is a benign re-send — the second copy is
+        // dropped (not fatal), even after the first was already applied (cursor
+        // moved past it; the log is non-destructive so the entry remains).
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(42, mk_reveal("Mountain"));
+        c.last_applied_state_sync_ac = 50; // simulate cursor advanced past 42
+        c.push_state_sync(42, mk_reveal("Mountain")); // identical re-send → dropped
+        assert_eq!(c.state_sync.len(), 1, "idempotent re-send must not duplicate");
+    }
+
+    #[test]
+    #[should_panic(expected = "two DIFFERENT state-sync deltas share game ac")]
+    fn push_state_sync_panics_on_distinct_delta_at_same_ac() {
+        // Two DIFFERENT deltas can never legitimately share a game ac (it is
+        // undo_log.len(), globally unique per logged action). A non-equivalent
+        // entry at an occupied ac is a genuine desync → fatal.
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(42, mk_reveal("a"));
+        c.push_state_sync(42, mk_reveal("b")); // same ac, different card name
+    }
+
+    #[test]
+    #[should_panic(expected = "apply cursor has already advanced past it")]
+    fn push_state_sync_panics_when_new_delta_arrives_behind_cursor() {
+        // A BRAND-NEW delta (no prior copy logged) arriving at an ac the apply
+        // cursor already passed would be silently dropped from every future apply
+        // window (last_applied < ac <= bound) — a needed delta lost = desync.
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(10, mk_reveal("a"));
+        c.last_applied_state_sync_ac = 10; // cursor consumed up to 10
+        c.push_state_sync(7, mk_reveal("too-late")); // never seen before, too late
     }
 
     #[test]

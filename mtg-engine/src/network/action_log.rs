@@ -109,6 +109,47 @@ impl<T> ActionLog<T> {
         self.entries.push((action_count, entry));
     }
 
+    /// Insert one entry at `action_count`, keeping the backing Vec in
+    /// `action_count`-ascending order even when entries ARRIVE out of order.
+    ///
+    /// This is the arrival-order-INDEPENDENT companion to [`push`](Self::push),
+    /// used ONLY by the shadow **state-sync** log (owner #2), never by the
+    /// per-controller choice buffer (owner #1). It exists because the server
+    /// emits state-sync deltas (reveals + library reorders) for one choice
+    /// window via TWO uncoordinated paths — the coordinator's
+    /// `LibraryReordered` broadcast (stamped at the reorder's own, often
+    /// LARGER, undo-log ac) is sent BEFORE the handler's `choice.reveals`
+    /// loop (stamped at each reveal's smaller ac). So a delta at ac 380 can
+    /// reach the client ahead of one at ac 376 (mtg-o99ow WASM bug #2). The
+    /// log is **keyed and consumed by GAME `action_count`** ([`get`](Self::get)
+    /// / [`frontier`](Self::frontier) / [`iter`](Self::iter) all operate on
+    /// the sorted Vec), so the wire ARRIVAL order is an efficiency concern,
+    /// not a correctness one: re-sorting on insert restores the canonical
+    /// game-position order and the apply cursor is unaffected.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an EXACT-duplicate `action_count` — two DISTINCT deltas can
+    /// never legitimately share an ac (`action_count == undo_log.len()` is
+    /// globally unique per logged action; the single atomic-multi case,
+    /// library-search candidates, is modeled as ONE `SearchCandidates` entry,
+    /// and the pre-game ac-0 initial orders are held outside this log). A
+    /// genuine same-ac arrival is therefore a protocol/wiring desync, and per
+    /// `NETWORK_ARCHITECTURE.md` § *Desync is ALWAYS a Fatal Error* we crash
+    /// rather than silently merge.
+    pub fn insert_sorted(&mut self, action_count: u64, entry: T) {
+        match self.entries.binary_search_by_key(&action_count, |&(ac, _)| ac) {
+            Ok(_) => panic!(
+                "ActionLog::insert_sorted: duplicate action_count {action_count}. \
+                 Two distinct state-sync deltas must never share an action_count \
+                 (it is undo_log.len(), globally unique per logged action). This is \
+                 a protocol / wiring desync; the only atomic-multi delta is \
+                 SearchCandidates, modeled as a single entry."
+            ),
+            Err(idx) => self.entries.insert(idx, (action_count, entry)),
+        }
+    }
+
     /// Look up an entry by its `action_count`.
     ///
     /// Returns `None` if no entry was pushed at exactly `action_count`
@@ -252,6 +293,32 @@ mod tests {
         let mut log = ActionLog::new();
         log.push(10, Payload(1));
         log.push(5, Payload(2));
+    }
+
+    #[test]
+    fn insert_sorted_tolerates_out_of_order_arrival() {
+        // The state-sync log's arrival-order-independent appender: deltas can
+        // arrive in any order; the Vec stays game-ac-sorted so get/iter/frontier
+        // see canonical game-position order (mtg-o99ow WASM bug #2).
+        let mut log = ActionLog::new();
+        log.insert_sorted(380, Payload(380));
+        log.insert_sorted(376, Payload(376)); // earlier ac arrives later
+        log.insert_sorted(8, Payload(8));
+        log.insert_sorted(400, Payload(400));
+        let acs: Vec<u64> = log.iter().map(|(ac, _)| ac).collect();
+        assert_eq!(acs, vec![8, 376, 380, 400]);
+        assert_eq!(log.frontier(), Some(400));
+        assert_eq!(log.get(376), Some(&Payload(376)));
+        assert_eq!(log.get(380), Some(&Payload(380)));
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate action_count")]
+    fn insert_sorted_panics_on_exact_dup() {
+        // Distinct deltas never share an ac; an exact-dup is a genuine desync.
+        let mut log = ActionLog::new();
+        log.insert_sorted(7, Payload(1));
+        log.insert_sorted(7, Payload(2));
     }
 
     #[test]
