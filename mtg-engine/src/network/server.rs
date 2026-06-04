@@ -3458,6 +3458,31 @@ fn with_configured_gh_repo(mut gh_args: Vec<String>) -> Vec<String> {
     gh_args
 }
 
+/// Build the optional egress-proxy command prefix from a raw value (the
+/// `MTG_GH_PROXY` env var). Empty/whitespace → no prefix (invoke the tool
+/// directly). Pure helper so it is unit-testable without mutating process env.
+fn proxy_prefix_from(value: Option<&str>) -> Vec<String> {
+    match value.map(str::trim).filter(|trimmed| !trimmed.is_empty()) {
+        Some(proxy) => vec![proxy.to_string()],
+        None => Vec::new(),
+    }
+}
+
+/// The egress-proxy prefix for spawned bug-report CLIs (`gh`, `claude`).
+///
+/// Read from `MTG_GH_PROXY`. UNSET/empty — the default, including production VMs
+/// that have direct internet egress — means invoke the tool directly. Set it to
+/// a wrapper path (e.g. `/usr/bin/with-proxy`) ONLY on networks that require
+/// routing outbound calls through a proxy (e.g. Meta devservers).
+///
+/// The previous code HARDCODED `/usr/bin/with-proxy`, which is absent on the
+/// deploy VM, so every `gh` invocation failed with ENOENT before `gh` even ran
+/// (mtg-zvlpk). Making the prefix config-driven + default-direct fixes filing on
+/// the VM (where `gh` is installed, authed, and has direct egress).
+fn command_proxy_prefix() -> Vec<String> {
+    proxy_prefix_from(std::env::var("MTG_GH_PROXY").ok().as_deref())
+}
+
 fn bug_report_issue_title(report: &BugReportRequest) -> String {
     let summary = report
         .description
@@ -3534,12 +3559,13 @@ fn run_command(args: &[String], cwd: &Path) -> std::io::Result<CommandOutput> {
 
 fn run_gh_command_with_runner(
     runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
-    repo_root: &Path,
+    cwd: &Path,
     gh_args: &[String],
 ) -> Result<String> {
-    let mut command_args = vec!["/usr/bin/with-proxy".to_string(), "/usr/bin/gh".to_string()];
+    let mut command_args = command_proxy_prefix();
+    command_args.push("/usr/bin/gh".to_string());
     command_args.extend_from_slice(gh_args);
-    let output = runner(&command_args, repo_root)?;
+    let output = runner(&command_args, cwd)?;
     if output.success {
         Ok(output.stdout)
     } else {
@@ -3565,13 +3591,13 @@ fn launch_claude_autofix_with_spawner(
     repo_root: &Path,
     request: &AutoFixLaunchRequest,
 ) -> Result<Option<u32>> {
-    let command_args = vec![
-        "/usr/bin/with-proxy".to_string(),
+    let mut command_args = command_proxy_prefix();
+    command_args.extend_from_slice(&[
         "claude".to_string(),
         "--dangerously-skip-permissions".to_string(),
         "-p".to_string(),
         request.prompt.clone(),
-    ];
+    ]);
     let pid = spawner(&command_args, repo_root)?;
     Ok(pid)
 }
@@ -3634,19 +3660,19 @@ fn schedule_claude_autofix_with_spawner(
 /// back to local storage.
 fn check_gh_auth_with_runner(
     runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
-    repo_root: &Path,
+    cwd: &Path,
 ) -> Result<()> {
-    run_gh_command_with_runner(runner, repo_root, &["auth".to_string(), "status".to_string()])?;
+    run_gh_command_with_runner(runner, cwd, &["auth".to_string(), "status".to_string()])?;
     Ok(())
 }
 
 fn available_bug_report_labels_with_runner(
     runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
-    repo_root: &Path,
+    cwd: &Path,
 ) -> Result<HashSet<String>> {
     let stdout = run_gh_command_with_runner(
         runner,
-        repo_root,
+        cwd,
         &with_configured_gh_repo(vec![
             "label".to_string(),
             "list".to_string(),
@@ -3670,12 +3696,12 @@ fn available_bug_report_labels_with_runner(
 
 fn upload_bug_report_logs_with_runner(
     runner: &dyn Fn(&[String], &Path) -> std::io::Result<CommandOutput>,
-    repo_root: &Path,
+    cwd: &Path,
     report_dir: &Path,
 ) -> Result<String> {
     let stdout = run_gh_command_with_runner(
         runner,
-        repo_root,
+        cwd,
         &[
             "gist".to_string(),
             "create".to_string(),
@@ -3739,12 +3765,19 @@ fn create_github_issue_with_runner(
     report_dir: &Path,
     reporter_player_id: Option<PlayerId>,
 ) -> Result<GitHubIssueOutcome> {
-    let repo_root = bug_report_repo_root();
+    // Working directory for the spawned `gh` commands. It MUST be a directory
+    // that exists at runtime: `gh` is scoped to the target repo with an explicit
+    // `-R OWNER/REPO` (with_configured_gh_repo), so the cwd is irrelevant to
+    // correctness — it only has to exist, or `Command::spawn` fails with ENOENT.
+    // We use the runtime bug-report dir (always created before this runs). The
+    // old code used `bug_report_repo_root()` = the COMPILE-TIME crate path, which
+    // does not exist on the deploy VM → every `gh` call ENOENT'd (mtg-zvlpk).
+    let gh_cwd = report_dir;
 
     // Preflight: a clear, early signal if the VM's `gh` is not authenticated.
     // Non-fatal — we still attempt to file (and fall back to local storage on
     // failure), but the warning makes auth problems easy to diagnose.
-    if let Err(error) = check_gh_auth_with_runner(runner, &repo_root) {
+    if let Err(error) = check_gh_auth_with_runner(runner, gh_cwd) {
         log::warn!(
             "gh auth status preflight failed before filing bug-report issue to {}: {}",
             BUG_REPORT_GITHUB_REPO,
@@ -3752,7 +3785,7 @@ fn create_github_issue_with_runner(
         );
     }
 
-    let available_labels = match available_bug_report_labels_with_runner(runner, &repo_root) {
+    let available_labels = match available_bug_report_labels_with_runner(runner, gh_cwd) {
         Ok(labels) => labels,
         Err(error) => {
             log::warn!("Failed to fetch GitHub labels for bug report issue: {}", error);
@@ -3764,14 +3797,14 @@ fn create_github_issue_with_runner(
         .filter(|label| available_labels.contains(*label))
         .collect();
 
-    let (log_artifact_url, log_artifact_warning) =
-        match upload_bug_report_logs_with_runner(runner, &repo_root, report_dir) {
-            Ok(url) => (Some(url), None),
-            Err(error) => {
-                log::warn!("Failed to upload bug report logs with gh gist create: {}", error);
-                (None, Some(error.to_string()))
-            }
-        };
+    let (log_artifact_url, log_artifact_warning) = match upload_bug_report_logs_with_runner(runner, gh_cwd, report_dir)
+    {
+        Ok(url) => (Some(url), None),
+        Err(error) => {
+            log::warn!("Failed to upload bug report logs with gh gist create: {}", error);
+            (None, Some(error.to_string()))
+        }
+    };
 
     let issue_body = build_bug_report_issue_body(
         report,
@@ -3797,7 +3830,7 @@ fn create_github_issue_with_runner(
     }
     let issue_args = with_configured_gh_repo(issue_args);
 
-    let issue_stdout = run_gh_command_with_runner(runner, &repo_root, &issue_args)?;
+    let issue_stdout = run_gh_command_with_runner(runner, gh_cwd, &issue_args)?;
     let issue_url = parse_first_url(&issue_stdout)?;
     std::fs::write(report_dir.join("github_issue_url.txt"), format!("{issue_url}\n"))?;
 
@@ -4219,15 +4252,17 @@ mod tests {
 
         let calls = Arc::new(StdMutex::new(Vec::<Vec<String>>::new()));
         let calls_clone = Arc::clone(&calls);
+        // No MTG_GH_PROXY in the test env → commands are ["/usr/bin/gh", <sub>, ...],
+        // so the gh subcommand is at index 1.
         let runner = move |args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
             calls_clone.lock().expect("lock calls").push(args.to_vec());
-            if args.get(2).map(String::as_str) == Some("auth") {
+            if args.get(1).map(String::as_str) == Some("auth") {
                 Ok(make_output("Logged in to github.com as rrnewton\n", ""))
-            } else if args.get(2).map(String::as_str) == Some("label") {
+            } else if args.get(1).map(String::as_str) == Some("label") {
                 Ok(make_output(r#"[{"name":"bug"},{"name":"triage"}]"#, ""))
-            } else if args.get(2).map(String::as_str) == Some("gist") {
+            } else if args.get(1).map(String::as_str) == Some("gist") {
                 Ok(make_output("https://gist.github.com/example/logs\n", ""))
-            } else if args.get(2).map(String::as_str) == Some("issue") {
+            } else if args.get(1).map(String::as_str) == Some("issue") {
                 Ok(make_output("https://github.com/rrnewton/DeepScry/issues/123\n", ""))
             } else {
                 panic!("unexpected command: {args:?}");
@@ -4247,21 +4282,22 @@ mod tests {
 
         let calls = calls.lock().expect("lock calls");
         assert_eq!(calls.len(), 4);
+        // Default (no MTG_GH_PROXY): each command is ["/usr/bin/gh", <sub>, ...]
+        // — invoked directly, no proxy wrapper (mtg-zvlpk).
         // 0: gh auth status preflight
-        assert_eq!(calls[0][0], "/usr/bin/with-proxy");
-        assert_eq!(calls[0][1], "/usr/bin/gh");
-        assert_eq!(calls[0][2], "auth");
-        assert_eq!(calls[0][3], "status");
+        assert_eq!(calls[0][0], "/usr/bin/gh");
+        assert_eq!(calls[0][1], "auth");
+        assert_eq!(calls[0][2], "status");
         // 1: label list -- repo-scoped via explicit -R
-        assert_eq!(calls[1][2], "label");
+        assert_eq!(calls[1][1], "label");
         assert!(calls[1].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
         // 2: gist create -- NOT repo-scoped (gists are user-scoped)
-        assert_eq!(calls[2][2], "gist");
+        assert_eq!(calls[2][1], "gist");
         assert!(calls[2].iter().any(|arg| arg.ends_with("game_logs.txt")));
         assert!(calls[2].iter().any(|arg| arg.ends_with("console_logs.txt")));
         assert!(!calls[2].iter().any(|arg| arg == "-R"));
         // 3: issue create -- repo-scoped via explicit -R
-        assert_eq!(calls[3][2], "issue");
+        assert_eq!(calls[3][1], "issue");
         assert!(calls[3].windows(2).any(|w| w[0] == "-R" && w[1] == "rrnewton/DeepScry"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "bug"));
         assert!(calls[3].windows(2).any(|w| w[0] == "--label" && w[1] == "triage"));
@@ -4281,8 +4317,10 @@ mod tests {
     fn test_check_gh_auth_with_runner_reports_unauthenticated() {
         // Authenticated: gh auth status exits 0.
         let ok_runner = |args: &[String], _cwd: &Path| -> std::io::Result<CommandOutput> {
-            assert_eq!(args.get(2).map(String::as_str), Some("auth"));
-            assert_eq!(args.get(3).map(String::as_str), Some("status"));
+            // Default (no MTG_GH_PROXY): command is ["/usr/bin/gh", "auth", "status"].
+            assert_eq!(args.first().map(String::as_str), Some("/usr/bin/gh"));
+            assert_eq!(args.get(1).map(String::as_str), Some("auth"));
+            assert_eq!(args.get(2).map(String::as_str), Some("status"));
             Ok(make_output("Logged in to github.com\n", ""))
         };
         assert!(check_gh_auth_with_runner(&ok_runner, Path::new("/tmp")).is_ok());
@@ -4298,6 +4336,26 @@ mod tests {
         };
         let error = check_gh_auth_with_runner(&fail_runner, Path::new("/tmp")).expect_err("unauthenticated");
         assert!(error.to_string().contains("not logged into"));
+    }
+
+    #[test]
+    fn test_proxy_prefix_from() {
+        // Unset / empty / whitespace → no proxy wrapper (invoke directly). This is
+        // the default + production-VM path: the old hardcoded /usr/bin/with-proxy
+        // is absent on the VM and made gh ENOENT (mtg-zvlpk).
+        assert_eq!(proxy_prefix_from(None), Vec::<String>::new());
+        assert_eq!(proxy_prefix_from(Some("")), Vec::<String>::new());
+        assert_eq!(proxy_prefix_from(Some("   ")), Vec::<String>::new());
+        // A non-empty value (trimmed) becomes the single-element command prefix,
+        // for networks that genuinely require an egress proxy (Meta devservers).
+        assert_eq!(
+            proxy_prefix_from(Some("/usr/bin/with-proxy")),
+            vec!["/usr/bin/with-proxy".to_string()]
+        );
+        assert_eq!(
+            proxy_prefix_from(Some("  /usr/bin/with-proxy  ")),
+            vec!["/usr/bin/with-proxy".to_string()]
+        );
     }
 
     #[test]
@@ -4464,10 +4522,10 @@ mod tests {
 
         assert_eq!(pid, Some(4242));
         let args = seen_args.lock().expect("lock args");
+        // Default (no MTG_GH_PROXY): claude is spawned directly, no proxy wrapper.
         assert_eq!(
             args.as_slice(),
             &[
-                "/usr/bin/with-proxy".to_string(),
                 "claude".to_string(),
                 "--dangerously-skip-permissions".to_string(),
                 "-p".to_string(),

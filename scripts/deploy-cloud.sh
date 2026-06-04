@@ -247,6 +247,14 @@ ENV
     if [[ -n "${TRUSTED_BUG_REPORT_PASSWORD:-}" ]]; then
         echo "TRUSTED_BUG_REPORT_PASSWORD=${TRUSTED_BUG_REPORT_PASSWORD}"
     fi
+    # MTG_GH_PROXY is OPTIONAL and normally UNSET on a cloud VM: the server
+    # invokes `gh` (bug-report issue filing) directly, since the VM has direct
+    # internet egress. Set it ONLY on a network that requires routing outbound
+    # calls through an egress wrapper (e.g. a Meta devserver's /usr/bin/with-proxy).
+    # Leaving it unset is correct for deepscry.net (mtg-zvlpk).
+    if [[ -n "${MTG_GH_PROXY:-}" ]]; then
+        echo "MTG_GH_PROXY=${MTG_GH_PROXY}"
+    fi
 }
 
 # ---------------------------------------------------------------------------
