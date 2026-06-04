@@ -410,6 +410,45 @@ async function testLauncherControlsAndPlay() {
             fail('launcher-edit-deck-href', 'Edit Deck href missing edit/source params: ' + editHref);
         }
 
+        // ---- Controller selector (mtg-254): Human default + Random selectable;
+        //      heuristic/zero DISABLED (they silently downgrade to Human in WASM
+        //      network mode, so we never expose them as a no-op). ----
+        const ctrlHuman = await page.$('input[name="controller"][value="human"]');
+        const ctrlRandom = await page.$('input[name="controller"][value="random"]');
+        const ctrlHeuristic = await page.$('input[name="controller"][value="heuristic"]');
+        const ctrlZero = await page.$('input[name="controller"][value="zero"]');
+        if (ctrlHuman && ctrlRandom && ctrlHeuristic && ctrlZero) {
+            pass('launcher-controller-radios', 'controller radios present (human/random/heuristic/zero)');
+        } else {
+            fail('launcher-controller-radios',
+                `controller radios missing (human=${!!ctrlHuman}, random=${!!ctrlRandom}, ` +
+                `heuristic=${!!ctrlHeuristic}, zero=${!!ctrlZero})`);
+        }
+        const ctrlHumanChecked = ctrlHuman ? await ctrlHuman.isChecked() : false;
+        if (ctrlHumanChecked) {
+            pass('launcher-controller-human-default', 'Human controller selected by default');
+        } else {
+            fail('launcher-controller-human-default', 'Human must be the default controller');
+        }
+        const heurDisabled = ctrlHeuristic ? await ctrlHeuristic.isDisabled() : false;
+        const zeroDisabled = ctrlZero ? await ctrlZero.isDisabled() : false;
+        if (heurDisabled && zeroDisabled) {
+            pass('launcher-controller-ai-disabled', 'heuristic + zero controllers DISABLED (mtg-254)');
+        } else {
+            fail('launcher-controller-ai-disabled',
+                `heuristic/zero must be disabled (heuristic=${heurDisabled}, zero=${zeroDisabled})`);
+        }
+        // Select Random → the auto-start redirect URL must carry controller=random.
+        // (Custom deck already selected above so __buildGamePageUrl is well-formed.)
+        await page.check('input[name="controller"][value="random"]').catch(() => {});
+        await page.waitForTimeout(100);
+        const ctrlUrl = await page.evaluate(() => window.__buildGamePageUrl && window.__buildGamePageUrl());
+        if (ctrlUrl && /[?&]controller=random/.test(ctrlUrl)) {
+            pass('launcher-controller-random-url', 'game-page redirect carries controller=random: ' + ctrlUrl);
+        } else {
+            fail('launcher-controller-random-url', 'redirect missing controller=random: ' + ctrlUrl);
+        }
+
         await shot(page, '04_launcher_controls.png');
         await ctx.close();
     }

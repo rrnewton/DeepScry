@@ -77,6 +77,9 @@ export const DEFAULT_UI = 'tui';
  * @param {boolean} [opts.allowLocalImgLoad]
  * @param {'tui'|'native'} [opts.ui]        - target game UI (default: 'tui')
  * @param {'local'|'network'} [opts.mode]   - game mode hint (default: 'network')
+ * @param {'human'|'random'|'heuristic'|'zero'} [opts.controller] - who drives
+ *          THIS web client (default: 'human'). Only 'human'/'random' truly work
+ *          in network games; heuristic/zero silently downgrade to Human (mtg-254).
  * @param {string}  [opts.reconnectToken]   - reconnect token from GameStarted
  * @param {boolean} [opts.showImages]       - card-image display pref (game-page)
  * @param {string[]} [opts.imageSources]    - enabled image sources, fallback order
@@ -107,6 +110,10 @@ export function buildRedirectQuery(opts) {
         qp.set('img_src', opts.imageSources.join(','));
     }
     if (opts.debug) qp.set('debug', 'true');
+    // Network controller for the web client (mtg-254). consumeLobbyParams() reads
+    // this back; default to 'human' for any unknown/absent value.
+    qp.set('controller', ['human', 'random', 'heuristic', 'zero'].includes(opts.controller)
+        ? opts.controller : 'human');
     qp.set('ui', ui);
     // Default to 'network' mode when coming from the lobby redirect.
     qp.set('mode', opts.mode === 'local' ? 'local' : 'network');

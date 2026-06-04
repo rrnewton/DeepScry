@@ -99,6 +99,8 @@
         }
         .renderer-opt input { margin: 0 6px 0 0; }
         .renderer-opt.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .renderer-opt.disabled { opacity: 0.4; cursor: not-allowed; }
+        .renderer-opt.disabled input { cursor: not-allowed; }
         .renderer-opt .ro-title { font-size: 14px; font-weight: 600; }
         .renderer-opt .ro-title .badge {
             font-size: 9px; color: var(--bg); background: var(--accent);
@@ -200,6 +202,36 @@
             <label class="renderer-opt" id="renderer-opt-tui">
                 <span class="ro-title"><input type="radio" name="renderer" id="renderer-tui" value="tui">Web TUI</span>
                 <span class="ro-desc">Terminal-style text renderer (tui_game.html).</span>
+            </label>
+        </div>
+    </div>
+
+    <!--
+      Controller toggle (Advanced): who DRIVES this web client over the network.
+      Default Human (a person plays). Random auto-drives the client so the user
+      can launch a game in two browser windows and WATCH the UI evolve hands-free.
+      Heuristic + Zero are DISABLED: WASM network mode silently downgrades them to
+      Human (mtg-254, fancy_tui.rs), so exposing them would be a silent no-op. The
+      &controller= param already flows end-to-end to the game pages + WASM.
+    -->
+    <div class="field">
+        <label class="field-label">Controller (Advanced)</label>
+        <div class="renderer-toggle" id="controller-toggle">
+            <label class="renderer-opt selected" id="controller-opt-human">
+                <span class="ro-title"><input type="radio" name="controller" id="controller-human" value="human" checked>Human<span class="badge">Default</span></span>
+                <span class="ro-desc">You play the cards yourself.</span>
+            </label>
+            <label class="renderer-opt" id="controller-opt-random">
+                <span class="ro-title"><input type="radio" name="controller" id="controller-random" value="random">Random AI</span>
+                <span class="ro-desc">Auto-driven random play — launch &amp; watch hands-free.</span>
+            </label>
+            <label class="renderer-opt disabled" id="controller-opt-heuristic" title="Not supported in network games yet (mtg-254)">
+                <span class="ro-title"><input type="radio" name="controller" id="controller-heuristic" value="heuristic" disabled>Heuristic AI</span>
+                <span class="ro-desc">Not supported in network games yet (mtg-254).</span>
+            </label>
+            <label class="renderer-opt disabled" id="controller-opt-zero" title="Not supported in network games yet (mtg-254)">
+                <span class="ro-title"><input type="radio" name="controller" id="controller-zero" value="zero" disabled>Zero AI</span>
+                <span class="ro-desc">Not supported in network games yet (mtg-254).</span>
             </label>
         </div>
     </div>
@@ -602,6 +634,33 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         return radioTui.checked ? 'tui' : 'native';
     }
 
+    // ==================== CONTROLLER TOGGLE (mtg-254) ====================
+    // Who drives THIS web client over the network. Only Human + Random work:
+    // WASM network mode silently downgrades heuristic/zero to Human (mtg-254),
+    // so those radios are DISABLED in the markup (never expose a no-op option).
+    // Random lets the user launch an auto-driven game and watch the UI evolve.
+    const radioCtrlHuman = document.getElementById('controller-human');
+    const radioCtrlRandom = document.getElementById('controller-random');
+    const optCtrlHuman = document.getElementById('controller-opt-human');
+    const optCtrlRandom = document.getElementById('controller-opt-random');
+    // Only the ENABLED radios participate in selection + persistence.
+    const controllerRadios = [radioCtrlHuman, radioCtrlRandom];
+
+    function refreshControllerUI() {
+        if (optCtrlHuman) optCtrlHuman.classList.toggle('selected', radioCtrlHuman.checked);
+        if (optCtrlRandom) optCtrlRandom.classList.toggle('selected', radioCtrlRandom.checked);
+    }
+    for (const r of controllerRadios) {
+        if (r) r.addEventListener('change', refreshControllerUI);
+    }
+    refreshControllerUI();
+
+    /** The selected network controller. Only 'human'/'random' are reachable
+     *  (heuristic/zero radios are disabled per mtg-254); default 'human'. */
+    function selectedController() {
+        return radioCtrlRandom && radioCtrlRandom.checked ? 'random' : 'human';
+    }
+
     // ==================== IMAGE-SOURCE PICKER + GATE ====================
     const showImagesCb = document.getElementById('show-card-images');
     const imgSrcLocalCb = document.getElementById('img-src-local');
@@ -649,6 +708,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         try {
             localStorage.setItem(SETTINGS_KEY, JSON.stringify({
                 renderer: selectedRenderer(),
+                controller: selectedController(),
                 showImages: showImagesCb.checked,
                 imgSrcLocal: !!(imgSrcLocalCb && imgSrcLocalCb.checked),
                 imgSrcScryfall: imgSrcScryfallCb.checked,
@@ -666,6 +726,9 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             s = JSON.parse(raw);
         } catch (e) { return; }
         if (s.renderer === 'tui') { radioTui.checked = true; refreshRendererUI(); }
+        // Only restore an ENABLED controller (heuristic/zero are disabled per
+        // mtg-254 and must never be re-selected from a stale localStorage value).
+        if (s.controller === 'random' && radioCtrlRandom) { radioCtrlRandom.checked = true; refreshControllerUI(); }
         if (s.showImages !== undefined) showImagesCb.checked = s.showImages;
         // The gate may have removed the Local checkbox; ignore a stale stored
         // "local on" in that case (applyLocalImageGate ran first).
@@ -687,7 +750,8 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     else if (wantRenderer === 'native') { radioNative.checked = true; refreshRendererUI(); }
     refreshImageSourceUI();
 
-    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, debugCb, radioNative, radioTui]) {
+    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, debugCb, radioNative, radioTui,
+                      radioCtrlHuman, radioCtrlRandom]) {
         if (el) el.addEventListener('change', saveSettings);
     }
     if (imgSrcLocalCb) imgSrcLocalCb.addEventListener('change', saveSettings);
@@ -702,7 +766,8 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // confirmed. autoUnready() is a no-op (and broadcasts nothing) when we are
     // not currently ready, so the handler is safe to attach unconditionally; it
     // is defined later in this IIFE but hoisted as a function declaration.
-    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, imgSrcLocalCb, debugCb]) {
+    for (const el of [showImagesCb, imgSrcScryfallCb, imgSrcGathererCb, imgSrcLocalCb, debugCb,
+                      radioCtrlHuman, radioCtrlRandom]) {
         if (el) el.addEventListener('change', () => autoUnready('settings changed'));
     }
 
@@ -745,6 +810,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             reconnectToken: qs.get('reconnect_token') || '',
             ui,
             mode: 'network',
+            controller: selectedController(),
             showImages: showImagesCb.checked,
             imageSources: selectedImageSources(),
             debug: debugCb.checked,
