@@ -7,7 +7,7 @@ labels:
 - validate-infra
 - networking
 created_at: 2026-06-03T21:58:50.567668623+00:00
-updated_at: 2026-06-04T11:16:04.090191174+00:00
+updated_at: 2026-06-04T17:26:51.312560397+00:00
 ---
 
 # Description
@@ -152,3 +152,37 @@ Ordered plan (do in this order; each independently valuable):
 
 cgroup (process containment) ⟂ netns (port-space isolation) ⟂ :0 ephemeral
 (collision-free binding) — orthogonal layers; ship 1→2→3 in confidence order.
+
+== STATUS 2026-06-04 (slot02 validate-followons; PAUSED at consolidation boundary) ==
+DONE + MERGED to integration this session:
+- Per-step ORPHAN REAPER (killpg variant): start_new_session + scoped killpg on
+  step completion/timeout. Reaps mtg/http.server/chromium grandchildren that
+  don't setsid-escape. (landed in the build-once/validate.py work.)
+- WHOLE-RUN SELF-REEXEC SCOPE @a8dd4431: a full local `make validate` re-execs
+  inside a transient `systemd-run --user --scope` cgroup (suppressed under
+  sentinel/$CI/$GITHUB_ACTIONS/--no-scope/no-systemd; --collect; relative script
+  path to dodge the mtg-463/r1osh clean-env self-detection). Contains the run's
+  ENTIRE descendant tree (incl. setsid escapees) → reaped atomically on exit.
+  VERIFIED: passed 33/0 amid slot03's concurrent validate, scope auto-collected,
+  0 leftover, sampler reaped.
+- LEFTOVER-SCOPE REAPER @e2188533: kill_zombie_processes.py stops leftover
+  validate-*.scope for THIS worktree (from a SIGKILLed scoped run) via
+  `systemctl --user stop`. CROSS-SLOT SAFE: ownership via the scope cgroup's
+  procs' /proc/<pid>/cwd (NOT cmd-substring, since the scoped validate uses a
+  relative path). VERIFIED: stops cwd-owned scope, leaves a /tmp scope untouched.
+=> The validate-CONTENTION concern is CLOSED: make validate self-isolates locally
+   by default; concurrent cross-slot validates are safe.
+
+REMAINING (DEFERRED to fresh focused sessions — agreed w/ team-lead, NOT urgent
+since the whole-run scope already mitigates contention):
+- PER-STEP cgroup.kill: replace/augment the per-step killpg reaper with a per-step
+  child cgroup + `echo 1 > cgroup.kill` so a setsid escapee from a HUNG step is
+  reaped MID-RUN (not just at run-end via the whole-run scope). MARGINAL over what's
+  merged; do only if later perf/netns work wants tighter mid-run reaping.
+- NETNS-conditional port isolation: own focused session (user set a HIGH BAR +
+  "wary of fragility"). Gate STRICTLY on an end-to-end probe (unshare -rn → lo up →
+  bind 127.0.0.1:0 → connect, <5s, probe-once+cache), clean fallback to cgroup-only,
+  ALL-OR-NOTHING per network-e2e step. With netns, ports can return to a fixed
+  DEFAULT_PORT. Verify CAP_NET_ADMIN/user-ns per runner. (Note: the :0 ephemeral-port
+  fix @c7744891 already retired the RANDOM port-collision false-positive class, so
+  netns is now extra-insurance, not a fix.)
