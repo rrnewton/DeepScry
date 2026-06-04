@@ -7,7 +7,7 @@ labels:
 - validate-infra
 - networking
 created_at: 2026-06-03T21:58:50.567668623+00:00
-updated_at: 2026-06-04T10:28:31.401390278+00:00
+updated_at: 2026-06-04T11:02:36.800418792+00:00
 ---
 
 # Description
@@ -53,3 +53,60 @@ merge gate for mtg-717 build-once: network-redo cannot merge until a failed/hung
 step is guaranteed reaped so it can't wedge the shard. Pair with the
 network.landing waitUntil:'domcontentloaded' robustness fix (see mtg-717
 CHECKPOINT 2026-06-04). Priority stays P2; now also on the mtg-717 critical path.
+
+
+== UPDATE 2026-06-04 (build-once @ 0d90b46c): per-step reaper IMPLEMENTED + corrected wedge root-cause + full isolation design ==
+
+CORRECTED ROOT CAUSE of the network-redo wedge: it was NOT the orphan-holds-pipe
+theory. It was a SCHEDULER LIVELOCK in validate_run.py Runner.run(): when a step
+fails, self.stop=True; remaining steps whose deps SUCCEEDED (the prebuilt
+build.mtg-release/wasm.bundle) are then neither launched (stop) nor counted by
+_skipped() (no dep failed), so `done+skipped >= steps` is never reached and the
+loop busy-waits forever. The orphan python3 in the GH cleanup trace WAS that
+livelocked runner. FIXED at 0d90b46c (terminate when not running AND (self.stop
+OR all-terminal)) — robust fail-fast, no wedge on ANY future step failure.
+
+PER-STEP ORPHAN REAPER — IMPLEMENTED (0d90b46c), killpg variant (NOT cgroup yet):
+each step now Popen(start_new_session=True) → its own process group (pgid==pid);
+on completion/timeout the runner killpg(pgid, SIGKILL) reaps leaked mtg
+server/http.server/chromium grandchildren. pgid captured right after Popen
+(getpgid(pid) raises once proc.wait collects the leader). Guarded against the
+runner's own pgrp — the historical exit-144 was killpg WITHOUT start_new_session
+(child shared the runner's group → suicide); the new session makes it safe.
+Verified locally: orphan grandchild SIGKILLed, no runner suicide, network.landing
+PASS with zero orphans left. LIMITATION: killpg misses processes that setsid()
+into a NEW session/group (true double-fork daemons). chromium/playwright/mtg
+server do NOT setsid away, so killpg catches them in practice — but cgroup.kill
+(below) is the strictly-stronger successor for setsid escapees.
+
+FULL ISOLATION DESIGN (user-directed, follow-on — two orthogonal axes + a scope):
+A) PROCESS containment (cgroup.kill): replace/augment the killpg reaper with a
+   per-step transient cgroup; `echo 1 > cgroup.kill` atomically SIGKILLs the
+   whole subtree INCLUDING setsid escapees. CI caveat: GH-hosted runners may
+   lack user-systemd / unprivileged cgroup delegation — verify; fall back to the
+   killpg reaper (already in place) there.
+B) SELF-REEXEC WHOLE-RUN SCOPE (local hygiene default): at the top of
+   validate_run.py, re-exec the runner under `systemd-run --user --scope
+   --setenv=MTG_VALIDATE_IN_SCOPE=1 ...` UNLESS (MTG_VALIDATE_IN_SCOPE set →
+   anti-recursion) OR ($CI/$GITHUB_ACTIONS set → CI runs direct) OR (--no-scope)
+   OR (systemd-run/systemctl --user unavailable → graceful skip). Effect: every
+   LOCAL validate self-isolates in a transient cgroup; all descendants incl.
+   setsid escapees are reaped on exit → no orphan leak between runs/agents
+   (kills the stale-lock + port-collision-false-positive class). Dev box HAS
+   systemd --user + cgroup v2. NOTE: whole-run scope ALONE does NOT fix a
+   mid-run wedge (the runner would hang inside the scope before exit-reap) — so
+   the per-step reaper (A / current killpg) is still required. Both needed.
+C) NETWORK NAMESPACE port-isolation (the bigger payoff): run each validate (or
+   each network-e2e harness) under `unshare --net` (+ `ip link set lo up`
+   inside) so each gets its OWN loopback / independent port space. PREVENTS the
+   port-collision-desync-false-positive class at the ROOT (vs racing to reap
+   orphans) AND lets concurrent validates run SAFELY IN PARALLEL — directly
+   fixing the cross-slot contention that forced serialized validates and serving
+   mtg-717's fast/all-cores goal. Privilege check: `unshare -rn` (user+net ns)
+   unprivileged locally; CAP_NET_ADMIN on the runner (self-hosted ok?
+   GH-hosted?). Harness must bind the namespaced loopback. cgroup (process kill)
+   ⟂ netns (port isolation) = complementary axes of full isolation.
+
+SCOPING: A (per-step reaper) + the landing domcontentloaded fix are on the
+build-once 12/12 critical path and DONE @ 0d90b46c. B (self-reexec scope) and C
+(netns) are the mtg-ibj22 follow-on design — do NOT balloon the 12/12 path.
