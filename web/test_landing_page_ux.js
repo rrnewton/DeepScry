@@ -19,6 +19,17 @@ const fs = require('fs');
 
 let BASE = process.env.MTG_QA_BASE || null;
 let WS_OVERRIDE = process.env.MTG_QA_WS || null;
+
+// mtg-717: landing-page navigations wait until 'domcontentloaded', NOT the
+// Playwright default of 'load'. Under prebuilt 2-vCPU CI a non-critical
+// subresource can 404 or stall, so the window 'load' event never fires and
+// page.goto({waitUntil:'load'}) times out — this was the network-redo shard
+// wedge (the failed step then orphaned a chromium holding the runner's stdout
+// pipe). Every scenario waits on explicit elements (waitForLobbyConnected /
+// waitForSelector / waitForLoadState) AFTER navigating, so the full 'load'
+// barrier was never needed; domcontentloaded + explicit waits is strictly more
+// robust. Apply NAV to every landing/game-page goto.
+const NAV = { waitUntil: 'domcontentloaded' };
 const SHOTS = path.join(__dirname, 'screenshots', 'landing_page_qa');
 fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -56,7 +67,7 @@ async function scenarioFullFlow() {
         if (m.type() === 'error') record('minor', 'alice console.error', m.text());
     });
 
-    await alice.goto(global.__landingRoot || (BASE + '/'));
+    await alice.goto(global.__landingRoot || (BASE + '/'), NAV);
     await alice.waitForLoadState('domcontentloaded');
     await shot(alice, 'landing_01_initial.png');
 
@@ -131,7 +142,7 @@ async function scenarioFullFlow() {
     const charlieCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const charlie = await charlieCtx.newPage();
     charlie.setDefaultNavigationTimeout(90000); charlie.setDefaultTimeout(90000);
-    await charlie.goto(global.__landingRoot || (BASE + '/'));
+    await charlie.goto(global.__landingRoot || (BASE + '/'), NAV);
     try { await waitForLobbyConnected(charlie); } catch (e) {}
     await charlie.fill('#username', 'charlie');
     await charlie.click('#btn-name');
@@ -209,7 +220,7 @@ async function scenarioPostRedirectAutoLaunch() {
     const url = BASE + '/tui_game.html?lobby_create=autolaunch-test&lobby_pass=&name=autolaunch&ws=' +
         encodeURIComponent(WS_OVERRIDE || 'ws://localhost:17810');
     console.log('  navigating to:', url);
-    await page.goto(url);
+    await page.goto(url, NAV);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000); // give WASM init + auto-launch a chance
     await shot(page, 'landing_12_post_redirect_autolaunch.png');
@@ -255,7 +266,7 @@ async function scenarioRefreshTimerNoError() {
         }
     });
 
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
     await waitForLobbyConnected(page).catch(() => {});
 
@@ -287,7 +298,7 @@ async function scenarioMobileViewport() {
     const ctx = await browser.newContext({ viewport: { width: 375, height: 667 } });
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {}
     await shot(page, 'landing_06_mobile_initial.png');
@@ -305,7 +316,7 @@ async function scenarioOfflineLobby() {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
-    await page.goto(BASE + '/?ws=ws://localhost:9/'); // discard port
+    await page.goto(BASE + '/?ws=ws://localhost:9/', NAV); // discard port
     await page.waitForTimeout(2000);
     await shot(page, 'landing_08_ws_down.png');
     const stateText = await page.textContent('#ws-state');
@@ -364,7 +375,7 @@ async function scenarioStickyLocalImageUnlock() {
     // (1) Load the lobby WITH the unlock param.
     const root = global.__landingRoot || (BASE + '/');
     const sep = root.indexOf('?') === -1 ? '?' : '&';
-    await page.goto(root + sep + 'allow_local_img_load=true');
+    await page.goto(root + sep + 'allow_local_img_load=true', NAV);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(500);
 
@@ -396,7 +407,7 @@ async function scenarioStickyLocalImageUnlock() {
 
     // (2) Navigate to the game page WITHOUT the param but in the SAME tab/session.
     // The gate must inherit the unlock from sessionStorage.
-    await page.goto(BASE + '/native_game.html');
+    await page.goto(BASE + '/native_game.html', NAV);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(1500);
     const allowedSticky = await page.evaluate(() => window.__allowLocalImgLoad === true);
@@ -414,7 +425,7 @@ async function scenarioStickyLocalImageUnlock() {
     const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page2 = await ctx2.newPage();
     page2.setDefaultNavigationTimeout(90000); page2.setDefaultTimeout(90000);
-    await page2.goto(BASE + '/native_game.html');
+    await page2.goto(BASE + '/native_game.html', NAV);
     // Seed a stale localStorage value to prove it is ignored, then reload.
     await page2.evaluate(() => { try { localStorage.setItem('allowLocalImgLoad', 'true'); } catch (e) {} });
     await page2.reload();
@@ -437,7 +448,7 @@ async function scenarioPasscodeEyeballToggle() {
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'pw-toggle pageerror', e.message));
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {
         record('blocking', 'pw-toggle ws', e.message);
@@ -514,7 +525,7 @@ async function scenarioGameListFilterAndPager() {
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'filter pageerror', e.message));
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {
         record('blocking', 'filter ws', e.message);
@@ -607,7 +618,7 @@ async function scenarioNativeGuiLaunch() {
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
     page.on('pageerror', (e) => record('major', 'renderer-absent pageerror', e.message));
 
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(page); } catch (e) {
         record('blocking', 'renderer-absent ws', e.message);
@@ -666,7 +677,7 @@ async function scenarioWaitingRoomAndParamContract() {
     dave.setDefaultNavigationTimeout(90000); dave.setDefaultTimeout(90000);
     dave.on('pageerror', (e) => record('major', 'dave pageerror', e.message));
 
-    await dave.goto(global.__landingRoot || (BASE + '/'));
+    await dave.goto(global.__landingRoot || (BASE + '/'), NAV);
     await dave.waitForLoadState('domcontentloaded');
     try { await waitForLobbyConnected(dave); } catch (e) {
         record('blocking', 'dave ws', e.message);
@@ -763,7 +774,7 @@ async function scenarioAccessibility() {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     page.setDefaultNavigationTimeout(90000); page.setDefaultTimeout(90000);
-    await page.goto(global.__landingRoot || (BASE + '/'));
+    await page.goto(global.__landingRoot || (BASE + '/'), NAV);
     await page.waitForLoadState('domcontentloaded');
 
     // Username input should have an associated label.

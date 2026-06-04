@@ -31,6 +31,7 @@ Exit status: 0 if all selected steps pass, 1 otherwise.
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -288,7 +289,21 @@ class Runner:
         while True:
             with self.lock:
                 # done?
-                if len(self.done) + len(self._skipped()) >= len(self.steps) and not self.running:
+                # Terminate when nothing is running AND either every step has a
+                # terminal outcome (done or dep-skipped) OR fail-fast tripped.
+                # mtg-717: the fail-fast clause is REQUIRED. When self.stop is set
+                # by a failed step, the remaining steps whose deps SUCCEEDED (e.g.
+                # the other browser steps in the network-redo shard, all depending
+                # on the prebuilt build.mtg-release/wasm.bundle) are neither
+                # launched (stop blocks launch) nor counted by _skipped() (no dep
+                # failed). Without this clause `done+skipped >= steps` is never
+                # reached, so the loop busy-waits forever — that was the network-
+                # redo 56-min CI wedge (the orphan python3 pid in the cleanup
+                # trace was this livelocked runner, NOT a pipe-blocked reader).
+                if not self.running and (
+                    self.stop
+                    or len(self.done) + len(self._skipped()) >= len(self.steps)
+                ):
                     break
                 launchable = []
                 if not self.stop:
@@ -333,6 +348,21 @@ class Runner:
                         break
         return sk
 
+    def _reap(self, pgid):
+        """SIGKILL the step's entire process group (orphan grandchildren incl.).
+        Takes the pgid captured right after Popen — NOT os.getpgid(proc.pid),
+        which fails once proc.wait() has reaped the leader (the group still
+        exists while any grandchild lives, so the stored pgid stays valid).
+        Scoped to the step's own session via start_new_session; guarded so we
+        never signal the runner's own group (suicide / the historical
+        exit-144)."""
+        if pgid is None or pgid <= 1 or pgid == os.getpgrp():
+            return
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass  # whole group already gone
+
     def _run_step(self, step):
         self._emit(f"[{step.tag}] ▶ START  {step.desc}")
         detail = self.steps_dir / f"{step.tag}.log"
@@ -350,8 +380,26 @@ class Runner:
         # the main thread blocks only on proc.wait(timeout), which returns when
         # the test process itself exits regardless of orphans — and bound each
         # step with a wall-clock timeout.
+        # start_new_session=True puts the step in its OWN process group/session
+        # (pgid == child pid), so we can reap the WHOLE tree (bash leader + mtg
+        # server + http.server + chromium) by killing that group on completion —
+        # WITHOUT ever touching the runner's own group. mtg-ibj22: a failed/hung
+        # browser test used to leak chromium/server orphans that held resources
+        # (and the stdout pipe) into later steps; scoped-killpg reaps them. The
+        # historical exit-144 came from killpg WITHOUT start_new_session (the
+        # child shared the runner's pgid, so killpg was suicide) — the new
+        # session makes it safe; _reap() additionally guards against our pgrp.
         proc = subprocess.Popen(["bash", "-c", step.cmd], cwd=PROJECT_DIR, env=env,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        # Capture the group id NOW, while the leader is alive. start_new_session
+        # makes pgid == proc.pid; after proc.wait() collects the leader,
+        # os.getpgid(proc.pid) would raise — but killpg(pgid) still reaps any
+        # surviving grandchildren, so we stash it for _reap().
+        try:
+            step_pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            step_pgid = proc.pid
 
         def _pump():
             try:
@@ -367,13 +415,14 @@ class Runner:
         try:
             proc.wait(timeout=step.timeout)
         except subprocess.TimeoutExpired:
-            # Genuine hang: SIGKILL the direct child (the bash leader). We do
-            # NOT killpg the group — in some sandboxes killpg can resolve to and
-            # kill the runner's own group. Killing the leader is enough to
-            # unblock; orphan grandchildren (if any) are harmless here.
+            # Genuine hang: reap the step's whole process group (bash leader +
+            # any server/chromium grandchildren). Safe because start_new_session
+            # gave the step its own group (pgid == child pid); _reap guards
+            # against signalling the runner's own group. The unconditional
+            # _reap() below also covers the non-timeout path.
             timed_out = True
+            self._reap(step_pgid)
             try:
-                proc.kill()
                 proc.wait(timeout=10)
             except Exception:
                 pass
@@ -383,6 +432,13 @@ class Runner:
         # completes regardless. proc.wait() already returned once the test
         # process itself exited; orphans don't gate us. Brief join, then move on.
         reader.join(timeout=2)
+        # mtg-ibj22: reap the step's whole process group, so any orphan
+        # grandchildren (mtg server / http.server / chromium that outlived the
+        # test) are SIGKILLed now instead of leaking into later steps or holding
+        # the stdout pipe. Scoped to the step's own session (start_new_session
+        # above) — never the runner's group. This also lets the abandoned reader
+        # thread finally see EOF.
+        self._reap(step_pgid)
         try:
             fh.close()
         except Exception:
