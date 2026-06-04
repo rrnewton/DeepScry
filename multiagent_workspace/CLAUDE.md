@@ -12,6 +12,32 @@ symlinked from the parent dir to `deepscry/multiagent_workspace/CLAUDE.md`
 by `multiagent_workspace/install.sh`. Edit the in-repo copy, not the
 symlink target — changes there flow back to every machine via `git pull`.
 
+## Communicating in plain language (no jargon drift)
+
+When reporting to the user — and when agents report up to the
+orchestrator — explain in plain language. Internal shorthand, issue
+IDs, and acronyms drift toward a private dialect that locks the user
+out of their own project. Counter it actively:
+
+- **Expand on first use.** The first time a term, issue ID, or acronym
+  appears in a user-facing message, gloss it in plain words: "the
+  `action_count` exclusion (a temporary workaround that stopped
+  comparing the two sides' action counters)". Bare `mtg-610`, `4a`,
+  `un-excluded`, `dual-ac-stamp`, `L1–L4` with no gloss is a defect.
+- **Lead with the plain point, IDs after.** Say what happened and why
+  it matters in words a smart non-specialist could follow; attach the
+  precise issue IDs / commit SHAs afterward for traceability, not
+  instead of the explanation.
+- **Prefer description to code-name:** "the reveal-ordering rework
+  (4a)" beats "4a"; "the build-once CI restructure (mtg-717)" beats a
+  bare "mtg-717".
+- **Orchestrator translates.** When relaying an agent's report to the
+  user, translate its shorthand first — never pass a wall of internal
+  codenames straight through.
+
+This is load-bearing for trust: the user cannot steer what they cannot
+read. A report the user has to ask you to decode is a failed report.
+
 ## Vocabulary
 
 These terms recur throughout this guide; agents must use them
