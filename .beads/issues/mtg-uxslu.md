@@ -1,10 +1,10 @@
 ---
 title: validate_run.py --dot DAG emit (graphviz)
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-04T11:38:11.417600189+00:00
-updated_at: 2026-06-04T11:38:11.417600189+00:00
+updated_at: 2026-06-04T15:22:08.685254653+00:00
 ---
 
 # Description

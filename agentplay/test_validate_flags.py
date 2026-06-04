@@ -151,6 +151,25 @@ def test_keep_going_runs_all_despite_failure():
     assert not r.aborted, "keep_going must not abort any step"
 
 
+def test_dot_emits_valid_graph_with_deps_and_resource_edges():
+    """--dot (mtg-iywhs): emits graphviz from build_registry() with solid dep
+    edges AND dashed cap-1 resource-serialization edges, clustered per jobGroup."""
+    import io
+    import contextlib
+    steps = validate.build_registry()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        validate._emit_dot(steps)
+    dot = buf.getvalue()
+    assert dot.startswith("digraph validate {") and dot.rstrip().endswith("}")
+    # a known dep edge (build-once falls out of deps)
+    assert '"build.mtg-release" -> "unit.nextest"' in dot
+    # the implicit browser cap-1 serialization is rendered (dashed)
+    assert "style=dashed" in dot and "browser cap1" in dot
+    # clustered per jobGroup
+    assert "subgraph cluster_" in dot and 'label="network"' in dot
+
+
 def test_no_network_disables_only_network_group():
     steps, disabled = _disabled_for(no_network=True)
     for s in steps:

@@ -1,10 +1,10 @@
 ---
 title: Inline-document unit.nextest -> build.mtg-release dep in validate_run.py
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-04T11:38:11.434510828+00:00
-updated_at: 2026-06-04T11:38:11.434510828+00:00
+updated_at: 2026-06-04T15:22:08.687427872+00:00
 ---
 
 # Description

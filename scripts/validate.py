@@ -133,6 +133,12 @@ def build_registry():
     #     prebuilt archive (--archive-file --workspace-remap .) instead of
     #     recompiling. The determinism/shell tests shell out to
     #     target/release/mtg via MTG_REUSE_PREBUILT (downloaded artifact).
+    # deps=["build.mtg-release"]: NOT just to compile the test binaries — several
+    # nextest-run tests (determinism_e2e.rs, the shell_script_tests.rs e2e wrappers)
+    # SHELL OUT to the prebuilt target/release/mtg at runtime, so the release
+    # binary must exist before this step. The old monolithic CI test-unit job
+    # built mtg in-job, which MASKED this dep; an isolated unit shard (mtg-717
+    # build-once) has no binary unless we declare it. (mtg-uxslu)
     add(Step("unit", "nextest", "cargo nextest run --features network",
              "make test", deps=["build.mtg-release"], env=_REUSE, timeout=BUILD_STEP_TIMEOUT))
     # --- examples (own debug build) ---
@@ -596,6 +602,11 @@ def main():
     ap.add_argument("-q", "--quiet", action="store_true")
     ap.add_argument("-v", dest="v", action="count", default=0, help="-v stream framework, -vv stream all")
     ap.add_argument("--list", action="store_true", help="list steps and exit")
+    ap.add_argument("--dot", action="store_true",
+                    help="emit the step DAG as graphviz (dep edges + dashed resource-"
+                         "serialization edges) and exit; honors --group/--only/--no-network/"
+                         "--no-wasm-e2e/--use-prebuilt so the graph matches what WOULD run. "
+                         "Pipe to: python3 scripts/validate.py --dot | dot -Tsvg -o validate.svg")
     # --- outer harness flags (folded in from the former scripts/validate.sh) ---
     # The harness (commit-hash cache, .validate.lock, dirty->WIP-commit, clean-env
     # gate, CPU-utilization report, atomic validate_logs/validate_<sha>.log
@@ -627,11 +638,59 @@ def main():
     if args.sequential:
         args.jobs = 1
     subset = bool(args.group or args.only or args.job)
-    use_harness = (not subset) and (not args.list) and (not args.no_harness) \
-        and (not args.use_prebuilt)
+    use_harness = (not subset) and (not args.list) and (not args.dot) \
+        and (not args.no_harness) and (not args.use_prebuilt)
     if use_harness:
         return run_with_harness(args)
     return run_orchestrator(args)
+
+
+def _emit_dot(steps):
+    """Emit the (already-filtered) step DAG as graphviz DOT.
+    - SOLID edges = explicit deps (build-once falls out of these).
+    - DASHED edges = implicit serialization among steps sharing a capacity-1
+      resource (e.g. the cap-1 'browser' resource → chromium-heavy steps run
+      ONE-AT-A-TIME with NO dep edge between them; a pure dep graph understates
+      the real ordering). The dashed chain is drawn in registry order purely to
+      VISUALISE the constraint — actual order is scheduler-chosen.
+    Steps are clustered per jobGroup. Honors whatever filtering already ran
+    (subset / --no-network / --no-wasm-e2e / --use-prebuilt), so the emitted
+    graph matches what WOULD actually run in that mode."""
+    tags = {s.tag for s in steps}
+    out = ['digraph validate {',
+           '  rankdir=LR;',
+           '  node [shape=box, style=rounded, fontsize=10];',
+           '  labelloc="t";',
+           '  label="make validate DAG  (solid = dependency,  dashed = shared cap-1 '
+           'resource → serialized, order scheduler-chosen)";']
+    groups = {}
+    for s in steps:
+        groups.setdefault(s.group, []).append(s)
+    for gi, (g, gsteps) in enumerate(sorted(groups.items())):
+        out.append(f'  subgraph cluster_{gi} {{')
+        out.append(f'    label="{g}"; style=dashed; color=gray70;')
+        for s in gsteps:
+            res = ("\\n[" + ",".join(sorted(s.resources)) + "]") if s.resources else ""
+            out.append(f'    "{s.tag}" [label="{s.tag}{res}"];')
+        out.append('  }')
+    for s in steps:                       # solid dep edges (present deps only)
+        for d in s.deps:
+            if d in tags:
+                out.append(f'  "{d}" -> "{s.tag}";')
+    res_members = {}                      # dashed resource-serialization chains
+    for s in steps:
+        for r in s.resources:
+            res_members.setdefault(r, []).append(s.tag)
+    colors = ["red", "blue", "darkgreen", "purple"]
+    for ri, (r, members) in enumerate(sorted(res_members.items())):
+        if len(members) < 2:
+            continue
+        c = colors[ri % len(colors)]
+        for a, b in zip(members, members[1:]):
+            out.append(f'  "{a}" -> "{b}" [style=dashed, color={c}, constraint=false, '
+                       f'label="{r} cap1", fontsize=8];')
+    out.append('}')
+    print("\n".join(out))
 
 
 def run_orchestrator(args):
@@ -721,6 +780,10 @@ def run_orchestrator(args):
                 for m in missing:
                     sys.stderr.write(f"    - {m}\n")
                 return 1
+
+    if args.dot:
+        _emit_dot(steps)
+        return 0
 
     if args.list:
         for s in steps:
