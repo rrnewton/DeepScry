@@ -1394,6 +1394,12 @@
         // re-loading the same image during rapid redraws.
         let _detailsImageCardId = null;
         let _lastStateSummary = null;
+        // mtg-6vzht change-detection: the last (view-model JSON + measured card
+        // sizes) we actually rendered. updateUI skips ALL rendering when this is
+        // byte-identical, so an unchanged tick does zero DOM work (no innerHTML
+        // churn, no reflow, preserves element identity). Reset to force a render
+        // (e.g. on (re)launch). See updateUI for the rationale.
+        let _lastRenderKey = null;
 
         function isDebugMode() {
             // bootConfig.debug is the local-boot &debug; gamePrefs.debug is the
@@ -2079,6 +2085,23 @@
             }
             if (!stateJson || stateJson === '{}') return;
 
+            // mtg-6vzht CHANGE-DETECTION (whole-render skip): the rendered DOM is
+            // a pure function of the view-model JSON + the measured battlefield
+            // card sizes (which change on pane/window resize even when the model
+            // doesn't). If BOTH are byte-identical to what we last rendered, the
+            // resulting DOM would be identical — so skip ALL rendering: no
+            // JSON.parse, no card-index rebuild, no innerHTML churn, no reflow,
+            // preserving element identity for free. Bulletproof against the
+            // under-render trap: the skip key IS the full render input (model +
+            // sizes), so no field can be forgotten the way a hand-picked
+            // signature could. (Saves the ~2ms render half on every unchanged
+            // tick; the ~2.3ms serialize is still paid — an O(1) wasm
+            // view-revision getter to skip that too is the filed follow-up.)
+            const cardSizes = computeBattlefieldCardSizes();
+            const renderKey = stateJson + '' + JSON.stringify(cardSizes);
+            if (renderKey === _lastRenderKey) return;
+            _lastRenderKey = renderKey;
+
             let state;
             try {
                 state = JSON.parse(stateJson);
@@ -2145,14 +2168,14 @@
             renderPlayerInfo(ourPlayer, 'player-info-body');
             renderPlayerInfo(oppPlayer, 'opp-info-body');
 
-            // Compute battlefield card sizes BEFORE rendering so the
-            // <img> elements can request the right resolution (small vs
-            // normal) and so cards never have to flicker through a
-            // wrong size. The compute function measures the pane-body
-            // (stable area) — see `computeBattlefieldCardSizes` for the
-            // feedback-loop fix it solves
-            // (bug-gamehtml-card-size-v2 #1, #2, #3, #4).
-            const cardSizes = computeBattlefieldCardSizes();
+            // Apply the battlefield card sizes measured above (before the
+            // change-detection check) so the <img> elements request the right
+            // resolution (small vs normal) and cards never flicker through a
+            // wrong size. The compute function measures the pane-body (stable
+            // area) — see `computeBattlefieldCardSizes` for the feedback-loop
+            // fix it solves (bug-gamehtml-card-size-v2 #1, #2, #3, #4). The
+            // measured sizes are part of the render-skip key (mtg-6vzht) so a
+            // pane/window resize still forces a re-render.
             applyBattlefieldCardSizes(cardSizes);
 
             renderBattlefield(ourPlayer, 'player-field-cards', cardSizes.your);
@@ -2820,6 +2843,7 @@
             _cardIndex = new Map();
             _detailsImageCardId = null;
             _lastStateSummary = null;
+            _lastRenderKey = null; // mtg-6vzht: force a fresh render on next launch
 
             document.getElementById('game-area').classList.remove('show');
             document.getElementById('game-controls').style.display = 'none';
