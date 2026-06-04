@@ -195,7 +195,27 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 view.action_count() as u64
             });
 
-        let state_hash = if client.is_network_debug() {
+        let state_hash = self.compute_submit_hash(&client, view, action_count);
+
+        // submit_choice internally tracks the sequence and consumes the ChoiceRequest
+        client.submit_choice(choice_indices, action_count, state_hash);
+    }
+
+    /// Compute the view hash for a choice submission and, in network-debug mode,
+    /// emit the shared WASM_CARD_DETAIL + WASM_FULL_UNDO_DUMP diagnostics. Shared
+    /// by BOTH the normal (`submit_choice_to_server`) and SMART-damage
+    /// (`submit_damage_choice_to_server`) submit paths so the damage/blocker
+    /// submissions are no longer an UNINSTRUMENTED hash source — the rejected
+    /// seed-2 client hash was produced here and was previously invisible
+    /// (mtg-yexvc / mtg-mb668 class-A). `action_count` is the server-echoed
+    /// action_count from the current ChoiceRequest.
+    fn compute_submit_hash(
+        &self,
+        client: &super::client::WasmNetworkClient,
+        view: &GameStateView,
+        action_count: u64,
+    ) -> Option<u64> {
+        if client.is_network_debug() {
             let hash = crate::game::compute_view_hash(view);
             // Debug: log each field used in compute_view_hash so we can compare with server
             use crate::core::PlayerId;
@@ -285,10 +305,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
             Some(hash)
         } else {
             None
-        };
-
-        // submit_choice internally tracks the sequence and consumes the ChoiceRequest
-        client.submit_choice(choice_indices, action_count, state_hash);
+        }
     }
 
     /// Submit a SMART damage assignment choice, attaching the authoritative
@@ -305,11 +322,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
             .map(|req| req.action_count)
             .unwrap_or_else(|| view.action_count() as u64);
 
-        let state_hash = if client.is_network_debug() {
-            Some(crate::game::compute_view_hash(view))
-        } else {
-            None
-        };
+        let state_hash = self.compute_submit_hash(&client, view, action_count);
 
         client.submit_choice_with_targets(choice_indices, action_count, state_hash, Some(vec![blocker_id]));
     }

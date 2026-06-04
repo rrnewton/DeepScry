@@ -412,7 +412,19 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     // 64-bit on x86-64), causing `write_isize` to emit different byte counts.
     // `as_hash_u32()` returns a fixed u32 from an explicit match, identical on all platforms.
     view.current_step().as_hash_u32().hash(&mut hasher);
-    (view.action_count() as u64).hash(&mut hasher); // usize → u64 for cross-platform stability
+    // NOTE: `action_count` (the undo-log length) is DELIBERATELY EXCLUDED from the
+    // view hash (mtg-mb668 class-A / mtg-yexvc). In the deterministic-replica
+    // network model a client does not execute every server action — it applies
+    // state-sync deltas and resolves reserved (instance-less) opponent cards — so
+    // its undo-log length legitimately drifts from the server's even when every
+    // OBSERVABLE field below is byte-identical. Seed-2 (robots, Timetwister): after
+    // the mass shuffle+draw the native client logged 947 actions vs the server's
+    // 950 with identical life/hands/libraries/battlefield/graveyards/stack, and
+    // hashing the count produced a FALSE-POSITIVE fatal desync. The action_count is
+    // still validated separately by the coordinator's `client_action_count ==
+    // action_count` echo check; it is internal bookkeeping, not comparable game
+    // state, and must not gate state equality. Mirrors `mana_state_version`'s
+    // exclusion from the Replay hash. See state_hash.rs tests.
 
     // ═══ Player State (2 players) ═══
     for player_idx in 0..2u32 {
@@ -851,6 +863,57 @@ mod tests {
             compute_state_hash_with_mode(&game, HashMode::Network),
             h_network,
             "Network mode must ignore mana_state_version"
+        );
+    }
+
+    /// mtg-mb668 class-A / mtg-yexvc: the network VIEW hash must be INVARIANT
+    /// under `action_count`, mirroring `mana_state_version_excluded_from_replay_hash`.
+    ///
+    /// In the deterministic-replica network model a CLIENT does not execute every
+    /// server action — it applies state-sync deltas and reserved-instance
+    /// resolutions — so its undo-log length (`view.action_count()`) legitimately
+    /// drifts from the server's even when every OBSERVABLE field is identical.
+    /// Seed-2 (robots, Timetwister): after the mass shuffle+draw resolution the
+    /// native client logged 947 actions vs the server's 950, with byte-identical
+    /// life / hands / libraries / battlefield / graveyards / stack (the server's
+    /// own mismatch box reported an EMPTY "DIFFERENCES" section). Because
+    /// `compute_view_hash` previously hashed `view.action_count()`, that 3-action
+    /// bookkeeping gap produced a FALSE-POSITIVE fatal desync. `action_count` is
+    /// internal undo-log bookkeeping, NOT comparable observable game state, so it
+    /// must not be part of the cross-machine view hash. This test pins the
+    /// invariant; without the fix it fails (hash changes when the undo log grows).
+    #[test]
+    fn view_hash_invariant_under_action_count_mb668_yexvc() {
+        use crate::game::controller::GameStateView;
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let p0 = game.players.first().unwrap().id;
+
+        let h_before = compute_view_hash(&GameStateView::new(&game, p0));
+
+        // Grow the undo log WITHOUT touching any hashed field — exactly the
+        // server/client bookkeeping drift the replica model permits.
+        // `cards_drawn_this_turn` is not part of the view hash.
+        let prior = game.undo_log.len();
+        game.undo_log.log(
+            crate::undo::GameAction::SetCardsDrawnThisTurn {
+                player_id: p0,
+                old_value: 0,
+                new_value: 0,
+            },
+            prior,
+        );
+        assert!(
+            game.undo_log.len() > prior,
+            "the no-op action must advance action_count"
+        );
+
+        let h_after = compute_view_hash(&GameStateView::new(&game, p0));
+        assert_eq!(
+            h_before, h_after,
+            "compute_view_hash MUST be invariant under action_count — it is internal \
+             undo-log bookkeeping that legitimately drifts between server and client \
+             in the deterministic-replica model, not comparable observable state \
+             (mtg-mb668 class-A / mtg-yexvc false-positive desync)"
         );
     }
 }
