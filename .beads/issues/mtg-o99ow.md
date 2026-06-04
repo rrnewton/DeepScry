@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T13:35:54.352867800+00:00
+updated_at: 2026-06-04T20:26:19.946835224+00:00
 ---
 
 # Description
@@ -52,3 +52,70 @@ In state_hash.rs compute_network_state_hash, after the current_step().as_hash_u3
 - Searched-dummy STAYS at the search-resolution ac (load-bearing for searched_card_for; never re-stamp earlier → mtg-mb668 regress). RED test pins it.
 - Distinct-ac per delta; SearchCandidates is the only atomic-multi.
 - desync ALWAYS fatal; never paper over. 4b (native game-ac keying + wait_for_state_sync_frontier block) is a SEPARATE later unit; if a NATIVE canary requires it → HARD STOP, exclusion stays.
+
+## STATUS 2026-06-04 (slot01-2) — MINIMAL LAZY PROTOCOL; user chose OPTION B; cycling KNOWN-RED until Phase 2
+Branch rebased onto integration @1763ffa5 (tip a9285342), CLEAN (10 commits, 0 conflicts). NOT pushed.
+
+CYCLING DESYNC DIAGNOSED (the layer-4 dual-stamp generalized): on the cycling/library-search path the
+server stamps TWO DISTINCT state-sync deltas at the SAME game action_count — SearchCandidates{cards}
+(at the search-CHOICE ac, server.rs ~2974-2978) AND RevealCard{reason:Searched, found-card} (ALSO at
+that ac, the ChoiceAccepted self-search reveal, server.rs ~3117-3123). Repro avatar-draft Mountaincycling:
+collision @ac=202. WASM (strict ac-keyed log) → push_state_sync "two DIFFERENT deltas share ac" panic
+(client.rs:1291). Native (synthetic-keyed) → found card never reaches hand → true state divergence
+(server P2 hand [41,70,73] vs client [70,73]) → off-by-one ac → FATAL hash mismatch. TRUE state divergence
+(action_count already excluded from compute_view_hash @state_hash.rs:415, hash still mismatches).
+PRE-EXISTING in slot01 (fails pre- AND post-rebase identically); origin/integration PASSES (byte-identical).
+Root = SERVER ac-SOURCE (MEDIUM-6 generalized: two distinct deltas must never share an ac). Buffer
+rearchitecture reuses these ac sources, so correct buffer-acs FIX it → Option B premise CONFIRMED.
+
+KNOWN-RED until Phase 2 (tracked per team-lead rail #1, NOT a paper-over):
+ - validate step network.equiv-random (tests/network_vs_local_equivalence_e2e.sh 3 random)
+ - validate step network.equiv-zero  (tests/network_vs_local_equivalence_e2e.sh 3 zero)
+ network.equiv-heuristic PASSES (heuristic avoids the cycling line).
+Coverage gap that hid it: web/test_network_multideck.js has ZERO cycling decks; native lockstep oracle
+used Hallows (no cycling). Phase 2 adds a permanent WASM cycling scenario.
+
+MERGE DISCIPLINE (rails): integration STAYS GREEN — NO merge while cycling red. Phases 0-1-2 accumulate
+on branch. FIRST integration merge only when FULL make validate (incl equiv-random/zero) green = Phase 2 end.
+PHASE 2 = the gate + proof: native shim + correct buffer acs MUST turn cycling green, else HARD STOP (Option C).
+Interim gate for Phases 1-2: WASM multideck + lockstep oracle.
+
+PLAN: ai_docs/NETARCH_minimal_protocol_PLAN_20260604.md. Sequence: diagnose(done)→Phase1(additive buffer,
+dual-emit, prove buffer-drives-WASM on interim gate)→Phase2(native shim→cycling green)→ff-merge→Phase3-4.
+
+## PHASE 1 COMPLETE 2026-06-04 (slot01-2) — additive buffer; buffer alone drives WASM (interim gate GREEN)
+Implemented the additive minimal-lazy buffer (dual-emit), proved buffer-drives-WASM:
+- protocol.rs: BufferedFact enum {Reveal,LibraryReorder,SearchCandidates,Choice} + buffer:Vec<(u64,BufferedFact)>
+  field on ServerMessage::ChoiceRequest (#[serde(default)]).
+- server.rs: handler accumulates eager OpponentMadeChoice + LibraryReordered (Phase-1 dual-emit) and
+  assemble_choice_buffer() builds the single ascending-ac catch-up buffer (reveals from choice_request.reveals
+  at own ac — NO eager opponent-cast re-emit, killing the dual-stamp; reorders from coordinator broadcast
+  (BLOCKER 2); choices from retained OpponentChoiceInfo (BLOCKER 1) + dummy Searched reveal for opp searches).
+  Eager messages STILL sent (native consumes them; native ignores buffer via serde default).
+- client.rs (WASM): buffer_is_authoritative flag set on first ChoiceRequest; apply_choice_buffer() routes the
+  buffer into state_sync + opponent_choices; eager CardRevealed/LibraryReordered/SearchCandidates/OpponentChoice
+  arms IGNORED once authoritative (opening-hand/initial pre-first-choice still processed). This makes the buffer
+  the SOLE mid-game source → eliminates the eager opponent-cast dual-stamp at the WASM consumer.
+
+INTERIM GATE GREEN:
+- WASM multideck 4/4 PASS (monored s13 [the layer-4 dual-stamp repro], counterspells s5, rogerbrand s3 combat,
+  robots s42 clone/balance) — buffer alone drives WASM, no desync/monotonicity panic.
+- netarch_lockstep_oracle_e2e PASS (control_seed_03, class_a_seed_02). native equiv-heuristic PASS (18/18 identical).
+- native clippy -Dwarnings clean, fmt clean, wasm-network bundle builds. (wasm-network clippy lints are pre-existing,
+  NOT in MY code, and NOT CI-gated — validate's clippy-wasm lints wasm-tui only.)
+- make validate --keep-going: 12 steps pass, ONLY cycling fails (see known-red). agentplay determinism FAIL was
+  FLAKY (empty log under heavy-parallel resource contention; passes 3/3 in isolation; network changes can't affect
+  local mtg tui).
+
+KNOWN-RED until Phase 2 (cycling SearchCandidates+Searched ac collision), tracked:
+ - validate network.equiv-random, network.equiv-zero
+ - unit.nextest shell_scripts__cycle_ability_network_sync_e2e (mtg-420, seed 315)
+ - unit.nextest shell_scripts__network_vs_local_equivalence_e2e
+ cycle_ability_network_sync_e2e PASSES on bare integration 1763ffa5 (29/29 IDENTICAL) → it is slot01's cycling
+ regression, NOT pre-existing (predecessor's "pre-existing on integration" note was outdated/wrong). All 4 are
+ Phase-2 merge-gate items.
+
+DISCIPLINE: NOT merged (rails: integration stays green; first merge only at Phase-2 full-validate-green). Branch
+checkpoint committed + pushed (force-with-lease, post-rebase, authorized). NEXT = Phase 2: native shim unpacks
+buffer into MVar/sync_to_action (+ reorders, reveals-before-choice ordering) AND correct buffer acs (SearchCandidates
+vs Searched-resolution distinct ac) → cycling GREEN = full validate green = merge gate.

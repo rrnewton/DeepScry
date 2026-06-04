@@ -97,6 +97,7 @@ mod async_tests {
             context: None,
             debug_info: None,
             abilities: None,
+            buffer: Vec::new(),
         };
 
         let request_json = serde_json::to_string(&request).expect("serialize request");

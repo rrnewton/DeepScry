@@ -392,6 +392,62 @@ impl DeckSubmission {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BUFFERED FACT (minimal lazy protocol, mtg-o99ow)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One server→client fact in a `ChoiceRequest` buffer, stamped at its TRUE game
+/// `action_count` (= the undo-log position of the action that produced it).
+///
+/// This is the minimal-lazy-protocol replacement for the eager server→client
+/// message zoo: instead of firing `CardRevealed` / `LibraryReordered` /
+/// `SearchCandidates` / `OpponentChoice` as separate messages at choice-accept
+/// time (the dual-stamp source, mtg-o99ow), the server collects every fact the
+/// recipient needs to replay its shadow forward to the choice point into ONE
+/// ascending-`ac` buffer carried by the next `ChoiceRequest`. The recipient
+/// splits the buffer by variant into the two consumer logs it already owns:
+/// the reveal-class variants map 1:1 onto [`crate::network::StateSyncEntry`]
+/// (keyed by game `ac`), and [`BufferedFact::Choice`] maps onto
+/// [`crate::network::ChoiceEntry`] (keyed by `choice_seq`).
+///
+/// During the additive phase (Phase 1) the server DUAL-EMITS — it sends both
+/// this buffer AND the legacy eager messages — so old/new clients interoperate;
+/// the buffer is authoritative and the eager copies are ignored by a
+/// buffer-aware client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)] // wire/transient buffer; CardReveal carries a full CardDefinition
+pub enum BufferedFact {
+    /// Hidden-info card identity the recipient is entitled to (own draw, an
+    /// opponent's cast, a tutored card). Maps to `StateSyncEntry::RevealCard`.
+    Reveal {
+        owner: PlayerId,
+        card: CardReveal,
+        reason: RevealReason,
+    },
+    /// Server-authoritative library order after a shuffle / scry / surveil /
+    /// search. Maps to `StateSyncEntry::LibraryReorder`. `new_order` is
+    /// top-to-bottom.
+    LibraryReorder { player: PlayerId, new_order: Vec<CardId> },
+    /// Atomic-multi tutor candidate reveal (the N candidate identities a
+    /// searcher sees, mtg-253). Maps to `StateSyncEntry::SearchCandidates`. One
+    /// fact at the single search-resolution `ac` (N separate `Reveal`s at one
+    /// `ac` would collide on the strictly-increasing state-sync log key).
+    SearchCandidates { searcher: PlayerId, cards: Vec<CardReveal> },
+    /// The OPPONENT's decision at this `ac`. Maps to `ChoiceEntry`. Carries the
+    /// structured disambiguators the shadow's remote controller needs to replay
+    /// the choice without seeing hidden information.
+    Choice {
+        choice_seq: u32,
+        choice_type: ChoiceType,
+        choice_indices: Vec<usize>,
+        description: String,
+        spell_ability: Option<SpellAbility>,
+        library_search_result: Option<CardId>,
+        target_card_ids: Option<Vec<CardId>>,
+    },
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SERVER → CLIENT MESSAGES
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -743,6 +799,17 @@ pub enum ServerMessage {
         /// instead of locally-computed ones for NetworkLocalController.
         #[serde(default)]
         abilities: Option<Vec<Option<SpellAbility>>>,
+        /// **Minimal lazy protocol buffer (mtg-o99ow).** Every reveal-class and
+        /// opponent-choice fact with `ac` in `(recipient's last choice,
+        /// action_count]`, each at its TRUE game `action_count`, in
+        /// ascending-`ac` order. This is the single catch-up payload that
+        /// replaces the eager `CardRevealed` / `LibraryReordered` /
+        /// `SearchCandidates` / `OpponentChoice` message zoo. A buffer-aware
+        /// client routes these into its state-sync + opponent-choice logs and
+        /// IGNORES the (still-sent, Phase-1 dual-emit) eager copies.
+        /// `#[serde(default)]` → empty for legacy servers/clients.
+        #[serde(default)]
+        buffer: Vec<(u64, BufferedFact)>,
     },
 
     /// Notify client of opponent's choice (for sync)
@@ -1741,6 +1808,7 @@ mod tests {
             context: None,
             debug_info: None,
             abilities: None,
+            buffer: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("serialize");
@@ -1876,6 +1944,7 @@ mod tests {
                 context: None,
                 debug_info: None,
                 abilities: None,
+                buffer: Vec::new(),
             },
             ServerMessage::CardRevealed {
                 owner: player_id,

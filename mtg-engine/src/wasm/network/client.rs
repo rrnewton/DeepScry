@@ -6,7 +6,7 @@
 
 use crate::core::{PlayerId, SpellAbility};
 use crate::network::{
-    ActionLog, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission, ServerMessage, StateSyncEntry,
+    ActionLog, BufferedFact, ChoiceEntry, ChoiceType, ClientMessage, DeckSubmission, ServerMessage, StateSyncEntry,
 };
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -301,6 +301,18 @@ pub struct WasmNetworkClient {
     /// entry at a specific `action_count`, bypassing this cursor entirely.
     next_opponent_choice_cursor: u64,
 
+    /// **Minimal lazy protocol (mtg-o99ow), Phase 1.** Set true the first time a
+    /// `ChoiceRequest` arrives. Before the first choice the server's eager
+    /// `CardRevealed` / `LibraryReordered` messages carry the opening hand +
+    /// initial library orders, which are NOT part of any choice buffer — so we
+    /// still process them. AFTER the first `ChoiceRequest`, the per-choice
+    /// `buffer` is the AUTHORITATIVE source of every mid-game reveal / reorder /
+    /// search / opponent-choice fact, and the still-sent (dual-emit) eager
+    /// copies are ignored — this is what makes the buffer alone drive the WASM
+    /// shadow and eliminates the eager opponent-cast dual-stamp (the same reveal
+    /// arriving at the choice ac AND its own ac).
+    buffer_is_authoritative: bool,
+
     /// Current ChoiceRequest from server (if any)
     current_choice_request: Option<ChoiceRequestData>,
 
@@ -405,6 +417,7 @@ impl WasmNetworkClient {
             max_received_choice_ac: 0,
             opponent_choices: ActionLog::new(),
             next_opponent_choice_cursor: 0,
+            buffer_is_authoritative: false,
             current_choice_request: None,
             choice_acknowledged: true, // Start acknowledged (no pending)
             last_submitted_choice_seq: None,
@@ -834,6 +847,15 @@ impl WasmNetworkClient {
                 reason,
                 action_count,
             } => {
+                // Minimal lazy protocol (mtg-o99ow): once the buffer is
+                // authoritative, mid-game reveals arrive via the ChoiceRequest
+                // buffer at their TRUE ac. Ignore the eager (dual-emit) copy —
+                // this is what removes the eager opponent-cast dual-stamp (the
+                // same card revealed at the choice ac AND its own ac). Before the
+                // first choice, eager reveals carry the opening hand, so process.
+                if self.buffer_is_authoritative {
+                    return;
+                }
                 log::debug!(
                     "WasmNetworkClient: Card revealed - {} ({:?}) for {:?} ac={:?}",
                     card.name,
@@ -872,20 +894,29 @@ impl WasmNetworkClient {
                 state_hash,
                 action_count,
                 abilities,
+                buffer,
                 ..
             } => {
                 log::debug!(
-                    "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={} abilities={}",
+                    "WasmNetworkClient: ChoiceRequest seq={} type={:?} action_count={} abilities={} buffer={}",
                     choice_seq,
                     choice_type,
                     action_count,
-                    abilities.as_ref().map(|a| a.len()).unwrap_or(0)
+                    abilities.as_ref().map(|a| a.len()).unwrap_or(0),
+                    buffer.len()
                 );
-                // mtg-o99ow L3: reveals/reorders are now keyed by their OWN game
-                // ac on the wire, so there is nothing to "stamp" at a choice. We
-                // still record the highest received choice ac as the
-                // reveal-history-complete watermark used by the rewind gate (all
-                // deltas with ac ≤ this have arrived, by wire ordering).
+                // Minimal lazy protocol (mtg-o99ow) Phase 1: route the single
+                // catch-up buffer into the state-sync + opponent-choice logs.
+                // From this point on the buffer is the AUTHORITATIVE source of
+                // mid-game facts; the still-sent eager copies are ignored (see
+                // `buffer_is_authoritative`).
+                self.buffer_is_authoritative = true;
+                self.apply_choice_buffer(buffer);
+                // mtg-o99ow L3: reveals/reorders are keyed by their OWN game ac,
+                // so there is nothing to "stamp" at a choice. We still record the
+                // highest received choice ac as the reveal-history-complete
+                // watermark used by the rewind gate (all deltas with ac ≤ this
+                // have arrived in this buffer, by construction).
                 self.note_received_choice_ac(action_count);
                 self.current_choice_request = Some(ChoiceRequestData {
                     choice_seq,
@@ -907,6 +938,14 @@ impl WasmNetworkClient {
                 target_card_ids,
                 ..
             } => {
+                // Minimal lazy protocol (mtg-o99ow): the opponent's decision now
+                // rides in our next ChoiceRequest buffer as BufferedFact::Choice.
+                // Ignore the eager (dual-emit) copy — routing it too would
+                // double-push the same choice_seq into opponent_choices and panic
+                // ActionLog's strict-monotonic key.
+                if self.buffer_is_authoritative {
+                    return;
+                }
                 log::debug!(
                     "WasmNetworkClient: OpponentChoice seq={} indices={:?} action_count={} desc={}",
                     choice_seq,
@@ -993,6 +1032,13 @@ impl WasmNetworkClient {
                 // pre-game initial-order sync (two per client, would collide at ac 0
                 // in the strict-monotonic log) — held separately and applied at the
                 // first sync point before the GameLoop's opening-hand draws.
+                // Minimal lazy protocol (mtg-o99ow): mid-game reorders arrive via
+                // the ChoiceRequest buffer (BufferedFact::LibraryReorder) once the
+                // buffer is authoritative. Ignore the eager copy. (ac==0 initial
+                // orders always precede the first choice, so they are processed.)
+                if self.buffer_is_authoritative {
+                    return;
+                }
                 log::debug!(
                     "WasmNetworkClient: Library reordered for {:?} ({} cards) ac={} - logged",
                     player,
@@ -1018,6 +1064,12 @@ impl WasmNetworkClient {
                 // ActionLog::push). Applied by replaying process_card_reveal over
                 // each candidate so the shadow library learns the candidate
                 // identities (the searcher's controller filters by name).
+                // Minimal lazy protocol (mtg-o99ow): search candidates arrive via
+                // the ChoiceRequest buffer (BufferedFact::SearchCandidates) once
+                // the buffer is authoritative. Ignore the eager copy.
+                if self.buffer_is_authoritative {
+                    return;
+                }
                 log::debug!(
                     "WasmNetworkClient: SearchCandidates for {:?} ({} cards) ac={}",
                     searcher,
@@ -1286,6 +1338,71 @@ impl WasmNetworkClient {
     /// ALWAYS Fatal). The bound is `>=` (not `>`): the cursor starts at 0 and the
     /// first opening-hand reveal is legitimately stamped at game ac 0
     /// (`opening_reveal_ac(0) == 0`).
+    /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow) into the
+    /// shadow's existing consumer logs. The buffer is ascending-`ac` and carries
+    /// every reveal-class + opponent-choice fact since this client's last choice:
+    /// reveal-class facts go into the game-`ac`-keyed `state_sync` log (applied
+    /// lazily by `apply_state_sync_at`), and `Choice` facts go into the
+    /// `choice_seq`-keyed `opponent_choices` log consumed by `WasmRemoteController`.
+    ///
+    /// This is the single routing point that replaces the eager
+    /// `CardRevealed` / `LibraryReordered` / `SearchCandidates` / `OpponentChoice`
+    /// message arms (now ignored once `buffer_is_authoritative`).
+    fn apply_choice_buffer(&mut self, buffer: Vec<(u64, BufferedFact)>) {
+        for (ac, fact) in buffer {
+            match fact {
+                BufferedFact::Reveal { owner, card, reason } => {
+                    self.push_state_sync(
+                        ac,
+                        StateSyncEntry::RevealCard {
+                            owner,
+                            card: Box::new(card),
+                            reason,
+                        },
+                    );
+                }
+                BufferedFact::LibraryReorder { player, new_order } => {
+                    // ac==0 would be a pre-game initial order (held separately to
+                    // avoid colliding at ac 0); the buffer only ever carries
+                    // mid-game reorders, but mirror the eager arm defensively.
+                    if ac == 0 {
+                        self.initial_library_orders.insert(player, new_order);
+                    } else {
+                        self.push_state_sync(ac, StateSyncEntry::LibraryReorder { player, new_order });
+                    }
+                }
+                BufferedFact::SearchCandidates { searcher, cards } => {
+                    self.push_state_sync(ac, StateSyncEntry::SearchCandidates { searcher, cards });
+                }
+                BufferedFact::Choice {
+                    choice_seq,
+                    choice_indices,
+                    description,
+                    spell_ability,
+                    library_search_result,
+                    target_card_ids,
+                    .. // choice_type is wire-envelope only; the controller re-derives it
+                } => {
+                    // Keyed by choice_seq (strictly unique/monotonic per choice),
+                    // NOT ac — same-ac combat-damage choices (mtg-sfihb) share an
+                    // ac but have distinct choice_seq. See ChoiceEntry doc.
+                    self.opponent_choices.push(
+                        u64::from(choice_seq),
+                        ChoiceEntry {
+                            choice_seq,
+                            action_count: ac,
+                            choice_indices,
+                            description,
+                            spell_ability,
+                            library_search_result,
+                            target_card_ids,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
     fn push_state_sync(&mut self, action_count: u64, entry: StateSyncEntry) {
         if let Some(existing) = self.state_sync.get(action_count) {
             assert!(

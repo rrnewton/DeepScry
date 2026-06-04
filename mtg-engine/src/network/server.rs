@@ -17,8 +17,8 @@ use crate::network::lobby::{
 };
 use crate::network::memory::{check_memory_admission, current_system_memory, AdmissionVerdict};
 use crate::network::protocol::{
-    now_ms, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason, ReconnectToken,
-    RevealReason, ServerMessage, DEFAULT_LOBBY_GAME,
+    now_ms, BufferedFact, CardReveal, ChoiceType, ClientMessage, DeckListInfo, DeckSubmission, JoinFailReason,
+    ReconnectToken, RevealReason, ServerMessage, DEFAULT_LOBBY_GAME,
 };
 use crate::network::{CardRevealInfo, ChoiceRequest, ChoiceResponse, NetworkController, DEFAULT_PORT};
 use crate::zones::Zone;
@@ -2904,6 +2904,20 @@ async fn handle_player_websocket(
     // Track if we're currently waiting for a choice from the client
     let mut waiting_for_choice: Option<ChoiceRequest> = None;
 
+    // ── Minimal lazy protocol (mtg-o99ow), Phase 1 dual-emit accumulators ──
+    // Facts that arrive eagerly from the coordinator (opponent choices via
+    // `OpponentMadeChoice`, library reorders via `LibraryReordered`) since this
+    // client's last `ChoiceRequest`. They are drained into the next
+    // `ChoiceRequest`'s `buffer` (alongside the per-recipient reveals already
+    // carried on the internal `ChoiceRequest`). We accumulate the eager
+    // messages rather than re-deriving from the undo log because the coordinator
+    // is the only place the choice payload (`choice_seq` / `choice_indices` /
+    // `description`) and the new library order exist (BLOCKER 1 / BLOCKER 2).
+    // The eager messages are STILL sent (dual-emit); a buffer-aware client
+    // ignores those copies and consumes the buffer.
+    let mut pending_choice_facts: Vec<OpponentChoiceInfo> = Vec::new();
+    let mut pending_reorder_facts: Vec<(PlayerId, Vec<CardId>, u64)> = Vec::new();
+
     loop {
         tokio::select! {
             // Messages from coordinator (game state)
@@ -2979,6 +2993,23 @@ async fn handle_player_websocket(
                             }
                         }
 
+                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
+                        // assemble the single catch-up buffer carried by this
+                        // ChoiceRequest. The eager messages above/below are still
+                        // sent; a buffer-aware client consumes the buffer and
+                        // ignores the eager copies. Built under the game lock
+                        // (reveal/candidate identities need card lookups).
+                        let buffer = {
+                            let game_guard = game.lock().await;
+                            assemble_choice_buffer(
+                                &game_guard,
+                                &choice_request,
+                                conn.player_id,
+                                &pending_reorder_facts,
+                                &pending_choice_facts,
+                            )
+                        };
+
                         // Check if client already sent a choice (pending_choice)
                         if let Some(pending) = conn.pending_choice.take() {
                             log::debug!(
@@ -2999,6 +3030,9 @@ async fn handle_player_websocket(
                                 client_state_hash: pending.client_state_hash,
                                 client_debug_info: pending.client_debug_info,
                             }).await?;
+                            // Buffer not delivered on this path (no ChoiceRequest
+                            // sent); keep the accumulated facts for the next one.
+                            let _ = buffer;
                         } else {
                             // Normal case: send ChoiceRequest to client and wait
                             conn.send(&ServerMessage::ChoiceRequest {
@@ -3012,7 +3046,12 @@ async fn handle_player_websocket(
                                 context: None,
                                 debug_info: choice_request.debug_info.clone(),
                                 abilities: choice_request.abilities.clone(),
+                                buffer,
                             }).await?;
+
+                            // The accumulated facts are now delivered in the buffer.
+                            pending_reorder_facts.clear();
+                            pending_choice_facts.clear();
 
                             // Mark that we're waiting for this choice
                             waiting_for_choice = Some(*choice_request);
@@ -3024,6 +3063,12 @@ async fn handle_player_websocket(
                             "Handler P{}: Forwarding opponent choice seq={}",
                             conn.player_id, info.choice_seq
                         );
+
+                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
+                        // accumulate this opponent decision for the next
+                        // ChoiceRequest buffer. The eager OpponentChoice send
+                        // below still happens; a buffer-aware client ignores it.
+                        pending_choice_facts.push(info.clone());
 
                         // If opponent played or activated a card, send CardRevealed first
                         if let Some(ref ability) = info.spell_ability {
@@ -3137,6 +3182,14 @@ async fn handle_player_websocket(
                             "Handler P{}: Forwarding LibraryReordered for {:?} ({} cards) ac={}",
                             conn.player_id, player, new_order.len(), action_count
                         );
+
+                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
+                        // accumulate this reorder for the next ChoiceRequest
+                        // buffer (BLOCKER 2: the new order exists here, not in a
+                        // backward undo-log scan). The eager LibraryReordered
+                        // send below still happens.
+                        pending_reorder_facts.push((player, new_order.clone(), action_count));
+
                         conn.send(&ServerMessage::LibraryReordered {
                             player,
                             new_order,
@@ -3431,6 +3484,119 @@ fn build_card_reveal(game: &GameState, info: &CardRevealInfo) -> Option<CardReve
         name: card.name.to_string(),
         card_def,
     })
+}
+
+/// Assemble the minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow).
+///
+/// Collects every reveal-class + opponent-choice fact the recipient needs to
+/// replay its shadow forward to this choice point into ONE ascending-`ac`
+/// vector, each fact at its TRUE game `action_count`. This is the single
+/// catch-up payload that supersedes the eager `CardRevealed` /
+/// `LibraryReordered` / `SearchCandidates` / `OpponentChoice` message zoo.
+///
+/// Sources (the critique's BLOCKER 1 / BLOCKER 2 corrections):
+/// - **Reveals** come from `choice_request.reveals` (collected per-recipient by
+///   `collect_reveals_since_last_choice`, each at its own undo position). This
+///   INCLUDES an opponent's cast-card reveal at its own ac (K+1), so we do NOT
+///   re-emit it at the choice ac (K) — that re-emission was the dual-stamp.
+/// - **Library reorders** come from the coordinator-broadcast `reorders` (the
+///   new order only exists live, never in a backward undo-log scan — BLOCKER 2).
+/// - **Search candidates** come from `choice_request.library_search_cards`.
+/// - **Choices** come from the coordinator-retained `choices` (the `choice_seq`
+///   / `choice_indices` / `description` only exist there — BLOCKER 1). For an
+///   opponent's hidden library search we also emit a dummy `Searched` reveal at
+///   the resolution ac so the recipient's `searched_card_for` selection works.
+///
+/// `searcher` is the recipient (own-library search). The result is stably sorted
+/// by `ac` so same-`ac` `Choice` facts keep their `choice_seq` order.
+fn assemble_choice_buffer(
+    game: &GameState,
+    choice_request: &ChoiceRequest,
+    searcher: PlayerId,
+    reorders: &[(PlayerId, Vec<CardId>, u64)],
+    choices: &[OpponentChoiceInfo],
+) -> Vec<(u64, BufferedFact)> {
+    let mut buffer: Vec<(u64, BufferedFact)> = Vec::new();
+
+    // (1) Per-recipient reveals, each at its own undo-log position.
+    for info in &choice_request.reveals {
+        if let Some(card) = build_card_reveal(game, info) {
+            let reason = zone_to_reveal_reason(info.to_zone);
+            buffer.push((
+                info.action_count,
+                BufferedFact::Reveal {
+                    owner: info.owner,
+                    card,
+                    reason,
+                },
+            ));
+        }
+    }
+
+    // (2) Library-search candidates: one atomic-multi delta at the search ac.
+    if let Some(ref library_cards) = choice_request.library_search_cards {
+        let cards: Vec<CardReveal> = library_cards
+            .iter()
+            .filter_map(|&card_id| {
+                game.cards.try_get(card_id).map(|card| CardReveal {
+                    card_id,
+                    name: card.name.to_string(),
+                    card_def: game.card_definitions.get(&card.name).cloned(),
+                })
+            })
+            .collect();
+        if !cards.is_empty() {
+            buffer.push((
+                choice_request.action_count,
+                BufferedFact::SearchCandidates { searcher, cards },
+            ));
+        }
+    }
+
+    // (3) Library reorders (new order from the live coordinator broadcast).
+    for (player, new_order, ac) in reorders {
+        buffer.push((
+            *ac,
+            BufferedFact::LibraryReorder {
+                player: *player,
+                new_order: new_order.clone(),
+            },
+        ));
+    }
+
+    // (4) Opponent choices (+ dummy Searched reveal for hidden tutor results).
+    for info in choices {
+        buffer.push((
+            info.action_count,
+            BufferedFact::Choice {
+                choice_seq: info.choice_seq,
+                choice_type: info.choice_type.clone(),
+                choice_indices: info.choice_indices.clone(),
+                description: info.description.clone(),
+                spell_ability: info.spell_ability.clone(),
+                library_search_result: info.library_search_result,
+                target_card_ids: info.target_card_ids.clone(),
+            },
+        ));
+        if let Some(card_id) = info.library_search_result {
+            buffer.push((
+                info.action_count,
+                BufferedFact::Reveal {
+                    owner: info.player,
+                    card: CardReveal {
+                        card_id,
+                        name: String::new(), // hidden — opponent's own library
+                        card_def: None,
+                    },
+                    reason: RevealReason::Searched,
+                },
+            ));
+        }
+    }
+
+    // Stable sort: same-ac Choice facts keep their choice_seq emission order.
+    buffer.sort_by_key(|(ac, _)| *ac);
+    buffer
 }
 
 /// Convert a zone to the appropriate RevealReason
