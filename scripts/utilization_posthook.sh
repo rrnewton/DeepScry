@@ -168,18 +168,8 @@ if [ "$SAMPLES" -gt 0 ]; then
         echo "    Most of the time CPUs are busy"
     elif [ "$AVG_INT" -ge 50 ]; then
         echo -e "  ${YELLOW}⚠ Moderate parallelism${NC} (avg ${AVG}% utilization)"
-        echo "    There's room to improve CPU utilization"
-        echo "    Consider:"
-        echo "      - Increasing parallel test execution"
-        echo "      - Using cargo --jobs parameter"
-        echo "      - Identifying sequential bottlenecks"
     else
         echo -e "  ${RED}✗ Poor parallelism${NC} (avg ${AVG}% utilization)"
-        echo "    CPUs are underutilized - significant room for improvement"
-        echo "    Consider:"
-        echo "      - Using parallel test execution"
-        echo "      - Profiling to find sequential bottlenecks"
-        echo "      - Checking if I/O bound rather than CPU bound"
     fi
 
     # Additional insights based on distribution
