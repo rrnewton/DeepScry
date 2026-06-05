@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T19:36:16.152828398+00:00
+updated_at: 2026-06-05T19:56:20.130833389+00:00
 ---
 
 # Description
@@ -588,3 +588,6 @@ FIX DIRECTION (durable, = mtg-ho2r8 §1-2): deposit an identity-hidden reserved 
 
 ## SEED-19 (mtg-8ow9h) 2026-06-05 (slot03-lockstep): mtg-j4krs#2 DONE + divergence pinned to Fireball target choice
 WASM client now populates SubmitChoice.spell_ability (mirrors native local_controller.rs:461-484) -> server CardId cross-check (controller.rs:663-685) protects the deployed web path. No regression (robots seeds 2 + 42 still PASS with cross-check active). It does NOT crash seed19 earlier: index-OOB guard (controller.rs:650) fires first. Seed-19 divergence is AT turn 24: Fireball (118) cast, XValue(0), then the TARGET choice — WASM enumerates 3 valid targets vs server 2, sends index 2 -> rejected. ALL state hashes MATCH up to crash -> non-hashed field affects target legality. LEADING HYPOTHESIS: an animated Mishra's Factory man-land is a CREATURE on the WASM shadow but a land on the server (creature-animation continuous-effect, NOT in compute_view_hash which hashes only id+tapped+controller). mtg-0e1wo controller option-set family. NEXT: dump the 3 vs 2 target CardIds, bisect where the Factory's animated status diverged. Full writeup: ai_docs/DEEPAC_SEED7_MEMBERSHIP_CONFIRM_20260605.md (seed-19 section). TEAM-LEAD: mirror onto mtg-8ow9h (integration-only).
+
+## SEED-7 DEEPER PIN 2026-06-05 (slot03-lockstep, post fix-attempt): exact lost-move site = actions/mod.rs:4777
+Fix attempt (wire native searched_card_lookup + UseChoice fallback) had ZERO effect (byte-identical hash 9455 x3). Instrumentation proved choose_from_library_with_hook is called 0 times all game — the opponent tutor does NOT use the search-pick/UseChoice/searched_card_lookup path. Reverted (unverified+wrong path=band-aid). ACTUAL path: Demonic Tutor is a SORCERY 'SP$ ChangeZone Origin$Library Destination$Hand' -> ApiType::ChangeZone(Origin=Library) converts to Effect::SearchLibrary (effect_converter.rs:404->464) -> a Sorcery's SearchLibrary resolves via GameState::apply_effect actions/mod.rs:4777 (NOT the GameLoop choose_from_library_with_hook path). That arm does . SERVER: real instances -> found=first 'Card'-match=97 -> moved to hand. OBSERVER: opponent library cards are RESERVED (instance-less) -> try_get None -> filter never checked -> found_card=None -> NO move -> then shuffle+LibraryReordered drops 97 -> observer P1 hand 5 vs server 6. This is the mtg-725 try_get(None) nondeterminism class (engine-side, not controller). FIX (durable, NOT session-surgical): the network resolution of a Sorcery's Effect::SearchLibrary (and any hidden-library ChangeZone->Hand) must use the authoritative fetched CardId (rewind-surviving searched_card_lookup / dummy Searched reveal) instead of scanning materialized library instances, OR route through choose_from_library_with_hook like the activated-ability arm. Tree reverted clean. Full writeup: ai_docs/DEEPAC_SEED7_MEMBERSHIP_CONFIRM_20260605.md (DEEPER PIN section). Related: mtg-725, mtg-ho2r8.

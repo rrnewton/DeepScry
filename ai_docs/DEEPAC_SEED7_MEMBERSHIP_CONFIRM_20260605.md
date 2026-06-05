@@ -87,6 +87,62 @@ opponent's hand zone as a counted, identity-hidden reserved card. The dummy
 instantiation — but in doing so it drops the count/zone-membership that the hand
 move requires.
 
+## DEEPER PIN (slot03-lockstep, 2026-06-05, post fix-attempt) — exact lost-move site
+
+A first fix attempt (wire the native `searched_card_lookup` + fall back to it in
+the `UseChoice` library-search branch) had **ZERO effect** — byte-identical hash
+`9455` across three runs. Instrumentation (`SEED7_DBG`) proved why:
+**`choose_from_library_with_hook` is called ZERO times all game** (server, native,
+browser). The opponent's tutor does NOT go through the search-pick / `UseChoice` /
+`searched_card_lookup` machinery at all. That fix was reverted (unverified +
+wrong path = would have been a band-aid).
+
+Actual resolution path, pinned:
+- Demonic Tutor is a **Sorcery**: `A:SP$ ChangeZone | Origin$ Library |
+  Destination$ Hand | ChangeType$ Card` (`cardsfolder/d/demonic_tutor.txt`).
+- `ApiType::ChangeZone` with `Origin=Library` converts to **`Effect::SearchLibrary`**
+  (`effect_converter.rs:404→464`).
+- A Sorcery's `Effect::SearchLibrary` resolves from the stack via
+  **`GameState::apply_effect` → actions/mod.rs:4777**, NOT the GameLoop's
+  `choose_from_library_with_hook` (that arm, priority.rs:3859, is for
+  activated-ability/in-stack resolution; it was never hit here).
+- That arm finds the card with:
+  ```rust
+  for &card_id in &library_cards {
+      if let Some(card) = self.cards.try_get(card_id) {        // ← reserved ⇒ None
+          if Self::card_matches_search_filter(card, filter) { found_card = Some(card_id); break; }
+      }
+  }
+  if let Some(card_id) = found_card { self.move_card(card_id, Library, dest, player)?; }
+  if shuffle { self.shuffle_library(player); }
+  ```
+- On the SERVER the opponent's library cards are real instances → `found_card =
+  first "Card"-matching card` (= 97) → moved to hand. On the OBSERVER the
+  opponent's library cards are **reserved (instance-less)** → `try_get` returns
+  None → the filter is never checked → **`found_card = None` → no move** → then
+  `shuffle_library` reorders, and the subsequent server `LibraryReordered`
+  overwrites to the post-fetch order → **97 is silently dropped**. Observer P1
+  hand stays 5; server 6.
+
+**This is the mtg-725 `try_get(None)` nondeterminism class**: a control-flow
+branch on whether a reserved opponent card is materialized. The non-interactive
+`Effect::SearchLibrary` resolution is information-DEPENDENT (it reads opponent
+library card identities that the observer's shadow does not have), violating the
+controller-information-independence invariant — but here it is the ENGINE
+resolution, not a controller.
+
+### Correct fix direction (durable — confirmed rearchitecture, NOT session-surgical)
+The network resolution of a Sorcery's `Effect::SearchLibrary` (and any
+hidden-library ChangeZone→Hand) must use the **authoritative fetched CardId**
+(the rewind-surviving `searched_card_lookup` / dummy `Searched` reveal) instead
+of re-deriving `found_card` by scanning materialized library instances — OR route
+the resolution through `choose_from_library_with_hook` like the activated-ability
+path does. Either way it must materialize the reserved opponent card into the
+hand as a counted, identity-hidden slot and survive rewind/replay. Touching the
+`GameState::apply_effect` SearchLibrary arm to be network-shadow-aware is the
+core of the mtg-ho2r8 / mtg-725 work and was correctly NOT band-aided this
+session.
+
 ## Fix direction (durable, mtg-ho2r8 §1-2 — NOT a session-surgical patch)
 
 Carry the opponent search-to-hand as a counted hand-membership delta on the
