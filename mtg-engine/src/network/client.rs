@@ -324,17 +324,30 @@ pub struct PendingLibraryReorder {
 /// docs/NETWORK_ACTION_LOG.md § 3.3).
 #[derive(Default)]
 struct StateSyncBuffer {
-    /// Append-only, **server-`action_count`-indexed** shadow state-sync log.
-    /// Shared primitive (`crate::network::ActionLog<StateSyncEntry>`),
-    /// identical to the WASM client's `state_sync` field.
+    /// Append-only, **server-`action_count`-indexed** shadow LIBRARY-REORDER log.
     ///
-    /// mtg-o99ow native buffer shim: entries are now keyed by the TRUE game
-    /// `action_count` the server stamped (carried in the `ChoiceRequest`
-    /// buffer), inserted out-of-order-tolerant via `insert_sorted` — NOT the
-    /// old synthetic monotonic counter. This is what aligns the native shadow
-    /// reveal application with game position (the WASM model) and removes the
-    /// multi-message arrival race that caused the equiv-zero desync.
-    log: ActionLog<StateSyncEntry>,
+    /// mtg-o99ow native buffer shim: SPLIT from the reveal log (was one shared
+    /// `ActionLog<StateSyncEntry>`). The split is load-bearing: a `LibraryReorder`
+    /// and a `RevealCard` can legitimately carry the SAME game `action_count` — the
+    /// server stamps a shuffle's reorder at the post-shuffle undo position
+    /// (`state.rs` shuffle path: `undo_log.len()` after the `ShuffleLibrary`)
+    /// while reveals are stamped at their OWN undo index (`forward_idx` in
+    /// `collect_reveals_since_last_choice`), two numbering schemes that COINCIDE
+    /// on a shuffle-then-draw resolution (Timetwister / Wheel / Windfall). They
+    /// are INDEPENDENT deltas (different player / zone) that both must apply
+    /// (reorder first, then reveal) — exactly what the old synthetic-keyed native
+    /// path did. Keeping them in ONE ac-keyed log made the second arrival look
+    /// like "two distinct deltas share an ac" and (correctly, for SAME-type
+    /// deltas) aborted as fatal. Two logs restore the real invariant: distinct ac
+    /// per SAME-TYPE delta; a reorder and a reveal may share an ac. Each log keeps
+    /// `insert_sorted` (out-of-order tolerant, dedups idempotent same-delta
+    /// re-sends, fatal on a DIFFERING same-type delta at one ac).
+    reorder_log: ActionLog<StateSyncEntry>,
+    /// Append-only, server-`action_count`-indexed shadow REVEAL log
+    /// (`RevealCard` + `SearchCandidates`). See `reorder_log` for why the two are
+    /// split. This is the native analogue of the WASM client's `state_sync` field
+    /// for the reveal-class deltas.
+    reveal_log: ActionLog<StateSyncEntry>,
     /// Cursor for **LibraryReorder** entries — POSITIONAL: a reorder at game ac
     /// K is applied only once the shadow's own `action_count` has reached K
     /// (bounded by `target_action`). This is load-bearing: a library reorder is
@@ -656,13 +669,27 @@ impl SharedNetworkState {
     /// `apply_choice_buffer` (the authoritative buffer route).
     fn push_state_sync_at(&self, action_count: u64, entry: StateSyncEntry) {
         let mut buf = self.state_sync.lock().unwrap();
-        if let Some(existing) = buf.log.get(action_count) {
+        // Route by delta CLASS into its own log (reorders vs reveals may share an
+        // ac — see the `reorder_log` doc). Same-type collision rules are unchanged:
+        // idempotent same-delta re-send = drop; DIFFERING same-type delta @ one ac
+        // = fatal; new delta behind its class cursor = lost = fatal.
+        let is_reorder = matches!(entry, StateSyncEntry::LibraryReorder { .. });
+        let class_cursor = if is_reorder {
+            buf.last_applied_reorder_ac
+        } else {
+            buf.last_applied_reveal_ac
+        };
+        let log = if is_reorder {
+            &mut buf.reorder_log
+        } else {
+            &mut buf.reveal_log
+        };
+        if let Some(existing) = log.get(action_count) {
             assert!(
                 state_sync_entries_equivalent(existing, &entry),
-                "push_state_sync_at: two DIFFERENT state-sync deltas share game ac={} \
-                 (existing={:?}, new={:?}). A game ac is the unique undo-log position \
-                 of one action, so distinct deltas cannot share it — this is a \
-                 protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                "push_state_sync_at: two DIFFERENT same-class state-sync deltas share game ac={} \
+                 (existing={:?}, new={:?}). Two same-type deltas cannot share an undo-log \
+                 position — this is a protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
                 action_count,
                 existing,
                 entry,
@@ -670,12 +697,6 @@ impl SharedNetworkState {
             // Benign idempotent dual-emit re-send; already logged. Drop it.
             return;
         }
-        // A NEW delta must not arrive behind the cursor of its OWN apply class
-        // (reorders and reveals advance independently — see the two cursors).
-        let class_cursor = match entry {
-            StateSyncEntry::LibraryReorder { .. } => buf.last_applied_reorder_ac,
-            StateSyncEntry::RevealCard { .. } | StateSyncEntry::SearchCandidates { .. } => buf.last_applied_reveal_ac,
-        };
         assert!(
             action_count >= class_cursor,
             "push_state_sync_at: a NEW state-sync delta arrived at ac={} but the apply \
@@ -685,7 +706,7 @@ impl SharedNetworkState {
             action_count,
             class_cursor,
         );
-        buf.log.insert_sorted(action_count, entry);
+        log.insert_sorted(action_count, entry);
         drop(buf);
         self.state_sync_notify.notify_all();
     }
@@ -879,47 +900,40 @@ impl SharedNetworkState {
             buf.initial_library_applied = true;
         }
 
-        let frontier = match buf.log.frontier() {
-            Some(f) => f,
-            None => return 0,
-        };
         let watermark = self.max_received_choice_ac();
 
-        // Two independently-bounded passes (see the cursor field docs):
+        // Two independently-bounded passes over SEPARATE logs (see the cursor +
+        // reorder_log field docs):
         //
         // Pass 1 — REORDERS, POSITIONAL: bound by target_action (the shadow's own
-        //   action_count) ∧ frontier. A shuffle's new library order must NOT be
-        //   adopted before the shadow has replayed the actions at earlier acs
-        //   (e.g. an opponent's cycling fetch that pulls a card OUT of the
+        //   action_count) ∧ reorder frontier. A shuffle's new library order must
+        //   NOT be adopted before the shadow has replayed the actions at earlier
+        //   acs (e.g. an opponent's cycling fetch that pulls a card OUT of the
         //   pre-shuffle library). Applying it early makes the fetched card vanish
         //   from the shadow's library → the search finds nothing → desync.
         // Pass 2 — REVEALS, EAGER: bound by the reveal-history-complete watermark
-        //   (latest received choice ac) ∧ frontier — applied AHEAD of the shadow's
-        //   position so the shadow can replay opponent plays whose cards must be
-        //   instantiated first (else "Entity not found"). Reveals are identity
-        //   injections (library-order independent), so applying them early is safe,
-        //   and the in-order buffer makes it race-free.
-        let reorder_bound = target_action.min(frontier);
-        let reveal_bound = watermark.min(frontier);
+        //   (latest received choice ac) ∧ reveal frontier — applied AHEAD of the
+        //   shadow's position so the shadow can replay opponent plays whose cards
+        //   must be instantiated first (else "Entity not found"). Reveals are
+        //   identity injections (library-order independent), so applying them
+        //   early is safe, and the in-order buffer makes it race-free.
+        let reorder_bound = target_action.min(buf.reorder_log.frontier().unwrap_or(0));
+        let reveal_bound = watermark.min(buf.reveal_log.frontier().unwrap_or(0));
 
         // Snapshot each pass's window (clone to release the lock before mutating
         // `game`; the WS reader must stay able to append while we apply).
         let reorder_cursor = buf.last_applied_reorder_ac;
         let reveal_cursor = buf.last_applied_reveal_ac;
         let reorders: Vec<(u64, StateSyncEntry)> = buf
-            .log
+            .reorder_log
             .iter()
-            .filter(|(ac, e)| {
-                *ac > reorder_cursor && *ac <= reorder_bound && matches!(e, StateSyncEntry::LibraryReorder { .. })
-            })
+            .filter(|(ac, _)| *ac > reorder_cursor && *ac <= reorder_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         let reveals: Vec<(u64, StateSyncEntry)> = buf
-            .log
+            .reveal_log
             .iter()
-            .filter(|(ac, e)| {
-                *ac > reveal_cursor && *ac <= reveal_bound && !matches!(e, StateSyncEntry::LibraryReorder { .. })
-            })
+            .filter(|(ac, _)| *ac > reveal_cursor && *ac <= reveal_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
         if reorders.is_empty() && reveals.is_empty() {
@@ -1006,13 +1020,19 @@ impl SharedNetworkState {
     /// Returns `true` if the frontier reached `count`, `false` if the wait
     /// was released by a terminal disconnect first.
     pub fn wait_for_state_sync_frontier(&self, count: u64) -> bool {
+        let frontier = |buf: &StateSyncBuffer| {
+            buf.reorder_log
+                .frontier()
+                .unwrap_or(0)
+                .max(buf.reveal_log.frontier().unwrap_or(0))
+        };
         let mut buf = self.state_sync.lock().unwrap();
         loop {
-            if buf.log.frontier().unwrap_or(0) >= count {
+            if frontier(&buf) >= count {
                 return true;
             }
             if self.terminal.load(std::sync::atomic::Ordering::Acquire) {
-                return buf.log.frontier().unwrap_or(0) >= count;
+                return frontier(&buf) >= count;
             }
             buf = self.state_sync_notify.wait(buf).unwrap();
         }
@@ -2904,6 +2924,69 @@ fn build_insecure_rustls_config() -> rustls::ClientConfig {
 mod tests {
     use super::*;
     use crate::loader::DeckEntry;
+
+    // ── mtg-o99ow native buffer shim: state-sync log collision invariants ──
+    //
+    // CORRECTED INVARIANT (team-lead, audit 20260604): two SAME-CLASS deltas must
+    // never share a game ac (reveal-reveal, reorder-reorder = FATAL); CROSS-class
+    // (a LibraryReorder + a RevealCard) MAY coincide — on shuffle-then-draw
+    // (Timetwister/Wheel/Windfall) the shuffle's reorder is stamped at the
+    // post-shuffle undo position while a draw-reveal is stamped at its own undo
+    // index, two schemes that legitimately collide. They are independent deltas
+    // applied in separate passes (reorder first), so they live in separate logs.
+
+    fn reveal_entry(card_id: u32, name: &str) -> StateSyncEntry {
+        StateSyncEntry::RevealCard {
+            owner: PlayerId::new(0),
+            card: Box::new(CardReveal {
+                card_id: CardId::new(card_id),
+                name: name.to_string(),
+                card_def: None,
+            }),
+            reason: RevealReason::Draw,
+        }
+    }
+
+    /// LOAD-BEARING: a genuine REVEAL-REVEAL dual-stamp (two DISTINCT reveals at
+    /// one ac — the ORIGINAL desync class this whole effort exists to catch) MUST
+    /// still be fatal. The reorder_log/reveal_log split relaxed ONLY reorder-vs-
+    /// reveal; reveal-vs-reveal stays strict (per-log insert_sorted + equivalence).
+    #[test]
+    #[should_panic(expected = "two DIFFERENT same-class state-sync deltas share game ac")]
+    fn reveal_vs_reveal_distinct_at_same_ac_is_fatal() {
+        let shared = SharedNetworkState::new();
+        shared.push_state_sync_at(7, reveal_entry(100, "Mountain"));
+        // A DIFFERENT reveal (different card_id/name) at the SAME ac = desync.
+        shared.push_state_sync_at(7, reveal_entry(200, "Island"));
+    }
+
+    /// A reorder and a reveal at the SAME ac coexist (cross-class is fine) — both
+    /// land in their own log; neither is dropped or treated as a collision.
+    #[test]
+    fn reorder_and_reveal_may_share_ac() {
+        let shared = SharedNetworkState::new();
+        shared.push_state_sync_at(7, reveal_entry(100, "Mountain"));
+        shared.push_state_sync_at(
+            7,
+            StateSyncEntry::LibraryReorder {
+                player: PlayerId::new(1),
+                new_order: vec![CardId::new(1), CardId::new(2)],
+            },
+        );
+        let buf = shared.state_sync.lock().unwrap();
+        assert!(buf.reveal_log.get(7).is_some(), "reveal must be logged at ac=7");
+        assert!(buf.reorder_log.get(7).is_some(), "reorder must coexist at ac=7");
+    }
+
+    /// An idempotent same-delta re-send at one ac is benignly dropped (not fatal).
+    #[test]
+    fn reveal_idempotent_resend_is_dropped() {
+        let shared = SharedNetworkState::new();
+        shared.push_state_sync_at(7, reveal_entry(100, "Mountain"));
+        shared.push_state_sync_at(7, reveal_entry(100, "Mountain")); // same delta, no panic
+        let buf = shared.state_sync.lock().unwrap();
+        assert!(buf.reveal_log.get(7).is_some());
+    }
 
     #[test]
     fn test_client_config() {
