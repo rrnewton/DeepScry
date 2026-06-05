@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T18:37:02.826575598+00:00
+updated_at: 2026-06-05T19:01:46.945091373+00:00
 ---
 
 # Description
@@ -561,3 +561,15 @@ actions) has been applied → short by the tutored card (hand -1) and short by t
 NOT the tapped/controller re-materialization class. Principled fix = reveal-actionlog
 unification (mtg-ho2r8): drive search-to-hand through the action_count-keyed consensus
 log so the shadow applies it in lockstep before the resolution sync.
+
+── seed-7 DECISIVE reframe (slot03-blockers, server+shadow undo diff @4d4467fe) ──
+CORRECTION to the "reveal lag" note above: captured the SERVER undo log (--undo-dump)
+and diffed vs the shadow's — they are BYTE-IDENTICAL through ac 1339 (same Demonic
+Tutor fetch 97->P1 hand, same Plains-82 land play, same order). seed 7 is NOT an
+action-sequence divergence (refutes slot04's "real state divergence"). The fatal
+'P1 hand 6 vs 5' is a choice_seq<->action_count STAMPING SKEW: server validates
+choice_seq=230 at ac 1341, client hashed at ac 1339, straddling [1337] MoveCard(82
+Hand->Battlefield) (the land play that drops hand 6->5). Hand size is hashed
+independent of action_count → fatals even prize-OFF. = the in-stack LOCKSTEP/
+choice-hash-timing half of mtg-ho2r8 (make both replicas hash a given choice_seq at
+the same ac), NOT a missing-delta. Full: ai_docs/DEEPAC_BLOCKERS_CHECKPOINT_20260605.md.
