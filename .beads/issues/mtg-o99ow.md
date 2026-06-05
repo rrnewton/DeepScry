@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T18:26:11.455643896+00:00
+updated_at: 2026-06-05T18:37:02.826575598+00:00
 ---
 
 # Description
@@ -548,3 +548,16 @@ STILL BLOCKING THE PRIZE (checkpointed):
    WebRandom Fireball cast turn 24 — option-set/state divergence (mtg-0e1wo family).
  - mtg-j4krs #2 (WASM spell_ability populate): deferred (crash-earlier guard).
 Prize (eb8f938e) re-applies only after ALL of 2,5,6,7,9,11,18,19,20,42 converge strict.
+
+── seed-7 root-cause TIGHTENED (slot03-blockers, read-only analysis @bcec4890) ──
+Full diagnosis: ai_docs/DEEPAC_BLOCKERS_CHECKPOINT_20260605.md. Wheel-of-Fortune
+redraw is IDENTICAL server vs client (both WebRandom draw 7: ids 82,91,90,79,105,96,86;
+discards Copy Artifact+Su-Chi match) → NOT the divergence. The split is during DEMONIC
+TUTOR (105) search-to-hand: at choice_seq=230 the engine logs 'action_count mismatch
+client=1339 server=1341 (diff=2)' AND hand 5(client) vs 6(server). The shadow reaches
+the tutor-resolution sync point BEFORE the search-result's library→hand move (+ its undo
+actions) has been applied → short by the tutored card (hand -1) and short by the move
+(ac -2). Deep-ac in-stack-resolution reveal-application LAG (mtg-o99ow/mtg-559 family),
+NOT the tapped/controller re-materialization class. Principled fix = reveal-actionlog
+unification (mtg-ho2r8): drive search-to-hand through the action_count-keyed consensus
+log so the shadow applies it in lockstep before the resolution sync.
