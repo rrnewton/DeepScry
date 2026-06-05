@@ -417,7 +417,13 @@ async function runTest() {
                 .map(l => l.text)
                 .filter(t => t.includes('WASM_CARD_DETAIL') || t.includes('WASM_SUBMIT'));
             const cardDetailPath = path.join(debugDumpDir, `${stamp}_card_detail.log`);
-            const serverMismatchBox = (serverRawStderr.match(/NETWORK SYNC MISMATCH DETECTED[\s\S]*?DIFFERENCES:[\s\S]*?╚/g) || [])
+            // mtg-559 deep-ac: the WASM client currently sends debug_info=None, so the
+            // server's "DIFFERENCES:" comparison section is suppressed. Capture the box
+            // up to its closing ╝ regardless (the "SERVER STATE:" block with
+            // battlefield_detail / graveyard_ids / life / hands / libs is printed even
+            // when the client side is None) so the server-vs-client field diff can be
+            // done by hand against the WASM_CARD_DETAIL lines above.
+            const serverMismatchBox = (serverRawStderr.match(/NETWORK SYNC MISMATCH DETECTED[\s\S]*?╚[^\n]*/g) || [])
                 .join('\n\n========\n\n');
             fs.writeFileSync(
                 cardDetailPath,
@@ -425,6 +431,18 @@ async function runTest() {
                 (wasmCardDetail.join('\n') || '(no WASM_CARD_DETAIL captured)') +
                 `\n\n=== SERVER mismatch box (real server detail) ===\n` +
                 (serverMismatchBox || '(no server mismatch box captured)') + '\n'
+            );
+            // mtg-559 deep-ac: also persist the COMPLETE raw server stderr (gitignored
+            // debug dir) so nothing is lost to regex assumptions while diagnosing.
+            fs.writeFileSync(
+                path.join(debugDumpDir, `${stamp}_server_stderr_full.log`),
+                serverRawStderr || '(empty)\n'
+            );
+            // DEEPAC_PROBE (temporary): dump WASM-shadow probe lines from the browser console.
+            const deepacWasm = browserLogs.map(l => l.text).filter(t => t.includes('DEEPAC_'));
+            fs.writeFileSync(
+                path.join(debugDumpDir, `${stamp}_deepac_wasm.log`),
+                deepacWasm.join('\n') || '(no DEEPAC_ wasm lines)\n'
             );
             log(`\nmtg-610 full undo-log dumps written:`);
             log(`  WASM  : ${wasmPath} (${wasmDumps.length} block(s))`);
