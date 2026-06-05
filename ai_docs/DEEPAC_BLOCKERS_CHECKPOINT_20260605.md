@@ -73,26 +73,40 @@ and the server mismatch box at the fatal. Refines the hypothesis above:
   `[1333] ShuffleLibrary(P1 36)`, `[1334] MoveCard(105 Stack→Graveyard)` — i.e. the
   search-to-hand move IS present on the shadow. So the earlier "move not applied"
   framing is WRONG.
-- **Real mechanism = the shadow RAN AHEAD past the server's validation point.** Right
-  after the tutor it continued into P1's next priority and its local controller
-  speculatively executed **PlayLand(82)**: `[1335] Choice(PlayLand 82)`,
-  `[1336] RevealCard(82)`, `[1337] MoveCard(82 Hand→Battlefield)` — dropping P1 hand
-  6→5. Meanwhile the server validates `choice_seq=230` at `action_count=1341` where the
-  land has NOT been played yet (hand=6). The reported `action_count mismatch
-  client=1339 server=1341 (diff=2)` is this misalignment: the shadow's per-choice hash
-  is computed at a state one P1-action AHEAD of the server's validation ac.
-- **Root class:** the shadow's choice-point / ac bookkeeping is not held in lockstep
-  with the server's per-choice validation across an in-stack resolution that flows
-  directly into the local player's next land/main-phase action. The shadow must compute
-  and submit its view hash at exactly the server's validation ac (before the speculative
-  next action), OR the next action must not advance shadow state until the server's
-  sync for the current ac lands. This is the in-stack **lockstep** half of mtg-ho2r8,
-  NOT the missing-delta half (which the design doc §1-2 covers for opponent reveals).
+- **Around the boundary the shadow also processes P1's next main-phase land play:**
+  `[1335] Choice(PlayLand 82)`, `[1336] RevealCard(82)`,
+  `[1337] MoveCard(82 Hand→Battlefield)`, `[1339] LandsPlayed(P1=1)` (dump seq=242,
+  local_ac=1340). So the in-stack tutor resolution flows DIRECTLY into the local
+  player's next land/main-phase action with no intervening barrier.
 
-**Assessment:** this is the netarch in-stack lockstep rearchitecture (spans
+**What is DEFINITIVE vs what still needs one more capture:**
+- DEFINITIVE: at the fatal, only P1 hand SIZE differs (6 server / 5 client); everything
+  else (P1 lib 36 sorted-identical, bf 16 identical, P0 hand, graveyards) matches. The
+  controller logs `action_count mismatch client=1339 server=1341 (diff=2)` — the client
+  is **2 actions BEHIND** the server's validation ac and **1 card short** in P1's hand.
+- NOT yet pinned (blocked on a missing capture): exactly WHICH 2 server actions the
+  client lacks, and which card is the hand difference. The shadow's own undo log shows
+  it applied BOTH the tutor fetch (97→hand) and the land play (82 out), so the
+  reconciliation requires the **server-side** undo log at the same ac — and
+  `--network-debug` does NOT capture it (`..seed7_server_undo.log` is header-only,
+  "no SERVER full-undo dumps captured"). The client-behind-by-2 + hand-short-by-1
+  direction is consistent with the in-stack reveal/move LAG (the shadow has not yet
+  applied a server-authoritative `RevealCard`+`MoveCard(→P1 hand)` pair at the
+  validation ac), but proving it needs the server dump.
+
+**NEXT DIAGNOSTIC STEP (do this first):** add a server-side full-undo dump to
+`--network-debug` (mirror the WASM `WASM_FULL_UNDO_DUMP` at the coordinator/handler so
+`..seed7_server_undo.log` is populated), re-run seed 7 strict, and diff the server vs
+shadow undo logs at ac 1339–1341 to name the exact 2 missing actions + the missing card.
+THEN decide the fix.
+
+**Root class & assessment:** the shadow's choice-point/ac bookkeeping is not held in
+lockstep with the server's per-choice validation across an in-stack resolution that flows
+directly into the local player's next main-phase action — the in-stack **lockstep** half
+of mtg-ho2r8 (NOT the missing-opponent-delta half the design doc §1-2 covers). It spans
 `network/server.rs` choice_seq/ac stamping + `wasm/network/client.rs` apply/advance
-cursors + the fancy_tui sync loop). It is NOT a one-session surgical patch and must not
-be band-aided. Handed off at this precise pin.
+cursors + the fancy_tui sync loop = netarch rearchitecture, NOT a one-session surgical
+patch. Handed off at this pin; do not band-aid.
 
 ## STILL BLOCKING — seed 19: Fireball option-set divergence (mtg-8ow9h)
 
