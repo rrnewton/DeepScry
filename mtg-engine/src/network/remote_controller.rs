@@ -6,8 +6,7 @@
 //!
 //! With the MVar architecture:
 //! - Returns `ControllerType::Remote` to identify this as a remote player
-//! - In MVar mode: Reads OpponentChoice from SharedNetworkState
-//! - In legacy mode: Panics (pre-choice hook should intercept)
+//! - Reads OpponentChoice from SharedNetworkState
 //!
 //! The network reader task populates the MVar with OpponentChoice,
 //! and this controller reads from it when a choice method is called.
@@ -31,10 +30,6 @@ struct CachedOpponentChoice {
 
 /// A controller that represents the remote opponent.
 ///
-/// Supports two modes:
-/// - MVar: Reads OpponentChoice from SharedNetworkState
-/// - Legacy: Panics (pre-choice hook should intercept)
-///
 /// ## Network Sync Protocol (prepare_for_priority_choice)
 ///
 /// Like NetworkLocalController, this controller implements a two-phase protocol:
@@ -44,8 +39,8 @@ struct CachedOpponentChoice {
 /// 4. choose_spell_ability_to_play() uses cached choice (doesn't block again)
 pub struct RemoteController {
     player_id: PlayerId,
-    /// Shared network state (MVar architecture) - if set, reads choices from MVar
-    shared_state: Option<Arc<SharedNetworkState>>,
+    /// Shared network state: the opponent-choice cursor buffer this controller replays from.
+    shared_state: Arc<SharedNetworkState>,
     /// Last library search result from server, consumed by take_library_search_result.
     /// Stored here so the game loop can retrieve the authoritative CardId after
     /// choose_from_library returns an index into an empty valid_cards list.
@@ -55,21 +50,11 @@ pub struct RemoteController {
 }
 
 impl RemoteController {
-    /// Create a new remote controller for the given player (legacy mode)
-    pub fn new(player_id: PlayerId) -> Self {
-        Self {
-            player_id,
-            shared_state: None,
-            last_library_search_result: None,
-            pending_choice: None,
-        }
-    }
-
-    /// Create a new remote controller with shared state (MVar mode)
+    /// Create a new remote controller with shared state.
     pub fn new_with_shared_state(player_id: PlayerId, shared_state: Arc<SharedNetworkState>) -> Self {
         Self {
             player_id,
-            shared_state: Some(shared_state),
+            shared_state,
             last_library_search_result: None,
             pending_choice: None,
         }
@@ -91,15 +76,10 @@ impl RemoteController {
             return true;
         }
 
-        // Only relevant for shared-state (network) mode
-        let Some(ref state) = self.shared_state else {
-            return true; // Legacy mode always proceeds
-        };
-
         // Block (NO timeout) for the next unconsumed opponent choice in the
         // choice buffer (mtg-629 step 3b). Returns None only on terminal
         // disconnect (game ended / fatal error).
-        match state.take_opponent_choice() {
+        match self.shared_state.take_opponent_choice() {
             Some(entry) => {
                 log::debug!(
                     "RemoteController::prepare_choice_info: got OpponentChoice seq={} action={} indices={:?}",
@@ -126,8 +106,6 @@ impl RemoteController {
     /// Get opponent's choice from MVar with action count validation
     ///
     /// Uses cached value from prepare_choice_info() if available.
-    /// In MVar mode: Takes OpponentChoice from remote_choice_mvar (blocking if needed)
-    /// In legacy mode: Panics (this shouldn't be called)
     ///
     /// The `expected_action` parameter is used for validation in network mode.
     /// If the choice's action_count doesn't match, this indicates a sync issue.
@@ -194,46 +172,39 @@ impl RemoteController {
             ));
         }
 
-        if let Some(ref state) = self.shared_state {
-            // Network mode: read the next unconsumed opponent choice from the
-            // buffer (mtg-629 step 3b), keyed by choice_seq, non-destructive.
-            match state.take_opponent_choice() {
-                Some(entry) => {
-                    // Validate action count ordering
-                    if entry.action_count != expected_action {
-                        log::warn!(
-                            "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
-                            expected_action,
-                            entry.action_count,
-                            entry.choice_indices
-                        );
-                        // Continue anyway - server is authoritative, but log the discrepancy
-                    }
-                    log::debug!(
-                        "RemoteController: got OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?}",
-                        entry.choice_seq,
-                        entry.choice_indices,
+        // Read the next unconsumed opponent choice from the buffer (mtg-629
+        // step 3b), keyed by choice_seq, non-destructive.
+        match self.shared_state.take_opponent_choice() {
+            Some(entry) => {
+                // Validate action count ordering
+                if entry.action_count != expected_action {
+                    log::warn!(
+                        "RemoteController: action count mismatch! expected={}, got={}, indices={:?}",
+                        expected_action,
                         entry.action_count,
-                        entry.library_search_result,
-                        entry.target_card_ids
+                        entry.choice_indices
                     );
-                    ChoiceResult::Ok((
-                        entry.choice_indices,
-                        entry.spell_ability,
-                        entry.library_search_result,
-                        entry.target_card_ids,
-                    ))
+                    // Continue anyway - server is authoritative, but log the discrepancy
                 }
-                None => {
-                    log::debug!("RemoteController: opponent-choice buffer signaled exit");
-                    ChoiceResult::ExitGame
-                }
+                log::debug!(
+                    "RemoteController: got OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?}",
+                    entry.choice_seq,
+                    entry.choice_indices,
+                    entry.action_count,
+                    entry.library_search_result,
+                    entry.target_card_ids
+                );
+                ChoiceResult::Ok((
+                    entry.choice_indices,
+                    entry.spell_ability,
+                    entry.library_search_result,
+                    entry.target_card_ids,
+                ))
             }
-        } else {
-            panic!(
-                "RemoteController choice method called in legacy mode! \
-                 This should never happen - the pre-choice hook should intercept remote player choices."
-            );
+            None => {
+                log::debug!("RemoteController: opponent-choice buffer signaled exit");
+                ChoiceResult::ExitGame
+            }
         }
     }
 }

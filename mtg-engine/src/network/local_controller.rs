@@ -379,22 +379,6 @@ impl<C: PlayerController> NetworkLocalController<C> {
             (None, None)
         }
     }
-
-    /// Helper to wrap a choice result and send to server (legacy mode)
-    #[allow(dead_code)]
-    fn handle_choice<T>(
-        &self,
-        view: &GameStateView,
-        choice_seq: u32,
-        result: ChoiceResult<T>,
-        indices: Vec<usize>,
-    ) -> ChoiceResult<T> {
-        if let ChoiceResult::Ok(_) = &result {
-            let (hash, debug) = self.get_debug_fields(view);
-            self.send_choice(choice_seq, indices, view.action_count() as u64, hash, debug, None, None);
-        }
-        result
-    }
 }
 
 impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
