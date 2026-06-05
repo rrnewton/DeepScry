@@ -4,10 +4,49 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T00:15:50.886627198+00:00
+updated_at: 2026-06-05T01:03:46.557195394+00:00
 ---
 
 # Description
+
+## LOCKSTEP-ORACLE HANG FIXED 2026-06-04 (slot02-build) @63a1cfdb — reorder_log/reveal_log split + CORRECTED INVARIANT
+
+`make validate` HUNG (not failed) on netarch_lockstep_oracle_e2e class-A seeds.
+NOT a deadlock — a PANIC (hangs the spawned shadow thread). On a
+shuffle-then-draw resolution (Timetwister/Wheel/Windfall) a LibraryReorder and a
+RevealCard legitimately carry the SAME game action_count: the server stamps a
+shuffle's reorder at the POST-shuffle undo position (state.rs:835,
+`undo_log.len()` after ShuffleLibrary) while reveals are stamped at their OWN
+undo index (controller.rs:577 `forward_idx`) — two schemes that coincide there.
+The old synthetic-keyed native client used private keys so it never noticed; my
+true-ac keying put both in one ac-keyed log → the second tripped the
+"two distinct deltas share an ac = FATAL" assert.
+
+**CORRECTED INVARIANT (corrects ai_docs/NETARCH_reveal_ac_collision_audit_20260604.md):**
+two SAME-CLASS deltas never share an ac (reveal-reveal, reorder-reorder = FATAL —
+the original dual-stamp desync class); a CROSS-class reorder + reveal MAY
+coincide (independent deltas, applied in separate passes reorder-first). The
+audit's "Reveal/SearchCandidates/LibraryReorder never share an ac" was
+over-strict. **Matters for the WASM re-enable**: the WASM client still uses ONE
+state_sync log (src/wasm/network/client.rs) and would hit the SAME panic on
+Timetwister — it needs the same reorder/reveal split before WASM network is
+re-enabled.
+
+FIX: split native StateSyncBuffer `log` → `reorder_log` + `reveal_log` (the
+shadow already applies them in separate passes with separate cursors). Each log
+keeps STRICT per-class insert_sorted (idempotent re-send dropped; DIFFERING
+same-class delta @ one ac FATAL; lost-behind-cursor FATAL). Both apply
+reorder-first = old working behaviour. No server change, no paper-over.
+
+LOAD-BEARING VERIFICATION (team-lead): relaxation did NOT weaken the original
+class. New unit tests (network::client::tests): reveal_vs_reveal_distinct_at_
+same_ac_is_fatal (#[should_panic]), reorder_and_reveal_may_share_ac,
+reveal_idempotent_resend_is_dropped — all PASS.
+
+GATE GREEN (isolated systemd-run --user --scope, mtime-fresh): lockstep oracle
+class_a_seed_02 (was hanging) + control_seed_03 + FULL 13-seed sweep (342s);
+equiv-zero seed3 4/4; cycle315; robots42; 3 new unit tests. Full make validate
+re-run pending (prior "nextest timeout @5.2% CPU" was THIS hang, not contention).
 
 ## TASK 1 + TASK 2 DONE + GREEN 2026-06-04 (slot02-build) — native buffer shim landed; eager opponent-choice deleted
 
