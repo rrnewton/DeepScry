@@ -579,6 +579,17 @@ pub fn build_debug_sync_info(
         view.player_library(p1).iter().map(|id| id.as_u32()).collect(),
         view.player_library(p2).iter().map(|id| id.as_u32()).collect(),
     ];
+    // Both players' KNOWN hand CardIds (sorted) — for the mtg-ho2r8 seed-7
+    // membership confirm: a hand-SIZE-only divergence with every public zone
+    // byte-identical is either a lost card (these differ by exactly that card)
+    // or a pure stamping skew (these are identical).
+    let hand_ids = {
+        let mut h0: Vec<u32> = view.player_hand(p1).iter().map(|id| id.as_u32()).collect();
+        let mut h1: Vec<u32> = view.player_hand(p2).iter().map(|id| id.as_u32()).collect();
+        h0.sort_unstable();
+        h1.sort_unstable();
+        [h0, h1]
+    };
 
     DebugSyncInfo {
         turn: view.turn_number(),
@@ -603,6 +614,7 @@ pub fn build_debug_sync_info(
         battlefield_detail,
         graveyard_ids,
         library_ids,
+        hand_ids,
     }
 }
 

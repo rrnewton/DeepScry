@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T19:01:46.945091373+00:00
+updated_at: 2026-06-05T19:26:51.970215293+00:00
 ---
 
 # Description
@@ -573,3 +573,15 @@ Hand->Battlefield) (the land play that drops hand 6->5). Hand size is hashed
 independent of action_count → fatals even prize-OFF. = the in-stack LOCKSTEP/
 choice-hash-timing half of mtg-ho2r8 (make both replicas hash a given choice_seq at
 the same ac), NOT a missing-delta. Full: ai_docs/DEEPAC_BLOCKERS_CHECKPOINT_20260605.md.
+
+## SEED-7 DECISIVE RE-DIAGNOSIS 2026-06-05 (slot03-lockstep) — corrects prior 'stamping skew' reframe; this is missing-opponent-delta (mtg-ho2r8 §1-2)
+
+Fresh mtime-fresh maximally-strict instrumented repro (03_robots_jesseisbak.dck seed 7, --undo-dump) with a NEW both-players hand-CardId dump (DebugSyncInfo.hand_ids + WASM_CARD_DETAIL hand0/hand1) NAMED the lost card directly:
+
+  player=0 (NATIVE desktop OBSERVER) choice_seq=230 ac=1341:
+  SERVER P1 hand=[79,86,90,91,96,97]  CLIENT P1 hand=[79,86,90,91,96]
+  -> P1 hand CardIds DIFFER: on_server_only=[97]
+
+GENUINE lost-card state divergence (NOT a stamping skew). Browser P1 casts Demonic Tutor -> fetches card 97 (Fireball) into its OWN hand; browser shadow is correct (WASM seq242 hand1 has 97, hash==server). The NATIVE observer removes 97 from P1 library (lib=36 matches) but never deposits into P1 hand zone -> 5 vs 6. ROOT: opponent Searched reveal is a DUMMY -> process_card_reveal SKIPS it (reveal_processor.rs:77-86), card never instantiated; replayed move_card(97 Lib->Hand) doesn't increment player_hand_size = zones.hand.len() (controller.rs:646-651). The prior '+12 choice_seq drift / acs 1230 vs 1341' was an artifact of PER-PLAYER choice_seq counters; action_counts already AGREE at the fatal (client_ac=1341 expected_ac=1341).
+
+FIX DIRECTION (durable, = mtg-ho2r8 §1-2): deposit an identity-hidden reserved placeholder into the OPPONENT hand zone on the observer for an opponent Searched-into-hand, keyed by search-resolution ac, rewind-surviving. Verify all 10 robots seeds strict before re-applying the eb8f938e ac-exclusion prize. Full writeup: ai_docs/DEEPAC_SEED7_MEMBERSHIP_CONFIRM_20260605.md. TEAM-LEAD: mirror this onto mtg-ho2r8 (integration-only; absent on fix-deep-ac worktree). Diagnostics committed on fix-deep-ac.

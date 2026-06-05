@@ -250,12 +250,31 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
                 .peek_choice_request()
                 .map(|req| req.choice_seq)
                 .unwrap_or(u32::MAX);
+            // mtg-ho2r8 seed-7 membership confirm: dump the shadow's KNOWN hand
+            // CardIds for BOTH players. The local (own) hand is fully known; the
+            // opponent's is the materialized subset (size-only zones contribute
+            // nothing). A hand-SIZE-only desync is a LOST card iff these differ
+            // from the server's by exactly that card.
+            let mut hand0: Vec<u32> = view
+                .player_hand(PlayerId::new(0))
+                .iter()
+                .map(|id| id.as_u32())
+                .collect();
+            let mut hand1: Vec<u32> = view
+                .player_hand(PlayerId::new(1))
+                .iter()
+                .map(|id| id.as_u32())
+                .collect();
+            hand0.sort_unstable();
+            hand1.sort_unstable();
             log::warn!(
-                "WASM_CARD_DETAIL seq={} server_ac={} local_ac={} hash={:016x} {}",
+                "WASM_CARD_DETAIL seq={} server_ac={} local_ac={} hash={:016x} hand0={:?} hand1={:?} {}",
                 choice_seq,
                 action_count,
                 local_action_count,
                 hash,
+                hand0,
+                hand1,
                 crate::game::state_hash::format_view_card_detail(view),
             );
             // mtg-mb668 class-A: UNCONDITIONAL shadow undo-log tail (network_debug).
