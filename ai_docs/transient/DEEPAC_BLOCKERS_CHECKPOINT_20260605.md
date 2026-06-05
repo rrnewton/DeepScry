@@ -2,7 +2,7 @@
 
 **Stamp:** 2026-06-05_#2971(bcec4890) (branch `fix-deep-ac`, after the Balance/controller/doc increment)
 **Author:** slot03-blockers
-**Context:** slot04 desync-review (`ai_docs/DEEPAC_DESYNC_REVIEW_20260605.md`) found robots
+**Context:** slot04 desync-review (`ai_docs/transient/DEEPAC_DESYNC_REVIEW_20260605.md`) found robots
 seeds 7/11/19 still fatal, blocking the action_count re-inclusion prize (`eb8f938e`).
 
 ## What is FIXED (committed @bcec4890, validate green, merged to integration @a80e49a5)

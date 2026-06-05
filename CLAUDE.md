@@ -89,6 +89,13 @@ Documentation and Analysis
 
 When creating analysis documents, specifications, or other AI-generated documentation, place them in the `ai_docs/` directory. This keeps the top-level clean and makes it clear which documents are AI-generated analysis (and may become outdated) versus core project documentation.
 
+**Bucket by lifecycle, not by topic — do NOT drop dated docs at the `ai_docs/` root.** `ai_docs/` has three subdirectories and `ai_docs/README.md` is the authority on which to use:
+- `ai_docs/reference/` — evergreen, **undated** docs that describe how something *currently* works (specs, grammars, current-architecture). Keep them up to date; never archive when code changes.
+- `ai_docs/transient/` — **in-flight WIP coordination**: session checkpoints, root-cause pins, desync reviews, cleanup/methodology audits, implementation plans/specs for work not yet done. Most such reports should be a **minibeads issue** instead; only write a full doc here when warranted. The bare `ai_docs/` root is NOT a valid home — a dated `SUBJECT_YYYYMMDD.md` belongs in `transient/` (in-flight) or `archived/` (done), never at the root.
+- `ai_docs/archived/` — dated, frozen, never-updated snapshots of *finished* point-in-time analysis.
+
+Promote `transient/` → `archived/` once the work it describes has fully landed.
+
 Debugging Scripts and Temporary Files
 ========================================
 
