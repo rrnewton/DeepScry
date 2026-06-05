@@ -4,10 +4,53 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T02:18:01.371472481+00:00
+updated_at: 2026-06-05T07:39:15.552788273+00:00
 ---
 
 # Description
+
+>## CORRECTION 2026-06-05 (slot02) — action_count re-inclusion is STAGED but GATED (NOT landed). Prior "completely finished" framing was WRONG.
+
+PLAIN-LANGUAGE: re-including the action counter in the network state-check is NOT
+safe yet. The desync-review (and I, reproducing it) found a real fatal: on the
+browser (WASM) shadow, the robots/Timetwister deck at SEED 2 (a class-A trajectory)
+diverges purely on action_count — the visible game state is byte-identical
+(empty DIFFERENCES box), but the WASM shadow's undo-log length transiently drifts
+from the server's (e.g. 949 vs 950), and with the counter back in the hash that
+drift becomes a fatal at choice_seq=175. The SAME seed PASSES at integration
+(where the counter is still excluded). So the closing commit is the right artifact
+but NOT ready to land.
+
+WHY MY EARLIER GREEN MISSED IT (coverage gap): the WASM network gate runs the
+robots/Timetwister deck at seed 42 ONLY (a historically-clean trajectory), and my
+probe canary used avatar-cycling seeds 1-6 + monored/counterspells/rogerbrand —
+NONE of which exercise robots-seed-2. The class-A-failing seeds (the very seed-2
+this issue's exclusion comment NAMED) were never run. The native lockstep oracle
+cannot reproduce the WASM-rewind divergence by construction. Lesson: probe the
+EXACT seeds the exclusion was introduced for.
+
+STATUS NOW:
+ - DONE + CI-green on integration: the netarch architecture/transport (native buffer
+   shim + WASM reorder/reveal split + B2), the AHE fix (mtg-u3dwj), the mtg-zw363
+   /tmp de-flake. action_count CONVERGES on the native shadow + the cross-class
+   same-ac path.
+ - NOT yet landed: the action_count re-inclusion CLOSING COMMIT. It is STAGED on
+   branch `fix-actioncount-reinclude` @eb8f938e (pushed; full make validate 33/0 +
+   un-excluded canary green — but that green did NOT cover the class-A seeds).
+ - GATED ON: (a) mtg-725 (the try_get(None) branch-on-absence sites that let the
+   WASM shadow's undo-log length drift), and possibly (b) mtg-677 (in-stack
+   mass-resolution rewind-completeness); AND (c) the WASM network gate extended to
+   cover the class-A seeds (e.g. robots seed 2) so this can never regress unnoticed.
+ - Production is UNAFFECTED: the cross-replica hash compare is --network-debug-gated;
+   the deploy runs WITHOUT it, so the staged change has zero production impact.
+ - All four governing issues remain OPEN: mtg-mb668, mtg-yexvc, mtg-725, mtg-677.
+
+NEXT: slot03 takes mtg-725 (try_get fixes + class-A gate coverage + empirical seed-2
+convergence verification). If mtg-725 alone doesn't converge seed-2 with action_count
+re-included, mtg-677 (in-stack rewind-completeness) is the next blocker. When the
+blockers close and the class-A seeds go green with action_count re-included, land
+`fix-actioncount-reinclude` (rebase → ff-merge) = netarch truly finished.
+
 
 ## WASM SIDE COMPLETE + FULL VALIDATE GREEN 2026-06-04 (slot02) @25cb0454 — reorder/reveal split + B2 fix ported; WASM net e2e RE-ENABLED
 

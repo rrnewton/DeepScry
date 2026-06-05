@@ -4,10 +4,28 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-04T00:21:37.241179570+00:00
+updated_at: 2026-06-05T07:39:15.554854235+00:00
 ---
 
 # Description
+
+>## CORRECTION 2026-06-05 (slot02) — exclusion STAYS (loud + tracked); revert is STAGED, NOT landed.
+
+The action_count exclusion in compute_view_hash REMAINS IN PLACE on integration.
+The revert (re-inclusion) is STAGED on branch `fix-actioncount-reinclude` @eb8f938e
+but is GATED, not merged — the desync-review reproduced a real fatal with it on the
+WASM-rewind Timetwister path (robots seed 2, choice_seq=175: action_count 949-vs-950
+drift, otherwise byte-identical state; passes at integration). My prior note here
+("REVERTED ... principled successor landed") was premature — corrected.
+
+WHAT THE NETARCH DID achieve: action_count now CONVERGES on the NATIVE shadow and
+on the cross-class same-ac path (server+client consume the same ordered buffer).
+WHAT IT DID NOT yet: converge action_count on the WASM-REWIND mass-shuffle path —
+the WASM shadow's undo-log length still drifts via the unfixed mtg-725 try_get(None)
+branch-on-absence sites (and possibly mtg-677 in-stack rewind-completeness). Until
+those close (and the WASM gate covers the class-A seeds), the exclusion stays as the
+interim guard. Production unaffected (hash compare is --network-debug-gated).
+
 
 robots42 seed=42 intermittent WASM rewind+replay desync (netarch STEP-3).
 
