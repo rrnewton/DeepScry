@@ -405,10 +405,30 @@ impl<'a> GameLoop<'a> {
             // the ChoiceRequest for the coordinator to resolve back to CardId.
             // No-op for non-network controllers (trait default is empty).
             controller.set_pending_library_search_card_ids(valid_cards);
+            // mtg-ho2r8 seed-7: a REMOTE controller replays an OPPONENT's hidden
+            // library search. The observer's `valid_cards` is only the MATERIALIZED
+            // subset of the opponent's library (e.g. 4 of the server's 37 — the
+            // unrevealed reserved cards are excluded), so the server's index (which
+            // addresses ITS full list) is MEANINGLESS against the partial list:
+            // `index < valid_cards.len()` either picks the WRONG card or (index out
+            // of range, non-empty list) falls through to `None`, LOSING the fetch.
+            // (Demonic Tutor seed-7: observer fetched nothing → P1 hand 5 vs server
+            // 6.) The empty-list arm below already handled the fully-unrevealed
+            // case; this flag generalises it to the partial case.
+            let is_remote = controller.get_controller_type() == ControllerType::Remote;
             // Call controller with CardDefinitions, get back index, map to CardId
             let view = GameStateView::new(self.game, viewer_player);
             let result = controller.choose_from_library(&view, &valid_card_definitions);
             let mapped = match result {
+                // REMOTE opponent search: ignore the partial-`valid_cards` index and
+                // use the AUTHORITATIVE server-fetched CardId (rewind-surviving
+                // lookup first, then the raced OpponentChoice result). See above.
+                ChoiceResult::Ok(_) if is_remote => {
+                    let lib_result = self
+                        .searched_card_lookup(player)
+                        .or_else(|| controller.take_library_search_result());
+                    ChoiceResult::Ok(lib_result)
+                }
                 ChoiceResult::Ok(Some(index)) if index < valid_cards.len() => {
                     ChoiceResult::Ok(Some(valid_cards[index]))
                 }

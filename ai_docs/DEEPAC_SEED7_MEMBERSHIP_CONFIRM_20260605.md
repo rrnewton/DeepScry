@@ -87,7 +87,54 @@ opponent's hand zone as a counted, identity-hidden reserved card. The dummy
 instantiation — but in doing so it drops the count/zone-membership that the hand
 move requires.
 
-## DEEPER PIN (slot03-lockstep, 2026-06-05, post fix-attempt) — exact lost-move site
+## ✅ FIXED (slot03-lockstep, 2026-06-05) — partial-`valid_cards` index for Remote opponent search
+
+**Seed 7 now PASSES**; all 8 previously-green robots seeds (2,5,6,9,11,18,20,42)
+still PASS (no regression); seed 19 still fails at its KNOWN, separate
+Mishra's-Factory-animation point. Both binaries mtime-fresh.
+
+The "DEEPER PIN" below (actions/mod.rs:4777) was itself a misread caused by a
+MISPLACED probe: my `choose_from_library_with_hook` probe sat AFTER the
+`if !self.is_network_mode() { … return }` early-return, so it never fired and I
+wrongly concluded the function was unused. A probe at the function ENTRY (which
+bypasses that early return) revealed the truth:
+
+```
+SEED7_PROBE cflwh ENTRY: player=1 ctrl_type=Network is_network_mode=false valid_cards_len=37 ...   ← SERVER
+SEED7_PROBE cflwh ENTRY: player=1 ctrl_type=Remote  is_network_mode=false valid_cards_len=4  ...   ← OBSERVER
+```
+
+`choose_from_library_with_hook` IS the resolution path (via its
+`!is_network_mode()` branch, since the legacy pre-choice hook is unconfigured —
+`is_network_mode()=false`). The real bug: the OBSERVER's `valid_cards` is only
+the **materialized subset** of the opponent's library (4 of the server's 37 — the
+reserved/unrevealed cards are excluded). The match only fell back to the
+authoritative server-fetched CardId when `valid_cards.is_empty()`; with a
+**partial, non-empty** `valid_cards` it took `Ok(Some(index)) if index <
+valid_cards.len()` — but the server's index addresses ITS 37-card list, so on the
+observer it either selected the WRONG card or (index ≥ 4) fell through to
+`Ok(None)` → the tutored card 97 was never fetched → P1 hand 5 vs server 6.
+
+**FIX (two parts):**
+1. `game_loop/network_choice.rs` (`choose_from_library_with_hook`): for a
+   **Remote** controller (replaying an opponent's hidden search), IGNORE the
+   partial-`valid_cards` index and use the authoritative server-fetched CardId
+   (`searched_card_lookup` → `take_library_search_result`). Generalises the
+   existing empty-list arm to the partial case.
+2. `network/client.rs`: add the native `SharedNetworkState::searched_card_for`
+   (ac-keyed dummy-`Searched` reveal lookup) and wire it into the native
+   `GameLoop` via `with_searched_card_lookup` — previously WASM-only. This makes
+   the fetch **rewind/replay-surviving** (the raced `take_library_search_result`
+   is empty on replay).
+
+The `actions/mod.rs:4777` `execute_effect` SearchLibrary arm (the
+"try_get(None)" path) is the NON-interactive fallback used only when
+`needs_interactive` is false; it is NOT on the network spell-resolution path
+(`needs_interactive` includes `SearchLibrary`, routing to the discard-hook +
+`choose_from_library_with_hook`). It remains a latent mtg-725 concern for any
+non-interactive caller but is NOT the seed-7 cause.
+
+## DEEPER PIN (slot03-lockstep, 2026-06-05, post fix-attempt) — exact lost-move site [SUPERSEDED — see FIXED section above]
 
 A first fix attempt (wire the native `searched_card_lookup` + fall back to it in
 the `UseChoice` library-search branch) had **ZERO effect** — byte-identical hash
