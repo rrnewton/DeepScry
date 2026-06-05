@@ -5,9 +5,46 @@ priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
 updated_at: 2026-06-05T20:39:10.599307738+00:00
+updated_at: 2026-06-05T06:17:11.848037964+00:00
 ---
 
 # Description
+
+>## CLOSING COMMIT — action_count RE-INCLUDED 2026-06-04 (slot02) — the netarch prize; consensus-undo-log unification COMPLETE
+
+PLAIN-LANGUAGE: the whole point of the netarch rearchitecture was to make the
+server and every client advance their internal action counters in identical
+lock-step, so that counter can once again be part of the cross-machine "are we in
+the same state?" check. That is now done: `action_count` is RE-INCLUDED in the
+network view hash (compute_view_hash), reverting the interim exclusion that was
+only ever a workaround for the old, un-synchronized client. The strongest
+cross-replica equality check is restored.
+
+CHANGE (mtg-engine/src/game/state_hash.rs): in compute_view_hash, re-added
+`(view.action_count() as u64).hash(&mut hasher)` after the current_step() line;
+deleted the DELIBERATELY-EXCLUDED note block; renamed+flipped the pinning test to
+view_hash_includes_action_count_mtg_o99ow (asserts the hash CHANGES when the undo
+log advances). New test PASSES.
+
+WHY SAFE NOW (root cause of the original exclusion is GONE): pre-netarch the
+client applied reveals/reorders via several uncoordinated eager messages, so its
+undo-log length drifted from the server's (seed-2 robots/Timetwister: 947 vs 950,
+otherwise byte-identical) -> hashing it was a FALSE-POSITIVE desync. The buffer
+rearchitecture (native shim + WASM split) makes both replicas consume the SAME
+ordered per-choice buffer -> undo logs advance identically -> action_count is a
+true consensus value again.
+
+EMPIRICAL PROOF (probe @6a88ead1 + recipe, mtime-fresh, isolated systemd-run scope):
+ - full un-excluded desync canary RESULT: PASS — avatar-cycling 18/18, monored 18/18,
+   counterspells 12/12, rogerbrand-heuristic 4/4; even mtg-586 rand/zero 8/8 (kept
+   known-red, see mtg-tyf3a). ZERO new red, ZERO nondeterminism.
+ - full make validate 33/33 (validate_<sha>.log cited in the commit), incl native+WASM
+   equivalence sweeps, network.multideck 4/4 (robots = Timetwister+Wheel), robots42.
+
+MTG Rules Review verdict in the commit message. This commit = netarch
+"completely finished": the action_count exclusion (mtg-mb668) is reverted, its
+principled successor (consensus-undo-log unification) landed.
+
 
 ## WASM SIDE COMPLETE + FULL VALIDATE GREEN 2026-06-04 (slot02) @25cb0454 — reorder/reveal split + B2 fix ported; WASM net e2e RE-ENABLED
 
