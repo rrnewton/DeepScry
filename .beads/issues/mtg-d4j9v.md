@@ -1,10 +1,10 @@
 ---
 title: 'PRIZE BLOCKER: Balance/multi-choice resolution replayed in different order on rewind (robots seeds 7/11 fatal)'
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-06-05T17:36:16.607542399+00:00
-updated_at: 2026-06-05T17:36:16.607542399+00:00
+updated_at: 2026-06-05T18:32:20.516702647+00:00
 ---
 
 # Description

@@ -1,10 +1,10 @@
 ---
 title: Re-materialization on rewind loses 'controller' too (twin of tapped bug; robots deck cannot catch it)
-status: open
+status: closed
 priority: 2
 issue_type: bug
 created_at: 2026-06-05T17:36:16.634288391+00:00
-updated_at: 2026-06-05T17:36:16.634288391+00:00
+updated_at: 2026-06-05T18:32:20.519399519+00:00
 ---
 
 # Description
