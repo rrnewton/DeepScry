@@ -57,6 +57,86 @@ on the server but not yet on the shadow at choice_seq=230 / ac≈1341 (client ac
 search-to-hand move through the action_count-keyed consensus log so the shadow applies it
 in lockstep before the resolution sync point, rather than per-field/per-effect patching.
 
+### TIGHTENED PIN (slot03-blockers, instrumented strict repro @state_hash strict toggle, 2026-06-05)
+
+Captured the shadow's full undo dump (`debug/netarch-undo-dumps/..seed7_wasm_undo.log`)
+and the server mismatch box at the fatal. Refines the hypothesis above:
+
+- **Exactly ONE zone diverges: P1's HAND size (server 6 vs client 5).** Both sides'
+  P1 library (36, sorted-identical), battlefield (16, identical incl. the just-played
+  Plains 82 at `(82,false,1)`), P0 hand (7, identical ids), graveyards — ALL MATCH. The
+  server's DIFFERENCES box lists only "Hand sizes DIFFER."
+- **The shadow DID apply the Demonic Tutor fetch.** Its undo log shows
+  `[1330] Choice(P1 #19 = LibrarySearch(Some(97)))`,
+  `[1331] RevealCard(97="Fireball" to P1)`,
+  `[1332] MoveCard(97 Library→Hand owner=P1)`,
+  `[1333] ShuffleLibrary(P1 36)`, `[1334] MoveCard(105 Stack→Graveyard)` — i.e. the
+  search-to-hand move IS present on the shadow. So the earlier "move not applied"
+  framing is WRONG.
+- **Around the boundary the shadow also processes P1's next main-phase land play:**
+  `[1335] Choice(PlayLand 82)`, `[1336] RevealCard(82)`,
+  `[1337] MoveCard(82 Hand→Battlefield)`, `[1339] LandsPlayed(P1=1)` (dump seq=242,
+  local_ac=1340). So the in-stack tutor resolution flows DIRECTLY into the local
+  player's next land/main-phase action with no intervening barrier.
+
+**What is DEFINITIVE vs what still needs one more capture:**
+- DEFINITIVE: at the fatal, only P1 hand SIZE differs (6 server / 5 client); everything
+  else (P1 lib 36 sorted-identical, bf 16 identical, P0 hand, graveyards) matches. The
+  controller logs `action_count mismatch client=1339 server=1341 (diff=2)` — the client
+  is **2 actions BEHIND** the server's validation ac and **1 card short** in P1's hand.
+- NOT yet pinned (blocked on a missing capture): exactly WHICH 2 server actions the
+  client lacks, and which card is the hand difference. The shadow's own undo log shows
+  it applied BOTH the tutor fetch (97→hand) and the land play (82 out), so the
+  reconciliation requires the **server-side** undo log at the same ac — and
+  `--network-debug` does NOT capture it (`..seed7_server_undo.log` is header-only,
+  "no SERVER full-undo dumps captured"). The client-behind-by-2 + hand-short-by-1
+  direction is consistent with the in-stack reveal/move LAG (the shadow has not yet
+  applied a server-authoritative `RevealCard`+`MoveCard(→P1 hand)` pair at the
+  validation ac), but proving it needs the server dump.
+
+**SERVER-UNDO CAPTURE DONE → decisive refinement (slot03-blockers, `--undo-dump`):**
+re-ran seed 7 with `--undo-dump` (sets `MTG_NET_FULL_UNDO_DUMP=1`, populating
+`..seed7_server_undo.log`). Diffed server vs shadow undo logs (choice display-numbers
+stripped) over actions [1300–1340]:
+
+- **They are BYTE-IDENTICAL through ac 1339.** Same actions, same order, same CardIds:
+  `[1330] Choice LibrarySearch(Some(97))`, `[1331] RevealCard(97 Fireball)`,
+  `[1332] MoveCard(97 Library→Hand P1)`, `[1333] ShuffleLibrary`,
+  `[1334] MoveCard(105 Stack→GY)`, `[1335] Choice PlayLand(82)`,
+  `[1336] RevealCard(82)`, `[1337] MoveCard(82 Hand→Battlefield)`,
+  `[1338] SetETB(82)`, `[1339] LandsPlayed(P1=1)`. The ONLY diff is the server has one
+  further `[1340] Choice(P1 pass-priority)` that the shadow's last dump (ac=1340) hadn't
+  recorded yet.
+- **So seed 7 is NOT a divergence in the executed action sequence** — both replicas ran
+  the identical Demonic-Tutor-fetch + land-play. (The fetch-lag framing is refuted; the
+  reveal-LAG framing is refuted.)
+- **The fatal is a choice_seq↔action_count STAMPING SKEW.** The server validates
+  `choice_seq=230` at `action_count=1341`; the client computed/sent its seq-230 view hash
+  at its local `action_count=1339` (`action_count mismatch client=1339 server=1341`). The
+  reported "P1 hand 6 (server) vs 5 (client)" is the two sides hashing P1's state at
+  DIFFERENT acs that **straddle `[1337] MoveCard(82 Hand→Battlefield)`** — the land play
+  that drops P1 hand 6→5. Hand SIZE is in the view hash (independent of action_count), so
+  this surfaces as a fatal even in the shipped/prize-OFF config (matches the observed
+  seed-7 FAIL-HASH there). It is a TIMING/stamping mismatch in the choice_seq↔ac
+  correspondence around an in-stack resolution that flows straight into the local
+  player's next main-phase action — NOT corrupted hand membership.
+
+**NEXT DIAGNOSTIC STEP:** instrument the exact P1 hand CardIds on BOTH sides at the
+seq-230 submit (the size diff is known; the membership/which-card is not yet dumped), and
+trace where choice_seq=230 is assigned its action_count on each side (server
+`network/server.rs` choice_seq/ac stamping vs client `wasm/network/.../local_controller.rs`
++ fancy_tui submit). Fix is to make the client compute+submit its seq hash at exactly the
+server's validation ac (i.e. before it speculatively advances past the land play), or to
+stamp choice_seq→ac identically on both replicas.
+
+**Root class & assessment:** the shadow's choice-point/ac bookkeeping is not held in
+lockstep with the server's per-choice validation across an in-stack resolution that flows
+directly into the local player's next main-phase action — the in-stack **lockstep** half
+of mtg-ho2r8 (NOT the missing-opponent-delta half the design doc §1-2 covers). It spans
+`network/server.rs` choice_seq/ac stamping + `wasm/network/client.rs` apply/advance
+cursors + the fancy_tui sync loop = netarch rearchitecture, NOT a one-session surgical
+patch. Handed off at this pin; do not band-aid.
+
 ## STILL BLOCKING — seed 19: Fireball option-set divergence (mtg-8ow9h)
 
 **Symptom:** `DESYNC DETECTED: NetworkController 1 received invalid choice index 2
