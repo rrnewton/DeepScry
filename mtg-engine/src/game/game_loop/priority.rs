@@ -1891,12 +1891,17 @@ impl<'a> GameLoop<'a> {
                                                 let discard_count = *count as usize;
                                                 let remember = *remember_discarded;
 
-                                                // Sync reveals so shadow sees newly drawn cards
+                                                // push_reveals is a no-op under the synchronous
+                                                // server/client transport (reveals ride the ChoiceRequest
+                                                // buffer, not a reveal_pusher); kept for parity with the
+                                                // other reveal sites. The shadow's hand MEMBERSHIP (which
+                                                // CardIds) is already correct here from its own draw — only
+                                                // the drawn cards' IDENTITIES are still unmaterialised, and
+                                                // those are filled by the prepare→sync below.
                                                 self.push_reveals(discard_player);
                                                 if let Some(opp) = self.game.get_other_player_id(discard_player) {
                                                     self.push_reveals(opp);
                                                 }
-                                                self.sync_to_action();
 
                                                 // Get current hand
                                                 let hand: SmallVec<[CardId; 8]> = self
@@ -1908,8 +1913,42 @@ impl<'a> GameLoop<'a> {
                                                 // Clamp count to actual hand size
                                                 let actual_count = discard_count.min(hand.len());
                                                 if actual_count == 0 {
+                                                    // Empty hand (e.g. a forced discard vs an empty-handed
+                                                    // player): the SERVER computes actual_count==0 and sends
+                                                    // NO discard ChoiceRequest. We MUST bail BEFORE the
+                                                    // blocking prepare below, preserving the invariant
+                                                    // "a network block happens iff a request will be sent"
+                                                    // (mtg-u3dwj BLOCKER-1): prepare_for_priority_choice()
+                                                    // blocks with no timeout and take_local_choice is a blind
+                                                    // FIFO pop, so blocking here would hang the client forever
+                                                    // OR pop the NEXT request → answer request N+1 to choice N
+                                                    // → off-by-one FATAL desync.
                                                     continue;
                                                 }
+
+                                                // mtg-u3dwj: a discard choice that IMMEDIATELY follows
+                                                // in-resolution draws (e.g. Bazaar of Baghdad "draw two,
+                                                // then discard three") must RECEIVE the server's discard
+                                                // ChoiceRequest BEFORE syncing the shadow: the just-drawn
+                                                // cards' reveals ride inside THAT request's catch-up buffer
+                                                // (assemble_choice_buffer), so they only land in the
+                                                // state-sync log once the request arrives. This mirrors the
+                                                // proven priority-loop order (see the "NETWORK SYNC PROTOCOL"
+                                                // block earlier in this file): prepare (block on the choice
+                                                // MVar) → sync_to_action → decide. The previous order synced
+                                                // FIRST, so on a network client the drawn cards stayed
+                                                // unmaterialised in the shadow and the heuristic discarded
+                                                // the WRONG cards vs the server's full-state decision — an
+                                                // information-independence desync (docs/NETWORK_ARCHITECTURE.md:
+                                                // "Desync is ALWAYS Fatal"). prepare_for_priority_choice() is a
+                                                // no-op default for non-network controllers AND for the
+                                                // authoritative server (whose NetworkController already holds
+                                                // the drawn cards in full state and merely relays the client's
+                                                // chosen indices); only the client's shadow controllers
+                                                // (NetworkLocalController / RemoteController) block to pre-cache
+                                                // the request (idempotent — choose_discard_with_hook reuses it).
+                                                let _ = controller.prepare_for_priority_choice();
+                                                self.sync_to_action();
 
                                                 // Route through controller protocol.
                                                 // Capture log size BEFORE asking controller so the
@@ -3168,12 +3207,16 @@ impl<'a> GameLoop<'a> {
                         let discard_count = *count as usize;
                         let remember = *remember_discarded;
 
-                        // Push reveals so shadow sees any cards drawn earlier
+                        // push_reveals is a no-op under the synchronous transport
+                        // (reveals ride the ChoiceRequest buffer). The shadow hand
+                        // MEMBERSHIP is already correct from its own draw; the drawn
+                        // cards' IDENTITIES are materialised by the prepare→sync below,
+                        // placed INSIDE the actual_count>0 guard so an empty-hand
+                        // discard never blocks (mtg-u3dwj BLOCKER-1).
                         self.push_reveals(*player);
                         if let Some(opp) = self.game.get_other_player_id(*player) {
                             self.push_reveals(opp);
                         }
-                        self.sync_to_action();
 
                         let hand: SmallVec<[CardId; 8]> = self
                             .game
@@ -3188,6 +3231,21 @@ impl<'a> GameLoop<'a> {
                             } else {
                                 controller2
                             };
+                            // mtg-u3dwj BLOCKER-2: the structurally identical SPELL-
+                            // resolution draw-then-discard (Careful Study, Frantic
+                            // Search, Thirst for Knowledge, Compulsive Research,
+                            // Blast of Genius, Ancient Excavation, Artificer's
+                            // Epiphany, ...) needs the SAME prepare→sync→decide
+                            // ordering as the activated-ability path: receive the
+                            // discard ChoiceRequest (whose buffer carries the
+                            // just-drawn cards' reveals) BEFORE syncing the shadow,
+                            // else the controller decides on unmaterialised cards
+                            // (information-independence desync). Inside the
+                            // actual_count>0 guard so an empty-hand discard never
+                            // blocks. prepare_for_priority_choice() is a no-op for the
+                            // authoritative server / non-network controllers.
+                            let _ = controller.prepare_for_priority_choice();
+                            self.sync_to_action();
                             // Capture log size BEFORE the choice so the ChoicePoint
                             // we log below can rewind cleanly to the pre-choice
                             // state. Mandatory for replay determinism — without
