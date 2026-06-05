@@ -560,6 +560,22 @@ EOF
     # Copy the whole web/ to staging (cheap; web/ ≈ a few hundred MB
     # with images so we exclude those first). dist/ is trunk's output dir
     # and must not be shipped raw.
+    # DEV-ONLY files must NOT reach the public web root (mtg-geuk1):
+    # the served VM has no source to build, so developer docs / npm manifests /
+    # node test helpers / test-browser metadata are dead weight at best and leak
+    # internal build instructions at worst (user found web/README.md — the
+    # wasm-pack build guide — served on deepscry.net). Every page's runtime asset
+    # set was grepped to confirm none of these are loaded by index/demo/tui_game/
+    # native_game/deck_editor/launcher/solo_launcher/wasm_ai_harness.html or by
+    # any runtime .js (server-config/help_dialog/lobby_launcher/network/bug_report).
+    #   *.md                  — README.md + any other docs (no page serves .md)
+    #   package.json/.nvmrc   — npm dev manifest + node version pin
+    #   .gitignore            — VCS dotfile (rsync -a would otherwise ship it)
+    #   ensure_node_deps.js / playwright_check.js / smoke_test_live.js /
+    #     game_boot_params.js — Node/Playwright test helpers (not browser runtime;
+    #                           game_boot_params.js even `require()`s http)
+    #   CHROME_VERSION.txt / METADATA — Playwright chrome-headless-shell test
+    #                                   browser pin + build metadata
     rsync -a \
         --exclude='images/' --exclude='images' \
         --exclude='node_modules/' --exclude='screenshots/' \
@@ -567,6 +583,11 @@ EOF
         --exclude='server.log' --exclude='*.log' \
         --exclude='package-lock.json' --exclude='test_*.js' \
         --exclude='network_*_test_results.json' \
+        --exclude='*.md' --exclude='package.json' --exclude='.nvmrc' \
+        --exclude='.gitignore' \
+        --exclude='ensure_node_deps.js' --exclude='playwright_check.js' \
+        --exclude='smoke_test_live.js' --exclude='game_boot_params.js' \
+        --exclude='CHROME_VERSION.txt' --exclude='METADATA' \
         web/ "$web_stage/"
     # Content-address the pkg pair on the staging copy (NOT the source tree,
     # so the committed HTML + `make validate` e2e tests stay on the fixed

@@ -1,0 +1,25 @@
+---
+title: 'deploy-cloud.sh: stop shipping dev-only files (README.md etc) to public web root'
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-06-05T13:01:33.230713716+00:00
+updated_at: 2026-06-05T13:01:33.230713716+00:00
+---
+
+# Description
+
+deploy-cloud.sh §5 ships DEV-ONLY files (README.md, package.json, test helpers, test-browser metadata) to the PUBLIC web root.
+
+User report: deepscry.net serves web/README.md — the "# MTG Forge WebAssembly Build" developer doc with wasm-pack build instructions. The doc is current (not stale), so the fix is NOT to delete it; the bug is that the deploy ships dev-only files where they have no business being (the served VM has no source to build).
+
+Root cause: the `rsync -a --exclude=...` list that stages web/ into the deploy temp dir (deploy-cloud.sh §5 "Rsync web/", ~line 563) excluded images/node_modules/screenshots/dist/*.log/package-lock.json/test_*.js/network_*_test_results.json but MISSED README.md and other dev-only files.
+
+Fix: add to the §5 rsync --exclude list (verified by grepping every served page + runtime .js that none are loaded by the runtime):
+  *.md, package.json, .nvmrc, .gitignore, ensure_node_deps.js,
+  playwright_check.js, smoke_test_live.js, game_boot_params.js,
+  CHROME_VERSION.txt, METADATA
+
+Runtime files confirmed KEPT: index.html, demo.html, tui_game.html, native_game.html, deck_editor.html, launcher.html, solo_launcher.html, wasm_ai_harness.html, server-config.js, help_dialog.js, lobby_launcher.js, network.js, bug_report.js, site.webmanifest, pkg/, data/.
+
+Verified via rsync -an before/after dry-run: the 10 dev-only files are pruned, all runtime files remain. deploy-cloud.sh is not exercised by make validate or CI (deploy-only script); bash -n passes.
