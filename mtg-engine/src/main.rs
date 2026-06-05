@@ -48,7 +48,9 @@ fn format_yyyymmdd_hhmmss_utc(secs: u64) -> String {
     format!("{:04}{:02}{:02}_{:02}{:02}{:02}", year, m, d, hour, minute, second)
 }
 
-/// Persist the in-memory game log buffer to `/tmp/mtg_game_YYYYMMDD_HHMMSS.log`.
+/// Persist the in-memory game log buffer to
+/// `/tmp/mtg_game_YYYYMMDD_HHMMSS_<pid>_<seq>.log` (the pid+seq make the path
+/// unique per process so concurrent games never collide — mtg-zw363).
 ///
 /// Returns `Ok(Some(path))` if a log file was written, `Ok(None)` if the buffer
 /// was empty (nothing to save), or an `io::Error` on failure.
@@ -69,7 +71,24 @@ fn save_game_log_to_tmp(logger: &mtg_engine::game::logger::GameLogger) -> std::i
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let timestamp = format_yyyymmdd_hhmmss_utc(secs);
-    let log_path = PathBuf::from(format!("/tmp/mtg_game_{}.log", timestamp));
+    // mtg-zw363 / mtg-632 (root-cause fix): the path MUST be unique per process,
+    // not just per wall-clock second. The old `/tmp/mtg_game_{timestamp}.log`
+    // used 1-second granularity on a GLOBAL /tmp path, so two `mtg` games
+    // finishing in the same second (routine under the parallel `make validate`
+    // fan-out) collided: the second `File::create` truncated the first, and a
+    // game then read back the OTHER game's log — a spurious "different game"
+    // divergence (the agentplay byte-identical-mock-seed and robots42 state-sync
+    // flakes). Append the OS process id and a per-process atomic sequence so the
+    // path is unique across concurrent processes (distinct live pids) AND within
+    // a process (the seq), while keeping the `mtg_game_` prefix + sortable
+    // timestamp for discoverability. Consumers read the path from the engine's
+    // "Log saved to <path>" stderr line (the returned PathBuf), never by
+    // reconstructing it from the timestamp, so this stays discoverable
+    // (agentplay/test_mode_equivalence.py, agentplay/agent_game.py).
+    static GAME_LOG_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let pid = std::process::id();
+    let seq = GAME_LOG_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let log_path = PathBuf::from(format!("/tmp/mtg_game_{}_{}_{}.log", timestamp, pid, seq));
 
     let file = std::fs::File::create(&log_path)?;
     let mut writer = std::io::BufWriter::new(file);

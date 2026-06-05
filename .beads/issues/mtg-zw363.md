@@ -6,7 +6,7 @@ issue_type: task
 labels:
 - test-hardening
 created_at: 2026-06-04T18:21:11.025808290+00:00
-updated_at: 2026-06-04T18:21:11.025808290+00:00
+updated_at: 2026-06-05T04:56:58.104172953+00:00
 ---
 
 # Description
@@ -64,3 +64,45 @@ green, isolating the cause to cross-validate resource sharing.
 
 RELATED: mtg-ibj22 (cgroup-scope process isolation), and the card-lookup.bin
 hermetic-contamination memory.
+
+## ROOT-CAUSE FIXED 2026-06-05 (fix-mtg-zw363, off integration @9c805545) — unique-per-process /tmp game-log path
+
+CONFIRMED ROOT CAUSE (the "shared temp paths" branch of the FIX DIRECTION above):
+`save_game_log_to_tmp` (mtg-engine/src/main.rs) wrote `/tmp/mtg_game_{YYYYMMDD_HHMMSS}.log`
+— 1-second granularity on a GLOBAL /tmp path. Under the parallel `make validate`
+fan-out, two `mtg` games finishing in the SAME wall-clock second computed the SAME
+path; the second `File::create` TRUNCATED the first, so a game (or a test reading
+the engine's announced "Log saved to <path>" line) read back the OTHER game's log.
+That is exactly the observed config-level divergence (mode-equiv stop-and-go vs
+persistent playing entirely different games: Heuristic/Forest vs Random/Mountain —
+a third concurrent validate's heuristic game had truncated one driver's log file),
+and the robots42_state_sync_e2e mana-cost/state-sync flake.
+
+mtg-632 (closed) only patched the TEST to read the announced path instead of
+reconstructing it — but it explicitly left this root cause: "Timestamp format
+... still theoretically collide-able." Reading the announced path does NOT help
+when that path's FILE was truncated by a same-second collision. This fixes the
+engine.
+
+FIX: path is now `/tmp/mtg_game_{timestamp}_{pid}_{seq}.log` — std::process::id()
+(unique across concurrent live processes) + a per-process AtomicU64 seq (unique
+within a process). Keeps the `mtg_game_` prefix + sortable timestamp; stays
+discoverable because every consumer reads the engine-returned/announced path
+(agentplay/test_mode_equivalence.py:518, agentplay/agent_game.py:1087 — both
+`re.search(r"Log saved to (\S+)")`), never reconstructs from the timestamp. main.rs
+is the sole writer of this path. No hacky string ops.
+
+DE-FLAKE PROOF (debug/zw363_concurrency_proof.sh):
+- 3 x 40 concurrent `mtg tui` games (up to 40 sharing ONE second — collision window
+  fully exercised): ALL 40 paths UNIQUE every run, 0 collisions.
+- PROVE-IT-BITES: temporarily reverting to the per-second path collapses 40
+  concurrent games to 2 unique paths (32 sharing one second) → proof FAILS. Restored.
+- Real flaky tests under continuous concurrent-game collision pressure:
+  test_mode_equivalence::test_drivers_byte_identical_mock_seed 4/4 PASS;
+  robots42_state_sync_e2e 3/3 PASS (4/4 seeds each).
+
+SCOPE: this fixes the /tmp-collision root cause only. The SEPARATE
+orphan/scope-teardown gap (killing a `make validate`'s bash does NOT reap the
+transient systemd scope's `mtg server`/`connect` children — setsid escapes killpg,
+so they orphan and contend for ports + this same /tmp path) is filed separately
+against mtg-ibj22 — NOT bundled here.
