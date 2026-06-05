@@ -215,8 +215,6 @@ struct OpponentChoiceInfo {
     description: String,
     /// Action count at time of choice (for sync validation)
     action_count: u64,
-    /// Wall-clock timestamp for debugging
-    timestamp_ms: u64,
     /// The actual spell ability chosen (for Priority choices)
     /// Allows client to execute the ability directly without computing from hidden hand
     spell_ability: Option<SpellAbility>,
@@ -2646,7 +2644,6 @@ async fn run_coordinator(
                                     choice_indices: response.choice_indices.clone(),
                                     description: format!("P1 choice #{}", choice_seq),
                                     action_count,
-                                    timestamp_ms: now_ms(),
                                     spell_ability,
                                     library_search_result,
                                     target_card_ids: response.target_card_ids,
@@ -2839,7 +2836,6 @@ async fn run_coordinator(
                                     choice_indices: response.choice_indices.clone(),
                                     description: format!("P2 choice #{}", choice_seq),
                                     action_count,
-                                    timestamp_ms: now_ms(),
                                     spell_ability,
                                     library_search_result,
                                     target_card_ids: response.target_card_ids,
@@ -3060,82 +3056,27 @@ async fn handle_player_websocket(
 
                     Some(GameToHandler::OpponentMadeChoice(info)) => {
                         log::debug!(
-                            "Handler P{}: Forwarding opponent choice seq={}",
+                            "Handler P{}: Accumulating opponent choice seq={} for next ChoiceRequest buffer",
                             conn.player_id, info.choice_seq
                         );
 
-                        // Minimal lazy protocol (mtg-o99ow) Phase-1 dual-emit:
-                        // accumulate this opponent decision for the next
-                        // ChoiceRequest buffer. The eager OpponentChoice send
-                        // below still happens; a buffer-aware client ignores it.
-                        pending_choice_facts.push(info.clone());
-
-                        // If opponent played or activated a card, send CardRevealed first
-                        if let Some(ref ability) = info.spell_ability {
-                            let card_id = ability.card_id();
-                            let game_guard = game.lock().await;
-                            if let Some(card) = game_guard.cards.try_get(card_id) {
-                                let card_def = game_guard.card_definitions.get(&card.name).cloned();
-                                let card_reveal = CardReveal {
-                                    card_id,
-                                    name: card.name.to_string(),
-                                    card_def,
-                                };
-                                // For ActivateAbility: the card is already on the battlefield.
-                                // Use TokenCreated reason so the shadow game adds it to both
-                                // game.cards AND game.battlefield (via insert_if_vacant + battlefield.add).
-                                // For CastSpell/CastFromExile: the card is being played from
-                                // hand/exile; Played reason instantiates it so the game loop
-                                // can recognize it when executing the action.
-                                let reason = if matches!(ability, SpellAbility::ActivateAbility { .. }) {
-                                    RevealReason::TokenCreated
-                                } else {
-                                    RevealReason::Played
-                                };
-                                conn.send(&ServerMessage::CardRevealed {
-                                    owner: info.player,
-                                    card: card_reveal,
-                                    reason,
-                                    // mtg-610: bundled with this OpponentChoice.
-                                    action_count: Some(info.action_count),
-                                }).await?;
-                            }
-                        }
-
-                        // If opponent searched their library, send dummy reveal (hidden card)
-                        // The opponent searched THEIR library - we can't see what card they got
-                        if let Some(card_id) = info.library_search_result {
-                            log::debug!(
-                                "Handler P{}: Sending dummy CardRevealed for opponent library search result {}",
-                                conn.player_id, card_id
-                            );
-                            let dummy_reveal = CardReveal {
-                                card_id,
-                                name: String::new(), // Hidden - can't see opponent's card
-                                card_def: None,
-                            };
-                            conn.send(&ServerMessage::CardRevealed {
-                                owner: info.player,
-                                card: dummy_reveal,
-                                reason: RevealReason::Searched,
-                                action_count: Some(info.action_count),
-                            }).await?;
-                        }
-
-                        conn.send(&ServerMessage::OpponentChoice {
-                            choice_seq: info.choice_seq,
-                            player: info.player,
-                            choice_type: info.choice_type,
-                            choice_indices: info.choice_indices,
-                            description: info.description,
-                            action_count: info.action_count,
-                            timestamp_ms: info.timestamp_ms,
-                            spell_ability: info.spell_ability,
-                            state_hash_after: None,
-                            debug_info: None,
-                            library_search_result: info.library_search_result,
-                            target_card_ids: info.target_card_ids,
-                        }).await?;
+                        // Minimal lazy protocol (mtg-o99ow) TASK 2 — buffer is the
+                        // SOLE source of the opponent decision. We ONLY accumulate
+                        // it for the next ChoiceRequest's `buffer`
+                        // (`assemble_choice_buffer` emits the `BufferedFact::Choice`
+                        // AND, for a hidden tutor, the dummy `Searched` reveal; the
+                        // opponent's cast-card reveal already rides in that
+                        // recipient's `choice_request.reveals` at its own ac). The
+                        // eager `OpponentChoice` + bundled `CardRevealed` sends were
+                        // DELETED here: they were the dual-stamp source (the same
+                        // card re-revealed at the choice ac vs its own ac) and are
+                        // fully superseded by the buffer. Both native and WASM
+                        // clients are buffer-driven; deleting the eager copy makes
+                        // the buffer the sole mid-game opponent-choice source (the
+                        // false-positive guard: no eager copy can secretly drive the
+                        // shadow). Opening hands + initial library orders still flow
+                        // via the game-setup path; ChoiceAccepted is still sent.
+                        pending_choice_facts.push(info);
                     }
 
                     Some(GameToHandler::ChoiceAccepted { choice_seq, action_count, timestamp_ms, library_search_result }) => {
