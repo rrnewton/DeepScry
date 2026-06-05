@@ -493,14 +493,22 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
             .choose_targets(view, spell, valid_targets, min_targets, max_targets)
         {
             ChoiceResult::Ok(targets) => {
-                let choice_indices: Vec<usize> = if targets.is_empty() {
-                    vec![valid_targets.len()] // "none" option
-                } else {
-                    targets
-                        .iter()
-                        .filter_map(|&t| valid_targets.iter().position(|&vt| vt == t))
-                        .collect()
-                };
+                // Map the chosen targets to indices into `valid_targets`. A
+                // variable-count divide spell (Fireball, TargetMin$ 0) may
+                // legally choose ZERO targets; that must encode as an EMPTY
+                // index list, NOT a `valid_targets.len()` sentinel. The server's
+                // `choose_targets` builds exactly `valid_targets.len()` options
+                // (no trailing "none" entry) and validates `idx < options.len()`,
+                // so a `len` index is an out-of-range FATAL desync. The native
+                // `NetworkLocalController::choose_targets` sends the same
+                // `filter_map(position).collect()` (empty for 0 targets), and the
+                // server decodes an empty index list as "0 targets chosen" — this
+                // restores WASM↔native parity (mtg-8ow9h seed-19: WebRandom rolls
+                // 0 of 2 animated-manland Fireball targets).
+                let choice_indices: Vec<usize> = targets
+                    .iter()
+                    .filter_map(|&t| valid_targets.iter().position(|&vt| vt == t))
+                    .collect();
                 self.submit_choice_to_server(choice_indices, view);
                 ChoiceResult::Ok(targets)
             }
@@ -770,14 +778,19 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
 
         match self.inner.choose_cards_to_discard(view, hand, count) {
             ChoiceResult::Ok(discards) => {
-                let choice_indices: Vec<usize> = if discards.is_empty() {
-                    vec![hand.len()]
-                } else {
-                    discards
-                        .iter()
-                        .filter_map(|&c| hand.iter().position(|&h| h == c))
-                        .collect()
-                };
+                // Same WASM↔native parity rule as choose_targets/_sacrifice
+                // (mtg-8ow9h): a "discard up to N" effect that legally chooses 0
+                // encodes as an EMPTY index list, NOT a hand.len() sentinel. The
+                // server's choose_cards_to_discard decodes the index vector with
+                // the same `idx < hand.len()` loop as targets (no trailing "none"
+                // slot), so a `len` index is an out-of-range FATAL desync; the
+                // native NetworkLocalController already sends filter_map → empty
+                // for 0. Discard shares targets' decode semantics — only
+                // choose_mana_sources_to_pay genuinely differs (mtg-6cbob).
+                let choice_indices: Vec<usize> = discards
+                    .iter()
+                    .filter_map(|&c| hand.iter().position(|&h| h == c))
+                    .collect();
                 self.submit_choice_to_server(choice_indices, view);
                 ChoiceResult::Ok(discards)
             }
@@ -917,14 +930,18 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
             .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
         {
             ChoiceResult::Ok(sacrifices) => {
-                let choice_indices: Vec<usize> = if sacrifices.is_empty() {
-                    vec![valid_permanents.len()] // "none" option
-                } else {
-                    sacrifices
-                        .iter()
-                        .filter_map(|&s| valid_permanents.iter().position(|&vp| vp == s))
-                        .collect()
-                };
+                // Same WASM↔native parity rule as `choose_targets` (mtg-8ow9h):
+                // "sacrifice nothing" (optional sacrifice) encodes as an EMPTY
+                // index list, NOT a `valid_permanents.len()` sentinel. The
+                // server's `choose_permanents_to_sacrifice` builds exactly
+                // `valid_permanents.len()` options and validates
+                // `idx < valid_permanents.len()`, so a `len` index is a FATAL
+                // desync; an empty list decodes as "0 sacrificed". Matches the
+                // native `NetworkLocalController` (filter_map → empty for none).
+                let choice_indices: Vec<usize> = sacrifices
+                    .iter()
+                    .filter_map(|&s| valid_permanents.iter().position(|&vp| vp == s))
+                    .collect();
                 self.submit_choice_to_server(choice_indices, view);
                 ChoiceResult::Ok(sacrifices)
             }
