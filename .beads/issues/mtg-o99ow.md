@@ -4,10 +4,110 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T01:03:46.557195394+00:00
+updated_at: 2026-06-05T02:18:01.371472481+00:00
 ---
 
 # Description
+
+## WASM SIDE COMPLETE + FULL VALIDATE GREEN 2026-06-04 (slot02) @25cb0454 — reorder/reveal split + B2 fix ported; WASM net e2e RE-ENABLED
+
+PLAIN-LANGUAGE: the browser (WASM) client had the same two flaws the desktop
+client's predecessor had. (1) On a shuffle-then-draw card (Timetwister / Wheel of
+Fortune / Windfall) a library-reshuffle and a card-reveal can legitimately land at
+the same internal time-stamp; the browser kept both in ONE list and crashed,
+mistaking them for a contradiction. (2) The browser's catch-up replay stalled one
+step short of the next decision because it refused to instantiate revealed cards
+ahead of where its own replay had reached. Both are now fixed by mirroring the
+proven desktop client: two separate lists (reshuffles vs reveals — same-kind
+clashes still crash as a real desync, only cross-kind may coincide), and revealing
+opponent cards eagerly up to the "all-facts-arrived" watermark so the replay can
+advance to the choice. The browser network tests are turned back on and the whole
+test suite is green.
+
+CHANGES (mtg-engine/src/wasm/network/client.rs ONLY; +274/-155 @1605eec7):
+ - SPLIT state_sync ActionLog -> reorder_log + reveal_log; last_applied_state_sync_ac
+   -> last_applied_reorder_ac + last_applied_reveal_ac. push_state_sync routes by
+   class. Cross-class (reorder+reveal) MAY share an ac; same-class (reveal-reveal /
+   reorder-reorder) collision STILL FATAL (the original dual-stamp desync class).
+ - B2 apply-frontier STALL FIX: apply_state_sync_at now bounds REORDERS positionally
+   by target_action and REVEALS eagerly by max_received_choice_ac (ahead of the
+   shadow), mirroring the native two-cursor apply. Removes the diff=5 stall.
+ - searched_card_for / unwind_state_sync_to / has_unapplied_state_sync /
+   reset_state_sync_cursor / reset threaded through the split (reveal scans read
+   reveal_log; unwind behaviour preserved — it only ever processed reveals).
+ - Unit tests mirror native: reorder_and_reveal_may_share_ac (relaxation),
+   reveal_vs_reveal + reorder_vs_reorder distinct-at-same-ac FATAL (guard the
+   original class), reveal_idempotent_resend_is_dropped, behind-class-cursor fatal.
+
+VALIDATE RE-ENABLE @25cb0454 (scripts/validate.py): removed the mtg-zsi9f
+disable-by-default block + WASM_NETWORK_GAME_TAGS; network.gui/multideck/human-input/
+redo-reload run by default again (CI shards already select them via --only).
+--enable-wasm-network kept as a deprecated no-op; --no-wasm-e2e still disables all
+browser steps for browser-less hosts.
+
+GATE GREEN (mtime-fresh server release+network + wasm bundle rebuilt after source;
+full run under systemd-run --user --scope):
+ - FULL make validate: 34/34 steps PASS, 0 FAIL ->
+   validate_logs/validate_25cb04541ea6dfe32e2d13e1ac807ee7f86aa92f.log
+ - Re-enabled WASM net e2e all PASS: network.gui, network.multideck (monored s13 =
+   the layer-4 dual-stamp repro, robots42 s42 = mtg-610 rewind/replay regression,
+   counterspells s5, rogerbrand s3), network.human-input, network.redo-reload (both legs).
+ - NATIVE STAYS GREEN: equiv-random, equiv-zero, equiv-heuristic, robots42, fuzz all
+   PASS; unit.nextest 1588 passed; wasm browser suite (16) + 4 native-vs-WASM equiv
+   sweeps PASS; clippy -Dwarnings (engine + wasm32) clean.
+
+NOTE / residual coverage: the 4 official multideck decks do NOT exercise the
+cross-class same-ac (shuffle-then-draw) path; that path is proven by the new unit
+tests + the native lockstep oracle (real Timetwister). I tried adding a WASM cycling
+deck (avatar draft mirror s315) but it FAILS in BOTH parent and this branch (parent:
+sync mismatch @choice_seq=8; this branch: rewind fatal @turn4 — gets further) — a
+PRE-EXISTING avatar/cycling mirror nondeterminism (mtg-725 / mtg-u3dwj class), NOT a
+regression and out of scope. A deterministic WASM Timetwister/cycling e2e scenario is
+a worthwhile future add (would need a stable deck/seed); filed mention here for team-lead.
+
+## MTG Rules Review — Verdict: PASS (WASM mirror of the native PASS above)
+1. Correct rule implementation: N/A for rule semantics — network shadow-replay
+   TRANSPORT infrastructure, no engine rule logic changed. Affected effects' rules
+   unchanged (search CR 701.20, scry/surveil CR 701.18/701.34, library order CR
+   401.2, draw CR 120).
+2. Reveal ordering: YES (strengthened) — the WASM shadow now applies reveals eagerly
+   up to the choice's reveal-history watermark BEFORE the controller decides, and
+   reorders positionally so a draw reads the correct post-shuffle library order.
+3. Information hiding: PRESERVED — no new info in any message; the split only
+   re-buckets already-entitled facts the client already received. Opponent-fetch
+   dummy Searched reveal logic (empty name + card_id) unchanged.
+4. Decision authority: PRESERVED — choices still routed to the client's
+   PlayerController via ChoiceRequest; client-only change, no server decision added.
+5. Server/client sync: this IS the fix's domain — eliminates the same-ac
+   reorder+reveal false-fatal and the apply-frontier stall; controllers stay
+   information-independent; desync stays FATAL (same-class dual-stamp still aborts;
+   behind-class-cursor lost delta still aborts). Verified by full validate green incl
+   all native + WASM equivalence sweeps.
+6. Workaround vs real fix: REAL FIX — the principled WASM mirror of the proven native
+   reorder/reveal split + two-cursor apply. No card-name special case, no skipped
+   event, no TODO-shim.
+7. Bug-class generalization: class-level — fixes ALL shuffle-then-draw cards
+   (Timetwister/Wheel/Windfall) and ALL apply-frontier stalls at once, not a single
+   card. Residual avatar/cycling mirror nondeterminism is a SEPARATE pre-existing
+   class (mtg-725 / mtg-u3dwj), unaffected by this change.
+
+Reasoning: This is a WASM-client-only shadow-replay transport change that ports the
+already-reviewed-and-PASSED native reorder/reveal split + eager-reveal apply to the
+browser. It strengthens reveal-ordering and determinism (block-on-miss watermark)
+and preserves information hiding and decision authority; same-class dual-stamp and
+lost-delta both stay fatal. Full make validate is green incl all native+WASM
+equivalence sweeps. The one red sibling (avatar/cycling mirror s315) is pre-existing
+in parent too and tracked under mtg-725 / mtg-u3dwj, explicitly out of scope.
+
+Gamelog justification: network.gui monored seed 13 (the layer-4 dual-stamp repro)
+completes 22 turns with NO desync/monotonicity error; robots42 (mtg-610 rewind/replay
++ in-resolution choices) PASS. Reproduce: cd web && node test_network_gui_e2e.js
+--deck decks/monored.dck --seed 13 (and --deck decks/old_school/03_robots_jesseisbak.dck
+--seed 42).
+
+NOT MERGED — team-lead runs an adversarial desync-review on the WASM diff, then merges
+the COMPLETE native+WASM prototype.
+
 
 ## LOCKSTEP-ORACLE HANG FIXED 2026-06-04 (slot02-build) @63a1cfdb — reorder_log/reveal_log split + CORRECTED INVARIANT
 
