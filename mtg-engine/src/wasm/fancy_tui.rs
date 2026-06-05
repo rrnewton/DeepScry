@@ -1948,6 +1948,23 @@ impl WasmFancyTuiState {
                                             let c_el = ca.get(i);
                                             let p_el = pa.get(i);
                                             if c_el != p_el {
+                                                // mtg-677: `player_zones` serialises as a
+                                                // Vec<(PlayerId, Zones)> -> each element is a
+                                                // 2-tuple ARRAY [id, zones], so the (Object,
+                                                // Object) recursion below would be SKIPPED and
+                                                // the whole zones blob dumped (truncated). When
+                                                // both differing elements are 2-arrays, unwrap to
+                                                // element [1] (the zones object) so the recursion
+                                                // names the exact differing zone (e.g. `library`)
+                                                // untruncated — the seed-2 byte-pin step.
+                                                let c_el = match c_el {
+                                                    Some(serde_json::Value::Array(t)) if t.len() == 2 => t.get(1),
+                                                    other => other,
+                                                };
+                                                let p_el = match p_el {
+                                                    Some(serde_json::Value::Array(t)) if t.len() == 2 => t.get(1),
+                                                    other => other,
+                                                };
                                                 // If both sides are objects (e.g. a Card
                                                 // instance), recurse one level to name the
                                                 // exact differing sub-field instead of dumping
@@ -2016,13 +2033,16 @@ impl WasmFancyTuiState {
                                     } else {
                                         let cs = serde_json::to_string(cv).unwrap_or_default();
                                         let ps = serde_json::to_string(pv).unwrap_or_default();
-                                        let cs_s = if cs.len() > 600 {
-                                            format!("{}…", &cs[..600])
+                                        // mtg-677: raised 600 -> 8000 so a diverging library
+                                        // (`cards:[...]`) is not cut off right where it starts,
+                                        // enabling the seed-2 byte-pin.
+                                        let cs_s = if cs.len() > 8000 {
+                                            format!("{}…", &cs[..8000])
                                         } else {
                                             cs
                                         };
-                                        let ps_s = if ps.len() > 600 {
-                                            format!("{}…", &ps[..600])
+                                        let ps_s = if ps.len() > 8000 {
+                                            format!("{}…", &ps[..8000])
                                         } else {
                                             ps
                                         };
