@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T12:44:21.456152802+00:00
+updated_at: 2026-06-05T14:42:32.582699153+00:00
 ---
 
 # Description
@@ -484,3 +484,36 @@ STATUS: diagnosis-to-checkpoint complete; fix NOT yet implemented (deep
 foundational surgery — checkpointed per discipline rather than rushed).
 Diagnostic harness tweaks kept on branch (gitignored debug output); the
 temporary engine DEEPAC_* probes were reverted (engine tree clean).
+
+## 2026-06-05 (slot03-deepac2) @dd9d44ee — DEEP-AC SEED-5+SEED-2 BOTH CONVERGE (two rewind fixes)
+
+Root-caused the deep-ac desync byte-by-byte (card 14 Mox Emerald, robots seeds). The
+seed-5 view hash carried TWO co-present opponent-permanent divergences (the view hash
+folds library SIZE + battlefield tap status into one value, so the predecessor's
+byte-pin saw only the tap and missed the library off-by-one):
+
+FIX 1 (tap class): a reveal-materialised opponent permanent (non-undo-logged
+cards.insert) starts UNTAPPED; a TapCard at ac<=R (Mox tapped for mana turn 13) is
+neither carried by the reveal nor re-applied by the forward replay (which runs only
+ac>R), so tapped defaulted false. unwind_state_sync_to now re-derives position-R
+tapped from the retained undo log via new UndoLog::reconstruct_tapped_states().
+
+FIX 2 (library class = the seed-2 sibling): on rewind, reset_state_sync_cursor() reset
+BOTH cursors to 0, re-applying every LibraryReorder ac<=R. A reorder rewrites library
+MEMBERSHIP; re-applying a pre-departure reorder re-adds a card that left the library
+(cast to battlefield), clobbering the correct undo-rewound membership -> phantom lib
+entry (player_library_size N vs N+1). REORDER cursor now resets to R (not 0); REVEAL
+cursor still 0.
+
+Added DebugSyncInfo.library_ids diagnostic (sibling of graveyard_ids) -> server box
+dumps per-player library CardIds; this pinned FIX 2.
+
+EVIDENCE (mtime-fresh server+wasm, strict per-choice view-hash check):
+- seed 5: Completed winner=Some(1) ac=1283 (was FATAL @ seq160/ac965); 0 mismatches
+- seed 2: Completed winner=Some(0) ac=3570; 0 mismatches
+- clippy engine+wasm32 -Dwarnings clean; fmt clean; undo::tests 15 pass (+new
+  test_reconstruct_tapped_states).
+
+REMAINING (gated on this): re-apply eb8f938e action_count prize + full un-excluded
+canary + make validate + add seeds 2/5 to multideck gate. NOT yet merged — team-lead
+adversarial desync-review + MTG-rules review pending. Keeps hash ID mtg-o99ow.
