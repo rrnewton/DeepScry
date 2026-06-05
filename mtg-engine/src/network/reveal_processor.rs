@@ -16,6 +16,7 @@ use crate::core::PlayerId;
 use crate::game::GameState;
 use crate::loader::CardDefinition;
 use crate::network::{CardReveal, RevealReason};
+use crate::zones::Zone;
 
 /// Strategy for obtaining card definitions from reveals
 ///
@@ -330,6 +331,53 @@ pub fn process_card_reveal<P: CardDefProvider>(
                 );
             }
         }
+    }
+
+    // mtg-725: reconcile a freshly-materialized shadow instance's reveal mask to
+    // match the server, keying off the card's RESULTING zone. The server sets a
+    // card's `revealed_to_mask` via undo-LOGGED reveal helpers inside `move_card`
+    // (`maybe_reveal_to_all` / `maybe_reveal_to_player(owner)`). A client
+    // materializes a reserved (instance-less) card lazily here via `instantiate`,
+    // which starts it at `revealed_to_mask = 0`. When the card's hidden→public (or
+    // →hand) transition was processed by the shadow BEFORE its instance existed —
+    // the else-branch of the reveal helpers logs the count-parity `RevealCard`
+    // but cannot set a mask — or when the client adds its own card directly to
+    // hand (WASM empty-library mode, no `move_card` at all), the instance ends up
+    // with a stale mask 0. A LATER move into a hidden library then SKIPS the
+    // `SetRevealedToMask` conceal that the server logs (`maybe_conceal_in_library`
+    // only logs when mask != 0), drifting `action_count` with byte-identical
+    // observable state. Reproduced at robots seed-2 Timetwister: P0-shadow card
+    // 115 "Underground Sea" (graveyard, diff=1) and the WASM P1-shadow's own
+    // opening-hand cards 121/120/119 (hand, diff=3).
+    //
+    // Keying off the RESULTING zone — not the reveal reason or owner — sidesteps a
+    // message-ordering trap: in the common cast / library-draw case the reveal
+    // arrives BEFORE the engine's `move_card`, so the card is still in a HIDDEN
+    // source zone (Library) here; we leave its mask untouched and let `move_card`
+    // set it AND log the matching reveal (pre-setting it would make the reveal
+    // helper see the card as already-revealed and SKIP that log, dropping an undo
+    // entry). A PUBLIC zone (battlefield/graveyard/stack/exile/command — CR 400.2)
+    // means the public move already happened → revealed to all. HAND means the
+    // card was added directly without a move → revealed to its owner;
+    // `mark_revealed_to` is additive, so an already-public card in hand keeps its
+    // broader mask. This is a non-undo-logged state reconciliation, so it does not
+    // itself change `action_count`.
+    match game.find_card_zone(card_id) {
+        Some(Zone::Battlefield | Zone::Stack | Zone::Graveyard | Zone::Exile | Zone::Command) => {
+            if let Ok(card) = game.cards.get_mut(card_id) {
+                if !card.is_revealed_to_all() {
+                    card.mark_revealed_to_all();
+                }
+            }
+        }
+        Some(Zone::Hand) => {
+            if let Ok(card) = game.cards.get_mut(card_id) {
+                if !card.is_revealed_to(owner) {
+                    card.mark_revealed_to(owner);
+                }
+            }
+        }
+        Some(Zone::Library) | None => {}
     }
 }
 
