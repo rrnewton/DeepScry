@@ -1437,6 +1437,14 @@ pub struct DebugSyncInfo {
     /// `graveyard_sizes`, can match while the ids differ).
     #[serde(default)]
     pub graveyard_ids: [Vec<u32>; 2],
+    /// Per-player LIBRARY CardIds `[P1_lib, P2_lib]` — diagnostic sibling of
+    /// `graveyard_ids`. `compute_view_hash` hashes only library SIZE (contents are
+    /// private), so a `library_sizes` off-by-one can desync the hash with every
+    /// other field byte-identical; dumping the ids names the extra/missing card.
+    /// Pinned the mtg-o99ow library-reorder-resurrection class (robots seed-5: a
+    /// permanent cast to the battlefield reappearing in the shadow library).
+    #[serde(default)]
+    pub library_ids: [Vec<u32>; 2],
 }
 
 impl DebugSyncInfo {
@@ -1458,6 +1466,7 @@ impl DebugSyncInfo {
             requesting_player_hand_ids: Vec::new(),
             battlefield_detail: Vec::new(),
             graveyard_ids: [Vec::new(), Vec::new()],
+            library_ids: [Vec::new(), Vec::new()],
         }
     }
 

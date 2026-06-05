@@ -1837,11 +1837,59 @@ impl WasmNetworkClient {
             }
         }
 
-        // Reset the apply cursor so the forward replay re-consumes the WHOLE log
-        // as it re-advances. Initial library orders are NOT re-applied (the undo
-        // rewind + re-applied in-game reorders restore the order at R); the
-        // one-shot guard stays set.
+        // Step 3 (mtg-o99ow): restore the position-R `tapped` state of every
+        // re-materialised opponent permanent from the retained undo log.
+        //
+        // A revealed opponent permanent is materialised by a NON-undo-logged
+        // `cards.insert` (Step 2 / the eager forward reveal) that starts the
+        // instance UNTAPPED. When the permanent was tapped by a logged `TapCard`
+        // at an action_count ≤ R (e.g. a Mox tapped for mana earlier this game),
+        // neither the reveal (which carries no per-instance state) nor the forward
+        // replay (which only re-executes actions AFTER R) re-taps the fresh
+        // instance — so its `tapped` silently defaulted to false, a non-undo-logged
+        // divergence from the server (server-authoritative TAPPED vs shadow
+        // UNTAPPED). The retained undo log (truncated to ≤ R by the rewind) is the
+        // deterministic record of tap-state at R; replay it forward to set each
+        // opponent permanent's `tapped` to its position-R value. Our own cards
+        // already have a real undo home and are excluded (retained_card_ids only
+        // holds opponent reveal ids). Gated to battlefield permanents — tapped is
+        // observable only there.
+        let tapped_at_r = shadow.undo_log.reconstruct_tapped_states();
+        for cid in &retained_card_ids {
+            if shadow.find_card_zone(*cid) != Some(crate::zones::Zone::Battlefield) {
+                continue;
+            }
+            if let Some(&tapped) = tapped_at_r.get(cid) {
+                if let Ok(card) = shadow.cards.get_mut(*cid) {
+                    card.tapped = tapped;
+                }
+            }
+        }
+
+        // Reset the apply cursors so the forward replay re-consumes the log as it
+        // re-advances. The two cursors reset to DIFFERENT positions (mtg-o99ow):
+        //
+        // - REVEALS reset to 0: reveals are idempotent identity injections and the
+        //   forward replay must re-materialise every opponent instance the rewind
+        //   cleared, so re-consuming the whole reveal log is correct and required.
+        //
+        // - REORDERS reset to R (retained_action), NOT 0: a `LibraryReorder` is a
+        //   wholesale `library.cards = new_order` assignment that REWRITES MEMBERSHIP,
+        //   not just order. Re-applying a reorder stamped at ac ≤ R resurrects the
+        //   library order AS IT WAS at that earlier ac — including cards that have
+        //   SINCE left the library (drawn / cast to the battlefield) via undo-logged
+        //   moves at ac ≤ R. The undo rewind already restored the library to its
+        //   correct position-R MEMBERSHIP (it reverses only moves > R, keeping the
+        //   cast that removed the card), so re-applying a stale pre-R reorder CLOBBERS
+        //   that correct state and re-adds the departed card — a phantom library
+        //   entry that desyncs `player_library_size` (server-authoritative N vs shadow
+        //   N+1). Reproduced at robots seed-5: P0's Mox Emerald (card 14), cast to the
+        //   battlefield turn 13, reappeared in P0's library after the turn-14 rewind
+        //   because a pre-cast P0 reorder was re-applied at the post-cast position.
+        //   Only reorders stamped at ac > R (which land DURING the forward replay
+        //   window) must re-apply; the rewind itself is authoritative for ≤ R.
         self.reset_state_sync_cursor();
+        self.last_applied_reorder_ac = retained_action;
     }
 
     /// Consume all state-sync deltas whose game `action_count` the shadow has

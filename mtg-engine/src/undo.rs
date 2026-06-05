@@ -1750,6 +1750,34 @@ impl UndoLog {
         self.actions.len()
     }
 
+    /// Reconstruct the net `tapped` state of every card touched by a `TapCard`
+    /// action in this log by replaying it forward (last `TapCard` per card wins).
+    ///
+    /// Every forward tap/untap site (`tap_permanent`, `untap_permanent`, the
+    /// mana-ability tap in `actions/mod.rs`, and the ETB-tapped self-replacement
+    /// in `move_card`) logs `TapCard { tapped: <new state> }`, so the value of the
+    /// LAST `TapCard` for a card equals its current `tapped`. The undo log itself
+    /// is the deterministic, position-keyed record of state at its head, so this
+    /// is a pure function of game position.
+    ///
+    /// mtg-o99ow: the network shadow's per-turn rewind re-materialises a revealed
+    /// OPPONENT permanent with a NON-undo-logged `cards.insert` that starts the
+    /// instance untapped. The undo rewind cannot restore tap-state set by a
+    /// `TapCard` BEFORE the rewind point (it only reverses actions AFTER it, and
+    /// the re-created instance never saw the earlier tap), so `unwind_state_sync_to`
+    /// uses this to re-derive the position-R `tapped` of each re-materialised
+    /// opponent permanent. Returns only cards that have at least one `TapCard`
+    /// entry; absence means the card was never tapped at this position.
+    pub fn reconstruct_tapped_states(&self) -> std::collections::HashMap<CardId, bool> {
+        let mut states = std::collections::HashMap::new();
+        for action in &self.actions {
+            if let GameAction::TapCard { card_id, tapped } = action {
+                states.insert(*card_id, *tapped);
+            }
+        }
+        states
+    }
+
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
@@ -2096,6 +2124,63 @@ mod tests {
         assert!(matches!(popped, GameAction::ModifyLife { .. }));
         assert_eq!(log_size, 0);
         assert_eq!(log.len(), 0);
+    }
+
+    #[test]
+    fn test_reconstruct_tapped_states() {
+        // mtg-o99ow: the network shadow uses this to re-derive the position-R
+        // tapped state of a reveal-materialised opponent permanent. Last TapCard
+        // per card wins; absence means never tapped.
+        let mut log = UndoLog::new();
+        let a = CardId::new(14);
+        let b = CardId::new(7);
+        let c = CardId::new(99);
+        // a: tapped, then untapped, then tapped again -> final true
+        log.log(
+            GameAction::TapCard {
+                card_id: a,
+                tapped: true,
+            },
+            0,
+        );
+        log.log(
+            GameAction::TapCard {
+                card_id: b,
+                tapped: true,
+            },
+            0,
+        );
+        log.log(
+            GameAction::TapCard {
+                card_id: a,
+                tapped: false,
+            },
+            0,
+        );
+        log.log(
+            GameAction::TapCard {
+                card_id: a,
+                tapped: true,
+            },
+            0,
+        );
+        // b: tapped then untapped -> final false
+        log.log(
+            GameAction::TapCard {
+                card_id: b,
+                tapped: false,
+            },
+            0,
+        );
+
+        let states = log.reconstruct_tapped_states();
+        assert_eq!(states.get(&a), Some(&true), "a's last TapCard is tapped=true");
+        assert_eq!(states.get(&b), Some(&false), "b's last TapCard is tapped=false");
+        assert_eq!(
+            states.get(&c),
+            None,
+            "c never tapped -> absent (caller defaults untapped)"
+        );
     }
 
     #[test]

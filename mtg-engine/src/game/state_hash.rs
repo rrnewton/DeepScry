@@ -575,6 +575,10 @@ pub fn build_debug_sync_info(
 
     let battlefield_detail = view_battlefield_detail(view);
     let graveyard_ids = view_graveyard_ids(view);
+    let library_ids = [
+        view.player_library(p1).iter().map(|id| id.as_u32()).collect(),
+        view.player_library(p2).iter().map(|id| id.as_u32()).collect(),
+    ];
 
     DebugSyncInfo {
         turn: view.turn_number(),
@@ -598,6 +602,7 @@ pub fn build_debug_sync_info(
         requesting_player_hand_ids,
         battlefield_detail,
         graveyard_ids,
+        library_ids,
     }
 }
 

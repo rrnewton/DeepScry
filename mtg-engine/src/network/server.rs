@@ -323,6 +323,14 @@ fn log_debug_sync_info(label: &str, info: &DebugSyncInfo) {
     if info.graveyard_ids.iter().any(|g| !g.is_empty()) {
         log::error!("║   Graveyard CardIds: {:?}", info.graveyard_ids);
     }
+    if info.library_ids.iter().any(|g| !g.is_empty()) {
+        let mut p0 = info.library_ids[0].clone();
+        let mut p1 = info.library_ids[1].clone();
+        p0.sort_unstable();
+        p1.sort_unstable();
+        log::error!("║   Library CardIds(sorted): P0={:?}", p0);
+        log::error!("║   Library CardIds(sorted): P1={:?}", p1);
+    }
 }
 
 /// Compare two DebugSyncInfo and log specific differences
