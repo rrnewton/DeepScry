@@ -33,12 +33,14 @@
 #
 # COVERAGE vs the default validate equiv legs (we EXTEND, not duplicate):
 #   default validate  : avatar pair, seed 3, {heuristic,random,zero}      (3 games)
-#   this canary GREEN  : avatar pair + monored mirror + counterspells mirror,
-#                        BROAD seed ranges, all three controllers.
+#   this canary GREEN  : avatar pair + monored mirror + counterspells mirror
+#                        (all three controllers) + rogerbrand mirror HEURISTIC
+#                        (combat two-choice + All Hallow's Eve mass-resurrection;
+#                        the mtg-u3dwj/mtg-d62r3 fix), BROAD seed ranges.
 #                        (cycling/search/shuffle, burn/combat-damage,
-#                         counter/stack-interaction)
-#   this canary KNOWN-RED: rogerbrand mirror (combat two-choice + All Hallow's
-#                        Eve mass-resurrection). See the KNOWN_RED note below.
+#                         counter/stack-interaction, in-resolution draw-then-discard)
+#   this canary KNOWN-RED: rogerbrand mirror random/zero only (mtg-586 load-flaky
+#                        network-server nondeterminism). See the KNOWN_RED note below.
 #
 # THE GREEN GATE vs THE KNOWN-RED TIER  (honest; no faked green)
 #   GREEN corpus  -> drives the exit code. If ANY green leg diverges, the canary
@@ -58,14 +60,19 @@
 #                    is not deterministically green (mtg-586 history); we surface
 #                    it here instead of pretending it is covered.
 #
-# BASELINE (integration @8c0d6ac6, 2026-06-04): the GREEN corpus is all-green;
-#   the KNOWN_RED rogerbrand-mirror HEURISTIC seed=3 leg diverges DETERMINISTICALLY
-#   (377-line local-vs-network gamelog diff, reproduces 3/3 in isolation, starts
-#   Turn 8 M2; local determinism itself holds). That is a real native desync in
-#   the rogerbrand / All Hallow's Eve family (cf. mtg-589 / mtg-609 which track
-#   the WASM-shadow expression; the native deterministic heuristic path is filed
-#   fresh as mtg-u3dwj). The netarch prototype must keep the GREEN corpus
-#   green and MUST NOT regress it; it is NOT required to fix the known-red leg.
+# BASELINE (fix-allhallows-eve on integration, 2026-06-04): the GREEN corpus is
+#   all-green, NOW INCLUDING the rogerbrand-mirror HEURISTIC leg. That leg used
+#   to diverge DETERMINISTICALLY (377-line local-vs-network gamelog diff, 3/3 in
+#   isolation, Turn 8 M2): the Bazaar-of-Baghdad "draw two, then discard three"
+#   in-resolution discard was decided on the network client's shadow BEFORE the
+#   just-drawn cards' reveals (carried in the discard ChoiceRequest's buffer) were
+#   materialised, so the heuristic discarded the wrong cards — an
+#   information-independence desync. FIXED (mtg-u3dwj / mtg-d62r3): the DiscardCards
+#   handler now receives the ChoiceRequest before syncing (prepare -> sync ->
+#   decide), so rogerbrand heuristic seeds 1-4 are now 5/5-deterministically green
+#   and promoted into the gate above. The rogerbrand random/zero legs remain
+#   KNOWN_RED (mtg-586-class load-flaky network-server nondeterminism; cf. the
+#   WASM-shadow expressions mtg-589 / mtg-609). The GREEN corpus MUST NOT regress.
 #
 # USAGE
 #   bug_finding/desync_canary.sh             # full canary (green gate + known-red report)
@@ -135,19 +142,23 @@ GREEN_CORPUS=(
   "avatar-cycling|decks/booster_draft/avatar/ryan_avatar_draft.dck decks/booster_draft/avatar/gabriel_avatar_draft.dck|all|1|$(qseeds 6)|$ALL_CONTROLLERS"
   "monored-burn|decks/monored.dck|self|11|$(qseeds 6)|$ALL_CONTROLLERS"
   "counterspells-stack|decks/counterspells.dck|self|3|$(qseeds 4)|$ALL_CONTROLLERS"
+  "rogerbrand-allhallows-heuristic|decks/old_school/01_rogue_rogerbrand.dck|self|1|$(qseeds 4)|heuristic"
 )
 
 # KNOWN_RED tier: PRE-EXISTING, tracked desyncs. Reported + captured, NOT gating.
-#   - rogerbrand mirror  : combat two-choice + All Hallow's Eve mass-resurrection.
-#                          NATIVE local-vs-network HEURISTIC seed=3 diverges
-#                          DETERMINISTICALLY (377 lines, 3/3 in isolation, Turn 8
-#                          M2). Related WASM-shadow expressions: mtg-589 / mtg-609.
-#                          Native deterministic heuristic path: see the beads
-#                          issue filed alongside this canary. random/zero on
-#                          rogerbrand are mtg-586-class load-flaky and are NOT
-#                          promoted into any gate.
+#   - rogerbrand mirror random/zero : combat two-choice + All Hallow's Eve
+#                          mass-resurrection. The deterministic HEURISTIC seed=3
+#                          divergence (the Bazaar-of-Baghdad in-resolution
+#                          draw-then-discard shadow-sync-ordering desync, mtg-u3dwj
+#                          / mtg-d62r3) was FIXED 2026-06-04 and PROMOTED into the
+#                          GREEN corpus above. The remaining random/zero legs on
+#                          rogerbrand stay here: they are mtg-586-class load-flaky
+#                          (network-server nondeterminism, NOT a same-game desync)
+#                          and must NOT be promoted into any gate until that is
+#                          root-caused. Related WASM-shadow expressions: mtg-589 /
+#                          mtg-609.
 KNOWN_RED_CORPUS=(
-  "rogerbrand-allhallows|decks/old_school/01_rogue_rogerbrand.dck|self|1|$(qseeds 4)|$ALL_CONTROLLERS"
+  "rogerbrand-allhallows-rand-zero|decks/old_school/01_rogue_rogerbrand.dck|self|1|$(qseeds 4)|random zero"
 )
 
 # ----- Runner ---------------------------------------------------------------
