@@ -9649,15 +9649,37 @@ impl GameState {
                     for card_id in cards_to_discard {
                         self.move_card(card_id, Zone::Hand, Zone::Graveyard, player_id)?;
 
-                        // Log the discard
-                        if let Some(card) = self.cards.try_get(card_id) {
-                            let player_name = self
-                                .get_player(player_id)
-                                .map(|p| p.name.to_string())
-                                .unwrap_or_else(|_| "Player".to_string());
-                            self.logger
-                                .gamelog(&format!("{} discards {} to Balance", player_name, card.name));
-                        }
+                        // Log the discard. mtg-d4j9v: emit UNCONDITIONALLY with a
+                        // reveal-timing-INDEPENDENT verifier key (mirrors the
+                        // move_card Hand→Graveyard discard line and the
+                        // discard_card line, both fixed under mtg-677). On a
+                        // network shadow the discarded OPPONENT card's public
+                        // `RevealCard` can arrive one ChoiceRequest AFTER the
+                        // forced Balance resolution that discards it (the shadow's
+                        // forward GameLoop runs AHEAD of the reveal stream), so a
+                        // `try_get`-gated line is DROPPED on the first forward pass
+                        // but PRESENT on a rewind replay (the instance is left
+                        // behind) → a spurious line-COUNT offset that shifts every
+                        // later entry and trips the rewind/replay verifier
+                        // (robots seeds 7/11, Balance hand-equalize). The card is
+                        // in the PUBLIC graveyard identically on both passes
+                        // (CR 400.2/404; the turn-start hash proves the STATE), so
+                        // comparing the server-authoritative CardId keeps full
+                        // rigor while not flagging the presentation asymmetry.
+                        let player_name = self
+                            .get_player(player_id)
+                            .map(|p| p.name.to_string())
+                            .unwrap_or_else(|_| "Player".to_string());
+                        let card_name = self
+                            .cards
+                            .try_get(card_id)
+                            .map(|c| c.name.to_string())
+                            .unwrap_or_else(|| format!("card#{}", card_id.as_u32()));
+                        let verifier_stable = format!("{} discards card#{} to Balance", player_name, card_id.as_u32());
+                        self.logger.gamelog_reveal_stable(
+                            &format!("{} discards {} to Balance", player_name, card_name),
+                            &verifier_stable,
+                        );
                     }
                 }
             }

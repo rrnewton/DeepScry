@@ -1778,6 +1778,37 @@ impl UndoLog {
         states
     }
 
+    /// Reconstruct the net `controller` of every card touched by a
+    /// `ChangeController` action in this log by replaying it forward (last
+    /// `ChangeController` per card wins → its `new_controller`).
+    ///
+    /// mtg-f0w57: the exact twin of [`reconstruct_tapped_states`] for the OTHER
+    /// hashed per-card battlefield field. A re-materialised revealed OPPONENT
+    /// permanent is rebuilt from the blank card template, which defaults
+    /// `controller = owner`; if a `ChangeController` (Control Magic, Old Man of
+    /// the Sea, Steal Artifact, …) moved it to a different controller at an
+    /// action_count ≤ R, neither the reveal (carries no per-instance state) nor
+    /// the forward replay (re-executes only actions AFTER R) restores it, so it
+    /// silently reverts to `owner` — a non-undo-logged divergence from the
+    /// server. The retained undo log (truncated to ≤ R) is the deterministic
+    /// record of controller at R; replay it forward to re-derive each card's
+    /// position-R controller. Returns only cards with at least one
+    /// `ChangeController` entry; absence means the card was never re-controlled.
+    pub fn reconstruct_controller_states(&self) -> std::collections::HashMap<CardId, PlayerId> {
+        let mut states = std::collections::HashMap::new();
+        for action in &self.actions {
+            if let GameAction::ChangeController {
+                card_id,
+                new_controller,
+                ..
+            } = action
+            {
+                states.insert(*card_id, *new_controller);
+            }
+        }
+        states
+    }
+
     pub fn is_empty(&self) -> bool {
         self.actions.is_empty()
     }
@@ -2180,6 +2211,62 @@ mod tests {
             states.get(&c),
             None,
             "c never tapped -> absent (caller defaults untapped)"
+        );
+    }
+
+    #[test]
+    fn test_reconstruct_controller_states() {
+        // mtg-f0w57: twin of test_reconstruct_tapped_states for the `controller`
+        // field. Last ChangeController per card wins (→ its new_controller);
+        // absence means the card was never re-controlled (caller defaults owner).
+        let mut log = UndoLog::new();
+        let a = CardId::new(14);
+        let b = CardId::new(7);
+        let c = CardId::new(99);
+        let p0 = PlayerId::new(0);
+        let p1 = PlayerId::new(1);
+        // a: owner p0 -> p1 (Control Magic), then back p1 -> p0 (effect ended),
+        // then p0 -> p1 again -> final p1.
+        log.log(
+            GameAction::ChangeController {
+                card_id: a,
+                old_controller: p0,
+                new_controller: p1,
+            },
+            0,
+        );
+        log.log(
+            GameAction::ChangeController {
+                card_id: b,
+                old_controller: p1,
+                new_controller: p0,
+            },
+            0,
+        );
+        log.log(
+            GameAction::ChangeController {
+                card_id: a,
+                old_controller: p1,
+                new_controller: p0,
+            },
+            0,
+        );
+        log.log(
+            GameAction::ChangeController {
+                card_id: a,
+                old_controller: p0,
+                new_controller: p1,
+            },
+            0,
+        );
+
+        let states = log.reconstruct_controller_states();
+        assert_eq!(states.get(&a), Some(&p1), "a's last ChangeController -> p1");
+        assert_eq!(states.get(&b), Some(&p0), "b's last ChangeController -> p0");
+        assert_eq!(
+            states.get(&c),
+            None,
+            "c never re-controlled -> absent (caller defaults owner)"
         );
     }
 

@@ -1855,6 +1855,13 @@ impl WasmNetworkClient {
         // holds opponent reveal ids). Gated to battlefield permanents — tapped is
         // observable only there.
         let tapped_at_r = shadow.undo_log.reconstruct_tapped_states();
+        // mtg-f0w57: restore `controller` too — the OTHER hashed per-card field.
+        // A re-materialised opponent permanent defaults `controller = owner`; a
+        // `ChangeController` (Control Magic / Old Man of the Sea / Steal Artifact)
+        // at ac ≤ R is neither carried by the reveal nor re-executed by the
+        // forward replay, so without this it silently reverts to owner and
+        // desyncs the view hash. Same position-R undo-log derivation as tapped.
+        let controller_at_r = shadow.undo_log.reconstruct_controller_states();
         for cid in &retained_card_ids {
             if shadow.find_card_zone(*cid) != Some(crate::zones::Zone::Battlefield) {
                 continue;
@@ -1862,6 +1869,11 @@ impl WasmNetworkClient {
             if let Some(&tapped) = tapped_at_r.get(cid) {
                 if let Ok(card) = shadow.cards.get_mut(*cid) {
                     card.tapped = tapped;
+                }
+            }
+            if let Some(&controller) = controller_at_r.get(cid) {
+                if let Ok(card) = shadow.cards.get_mut(*cid) {
+                    card.controller = controller;
                 }
             }
         }

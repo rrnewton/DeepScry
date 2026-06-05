@@ -342,9 +342,16 @@ pub enum ClientMessage {
         debug_info: Option<DebugSyncInfo>,
         /// The actual spell ability chosen (for Priority choices)
         ///
-        /// When present, server uses this directly instead of looking up by index.
-        /// This is more robust against client/server state divergence since it
-        /// identifies the ability by CardId rather than position in a list.
+        /// VALIDATION ONLY (mtg-j4krs). The server's canonical choice is ALWAYS
+        /// the index-based lookup; when this field is present the server
+        /// additionally asserts the index-selected ability `==` this
+        /// `spell_ability` and treats any mismatch as a FATAL desync (early
+        /// detection by CardId). It is NOT used "directly instead of the index".
+        /// See `NetworkController` priority handling and
+        /// `docs/NETWORK_ARCHITECTURE.md` ("desync is always fatal"). The
+        /// native local controller populates this for all priority choices; the
+        /// WASM/web client currently sends `None`, so the cross-check is a no-op
+        /// on the deployed web path until it is threaded through (mtg-j4krs #2).
         spell_ability: Option<SpellAbility>,
         /// Actual target CardIds for target choices
         ///
