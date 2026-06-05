@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T14:42:32.582699153+00:00
+updated_at: 2026-06-05T18:26:11.455643896+00:00
 ---
 
 # Description
@@ -517,3 +517,34 @@ EVIDENCE (mtime-fresh server+wasm, strict per-choice view-hash check):
 REMAINING (gated on this): re-apply eb8f938e action_count prize + full un-excluded
 canary + make validate + add seeds 2/5 to multideck gate. NOT yet merged — team-lead
 adversarial desync-review + MTG-rules review pending. Keeps hash ID mtg-o99ow.
+
+═══ DEEP-AC BLOCKER INCREMENT (slot03-blockers, fix-deep-ac, 2026-06-05) ═══
+PLAIN-LANGUAGE: fixed the Balance-resolution crash on robots seeds 7 & 11. It was
+a LOGGING bug (one discard log line skipped when the browser hadn't yet learned
+the opponent's discarded card identity → shifted the whole log stream by one →
+false rewind/replay self-check failure), NOT a state divergence. Seed 11 now
+PASSES strict; seed 7 advances to a deeper, separate state bug.
+
+CHANGES (committed on fix-deep-ac, prize still OFF):
+ 1. mtg-d4j9v [PRIMARY]: actions/mod.rs execute_balance_effect Hand-zone discard
+    log now emitted UNCONDITIONALLY via gamelog_reveal_stable (verifier key
+    'X discards card#<id> to Balance'), the 3rd discard-log site of the mtg-677
+    reveal-timing class. Kills the +1 line-count offset (seed7 buffer idx 68,
+    seed11 idx 382).
+ 2. mtg-f0w57: undo.rs reconstruct_controller_states() + client.rs applies it on
+    re-materialization (twin of reconstruct_tapped_states; restores hashed
+    'controller'). Robots can't exercise it; unit-tested.
+ 3. mtg-j4krs #1: protocol.rs SubmitChoice.spell_ability stale doc corrected.
+
+STRICT broad sweep (action_count RE-INCLUDED), mtime-fresh: PASS 2,5,6,9,11,18,20,42
+(8/10). Shipped-config (prize OFF) identical. make validate GREEN 33/0.
+
+STILL BLOCKING THE PRIZE (checkpointed):
+ - seed 7: P1 hand-size off-by-one (server 6 vs client 5) at choice_seq=230
+   action_count=1341, right after Demonic Tutor search-to-hand following a Wheel
+   of Fortune discard+redraw → deep-ac in-stack-resolution reveal class; principled
+   fix = reveal-actionlog unification (mtg-ho2r8).
+ - seed 19 (mtg-8ow9h): client sends illegal choice index 2 (server offers 2) at
+   WebRandom Fireball cast turn 24 — option-set/state divergence (mtg-0e1wo family).
+ - mtg-j4krs #2 (WASM spell_ability populate): deferred (crash-earlier guard).
+Prize (eb8f938e) re-applies only after ALL of 2,5,6,7,9,11,18,19,20,42 converge strict.
