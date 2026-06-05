@@ -1,23 +1,26 @@
 ---
 title: 'Web game: start PAUSED, don''t auto-run; spacebar/''Run 1 turn''/''Auto run'' advance; ?auto_run=true override'
-status: open
+status: closed
 priority: 3
 issue_type: feature
 created_at: 2026-06-05T13:52:32.666251510+00:00
-updated_at: 2026-06-05T13:52:32.666251510+00:00
+updated_at: 2026-06-05T16:43:36.109565186+00:00
 ---
 
 # Description
 
-Web random/random (and any auto-runnable) game should start PAUSED, not auto-run.
+DONE (web-only, slot01 web-ux-playtest-batch).
 
-REPORTED (user playtest 2026-06-05): loading a random/random game in the web interface, it runs automatically as soon as both game screens load (after both players press Ready), IGNORING the 'Run 1 turn' / 'Auto run' control in the upper-right.
+Web games now start PAUSED instead of auto-running to completion. Implemented purely in the web frontend (no engine/protocol edits).
 
-DESIRED:
-- Start in a PAUSED state.
-- Advance by: spacebar, OR the 'Run 1 turn' button, OR enabling 'Auto run'.
-- Optional ?auto_run=true query param to auto-enable auto-run for testing.
+WHAT CHANGED:
+- web/lobby_launcher.js: new isAutoRunRequested() helper (reads ?auto_run=true); documented in the redirect param contract.
+- web/native_game.html + web/tui_game.html: added gamePaused (default !auto_run) + ourSeatIsAI() + syncInitialRunState(). Forward progress for an AI seat is now gated: at launch and in onMessageProcessed we only call tui_run_turn() when the seat is human OR not paused. syncInitialRunState() reconciles the WASM auto_run flag (born true for a network AI seat in fancy_tui.rs) by toggling it off via tui_toggle_auto() unless ?auto_run=true. Auto-Run button / 'a' key now clear gamePaused when enabling auto.
 
-FUTURE: enables a benchmark - how fast can a random/random browser game run to completion (near-instant Random controller). Note: full-speed random/random is currently still slow (see the log-spam + perf issue).
+ROOT CAUSE: a network AI seat initialised WASM auto_run=true, and the JS drivers (onGameReady's tui_run_turn + onMessageProcessed's tui_run_turn + the ratzilla draw_web should_auto_run loop) advanced unconditionally. Human seats are unaffected (the loop naturally blocks at human choice points), so the gate only touches AI seats. Determinism is untouched — pausing only delays our decision submission; it never changes a decision.
 
-Files: the network game page auto-run control + game boot flow (web/native_game.html, web/tui_game.html, web/game_boot_params.js). Related: mtg-567 (auto-run button spams turn message with human controller).
+ADVANCE CONTROLS: Space (manual step), 'Run 1 Turn' button, 'Auto Run' toggle. ?auto_run=true restores auto-advancing for benchmark/e2e.
+
+TESTS updated to opt into auto-run (unattended AI runs): web/test_network_random_e2e.js, test_redo_ai_network_e2e.js, test_network_gui_e2e.js (random only), test_redo_multiturn_reload_e2e.js.
+
+Verified: all inline HTML script blocks + modified test files pass node --check. Full make validate pending (orchestrator-sequenced).

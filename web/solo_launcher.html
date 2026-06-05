@@ -169,7 +169,7 @@
             <select id="p1-controller">
                 <option value="human" selected>Human (you)</option>
                 <option value="heuristic">Heuristic AI</option>
-                <option value="random">Random AI</option>
+                <option value="random">Random</option>
                 <option value="zero">Zero AI (passes)</option>
             </select>
         </div>
@@ -177,7 +177,7 @@
             <label class="field-label" for="p2-controller">Opponent</label>
             <select id="p2-controller">
                 <option value="heuristic" selected>Heuristic AI</option>
-                <option value="random">Random AI</option>
+                <option value="random">Random</option>
                 <option value="zero">Zero AI (passes)</option>
                 <option value="human">Human (hot-seat)</option>
             </select>
@@ -218,7 +218,7 @@
             <label class="cb-row"><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
             <div id="img-src-local-gate-note" class="gate-note" style="display:none;">
                 Local images hidden pending licensing clarity around card images.
-                Append <code>?allow_local_img_load=true</code> to the URL to enable.
+                Append <code>?advanced_options=true</code> to the URL to enable.
             </div>
         </div>
     </div>
@@ -254,10 +254,16 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
         statusEl.classList.toggle('error', !!isError);
     }
 
-    // ── Local-image gate (mirrors launcher.html / lobby_launcher's sticky gate) ──
+    // ── Advanced-options gate (mtg-2csf2; mirrors launcher.html). ?advanced_options
+    // is the new gate for the Local image source; ?allow_local_img_load is a
+    // backward-compatible alias. Sticky in sessionStorage. (Solo always allows the
+    // seed field — seed control is only restricted for MULTIPLAYER creators.)
     function resolveLocalImageAllowed() {
         let allowed;
-        if (qs.has('allow_local_img_load')) {
+        if (qs.has('advanced_options')) {
+            allowed = qs.get('advanced_options') === 'true';
+            try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
+        } else if (qs.has('allow_local_img_load')) {
             allowed = qs.get('allow_local_img_load') === 'true';
             try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
         } else {
@@ -487,7 +493,7 @@ import { IMAGE_SOURCE_IDS, forwardStickyParams, forwardStickyParamsOnAnchor } fr
         const srcs = selectedImageSources();
         if (srcs.length > 0) qp.set('img_src', srcs.join(','));
         if (debugCb.checked) qp.set('debug', 'true');
-        if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+        if (allowLocalImgLoad) { qp.set('advanced_options', 'true'); qp.set('allow_local_img_load', 'true'); }
         const url = new URL(page, window.location.href);
         url.search = qp.toString();
         // Relay the CAS release token + other sticky params from our own URL.

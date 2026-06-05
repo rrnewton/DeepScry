@@ -191,6 +191,9 @@ async function runTest() {
             name: 'WebRandom',
             deck: webDeckName,
             controller: 'random',
+            // mtg-rxacr: web games start PAUSED now. This unattended AI-vs-AI
+            // run must opt back into auto-advancing with ?auto_run=true.
+            auto_run: 'true',
         }).toString();
         await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
         testResults.steps.push({ name: 'wasm_loaded', timestamp: new Date().toISOString() });

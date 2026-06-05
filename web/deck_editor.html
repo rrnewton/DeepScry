@@ -507,7 +507,9 @@ function launcherReturnUrl(deckName) {
         const v = EDITOR_QS.get(k);
         if (v) qp.set(k, v);
     }
-    if (EDITOR_QS.get('allow_local_img_load') === 'true') qp.set('allow_local_img_load', 'true');
+    if (EDITOR_QS.get('advanced_options') === 'true' || EDITOR_QS.get('allow_local_img_load') === 'true') {
+        qp.set('advanced_options', 'true'); qp.set('allow_local_img_load', 'true'); // mtg-2csf2 (+legacy alias)
+    }
     const renderer = EDITOR_QS.get('renderer');
     if (renderer === 'tui' || renderer === 'native') qp.set('renderer', renderer);
     if (deckName) {
@@ -1374,7 +1376,9 @@ filterCmc.addEventListener('change', renderCatalog);
         const v = EDITOR_QS.get(k);
         if (v) qp.set(k, v);
     }
-    if (EDITOR_QS.get('allow_local_img_load') === 'true') qp.set('allow_local_img_load', 'true');
+    if (EDITOR_QS.get('advanced_options') === 'true' || EDITOR_QS.get('allow_local_img_load') === 'true') {
+        qp.set('advanced_options', 'true'); qp.set('allow_local_img_load', 'true'); // mtg-2csf2 (+legacy alias)
+    }
     const q = qp.toString();
     if (q) link.href = 'index.html?' + q;
 })();

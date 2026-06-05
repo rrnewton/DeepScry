@@ -26,13 +26,15 @@
  *   &deck=<deck_name>             → pre-select deck in the game page launcher
  *   &name=<player_name>           → pre-fill player name field
  *   &ws=<ws_url>                  → override lobby WebSocket URL
- *   &allow_local_img_load=true    → propagate the sticky local-image unlock
+ *   &advanced_options=true        → propagate the sticky advanced-options unlock (mtg-2csf2)
+ *   &allow_local_img_load=true    → legacy alias of advanced_options (local-image unlock)
  *   &ui=tui|native                → which game-page UI to land on (default: tui)
  *   &mode=local|network           → game mode hint (default: network when from lobby)
  *   &reconnect_token=<token>      → reconnect token from GameStarted (reattach still a stub, mtg-682)
  *   &images=true|false            → show card images on the game page (pre-game pref)
  *   &img_src=local,scryfall,gatherer → enabled image sources, in fallback order
  *   &debug=true                   → enable TRACE logging on the game page
+ *   &auto_run=true                → auto-advance an AI game (default: start PAUSED, mtg-rxacr)
  * ──────────────────────────────────────────────────────────────────────────────
  *
  * GAME-PREFS contract (mtg-695 launcher-parity restore):
@@ -100,7 +102,13 @@ export function buildRedirectQuery(opts) {
     if (opts.deckName)         qp.set('deck', opts.deckName);
     if (opts.playerName)       qp.set('name', opts.playerName);
     if (opts.wsUrl)            qp.set('ws', opts.wsUrl);
-    if (opts.allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+    // mtg-2csf2: advanced_options is the new gate (unlocks the Local image
+    // source + the advanced multiplayer-seed field). Emit allow_local_img_load
+    // too as a backward-compatible alias so older consumers keep working.
+    if (opts.advancedOptions || opts.allowLocalImgLoad) {
+        qp.set('advanced_options', 'true');
+        qp.set('allow_local_img_load', 'true');
+    }
     if (opts.reconnectToken)   qp.set('reconnect_token', opts.reconnectToken);
     // Per-game prefs re-homed from the old built-in launcher (mtg-695). Only
     // emit when explicitly provided so a caller that does not set them lets the
@@ -263,6 +271,22 @@ export function consumeNetworkParams() {
     };
 }
 
+/**
+ * True when the game page was opened with `?auto_run=true` (mtg-rxacr).
+ *
+ * Web games now start PAUSED by default: an AI-vs-AI (e.g. random/random) game
+ * no longer auto-runs to completion the instant both clients load — the player
+ * advances it with Space / the "Run 1 Turn" button / the "Auto Run" toggle.
+ * `?auto_run=true` opts back into the old auto-advancing behaviour (so the
+ * benchmark / e2e harnesses that WANT an unattended run can request it). Parsed
+ * here so both game pages share ONE definition of the param (DRY).
+ *
+ * @returns {boolean}
+ */
+export function isAutoRunRequested() {
+    return new URLSearchParams(window.location.search).get('auto_run') === 'true';
+}
+
 // ---------------------------------------------------------------------------
 // consumeGamePrefs — per-game display/debug prefs re-homed from the launcher
 // ---------------------------------------------------------------------------
@@ -331,7 +355,7 @@ export function consumeGamePrefs(defaults) {
  * sticky-param plumbing, it is MERGED into each destination's query string
  * WITHOUT clobbering the other params — never dropping deck/name/seed/ws/etc.
  */
-export const STICKY_PARAM_KEYS = ['allow_local_img_load', 'debug', 'images', 'img_src', 'name', 'release', 'ws'];
+export const STICKY_PARAM_KEYS = ['advanced_options', 'allow_local_img_load', 'debug', 'images', 'img_src', 'name', 'release', 'ws'];
 
 /**
  * Copy the sticky params (those present in `source`, default

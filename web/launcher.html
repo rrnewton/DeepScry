@@ -222,7 +222,7 @@
                 <span class="ro-desc">You play the cards yourself.</span>
             </label>
             <label class="renderer-opt" id="controller-opt-random">
-                <span class="ro-title"><input type="radio" name="controller" id="controller-random" value="random">Random AI</span>
+                <span class="ro-title"><input type="radio" name="controller" id="controller-random" value="random">Random</span>
                 <span class="ro-desc">Auto-driven random play — launch &amp; watch hands-free.</span>
             </label>
             <label class="renderer-opt disabled" id="controller-opt-heuristic" title="Not supported in network games yet (mtg-254)">
@@ -254,7 +254,7 @@
             <label class="cb-row"><input type="checkbox" id="img-src-gatherer" checked> Gatherer (official)</label>
             <div id="img-src-local-gate-note" class="gate-note" style="display:none;">
                 Local images hidden pending licensing clarity around card images.
-                Append <code>?allow_local_img_load=true</code> to the URL to enable.
+                Append <code>?advanced_options=true</code> to the URL to enable.
             </div>
         </div>
     </div>
@@ -262,6 +262,26 @@
     <div class="field">
         <label class="field-label">Diagnostics</label>
         <label class="cb-row"><input type="checkbox" id="debug-mode"> Debug logging (TRACE)</label>
+    </div>
+
+    <!--
+      Advanced: multiplayer RNG seed (mtg-2csf2). Gated behind
+      ?advanced_options=true and shown ONLY to the game CREATOR. Seed control is
+      normally solo-only ON PURPOSE — a multiplayer creator who could set the
+      seed could pre-test a known winning hand — so this stays behind the
+      testing-only advanced-options gate. Its purpose: run the SAME random/random
+      multiplayer game repeatedly and verify an identical outcome.
+      NOTE: takes effect only once the server threads the seed through CreateGame
+      to BOTH clients (follow-up mtg-737vj) — without that, setting it on the
+      creator alone would desync the joiner, so it is NOT wired into the launch yet.
+    -->
+    <div class="field" id="advanced-seed-field" style="display:none;">
+        <label class="field-label" for="mp-seed">RNG Seed <span style="text-transform:none;">(advanced — creator only)</span></label>
+        <input type="number" id="mp-seed" min="0" step="1" placeholder="(server default)" style="width:100%; box-sizing:border-box;">
+        <div class="gate-note">
+            Pending server support for sharing the seed with the joiner; setting
+            it here has no effect yet (a follow-up will thread it through CreateGame).
+        </div>
     </div>
 
     <!--
@@ -322,24 +342,33 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
     // forwarded to the game page as &images/&img_src/&debug.
     const SETTINGS_KEY = 'mtg-forge-launcher-settings';
 
-    // Gate the "Local" image source behind ?allow_local_img_load=true. Sticky in
-    // sessionStorage (survives same-tab nav, resets on tab close) — NOT
-    // localStorage, so a stale flag can never silently re-enable Local weeks
-    // later (the exact failure the gate prevents). The param is authoritative
-    // WHEN PRESENT (so ?allow_local_img_load=false can turn it back off).
-    function resolveLocalImageAllowed() {
-        let allowed;
-        if (qs.has('allow_local_img_load')) {
-            allowed = qs.get('allow_local_img_load') === 'true';
-            try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
+    // ?advanced_options=true (mtg-2csf2) is the single gate for the testing-only
+    // controls: (a) the "Load from DeepScry server" local-image source, and
+    // (b) the multiplayer RNG-seed field on the CREATOR side. It supersedes the
+    // older ?allow_local_img_load=true, which is kept as a backward-compatible
+    // alias. Sticky in sessionStorage (survives same-tab nav, resets on tab
+    // close) — NOT localStorage, so a stale flag can never silently re-enable
+    // these weeks later. The param is authoritative WHEN PRESENT (so
+    // ?advanced_options=false can turn it back off).
+    function resolveAdvancedOptions() {
+        let enabled;
+        if (qs.has('advanced_options')) {
+            enabled = qs.get('advanced_options') === 'true';
+            try { sessionStorage.setItem('advancedOptions', enabled ? 'true' : 'false'); } catch (e) { /* ignore */ }
+        } else if (qs.has('allow_local_img_load')) { // legacy alias
+            enabled = qs.get('allow_local_img_load') === 'true';
+            try { sessionStorage.setItem('advancedOptions', enabled ? 'true' : 'false'); } catch (e) { /* ignore */ }
         } else {
             let stored = null;
-            try { stored = sessionStorage.getItem('allowLocalImgLoad'); } catch (e) { /* ignore */ }
-            allowed = stored === 'true';
+            try { stored = sessionStorage.getItem('advancedOptions'); } catch (e) { /* ignore */ }
+            if (stored === null) { try { stored = sessionStorage.getItem('allowLocalImgLoad'); } catch (e) { /* ignore */ } }
+            enabled = stored === 'true';
         }
-        return allowed;
+        return enabled;
     }
-    const allowLocalImgLoad = resolveLocalImageAllowed();
+    const advancedOptions = resolveAdvancedOptions();
+    // The local-image unlock now rides the advanced-options gate (same flag).
+    const allowLocalImgLoad = advancedOptions;
 
     const statusEl = document.getElementById('status');
     function setStatus(msg, isError) {
@@ -519,7 +548,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             const v = qs.get(k);
             if (v) ctx.set(k, v);
         }
-        if (allowLocalImgLoad) ctx.set('allow_local_img_load', 'true');
+        if (advancedOptions) { ctx.set('advanced_options', 'true'); ctx.set('allow_local_img_load', 'true'); }
         ctx.set('renderer', selectedRenderer());
         ctx.set('collection', collectionSelect.value);
         if (deckSelect.value) ctx.set('deck', deckSelect.value);
@@ -561,6 +590,11 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
 
     collectionSelect.addEventListener('change', updateDeckDropdown);
     deckSelect.addEventListener('change', refreshPlayEnabled);
+    // mtg-nf6p6: persist the deck/collection picks so they survive a Back round
+    // trip. (updateDeckDropdown runs first on a collection change and may reset
+    // deckSelect.value, so save AFTER it via a second listener.)
+    collectionSelect.addEventListener('change', saveSettings);
+    deckSelect.addEventListener('change', saveSettings);
 
     /** Load the built-in deck names WASM-free (same source deck_editor uses). */
     async function loadDeckNames() {
@@ -583,7 +617,9 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
         // otherwise default to a populated built-in collection so a deck is
         // preselected.
         // A ?deck= (Back-to-Launcher round trip) wins; else a one-shot localStorage
-        // preselect from deck_editor's legacy "Use in Lobby" path.
+        // preselect from deck_editor's legacy "Use in Lobby" path; else the
+        // last-used deck/collection saved in SETTINGS_KEY (mtg-nf6p6) so returning
+        // to the launcher restores the user's pick instead of the built-in default.
         let wantDeck = qs.get('deck');
         let wantCollection = qs.get('collection');
         if (!wantDeck) {
@@ -593,6 +629,16 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
                     wantDeck = pre;
                     wantCollection = wantCollection || 'custom';
                     localStorage.removeItem(LOBBY_PRESELECT_KEY); // one-shot
+                }
+            } catch (e) { /* ignore */ }
+        }
+        if (!wantDeck && !wantCollection) {
+            try {
+                const raw = localStorage.getItem(SETTINGS_KEY);
+                if (raw) {
+                    const s = JSON.parse(raw);
+                    if (s && s.collection) wantCollection = s.collection;
+                    if (s && s.deck) wantDeck = s.deck;
                 }
             } catch (e) { /* ignore */ }
         }
@@ -709,6 +755,11 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             localStorage.setItem(SETTINGS_KEY, JSON.stringify({
                 renderer: selectedRenderer(),
                 controller: selectedController(),
+                // mtg-nf6p6: remember the last deck/collection so returning to the
+                // launcher (e.g. via "Back" from a game) restores the user's
+                // selection instead of snapping back to the built-in default.
+                collection: collectionSelect.value,
+                deck: deckSelect.value,
                 showImages: showImagesCb.checked,
                 imgSrcLocal: !!(imgSrcLocalCb && imgSrcLocalCb.checked),
                 imgSrcScryfall: imgSrcScryfallCb.checked,
@@ -806,6 +857,7 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
             deckName,
             playerName,
             wsUrl,
+            advancedOptions,
             allowLocalImgLoad,
             reconnectToken: qs.get('reconnect_token') || '',
             ui,
@@ -844,6 +896,12 @@ import { buildRedirectQuery, IMAGE_SOURCE_IDS, forwardStickyParamsOnAnchor, forw
 
     const role = qs.get('role') === 'join' ? 'join' : 'create';
     const isCreator = role === 'create';
+    // mtg-2csf2: reveal the advanced multiplayer-seed field to the CREATOR only,
+    // and only when ?advanced_options=true unlocked it.
+    const advancedSeedField = document.getElementById('advanced-seed-field');
+    if (advancedSeedField && isCreator && advancedOptions) {
+        advancedSeedField.style.display = '';
+    }
     const gameName = qs.get('game') || '';
     const playerName = qs.get('name') || '';
     const lobbyWsUrl = qs.get('ws') || window.MTG_WS_URL;

@@ -1101,6 +1101,7 @@
             hasNoLaunchParams,
             buildLobbyAction,
             consumeGamePrefs,
+            isAutoRunRequested,
             forwardStickyParamsOnAnchor,
             stickyUrl,
         } from './lobby_launcher.js';
@@ -1377,6 +1378,16 @@
         const loadedSetFiles = new Set();
         let tuiLaunched = false;
         let autoRunning = false;
+        // mtg-rxacr: web games start PAUSED. An AI-vs-AI (e.g. random/random)
+        // game used to auto-run to completion the instant both clients loaded,
+        // ignoring the Run-1-Turn / Auto-Run control. Now forward progress for
+        // an AI-driven seat is gated behind `gamePaused`: the player advances
+        // via Space, the "Run 1 Turn" button, or by enabling "Auto Run".
+        // `?auto_run=true` opts back into auto-advancing (benchmark / e2e use).
+        // Human seats are unaffected — the game loop naturally blocks at a human
+        // choice point regardless of this flag, so we only gate the AI seat.
+        const autoRunRequested = isAutoRunRequested();
+        let gamePaused = !autoRunRequested;
         let showImages = gamePrefs.showImages;
         let fullCardsLoaded = false;
         let fullTokensLoaded = false;
@@ -1420,6 +1431,32 @@
         }
         function debugLog(...args) {
             if (isDebugMode()) console.log('[Debug]', ...args);
+        }
+
+        // mtg-rxacr pause helpers.
+        //
+        // True when OUR seat is driven by an AI controller (random/heuristic/
+        // zero) rather than a human. Only AI seats auto-advance; a human seat
+        // blocks at its own choice points, so the pause gate never applies to it.
+        function ourSeatIsAI() {
+            return !!bootConfig.p1Controller && bootConfig.p1Controller !== 'human';
+        }
+
+        // Reconcile the WASM `auto_run` flag + the JS `autoRunning`/button state
+        // with the pause policy right after launch. The WASM state initialises
+        // `auto_run = is_network_mode && our_controller != Human` (fancy_tui.rs),
+        // so a network AI seat is born auto-running; flip it off (via the only
+        // available toggle export) unless `?auto_run=true` asked us to keep it.
+        function syncInitialRunState() {
+            const wasmAutoRunInitial = !!bootConfig.isNetwork && ourSeatIsAI();
+            const desired = autoRunRequested; // start auto-running only on opt-in
+            if (wasmAutoRunInitial !== desired && typeof tui_toggle_auto === 'function') {
+                tui_toggle_auto();
+            }
+            autoRunning = desired;
+            gamePaused = !desired;
+            const btn = document.getElementById('btn-auto');
+            if (btn) btn.textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
         }
 
         // ==================== CONTROLLER TYPE MAP ====================
@@ -1630,7 +1667,13 @@
         function resolveLocalImageAllowed() {
             const params = new URLSearchParams(window.location.search);
             let allowed;
-            if (params.has('allow_local_img_load')) {
+            // mtg-2csf2: ?advanced_options=true is the new gate; ?allow_local_img_load
+            // remains a backward-compatible alias. Either, when present, is
+            // authoritative and sticks in sessionStorage.
+            if (params.has('advanced_options')) {
+                allowed = params.get('advanced_options') === 'true';
+                try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
+            } else if (params.has('allow_local_img_load')) {
                 allowed = params.get('allow_local_img_load') === 'true';
                 try { sessionStorage.setItem('allowLocalImgLoad', allowed ? 'true' : 'false'); } catch (e) { /* ignore */ }
             } else {
@@ -1836,7 +1879,12 @@
                         );
                         tuiLaunched = true;
                         maybeEnableReplayVerifier();
-                        tui_run_turn();
+                        // mtg-rxacr: reconcile the auto-run flags, then only kick
+                        // the loop forward when NOT paused. A human seat always
+                        // advances (it blocks at the human choice anyway); an AI
+                        // seat advances only when auto-run was requested.
+                        syncInitialRunState();
+                        if (!ourSeatIsAI() || !gamePaused) tui_run_turn();
 
                         // Initial native render of the synced state.
                         setTimeout(updateUI, 200);
@@ -1847,9 +1895,12 @@
                         // Each processed server message may have advanced game
                         // state; drive the engine forward and re-render the native
                         // card DOM (the TUI page calls tui_run_turn here too — same
-                        // controller path, only the render differs).
+                        // controller path, only the render differs). mtg-rxacr:
+                        // when an AI seat is paused we still RENDER applied server
+                        // facts but do NOT auto-submit our next decision — that is
+                        // what kept random/random games running to completion.
                         if (tuiLaunched) {
-                            tui_run_turn();
+                            if (!ourSeatIsAI() || !gamePaused) tui_run_turn();
                             clearTimeout(window._netRenderTimer);
                             window._netRenderTimer = setTimeout(updateUI, 30);
                         }
@@ -1880,6 +1931,12 @@
                     );
                     tuiLaunched = true;
                     maybeEnableReplayVerifier();
+                    // mtg-rxacr: local games already wait for the first
+                    // Run-1-Turn / Space (no implicit tui_run_turn here), so they
+                    // are paused by default. Reconcile the control state and, when
+                    // ?auto_run=true was requested, start the auto-run loop.
+                    syncInitialRunState();
+                    if (!gamePaused) startAutoRun();
 
                     console.log(`Launched game: ${ourDeck} vs ${p2Deck} (seed: ${seed})`);
 
@@ -2660,6 +2717,7 @@
                 case 'A':
                     e.preventDefault();
                     autoRunning = !autoRunning;
+                    gamePaused = !autoRunning; // mtg-rxacr: un-pause when auto on
                     debugLog('key: A (auto toggle)', autoRunning ? 'ON' : 'OFF');
                     tui_toggle_auto();
                     document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
@@ -2828,6 +2886,7 @@
         });
         document.getElementById('btn-auto').addEventListener('click', () => {
             autoRunning = !autoRunning;
+            gamePaused = !autoRunning; // mtg-rxacr: un-pause when auto on
             tui_toggle_auto();
             document.getElementById('btn-auto').textContent = autoRunning ? 'Stop Auto' : 'Auto Run';
             if (autoRunning) startAutoRun();

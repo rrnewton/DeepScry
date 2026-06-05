@@ -270,6 +270,9 @@ async function runTest() {
             // match nor stay fixed across runs. Passing the same GAME_SEED to both
             // makes the FULL game (deck shuffle + both players' choices) reproducible.
             seed: GAME_SEED.toString(),
+            // mtg-rxacr: web games start PAUSED now. The unattended Random run
+            // must opt back into auto-advancing; Human mode drives via keyboard.
+            ...(HUMAN_MODE ? {} : { auto_run: 'true' }),
         }).toString();
         await page.goto(bootUrl, { waitUntil: 'networkidle', timeout: 60000 });
 

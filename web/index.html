@@ -511,8 +511,13 @@
     // param is authoritative when present (so ?allow_local_img_load=false can
     // explicitly re-lock). We never read localStorage, so old localStorage from
     // prior builds cannot bypass the gate.
+    // mtg-2csf2: ?advanced_options=true is the new gate; ?allow_local_img_load is
+    // a backward-compatible alias. Either, when present, is authoritative.
     var allowLocalImgLoad;
-    if (qs.has('allow_local_img_load')) {
+    if (qs.has('advanced_options')) {
+        allowLocalImgLoad = qs.get('advanced_options') === 'true';
+        try { sessionStorage.setItem('allowLocalImgLoad', allowLocalImgLoad ? 'true' : 'false'); } catch (e) { /* ignore */ }
+    } else if (qs.has('allow_local_img_load')) {
         allowLocalImgLoad = qs.get('allow_local_img_load') === 'true';
         try { sessionStorage.setItem('allowLocalImgLoad', allowLocalImgLoad ? 'true' : 'false'); } catch (e) { /* ignore */ }
     } else {
@@ -920,7 +925,7 @@
         var p = new URLSearchParams();
         if (currentUsername) p.set('name', currentUsername);
         if (wsUrl) p.set('ws', wsUrl);
-        if (allowLocalImgLoad) p.set('allow_local_img_load', 'true');
+        if (allowLocalImgLoad) { p.set('advanced_options', 'true'); p.set('allow_local_img_load', 'true'); }
         // Seed the CAS release token onto every forward link so the destination
         // page knows its release (mtg-704). Only on the baked deploy tree —
         // on the dev tree the placeholder is not a real token.
@@ -1018,7 +1023,7 @@
         if (gamePass) qp.set('pass', gamePass);
         if (currentUsername) qp.set('name', currentUsername);
         if (wsUrl) qp.set('ws', wsUrl);
-        if (allowLocalImgLoad) qp.set('allow_local_img_load', 'true');
+        if (allowLocalImgLoad) { qp.set('advanced_options', 'true'); qp.set('allow_local_img_load', 'true'); }
         // Seed the CAS release token so the launcher (and everything downstream)
         // stays pinned to this deployment (mtg-704).
         if (RELEASE_BAKED) qp.set('release', MTG_RELEASE_TOKEN);

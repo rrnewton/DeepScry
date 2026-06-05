@@ -4,19 +4,30 @@ status: open
 priority: 3
 issue_type: bug
 created_at: 2026-06-05T13:52:32.705814499+00:00
-updated_at: 2026-06-05T13:52:32.705814499+00:00
+updated_at: 2026-06-05T16:44:19.650477334+00:00
 ---
 
 # Description
 
-Launcher: 'Back' from game loses settings; joiner reconnect flaky; zombie ready-state.
+Launcher 'Back' loses settings (FIXED); joiner reconnect flaky + zombie ready-state (DIAGNOSED, follow-up).
 
-REPORTED (user playtest 2026-06-05): play a 'julian vs gabriel' avatar booster game, then press 'Back' from within the game to return to the launcher. Three problems:
+=== (a) SETTINGS NOT SAVED — FIXED (web/launcher.html) ===
+The launcher now persists the last-used deck + collection to localStorage (SETTINGS_KEY 'mtg-forge-launcher-settings', alongside the existing renderer/controller/image prefs) and restores them on load.
+- saveSettings() now records {collection, deck}; change listeners added on #deck-collection and #deck-select.
+- loadDeckNames() restore order: ?deck/?collection (Back-to-Launcher round trip) > one-shot LOBBY_PRESELECT_KEY > saved SETTINGS_KEY {collection,deck} > built-in default. So returning via 'Back' restores the user's last pick instead of snapping to eric_avatar_draft / 'Booster Draft'.
 
-(a) MOST IMPORTANT - settings not saved: the launcher reverts to defaults (deck back to 'eric_avatar_draft', collection back to 'Booster Draft') even if the last game used something else (e.g. Old School). It should SAVE and restore the last-used selections.
+=== (b)+(c) JOINER RECONNECT FLAKY + ZOMBIE READY-STATE — DIAGNOSED, NOT FIXED ===
+Root cause is a genuinely deeper multiplayer WebSocket-state gap; per playtest-batch guidance I diagnosed rather than rush a risky fix (it partly needs server/reconnect-token coordination). Do NOT ship a half-fix that masks it.
 
-(b) Joiner reconnect flaky: the game-CREATOR reconnects fine, but the game-JOINER usually needs a page refresh to reconnect (inconsistent).
+(b) Joiner reconnect needs a manual refresh:
+- web/network.js _scheduleReconnect() is a STUB: on a non-clean WS close it waits 3s then just calls onError('Connection lost. Please reconnect.') and clears the reconnecting flag — it NEVER re-opens the socket or re-sends CreateGame/JoinGame + reconnect_token. So the game page (joiner) cannot auto-reconnect → manual refresh. The creator 'reconnects fine' likely because its game tab/host WS path is more resilient / it re-creates on reload; the joiner's JoinGame path has no auto-retry.
 
-(c) Zombie ready-state: sometimes both sides show 'ready' green boxes but toggling the big green button does nothing and the UI is unresponsive, with NO dev-console warnings/errors. Reloading usually fixes it, but often requires multiple reloads from the joiner.
+(c) Zombie ready-state (both green, big button dead, no console errors):
+- web/launcher.html lobbyWs.onclose (pre-game-start) only sets connected=false + shows 'Disconnected from server.' It does NOT reset createdOrJoined / weAreReady, nor relabel/disable the ready button, nor reconnect. After a transient close (e.g. Cloudflare ~100s idle — keepalive mitigates but races remain), the UI keeps the stale ready-green while lobbyWs is dead; clicking #btn-play then either no-ops ('Still connecting…' only if createdOrJoined was reset, which it isn't) or wsSend()s on a closed socket → silently nothing. Hence 'green but unresponsive, reload fixes it'.
 
-Related: mtg-694 (lobby/launcher playtest UX fixes), mtg-682 (launcher overhaul tracker), mtg-695 (closed - lobby redo dropped launcher settings; this is a regression of the same class), mtg-692 (in_progress - remove dead launcher-only JS from game pages).
+RECOMMENDED FOLLOW-UP FIX (separate issue / not in this web-batch):
+1. Implement real reconnect in network.js: on non-clean close, re-open WS and re-send the last lobby action + reconnect_token (server already issues one on CreateGame/JoinGame, protocol.rs:102), with bounded backoff.
+2. launcher.html onclose (pre-start): mark createdOrJoined=false, reset weAreReady, relabel #btn-play to 'Reconnecting…/Refresh to reconnect', and attempt lobbyWs reconnect — so the button is never a silent no-op.
+3. Verify reconnect_token reattach is actually wired server-side (NETWORK_ARCHITECTURE notes reattach was a stub under mtg-682) — coordinate with netarch owners; determinism must hold across reattach.
+
+Related: mtg-695 (regression class), mtg-682 (launcher overhaul tracker).

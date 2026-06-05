@@ -162,6 +162,10 @@ async function launchBrowserClient(browser, httpPort, serverPort, mode, playerNa
         deck: displayName,
         controller: 'random',
         mode: 'network',
+        // mtg-rxacr: web games start PAUSED now; this unattended AI-vs-AI run
+        // opts back into auto-advancing with ?auto_run=true (matches the
+        // "auto_run=true handles it automatically" note further below).
+        auto_run: 'true',
     });
     qp.set(lobbyKey, GAME_NAME);
     const bootUrl = `http://127.0.0.1:${httpPort}/tui_game.html?` + qp.toString();

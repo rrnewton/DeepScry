@@ -182,6 +182,9 @@ async function bootClient(browser, httpPort, serverPort, gameName, mode, rendere
         controller: 'random',
         mode: 'network',
         ui: renderer,
+        // mtg-rxacr: web games start PAUSED now; this unattended AI-vs-AI
+        // multi-turn run opts back into auto-advancing with ?auto_run=true.
+        auto_run: 'true',
     });
     qp.set(lobbyKey, gameName);
     const bootUrl = `http://${HTTP_HOST}:${httpPort}/${renderer === 'native' ? 'native_game.html' : 'tui_game.html'}?${qp.toString()}`;
