@@ -4,10 +4,26 @@ status: open
 priority: 2
 issue_type: bug
 created_at: 2026-06-02T19:39:54.432003632+00:00
-updated_at: 2026-06-04T00:21:37.241179570+00:00
+updated_at: 2026-06-05T06:17:11.850800848+00:00
 ---
 
 # Description
+
+>## REVERTED 2026-06-04 (slot02) — action_count exclusion removed; principled successor landed (mtg-o99ow)
+
+The interim action_count exclusion from compute_view_hash (this issue's class-A
+workaround, mtg-mb668 / mtg-yexvc) has been REVERTED. action_count is once again
+hashed as a cross-replica invariant. This was always intended to be temporary:
+the exclusion masked a FALSE-POSITIVE desync caused by the pre-netarch client's
+undo-log drift (un-synchronized eager reveal/reorder application). The netarch
+consensus-undo-log unification (mtg-o99ow) removed that drift at the source
+(server+client consume the same ordered per-choice buffer), so the count is a
+true consensus value again. Empirically verified safe: full un-excluded desync
+canary + make validate green with action_count re-included (see mtg-o99ow). The
+closing commit re-includes the hash line, deletes the exclusion note, and flips
+the pinning test. mtg-586 rand/zero observed green in the probe but kept
+known-red pending reliability confirmation (mtg-tyf3a).
+
 
 robots42 seed=42 intermittent WASM rewind+replay desync (netarch STEP-3).
 

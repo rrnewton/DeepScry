@@ -412,19 +412,23 @@ pub fn compute_view_hash(view: &crate::game::controller::GameStateView) -> u64 {
     // 64-bit on x86-64), causing `write_isize` to emit different byte counts.
     // `as_hash_u32()` returns a fixed u32 from an explicit match, identical on all platforms.
     view.current_step().as_hash_u32().hash(&mut hasher);
-    // NOTE: `action_count` (the undo-log length) is DELIBERATELY EXCLUDED from the
-    // view hash (mtg-mb668 class-A / mtg-yexvc). In the deterministic-replica
-    // network model a client does not execute every server action — it applies
-    // state-sync deltas and resolves reserved (instance-less) opponent cards — so
-    // its undo-log length legitimately drifts from the server's even when every
-    // OBSERVABLE field below is byte-identical. Seed-2 (robots, Timetwister): after
-    // the mass shuffle+draw the native client logged 947 actions vs the server's
-    // 950 with identical life/hands/libraries/battlefield/graveyards/stack, and
-    // hashing the count produced a FALSE-POSITIVE fatal desync. The action_count is
-    // still validated separately by the coordinator's `client_action_count ==
-    // action_count` echo check; it is internal bookkeeping, not comparable game
-    // state, and must not gate state equality. Mirrors `mana_state_version`'s
-    // exclusion from the Replay hash. See state_hash.rs tests.
+    // `action_count` (the undo-log length) IS hashed as a cross-replica invariant
+    // (mtg-o99ow closing commit; reverts the mtg-mb668 class-A / mtg-yexvc
+    // exclusion). The exclusion was an INTERIM workaround: before the
+    // reveal-as-choice / consensus-undo-log unification, a client did not execute
+    // every server action in lock-step — it applied reveals/reorders via several
+    // uncoordinated eager messages and its undo-log length legitimately drifted
+    // from the server's (seed-2 robots/Timetwister: 947 client vs 950 server with
+    // otherwise byte-identical state), so hashing the count produced a
+    // FALSE-POSITIVE desync. The netarch buffer rearchitecture removed that drift
+    // at the source: server and client now consume the SAME ordered per-choice
+    // buffer, so their undo logs advance identically and `action_count` is once
+    // again a true consensus value. Re-including it restores the strongest
+    // cross-replica equality check. Empirically verified safe (mtg-o99ow probe:
+    // full un-excluded desync canary + `make validate` green with action_count
+    // re-included — avatar-cycling/monored/counterspells/rogerbrand green gates,
+    // robots42 Timetwister, native+WASM equivalence sweeps, all green).
+    (view.action_count() as u64).hash(&mut hasher);
 
     // ═══ Player State (2 players) ═══
     for player_idx in 0..2u32 {
@@ -866,33 +870,33 @@ mod tests {
         );
     }
 
-    /// mtg-mb668 class-A / mtg-yexvc: the network VIEW hash must be INVARIANT
-    /// under `action_count`, mirroring `mana_state_version_excluded_from_replay_hash`.
+    /// mtg-o99ow closing commit: the network VIEW hash now INCLUDES `action_count`
+    /// as a cross-replica invariant (reverting the interim mtg-mb668 class-A /
+    /// mtg-yexvc exclusion).
     ///
-    /// In the deterministic-replica network model a CLIENT does not execute every
-    /// server action — it applies state-sync deltas and reserved-instance
-    /// resolutions — so its undo-log length (`view.action_count()`) legitimately
-    /// drifts from the server's even when every OBSERVABLE field is identical.
-    /// Seed-2 (robots, Timetwister): after the mass shuffle+draw resolution the
-    /// native client logged 947 actions vs the server's 950, with byte-identical
-    /// life / hands / libraries / battlefield / graveyards / stack (the server's
-    /// own mismatch box reported an EMPTY "DIFFERENCES" section). Because
-    /// `compute_view_hash` previously hashed `view.action_count()`, that 3-action
-    /// bookkeeping gap produced a FALSE-POSITIVE fatal desync. `action_count` is
-    /// internal undo-log bookkeeping, NOT comparable observable game state, so it
-    /// must not be part of the cross-machine view hash. This test pins the
-    /// invariant; without the fix it fails (hash changes when the undo log grows).
+    /// The exclusion was a workaround for a pre-netarch defect: before the
+    /// reveal-as-choice / consensus-undo-log unification, server and client did
+    /// NOT advance their undo logs in lock-step (the client applied
+    /// reveals/reorders via several uncoordinated eager messages), so its undo-log
+    /// length legitimately drifted (seed-2 robots/Timetwister: 947 client vs 950
+    /// server with otherwise byte-identical state) and hashing the count produced a
+    /// FALSE-POSITIVE desync. The netarch buffer rearchitecture removed that drift
+    /// at the source — both replicas consume the SAME ordered per-choice buffer, so
+    /// `action_count` is once again a true consensus value. This test pins the
+    /// RE-INCLUSION: growing the undo log (a real position advance) MUST change the
+    /// view hash. Empirically verified safe by the mtg-o99ow probe (full
+    /// un-excluded desync canary + `make validate` green with action_count hashed).
     #[test]
-    fn view_hash_invariant_under_action_count_mb668_yexvc() {
+    fn view_hash_includes_action_count_mtg_o99ow() {
         use crate::game::controller::GameStateView;
         let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
         let p0 = game.players.first().unwrap().id;
 
         let h_before = compute_view_hash(&GameStateView::new(&game, p0));
 
-        // Grow the undo log WITHOUT touching any hashed field — exactly the
-        // server/client bookkeeping drift the replica model permits.
-        // `cards_drawn_this_turn` is not part of the view hash.
+        // Advance the undo log (game position). Under the consensus-undo-log model
+        // both replicas advance identically, so this is a real, comparable state
+        // change that the cross-replica hash MUST reflect.
         let prior = game.undo_log.len();
         game.undo_log.log(
             crate::undo::GameAction::SetCardsDrawnThisTurn {
@@ -908,12 +912,11 @@ mod tests {
         );
 
         let h_after = compute_view_hash(&GameStateView::new(&game, p0));
-        assert_eq!(
+        assert_ne!(
             h_before, h_after,
-            "compute_view_hash MUST be invariant under action_count — it is internal \
-             undo-log bookkeeping that legitimately drifts between server and client \
-             in the deterministic-replica model, not comparable observable state \
-             (mtg-mb668 class-A / mtg-yexvc false-positive desync)"
+            "compute_view_hash MUST include action_count — it is a cross-replica \
+             consensus value again under the netarch consensus-undo-log model \
+             (mtg-o99ow closing commit; reverts the mtg-mb668 / mtg-yexvc exclusion)"
         );
     }
 }
