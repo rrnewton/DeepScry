@@ -751,11 +751,28 @@ impl<'a> GameLoop<'a> {
     /// Returns `None` if no hook is configured (non-network mode).
     /// In non-network mode, callers should proceed directly to calling the controller.
     pub(super) fn call_pre_choice_hook(&mut self, player: PlayerId, kind: ChoiceKind) -> Option<PreChoiceResult> {
-        if let Some(ref mut hook) = self.pre_choice_hook {
-            Some(hook(self.game, player, kind))
+        let result = if let Some(ref mut hook) = self.pre_choice_hook {
+            hook(self.game, player, kind)
         } else {
-            None
-        }
+            return None;
+        };
+        // mtg-u3dwj / mtg-o99ow native buffer shim: before the controller decides,
+        // materialise every state-sync fact up to THIS choice's action_count into
+        // the shadow. The ChoiceRequest that just unblocked the hook carried (and
+        // the WS reader applied to the state-sync LOG + bumped the reveal
+        // watermark) the reveals for cards drawn/revealed during this resolution —
+        // e.g. Bazaar of Baghdad's "draw 2, then discard 3", where the just-drawn
+        // own cards must exist in the shadow before the discard is chosen. Without
+        // this they sit in the log UNAPPLIED and the controller decides on a stale
+        // view (discards the wrong cards) → an information-independence desync
+        // (docs/NETWORK_ARCHITECTURE.md). This is the in-resolution LOCAL-choice
+        // analogue of the sync_callback that already covers priority points, and
+        // it is needed for EVERY ChoiceKind (hence here in the shared hook, not
+        // per choose_*_with_hook). Non-blocking: it applies only already-arrived
+        // log entries (the buffer arrives atomically with the ChoiceRequest), so
+        // there is no deadlock risk if a reveal is somehow never sent.
+        self.sync_to_action();
+        Some(result)
     }
 
     /// Sync network state up to the current action count

@@ -6185,8 +6185,30 @@ impl PlayerController for HeuristicController {
         hand: &[CardId],
         count: usize,
     ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
-        // Simple heuristic: Discard lands first, then worst creatures
-        let mut hand_cards: Vec<&Card> = hand.iter().filter_map(|&id| view.get_card(id)).collect();
+        // Simple heuristic: Discard lands first, then worst creatures.
+        //
+        // HARDENING (mtg-u3dwj): every id in `hand` is one of the deciding
+        // player's OWN cards, so it MUST resolve in `view`. Silently dropping an
+        // unresolvable id (the old `filter_map`) is exactly what masked the
+        // mtg-u3dwj desync: on a network client's shadow a just-drawn own card
+        // that has not yet been materialised (its reveal still unapplied) would be
+        // dropped from the discard candidate set, so the heuristic discarded the
+        // WRONG cards vs the server's full-state decision — an
+        // information-independence violation. We now `debug_assert` on an
+        // unresolvable own card so the whole class surfaces LOUDLY in debug/test/
+        // shadow builds instead of silently mis-deciding.
+        let mut hand_cards: Vec<&Card> = Vec::with_capacity(hand.len());
+        for &id in hand {
+            match view.get_card(id) {
+                Some(card) => hand_cards.push(card),
+                None => debug_assert!(
+                    false,
+                    "choose_cards_to_discard: own hand card {id:?} is not resolvable in the shadow view — \
+                     a draw/reveal was not applied before the discard decision (mtg-u3dwj class: \
+                     information-independence desync; NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal)."
+                ),
+            }
+        }
 
         // Sort by value (ascending) - discard worst cards first
         hand_cards.sort_by_key(|c| {
