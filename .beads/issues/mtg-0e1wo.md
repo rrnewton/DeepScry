@@ -1,0 +1,21 @@
+---
+title: 'FATAL DESYNC (web random/random turn 9): client 19 phantom CastFromExile vs server 1 (PersistentEffectId 0..18, card 34)'
+status: open
+priority: 2
+issue_type: bug
+created_at: 2026-06-05T13:52:32.736438017+00:00
+updated_at: 2026-06-05T13:52:32.736438017+00:00
+---
+
+# Description
+
+FATAL DESYNC (web random/random, turn 9): client over-generates CastFromExile (19 vs server 1).
+
+REPORTED (user playtest 2026-06-05): a random/random web game reached turn 9 then hit:
+  'FATAL DESYNC: Local abilities (23) != server abilities (5)'
+
+The divergence is entirely in CastFromExile for card_id 34: the CLIENT lists NINETEEN CastFromExile entries for card 34, identical except effect_id = PersistentEffectId(0) through PersistentEffectId(18); each has alternative_cost ManaCost{ generic:2, all colours 0 }. The SERVER lists only ONE CastFromExile for card 34 (effect_id PersistentEffectId(0)). All other actions match on both sides: PlayLand{28}, CastSpell{29}, CastSpell{31}, CastSpell{39}.
+
+So the client materializes 19 persistent exile-cast-granting effects for one exiled card where the server has 1 -> different available-action set -> fatal desync. This is an OPTION-GENERATION / information-independence divergence (distinct signature from the state-hash deep-AC class in mtg-o99ow, though possibly the same root family). ROOT-CAUSE NEEDED: why does the client see 19 PersistentEffectIds for card 34's exile-cast grant vs the server's 1 (duplicate effect application on the shadow? effect not deduped on replay? persistent-effect id allocation diverging?).
+
+PRIORITY 2 (fatal desync - always fatal per docs/NETWORK_ARCHITECTURE.md). Repro currently NOT seed-pinned - depends on the web seed-control + pause issues to make it reproducible. Related: mtg-677 (netarch rewind/replay), mtg-o99ow (reveal-actionlog unification).
