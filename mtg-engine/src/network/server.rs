@@ -793,8 +793,8 @@ async fn run_lobby_dispatch(
                             },
                         )
                         .await?;
-                        // Phase 1 stub: token is valid but in-game task
-                        // reattachment is deferred to Phase 3. The connection
+                        // mtg-682: token is valid but in-game task
+                        // reattachment is still a stub. The connection
                         // can be kept alive here for a future resume handshake.
                         log::info!(
                             "Reconnect accepted for game '{}' player {} (Phase 3 resume pending)",
@@ -1999,7 +1999,7 @@ async fn run_game(
     let p1_deck_info = Some(DeckListInfo::from_submission(&p1.deck));
     let p2_deck_info = Some(DeckListInfo::from_submission(&p2.deck));
 
-    // Compute deck CardID ranges for late-binding architecture (Phase 3)
+    // Compute deck CardID ranges for late-binding architecture (mtg-218)
     // P1's deck: CardIDs [0, p1_deck_size)
     // P2's deck: CardIDs [p1_deck_size, p1_deck_size + p2_deck_size)
     let p1_deck_size = p1.deck.main_deck_size();

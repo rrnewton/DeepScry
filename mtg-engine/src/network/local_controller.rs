@@ -843,7 +843,7 @@ impl<C: PlayerController> PlayerController for NetworkLocalController<C> {
         // Wait for ChoiceAccepted to confirm the server processed our choice
         // The server returns the index it used, which should match what we sent
         if let Some(ref state) = self.shared_state {
-            // Phase 2 step 3c: block (NO timeout) for the ChoiceAccepted
+            // mtg-629 step 3c: block (NO timeout) for the ChoiceAccepted
             // matching this choice_seq in the local choice-accepted buffer.
             // Non-destructive read by choice_seq; None means terminal exit.
             match state.wait_for_choice_accepted(choice_seq) {

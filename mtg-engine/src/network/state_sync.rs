@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn state_sync_log_arrival_order_independence_via_action_count() {
-        // The whole point of the Phase 2 refactor (robots42 / mtg-559):
+        // The whole point of the action_count-keyed state-sync refactor (robots42 / mtg-559):
         // two arrival orderings of the same set of entries must yield
         // identical readbacks when keyed by action_count.
         //

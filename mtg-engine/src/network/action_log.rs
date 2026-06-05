@@ -1,7 +1,8 @@
 //! Generic append-only, `action_count`-indexed, non-destructive log.
 //!
-//! This is the Phase 1 primitive for the network re-architecture described
-//! in `docs/NETWORK_ACTION_LOG.md`. It is the SHARED substrate that backs
+//! This is the foundational primitive for the network re-architecture
+//! (mtg-o99ow) described in `docs/NETWORK_ACTION_LOG.md`. It is the SHARED
+//! substrate that backs
 //! THREE distinct owners (per the design doc § 3):
 //!
 //! 1. **Per-controller choice buffer** (private to each controller).
@@ -183,7 +184,7 @@ impl<T> ActionLog<T> {
     }
 
     /// Iterate `(action_count, &entry)` pairs in append (= `action_count`-
-    /// ascending) order. Useful for diagnostics and Phase 2 batch consumers
+    /// ascending) order. Useful for diagnostics and batch consumers (mtg-o99ow)
     /// that walk the log from the engine's current cursor up to the frontier.
     pub fn iter(&self) -> impl Iterator<Item = (u64, &T)> {
         self.entries.iter().map(|(ac, e)| (*ac, e))
@@ -200,7 +201,7 @@ mod tests {
 
     // A trivial payload type to exercise the generic. The primitive itself
     // is payload-agnostic; integration tests for the concrete `ChoiceEntry`
-    // and `StateSyncEntry` types live with their owners in Phase 2.
+    // and `StateSyncEntry` types live with their owners (mtg-o99ow).
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct Payload(u32);
 

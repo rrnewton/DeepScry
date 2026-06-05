@@ -6,7 +6,7 @@
  *   - web/tui_game.html    (consumer: reads query params and auto-launches)
  *   - web/native_game.html (consumer: reads query params and auto-launches)
  *
- * Design goals (Phase 2 / mtg-phase2-native-network):
+ * Design goals (native-network lobby overhaul, mtg-682):
  *   - DRY: param names, lobby-action semantics, and WS-URL derivation live here
  *     exactly once. Game pages import and call `consumeLobbyParams()` instead of
  *     duplicating the ?lobby_create / ?lobby_join detection logic.
@@ -29,7 +29,7 @@
  *   &allow_local_img_load=true    → propagate the sticky local-image unlock
  *   &ui=tui|native                → which game-page UI to land on (default: tui)
  *   &mode=local|network           → game mode hint (default: network when from lobby)
- *   &reconnect_token=<token>      → reconnect token from GameStarted (Phase 1 stub)
+ *   &reconnect_token=<token>      → reconnect token from GameStarted (reattach still a stub, mtg-682)
  *   &images=true|false            → show card images on the game page (pre-game pref)
  *   &img_src=local,scryfall,gatherer → enabled image sources, in fallback order
  *   &debug=true                   → enable TRACE logging on the game page
@@ -142,7 +142,7 @@ export function buildRedirectQuery(opts) {
  * @property {string}  deckName           - may be ''
  * @property {'tui'|'native'} ui
  * @property {'local'|'network'} mode     - game mode hint
- * @property {string}  reconnectToken     - may be '' (Phase 1 stub)
+ * @property {string}  reconnectToken     - may be '' (reattach still a stub, mtg-682)
  * @property {'human'|'heuristic'|'random'|'zero'} controller - our network
  *           controller. Defaults to 'human' (a person plays the web client).
  *           An explicit &controller= lets an AI drive the web client over the

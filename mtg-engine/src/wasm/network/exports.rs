@@ -358,7 +358,7 @@ pub fn network_has_opponent_choice() -> bool {
 /// Check if any state-sync entries have arrived but not yet been applied
 /// to the shadow `GameState`.
 ///
-/// Phase 2 step 1: this is the diagnostic replacement for the legacy
+/// State-sync-log diagnostic (mtg-629, phase 2 step 1): this is the replacement for the legacy
 /// `network_has_pending_reveals()` (deleted along with the
 /// `pending_reveals` VecDeque). The state-sync log carries both reveals
 /// AND library reorders, so the question "are there unprocessed pushes"

@@ -6,8 +6,8 @@
 # dependency .rmeta/.rlib/.o files. When the workspace is built with
 # `trim-paths = "all"` (see .cargo/config.toml) plus the optional CFLAGS
 # prefix-map trick (see release_build.sh), 99%+ of dep artifacts are byte-
-# identical across worktrees and can be deduplicated. The buildopt Phase 3
-# experiment (phase3-fclones-dedup) measured ~30% / 1.8 GB savings on a
+# identical across worktrees and can be deduplicated. The fclones-dedup
+# buildopt experiment (branch phase3-fclones-dedup) measured ~30% / 1.8 GB savings on a
 # 2-worktree setup.
 #
 # IMPORTANT GOTCHA: fclones default invocation respects .gitignore, and the

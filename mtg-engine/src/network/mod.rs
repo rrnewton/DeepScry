@@ -28,7 +28,8 @@ pub use protocol::*;
 mod reveal_processor;
 pub use reveal_processor::*;
 
-// Generic append-only, action_count-indexed log. The Phase 1 primitive
+// Generic append-only, action_count-indexed log. The foundational primitive
+// for the network re-architecture (mtg-o99ow)
 // that backs (a) each controller's private choice buffer, (b) the
 // NetworkClient-owned shadow state-sync log, and (c) future MCTS
 // rollout logs. See docs/NETWORK_ACTION_LOG.md for the ownership split.
