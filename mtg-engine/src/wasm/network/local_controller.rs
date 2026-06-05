@@ -181,6 +181,19 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
     ///
     /// The client tracks the submitted sequence number to prevent duplicate processing.
     fn submit_choice_to_server(&self, choice_indices: Vec<usize>, view: &GameStateView) {
+        self.submit_choice_to_server_with_ability(choice_indices, view, None);
+    }
+
+    /// As [`submit_choice_to_server`], but also forwards the chosen `SpellAbility`
+    /// so the server's always-on CardId cross-check protects the web path
+    /// (mtg-j4krs #2, mirrors native `local_controller.rs:461-484`). Used by the
+    /// Priority path; all other choice types pass `None`.
+    fn submit_choice_to_server_with_ability(
+        &self,
+        choice_indices: Vec<usize>,
+        view: &GameStateView,
+        spell_ability: Option<SpellAbility>,
+    ) {
         let mut client = self.network_client.borrow_mut();
 
         // Get server's action_count from the current ChoiceRequest
@@ -198,7 +211,7 @@ impl<C: PlayerController> WasmNetworkLocalController<C> {
         let state_hash = self.compute_submit_hash(&client, view, action_count);
 
         // submit_choice internally tracks the sequence and consumes the ChoiceRequest
-        client.submit_choice(choice_indices, action_count, state_hash);
+        client.submit_choice_with_ability(choice_indices, action_count, state_hash, spell_ability);
     }
 
     /// Compute the view hash for a choice submission and, in network-debug mode,
@@ -441,7 +454,9 @@ impl<C: PlayerController + 'static> PlayerController for WasmNetworkLocalControl
                     None => vec![0], // Pass
                     Some(ability) => vec![available.iter().position(|a| a == ability).map(|i| i + 1).unwrap_or(0)],
                 };
-                self.submit_choice_to_server(choice_indices, view);
+                // Forward the chosen SpellAbility for the server's CardId cross-check
+                // (mtg-j4krs #2). Pass (None) carries no ability, matching native.
+                self.submit_choice_to_server_with_ability(choice_indices, view, choice.clone());
 
                 // Return the choice immediately - local game can advance
                 // The ack will arrive asynchronously and be handled next time

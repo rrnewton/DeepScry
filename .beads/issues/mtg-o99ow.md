@@ -4,7 +4,7 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T19:26:51.970215293+00:00
+updated_at: 2026-06-05T19:36:16.152828398+00:00
 ---
 
 # Description
@@ -585,3 +585,6 @@ Fresh mtime-fresh maximally-strict instrumented repro (03_robots_jesseisbak.dck 
 GENUINE lost-card state divergence (NOT a stamping skew). Browser P1 casts Demonic Tutor -> fetches card 97 (Fireball) into its OWN hand; browser shadow is correct (WASM seq242 hand1 has 97, hash==server). The NATIVE observer removes 97 from P1 library (lib=36 matches) but never deposits into P1 hand zone -> 5 vs 6. ROOT: opponent Searched reveal is a DUMMY -> process_card_reveal SKIPS it (reveal_processor.rs:77-86), card never instantiated; replayed move_card(97 Lib->Hand) doesn't increment player_hand_size = zones.hand.len() (controller.rs:646-651). The prior '+12 choice_seq drift / acs 1230 vs 1341' was an artifact of PER-PLAYER choice_seq counters; action_counts already AGREE at the fatal (client_ac=1341 expected_ac=1341).
 
 FIX DIRECTION (durable, = mtg-ho2r8 §1-2): deposit an identity-hidden reserved placeholder into the OPPONENT hand zone on the observer for an opponent Searched-into-hand, keyed by search-resolution ac, rewind-surviving. Verify all 10 robots seeds strict before re-applying the eb8f938e ac-exclusion prize. Full writeup: ai_docs/DEEPAC_SEED7_MEMBERSHIP_CONFIRM_20260605.md. TEAM-LEAD: mirror this onto mtg-ho2r8 (integration-only; absent on fix-deep-ac worktree). Diagnostics committed on fix-deep-ac.
+
+## SEED-19 (mtg-8ow9h) 2026-06-05 (slot03-lockstep): mtg-j4krs#2 DONE + divergence pinned to Fireball target choice
+WASM client now populates SubmitChoice.spell_ability (mirrors native local_controller.rs:461-484) -> server CardId cross-check (controller.rs:663-685) protects the deployed web path. No regression (robots seeds 2 + 42 still PASS with cross-check active). It does NOT crash seed19 earlier: index-OOB guard (controller.rs:650) fires first. Seed-19 divergence is AT turn 24: Fireball (118) cast, XValue(0), then the TARGET choice — WASM enumerates 3 valid targets vs server 2, sends index 2 -> rejected. ALL state hashes MATCH up to crash -> non-hashed field affects target legality. LEADING HYPOTHESIS: an animated Mishra's Factory man-land is a CREATURE on the WASM shadow but a land on the server (creature-animation continuous-effect, NOT in compute_view_hash which hashes only id+tapped+controller). mtg-0e1wo controller option-set family. NEXT: dump the 3 vs 2 target CardIds, bisect where the Factory's animated status diverged. Full writeup: ai_docs/DEEPAC_SEED7_MEMBERSHIP_CONFIRM_20260605.md (seed-19 section). TEAM-LEAD: mirror onto mtg-8ow9h (integration-only).

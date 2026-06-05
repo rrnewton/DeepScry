@@ -1954,7 +1954,7 @@ impl WasmNetworkClient {
 
     /// Queue a SubmitChoice response
     pub fn submit_choice(&mut self, choice_indices: Vec<usize>, action_count: u64, state_hash: Option<u64>) {
-        self.submit_choice_with_targets(choice_indices, action_count, state_hash, None)
+        self.submit_choice_full(choice_indices, action_count, state_hash, None, None)
     }
 
     /// Queue a SubmitChoice response, including authoritative `target_card_ids`.
@@ -1970,6 +1970,35 @@ impl WasmNetworkClient {
         state_hash: Option<u64>,
         target_card_ids: Option<Vec<crate::core::CardId>>,
     ) {
+        self.submit_choice_full(choice_indices, action_count, state_hash, None, target_card_ids)
+    }
+
+    /// Queue a SubmitChoice response, including the chosen `SpellAbility` so the
+    /// server's always-on CardId cross-check (controller.rs:644-687) protects the
+    /// deployed web path, not just native-vs-native (mtg-j4krs #2). The index stays
+    /// canonical; `spell_ability` is a redundant assert (fatal on disagreement),
+    /// mirroring native `local_controller.rs:461-484`. Populated for Priority
+    /// choices only (the only choice type carrying a SpellAbility).
+    pub fn submit_choice_with_ability(
+        &mut self,
+        choice_indices: Vec<usize>,
+        action_count: u64,
+        state_hash: Option<u64>,
+        spell_ability: Option<SpellAbility>,
+    ) {
+        self.submit_choice_full(choice_indices, action_count, state_hash, spell_ability, None)
+    }
+
+    /// Shared SubmitChoice queuing path carrying both the optional chosen
+    /// `spell_ability` (priority cross-check) and authoritative `target_card_ids`.
+    pub fn submit_choice_full(
+        &mut self,
+        choice_indices: Vec<usize>,
+        action_count: u64,
+        state_hash: Option<u64>,
+        spell_ability: Option<SpellAbility>,
+        target_card_ids: Option<Vec<crate::core::CardId>>,
+    ) {
         if let Some(ref request) = self.current_choice_request {
             let choice_seq = request.choice_seq;
             let msg = ClientMessage::SubmitChoice {
@@ -1979,7 +2008,7 @@ impl WasmNetworkClient {
                 timestamp_ms: crate::network::now_ms(),
                 client_state_hash: state_hash,
                 debug_info: None,
-                spell_ability: None, // WASM client doesn't track spell_ability yet
+                spell_ability,
                 target_card_ids,
             };
             // mtg-mb668 class-A snapshot verification: log the DEFINITIVE wire

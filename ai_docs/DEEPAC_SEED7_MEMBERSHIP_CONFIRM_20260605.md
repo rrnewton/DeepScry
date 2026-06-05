@@ -118,3 +118,63 @@ card. Pursuing stamping alignment would be fixing a non-bug.
 
 All four are diagnostics-only (network-debug-gated paths / debug box), no
 behavior change. Repro artifacts: `debug/netarch-undo-dumps/gui_random_03_robots_jesseisbak_seed7_*`.
+
+---
+
+# Seed-19 (mtg-8ow9h) — mtg-j4krs #2 done + divergence pinned to the Fireball target choice
+
+PLAIN-LANGUAGE: seed 19 crashes on turn 24 because the browser player's
+Fireball offers ONE MORE valid target than the server allows. Both sides agree
+on every *hashed* fact, but the browser thinks an extra permanent is a legal
+target. The most likely culprit is a Man-land (Mishra's Factory) whose
+"is currently an animated creature" status — a temporary continuous effect that
+is NOT part of the network sync hash — has drifted between the two sides.
+
+## mtg-j4krs #2 DONE (committed): WASM client now populates SubmitChoice.spell_ability
+
+Threaded the chosen `SpellAbility` through the WASM priority path
+(`choose_spell_ability_to_play` → new `submit_choice_to_server_with_ability` →
+new `WasmNetworkClient::submit_choice_with_ability` → `submit_choice_full`),
+mirroring native `local_controller.rs:461-484`. The server's always-on CardId
+cross-check (controller.rs:663-685) now protects the DEPLOYED WEB path, not just
+native-vs-native. NO REGRESSION: robots seeds 2 and 42 still PASS with the
+cross-check active (it does not false-positive — the WASM and server enumerate
+identical abilities on converged seeds).
+
+## Seed-19 divergence pinned (NOT closed — non-hashed continuous-effect class)
+
+The spell_ability cross-check does NOT crash seed 19 earlier: the existing
+index-out-of-bounds guard (controller.rs:650-656) fires FIRST on the same
+divergence. The divergence is genuinely AT turn 24, not an upstream silent
+ability swap.
+
+Crash: `DESYNC: NetworkController 1 received invalid choice index 2 (only 2
+options available). Client sent indices [2]` — the Fireball TARGET choice.
+WASM undo sequence (seed 19, turn 24):
+  [1761] Choice(P1 #32 = CastSpell{card_id:118})   (Fireball)
+  [1762] SetXPaid(card=118, prev=0)
+  [1763] Choice(P1 #33 = XValue(0))
+  [1764] <Fireball target choice> — WASM enumerates 3 valid targets, server 2;
+         WASM picks index 2 (3rd) → server rejects (only 2).
+
+All state hashes MATCH up to the crash (no mismatch box) → the diverging field
+is NOT in the view hash but DOES affect target legality. Both battlefields are
+full of Mishra's Factory man-lands (NativeAI: 49,51,27; WebRandom: 119,110) that
+were actively animated via `ActivateAbility{ability_index:1}` ("becomes a
+creature") in the turns leading up (WASM undo [1734]/[1739]/[1744]/[1746]).
+LEADING HYPOTHESIS: a Mishra's Factory is an animated CREATURE on the WASM
+shadow but a plain land on the server (or its animation expiry diverged), so the
+WASM offers it as an extra Fireball target. This is the mtg-0e1wo controller
+option-set family: a continuous-effect / type-changing state (creature
+animation) that `compute_view_hash` does not capture (it hashes card_id + tapped
++ controller, NOT P/T/types/animation) diverges and surfaces only through option
+generation.
+
+NEXT STEP to close: instrument the Fireball target enumeration to dump the 3 WASM
+vs 2 server target CardIds at the crash (name the extra), then bisect where that
+permanent's animated-creature status diverged (turn-end "until end of turn"
+cleanup vs the animation ActivateAbility application on the shadow). Likely fix
+family: ensure continuous-effect / type-change state is reconstructed in lockstep
+on the shadow (or include the relevant derived targetability in the cross-check).
+Repro: `cd web && node test_network_gui_e2e.js --deck
+decks/old_school/03_robots_jesseisbak.dck --seed 19 --undo-dump`.
