@@ -131,43 +131,75 @@ pub struct WasmNetworkClient {
     /// Whether network debug mode is enabled
     network_debug: bool,
 
-    /// Append-only, **game-`action_count`-indexed** shadow state-sync log
-    /// (mtg-o99ow L3).
+    /// Append-only, **game-`action_count`-indexed** shadow LIBRARY-REORDER log
+    /// (mtg-o99ow L3 + the reorder/reveal SPLIT).
+    ///
+    /// **SPLIT from the reveal log (mtg-o99ow, mirrors the native client).** A
+    /// `LibraryReorder` and a `RevealCard` can legitimately carry the SAME game
+    /// `action_count`: the server stamps a shuffle's reorder at the post-shuffle
+    /// undo position (`state.rs` shuffle path, `undo_log.len()` after the
+    /// `ShuffleLibrary`) while reveals are stamped at their OWN undo index
+    /// (`forward_idx` in `collect_reveals_since_last_choice`), two numbering
+    /// schemes that COINCIDE on a shuffle-then-draw resolution (Timetwister /
+    /// Wheel of Fortune / Windfall). They are INDEPENDENT deltas (different
+    /// player / zone) that both must apply (reorder first, then reveal). Keeping
+    /// them in ONE ac-keyed log made the second arrival look like "two distinct
+    /// deltas share an ac" and (correctly, for SAME-class deltas) PANIC as fatal
+    /// — which would crash the WASM shadow on any shuffle-then-draw card. Two
+    /// logs restore the real invariant: distinct ac per SAME-class delta; a
+    /// reorder and a reveal MAY share an ac. Each log keeps `insert_sorted`
+    /// (out-of-order tolerant, dedups idempotent same-delta re-sends, fatal on a
+    /// DIFFERING same-class delta at one ac).
     ///
     /// Backs the reveal-as-choice unification described in
     /// `docs/NETWORK_ACTION_LOG.md` § 3.2 and
     /// `ai_docs/REVEAL_ACTIONLOG_UNIFICATION_DESIGN_20260603.md`. The WS
-    /// receive handler pushes each server-authoritative delta
-    /// (`CardRevealed` / `LibraryReordered` / `SearchCandidates`) at the
-    /// **game `action_count` the server stamped on the wire** — the undo-log
-    /// position of the delta's own action (a draw's `RevealCard`, a shuffle's
-    /// `ShuffleLibrary`, a scry's `ReorderLibrary`, a search-resolution
-    /// choice). The key IS the game position, so the shadow consumes each
-    /// delta at the SAME game `action_count` on the forward pass and on every
-    /// rewind/replay — no synthetic arrival counter, no effective-ac side map.
-    ///
-    /// `ActionLog::push` requires strictly-increasing keys; the server
-    /// guarantees distinct acs per delta (each draw/shuffle/scry is its own
-    /// undo action) and folds the ONE genuine atomic-multi-delta — the N
-    /// library-search candidates revealed by a single search — into a single
-    /// [`StateSyncEntry::SearchCandidates`] carrying `Vec<CardReveal>` at the
-    /// one search ac. A duplicate-or-decreasing ac is a server desync and the
-    /// `push` panic is the correct fatal response (NETWORK_ARCHITECTURE.md
-    /// "Desync is ALWAYS Fatal").
+    /// receive handler / `apply_choice_buffer` pushes each server-authoritative
+    /// delta at the **game `action_count` the server stamped on the wire** — the
+    /// undo-log position of the delta's own action. The key IS the game position,
+    /// so the shadow consumes each delta at the SAME game `action_count` on the
+    /// forward pass and on every rewind/replay — no synthetic arrival counter, no
+    /// effective-ac side map.
     ///
     /// Replaces the legacy `pending_reveals` / `pending_library_reorders`
     /// VecDeques + `drain_*` helpers and the interim synthetic-key +
     /// effective-ac machinery (mtg-610).
-    pub state_sync: ActionLog<StateSyncEntry>,
+    reorder_log: ActionLog<StateSyncEntry>,
 
-    /// Cursor into `state_sync`: highest game `action_count` whose entry has
-    /// already been applied to the shadow `GameState`.
+    /// Append-only, **game-`action_count`-indexed** shadow REVEAL log
+    /// (`RevealCard` + `SearchCandidates`). See `reorder_log` for why the two are
+    /// split. The N library-search candidates revealed by a single search are
+    /// folded into one [`StateSyncEntry::SearchCandidates`] carrying
+    /// `Vec<CardReveal>` at the one search ac (N separate `RevealCard` at one ac
+    /// would be a same-class collision). Mirrors the native client's `reveal_log`.
+    reveal_log: ActionLog<StateSyncEntry>,
+
+    /// Cursor for **LibraryReorder** entries — POSITIONAL: a reorder at game ac
+    /// K is applied only once the shadow's own `action_count` has reached K
+    /// (bounded by `target_action`). Load-bearing: a shuffle's order must NOT
+    /// overwrite the shadow library before the shadow has replayed earlier-ac
+    /// actions that read it (e.g. an opponent's cycling fetch that pulls a card
+    /// OUT of the pre-shuffle library — apply the post-shuffle order early and the
+    /// fetched card vanishes → the search finds nothing → desync). Mirrors the
+    /// native `last_applied_reorder_ac`.
+    last_applied_reorder_ac: u64,
+
+    /// Cursor for **RevealCard / SearchCandidates** entries — EAGER: applied up
+    /// to the reveal-history-complete watermark (`max_received_choice_ac`), AHEAD
+    /// of the shadow's own `action_count`. The shadow replays the OPPONENT's
+    /// actions (via `WasmRemoteController`) at acs beyond its own position, and
+    /// those plays need their card identities revealed BEFORE the shadow can
+    /// replay them (else "Entity not found"). Reveals are identity injections
+    /// (library-order independent), so applying them early is safe.
     ///
-    /// `apply_state_sync_at` applies entries with
-    /// `last_applied_state_sync_ac < ac <= min(target_action, frontier())`
-    /// and bumps this cursor. The log itself is never popped or drained —
-    /// invariant #4 of `docs/NETWORK_ACTION_LOG.md` § 8.
-    last_applied_state_sync_ac: u64,
+    /// **This eager bound FIXES the apply-frontier stall (mtg-o99ow B2):** the
+    /// old single cursor bounded reveals by `target_action` too, so the shadow's
+    /// forward replay stalled at the last reveal (e.g. server=55 / local=50,
+    /// diff=5) instead of advancing to the `ChoiceRequest`'s `action_count` —
+    /// because a buffered opponent choice at a higher ac could not be consumed
+    /// until its bundled reveals were applied. Mirrors the native
+    /// `last_applied_reveal_ac`.
+    last_applied_reveal_ac: u64,
 
     /// **Game-start library orders (mtg-o99ow L3).** The server syncs each
     /// player's initial (pre-game) shuffled library order via
@@ -357,8 +389,10 @@ impl WasmNetworkClient {
             opponent_id: None,
             opponent_name: None,
             network_debug: false,
-            state_sync: ActionLog::new(),
-            last_applied_state_sync_ac: 0,
+            reorder_log: ActionLog::new(),
+            reveal_log: ActionLog::new(),
+            last_applied_reorder_ac: 0,
+            last_applied_reveal_ac: 0,
             initial_library_orders: std::collections::BTreeMap::new(),
             initial_library_applied: false,
             max_received_choice_ac: 0,
@@ -1269,9 +1303,10 @@ impl WasmNetworkClient {
     ///    and is fatal.
     ///
     /// Only when no entry yet occupies this ac do we insert. At that point a
-    /// brand-new delta arriving at `ac < last_applied_state_sync_ac` means a delta
-    /// needed at its game position never arrived in time and the cursor has moved
-    /// on — a lost delta = desync, fatal (NETWORK_ARCHITECTURE.md: Desync is
+    /// brand-new delta arriving behind its CLASS apply cursor (the reveal cursor
+    /// for reveals/search-candidates, the reorder cursor for reorders) means a
+    /// delta needed at its game position never arrived in time and the cursor has
+    /// moved on — a lost delta = desync, fatal (NETWORK_ARCHITECTURE.md: Desync is
     /// ALWAYS Fatal). The bound is `>=` (not `>`): the cursor starts at 0 and the
     /// first opening-hand reveal is legitimately stamped at game ac 0
     /// (`opening_reveal_ac(0) == 0`).
@@ -1385,13 +1420,30 @@ impl WasmNetworkClient {
     }
 
     fn push_state_sync(&mut self, action_count: u64, entry: StateSyncEntry) {
-        if let Some(existing) = self.state_sync.get(action_count) {
+        // Route by delta CLASS into its own log (reorders vs reveals may share an
+        // ac — see the `reorder_log` doc). Same-class collision rules are
+        // unchanged: idempotent same-delta re-send = drop; DIFFERING same-class
+        // delta @ one ac = fatal; new delta behind its class cursor = lost =
+        // fatal. A cross-class reorder + reveal sharing one ac is now legal: they
+        // land in different logs, never collide, and apply in separate passes
+        // (reorder-first).
+        let is_reorder = matches!(entry, StateSyncEntry::LibraryReorder { .. });
+        let class_cursor = if is_reorder {
+            self.last_applied_reorder_ac
+        } else {
+            self.last_applied_reveal_ac
+        };
+        let log = if is_reorder {
+            &mut self.reorder_log
+        } else {
+            &mut self.reveal_log
+        };
+        if let Some(existing) = log.get(action_count) {
             assert!(
                 state_sync_entries_equivalent(existing, &entry),
-                "push_state_sync: two DIFFERENT state-sync deltas share game ac={} \
-                 (existing={:?}, new={:?}). A game ac is the unique undo-log position \
-                 of one action, so distinct deltas cannot share it — this is a \
-                 protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
+                "push_state_sync: two DIFFERENT same-class state-sync deltas share game ac={} \
+                 (existing={:?}, new={:?}). Two same-class deltas cannot share an undo-log \
+                 position — this is a protocol desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
                 action_count,
                 existing,
                 entry,
@@ -1401,15 +1453,15 @@ impl WasmNetworkClient {
             return;
         }
         assert!(
-            action_count >= self.last_applied_state_sync_ac,
+            action_count >= class_cursor,
             "push_state_sync: a NEW state-sync delta arrived at ac={} but the apply \
-             cursor has already advanced past it (last_applied={}) and no prior copy \
-             was logged — a delta needed at its game position never arrived in time \
+             cursor for its class has already advanced past it (cursor={}) and no prior \
+             copy was logged — a delta needed at its game position never arrived in time \
              = lost delta = desync (NETWORK_ARCHITECTURE.md: Desync is ALWAYS Fatal).",
             action_count,
-            self.last_applied_state_sync_ac,
+            class_cursor,
         );
-        self.state_sync.insert_sorted(action_count, entry);
+        log.insert_sorted(action_count, entry);
     }
 
     /// Advance the reveal-history-complete watermark to a received choice's game
@@ -1468,7 +1520,7 @@ impl WasmNetworkClient {
     /// a choice (still past the frontier).
     pub fn searched_card_for(&self, searcher: PlayerId, target_action: u64) -> Option<crate::core::CardId> {
         let mut best: Option<(u64, crate::core::CardId)> = None;
-        for (ac, entry) in self.state_sync.iter() {
+        for (ac, entry) in self.reveal_log.iter() {
             let StateSyncEntry::RevealCard { owner, card, reason } = entry else {
                 continue;
             };
@@ -1521,51 +1573,67 @@ impl WasmNetworkClient {
         target_action: u64,
     ) -> usize {
         // Game-start library orders precede every in-game delta; establish them
-        // before the first draw (and they are not in the ac-keyed log).
+        // before the first draw (and they are not in the ac-keyed logs).
         self.apply_initial_library_orders(shadow);
 
-        let frontier = match self.state_sync.frontier() {
-            Some(f) => f,
-            None => return 0,
-        };
-        // Apply only entries whose game position the shadow has reached
-        // (≤ target_action) AND for which the reveal-history is COMPLETE — i.e.
-        // ≤ `max_received_choice_ac`, the highest game ac of any choice received.
-        //
-        // mtg-o99ow WASM bug #2 (block-on-miss via the completeness watermark):
-        // bounding by the raw `frontier` (highest ARRIVED entry) is unsafe,
-        // because the server emits a choice window's deltas via two uncoordinated
-        // paths — the coordinator's `LibraryReordered` broadcast (at the reorder's
-        // LARGER ac) reaches the client BEFORE the handler's `choice.reveals` loop
-        // (at each reveal's SMALLER ac). So a reorder at ac 380 can be the frontier
-        // while a reveal at ac 376 has not yet arrived; applying up to the frontier
-        // would advance the cursor past 376, and the later-arriving reveal would be
-        // lost (or trip the behind-cursor desync assert). The `max_received_choice_ac`
-        // watermark is the server's per-choice completeness signal: by wire ordering
-        // (NETWORK_ARCHITECTURE.md) the server sends ALL deltas with ac ≤ A before
-        // the choice at ac A, so once that choice has arrived every delta with ac ≤ A
-        // is present. Bounding apply by it guarantees no entry below the cursor is
-        // still in flight — the principled L4 block-on-miss, keyed by game ac.
-        let bound = target_action.min(frontier).min(self.max_received_choice_ac);
-        if bound <= self.last_applied_state_sync_ac {
-            return 0;
-        }
+        let watermark = self.max_received_choice_ac;
 
-        // CRITICAL ORDERING (mtg-589): apply LibraryReorder entries BEFORE the
-        // reveal-like entries within the window — the server-authoritative library
-        // order must be in place before a reveal moves a card out of the library,
-        // and before any draw pops it. Two-pass over the same cursor window keeps
-        // re-runs after a rewind bit-identical. The cursor advances over EVERY
-        // applied entry (reorder and reveal alike).
-        let to_apply: Vec<(u64, StateSyncEntry)> = self
-            .state_sync
+        // Two independently-bounded passes over SEPARATE logs (see the cursor +
+        // reorder_log field docs):
+        //
+        // Pass 1 — REORDERS, POSITIONAL: bound by `target_action` (the shadow's
+        //   own action_count) ∧ reorder frontier. A shuffle's new library order
+        //   must NOT be adopted before the shadow has replayed the actions at
+        //   earlier acs (e.g. an opponent's cycling fetch that pulls a card OUT of
+        //   the pre-shuffle library). Applying it early makes the fetched card
+        //   vanish from the shadow's library → the search finds nothing → desync.
+        // Pass 2 — REVEALS, EAGER: bound by the reveal-history-complete watermark
+        //   (`max_received_choice_ac`) ∧ reveal frontier — applied AHEAD of the
+        //   shadow's position so the shadow can replay opponent plays whose cards
+        //   must be instantiated first (else "Entity not found"). Reveals are
+        //   identity injections (library-order independent), so applying them
+        //   early is safe.
+        //
+        // The eager reveal bound is the apply-frontier STALL fix (mtg-o99ow B2):
+        // the prior single cursor bounded reveals by `target_action` too, so the
+        // shadow forward-replay stalled at the last reveal (server=55/local=50)
+        // instead of advancing to the choice's ac and consuming a buffered
+        // opponent choice that sat above the last reveal.
+        //
+        // The watermark is the server's per-choice completeness signal: by wire
+        // ordering (NETWORK_ARCHITECTURE.md) the server sends ALL deltas with
+        // ac ≤ A before the choice at ac A, so once that choice has arrived every
+        // delta with ac ≤ A is present — bounding the reveal apply by it
+        // guarantees no entry below the reveal cursor is still in flight (the
+        // principled L4 block-on-miss, keyed by game ac).
+        let reorder_bound = target_action.min(self.reorder_log.frontier().unwrap_or(0));
+        let reveal_bound = watermark.min(self.reveal_log.frontier().unwrap_or(0));
+
+        let reorders: Vec<(u64, StateSyncEntry)> = self
+            .reorder_log
             .iter()
-            .filter(|(ac, _)| *ac > self.last_applied_state_sync_ac && *ac <= bound)
+            .filter(|(ac, _)| *ac > self.last_applied_reorder_ac && *ac <= reorder_bound)
             .map(|(ac, entry)| (ac, entry.clone()))
             .collect();
+        let reveals: Vec<(u64, StateSyncEntry)> = self
+            .reveal_log
+            .iter()
+            .filter(|(ac, _)| *ac > self.last_applied_reveal_ac && *ac <= reveal_bound)
+            .map(|(ac, entry)| (ac, entry.clone()))
+            .collect();
+        if reorders.is_empty() && reveals.is_empty() {
+            return 0;
+        }
+        self.last_applied_reorder_ac = self.last_applied_reorder_ac.max(reorder_bound);
+        self.last_applied_reveal_ac = self.last_applied_reveal_ac.max(reveal_bound);
 
-        // Pass 1: library reorders.
-        for (ac, entry) in &to_apply {
+        // CRITICAL ORDERING (mtg-589): apply LibraryReorder entries BEFORE the
+        // reveal-like entries — the server-authoritative library order must be in
+        // place before a reveal moves a card out of the library, and before any
+        // draw pops it. Re-runs after a rewind stay bit-identical because both
+        // logs are non-destructive and the cursors are positional/watermarked.
+        let mut applied = 0;
+        for (ac, entry) in &reorders {
             if let StateSyncEntry::LibraryReorder { player, new_order } = entry {
                 log::debug!(
                     "apply_state_sync: library reorder ac={} player={:?} ({} cards)",
@@ -1577,11 +1645,11 @@ impl WasmNetworkClient {
                     zones.library.cards = new_order.iter().rev().copied().collect();
                 }
             }
+            applied += 1;
         }
 
         // Pass 2: reveal-like entries (single reveals + search-candidate bundles).
-        let mut applied = 0;
-        for (ac, entry) in to_apply {
+        for (ac, entry) in reveals {
             match entry {
                 StateSyncEntry::RevealCard { owner, card, reason } => {
                     log::debug!(
@@ -1617,7 +1685,7 @@ impl WasmNetworkClient {
                 }
                 StateSyncEntry::LibraryReorder { .. } => {}
             }
-            self.last_applied_state_sync_ac = ac;
+            // The reveal cursor was already advanced to `reveal_bound` above.
             applied += 1;
         }
         applied
@@ -1632,7 +1700,8 @@ impl WasmNetworkClient {
     /// The log itself stays intact — that's exactly what "non-destructive
     /// reads" buys us (invariant #3 of `docs/NETWORK_ACTION_LOG.md` § 8).
     pub fn reset_state_sync_cursor(&mut self) {
-        self.last_applied_state_sync_ac = 0;
+        self.last_applied_reorder_ac = 0;
+        self.last_applied_reveal_ac = 0;
     }
 
     /// **Rebuild the reveal-history materialisation to game `action_count` R**
@@ -1677,7 +1746,9 @@ impl WasmNetworkClient {
         // choice — they must NOT exist at R).
         let mut retained_card_ids: std::collections::BTreeSet<crate::core::CardId> = std::collections::BTreeSet::new();
         let mut future_card_ids: Vec<crate::core::CardId> = Vec::new();
-        for (ac, entry) in self.state_sync.iter() {
+        // Reveals (incl. search candidates) live in `reveal_log`; reorders never
+        // materialise instances, so the unwind only scans the reveal log.
+        for (ac, entry) in self.reveal_log.iter() {
             if let StateSyncEntry::RevealCard { owner, card, .. } = entry {
                 if our_id == Some(*owner) {
                     continue; // our own card — undo log owns its lifecycle
@@ -1724,7 +1795,7 @@ impl WasmNetworkClient {
         // halt the scan and leave a later retained reveal unapplied — that gap
         // was the `cards[id]` PRIOR-null / CURRENT-present turn-start drift.
         let retained_to_apply: Vec<(PlayerId, Box<crate::network::CardReveal>, crate::network::RevealReason)> = self
-            .state_sync
+            .reveal_log
             .iter()
             .filter(|(ac, _)| *ac <= retained_action)
             .filter_map(|(_, entry)| match entry {
@@ -1746,7 +1817,7 @@ impl WasmNetworkClient {
         // Re-apply retained search-candidate bundles (their identities also
         // materialise into the shadow library at R).
         let retained_searches: Vec<(PlayerId, Vec<crate::network::CardReveal>)> = self
-            .state_sync
+            .reveal_log
             .iter()
             .filter(|(ac, _)| *ac <= retained_action)
             .filter_map(|(_, entry)| match entry {
@@ -1796,15 +1867,25 @@ impl WasmNetworkClient {
     /// frontier comparison; preserves the "K > frontier ⇒ yield NeedsInput"
     /// semantics of invariant #5 in design-doc terms.
     pub fn has_unapplied_state_sync(&self) -> bool {
-        self.state_sync
+        self.reorder_log
             .frontier()
-            .is_some_and(|f| f > self.last_applied_state_sync_ac)
+            .is_some_and(|f| f > self.last_applied_reorder_ac)
+            || self
+                .reveal_log
+                .frontier()
+                .is_some_and(|f| f > self.last_applied_reveal_ac)
     }
 
-    /// Diagnostic accessor: current state-sync apply cursor. Test-only use.
+    /// Diagnostic accessor: current REVEAL apply cursor. Test-only use.
     #[cfg(test)]
-    pub(crate) fn last_applied_state_sync_ac(&self) -> u64 {
-        self.last_applied_state_sync_ac
+    pub(crate) fn last_applied_reveal_ac(&self) -> u64 {
+        self.last_applied_reveal_ac
+    }
+
+    /// Diagnostic accessor: current REORDER apply cursor. Test-only use.
+    #[cfg(test)]
+    pub(crate) fn last_applied_reorder_ac(&self) -> u64 {
+        self.last_applied_reorder_ac
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1920,8 +2001,10 @@ impl WasmNetworkClient {
         self.opponent_id = None;
         self.opponent_name = None;
         self.network_debug = false;
-        self.state_sync = ActionLog::new();
-        self.last_applied_state_sync_ac = 0;
+        self.reorder_log = ActionLog::new();
+        self.reveal_log = ActionLog::new();
+        self.last_applied_reorder_ac = 0;
+        self.last_applied_reveal_ac = 0;
         self.initial_library_orders.clear();
         self.initial_library_applied = false;
         self.max_received_choice_ac = 0;
@@ -2047,140 +2130,176 @@ mod tests {
     #[test]
     fn push_state_sync_keys_by_game_action_count() {
         // mtg-o99ow L3: the log key IS the server-stamped game action_count.
-        // ActionLog::push enforces strict monotonicity.
+        // Reveals route to `reveal_log`, reorders to `reorder_log` (the split).
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(5, mk_reveal("a"));
         c.push_state_sync(8, mk_reorder(0));
         c.push_state_sync(13, mk_reveal("b"));
-        let acs: Vec<u64> = c.state_sync.iter().map(|(ac, _)| ac).collect();
-        assert_eq!(acs, vec![5, 8, 13]);
-        assert_eq!(c.state_sync.frontier(), Some(13));
+        let reveal_acs: Vec<u64> = c.reveal_log.iter().map(|(ac, _)| ac).collect();
+        let reorder_acs: Vec<u64> = c.reorder_log.iter().map(|(ac, _)| ac).collect();
+        assert_eq!(reveal_acs, vec![5, 13]);
+        assert_eq!(reorder_acs, vec![8]);
+        assert_eq!(c.reveal_log.frontier(), Some(13));
+        assert_eq!(c.reorder_log.frontier(), Some(8));
     }
 
     #[test]
     fn push_state_sync_tolerates_out_of_order_arrival() {
         // mtg-o99ow WASM bug #2: the server emits a choice window's deltas via
-        // two uncoordinated paths (coordinator LibraryReordered broadcast at the
-        // reorder's larger ac, BEFORE the handler's choice.reveals loop at each
-        // reveal's smaller ac), so a delta at ac 380 can arrive ahead of one at
-        // 376. The log is keyed+consumed by game ac, so insert-sorted restores
-        // canonical game-position order regardless of wire arrival order — no
-        // strict-monotonic-arrival panic (the old ActionLog::push behaviour).
+        // two uncoordinated paths so a reveal at a larger ac can ARRIVE before one
+        // at a smaller ac. Each per-class log is keyed+consumed by game ac, so
+        // insert-sorted restores canonical game-position order regardless of wire
+        // arrival order — no strict-monotonic-arrival panic.
         let mut c = WasmNetworkClient::new();
-        c.push_state_sync(380, mk_reorder(0)); // larger ac arrives FIRST
-        c.push_state_sync(376, mk_reveal("late")); // smaller ac arrives SECOND
-        let acs: Vec<u64> = c.state_sync.iter().map(|(ac, _)| ac).collect();
-        assert_eq!(acs, vec![376, 380], "log must be re-sorted by game ac");
-        // Both entries are still findable by their game ac (binary search).
-        assert!(c.state_sync.get(376).is_some());
-        assert!(c.state_sync.get(380).is_some());
+        c.push_state_sync(380, mk_reveal("late-but-larger")); // larger ac arrives FIRST
+        c.push_state_sync(376, mk_reveal("early-but-smaller")); // smaller ac arrives SECOND
+        let acs: Vec<u64> = c.reveal_log.iter().map(|(ac, _)| ac).collect();
+        assert_eq!(acs, vec![376, 380], "reveal log must be re-sorted by game ac");
+        assert!(c.reveal_log.get(376).is_some());
+        assert!(c.reveal_log.get(380).is_some());
     }
 
     #[test]
-    fn push_state_sync_drops_idempotent_resend() {
+    fn reorder_and_reveal_may_share_ac() {
+        // THE SPLIT INVARIANT (mtg-o99ow, mirrors the native client test): a
+        // shuffle-then-draw resolution (Timetwister / Wheel of Fortune /
+        // Windfall) legitimately stamps a LibraryReorder and a RevealCard at the
+        // SAME game ac. With ONE shared log this tripped the "two distinct deltas
+        // share an ac" fatal assert and crashed the WASM shadow; with the split
+        // they land in different logs and both survive. Order of arrival must not
+        // matter.
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(100, mk_reorder(0)); // reorder first
+        c.push_state_sync(100, mk_reveal("Timetwister-draw")); // reveal at the SAME ac
+        assert_eq!(c.reorder_log.get(100).map(|_| ()), Some(()));
+        assert_eq!(c.reveal_log.get(100).map(|_| ()), Some(()));
+        // Reverse arrival order is equally fine.
+        let mut c2 = WasmNetworkClient::new();
+        c2.push_state_sync(200, mk_reveal("draw")); // reveal first
+        c2.push_state_sync(200, mk_reorder(1)); // reorder at the SAME ac
+        assert!(c2.reveal_log.get(200).is_some());
+        assert!(c2.reorder_log.get(200).is_some());
+    }
+
+    #[test]
+    fn reveal_idempotent_resend_is_dropped() {
         // mtg-o99ow WASM bug #2: the server's shared_reveal_index immediate-pusher
         // and collect_reveals_since_last_choice both emit the same reveal, so an
         // IDENTICAL delta can arrive twice at the same game ac. Since distinct
-        // deltas never share an ac, this is a benign re-send — the second copy is
-        // dropped (not fatal), even after the first was already applied (cursor
-        // moved past it; the log is non-destructive so the entry remains).
+        // SAME-CLASS deltas never share an ac, this is a benign re-send — the
+        // second copy is dropped (not fatal), even after the first was already
+        // applied (cursor moved past it; the log is non-destructive so it remains).
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(42, mk_reveal("Mountain"));
-        c.last_applied_state_sync_ac = 50; // simulate cursor advanced past 42
+        c.last_applied_reveal_ac = 50; // simulate reveal cursor advanced past 42
         c.push_state_sync(42, mk_reveal("Mountain")); // identical re-send → dropped
-        assert_eq!(c.state_sync.len(), 1, "idempotent re-send must not duplicate");
+        assert_eq!(c.reveal_log.len(), 1, "idempotent re-send must not duplicate");
     }
 
     #[test]
-    #[should_panic(expected = "two DIFFERENT state-sync deltas share game ac")]
-    fn push_state_sync_panics_on_distinct_delta_at_same_ac() {
-        // Two DIFFERENT deltas can never legitimately share a game ac (it is
-        // undo_log.len(), globally unique per logged action). A non-equivalent
-        // entry at an occupied ac is a genuine desync → fatal.
+    #[should_panic(expected = "two DIFFERENT same-class state-sync deltas share game ac")]
+    fn reveal_vs_reveal_distinct_at_same_ac_is_fatal() {
+        // The ORIGINAL dual-stamp desync class MUST stay fatal after the split:
+        // two DIFFERENT reveals can never legitimately share a game ac (it is
+        // undo_log.len(), globally unique per logged action). The split relaxes
+        // ONLY cross-class (reorder + reveal); same-class collisions remain fatal.
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(42, mk_reveal("a"));
-        c.push_state_sync(42, mk_reveal("b")); // same ac, different card name
+        c.push_state_sync(42, mk_reveal("b")); // same ac, different card name → fatal
     }
 
     #[test]
-    #[should_panic(expected = "apply cursor has already advanced past it")]
+    #[should_panic(expected = "two DIFFERENT same-class state-sync deltas share game ac")]
+    fn reorder_vs_reorder_distinct_at_same_ac_is_fatal() {
+        // Same-class reorder collisions must also stay fatal.
+        let mut c = WasmNetworkClient::new();
+        c.push_state_sync(42, mk_reorder(0));
+        c.push_state_sync(42, mk_reorder(1)); // same ac, different player → fatal
+    }
+
+    #[test]
+    #[should_panic(expected = "apply cursor for its class has already advanced past it")]
     fn push_state_sync_panics_when_new_delta_arrives_behind_cursor() {
-        // A BRAND-NEW delta (no prior copy logged) arriving at an ac the apply
-        // cursor already passed would be silently dropped from every future apply
-        // window (last_applied < ac <= bound) — a needed delta lost = desync.
+        // A BRAND-NEW delta (no prior copy logged) arriving at an ac its class
+        // apply cursor already passed would be silently dropped from every future
+        // apply window — a needed delta lost = desync.
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(10, mk_reveal("a"));
-        c.last_applied_state_sync_ac = 10; // cursor consumed up to 10
+        c.last_applied_reveal_ac = 10; // reveal cursor consumed up to 10
         c.push_state_sync(7, mk_reveal("too-late")); // never seen before, too late
     }
 
     #[test]
     fn cursor_starts_at_zero_and_advances_with_apply() {
-        // The cursor MUST track applied entries so a second apply call
+        // The cursors MUST track applied entries so a second apply call
         // re-applies nothing. This is the property that replaces the
         // legacy drain_*() destructive semantics with a non-destructive
-        // read (invariant #3, #4).
-        //
-        // We exercise the cursor mechanic via the helper that is the only
-        // mutation point besides apply_state_sync_up_to_frontier. A real
-        // GameState round-trip is exercised by the e2e regression test
-        // (tests/robots42_state_sync_e2e.sh).
+        // read (invariant #3, #4). A real GameState round-trip is exercised
+        // by the e2e regression test (tests/robots42_state_sync_e2e.sh).
         let mut c = WasmNetworkClient::new();
-        assert_eq!(c.last_applied_state_sync_ac(), 0);
+        assert_eq!(c.last_applied_reveal_ac(), 0);
+        assert_eq!(c.last_applied_reorder_ac(), 0);
         assert!(!c.has_unapplied_state_sync());
 
         c.push_state_sync(1, mk_reveal("a"));
         c.push_state_sync(2, mk_reveal("b"));
         assert!(c.has_unapplied_state_sync());
-        assert_eq!(c.last_applied_state_sync_ac(), 0);
+        assert_eq!(c.last_applied_reveal_ac(), 0);
     }
 
     #[test]
     fn reset_state_sync_cursor_rewinds_for_replay() {
         // Snapshot/rewind support: after the engine rewinds, the next
-        // forward pass must replay every entry. The log stays intact —
-        // only the cursor resets. This is the property docs/NETWORK_ACTION_LOG.md
-        // § 8 calls out as making rewind/replay free.
+        // forward pass must replay every entry. Both logs stay intact —
+        // only the cursors reset.
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(1, mk_reveal("x"));
         c.push_state_sync(2, mk_reorder(1));
-        c.last_applied_state_sync_ac = 2; // simulate post-apply
+        c.last_applied_reveal_ac = 1; // simulate post-apply
+        c.last_applied_reorder_ac = 2;
         assert!(!c.has_unapplied_state_sync());
 
         c.reset_state_sync_cursor();
-        assert_eq!(c.last_applied_state_sync_ac(), 0);
+        assert_eq!(c.last_applied_reveal_ac(), 0);
+        assert_eq!(c.last_applied_reorder_ac(), 0);
         assert!(c.has_unapplied_state_sync());
-        // Log is intact:
-        assert_eq!(c.state_sync.len(), 2);
-        assert_eq!(c.state_sync.frontier(), Some(2));
+        // Logs are intact:
+        assert_eq!(c.reveal_log.len(), 1);
+        assert_eq!(c.reorder_log.len(), 1);
+        assert_eq!(c.reveal_log.frontier(), Some(1));
+        assert_eq!(c.reorder_log.frontier(), Some(2));
     }
 
     #[test]
     fn reset_clears_state_sync_log_and_cursor() {
-        // A new game starts fresh: log empty, cursor at 0, allocator at 0.
+        // A new game starts fresh: both logs empty, both cursors at 0.
         let mut c = WasmNetworkClient::new();
         c.push_state_sync(1, mk_reveal("x"));
         c.push_state_sync(2, mk_reorder(0));
-        c.last_applied_state_sync_ac = 1;
+        c.last_applied_reveal_ac = 1;
         c.reset();
-        assert_eq!(c.state_sync.len(), 0);
-        assert_eq!(c.state_sync.frontier(), None);
-        assert_eq!(c.last_applied_state_sync_ac(), 0);
+        assert_eq!(c.reveal_log.len(), 0);
+        assert_eq!(c.reorder_log.len(), 0);
+        assert_eq!(c.reveal_log.frontier(), None);
+        assert_eq!(c.reorder_log.frontier(), None);
+        assert_eq!(c.last_applied_reveal_ac(), 0);
+        assert_eq!(c.last_applied_reorder_ac(), 0);
         assert!(!c.initial_library_applied);
         assert!(!c.has_unapplied_state_sync());
     }
 
     #[test]
     fn has_unapplied_state_sync_reflects_cursor_position() {
-        // Verifies the frontier vs cursor comparison that gates the
+        // Verifies the per-class frontier vs cursor comparison that gates the
         // "K > frontier ⇒ yield NeedsInput" signal at the wasm shim layer.
         let mut c = WasmNetworkClient::new();
         assert!(!c.has_unapplied_state_sync());
         c.push_state_sync(1, mk_reveal("a"));
         assert!(c.has_unapplied_state_sync());
-        c.last_applied_state_sync_ac = 1;
+        c.last_applied_reveal_ac = 1;
         assert!(!c.has_unapplied_state_sync());
-        c.push_state_sync(2, mk_reveal("b"));
+        // A reorder ahead of the reorder cursor also counts as unapplied.
+        c.push_state_sync(2, mk_reorder(0));
         assert!(c.has_unapplied_state_sync());
     }
 
