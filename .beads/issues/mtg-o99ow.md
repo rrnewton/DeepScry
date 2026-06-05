@@ -4,10 +4,108 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-04T22:16:33.167174255+00:00
+updated_at: 2026-06-05T00:15:50.886627198+00:00
 ---
 
 # Description
+
+## TASK 1 + TASK 2 DONE + GREEN 2026-06-04 (slot02-build) — native buffer shim landed; eager opponent-choice deleted
+
+The user's NATIVE-FIRST + DELETE-EAGER plan is implemented and green on all
+deterministic native paths. Commits on netarch-reveal-actionlog-unify
+(dc99d57d, 021de859, 46d1cc12, d90e7183, 4d8675df).
+
+PLAIN-LANGUAGE: the desktop client used to learn about reveals / library
+reshuffles / opponent choices from several separate websocket messages applied
+greedily; those RACED and ~50% of the time dropped a searched-up card, causing a
+fatal desync. The desktop client now consumes the SINGLE ordered list (buffer)
+carried inside each choice request — exactly as the browser client already does —
+so the race is impossible by construction. We then DELETED the now-redundant
+separate "opponent made a choice" messages so the buffer is the only source.
+
+TASK 1 (native buffer shim, mtg-engine/src/network/client.rs):
+ - NetworkMessage::ChoiceRequest carries `buffer`; reveal-class variants carry the
+   server action_count. buffer_is_authoritative + max_received_choice_ac on
+   SharedNetworkState.
+ - State-sync log keyed by TRUE server ac via insert_sorted (dedups idempotent
+   re-sends; differing-delta-at-one-ac or behind-cursor = FATAL). Game-start
+   library orders held in a separate initial_library_orders map (would collide at
+   ac 0), applied once before first draw.
+ - apply_choice_buffer routes facts; reveals pushed BEFORE choices (a Choice push
+   wakes the RemoteController, which must see a fully-populated reveal log — the
+   timing race that made it look nondeterministic). Watermark set BEFORE apply.
+ - TWO apply cursors (the native B2 replay-driver): REORDERS are positional
+   (bounded by the shadow's own action_count — a shuffle must not overwrite the
+   library before the shadow replays earlier-ac actions that read it, e.g. a
+   cycling fetch out of the pre-shuffle library); REVEALS are eager (bounded by
+   the reveal watermark, applied ahead so opponent plays can be replayed —
+   "Entity not found" otherwise). Reveals are library-order independent.
+ - sync_callback passes target_action through; eager reader arms ignored once
+   authoritative.
+ - DRY: state_sync_entries_equivalent moved to network/state_sync.rs (shared
+   native+WASM).
+
+TASK 2 (server.rs): the OpponentMadeChoice handler no longer eager-sends
+OpponentChoice / bundled CardRevealed / dummy Searched reveal — it only
+accumulates into the next ChoiceRequest buffer (assemble_choice_buffer is a
+proven complete superset). Buffer is the SOLE mid-game opponent-choice source
+(false-positive guard, definitive). Removed unused OpponentChoiceInfo.timestamp_ms.
+
+mtg-u3dwj asks (team-lead): (1) call_pre_choice_hook now applies state-sync up to
+the choice ac before the LOCAL controller decides (covers in-resolution local
+choices, all ChoiceKinds, DRY); (3) heuristic choose_cards_to_discard
+debug_assert!s on an unresolvable OWN hand card (was a silent filter_map drop).
+(2) rogerbrand seed3 heuristic is STILL RED — its divergence is DEEPER than the
+reveal-timing class (network shadow heuristic plays Badlands + casts Sedge Troll
+before discarding; All Hallow's Eve / Wheel of Fortune family, sibling of
+mtg-609), NOT subsumed by the buffer shim. Tracked in mtg-u3dwj; not chased.
+
+GATE (all isolated systemd-run --user --scope, mtime-fresh binary):
+ - equiv-zero seed3: 8/8 then 6/6 (the branch-introduced desync — was ~50% FATAL)
+ - equiv-random, equiv-heuristic, cycle315 x3, robots42: GREEN
+ - full make validate: GREEN except a unit.nextest TIMEOUT under concurrent
+   slot03-validate CPU contention (all individual tests incl all network tests
+   PASSED; re-run in isolation pending). NOT a real failure.
+
+## MTG Rules Review — Verdict: PASS
+
+1. Correct rule implementation: N/A for rule semantics — this is network
+   TRANSPORT/shadow-apply infrastructure; no engine rule logic changed. Affected
+   effects' rules unchanged: search CR 701.20, scry/surveil CR 701.18/701.34,
+   library order CR 401.2, draw CR 120.
+2. Reveal ordering: YES (core of the fix) — the shadow now applies reveals up to
+   the choice's action_count BEFORE the controller decides (call_pre_choice_hook
+   sync + watermark-bounded eager reveal apply); reorders applied positionally so
+   a draw reads the correct library order. Buffer is ascending-ac → replayable.
+3. Information hiding: PRESERVED — opponent's fetched card stays hidden (dummy
+   Searched reveal: empty name + card_id only). Buffer assembled from the SAME
+   entitled sources the eager path used; TASK 2 removes a copy, adds no new info.
+4. Decision authority: PRESERVED — choices still routed to the client's
+   PlayerController via ChoiceRequest; the buffer carries FACTS + the opponent's
+   OWN already-made decision, never a server-made decision.
+5. Server/client sync: this IS the fix's domain — eliminates the multi-message
+   arrival race; controllers stay information-independent; desync stays FATAL
+   (no silent recovery; push_state_sync_at asserts on differing/lost delta).
+   Verified: equiv-zero 6/6 + random/heuristic/cycle/robots green.
+6. Workaround vs real fix: REAL FIX — the principled successor to the
+   action_count exclusion (reveals arrive in canonical game-position order by
+   construction). No card-name special case, no skipped events, no TODO-shim.
+7. Bug-class generalization: class-level (all reveal/reorder/opponent-choice
+   transmission + the in-resolution local-choice sync covers ALL ChoiceKinds;
+   hardening surfaces the silent-drop class). Remaining sibling rogerbrand /
+   All Hallow's Eve heuristic info-independence divergence is a SEPARATE class,
+   tracked in mtg-u3dwj (pre-existing, not introduced here).
+
+Reasoning: The change is network shadow-replay infrastructure that makes the
+native client consume the ordered ChoiceRequest buffer (matching WASM) and
+deletes the redundant eager opponent-choice send. It strengthens, not weakens,
+the reveal-ordering and determinism invariants and preserves information hiding
+and decision authority. The one red sibling (rogerbrand) is a pre-existing,
+deeper divergence already tracked in mtg-u3dwj and explicitly out of scope.
+
+Gamelog justification: cycle_ability_network_sync_e2e (seed 315, Mountaincycling
+search→fetch→shuffle) and network_vs_local_equivalence_e2e (seed3 zero/random/
+heuristic) confirm byte-identical local-vs-network gamelogs after the fix.
 
 ## TASK 0 SETTLED 2026-06-04 (slot02) — equiv-zero seed3 is BRANCH-INTRODUCED, NOT pre-existing mtg-725. The REFRAME above is WRONG.
 Built clean INTEGRATION (primary checkout @b886d9b3, fresh release+network binary) and the BRANCH (@e0188273). Ran network_vs_local_equivalence_e2e.sh seed3 zero zero, each isolated under systemd-run --user --scope:
