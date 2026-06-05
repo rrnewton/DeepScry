@@ -1452,6 +1452,14 @@ pub struct DebugSyncInfo {
     /// permanent cast to the battlefield reappearing in the shadow library).
     #[serde(default)]
     pub library_ids: [Vec<u32>; 2],
+    /// Per-player KNOWN hand CardIds `[P0_hand, P1_hand]`, sorted. Unlike
+    /// `requesting_player_hand_ids` (only the one requesting player), this dumps
+    /// BOTH hands the side can see (the server sees both; a client sees its own
+    /// fully + the materialized subset of the opponent's). When `hand_sizes`
+    /// differs but every public zone is byte-identical, diffing these names the
+    /// exact card the shadow LOST vs a pure stamping skew (mtg-ho2r8 seed-7).
+    #[serde(default)]
+    pub hand_ids: [Vec<u32>; 2],
 }
 
 impl DebugSyncInfo {
@@ -1474,6 +1482,7 @@ impl DebugSyncInfo {
             battlefield_detail: Vec::new(),
             graveyard_ids: [Vec::new(), Vec::new()],
             library_ids: [Vec::new(), Vec::new()],
+            hand_ids: [Vec::new(), Vec::new()],
         }
     }
 

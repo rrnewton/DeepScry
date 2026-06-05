@@ -317,6 +317,13 @@ fn log_debug_sync_info(label: &str, info: &DebugSyncInfo) {
     if !info.requesting_player_hand_ids.is_empty() {
         log::error!("║   Hand CardIds: {:?}", info.requesting_player_hand_ids);
     }
+    if info.hand_ids.iter().any(|h| !h.is_empty()) {
+        log::error!(
+            "║   Hand CardIds(known): P0={:?} P1={:?}",
+            info.hand_ids[0],
+            info.hand_ids[1]
+        );
+    }
     if !info.battlefield_detail.is_empty() {
         log::error!("║   Battlefield (id,tapped,ctrl): {:?}", info.battlefield_detail);
     }
@@ -356,6 +363,18 @@ fn log_state_differences(server: &DebugSyncInfo, client: &DebugSyncInfo) {
         log::error!("║   - Hand CardIds DIFFER");
         log::error!("║      Server: {:?}", server.requesting_player_hand_ids);
         log::error!("║      Client: {:?}", client.requesting_player_hand_ids);
+    }
+    // mtg-ho2r8 seed-7: name the lost/extra card per player when hand SIZE diverges.
+    for p in 0..2usize {
+        if server.hand_ids[p] != client.hand_ids[p] {
+            let s: std::collections::BTreeSet<u32> = server.hand_ids[p].iter().copied().collect();
+            let c: std::collections::BTreeSet<u32> = client.hand_ids[p].iter().copied().collect();
+            let only_server: Vec<u32> = s.difference(&c).copied().collect();
+            let only_client: Vec<u32> = c.difference(&s).copied().collect();
+            log::error!(
+                "║   - P{p} hand CardIds DIFFER: on_server_only={only_server:?} on_client_only={only_client:?}"
+            );
+        }
     }
     // mtg-mb668 class-A: pinpoint the per-card battlefield divergence (a tap-status
     // or controller mismatch on a single card) when the coarse sizes all match.
