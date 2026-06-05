@@ -4,10 +4,11 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T02:18:01.371472481+00:00
+updated_at: 2026-06-05T10:36:52.371206466+00:00
 ---
 
 # Description
+
 
 ## WASM SIDE COMPLETE + FULL VALIDATE GREEN 2026-06-04 (slot02) @25cb0454 — reorder/reveal split + B2 fix ported; WASM net e2e RE-ENABLED
 
@@ -408,3 +409,29 @@ Native-first pivot landed the WASM-disable (@b67d8428, mtg-zsi9f). Characterizin
 - equiv-random seed3: 3/3 deterministic GREEN. equiv-heuristic: GREEN. robots42: 4/4 GREEN. cycle315: 3/3 GREEN (my searcher fix). So the CYCLING/buffer work is sound where deterministic; the only native red is the zero-controller network nondeterminism.
 - My earlier single-run "Blocker A = searcher-shadow valid_cards=0 / found card not materialized" was a SYMPTOM of this nondeterminism (different library order → different/empty search), NOT a deterministic bug.
 OPEN QUESTION (needs an integration build to settle): is this network-server nondeterminism PRE-EXISTING (mtg-725, orthogonal to the branch) or BRANCH-INTRODUCED? The branch changed what's TRANSMITTED (reveals/buffer), not the server's game-choice logic, so PRE-EXISTING is most likely — but unverified. The native-first "rock solid" gate cannot be green while equiv-zero is nondeterministic; that's a separate nondeterminism root-cause (mtg-725 class), not buffer work.
+========================================================================
+DEEP-AC IN-STACK-RESOLUTION STATE CLASS — empirical pins (2026-06-05, slot03-mtg677b)
+This is the OPEN prize-blocker now that mtg-677 rewind/replay-faithfulness is
+DONE (@1b61b895, the reveal-timing-stable discard carve-out). With that fix the
+robots network games run far PAST the old rewind FATAL and expose GENUINE
+server-vs-client STATE divergences at deep action_count (action_counts MATCH;
+the state HASH differs — a real desync, not a rewind LogMismatch, not presentation):
+
+  • seed 5 (decks/old_school/03_robots_jesseisbak.dck --network-debug):
+      FATAL: P2 state hash mismatch at choice_seq=160 action_count=965
+      server=fe79d428add11897 client=80de73e9c1540d20
+      Deck has Copy Artifact / Balance → in-stack copy/resolution class. WASM
+      battlefield/gy at the mismatch (from card_detail dump): bf ids
+      [14,35,46,48,54,56,94,118,123], gy [[45,38,37],[101,122]] (122 = Copy
+      Artifact). Artifacts: debug/netarch-undo-dumps/..seed5_{wasm_undo,card_detail,mismatch}.log
+  • seed 2: turn-17-start P1-library TurnStartHashChanged (reserved-card
+      reveal-materialisation timing across two rewinds; library order pins in
+      mtg-677 "[SEED 2]" sections).
+
+Both are the mtg-559 robots42 deep-ac residual family. The principled fix is THIS
+issue's reveal-actionlog unification (drive reveals/materialisations through the
+monotonic action_log keyed by game action_count so they replay deterministically
+alongside the undo log). Acceptance prize: robots seeds 2 & 5 un-excluded-green in
+web/test_network_multideck.js with the eb8f938e action_count-in-hash recipe applied
+→ converged. NOT started this session (separate substantial class; mtg-677 was
+scoped to rewind-faithfulness only).
