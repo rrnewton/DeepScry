@@ -1,0 +1,12 @@
+---
+title: 'Desync tooling P1: structured both-sides per-field state-diff (name ALL diverging fields/cards/actions at once)'
+status: open
+priority: 2
+issue_type: task
+created_at: 2026-06-05T17:42:17.589458398+00:00
+updated_at: 2026-06-05T17:42:17.589458398+00:00
+---
+
+# Description
+
+Audit P1 (the 'one thing'). diff_full_state(server_debug, client_debug, server_undo, client_undo) -> structured tree naming every diverging field AND card AND action in one shot — fixes 'two bugs in one hash' by enumerating ALL divergences, not stopping at the first. ~300 LoC; 80% exists (DebugSyncInfo protocol.rs:1394-1612 + detail helpers). Wire into server.rs:251-293. Tier-2 minutes->seconds. Effort M. Related: mtg-o99ow.
