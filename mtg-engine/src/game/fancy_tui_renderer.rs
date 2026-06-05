@@ -4873,6 +4873,7 @@ mod tests {
                 level: VerbosityLevel::Normal,
                 category: None,
                 private_to: None,
+                verifier_stable: None,
             },
             LogEntry {
                 message: "P2 draws Bayou (121)".to_string(),
@@ -4882,6 +4883,7 @@ mod tests {
                     owner: p2,
                     public_message: "P2 draws a card".to_string(),
                 }),
+                verifier_stable: None,
             },
             LogEntry {
                 message: "P1 draws Mox Jet (21)".to_string(),
@@ -4891,6 +4893,7 @@ mod tests {
                     owner: p1,
                     public_message: "P1 draws a card".to_string(),
                 }),
+                verifier_stable: None,
             },
         ];
 
@@ -4975,6 +4978,7 @@ mod tests {
             level: VerbosityLevel::Normal,
             category: None,
             private_to: None,
+            verifier_stable: None,
         };
 
         // Pre-rewind buffer: 3 entries ending on a turn-2 banner.

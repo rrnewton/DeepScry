@@ -63,6 +63,24 @@ pub struct LogEntry {
     /// `owner`. UIs rendering from a different perspective should display
     /// `public_message` instead. See [`PrivateLogInfo`].
     pub private_to: Option<PrivateLogInfo>,
+    /// If `Some`, the rewind/replay verifier compares THIS string instead of
+    /// `message` / `private_to.public_message` (mtg-677).
+    ///
+    /// This is for FULLY PUBLIC lines whose displayed text legitimately
+    /// depends on async reveal-arrival TIMING — e.g. a discard into the public
+    /// graveyard: on a network shadow the discarded opponent card's instance
+    /// may not be materialised yet (its public `RevealCard` arrives one
+    /// `ChoiceRequest` later), so the line renders an id fallback `card#52` on
+    /// the forward pass but the real name `Disenchant` on a rewind+replay.
+    /// The underlying STATE is identical (the card is in the graveyard either
+    /// way — guarded by the turn-start hash check); only the presentation
+    /// differs by reveal timing. The verifier compares this reveal-timing-
+    /// INDEPENDENT form (keyed on the server-authoritative `CardId`) so the
+    /// asymmetry is not flagged as a fatal desync — the same carve-out
+    /// `private_to.public_message` provides for the private DRAW log, but
+    /// WITHOUT masking the public name from any viewer in the UI
+    /// (`message_for` deliberately ignores this field).
+    pub verifier_stable: Option<String>,
 }
 
 impl LogEntry {
@@ -616,6 +634,7 @@ impl GameLogger {
                 message: message.to_string(),
                 category: None,
                 private_to: None,
+                verifier_stable: None,
             });
         }
 
@@ -646,10 +665,47 @@ impl GameLogger {
                 message: message.to_string(),
                 category: None,
                 private_to: None,
+                verifier_stable: None,
             });
         }
 
         // Output to stdout if mode requires it and verbosity allows
+        if should_output && VerbosityLevel::Normal <= self.verbosity {
+            self.log_to_stdout(VerbosityLevel::Normal, message);
+        }
+    }
+
+    /// Log at Normal level a FULLY PUBLIC line whose displayed text depends on
+    /// async reveal-arrival timing, supplying the reveal-timing-INDEPENDENT
+    /// string the rewind/replay verifier should compare instead (mtg-677).
+    ///
+    /// Unlike [`Self::normal_private`], this does NOT mask anything in the UI —
+    /// every viewer sees the full `message`. It only steers the verifier to a
+    /// stable comparison key (see [`LogEntry::verifier_stable`]). Use for e.g.
+    /// the discard-into-graveyard line, whose card name is known on a rewind
+    /// replay but not on the first forward pass of a network shadow.
+    #[inline]
+    pub fn normal_reveal_stable(&self, message: &str, verifier_stable: &str) {
+        if self.suppressed {
+            return;
+        }
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
+
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        if should_capture {
+            self.log_buffer.borrow_mut().push(LogEntry {
+                level: VerbosityLevel::Normal,
+                message: message.to_string(),
+                category: None,
+                private_to: None,
+                verifier_stable: Some(verifier_stable.to_string()),
+            });
+        }
+
         if should_output && VerbosityLevel::Normal <= self.verbosity {
             self.log_to_stdout(VerbosityLevel::Normal, message);
         }
@@ -693,6 +749,7 @@ impl GameLogger {
                     owner,
                     public_message: public_message.to_string(),
                 }),
+                verifier_stable: None,
             });
         }
 
@@ -727,6 +784,7 @@ impl GameLogger {
             message: message.to_string(),
             category: None,
             private_to: None,
+            verifier_stable: None,
         });
     }
 
@@ -751,6 +809,7 @@ impl GameLogger {
                 message: message.to_string(),
                 category: None,
                 private_to: None,
+                verifier_stable: None,
             });
         }
 
@@ -805,10 +864,58 @@ impl GameLogger {
                 message: formatted.clone(),
                 category: Some("gamelog".to_string()),
                 private_to: None,
+                verifier_stable: None,
             });
         }
 
         // Output to stdout if mode requires it and verbosity allows
+        if should_output && VerbosityLevel::Normal <= self.verbosity {
+            self.log_to_stdout(VerbosityLevel::Normal, &formatted);
+        }
+    }
+
+    /// Log a FULLY PUBLIC official game action whose displayed text depends on
+    /// async reveal-arrival timing, supplying the reveal-timing-INDEPENDENT
+    /// string the rewind/replay verifier should compare instead (mtg-677).
+    ///
+    /// Identical to [`Self::gamelog`] (same `[GAMELOG ...]` tagging, same
+    /// stdout behaviour, fully public — no UI masking) except the captured
+    /// entry carries a [`LogEntry::verifier_stable`] key. The key is tagged
+    /// with the SAME turn/step prefix as `message` so the two stay comparable
+    /// across modes. Use for the discard-into-graveyard gamelog line.
+    #[inline]
+    pub fn gamelog_reveal_stable(&self, message: &str, verifier_stable: &str) {
+        if self.suppressed {
+            return;
+        }
+        let should_capture = matches!(self.output_mode, OutputMode::Memory | OutputMode::Both);
+        let should_output = matches!(self.output_mode, OutputMode::Stdout | OutputMode::Both);
+
+        if VerbosityLevel::Normal > self.verbosity && !should_capture {
+            return;
+        }
+
+        let (formatted, formatted_stable) = if self.tag_gamelogs {
+            let turn = *self.gamelog_turn.borrow();
+            let step = *self.gamelog_step.borrow();
+            (
+                format!("[GAMELOG Turn{} {}] {}", turn, step, message),
+                format!("[GAMELOG Turn{} {}] {}", turn, step, verifier_stable),
+            )
+        } else {
+            (message.to_string(), verifier_stable.to_string())
+        };
+
+        if should_capture {
+            self.log_buffer.borrow_mut().push(LogEntry {
+                level: VerbosityLevel::Normal,
+                message: formatted.clone(),
+                category: Some("gamelog".to_string()),
+                private_to: None,
+                verifier_stable: Some(formatted_stable),
+            });
+        }
+
         if should_output && VerbosityLevel::Normal <= self.verbosity {
             self.log_to_stdout(VerbosityLevel::Normal, &formatted);
         }
@@ -867,6 +974,7 @@ impl GameLogger {
                     owner,
                     public_message: formatted_public,
                 }),
+                verifier_stable: None,
             });
         }
 
@@ -916,6 +1024,7 @@ impl GameLogger {
                 message: formatted.clone(),
                 category: Some("controller_choice".to_string()),
                 private_to: None,
+                verifier_stable: None,
             });
         }
 

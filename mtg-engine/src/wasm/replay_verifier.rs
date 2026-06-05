@@ -263,6 +263,18 @@ fn is_replayable_entry(entry: &LogEntry) -> bool {
 /// this presentation-layer asymmetry as a fatal desync. This is the same
 /// principle as the `controller_choice` exclusion above.
 fn replay_compare_message(entry: &LogEntry) -> &str {
+    // mtg-677: a FULLY PUBLIC line whose displayed identity depends on async
+    // reveal-arrival timing (e.g. a discard into the public graveyard, which
+    // renders `card#52` before the reveal arrives and `Disenchant` after)
+    // supplies a reveal-timing-INDEPENDENT comparison key. Prefer it: the
+    // underlying STATE is identical across forward/replay (the card is in the
+    // graveyard either way — proven by the turn-start hash that runs first);
+    // only the presentation differs. This is the same carve-out
+    // `private_to.public_message` provides for the private DRAW log, here
+    // without masking the public name from any viewer.
+    if let Some(stable) = &entry.verifier_stable {
+        return stable;
+    }
     match &entry.private_to {
         Some(info) => &info.public_message,
         None => &entry.message,
@@ -382,6 +394,7 @@ mod tests {
             message: msg.to_string(),
             category: None,
             private_to: None,
+            verifier_stable: None,
         }
     }
 
@@ -391,6 +404,7 @@ mod tests {
             message: msg.to_string(),
             category: Some("controller_choice".to_string()),
             private_to: None,
+            verifier_stable: None,
         }
     }
 
@@ -400,6 +414,21 @@ mod tests {
             message: msg.to_string(),
             category: Some("gamelog".to_string()),
             private_to: None,
+            verifier_stable: None,
+        }
+    }
+
+    /// mtg-677: a discard log entry whose DISPLAY text differs by reveal timing
+    /// (`card#52` forward vs `Disenchant` replay) but whose `verifier_stable`
+    /// id-form is identical. The verifier must compare the stable form and NOT
+    /// flag a divergence.
+    fn make_discard_entry(display: &str, stable: &str) -> LogEntry {
+        LogEntry {
+            level: VerbosityLevel::Normal,
+            message: display.to_string(),
+            category: Some("gamelog".to_string()),
+            private_to: None,
+            verifier_stable: Some(stable.to_string()),
         }
     }
 
@@ -462,6 +491,79 @@ mod tests {
                 assert_eq!(replay_tail_len, 3);
             }
             other => panic!("expected LogMismatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_verify_replay_discard_reveal_timing_is_stable() {
+        // mtg-677 H2: a discard into the public graveyard renders the id
+        // fallback `card#52` on a network shadow's FIRST forward pass (the
+        // reveal has not arrived yet) and the real name `Disenchant` on a
+        // rewind+replay (the reveal landed). The DISPLAY text differs but the
+        // `verifier_stable` id form is identical, so the verifier must NOT flag
+        // a divergence — the card is in the graveyard either way.
+        let verification = RewindVerification {
+            turn_number: 1,
+            pre_rewind_state_hash: 0xAA,
+            pre_rewind_action_count: 3,
+            pre_rewind_log_count: 2,
+            // Captured FORWARD pass: instance absent → display is the id form.
+            pre_rewind_log_tail: vec![make_discard_entry(
+                "NativeAI discards card#52",
+                "NativeAI discards card#52",
+            )],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xBB,
+            post_rewind_state_snapshot: None,
+        };
+
+        // REPLAY pass: instance present → display is the real public name, but
+        // the same reveal-timing-stable id key is attached.
+        let replayed = fresh_game_with_logs(&["turn header"]);
+        replayed
+            .logger
+            .gamelog_reveal_stable("NativeAI discards Disenchant", "NativeAI discards card#52");
+
+        let outcome = verify_replay(&verification, &replayed, Some(0xBB));
+        assert_eq!(
+            outcome,
+            ReplayCheckOutcome::Ok,
+            "reveal-timing-only display difference must not be a fatal desync"
+        );
+    }
+
+    #[test]
+    fn test_verify_replay_discard_stable_key_still_catches_real_divergence() {
+        // The carve-out must NOT blind the verifier: if the reveal-timing-stable
+        // id form ITSELF diverges (a genuinely different card discarded), it is
+        // still a fatal LogMismatch.
+        let verification = RewindVerification {
+            turn_number: 1,
+            pre_rewind_state_hash: 0xAA,
+            pre_rewind_action_count: 3,
+            pre_rewind_log_count: 2,
+            pre_rewind_log_tail: vec![make_discard_entry(
+                "NativeAI discards card#52",
+                "NativeAI discards card#52",
+            )],
+            log_size_at_turn: 1,
+            post_rewind_turn_start_hash: 0xBB,
+            post_rewind_state_snapshot: None,
+        };
+
+        let replayed = fresh_game_with_logs(&["turn header"]);
+        // Different underlying card id (#99) → stable forms diverge → fatal.
+        replayed
+            .logger
+            .gamelog_reveal_stable("NativeAI discards Disenchant", "NativeAI discards card#99");
+
+        let outcome = verify_replay(&verification, &replayed, Some(0xBB));
+        match outcome {
+            ReplayCheckOutcome::LogMismatch { expected, actual, .. } => {
+                assert_eq!(expected, "NativeAI discards card#52");
+                assert_eq!(actual, "NativeAI discards card#99");
+            }
+            other => panic!("expected LogMismatch on diverging stable key, got {:?}", other),
         }
     }
 

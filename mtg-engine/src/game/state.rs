@@ -1595,19 +1595,10 @@ impl GameState {
                     // Spell resolved or was countered - logged elsewhere
                 }
                 (Zone::Hand, Zone::Graveyard) => {
-                    // A discard puts the card into the graveyard, a PUBLIC zone
-                    // (CR 400.2, 404), so its identity is revealed to every
-                    // player. The reveal happened deterministically just above
-                    // (the Hand→Graveyard arm of the auto-reveal match calls
-                    // `maybe_reveal_to_all` BEFORE the move, materializing the
-                    // instance on a network shadow), so `card_name` here is the
-                    // real, now-public name on the server, the shadow, the
-                    // forward pass, and any rewind+replay alike — identity-
-                    // stable by construction (mtg-610). Logged PUBLICLY; this
-                    // does NOT leak hidden information because the graveyard is
-                    // public. (The owner-private DRAW log is the opposite case:
-                    // drawing to hand is hidden, so that line is masked.)
-                    self.logger.normal(&format!("{} is discarded", card_name));
+                    // Logged UNCONDITIONALLY below (outside this try_get-gated
+                    // match) so the line is present on a network shadow's first
+                    // forward pass even when the discarded opponent card's
+                    // instance is not materialised yet (mtg-677). No-op here.
                 }
                 (Zone::Library, Zone::Graveyard) => {
                     // Mill - don't spam, this is logged by mill effect
@@ -1616,6 +1607,32 @@ impl GameState {
                     // Other moves are either logged elsewhere or not significant
                 }
             }
+        }
+
+        // mtg-677: a discard puts the card into the graveyard, a PUBLIC zone
+        // (CR 400.2, 404), so its identity is revealed to every player. Emit the
+        // line UNCONDITIONALLY (outside the try_get gate above): on a network
+        // shadow the discarded OPPONENT card may not be materialised yet — its
+        // public `RevealCard` arrives one ChoiceRequest after the forced
+        // resolution that discarded it (mtg-677 H2: the shadow's forward
+        // GameLoop runs AHEAD of the reveal stream). A try_get-gated line would
+        // therefore be DROPPED on the first forward pass but PRESENT on a rewind
+        // replay (instance left behind) → a spurious line-count + name
+        // LogMismatch. We log from `card_id` directly: DISPLAY shows the real
+        // public name when known (server / replay) and a `card#<id>` fallback
+        // before the reveal arrives; the rewind/replay verifier compares the
+        // reveal-timing-INDEPENDENT id form (`verifier_stable`) so the
+        // presentation asymmetry is not a fatal desync. The card is in the
+        // graveyard identically either way (turn-start hash proves the STATE).
+        if from == Zone::Hand && to == Zone::Graveyard {
+            let display = self
+                .cards
+                .try_get(card_id)
+                .map(|card| card.name.to_string())
+                .unwrap_or_else(|| format!("card#{}", card_id.as_u32()));
+            let stable = format!("card#{} is discarded", card_id.as_u32());
+            self.logger
+                .normal_reveal_stable(&format!("{} is discarded", display), &stable);
         }
 
         // Update mana caches (event-driven incremental update)

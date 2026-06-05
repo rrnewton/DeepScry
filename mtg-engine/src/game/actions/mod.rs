@@ -6734,7 +6734,18 @@ impl GameState {
         // a public zone, so every player learns its identity (CR 400.2). This
         // is the OPPOSITE of the draw log (drawing to hand is private); the log
         // visibility follows zone publicness.
-        self.logger.gamelog(&format!("{} discards {}", player_name, card_name));
+        //
+        // mtg-677: the DISPLAYED name depends on async reveal timing on a
+        // network shadow (the discarded opponent card may not be materialised
+        // yet — see `move_card`'s Hand→Graveyard note), so the displayed text
+        // can be `card#52` on the first forward pass and `Disenchant` on a
+        // rewind replay. The STATE is identical; only presentation differs. We
+        // supply the rewind/replay verifier a reveal-timing-INDEPENDENT id form
+        // so this is not flagged as a fatal desync, WITHOUT masking the public
+        // name from any viewer in the UI.
+        let verifier_stable = format!("{} discards card#{}", player_name, card_id.as_u32());
+        self.logger
+            .gamelog_reveal_stable(&format!("{} discards {}", player_name, card_name), &verifier_stable);
 
         Ok(())
     }
