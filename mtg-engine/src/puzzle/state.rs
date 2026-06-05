@@ -68,7 +68,7 @@ pub struct PlayerStateDefinition {
     pub lands_played: u32,
     pub lands_played_last_turn: u32,
     pub counters: HashMap<CounterType, i32>,
-    pub mana_pool: Vec<String>, // Simplified for Phase 1, will parse properly later
+    pub mana_pool: Vec<String>, // TODO(mtg-9hkvk): parse into typed mana symbols instead of Vec<String>
     pub persistent_mana: Vec<String>,
     pub hand: Vec<CardDefinition>,
     pub battlefield: Vec<CardDefinition>,

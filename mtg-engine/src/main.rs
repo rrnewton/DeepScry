@@ -692,7 +692,7 @@ enum Commands {
     /// / `CreateGame` / `JoinGame`. When two players have joined the same game
     /// slot the server starts a full GameServer session on that connection pair.
     /// Reconnect tokens are issued at game-start so a dropped player can
-    /// re-attach (Phase 3 resume wiring). Waiting games are evicted immediately
+    /// re-attach (mtg-682: mid-game resume reattachment is still a stub). Waiting games are evicted immediately
     /// when the creator's WebSocket drops (no stale entries in `ListGames`).
     ///
     /// For the complete browser product — static assets + lobby on one public

@@ -294,7 +294,7 @@ pub enum LocalChoiceInfo {
     Error { message: String },
 }
 
-// Phase 2 step 3 (mtg-i2x3r / netarch): the legacy `RemoteChoiceInfo`,
+// netarch (mtg-629, phase 2 step 3): the legacy `RemoteChoiceInfo`,
 // `ChoiceAcceptedInfo`, and the deprecated `ChoiceInfo` enums, plus the
 // `PendingReveal` struct, are GONE. Opponent choices and ChoiceAccepted
 // acks now flow through the shared `ActionLog<ChoiceEntry>` buffers, and
@@ -313,7 +313,7 @@ pub struct PendingLibraryReorder {
     pub new_order: Vec<CardId>,
 }
 
-/// Shadow state-sync log + apply cursor (Phase 2 step 3a).
+/// Shadow state-sync log + apply cursor (mtg-629 step 3a).
 ///
 /// Wraps the SHARED `ActionLog<StateSyncEntry>` primitive plus the two
 /// pieces of consumer-owned bookkeeping the sync callback needs: the
@@ -381,7 +381,7 @@ struct StateSyncBuffer {
     initial_library_applied: bool,
 }
 
-/// Opponent-choice buffer + FIFO read cursor (Phase 2 step 3b).
+/// Opponent-choice buffer + FIFO read cursor (mtg-629 step 3b).
 ///
 /// Wraps the SHARED `ActionLog<ChoiceEntry>` primitive keyed by the
 /// server `choice_seq`, plus the engine-side read cursor that hands out
@@ -396,7 +396,7 @@ struct OpponentChoiceBuffer {
     cursor: u64,
 }
 
-/// Local ChoiceAccepted buffer + read cursor (Phase 2 step 3c).
+/// Local ChoiceAccepted buffer + read cursor (mtg-629 step 3c).
 ///
 /// Wraps a SHARED `ActionLog<ChoiceEntry>` keyed by the server
 /// `choice_seq`. Only the `choice_seq` + `library_search_result` fields
@@ -414,7 +414,7 @@ struct ChoiceAcceptedBuffer {
 /// Shared network state for synchronization between network loop and game loop
 ///
 /// This structure implements choice + state synchronization using the
-/// shared `ActionLog` primitive (Phase 2 step 3) plus an MVar for local
+/// shared `ActionLog` primitive (mtg-629 step 3) plus an MVar for local
 /// ChoiceRequests:
 /// - `state_sync`: `ActionLog<StateSyncEntry>` of CardRevealed / LibraryReordered
 /// - `local_choice_mvar`: MVar for ChoiceRequest messages (local player)
@@ -446,7 +446,7 @@ struct ChoiceAcceptedBuffer {
 pub struct SharedNetworkState {
     /// Shadow state-sync log + apply cursor, behind one lock.
     ///
-    /// Phase 2 step 3a (mtg-i2x3r / netarch): this REPLACES the legacy
+    /// netarch (mtg-629, phase 2 step 3a): this REPLACES the legacy
     /// `pending_reveals` / `pending_library_reorders` VecDeques, the
     /// `library_reorder_condvar`, and the `choice_pending` race-fixer flag.
     /// `CardRevealed` and `LibraryReordered` are now appended to a single
@@ -473,7 +473,7 @@ pub struct SharedNetworkState {
     local_choice_mvar: super::mvar::MVar<LocalChoiceInfo>,
 
     /// Opponent-choice buffer (`ActionLog<ChoiceEntry>`) + FIFO read cursor,
-    /// behind one lock. Phase 2 step 3b: REPLACES the legacy
+    /// behind one lock. mtg-629 step 3b: REPLACES the legacy
     /// `remote_choice_mvar`. The WS reader appends each `OpponentChoice`
     /// keyed by its server-assigned `choice_seq` (strictly unique/monotonic
     /// per choice — `action_count` is NOT unique, mtg-sfihb); the
@@ -488,7 +488,7 @@ pub struct SharedNetworkState {
     opponent_choices_notify: std::sync::Condvar,
 
     /// Local ChoiceAccepted buffer (`ActionLog<ChoiceEntry>`) + read cursor,
-    /// behind one lock. Phase 2 step 3c: REPLACES the legacy
+    /// behind one lock. mtg-629 step 3c: REPLACES the legacy
     /// `choice_accepted_mvar` + `take_choice_accepted_for_seq`. Keyed by the
     /// server `choice_seq` (the value `NetworkLocalController` already waits
     /// for), read non-destructively so a rewind/replay re-reads the same
@@ -640,7 +640,7 @@ impl SharedNetworkState {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // STATE-SYNC LOG (Phase 2 step 3a — reveal/reorder via ActionLog<StateSyncEntry>)
+    // STATE-SYNC LOG (mtg-629 step 3a — reveal/reorder via ActionLog<StateSyncEntry>)
     // ─────────────────────────────────────────────────────────────────────
 
     /// Append a `StateSyncEntry` to the shadow state-sync log keyed by its
@@ -1056,7 +1056,7 @@ impl SharedNetworkState {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // OPPONENT-CHOICE BUFFER (Phase 2 step 3b — ActionLog<ChoiceEntry>)
+    // OPPONENT-CHOICE BUFFER (mtg-629 step 3b — ActionLog<ChoiceEntry>)
     // ─────────────────────────────────────────────────────────────────────
 
     /// Append an `OpponentChoice` to the per-controller choice buffer, keyed
@@ -1128,7 +1128,7 @@ impl SharedNetworkState {
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // LOCAL CHOICE-ACCEPTED BUFFER (Phase 2 step 3c — ActionLog<ChoiceEntry>)
+    // LOCAL CHOICE-ACCEPTED BUFFER (mtg-629 step 3c — ActionLog<ChoiceEntry>)
     // ─────────────────────────────────────────────────────────────────────
 
     /// Append a `ChoiceAccepted` ack to the local choice-accepted buffer,
@@ -1786,7 +1786,7 @@ impl NetworkClient {
             initial_state_hash,
             opponent_decklist,
             server_network_debug,
-            deck_card_ids,     // Phase 3: CardID ranges for late-binding architecture
+            deck_card_ids,     // mtg-218: CardID ranges for late-binding architecture
             token_definitions, // Token definitions for network clients without local card DB
             rng_state,         // Serialized RNG state for deterministic shuffles
         ) = loop {
@@ -2432,8 +2432,8 @@ async fn run_ws_reader_shared(
                                 // ChoiceRequest buffer at their TRUE ac. The server
                                 // STILL dual-emits the eager copy during the additive
                                 // phase, so we IGNORE it here (it is NOT a no-op site —
-                                // the arm IS reached). FALSE-POSITIVE GUARD: TASK 2
-                                // deletes the eager send entirely; the buffer-driven
+                                // the arm IS reached). FALSE-POSITIVE GUARD: the
+                                // delete-eager task (mtg-o99ow) removes the eager send entirely; the buffer-driven
                                 // gate then runs with ZERO eager copies, proving the
                                 // buffer is the sole source (a behavioural proof, not a
                                 // debug_assert — the eager copy legitimately arrives).
@@ -2547,7 +2547,7 @@ async fn run_ws_reader_shared(
                                     library_search_result
                                 );
                                 // Append to the local choice-accepted buffer
-                                // (Phase 2 step 3c), keyed by choice_seq.
+                                // (mtg-629 step 3c), keyed by choice_seq.
                                 shared_state.push_choice_accepted(choice_seq, library_search_result);
                             }
                             NetworkMessage::OpponentChoice {
@@ -2575,7 +2575,7 @@ async fn run_ws_reader_shared(
                                 shared_state.update_server_action_count(action_count);
                                 shared_state.note_received_choice_ac(action_count);
                                 // Append to the per-controller opponent-choice
-                                // buffer (Phase 2 step 3b), keyed by choice_seq.
+                                // buffer (mtg-629 step 3b), keyed by choice_seq.
                                 log::debug!(
                                     "WsReaderShared: OpponentChoice seq={} indices={:?} action={} lib_search={:?} targets={:?} -> opponent_choices",
                                     choice_seq,

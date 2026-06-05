@@ -4838,7 +4838,7 @@ impl GameState {
                     return Ok(());
                 }
 
-                // Call the attach_equipment method from Phase 1
+                // Call the attach_equipment method
                 self.attach_equipment(*source_equipment, *target_creature)?;
             }
             Effect::Balance {

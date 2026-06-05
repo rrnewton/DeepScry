@@ -97,7 +97,7 @@ impl RemoteController {
         };
 
         // Block (NO timeout) for the next unconsumed opponent choice in the
-        // choice buffer (Phase 2 step 3b). Returns None only on terminal
+        // choice buffer (mtg-629 step 3b). Returns None only on terminal
         // disconnect (game ended / fatal error).
         match state.take_opponent_choice() {
             Some(entry) => {
@@ -196,7 +196,7 @@ impl RemoteController {
 
         if let Some(ref state) = self.shared_state {
             // Network mode: read the next unconsumed opponent choice from the
-            // buffer (Phase 2 step 3b), keyed by choice_seq, non-destructive.
+            // buffer (mtg-629 step 3b), keyed by choice_seq, non-destructive.
             match state.take_opponent_choice() {
                 Some(entry) => {
                     // Validate action count ordering

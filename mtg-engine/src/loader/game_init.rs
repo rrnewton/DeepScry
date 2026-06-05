@@ -96,7 +96,7 @@ impl<'a> GameInitializer<'a> {
         let mut game = GameState::new_two_player_with_capacity(player1_name, player2_name, starting_life, total_cards);
 
         // Reserve all CardID slots in EntityStore without instantiating cards
-        // This uses the Phase 1 EntityStore::reserve_range() method
+        // This uses the late-binding-architecture EntityStore::reserve_range() method (mtg-218)
         game.cards
             .reserve_range(CardId::new(ranges.p1_start), ranges.p1_end - ranges.p1_start);
         game.cards

@@ -48,7 +48,7 @@ impl NetworkState {
 ///
 /// Carry-on view returned by [`WasmNetworkClient::pop_opponent_choice`] and
 /// [`WasmNetworkClient::peek_opponent_choice`]. The underlying storage in
-/// Phase 2 step 2 is now an `ActionLog<ChoiceEntry>` keyed by
+/// netarch step 2 (mtg-o99ow) is now an `ActionLog<ChoiceEntry>` keyed by
 /// `action_count`; this struct materialises the index + payload back into
 /// the single shape `WasmRemoteController` and the SMART damage-assignment
 /// overrides already consume. Keeping the shape stable across the refactor
@@ -241,7 +241,7 @@ pub struct WasmNetworkClient {
     /// Append-only, `choice_seq`-indexed per-controller choice buffer for
     /// opponent (remote) choices.
     ///
-    /// Backs the Phase 2 step 2 migration described in
+    /// Backs the netarch step 2 (mtg-o99ow) migration described in
     /// `docs/NETWORK_ACTION_LOG.md` § 3.1 / `NETWORK_ACTION_LOG_MIGRATION.md`
     /// § 2.1. The WS receive handler pushes `ServerMessage::OpponentChoice`
     /// here keyed by the server-reported **`choice_seq`** (NOT `action_count`).
@@ -937,7 +937,7 @@ impl WasmNetworkClient {
                 // mtg-o99ow L3: see ChoiceRequest — reveals are self-keyed by
                 // game ac now; just advance the reveal-history watermark.
                 self.note_received_choice_ac(action_count);
-                // Phase 1-2 dual-emit: record into the per-controller choice
+                // dual-emit (mtg-o99ow): record into the per-controller choice
                 // buffer keyed by `choice_seq`, deduping the eager-vs-buffer
                 // duplicate (see `record_opponent_choice`). `choice_seq` (NOT
                 // `action_count`) is the log key: the server bumps it once per
@@ -1173,7 +1173,7 @@ impl WasmNetworkClient {
 
     /// Check if at least one unconsumed `OpponentChoice` is buffered.
     ///
-    /// Phase 2 step 2: this is the cursor-vs-frontier test on
+    /// netarch step 2 (mtg-o99ow): this is the cursor-vs-frontier test on
     /// `opponent_choices` — equivalent to the legacy `!is_empty()` check
     /// against the old `VecDeque`, but it derives the answer from the
     /// non-destructive `ActionLog` + cursor pair. See the field-level
@@ -1266,7 +1266,7 @@ impl WasmNetworkClient {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // STATE-SYNC LOG (Phase 2 step 1 — reveal/reorder via ActionLog<StateSyncEntry>)
+    // STATE-SYNC LOG (netarch step 1 (mtg-o99ow) — reveal/reorder via ActionLog<StateSyncEntry>)
     // ═══════════════════════════════════════════════════════════════════════════
     //
     // See `docs/NETWORK_ACTION_LOG.md` § 3.2 for design and
@@ -1375,7 +1375,7 @@ impl WasmNetworkClient {
     }
 
     /// Record an opponent choice into the `choice_seq`-keyed `opponent_choices`
-    /// log, deduping the Phase 1-2 dual-emit duplicate.
+    /// log, deduping the dual-emit duplicate (mtg-o99ow).
     ///
     /// During the additive-buffer window the SAME opponent choice can arrive
     /// BOTH eagerly (`ServerMessage::OpponentChoice`, processed only while the
@@ -1400,7 +1400,7 @@ impl WasmNetworkClient {
     /// monotonically; the only out-of-order arrival is the dual-emit duplicate,
     /// which we drop here before it reaches `push`.
     ///
-    /// TRANSITIONAL: in Phase 3 (eager `OpponentChoice` deleted) only the buffer
+    /// TRANSITIONAL: once eager `OpponentChoice` is deleted (mtg-o99ow) only the buffer
     /// feeds this, the dedup becomes a no-op, and this helper collapses back to a
     /// bare `push`.
     fn record_opponent_choice(&mut self, entry: ChoiceEntry) {
@@ -2037,7 +2037,7 @@ pub fn new_shared_client() -> SharedNetworkClient {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TESTS — state-sync log invariants (Phase 2 step 1)
+// TESTS — state-sync log invariants (netarch step 1 (mtg-o99ow))
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
@@ -2303,7 +2303,7 @@ mod tests {
         assert!(c.has_unapplied_state_sync());
     }
 
-    // ─── Phase 2 step 2 — per-controller choice buffer ─────────────────
+    // ─── netarch step 2 (mtg-o99ow) — per-controller choice buffer ─────────────────
 
     /// Drive the on_message OpponentChoice path. Bypasses JSON parsing by
     /// directly calling the private handler; verifies the message lands in

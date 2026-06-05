@@ -99,8 +99,9 @@ impl<T> MVar<T> {
 
     /// Check if exit has been signaled.
     ///
-    /// Part of the generic MVar primitive's public API. As of netarch Phase 2
-    /// Step 3, `SharedNetworkState::should_exit` reads the dedicated `terminal`
+    /// Part of the generic MVar primitive's public API. As of the netarch
+    /// dedicated-terminal-flag rework (mtg-629, phase 2 step 3),
+    /// `SharedNetworkState::should_exit` reads the dedicated `terminal`
     /// flag instead of this, so this accessor currently has no in-tree caller
     /// outside the mvar unit tests.
     #[allow(dead_code)]

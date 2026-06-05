@@ -290,10 +290,10 @@ pub enum ClientMessage {
     /// running game task. The response is a normal `GameStarted`-style
     /// snapshot of current state so the client can reconstruct its view.
     ///
-    /// **Not yet fully wired to the in-game task** (stubbed in Phase 1 —
-    /// the token lifecycle is implemented and tested; the actual mid-game
-    /// resume of a running `GameLoop` is deferred to Phase 3). A successful
-    /// `Reconnect` in Phase 1 will respond with `ReconnectResult { success:
+    /// **Not yet fully wired to the in-game task** (mtg-682: the token
+    /// lifecycle is implemented and tested; the actual mid-game
+    /// resume of a running `GameLoop` is still a stub). A successful
+    /// `Reconnect` currently responds with `ReconnectResult { success:
     /// true }` but the game may not yet continue on the reattached socket.
     Reconnect {
         /// The token received at game creation / join time.
@@ -409,7 +409,7 @@ impl DeckSubmission {
 /// (keyed by game `ac`), and [`BufferedFact::Choice`] maps onto
 /// [`crate::network::ChoiceEntry`] (keyed by `choice_seq`).
 ///
-/// During the additive phase (Phase 1) the server DUAL-EMITS — it sends both
+/// During the additive dual-emit phase (mtg-o99ow) the server sends both
 /// this buffer AND the legacy eager messages — so old/new clients interoperate;
 /// the buffer is authoritative and the eager copies are ignored by a
 /// buffer-aware client.
@@ -595,10 +595,10 @@ pub enum ServerMessage {
 
     /// Result of a `ClientMessage::Reconnect` request.
     ///
-    /// In Phase 1 the token lifecycle is fully implemented (issue on
+    /// The token lifecycle is fully implemented (issue on
     /// CreateGame/JoinGame, validate on Reconnect, invalidate on game end),
     /// but the in-game task reattachment is stubbed. A successful reconnect
-    /// returns `success: true`; mid-game resume wiring is a Phase 3 task.
+    /// returns `success: true`; mid-game resume wiring is still a stub (mtg-682).
     ReconnectResult {
         /// `true` iff the token was valid and the reconnect was accepted.
         success: bool,
@@ -661,7 +661,7 @@ pub enum ServerMessage {
         /// in SubmitChoice and validate server hashes
         #[serde(default)]
         network_debug: bool,
-        /// Deterministic CardID ranges for late-binding architecture (Phase 3)
+        /// Deterministic CardID ranges for late-binding architecture (mtg-218)
         ///
         /// Contains the CardID ranges for both players' decks:
         /// - P1's deck gets CardIDs [0, p1_deck_size)
