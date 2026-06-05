@@ -4,11 +4,10 @@ status: open
 priority: 2
 issue_type: task
 created_at: 2026-06-04T03:13:00.957496754+00:00
-updated_at: 2026-06-05T10:36:52.371206466+00:00
+updated_at: 2026-06-05T12:44:21.456152802+00:00
 ---
 
 # Description
-
 
 ## WASM SIDE COMPLETE + FULL VALIDATE GREEN 2026-06-04 (slot02) @25cb0454 — reorder/reveal split + B2 fix ported; WASM net e2e RE-ENABLED
 
@@ -435,3 +434,53 @@ alongside the undo log). Acceptance prize: robots seeds 2 & 5 un-excluded-green 
 web/test_network_multideck.js with the eb8f938e action_count-in-hash recipe applied
 → converged. NOT started this session (separate substantial class; mtg-677 was
 scoped to rewind-faithfulness only).
+
+========================================================================
+DEEP-AC SEED-5 ROOT PINNED (2026-06-05, slot03-deepac, branch fix-deep-ac)
+========================================================================
+The deep-ac state class (the FINAL action_count-prize blocker) is now
+byte-pinned for robots seed 5. Full writeup + repro + fix plan:
+ai_docs/DEEPAC_SEED5_ROOT_PIN_20260605.md (this branch).
+
+EXACT diverging field: ONE battlefield tuple at turn-14 Upkeep ac=965 —
+card 14 = the OPPONENT's (P0) Mox Emerald, tapped for mana during P0's
+turn 13. Server view = (14, TAPPED, ctrl 0) [correct]; WASM-shadow view =
+(14, UNTAPPED, ctrl 0) [wrong]. Every other hashed field (life, hand/lib
+sizes, both graveyards, stack, all other bf cards/controllers) is
+byte-identical. server=fe79d428add11897 client=80de73e9c1540d20.
+
+KEY SIGNATURE: both undo logs are IDENTICAL and BOTH contain Tap(14)@934
+with NO Untap(14). So the WASM LIVE card.tapped (false) contradicts the
+shadow's OWN action log (tapped). Empirically: untap step is innocent
+(14 not in normal_to_untap, controller 0 != active 1); Card::untap is
+NEVER called on 14 (probe count 0); EntityStore::insert is write-once
+(no instance replacement). => a NON-undo-logged tap-state divergence.
+
+ROOT: the reveal/replay-ordering model. apply_state_sync Pass-2 applies
+REVEALS EAGERLY ahead of the shadow's replay position ("reveals are
+identity injections, safe to apply early" — client.rs ~L914-919 + WASM
+mirror). True for library order, FALSE for an opponent permanent whose
+tap-state is set by a replayed same-turn action: eager materialize +
+forward replay leaves the live Mox untapped while Tap is still logged
+(action_count parity preserved, hashed STATE wrong). Exactly the
+mtg-o99ow "reveal not aligned at the correct action_count" class,
+surfaced now that mtg-725/mtg-677 let robots run this deep. This is why
+eb8f938e (action_count-in-hash) still can't land: the STATE truly
+diverges here.
+
+FIX DIRECTION (next agent, principled — no band-aid): align opponent-
+permanent materialization + derived per-instance state (tap, etc.) with
+the action_count at which the replay executes the matching action — i.e.
+bound reveal-apply POSITIONALLY for the battlefield-permanent case
+(mirror the reorder bound), keeping eager apply only for true identity-
+only reveals (hand/library/graveyard); OR drive the tap through the
+ac-keyed log so it replays deterministically. Decisive next probe:
+instrument every write to a card's `tapped` field (Card::untap ruled
+out) to catch the non-logging writer that flips 14 to false (suspect: a
+zone-move/ETB/clone/snapshot path resetting tapped after the logged tap,
+ordering-dependent on the eager reveal).
+
+STATUS: diagnosis-to-checkpoint complete; fix NOT yet implemented (deep
+foundational surgery — checkpointed per discipline rather than rushed).
+Diagnostic harness tweaks kept on branch (gitignored debug output); the
+temporary engine DEEPAC_* probes were reverted (engine tree clean).
