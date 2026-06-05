@@ -725,6 +725,48 @@ impl SharedNetworkState {
             .insert(player, new_order);
     }
 
+    /// Authoritative, **rewind-surviving** library-search result for an OPPONENT
+    /// `searcher` resolving at game position `target_action` — the NATIVE analogue
+    /// of `WasmNetworkClient::searched_card_for` (mtg-mb668 / mtg-ho2r8 seed-7).
+    ///
+    /// When the OPPONENT tutors a card from their (hidden) library, the server
+    /// sends a single **dummy `Searched` reveal**: empty `name` (identity hidden)
+    /// but carrying the authoritative fetched `card_id`, owned by the searcher,
+    /// stamped at the search choice's `action_count`. The observer's
+    /// `choose_from_library_with_hook` consumes this CardId to resolve the
+    /// opponent's fetch (the observer's own `valid_cards` is only a partial,
+    /// materialized subset of the opponent's library, so the server's index is not
+    /// usable). The raced `OpponentChoice.library_search_result` is present on the
+    /// FORWARD pass but EMPTY on rewind/replay (mtg-mb668 sig-1); this buffer is
+    /// append-only and game-`action_count`-keyed, so it returns the SAME
+    /// `Some(card_id)` on the first forward resolution AND every replay. We pick the
+    /// dummy `Searched` reveal owned by `searcher` with the GREATEST `action_count`
+    /// that is `<= target_action`. Only EMPTY-name reveals match (the opponent-fetch
+    /// dummy); our own search receives NAMED candidate reveals, which are excluded.
+    /// `None` = genuine "fail to find" (CR 701.19c, no reveal sent).
+    ///
+    /// Wired into the native `GameLoop` via `with_searched_card_lookup`, exactly as
+    /// the WASM shadow path does — previously this lookup was WASM-only, leaving the
+    /// native observer without rewind-surviving opponent-fetch resolution.
+    pub fn searched_card_for(&self, searcher: PlayerId, target_action: u64) -> Option<CardId> {
+        let buf = self.state_sync.lock().unwrap();
+        let mut best: Option<(u64, CardId)> = None;
+        for (ac, entry) in buf.reveal_log.iter() {
+            let StateSyncEntry::RevealCard { owner, card, reason } = entry else {
+                continue;
+            };
+            // Opponent-fetch dummy: empty name (identity hidden), authoritative
+            // card_id, owned by the searcher, reason == Searched.
+            if *owner != searcher || !matches!(reason, RevealReason::Searched) || !card.name.is_empty() {
+                continue;
+            }
+            if ac <= target_action && best.is_none_or(|(best_ac, _)| ac >= best_ac) {
+                best = Some((ac, card.card_id));
+            }
+        }
+        best.map(|(_, card_id)| card_id)
+    }
+
     /// Route a minimal-lazy-protocol `ChoiceRequest` buffer (mtg-o99ow) into the
     /// shadow's existing consumer logs — the native mirror of the WASM
     /// `apply_choice_buffer`. The buffer is ascending-`ac` and carries every
@@ -2242,6 +2284,10 @@ impl NetworkClient {
         let sync_state = shared_state.clone();
         let controller_state = shared_state.clone();
         let seed_state = shared_state.clone();
+        // mtg-ho2r8 seed-7: the rewind-surviving opponent-fetch lookup, mirroring
+        // the WASM shadow path. Without it the native observer loses an opponent's
+        // tutored card on replay (the raced take_library_search_result is empty).
+        let search_state = shared_state.clone();
         let card_db_for_sync = card_db.clone();
 
         // Run game loop in spawn_blocking (works with both single and multi-threaded runtimes)
@@ -2327,6 +2373,13 @@ impl NetworkClient {
                 let mut game_loop = GameLoop::new(&mut game)
                     .with_sync_callback(sync_callback)
                     .with_reveal_validation(our_player_id, false) // Server is authoritative
+                    // mtg-ho2r8 seed-7: rewind-surviving opponent-fetch resolution
+                    // (native analogue of the WASM shadow's wiring). Reads the
+                    // ac-keyed reveal_log so an opponent's library search resolves to
+                    // the SAME CardId on the first forward pass AND every replay.
+                    .with_searched_card_lookup(move |game: &GameState, searcher: PlayerId| {
+                        search_state.searched_card_for(searcher, game.action_count())
+                    })
                     .skip_opening_hands()
                     .with_deferred_game_end();
 
