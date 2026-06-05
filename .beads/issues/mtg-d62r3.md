@@ -108,6 +108,24 @@ re-entry guard). This is the NATIVE-client analogue — distinct code path
 buffer rearchitecture (mtg-o99ow) fixed the EARLIER Bazaar reveal-timing race;
 this fixes the residual in-resolution local-choice sync-ordering gap it left.
 
+## Tests
+
+- Rust integration regression (mtg-engine/src/game/game_loop/priority.rs,
+  `discard_prepare_ordering_tests`): drives the SPELL-resolution discard path
+  (`resolve_top_spell_with_discard_hook`) with a `RecordingNetController`
+  (ControllerType::Network, counts `prepare_for_priority_choice()` calls):
+  - `empty_hand_discard_does_not_block_on_prepare`: empty hand → prepare NOT
+    called (pins the BLOCKER-1 empty-hand hang/desync regression).
+  - `nonempty_hand_discard_calls_prepare_once`: non-empty → prepare called
+    exactly once (proves the guard did not over-gate the normal path).
+  - PROVE-IT-BITES (verified manually, then reverted): moving the prepare above
+    the `actual_count > 0` guard makes the empty-hand test FAIL (prep=1, want 0).
+- rogerbrand-allhallows-heuristic promoted to the desync-canary GREEN gate
+  (covers the ACTIVATED-ability draw-then-discard path, non-empty).
+- Follow-ups filed: mtg-6rru5 (ServerConfig start-state injection so a real
+  empty-hand targeted-discard SERVER/CLIENT e2e becomes possible), mtg-825ti
+  (best-effort spell-path network-equivalence e2e via Blast of Genius).
+
 ## MTG Rules Review — Verdict: PASS
 1. Rule impl: N/A for rule semantics — network shadow-apply ordering only.
    Bazaar of Baghdad "{T}: Draw two cards, then discard three cards." (CR 120

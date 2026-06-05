@@ -4372,3 +4372,243 @@ impl<'a> GameLoop<'a> {
         Some((card_type, zone, sub_ability))
     }
 }
+
+/// mtg-u3dwj BLOCKER-1 regression: the discard handler must call the BLOCKING
+/// `prepare_for_priority_choice()` (which, on a real network client, waits for
+/// the server's discard ChoiceRequest) ONLY when a request will actually be
+/// sent — i.e. only when `actual_count > 0`. On an empty hand the server sends
+/// NO request, so blocking there would hang the client forever, and because
+/// `take_local_choice` is a blind FIFO pop it could instead answer the NEXT
+/// request to THIS choice → off-by-one FATAL desync (docs/NETWORK_ARCHITECTURE.md).
+///
+/// These tests drive the SPELL-resolution discard path
+/// (`resolve_top_spell_with_discard_hook`, the path team-lead's "discard N
+/// (choice) spell on the stack" describes) with a `RecordingNetController` that
+/// reports itself as `ControllerType::Network` and counts every
+/// `prepare_for_priority_choice()` call. The empty-hand guard lives in BOTH
+/// discard sites; the activated-ability site shares the identical guard pattern
+/// and is exercised (non-empty) by the rogerbrand desync canary.
+///
+/// PROVE-IT-BITES (done manually 2026-06-04, restored): moving the spell-path
+/// `prepare_for_priority_choice()` ABOVE its `if actual_count > 0` guard makes
+/// `empty_hand_discard_does_not_block_on_prepare` FAIL (prep count 1, expected
+/// 0) — confirming the test pins the regression.
+#[cfg(test)]
+mod discard_prepare_ordering_tests {
+    use super::*;
+    use crate::core::{Card, CardType, ManaCost, SpellAbility};
+    use crate::game::controller::ChoiceResult;
+    use crate::game::snapshot::ControllerType;
+    use crate::game::ZeroController;
+    use crate::loader::CardDefinition;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// Delegates every decision to an inner `ZeroController` but RECORDS each
+    /// `prepare_for_priority_choice()` call and reports as a Network controller.
+    struct RecordingNetController {
+        inner: ZeroController,
+        prepare_calls: Rc<Cell<u32>>,
+    }
+
+    impl RecordingNetController {
+        fn new(player_id: PlayerId, prepare_calls: Rc<Cell<u32>>) -> Self {
+            Self {
+                inner: ZeroController::new(player_id),
+                prepare_calls,
+            }
+        }
+    }
+
+    impl PlayerController for RecordingNetController {
+        // --- the two methods that matter for this regression ---
+        fn prepare_for_priority_choice(&mut self) -> bool {
+            self.prepare_calls.set(self.prepare_calls.get() + 1);
+            true
+        }
+        fn get_controller_type(&self) -> ControllerType {
+            ControllerType::Network
+        }
+
+        // --- everything else delegates to the inner ZeroController ---
+        fn player_id(&self) -> PlayerId {
+            self.inner.player_id()
+        }
+        fn choose_spell_ability_to_play(
+            &mut self,
+            view: &GameStateView,
+            available: &[SpellAbility],
+        ) -> ChoiceResult<Option<SpellAbility>> {
+            self.inner.choose_spell_ability_to_play(view, available)
+        }
+        fn choose_targets(
+            &mut self,
+            view: &GameStateView,
+            spell: CardId,
+            valid_targets: &[CardId],
+            min_targets: usize,
+            max_targets: usize,
+        ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+            self.inner
+                .choose_targets(view, spell, valid_targets, min_targets, max_targets)
+        }
+        fn choose_mana_sources_to_pay(
+            &mut self,
+            view: &GameStateView,
+            cost: &ManaCost,
+            available_sources: &[CardId],
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            self.inner.choose_mana_sources_to_pay(view, cost, available_sources)
+        }
+        fn choose_attackers(
+            &mut self,
+            view: &GameStateView,
+            available_creatures: &[CardId],
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            self.inner.choose_attackers(view, available_creatures)
+        }
+        fn choose_blockers(
+            &mut self,
+            view: &GameStateView,
+            available_blockers: &[CardId],
+            attackers: &[CardId],
+        ) -> ChoiceResult<SmallVec<[(CardId, CardId); 8]>> {
+            self.inner.choose_blockers(view, available_blockers, attackers)
+        }
+        fn choose_damage_assignment_order(
+            &mut self,
+            view: &GameStateView,
+            attacker: CardId,
+            blockers: &[CardId],
+        ) -> ChoiceResult<SmallVec<[CardId; 4]>> {
+            self.inner.choose_damage_assignment_order(view, attacker, blockers)
+        }
+        fn choose_cards_to_discard(
+            &mut self,
+            view: &GameStateView,
+            hand: &[CardId],
+            count: usize,
+        ) -> ChoiceResult<SmallVec<[CardId; 7]>> {
+            self.inner.choose_cards_to_discard(view, hand, count)
+        }
+        fn choose_from_library(
+            &mut self,
+            view: &GameStateView,
+            valid_cards: &[&CardDefinition],
+        ) -> ChoiceResult<Option<usize>> {
+            self.inner.choose_from_library(view, valid_cards)
+        }
+        fn choose_permanents_to_sacrifice(
+            &mut self,
+            view: &GameStateView,
+            valid_permanents: &[CardId],
+            count: usize,
+            card_type_description: &str,
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            self.inner
+                .choose_permanents_to_sacrifice(view, valid_permanents, count, card_type_description)
+        }
+        fn choose_permanents_to_not_untap(
+            &mut self,
+            view: &GameStateView,
+            may_not_untap_permanents: &[CardId],
+        ) -> ChoiceResult<SmallVec<[CardId; 8]>> {
+            self.inner
+                .choose_permanents_to_not_untap(view, may_not_untap_permanents)
+        }
+        fn choose_modes(
+            &mut self,
+            view: &GameStateView,
+            spell_id: CardId,
+            mode_descriptions: &[String],
+            mode_count: usize,
+            min_modes: usize,
+            can_repeat: bool,
+        ) -> ChoiceResult<SmallVec<[usize; 4]>> {
+            self.inner
+                .choose_modes(view, spell_id, mode_descriptions, mode_count, min_modes, can_repeat)
+        }
+        fn on_priority_passed(&mut self, view: &GameStateView) {
+            self.inner.on_priority_passed(view)
+        }
+        fn on_game_end(&mut self, view: &GameStateView, won: bool) {
+            self.inner.on_game_end(view, won)
+        }
+    }
+
+    /// Build a game where p0 owns a "you discard two cards (choose)" sorcery that
+    /// is ON THE STACK, with `hand_size` cards already in p0's hand.
+    fn setup(hand_size: usize) -> (GameState, CardId, PlayerId, PlayerId) {
+        let mut game = GameState::new_two_player("P0".to_string(), "P1".to_string(), 20);
+        let p0 = game.players[0].id;
+        let p1 = game.players[1].id;
+
+        for _ in 0..hand_size {
+            let cid = game.next_card_id();
+            let mut c = Card::new(cid, "Forest".to_string(), p0);
+            c.add_type(CardType::Land);
+            game.cards.insert(cid, c);
+            game.get_player_zones_mut(p0).unwrap().hand.add(cid);
+        }
+
+        let spell_id = game.next_card_id();
+        let mut spell = Card::new(spell_id, "Test Discard Two".to_string(), p0);
+        spell.add_type(CardType::Sorcery);
+        // count != u8::MAX -> the choice (TgtChoose) discard path; player is
+        // concrete (self-target) so the handler discards from p0's hand.
+        spell.effects.push(Effect::DiscardCards {
+            player: p0,
+            count: 2,
+            remember_discarded: false,
+            optional: false,
+            remember_discarding_players: false,
+        });
+        game.cards.insert(spell_id, spell);
+        game.stack.add(spell_id);
+
+        (game, spell_id, p0, p1)
+    }
+
+    #[test]
+    fn empty_hand_discard_does_not_block_on_prepare() {
+        // EMPTY hand -> actual_count == 0 -> server sends NO ChoiceRequest -> the
+        // handler MUST NOT call the blocking prepare_for_priority_choice().
+        let (mut game, spell_id, p0, p1) = setup(0);
+        let prep = Rc::new(Cell::new(0u32));
+        let mut c0 = RecordingNetController::new(p0, Rc::clone(&prep));
+        let mut c1 = ZeroController::new(p1);
+        {
+            let mut gl = GameLoop::new(&mut game);
+            gl.resolve_top_spell_with_discard_hook(spell_id, &mut c0, &mut c1)
+                .expect("empty-hand discard spell should resolve cleanly");
+        }
+        assert_eq!(
+            prep.get(),
+            0,
+            "empty-hand discard must NOT call prepare_for_priority_choice \
+             (a real network client would hang / mis-pop the next request → FATAL desync)"
+        );
+    }
+
+    #[test]
+    fn nonempty_hand_discard_calls_prepare_once() {
+        // NON-EMPTY hand -> a discard IS requested -> prepare is called exactly
+        // once before the choice (proves the empty-hand guard did not over-gate
+        // the normal prepare → sync → decide path).
+        let (mut game, spell_id, p0, p1) = setup(3);
+        let prep = Rc::new(Cell::new(0u32));
+        let mut c0 = RecordingNetController::new(p0, Rc::clone(&prep));
+        let mut c1 = ZeroController::new(p1);
+        {
+            let mut gl = GameLoop::new(&mut game);
+            gl.resolve_top_spell_with_discard_hook(spell_id, &mut c0, &mut c1)
+                .expect("non-empty discard spell should resolve cleanly");
+        }
+        assert_eq!(
+            prep.get(),
+            1,
+            "non-empty discard must call prepare_for_priority_choice exactly once \
+             (prepare → sync → decide)"
+        );
+    }
+}
