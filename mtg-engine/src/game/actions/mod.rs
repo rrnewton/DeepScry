@@ -8107,21 +8107,50 @@ impl GameState {
             // Execute effects with placeholder resolution
             for effect in trigger.effects {
                 // Apply shared placeholder resolution
-                let resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+                let mut resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+
+                // SpellCast triggers with a PumpCreature whose target is still a
+                // placeholder always mean "pump the source permanent" (Prowess).
+                // The generic `resolve_effect_placeholder` leaves PumpCreature
+                // unresolved because in other trigger contexts it is ambiguous
+                // (e.g. ETB triggers need to find a chosen target).  Here the
+                // context is unambiguous: the SpellCast trigger fires on behalf of
+                // `source_card_id`, so CardId::placeholder() → source_card_id.
+                if let Effect::PumpCreature {
+                    target,
+                    power_bonus,
+                    toughness_bonus,
+                    keywords_granted,
+                } = &resolved_effect
+                {
+                    if target.is_placeholder() {
+                        resolved_effect = Effect::PumpCreature {
+                            target: trigger.source_card_id,
+                            power_bonus: *power_bonus,
+                            toughness_bonus: *toughness_bonus,
+                            keywords_granted: keywords_granted.clone(),
+                        };
+                    }
+                }
 
                 // Log specific effects with custom messages
                 // Wildcard is intentional: only PutCounter and PumpCreature need special logging
                 #[allow(clippy::wildcard_enum_match_arm)]
                 match &resolved_effect {
-                    Effect::PutCounter { target, amount, .. } if *target == trigger.source_card_id => {
+                    Effect::PutCounter {
+                        target,
+                        amount,
+                        counter_type,
+                    } if *target == trigger.source_card_id => {
                         let current_counters = self
                             .cards
                             .get(trigger.source_card_id)
-                            .map(|c| c.get_counter(crate::core::CounterType::P1P1))
+                            .map(|c| c.get_counter(*counter_type))
                             .unwrap_or(0);
                         self.logger.normal(&format!(
-                            "{} gets a +1/+1 counter (now {} counters)",
+                            "{} gets a {} counter (now {} counters)",
                             trigger.source_name,
+                            counter_type,
                             current_counters + amount
                         ));
                     }

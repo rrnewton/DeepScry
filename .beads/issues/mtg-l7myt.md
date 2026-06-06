@@ -1,0 +1,37 @@
+---
+title: 'Card Compatibility: Iroh''s Demonstration'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:32:29.615803681+00:00
+updated_at: 2026-06-06T04:32:29.615803681+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Iroh's Demonstration in MTG Forge-rs.
+
+Card: cardsfolder/i/irohs_demonstration.txt
+Set: ATLA / 2025 Standard
+Deck: 01 Manfield, 03 Davis Izzet Lessons (2025 WC)
+
+Card text:
+  1R  Sorcery — Lesson
+  Choose one:
+  - Iroh's Demonstration deals 1 damage to each creature your opponents control.
+  - Iroh's Demonstration deals 4 damage to target creature.
+
+Findings (2026-06-05_#3008(50175e06)):
+
+1. [x] Parses: cost 1R, Sorcery Lesson, Charm mode
+2. [x] Mode selection works (A:SP$ Charm | Choices$ DBDamageAll,DBDamage)
+3. [unverified] Mode 1 (1 damage to each creature opp controls)
+4. [unverified] Mode 2 (4 damage to target creature)
+5. [NOTE] mtg-381 documents extra network-mode log lines for multi-target damage from Iroh's Demonstration
+
+Related: mtg-381 (network log extra lines for Iroh's Demonstration)
+
+Reproducer:
+[INFO  mtg] === MTG Forge Rust - Text UI Mode ===
+
+CARD STATUS: PARTIAL — parses and mode selection works; game-log evidence for damage amounts not directly verified

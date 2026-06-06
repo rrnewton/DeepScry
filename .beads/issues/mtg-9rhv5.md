@@ -1,0 +1,33 @@
+---
+title: 'Card Compatibility: Starting Town'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:36:28.020421583+00:00
+updated_at: 2026-06-06T04:36:28.020421583+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Starting Town in MTG Forge-rs.
+
+Card: cardsfolder/s/starting_town.txt
+Set: ATLA / 2025 Standard
+Deck: 03 Davis Izzet Lessons (2025 WC)
+
+Card text:
+  Land — Town
+  This land enters tapped unless it's your first, second, or third turn of the game.
+  {T}: Add {C}.
+  {T}, Pay 1 life: Add one mana of any color.
+
+Findings (2026-06-05_#3008(50175e06)):
+
+1. [x] Parses: no cost, Land Town
+2. [unverified] ETB replacement: enters tapped unless turn 1-3 (complex SVar: Count$Compare Y GE1.Z.4 / Y:PlayerCountPropertyYou$HasPropertyActive / Z:Count$YourTurns)
+3. [unverified] {T} for {C}
+4. [unverified] {T}, Pay 1 life for any color
+
+Note: Zero controller never plays Starting Town in observed games (prefers Island).
+
+CARD STATUS: PARTIAL — parses correctly; ETB tapped condition and mana abilities unverified

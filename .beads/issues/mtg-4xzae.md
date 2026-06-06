@@ -1,0 +1,40 @@
+---
+title: 'Card Compatibility: Monument to Endurance'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:31:18.374470671+00:00
+updated_at: 2026-06-06T04:31:18.374470671+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Monument to Endurance in MTG Forge-rs.
+
+Card: cardsfolder/m/monument_to_endurance.txt
+Set: ATLA / 2025 Standard
+Deck: 01 Manfield, 02 Shibata Izzet Lessons (2025 WC)
+
+Card text:
+  3  Artifact
+  Whenever you discard a card, choose one that has not been chosen this turn:
+  - Draw a card.
+  - Create a Treasure token.
+  - Each opponent loses 3 life.
+
+Findings (2026-06-05_#3008(50175e06)):
+
+1. [x] Parses: cost 3, Artifact
+2. [x] Enters battlefield
+3. [BROKEN] Discard trigger never fires: T:Mode$ Discarded is not a supported TriggerEvent (mtg-ooqbh). When cards are discarded (hand cleanup, forced discard), no trigger fires.
+4. [unverified] Charm with ChoiceRestriction$ ThisTurn (once-per-mode-per-turn logic)
+
+Reproducer:
+```sh
+./target/release/mtg tui --p1 zero --p2 zero --p1-draw "Monument to Endurance;Island;Island;Island;Island;Island;Island" --p2-draw "Island;Island;Island;Island;Island;Island;Island" --seed 42 --verbosity 3 decks/championship/2025/01_manfield_izzet_lessons.dck decks/championship/2025/01_manfield_izzet_lessons.dck 2>&1 | grep -E "Monument|Endurance|discard|Discard|Trigger|draw|Treasure|life"
+```
+
+Expected: When a card is discarded with Monument on battlefield → charm triggers.
+Actual: No trigger fires.
+
+CARD STATUS: BROKEN — discard trigger not implemented (mtg-ooqbh)

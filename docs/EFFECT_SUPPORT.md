@@ -232,6 +232,53 @@ workflow, row format, and update rules.
 | ChangeZone Defined$ Self (non-stack self-move)  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ConditionDefined$ Self + ConditionPresent$ ctr  | WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
 | ChangeZoneAll Graveyard→Battlefield (mass reanim)| WORKING  | 2026-05-28_#2362(f454dccb) | (none)      | All Hallow's Eve |
+| Count$ValidGraveyard <selector> (count permanents/cards in graveyard) | BROKEN | 2026-06-05_#3008(50175e06) | mtg-cedrg | Combustion Technique, Accumulate Wisdom, Eddymurk Crab |
+| Count$Compare Y GE<N>.<true-val>.<false-val> (ternary comparison) | PARTIAL | 2026-06-05_#3008(50175e06) | mtg-cedrg | Accumulate Wisdom, Starting Town |
+  - Depends on inner Count$ being evaluated correctly first; Starting Town's PlayerCountPropertyYou$ chain is unverified.
+| Count$YouCastThisTurn (spells cast this turn counter) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Artist's Talent |
+| SP$ Counter UnlessCost$ 2 (counterspell with optional pay) | WORKING | 2026-06-05_#3008(50175e06) | (none) | It'll Quench Ya! |
+| SP$ Dig DigNum$ N ChangeNum$ X (look at top N, put X in hand) | PARTIAL | 2026-06-05_#3008(50175e06) | mtg-cedrg | Stock Up (N=5, X=2 literal — WORKING), Accumulate Wisdom (ChangeNum$ X var — BROKEN) |
+  - When ChangeNum$ is a literal integer it works. When ChangeNum$ is a variable name, n.parse::<u8>() fails → falls back to dig_count → all cards go to hand.
+| AB$ Charm Choices$ DB1,DB2 (modal charm spell) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Iroh's Demonstration, Broadside Barrage |
+| K$ Prowess (SpellCast +1/+1 pump trigger with CardId(0) placeholder) | BROKEN | 2026-06-05_#3008(50175e06) | mtg-b0igv | Stormchaser's Talent (Otter token), Ral Crackling Wit (Otter token) |
+  - PumpCreature placeholder CardId(0) is never resolved to the trigger's source card; pump effect fizzles silently.
+| T$ SpellCast DB$ PutCounter CounterType$ LOYALTY (planeswalker loyalty from SpellCast trigger) | PARTIAL | 2026-06-05_#3008(50175e06) | mtg-gi104 | Ral, Crackling Wit |
+  - Counter is placed correctly but log message hardcodes "+1/+1 counter" instead of "loyalty counter". State is correct; text is wrong.
+| T$ Mode$ Discarded ValidCard$ Card.YouOwn (controller's self-discard trigger) | BROKEN | 2026-06-05_#3008(50175e06) | mtg-ooqbh | Monument to Endurance |
+  - `TriggerEvent::CardDiscarded` does not exist; `Mode$ Discarded` in parse_triggers() falls to Unknown. See also mtg-648 for opponent-forced-discard variant.
+| T$ Mode$ UnlockDoor (Room door-unlock trigger) | BROKEN | 2026-06-05_#3008(50175e06) | mtg-06mae | Roaring Furnace // Steaming Sauna |
+  - `Mode$ UnlockDoor` has no branch in parse_triggers(); trigger never fires.
+| K$ Kicker:<N> + Count$Kicked.<true>.<false> (kicker cost detection) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Firebending Lesson |
+  - K:Kicker parses OK. Count$Kicked is not in CountExpression::parse_internal(); treated as 0 → always uses the non-kicked value. Damage deals using non-kicked amount.
+| K$ Bargain (sacrifice an artifact/enchantment/token as alternative cost) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Torch the Tower |
+  - Bargain cost declaration parses; whether the game enforces paying it and whether the "was bargained" condition gates the +1 damage is unverified.
+| K$ Class (level-up enchantment with Class:N sub-levels) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Stormchaser's Talent, Artist's Talent |
+  - Class levels 2 and 3 have activated abilities that level up; parsing appears OK. Full level-gate enforcement unverified.
+| K$ Tiered (Fire Magic / tiered cost keyword) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Fire Magic |
+  - K:Tiered with Charm and ModeCost$ present; modal choices and tiered casting appear to work.
+| K$ Warp:<cost> (alternative pay-at-start-of-turn-upkeep casting) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Quantum Riddler |
+  - Warp keyword parses. Whether the engine actually offers the "at the beginning of your upkeep" alternate cast window is unverified.
+| K$ Web-slinging:<cost> (Spider-Man web-slinging pitch cost) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Spider-Sense |
+  - Keyword parses. Counter/cancel effect for instants/sorceries/triggered abilities unverified against engine counter logic.
+| R$ Event$ Moved ETB Replacement on land (enters tapped or gains subtype) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Agna Qel'a |
+  - ETB replacement effect parses. Whether the engine applies both the tap-replacement and subtype-granting correctly is unverified.
+| S$ Mode$ ReduceCost IsPresent$ <selector> PresentZone$ Graveyard (cost reduction based on graveyard count) | BROKEN | 2026-06-05_#3008(50175e06) | mtg-cedrg | Eddymurk Crab, Gran-Gran |
+  - IsPresent$ + PresentZone$ Graveyard threshold check requires graveyard-count evaluation which depends on Count$ValidGraveyard (BROKEN).
+| AB$ ChangeZone Origin$ Library Destination$ Hand ValidCards$ BasicLand (basic land fetch to hand) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Boomerang Basics |
+| AB$ Draw DB$ Discard (draw then discard, activated loot) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Agna Qel'a |
+| SP$ ChangeZone Destination$ Hand Origin$ Battlefield ValidTgts$ Permanent.nonLand (bounce) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Boomerang Basics |
+| T$ SpellCast DB$ Draw + DB$ Discard (spell-cast-triggered loot) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Artist's Talent |
+  - Loot resolves. Damage-increase clause (Artist's Talent level 3: spells deal 2 additional damage) unverified.
+| T$ ChangesZone ETB DB$ Draw + DB$ Discard (ETB draw-then-discard) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Roiling Dragonstorm |
+| T$ ChangesZone ValidCard$ Dragon.YouCtrl DB$ ChangeZone Hand (Dragon ETB → return Dragon to hand) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Roiling Dragonstorm |
+| Land ChooseType ETB (land enters and becomes chosen basic type) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Multiversal Passage |
+  - ChooseType ETB parsed. Whether subtype is correctly applied and the chosen type persists is unverified.
+| Dual/conditional mana land (always R, also U if Island or Mountain controlled) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Riverpyre Verge |
+| K$ Ghost Vacuum (exile graveyard / conditional reanimate) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Ghost Vacuum |
+  - ETB exile-all-graveyards resolves. Reanimate with Flying counter and count-of-exiled condition is unverified.
+| T$ Taps Execute$ DB$ Mana (untap land for mana when something taps) | WORKING | 2026-06-05_#3008(50175e06) | (none) | Gran-Gran |
+| AB$ UnlessCost$ Discard UnlessSwitched$ True (discard-unless-draw) | PARTIAL | 2026-06-05_#3008(50175e06) | (none) | Abandon Attachments |
+  - Effect fires; whether the "unless" discard cost is properly offered and skipped depends on UnlessSwitched$ True gating (unverified).
 
 ---
 

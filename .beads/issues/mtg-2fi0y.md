@@ -1,0 +1,39 @@
+---
+title: 'Card Compatibility: Boomerang Basics'
+status: open
+priority: 3
+issue_type: task
+created_at: 2026-06-06T04:32:07.578498592+00:00
+updated_at: 2026-06-06T04:32:07.578498592+00:00
+---
+
+# Description
+
+Test all behavioral aspects of Boomerang Basics in MTG Forge-rs.
+
+Card: cardsfolder/b/boomerang_basics.txt
+Set: ATLA / 2025 Standard
+Deck: 01 Manfield, 02 Shibata, 03 Davis Izzet Lessons (2025 WC)
+
+Card text:
+  U  Sorcery — Lesson
+  Return target nonland permanent to its owner's hand. If you controlled that permanent, draw a card.
+
+Findings (2026-06-05_#3008(50175e06)):
+
+1. [x] Parses: cost U, Sorcery Lesson
+2. [x] Casts and resolves: returns own nonland permanent and draws a card
+3. [x] Conditional draw: "If you controlled that permanent, draw a card" appears to work (drew a card when bouncing own land - wait, Riverpyre Verge is a land... need to verify)
+4. [NOTE] In observed game, bounced Riverpyre Verge (land) but the card says nonland permanent. The zero controller may be passing ValidTgts$ Permanent.nonLand incorrectly.
+
+Actually looking at the log more carefully: in the test run, Zero1 played Riverpyre Verge then cast Boomerang Basics on it. But the target is Permanent.nonLand... Riverpyre Verge IS a land, so it should not be a valid target. This may be another targeting bug.
+
+Reproducer:
+```sh
+./target/release/mtg tui --p1 zero --p2 zero --p1-draw "Boomerang Basics;Island;Island;Island;Island;Island;Island" --p2-draw "Island;Island;Island;Island;Island;Island;Island" --seed 42 --verbosity 3 decks/championship/2025/01_manfield_izzet_lessons.dck decks/championship/2025/01_manfield_izzet_lessons.dck 2>&1 | grep -E "Boomerang|return|draw|target|Riverpyre"
+```
+
+Expected: Cannot target lands (Permanent.nonLand restriction).
+Actual: Targets Riverpyre Verge (a land) and draws a card — possible targeting restriction violation.
+
+CARD STATUS: PARTIAL — casts and resolves; may have targeting restriction bypass for nonland check
