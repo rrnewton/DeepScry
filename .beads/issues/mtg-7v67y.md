@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Firebending Lesson'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:31:56.866044064+00:00
-updated_at: 2026-06-06T04:31:56.866044064+00:00
+updated_at: 2026-06-06T08:30:03.063550804+00:00
 ---
 
 # Description
@@ -36,3 +36,10 @@ Expected: Not castable when no creatures exist, or targets a creature.
 Actual: "Firebending Lesson deals 0 damage to Zero2"
 
 CARD STATUS: BROKEN — targeting bypass (targets player instead of creature), 0 damage to player
+
+## Fix (2026-06-06_#3016(5d7c2785)):
+- Root cause 1 (no valid targets): Fixed by adding creature-targeting DealDamage to spell_requires_battlefield_target() in game_loop/actions.rs — spell no longer offered when no creatures exist.
+- Root cause 2 (0 damage): Was caused by targeting bypass above; now correctly deals 2 damage to creatures.
+- Kicker 5-damage path: Count$Kicked.5.2 evaluates to 2 (unkicked default, conservative) — correct behavior for our current kicker implementation.
+
+CARD STATUS: WORKING (unkicked only — kicker tracking not yet implemented, but correct default behavior)

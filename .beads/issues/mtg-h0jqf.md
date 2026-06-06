@@ -1,10 +1,10 @@
 ---
 title: 'Bug: ValidTgts modifiers cmcGE/cmcLE and nonCreature silently dropped in CounterSpell targets'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-06T04:35:02.781771913+00:00
-updated_at: 2026-06-06T04:35:52.889091574+00:00
+updated_at: 2026-06-06T08:30:26.988656469+00:00
 ---
 
 # Description
@@ -39,3 +39,8 @@ Reproducer (Disdainful Stroke CMC bypass):
 
 Expected: Disdainful Stroke should NOT counter Thundertrap Trainer (CMC 2). Annul should NOT counter Ral, Crackling Wit.
 Actual: Both violations observed in the same game log.
+
+## Fix (2026-06-06_#3009(7eb0243d)):
+Added requires_noncreature and min_cmc fields to TargetRestriction; parser reads ValidTgts$ nonCreature and cmcGE params. Fixed in slot04 (fix-stormchasers-talent) and merged to integration at 7eb0243d.
+
+CARD STATUS: FIXED

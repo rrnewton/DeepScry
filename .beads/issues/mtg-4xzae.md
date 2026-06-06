@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Monument to Endurance'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:31:18.374470671+00:00
-updated_at: 2026-06-06T04:31:18.374470671+00:00
+updated_at: 2026-06-06T08:30:06.170998069+00:00
 ---
 
 # Description
@@ -38,3 +38,8 @@ Expected: When a card is discarded with Monument on battlefield → charm trigge
 Actual: No trigger fires.
 
 CARD STATUS: BROKEN — discard trigger not implemented (mtg-ooqbh)
+
+## Fix (2026-06-06_#3013(41b11143)):
+Added TriggerEvent::CardDiscarded to effects.rs and check_card_discarded_triggers() in actions/mod.rs. Monument to Endurance now fires its discard trigger from the battlefield when its controller discards a card.
+
+CARD STATUS: WORKING

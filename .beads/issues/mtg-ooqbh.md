@@ -1,10 +1,10 @@
 ---
 title: 'Bug: Mode$ Discarded trigger not supported (Monument to Endurance)'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-06T04:29:28.169862718+00:00
-updated_at: 2026-06-06T04:29:28.169862718+00:00
+updated_at: 2026-06-06T08:30:37.725613061+00:00
 ---
 
 # Description
@@ -37,3 +37,8 @@ Findings (2026-06-05_#3008(50175e06)):
 - discard code path does not call check_triggers for discard events
 
 CARD STATUS: BROKEN (engine feature gap)
+
+## Fix (2026-06-06_#3013(41b11143)):
+Added TriggerEvent::CardDiscarded and check_card_discarded_triggers() to actions/mod.rs. Fires from permanents on battlefield when controller discards. Also added to heuristic_controller.rs exhaustive match.
+
+CARD STATUS: FIXED

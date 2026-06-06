@@ -1,10 +1,10 @@
 ---
 title: 'Bug: Count$ValidGraveyard not implemented in CountExpression parser'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-06T04:29:14.154914584+00:00
-updated_at: 2026-06-06T04:29:14.154914584+00:00
+updated_at: 2026-06-06T08:30:19.114096867+00:00
 ---
 
 # Description
@@ -36,3 +36,13 @@ Findings (2026-06-05_#3008(50175e06)):
 - Affects Combustion Technique, Accumulate Wisdom, and any card counting graveyard cards
 
 CARD STATUS: BROKEN (root-cause bug, not card-specific)
+
+## Fix (2026-06-06 / integration via slot04+slot03):
+- CountExpression::ValidGraveyard { filter, modifier } implemented in effects.rs
+- Parser handles Count$ValidGraveyard <filter>[/Plus.N] syntax
+- evaluate_count_expression() calls count_cards_matching_filter() with the filter and applies modifier
+- Accumulate Wisdom (Lesson.YouOwn) and Combustion Technique (Lesson.YouOwn/Plus.2) now use correct graveyard count
+
+Remaining variants (mtg-c9ja0): Times.2 modifier and multi-type filters (Instant,Sorcery.YouOwn) not yet implemented.
+
+CARD STATUS: FIXED (basic variant)

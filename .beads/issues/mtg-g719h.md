@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Accumulate Wisdom'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:30:56.090605959+00:00
-updated_at: 2026-06-06T04:30:56.090605959+00:00
+updated_at: 2026-06-06T08:30:33.271037684+00:00
 ---
 
 # Description
@@ -37,3 +37,8 @@ Expected: puts 1 into hand when graveyard has fewer than 3 Lessons.
 Actual: puts ALL 3 into hand (ChangeNum$ X parsing falls back to dig_count=3).
 
 CARD STATUS: BROKEN — conditional 3-vs-1 behavior always fires 3 (Count$ValidGraveyard bug mtg-cedrg)
+
+## Fix (2026-06-06):
+Root cause (Count$ValidGraveyard, mtg-cedrg) now fixed. Accumulate Wisdom draws 3 cards when you have a Lesson in your graveyard, 1 card otherwise.
+
+CARD STATUS: WORKING
