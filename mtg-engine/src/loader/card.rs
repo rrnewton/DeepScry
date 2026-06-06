@@ -2110,7 +2110,7 @@ impl CardDefinition {
         svar_params: &super::ability_parser::AbilityParams,
     ) -> Vec<crate::core::Effect> {
         use super::ability_parser::ApiType;
-        use super::effect_converter::params_to_effect;
+        use super::effect_converter::{params_to_charm_effect_with_svars, params_to_effect};
         use crate::core::{CardId, Effect, Keyword, PlayerId};
 
         let mut effects = Vec::new();
@@ -2123,6 +2123,17 @@ impl CardDefinition {
         // SubAbility-chain path in follow_sub_ability_chain).
         if let Some(effect) = self.gain_life_dynamic_from_params(svar_params) {
             effects.push(effect);
+            return effects;
+        }
+
+        // Charm (DB$ Charm | Choices$ ...) needs the SVar-aware converter so that
+        // mode SVars (e.g. DBDraw, DBToken, DBLoseLife) are resolved to real Effects
+        // rather than placeholders. This mirrors the SubAbility-chain path in
+        // follow_sub_ability_chain (same rule: Charm always gets the SVar builder).
+        if svar_params.api_type == ApiType::Charm {
+            if let Some(effect) = params_to_charm_effect_with_svars(svar_params, &self.svars) {
+                effects.push(effect);
+            }
             return effects;
         }
 
@@ -3250,6 +3261,32 @@ impl CardDefinition {
                     })
                     .unwrap_or_default();
 
+                triggers.push(trigger);
+            }
+
+            // Parse Discarded triggers (Mode$ Discarded)
+            // Example: T:Mode$ Discarded | ValidCard$ Card.YouOwn | TriggerZones$ Battlefield | Execute$ TrigCharm
+            //   | TriggerDescription$ Whenever you discard a card, choose one...
+            // Fires when the trigger's controller discards a card.
+            // ValidCard$ Card.YouOwn = fires when the card's controller discards.
+            if mode == Some("Discarded") {
+                let mut effects = Vec::new();
+
+                if let Some(exec_ref) = params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                let description = params
+                    .get("TriggerDescription")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "Whenever you discard a card".to_string());
+
+                // ValidCard$ Card.YouOwn means "when the trigger's controller discards"
+                // (the only currently-handled restriction; other ValidCard patterns
+                // are not yet distinguished — both fire on controller discard).
+                let trigger = Trigger::new_any(TriggerEvent::CardDiscarded, effects, description);
                 triggers.push(trigger);
             }
         }

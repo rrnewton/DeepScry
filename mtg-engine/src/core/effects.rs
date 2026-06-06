@@ -305,6 +305,19 @@ pub enum CountExpression {
         /// Value to return if condition is false
         false_value: i32,
     },
+
+    /// Conditional value based on whether the spell was kicked (Count$Kicked.true_val.false_val)
+    ///
+    /// Corresponds to Forge's `Count$Kicked.5.2` = "5 if kicked, 2 if not".
+    /// The resolution requires the kicker-paid flag on the spell being resolved.
+    /// Since we don't yet track kicker state at resolution time, this evaluates
+    /// to `false_value` (unkicked) as a safe default.
+    Kicked {
+        /// Value if the spell was kicked
+        kicked_value: i32,
+        /// Value if the spell was NOT kicked (default)
+        unkicked_value: i32,
+    },
 }
 
 /// Comparison conditions for Count$Compare expressions
@@ -488,6 +501,18 @@ impl CountExpression {
                                     false_value: false_val,
                                 };
                             }
+                        }
+                    }
+                } else if let Some(kicked_rest) = rest.strip_prefix("Kicked.") {
+                    // Count$Kicked.TrueValue.FalseValue
+                    // Example: "Kicked.5.2" = 5 if kicked, 2 if not
+                    let parts: Vec<&str> = kicked_rest.splitn(2, '.').collect();
+                    if parts.len() == 2 {
+                        if let (Ok(kicked_val), Ok(unkicked_val)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                            return CountExpression::Kicked {
+                                kicked_value: kicked_val,
+                                unkicked_value: unkicked_val,
+                            };
                         }
                     }
                 }
@@ -2483,6 +2508,13 @@ pub enum TriggerEvent {
         /// The level that was just reached.
         level: u8,
     },
+
+    /// When a card is discarded
+    /// Corresponds to: T:Mode$ Discarded | ValidCard$ Card.YouOwn | TriggerZones$ Battlefield
+    /// Example: Monument to Endurance — "Whenever you discard a card, choose one..."
+    /// Fires from any permanent on the battlefield when its controller (or any
+    /// player matching ValidCard$) discards a card.
+    CardDiscarded,
 }
 
 /// A triggered ability that executes when an event occurs
@@ -4272,6 +4304,7 @@ mod tests {
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
             | CountExpression::ValidGraveyard { .. }
+            | CountExpression::Kicked { .. }
             | CountExpression::Compare { .. } => panic!("Expected CardsInHand, got {:?}", expr),
         }
 
@@ -4359,6 +4392,7 @@ mod tests {
                     | CountExpression::XPaid
                     | CountExpression::SpellsCastThisTurn
                     | CountExpression::ValidGraveyard { .. }
+                    | CountExpression::Kicked { .. }
                     | CountExpression::Compare { .. } => {
                         panic!("Expected ValidPermanents, got {:?}", source)
                     }
@@ -4375,7 +4409,8 @@ mod tests {
             | CountExpression::CardsInHand { .. }
             | CountExpression::XPaid
             | CountExpression::SpellsCastThisTurn
-            | CountExpression::ValidGraveyard { .. } => panic!("Expected Compare, got {:?}", expr),
+            | CountExpression::ValidGraveyard { .. }
+            | CountExpression::Kicked { .. } => panic!("Expected Compare, got {:?}", expr),
         }
     }
 

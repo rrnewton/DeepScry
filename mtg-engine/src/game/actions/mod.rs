@@ -7095,6 +7095,11 @@ impl GameState {
         self.logger
             .gamelog_reveal_stable(&format!("{} discards {}", player_name, card_name), &verifier_stable);
 
+        // Fire discard triggers (T:Mode$ Discarded, e.g. Monument to Endurance).
+        // CR 603.1: triggered ability fires whenever the trigger event occurs.
+        // Called AFTER the card is in the graveyard so the trigger can "see" it there.
+        self.check_card_discarded_triggers(player_id)?;
+
         Ok(())
     }
 
@@ -8543,6 +8548,98 @@ impl GameState {
                 }
 
                 self.execute_effect(&resolved_effect)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check and execute discard triggers for all battlefield permanents.
+    ///
+    /// Called from `discard_card` after the card moves to the graveyard.
+    /// Handles "Whenever you discard a card" triggers like Monument to Endurance.
+    ///
+    /// CR 603.1: Whenever the trigger event occurs, the trigger fires. Here the
+    /// trigger checks that the discarding player is the controller of the
+    /// triggering permanent (`ValidCard$ Card.YouOwn` semantics).
+    ///
+    /// # Arguments
+    ///
+    /// - `discarding_player`: The player who discarded
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if effect execution fails.
+    pub fn check_card_discarded_triggers(&mut self, discarding_player: PlayerId) -> Result<()> {
+        use smallvec::SmallVec;
+
+        // Fast path: check if any battlefield permanent has a CardDiscarded trigger
+        let battlefield_cards: SmallVec<[CardId; 32]> = self.battlefield.cards.iter().copied().collect();
+
+        struct TriggerInfo {
+            card_id: CardId,
+            controller: PlayerId,
+            card_name: String,
+            description: String,
+            effects: SmallVec<[Effect; 2]>,
+        }
+
+        let mut triggers_to_fire: SmallVec<[TriggerInfo; 2]> = SmallVec::new();
+
+        for card_id in battlefield_cards {
+            let Ok(card) = self.cards.get(card_id) else {
+                continue;
+            };
+
+            for trigger in &card.triggers {
+                if trigger.event != TriggerEvent::CardDiscarded {
+                    continue;
+                }
+
+                // CR 603.1 + ValidCard$ Card.YouOwn: trigger fires only when the
+                // permanent's controller is the one discarding the card.
+                if card.controller != discarding_player {
+                    continue;
+                }
+
+                triggers_to_fire.push(TriggerInfo {
+                    card_id,
+                    controller: card.controller,
+                    card_name: card.name.to_string(),
+                    description: trigger.description.clone(),
+                    effects: SmallVec::from_iter(trigger.effects.iter().cloned()),
+                });
+            }
+        }
+
+        if triggers_to_fire.is_empty() {
+            return Ok(());
+        }
+
+        // Execute triggers (released borrow on cards)
+        for trigger_info in triggers_to_fire {
+            self.logger.gamelog(&format!(
+                "Trigger: {} - {}",
+                trigger_info.card_name, trigger_info.description
+            ));
+
+            let ctx = TriggerContext::new(trigger_info.card_id, trigger_info.controller);
+
+            for effect in trigger_info.effects {
+                let resolved_effect = resolve_effect_placeholder(&effect, &ctx);
+                // ModalChoice effects (e.g. Monument to Endurance's Charm) cannot be
+                // handled via execute_effect (which skips them with a warning). Instead,
+                // auto-pick the first mode and execute its effect — this is a simplification
+                // that satisfies AI-vs-AI play. Full player-choice integration requires the
+                // priority loop and is tracked as TODO (mtg-ooqbh).
+                if let Effect::ModalChoice { ref modes, .. } = resolved_effect {
+                    if let Some(first_mode) = modes.first() {
+                        let mode_effect = resolve_effect_placeholder(&first_mode.effect, &ctx);
+                        self.execute_effect(&mode_effect)?;
+                    }
+                } else {
+                    self.execute_effect(&resolved_effect)?;
+                }
             }
         }
 
@@ -10342,6 +10439,23 @@ impl GameState {
                 } else {
                     Ok(*false_value)
                 }
+            }
+            CountExpression::ValidGraveyard { filter, modifier } => {
+                // Count cards in the controller's graveyard matching `filter`,
+                // then apply the arithmetic modifier (e.g. `/Plus.2` for
+                // Combustion Technique: "Lesson cards in graveyard + 2").
+                let raw = self.count_cards_matching_filter(controller, filter, crate::zones::Zone::Graveyard);
+                let raw_i32 = i32::try_from(raw).unwrap_or(i32::MAX);
+                Ok(modifier.apply(raw_i32))
+            }
+            CountExpression::Kicked {
+                kicked_value: _,
+                unkicked_value,
+            } => {
+                // Kicker state is not yet tracked at resolution time (mtg-cedrg).
+                // Conservatively evaluate as unkicked (the lower/safer damage value).
+                // TODO: Once kicker tracking is implemented, resolve the actual state.
+                Ok(*unkicked_value)
             }
         }
     }
