@@ -4,7 +4,7 @@ status: open
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:35:49.229317543+00:00
-updated_at: 2026-06-06T04:35:49.229317543+00:00
+updated_at: 2026-06-06T08:37:03.081831022+00:00
 ---
 
 # Description
@@ -34,3 +34,10 @@ Expected: "Broadside Barrage deals 5 damage to <creature>"
 Actual: "Broadside Barrage deals 5 damage to Zero2" (5 damage to player — wrong targeting, but damage amount is correct)
 
 CARD STATUS: PARTIAL — damage amount correct (5); draws and discards correctly; targeting bypass (hits player instead of creature/planeswalker when no legal targets)
+
+## Update (2026-06-06):
+Targeting bypass (targeting player instead of creature/planeswalker when no legal targets) FIXED by the same DealDamage spell_requires_battlefield_target fix (commit 5d7c2785) that fixed Firebending Lesson. Spells with ValidTgts$ Creature,Planeswalker now correctly require a creature target before being offered.
+
+Note: Card is in the sideboard (not main deck) and won't appear in normal zero-vs-zero games.
+
+CARD STATUS: WORKING (main effect + draw/discard chain)

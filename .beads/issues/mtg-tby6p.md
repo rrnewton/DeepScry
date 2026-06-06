@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Ral, Crackling Wit'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:31:43.825802734+00:00
-updated_at: 2026-06-06T04:31:43.825802734+00:00
+updated_at: 2026-06-06T08:31:26.133757666+00:00
 ---
 
 # Description
@@ -41,3 +41,9 @@ Expected: After casting a noncreature spell with Ral on BF: "Ral, Crackling Wit 
 Actual: "Ral, Crackling Wit gets a +1/+1 counter (now 1 counters)" (wrong log, correct state)
 
 CARD STATUS: PARTIAL — casts/activates/triggers work; log bug for loyalty trigger (mtg-gi104); Prowess on tokens broken (mtg-b0igv)
+
+## Fix (2026-06-06):
+- Prowess fizzle (mtg-b0igv) FIXED — Otter tokens now correctly get +1/+1 from Prowess when noncreature spells are cast. Verified: tokens grow to 3/3 in test.
+- SpellCast loyalty counter log fixed (mtg-gi104 shared fix).
+
+CARD STATUS: WORKING (Prowess and loyalty triggers verified)

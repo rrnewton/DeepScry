@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Negate'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:36:22.125643036+00:00
-updated_at: 2026-06-06T04:36:22.125643036+00:00
+updated_at: 2026-06-06T08:35:34.518864343+00:00
 ---
 
 # Description
@@ -33,3 +33,8 @@ Reproducer:
 ```
 
 CARD STATUS: PARTIAL — parses correctly; noncreature restriction likely broken (mtg-h0jqf)
+
+## Fix (2026-06-06, integration via slot04):
+mtg-h0jqf fixed — Negate's 'Card.nonCreature' ValidTgts restriction is now enforced at target selection time. Negate correctly only counters non-creature spells.
+
+CARD STATUS: WORKING

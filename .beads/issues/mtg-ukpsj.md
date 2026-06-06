@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Disdainful Stroke'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:33:44.485685213+00:00
-updated_at: 2026-06-06T04:35:14.311777431+00:00
+updated_at: 2026-06-06T08:35:34.563962982+00:00
 ---
 
 # Description
@@ -40,3 +40,8 @@ Disdainful Stroke (54) counters Thundertrap Trainer (117)
 Bug: mtg-h0jqf
 
 CARD STATUS: BROKEN — CMC ≥ 4 restriction not enforced; counters any spell regardless of mana value
+
+## Fix (2026-06-06, integration via slot04):
+mtg-h0jqf fixed — Disdainful Stroke's cmcGE4 restriction is enforced. Only counters spells with MV≥4.
+
+CARD STATUS: WORKING

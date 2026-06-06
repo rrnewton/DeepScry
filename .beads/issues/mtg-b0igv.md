@@ -1,10 +1,10 @@
 ---
 title: 'Bug: Prowess PumpCreature trigger fizzles (placeholder not resolved to self)'
-status: open
+status: closed
 priority: 2
 issue_type: task
 created_at: 2026-06-06T04:29:45.126103182+00:00
-updated_at: 2026-06-06T04:42:51.462527162+00:00
+updated_at: 2026-06-06T08:31:26.114210265+00:00
 ---
 
 # Description

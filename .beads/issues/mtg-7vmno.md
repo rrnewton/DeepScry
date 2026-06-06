@@ -1,10 +1,10 @@
 ---
 title: 'Card Compatibility: Annul'
-status: open
+status: closed
 priority: 3
 issue_type: task
 created_at: 2026-06-06T04:33:32.506447565+00:00
-updated_at: 2026-06-06T04:36:04.815356684+00:00
+updated_at: 2026-06-06T08:35:34.542800142+00:00
 ---
 
 # Description
@@ -40,3 +40,8 @@ Annul (49) counters Ral, Crackling Wit (81)
 Bug: mtg-h0jqf
 
 CARD STATUS: BROKEN — artifact/enchantment type restriction not enforced; counters any spell regardless of type
+
+## Fix (2026-06-06, integration via slot04):
+mtg-h0jqf fixed — Annul's 'Artifact,Enchantment' ValidTgts restriction is enforced. Annul correctly only counters artifacts and enchantments.
+
+CARD STATUS: WORKING
