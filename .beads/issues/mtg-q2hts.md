@@ -1,12 +1,26 @@
 ---
 title: 'Web GUI: gate ungated console.log / WASM log::info prints behind DEBUG (log spam without trace mode)'
 status: open
-priority: 3
+priority: 2
 issue_type: bug
 created_at: 2026-06-06T00:14:05.545952963+00:00
-updated_at: 2026-06-06T00:14:05.545952963+00:00
+updated_at: 2026-06-06T00:19:33.355666033+00:00
 ---
 
 # Description
 
-The web game GUI prints noisy status/init logs to the browser console even with DEBUG/trace OFF (user-reported on the deployed site, 2026-06-06). Sources: ~14 ungated console.log() calls in web/native_game.html (e.g. '[Network] Network features available', '[mtg-722] card-lookup table: N entries', 'MTG Forge Native GUI initialized: N decks', '[Network] Connecting to ...', '[Network] State: ...') that should go through the existing debugLog() gate (isDebugMode()); AND ~49 ungated log::info!/println! in mtg-engine/src/wasm/ that surface to the browser console. FIX: route the JS status prints through debugLog() (keep genuine warnings/errors at console.warn/error), and lower the WASM per-action/status log::info! to log::debug!/trace! (or gate behind the debug flag) so the default web log is quiet. Keep errors + desync-fatal messages loud. Part of the 'minimal, internally-consistent, well-documented' web cleanup. Related: mtg-rxacr (debug-gating), the networking-code cruft audit.
+The web game GUI floods the browser console with per-action logs even with DEBUG/trace OFF (user-reported on the deployed site, 2026-06-06). ACCEPTANCE: a non-DEBUG game must look CLEAN — only essential info + errors; everything per-action/per-priority/per-reveal goes to debug!/trace! or is deleted.
+
+CONCRETE SPAM (user-captured, via bug_report.js console shim):
+- 'Priority check: player N has 0 available abilities, action_count=NNN' (EVERY priority pass — the loudest)
+- 'apply_state_sync: reveal ac=NN owner=N card=NAME'
+- 'WASM Draw: NAME (id=NN) for 1 card_already_known=true'
+- 'WASM Played: NAME (id=NN) card_already_known=true'
+- 'WasmRemoteController: Opponent chose indices [..] (seq=NN, P2 choice #NN)'
+- 'WasmNetworkLocalController: ChoiceRequest seq=NN ready (last_submitted=..)'
+- 'WasmNetworkLocalController: Auto-pass with 0 abilities (..)'
+- 'WasmNetworkClient: Submitted choice seq=NN, waiting for ack...'
+
+SOURCES: ~49 ungated log::info!/println! in mtg-engine/src/wasm/ (the Priority check / apply_state_sync / WASM Draw/Played / controller status lines) + ~14 ungated console.log() in web/native_game.html. FIX: drop all per-action/per-priority/per-choice log::info! to log::debug!/trace! (gate behind the debug flag); route JS status console.log through the existing debugLog()/isDebugMode() gate. KEEP loud: errors, desync-fatal messages, genuine warnings, game-over/result. AUDIT every print: keep-essential / demote-to-debug / delete.
+
+PERF LINK (mtg-<perf issue>): this spam is ALSO a speed drag — a console.log per action, intercepted + buffered by the bug_report.js capture shim, in the hottest loop of a near-instant random/random game, is expensive. Gating it should measurably speed up full-speed games (test before/after). Part of the 'minimal, internally-consistent, well-documented' web cleanup + the networking-code cruft audit.
