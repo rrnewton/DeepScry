@@ -655,12 +655,14 @@ impl GameState {
                             | Effect::Clone { .. }
                             | Effect::Proliferate
                             | Effect::Unimplemented { .. }
+                            | Effect::ClassLevelUp { .. }
                             | Effect::UnlessCostWrapper { .. }
                             | Effect::GainControl { .. }
                             | Effect::Fight { .. }
                             | Effect::SelfExileFromStack { .. }
                             | Effect::MoveSelfBetweenZones { .. }
                             | Effect::ReturnCardsFromGraveyardToHand { .. }
+                            | Effect::ReturnGraveyardCardToHand { .. }
                             | Effect::PreventAllCombatDamageThisTurn { .. }
                             | Effect::ExileIfWouldDieThisTurn { .. }
                             | Effect::ConditionalSelfCounter { .. } => {
@@ -712,6 +714,7 @@ impl GameState {
                 | Effect::ChooseColor { .. }
                 | Effect::Clone { .. }
                 | Effect::Unimplemented { .. }
+                | Effect::ClassLevelUp { .. }
                 | Effect::Proliferate
                 // Phase-trigger damage: target player resolved at trigger time,
                 // no cast-time targeting.
@@ -719,6 +722,7 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. } => {
                     // These effects target players or have no targeting requirements
@@ -728,6 +732,7 @@ impl GameState {
                     // Proliferate: player chooses permanents/players during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: works on the caster's graveyard, no targeting
+                    // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses last_resolved_target, no cast-time target
                 }
                 // Effects with already-specified targets (non-zero target field)
@@ -1310,6 +1315,7 @@ impl GameState {
                 | Effect::PutCounterAll { .. }
                 | Effect::UntapAll { .. }
                 | Effect::Unimplemented { .. }
+                | Effect::ClassLevelUp { .. }
                 | Effect::EachDamage { .. }
                 | Effect::ForceSacrifice { .. }
                 | Effect::TapAll { .. }
@@ -1321,6 +1327,7 @@ impl GameState {
                 | Effect::SelfExileFromStack { .. }
                 | Effect::MoveSelfBetweenZones { .. }
                 | Effect::ReturnCardsFromGraveyardToHand { .. }
+                | Effect::ReturnGraveyardCardToHand { .. }
                 | Effect::PreventAllCombatDamageThisTurn { .. }
                 | Effect::ConditionalSelfCounter { .. }
                 | Effect::UnlessCostWrapper { .. } => {
@@ -1333,6 +1340,7 @@ impl GameState {
                     // Proliferate: player chooses during resolution, no targeting
                     // SelfExileFromStack: operates on the resolving spell itself, no targets
                     // ReturnCardsFromGraveyardToHand: uses remembered_cards count, no targeting
+                    // ReturnGraveyardCardToHand: AI picks matching card, no cast-time targeting
                     // PreventAllCombatDamageThisTurn: reuses UntapPermanent's last_resolved_target
                 }
                 // Effects with pre-specified targets (guard failed: target.as_u32() != 0)
@@ -1630,6 +1638,7 @@ impl GameState {
             | Effect::AddTurn { .. }
             | Effect::AddPhase { .. }
             | Effect::Unimplemented { .. }
+            | Effect::ClassLevelUp { .. }
             | Effect::EachDamage { .. }
             | Effect::UnlessCostWrapper { .. }
             | Effect::DestroyAll { .. }
@@ -1650,6 +1659,7 @@ impl GameState {
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             // ExileIfWouldDieThisTurn reuses the parent DealDamage's target, so

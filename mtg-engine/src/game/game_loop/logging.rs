@@ -1114,6 +1114,9 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) has unimplemented effect '{api_type}'");
                 self.game.logger.gamelog(&message);
             }
+            // ClassLevelUp logging is handled inside execute_class_level_up
+            // (the level advance is logged there with full context).
+            Effect::ClassLevelUp { .. } => {}
             Effect::SelfExileFromStack { remember_changed, .. } => {
                 // Surface the self-exile so users can see e.g. All Hallow's Eve
                 // moving from the stack to exile (and being remembered for the
@@ -1133,9 +1136,9 @@ impl<'a> GameLoop<'a> {
                 let message = format!("{source_name} ({source_id}) moves from {origin:?} to {destination:?}");
                 self.game.logger.gamelog(&message);
             }
-            Effect::ReturnCardsFromGraveyardToHand { .. } => {
-                // Individual card-return log lines are emitted inside execute_effect
-                // (one line per card returned). Nothing to surface at the top level.
+            Effect::ReturnCardsFromGraveyardToHand { .. } | Effect::ReturnGraveyardCardToHand { .. } => {
+                // Individual card-return log lines are emitted inside execute_effect.
+                // Nothing to surface at the top level.
             }
             Effect::PreventAllCombatDamageThisTurn { .. } => {
                 // The combat-damage prevention log line is emitted inside execute_effect

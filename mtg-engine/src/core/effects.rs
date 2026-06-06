@@ -1584,6 +1584,21 @@ pub enum Effect {
         player: PlayerId,
     },
 
+    /// Return exactly one card matching a type filter from a player's graveyard
+    /// to their hand.  The AI picks the highest-value matching card.
+    ///
+    /// Corresponds to `DB$ ChangeZone | Origin$ Graveyard | Destination$ Hand |
+    /// ValidTgts$ <filter>` without a `ChangeNum$` (i.e. return exactly 1 card).
+    /// Example: Stormchaser's Talent level-2 trigger: return target instant or
+    /// sorcery from your graveyard to hand.
+    ReturnGraveyardCardToHand {
+        /// Player whose graveyard to search.
+        player: PlayerId,
+        /// Comma-separated card type filter (e.g. `"Instant,Sorcery"`).
+        /// Empty string means any card.
+        type_filter: String,
+    },
+
     /// Execute an inner effect only if the source card currently satisfies a
     /// counter-count condition (e.g. `ConditionPresent$ Card.counters_EQ0_SCREAM`).
     ///
@@ -2094,6 +2109,24 @@ pub enum Effect {
         count: u8,
     },
 
+    /// Advance a Class enchantment to the next level.
+    ///
+    /// Class enchantments (e.g. Stormchaser's Talent, Barbarian Class) have
+    /// level-up activated abilities that can be paid at sorcery speed.  When
+    /// the ability resolves this effect fires, which:
+    ///
+    /// 1. Increments the `CounterType::Level` counter on the Class card.
+    /// 2. Fires any one-time `ClassLevelGained` triggers at that level.
+    /// 3. Attaches any ongoing triggers / statics defined by `AddTrigger$`
+    ///    or `AddStaticAbility$` at that level to the card permanently.
+    ///
+    /// `class_card_id` is the permanent being leveled up; `target_level` is
+    /// the level being reached (e.g. `2` for the first paid activation).
+    ClassLevelUp {
+        class_card_id: crate::core::CardId,
+        target_level: u8,
+    },
+
     /// Placeholder for a recognized but unimplemented effect
     /// Produced instead of silently dropping the effect, so that spell resolution
     /// can warn/error instead of silently no-op'ing.
@@ -2247,6 +2280,10 @@ impl Effect {
             // target (Disintegrate's ReplaceDyingDefined clause); it never
             // collects its own cast-time target.
             | Effect::ExileIfWouldDieThisTurn { .. }
+            // ClassLevelUp targets the Class card itself (self-resolving), not a
+            // cast-time target — the class_card_id is baked in at ability creation.
+            | Effect::ClassLevelUp { .. }
+            | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::Unimplemented { .. } => EffectTargetCategory::NoTargetNeeded,
 
             // Effects using filters (affect multiple permanents)
@@ -2432,6 +2469,20 @@ pub enum TriggerEvent {
     /// dying card's `damaged_by_this_turn` list contains the trigger source's
     /// CardId.
     DamagedCreatureDies,
+
+    /// When a Class enchantment reaches a specific level.
+    ///
+    /// Corresponds to: T:Mode$ ClassLevelGained | ClassLevel$ N | ValidCard$ Card.Self
+    ///
+    /// Fires on the Class enchantment itself after `Effect::ClassLevelUp`
+    /// advances the card's `CounterType::Level` counter to `level`.  Used for
+    /// one-time "when this Class becomes level N" effects (e.g. Stormchaser's
+    /// Talent level-2: return an instant or sorcery from your graveyard to
+    /// your hand).
+    ClassLevelGained {
+        /// The level that was just reached.
+        level: u8,
+    },
 }
 
 /// A triggered ability that executes when an event occurs
@@ -2505,6 +2556,12 @@ pub struct Trigger {
     /// Example: "Whenever you cast a noncreature spell"
     #[serde(default)]
     pub requires_noncreature: bool,
+
+    /// When true, trigger only fires if the cast spell is an instant or sorcery.
+    /// Corresponds to `ValidCard$ Instant,Sorcery` on SpellCast triggers.
+    /// Example: Stormchaser's Talent level 3 "Whenever you cast an instant or sorcery spell"
+    #[serde(default)]
+    pub requires_instant_or_sorcery: bool,
 
     /// When true, the trigger fires only when the event source is the
     /// permanent this trigger's card is *attached to* (`ValidSource$
@@ -2582,6 +2639,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             requires_noncreature: false,
+            requires_instant_or_sorcery: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -2607,6 +2665,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             requires_noncreature: false,
+            requires_instant_or_sorcery: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -2638,6 +2697,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             requires_noncreature: false,
+            requires_instant_or_sorcery: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,
@@ -2664,6 +2724,7 @@ impl Trigger {
             controller_turn_only: false,
             chosen_player_turn_only: false,
             requires_noncreature: false,
+            requires_instant_or_sorcery: false,
             requires_attached_source: false,
             combat_damage_target: CombatDamageTarget::Any,
             requires_combat_damage: false,

@@ -54,7 +54,7 @@ fn ordinal(n: u8) -> String {
 /// callers query the resulting map (`params.get("Mode")`) instead of doing
 /// substring matching on the raw body. The body is the portion AFTER the
 /// `S:`/`T:`/SVar prefix.
-fn tokenize_pipe_dollar(body: &str) -> std::collections::HashMap<String, String> {
+pub(crate) fn tokenize_pipe_dollar(body: &str) -> std::collections::HashMap<String, String> {
     let mut params = std::collections::HashMap::new();
     for param in body.split('|') {
         let param = param.trim();
@@ -803,6 +803,59 @@ impl CardDefinition {
 
         // Copy SVars for SubAbility resolution during effect execution
         card.svars = self.svars.clone();
+
+        // Add Class level-up activated abilities for Class enchantments (CR 716).
+        // Each K:Class:N:cost:abilities entry generates a sorcery-speed activated ability
+        // whose effect is ClassLevelUp { target_level: N }.
+        // The current level is tracked at runtime via CounterType::Level on the permanent.
+        {
+            let class_levels: Vec<(u8, ManaCost)> = card
+                .keywords
+                .iter_args()
+                .filter_map(|kw| {
+                    if let KeywordArgs::Class { level, cost, .. } = kw {
+                        Some((*level, ManaCost::from_string(cost)))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (level, mana_cost) in class_levels {
+                use crate::core::{ActivatedAbility, Cost, Effect};
+                let ability_cost = Cost::Mana(mana_cost);
+                let effects = vec![Effect::ClassLevelUp {
+                    class_card_id: id,
+                    target_level: level,
+                }];
+                let description = format!("Level {} (class level-up)", level);
+                // Class level-up is sorcery-speed (CR 716.2a)
+                card.activated_abilities
+                    .push(ActivatedAbility::new_sorcery_speed(ability_cost, effects, description));
+            }
+        }
+
+        // Class enchantments start at level 1 (CR 716.1c).  Add an ETB trigger that
+        // places 1 Level counter on the card as it enters the battlefield so the
+        // `execute_class_level_up` guard (`current_level + 1 == target_level`) works
+        // correctly: current=1 → level-up to 2; current=2 → level-up to 3.
+        let has_class_levels = card
+            .keywords
+            .iter_args()
+            .any(|kw| matches!(kw, KeywordArgs::Class { .. }));
+        if has_class_levels {
+            use crate::core::{CounterType, Effect, Trigger, TriggerEvent};
+            let etb_level_trigger = Trigger::new(
+                TriggerEvent::EntersBattlefield,
+                vec![Effect::PutCounter {
+                    target: CardId::self_target(),
+                    counter_type: CounterType::Level,
+                    amount: 1,
+                }],
+                "Class enters as level 1 (place 1 level counter)".to_string(),
+            );
+            card.triggers.push(etb_level_trigger);
+        }
 
         // Add Firebending attack trigger if the keyword is present
         // Firebending N: "Whenever this creature attacks, add N {R}. This mana lasts until end of combat."
@@ -2156,7 +2209,7 @@ impl CardDefinition {
     /// Parse triggered abilities (T: lines)
     ///
     /// Uses tokenized parameter extraction for safety. Replaces unsafe substring matching.
-    fn parse_triggers(&self) -> Vec<Trigger> {
+    pub fn parse_triggers(&self) -> Vec<Trigger> {
         use super::ability_parser::ApiType;
         use std::collections::HashMap;
 
@@ -3201,6 +3254,60 @@ impl CardDefinition {
             }
         }
 
+        // Parse ClassLevelGained triggers from K:Class:N:cost:AddTrigger$ X entries.
+        // These are one-shot triggers that fire when the Class first reaches level N.
+        // They are placed on the card at load-time so check_triggers() can find them
+        // when execute_class_level_up fires TriggerEvent::ClassLevelGained { level: N }.
+        for kw_str in &self.raw_keywords {
+            // Match K:Class:N:cost:AddTrigger$ X
+            let Some(rest) = kw_str.strip_prefix("Class:") else {
+                continue;
+            };
+            // rest = "N:cost:abilities"
+            let mut parts = rest.splitn(3, ':');
+            let level_str = parts.next().unwrap_or("");
+            let _cost = parts.next().unwrap_or("");
+            let abilities = parts.next().unwrap_or("");
+            let Ok(level) = level_str.trim().parse::<u8>() else {
+                continue;
+            };
+
+            // Parse the abilities portion to look for AddTrigger$ X
+            let ability_params = tokenize_pipe_dollar(abilities);
+            let Some(svar_name) = ability_params.get("AddTrigger") else {
+                continue;
+            };
+
+            // Look up the SVar body
+            let Some(svar_body) = self.svars.get(svar_name.as_str()) else {
+                continue;
+            };
+
+            // Parse the SVar body to check its mode
+            let svar_params = tokenize_pipe_dollar(svar_body);
+            let Some(mode) = svar_params.get("Mode") else { continue };
+
+            if mode == "ClassLevelGained" {
+                // One-time trigger: fires when the Class reaches `level`.
+                // Parse effects from the Execute$ SVar reference.
+                let mut effects = Vec::new();
+                if let Some(exec_ref) = svar_params.get("Execute") {
+                    if let Some(svar_params) = self.parsed_svars.get(exec_ref.as_str()) {
+                        effects.extend(self.extract_effects_from_svar(svar_params));
+                    }
+                }
+
+                let description = svar_params
+                    .get("TriggerDescription")
+                    .cloned()
+                    .unwrap_or_else(|| format!("When this Class becomes level {}", level));
+
+                // One-shot trigger: fires only on this card (trigger_self_only=true)
+                let trigger = Trigger::new(TriggerEvent::ClassLevelGained { level }, effects, description);
+                triggers.push(trigger);
+            }
+        }
+
         triggers
     }
 
@@ -3462,7 +3569,14 @@ impl CardDefinition {
         true
     }
 
-    fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
+    /// Parse static abilities (`S:` lines) from the card definition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the first affected selector is absent after building a
+    /// non-empty selector list (internal invariant; always preceded by a
+    /// `!is_empty()` check in practice).
+    pub fn parse_static_abilities(&self) -> Vec<crate::core::StaticAbility> {
         use crate::core::{AffectedSelector, StaticAbility};
 
         /// Check if a string represents a known card type
@@ -4824,6 +4938,69 @@ impl CardDefinition {
         let description = params.get("SpellDescription").unwrap_or("Granted ability").to_string();
 
         Some(ActivatedAbility::new(cost, effects, description, is_mana_ability))
+    }
+
+    /// Parse an ongoing trigger from a raw SVar body string, using this
+    /// card's own SVar context for `Execute$` resolution.
+    ///
+    /// Used by `apply_class_level_ongoing_abilities` when a Class level-up
+    /// grants an ongoing trigger (e.g. a SpellCast trigger at level 3).
+    ///
+    /// Returns `None` if the body cannot be parsed as a supported trigger mode.
+    pub fn parse_ongoing_trigger_from_svar_body(&self, body: &str) -> Option<crate::core::Trigger> {
+        let params = tokenize_pipe_dollar(body);
+        let mode = params.get("Mode").map(|s| s.as_str())?;
+
+        // Determine trigger event from Mode
+        let event = match mode {
+            "SpellCast" => crate::core::TriggerEvent::SpellCast,
+            "ChangesZone" => {
+                // Only EntersBattlefield self-trigger supported here for now
+                let dest = params.get("Destination").map(|s| s.as_str());
+                if dest == Some("Battlefield") {
+                    crate::core::TriggerEvent::EntersBattlefield
+                } else {
+                    return None;
+                }
+            }
+            // ClassLevelGained is one-time — loaded statically, not as ongoing
+            _ => return None,
+        };
+
+        // Parse effects via Execute$ SVar resolution
+        let mut effects = Vec::new();
+        if let Some(exec_ref) = params.get("Execute") {
+            if let Some(svar_params) = self.parsed_svars.get(exec_ref.as_str()) {
+                effects.extend(self.extract_effects_from_svar(svar_params));
+            }
+        }
+
+        let description = params
+            .get("TriggerDescription")
+            .cloned()
+            .unwrap_or_else(|| format!("Ongoing {} trigger", mode));
+
+        // Build trigger — ongoing triggers are NOT self-only (they watch other spells/events)
+        let mut trigger = crate::core::Trigger::new_any(event, effects, description);
+
+        // Apply mode-specific filter flags
+        if mode == "SpellCast" {
+            let valid_card = params.get("ValidCard").map(|s| s.as_str());
+            match valid_card {
+                Some("Card.nonCreature") => trigger.requires_noncreature = true,
+                // "Instant,Sorcery" — triggers specifically on instant or sorcery spells
+                Some(vc)
+                    if vc.split(',').any(|t| t.trim() == "Instant") && vc.split(',').any(|t| t.trim() == "Sorcery") =>
+                {
+                    trigger.requires_instant_or_sorcery = true;
+                }
+                _ => {}
+            }
+            // ValidActivatingPlayer$ You is already handled at runtime:
+            // check_triggers filters on card.controller == caster_id (line ~7942).
+        }
+
+        Some(trigger)
     }
 }
 

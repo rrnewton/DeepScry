@@ -3867,9 +3867,11 @@ impl GameState {
                     | crate::core::Effect::SelfExileFromStack { .. }
                     | crate::core::Effect::MoveSelfBetweenZones { .. }
                     | crate::core::Effect::ReturnCardsFromGraveyardToHand { .. }
+                    | crate::core::Effect::ReturnGraveyardCardToHand { .. }
                     | crate::core::Effect::PreventAllCombatDamageThisTurn { .. }
                     | crate::core::Effect::ConditionalSelfCounter { .. }
                     | crate::core::Effect::Unimplemented { .. }
+                    | crate::core::Effect::ClassLevelUp { .. }
                     | crate::core::Effect::DealDamageXPaid { .. }
                     | crate::core::Effect::DrawCardsXPaid { .. }
                     | crate::core::Effect::GainLifeDynamic { .. }

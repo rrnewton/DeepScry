@@ -751,7 +751,8 @@ impl HeuristicController {
                 | crate::core::TriggerEvent::CardDrawn
                 | crate::core::TriggerEvent::Taps
                 | crate::core::TriggerEvent::AttackersDeclared
-                | crate::core::TriggerEvent::EquippedCreatureDies => {
+                | crate::core::TriggerEvent::EquippedCreatureDies
+                | crate::core::TriggerEvent::ClassLevelGained { .. } => {
                     // Other triggers get a small bonus
                     value += 5;
                 }

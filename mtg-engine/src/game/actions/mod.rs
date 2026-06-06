@@ -87,10 +87,12 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
         | Effect::SelfExileFromStack { .. }
         | Effect::MoveSelfBetweenZones { .. }
         | Effect::ReturnCardsFromGraveyardToHand { .. }
+        | Effect::ReturnGraveyardCardToHand { .. }
         | Effect::PreventAllCombatDamageThisTurn { .. }
         | Effect::ConditionalSelfCounter { .. }
         | Effect::Unimplemented { .. }
         | Effect::GainLifeDynamic { .. }
+        | Effect::ClassLevelUp { .. }
         | Effect::UnlessCostWrapper { .. } => false,
     };
 
@@ -208,10 +210,12 @@ fn expand_all_players_effect(effect: &Effect, player_ids: &[PlayerId]) -> smallv
             | Effect::SelfExileFromStack { .. }
             | Effect::MoveSelfBetweenZones { .. }
             | Effect::ReturnCardsFromGraveyardToHand { .. }
+            | Effect::ReturnGraveyardCardToHand { .. }
             | Effect::PreventAllCombatDamageThisTurn { .. }
             | Effect::ConditionalSelfCounter { .. }
             | Effect::Unimplemented { .. }
             | Effect::GainLifeDynamic { .. }
+            | Effect::ClassLevelUp { .. }
             | Effect::UnlessCostWrapper { .. } => unreachable!(),
         })
         .collect()
@@ -2805,6 +2809,14 @@ impl GameState {
             Effect::ReturnCardsFromGraveyardToHand { player } if player.is_placeholder() => {
                 Effect::ReturnCardsFromGraveyardToHand { player: card_owner }
             }
+            // "Return one matching card from your graveyard to hand" — also targets
+            // the spell/trigger controller by default. Resolve placeholder.
+            Effect::ReturnGraveyardCardToHand { player, type_filter } if player.is_placeholder() => {
+                Effect::ReturnGraveyardCardToHand {
+                    player: card_owner,
+                    type_filter: type_filter.clone(),
+                }
+            }
             // Maze of Ith's "prevent all combat damage": the target creature is the
             // same creature targeted by the preceding UntapPermanent effect in the
             // sub-ability chain. Reuse `last_resolved_target` (set by UntapPermanent).
@@ -4601,6 +4613,83 @@ impl GameState {
                         .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
                 }
             }
+            Effect::ReturnGraveyardCardToHand { player, type_filter } => {
+                // Return exactly one card matching `type_filter` from the player's graveyard
+                // to their hand.  The AI picks the highest-value matching card.
+                // Used by triggered abilities like Stormchaser's Talent level-2
+                // "return target instant or sorcery from your graveyard to hand".
+                let graveyard_cards: smallvec::SmallVec<[CardId; 8]> = self
+                    .get_player_zones(*player)
+                    .map(|z| z.graveyard.cards.iter().copied().collect())
+                    .unwrap_or_default();
+
+                // Filter by type
+                let filter_types: Vec<&str> = if type_filter.is_empty() {
+                    vec![]
+                } else {
+                    type_filter.split(',').map(|s| s.trim()).collect()
+                };
+
+                let matching: smallvec::SmallVec<[CardId; 8]> = graveyard_cards
+                    .into_iter()
+                    .filter(|&id| {
+                        if filter_types.is_empty() {
+                            return true;
+                        }
+                        if let Some(card) = self.cards.try_get(id) {
+                            filter_types.iter().any(|&t| match t {
+                                "Instant" => card.is_instant(),
+                                "Sorcery" => card.is_sorcery(),
+                                "Creature" => card.is_creature(),
+                                "Land" => card.is_land(),
+                                "Artifact" => card.is_artifact(),
+                                _ => false,
+                            })
+                        } else {
+                            false
+                        }
+                    })
+                    .collect();
+
+                if matching.is_empty() {
+                    let player_name = self
+                        .get_player(*player)
+                        .ok()
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    self.logger.gamelog(&format!(
+                        "{} has no matching {} in graveyard to return",
+                        player_name,
+                        if type_filter.is_empty() {
+                            "card".to_string()
+                        } else {
+                            type_filter.clone()
+                        }
+                    ));
+                } else {
+                    // Deterministic pick: lowest CardId (stable across server/clients).
+                    let Some(&chosen) = matching.iter().min_by_key(|id| id.as_u32()) else {
+                        return Ok(());
+                    };
+                    let card_name = self
+                        .cards
+                        .try_get(chosen)
+                        .map(|c| c.name.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let player_name = self
+                        .get_player(*player)
+                        .ok()
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    self.move_card(chosen, Zone::Graveyard, Zone::Hand, *player)?;
+                    self.logger
+                        .gamelog(&format!("{} returns {} from graveyard to hand", player_name, card_name));
+                }
+            }
+
             Effect::ConditionalSelfCounter {
                 source,
                 condition,
@@ -6422,7 +6511,221 @@ impl GameState {
                     remember_discarding_players: false,
                 })?;
             }
+
+            Effect::ClassLevelUp {
+                class_card_id,
+                target_level,
+            } => {
+                self.execute_class_level_up(*class_card_id, *target_level)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Execute the Class level-up mechanic (CR 716, Class supertype rules).
+    ///
+    /// 1. Add a `Level` counter to the Class permanent (tracks current level).
+    /// 2. Fire any one-time `ClassLevelGained` triggers registered on the card.
+    /// 3. Attach any permanent ongoing triggers / static abilities defined at
+    ///    this level via `AddTrigger$` / `AddStaticAbility$`.
+    fn execute_class_level_up(&mut self, class_card_id: crate::core::CardId, target_level: u8) -> Result<()> {
+        use crate::core::{CounterType, KeywordArgs};
+
+        // Verify the card is still on the battlefield.
+        if self.cards.try_get(class_card_id).is_none() || !self.battlefield.cards.contains(&class_card_id) {
+            log::debug!(
+                "ClassLevelUp: card {:?} not found on battlefield — fizzling",
+                class_card_id
+            );
+            return Ok(());
+        }
+
+        // Guard: only advance if the current level is exactly target_level - 1.
+        // Prevents paying the same level-up cost multiple times (CR 716.2).
+        let current_level = self
+            .cards
+            .try_get(class_card_id)
+            .map(|c| c.get_counter(CounterType::Level))
+            .unwrap_or(0);
+        if current_level + 1 != target_level {
+            log::debug!(
+                "ClassLevelUp: {:?} is at level {} but target is {} — wrong level, fizzling",
+                class_card_id,
+                current_level,
+                target_level
+            );
+            return Ok(());
+        }
+
+        // 1. Increment the Level counter on the Class permanent.
+        self.add_counters(class_card_id, CounterType::Level, 1)?;
+
+        let actual_level = self
+            .cards
+            .try_get(class_card_id)
+            .map(|c| c.get_counter(CounterType::Level))
+            .unwrap_or(0);
+
+        let card_name = self
+            .cards
+            .try_get(class_card_id)
+            .map(|c| c.name.to_string())
+            .unwrap_or_else(|| "Class".to_string());
+
+        self.logger
+            .gamelog(&format!("{} advances to level {}", card_name, actual_level));
+
+        // 2. Fire one-time ClassLevelGained triggers (uses the standard
+        //    check_triggers infrastructure which scans all battlefield cards).
+        self.check_triggers(TriggerEvent::ClassLevelGained { level: actual_level }, class_card_id)?;
+
+        // 3. Collect Class keyword entries at this level for ongoing ability attachment.
+        let class_abilities_at_level: Vec<String> = {
+            let card = match self.cards.try_get(class_card_id) {
+                Some(c) => c,
+                None => return Ok(()),
+            };
+            card.keywords
+                .iter_args()
+                .filter_map(|kw| {
+                    if let KeywordArgs::Class { level, abilities, .. } = kw {
+                        if *level == target_level {
+                            Some(abilities.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        for abilities_str in &class_abilities_at_level {
+            self.apply_class_level_ongoing_abilities(class_card_id, abilities_str)?;
+        }
+
+        Ok(())
+    }
+
+    /// Parse and attach ongoing triggers / static abilities defined in a Class
+    /// level's `AddTrigger$` or `AddStaticAbility$` clause.  Called after the
+    /// level counter is advanced; one-time `ClassLevelGained` triggers are fired
+    /// separately via `check_triggers`.
+    ///
+    /// `abilities_str` is the `<abilities>` portion of `K:Class:N:cost:<abilities>`,
+    /// e.g. `"AddTrigger$ TriggerCast"` or `"AddStaticAbility$ SReduceCost"`.
+    fn apply_class_level_ongoing_abilities(
+        &mut self,
+        class_card_id: crate::core::CardId,
+        abilities_str: &str,
+    ) -> Result<()> {
+        use crate::loader::card::tokenize_pipe_dollar;
+
+        let params = tokenize_pipe_dollar(abilities_str);
+
+        // --- AddTrigger$ ---
+        if let Some(svar_name) = params.get("AddTrigger") {
+            let svar_body = self
+                .cards
+                .try_get(class_card_id)
+                .and_then(|c| c.definition.svars.get(svar_name.as_str()).cloned());
+
+            if let Some(body) = svar_body {
+                // Parse the SVar trigger mode to determine if it's ongoing.
+                // One-time ClassLevelGained triggers were already fired via check_triggers;
+                // skip them here to avoid double-firing.
+                let svar_params = tokenize_pipe_dollar(&body);
+                let mode = svar_params.get("Mode").map(|s| s.as_str()).unwrap_or("");
+                if mode == "ClassLevelGained" {
+                    // Already handled by check_triggers above.
+                    return Ok(());
+                }
+
+                // Ongoing trigger: parse using the card's own SVar context
+                // (so Execute$ references like TrigToken resolve correctly).
+                let card_name = self
+                    .cards
+                    .try_get(class_card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| "Class".to_string());
+
+                let maybe_trigger = self
+                    .cards
+                    .try_get(class_card_id)
+                    .and_then(|c| c.definition.parse_ongoing_trigger_from_svar_body(&body));
+
+                if let Some(new_trigger) = maybe_trigger {
+                    let desc = new_trigger.description.clone();
+                    if let Ok(card) = self.cards.get_mut(class_card_id) {
+                        log::info!("{} gains ongoing trigger: {}", card.name.as_str(), &desc);
+                        card.triggers.push(new_trigger);
+                    }
+                    self.logger.gamelog(&format!("{} gains ability: {}", card_name, desc));
+                } else {
+                    log::debug!(
+                        "apply_class_level_ongoing_abilities: AddTrigger$ {} body '{}' produced no trigger",
+                        svar_name,
+                        body
+                    );
+                }
+            } else {
+                log::debug!(
+                    "apply_class_level_ongoing_abilities: SVar '{}' not found on class card",
+                    svar_name
+                );
+            }
+        }
+
+        // --- AddStaticAbility$ ---
+        if let Some(svar_name) = params.get("AddStaticAbility") {
+            let svar_body = self
+                .cards
+                .try_get(class_card_id)
+                .and_then(|c| c.definition.svars.get(svar_name.as_str()).cloned());
+
+            if let Some(body) = svar_body {
+                let card_name = self
+                    .cards
+                    .try_get(class_card_id)
+                    .map(|c| c.name.to_string())
+                    .unwrap_or_else(|| "Class".to_string());
+
+                let raw = format!("S:{}", body);
+                let temp_script = format!("Name:{}\nManaCost:no cost\nTypes:Enchantment\n{}\n", card_name, raw);
+                let Ok(card_def) = crate::loader::CardLoader::parse(&temp_script) else {
+                    log::debug!(
+                        "apply_class_level_ongoing_abilities: failed to parse temp script for AddStaticAbility$ {}",
+                        svar_name
+                    );
+                    return Ok(());
+                };
+                let new_statics = card_def.parse_static_abilities();
+
+                if new_statics.is_empty() {
+                    log::debug!(
+                        "apply_class_level_ongoing_abilities: AddStaticAbility$ {} produced no statics",
+                        svar_name
+                    );
+                } else {
+                    let count = new_statics.len();
+                    if let Ok(card) = self.cards.get_mut(class_card_id) {
+                        for s in new_statics {
+                            card.static_abilities.push(s);
+                        }
+                    }
+                    let card_name2 = self
+                        .cards
+                        .try_get(class_card_id)
+                        .map(|c| c.name.to_string())
+                        .unwrap_or_else(|| "Class".to_string());
+                    for _ in 0..count {
+                        self.logger.gamelog(&format!("{} gains static ability", card_name2));
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -7716,8 +8019,13 @@ impl GameState {
             );
         }
 
-        // Check if the cast spell is a creature (for noncreature-only triggers)
+        // Check cast-spell type flags (for SpellCast trigger filtering)
         let is_creature_spell = self.cards.get(cast_spell_id).map(|c| c.is_creature()).unwrap_or(false);
+        let is_instant_or_sorcery = self
+            .cards
+            .get(cast_spell_id)
+            .map(|c| c.is_instant() || c.is_sorcery())
+            .unwrap_or(false);
 
         // Collect SpellCast triggers from permanents on the battlefield
         // These triggers fire when their controller casts a spell
@@ -7752,6 +8060,11 @@ impl GameState {
                             // Check noncreature-only triggers using pre-parsed flag
                             // OPTIMIZATION: Use boolean flag instead of runtime .contains()
                             if trigger.requires_noncreature && is_creature_spell {
+                                return false;
+                            }
+
+                            // Check instant-or-sorcery-only triggers
+                            if trigger.requires_instant_or_sorcery && !is_instant_or_sorcery {
                                 return false;
                             }
 

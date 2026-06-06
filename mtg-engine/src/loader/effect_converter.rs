@@ -500,7 +500,28 @@ pub fn params_to_effect(params: &AbilityParams) -> Option<Effect> {
             // (Earthquake Dragon: "Return CARDNAME from your graveyard to your hand.")
             // The card source is implicit (the ability's host card); use self_target()
             // so MoveSelfBetweenZones patches it to the real CardId at resolve time.
-            else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
+            // Targeted return: graveyard → hand for a card matching ValidTgts$
+            // (e.g. Stormchaser's Talent level-2 trigger: return target instant
+            //  or sorcery from your graveyard to hand).
+            else if params.get("Origin") == Some("Graveyard")
+                && params.get("Destination") == Some("Hand")
+                && params.get("ValidTgts").is_some()
+                && params.get("Defined").is_none()
+            {
+                // Extract type filter from ValidTgts$ (e.g. "Instant.YouCtrl,Sorcery.YouCtrl")
+                // Strip qualifiers like ".YouCtrl" to get plain type names.
+                let valid_tgts = params.get("ValidTgts").unwrap_or("Card");
+                let type_filter: String = valid_tgts
+                    .split(',')
+                    .filter_map(|part| part.split('.').next())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                Some(Effect::ReturnGraveyardCardToHand {
+                    player: PlayerId::placeholder(),
+                    type_filter,
+                })
+            } else if matches!(params.get("Origin"), Some("Graveyard" | "Hand" | "Exile"))
                 && params.get("Destination").is_some()
                 && params.get("Defined").is_none()
             {
